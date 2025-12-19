@@ -1,0 +1,67 @@
+version: "3.8"
+
+services:
+  entropi:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: entropi:latest
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - ENTROPI_MODELS_DIR=/models
+    volumes:
+      - ${HOME}/models/gguf:/models:ro
+      - .:/workspace
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  entropi-dev:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    image: entropi:dev
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - ENTROPI_LOG_LEVEL=DEBUG
+    volumes:
+      - ${HOME}/models/gguf:/models:ro
+      - .:/app
+      - .:/workspace
+    stdin_open: true
+    tty: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  test:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    image: entropi:dev
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+    volumes:
+      - ${HOME}/models/gguf:/models:ro
+      - .:/app
+    command: pytest tests/ -v --cov=src/entropi --cov-report=html
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

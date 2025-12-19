@@ -1,0 +1,57 @@
+# ============================================================================
+# Entropi Development Dockerfile
+# Includes dev tools and test framework
+# ============================================================================
+
+FROM nvidia/cuda:12.4-devel-ubuntu24.04
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    cmake \
+    git \
+    curl \
+    vim \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --upgrade pip setuptools wheel
+
+# Build llama-cpp-python with CUDA
+ENV CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89"
+RUN pip install llama-cpp-python --no-cache-dir
+
+# Install development dependencies
+COPY pyproject.toml /app/
+WORKDIR /app
+RUN pip install -e ".[dev]" --no-cache-dir
+
+# Copy source
+COPY . /app/
+
+# Create non-root user for development
+RUN useradd -m -s /bin/bash dev
+RUN chown -R dev:dev /app
+USER dev
+
+# Volumes
+VOLUME /models
+VOLUME /workspace
+
+WORKDIR /workspace
+
+# Development environment
+ENV ENTROPI_LOG_LEVEL=DEBUG
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Default command runs tests
+CMD ["pytest", "tests/", "-v"]

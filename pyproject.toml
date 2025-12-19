@@ -1,0 +1,97 @@
+[project]
+name = "entropi"
+version = "0.1.0"
+description = "Local AI coding assistant powered by Qwen models"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+authors = [
+    {name = "Tristan VanFossen"}
+]
+keywords = ["ai", "coding", "assistant", "llm", "local"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development",
+]
+
+dependencies = [
+    "llama-cpp-python>=0.2.0",
+    "mcp>=1.0.0",
+    "rich>=13.0.0",
+    "prompt-toolkit>=3.0.0",
+    "click>=8.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "aiosqlite>=0.19.0",
+    "httpx>=0.25.0",
+    "pyyaml>=6.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-bdd>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "pre-commit>=3.0.0",
+    "types-pyyaml>=6.0.0",
+]
+
+[project.scripts]
+entropi = "entropi.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 100
+target-version = ["py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+strict = false
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+
+[[tool.mypy.overrides]]
+module = ["entropi.cli", "entropi.cli_download"]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = "entropi.mcp.servers.base"
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = "entropi.ui.terminal"
+disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]

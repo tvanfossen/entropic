@@ -6,8 +6,15 @@ Handles command-line arguments and initializes the application.
 
 import asyncio
 import sys
+import warnings
 from pathlib import Path
 from typing import Any
+
+# Suppress common import warnings from dependencies
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="llama_cpp")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*found in sys.modules.*")
+warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 
 import click
 
@@ -27,7 +34,7 @@ from entropi.core.logging import setup_logging
 @click.option(
     "--model",
     "-m",
-    type=click.Choice(["primary", "workhorse", "fast", "micro"]),
+    type=click.Choice(["thinking", "normal", "code", "micro"]),
     help="Model to use",
 )
 @click.option(
@@ -67,14 +74,17 @@ def main(
     # Load configuration
     app_config = reload_config(cli_overrides)
 
-    # Setup logging
-    logger = setup_logging(app_config)
+    # Determine project directory
+    project_dir = project or Path.cwd()
+
+    # Setup logging (writes to .entropi/session.log)
+    logger = setup_logging(app_config, project_dir=project_dir)
 
     # Store in context for subcommands
     ctx.ensure_object(dict)
     ctx.obj["config"] = app_config
     ctx.obj["logger"] = logger
-    ctx.obj["project"] = project or Path.cwd()
+    ctx.obj["project"] = project_dir
 
     # If no subcommand, start interactive mode
     if ctx.invoked_subcommand is None:
@@ -99,23 +109,28 @@ def status(ctx: click.Context) -> None:
     table.add_column("Status", style="green")
 
     # Models
-    if config.models.primary:
-        table.add_row("Primary Model", str(config.models.primary.path))
+    if config.models.thinking:
+        table.add_row("Thinking Model (Qwen3-14B)", str(config.models.thinking.path))
     else:
-        table.add_row("Primary Model", "[dim]Not configured[/dim]")
+        table.add_row("Thinking Model", "[dim]Not configured[/dim]")
 
-    if config.models.workhorse:
-        table.add_row("Workhorse Model", str(config.models.workhorse.path))
-
-    if config.models.fast:
-        table.add_row("Fast Model", str(config.models.fast.path))
+    if config.models.normal:
+        table.add_row("Normal Model (Qwen3-8B)", str(config.models.normal.path))
     else:
-        table.add_row("Fast Model", "[dim]Not configured[/dim]")
+        table.add_row("Normal Model", "[dim]Not configured[/dim]")
+
+    if config.models.code:
+        table.add_row("Code Model (Qwen2.5-Coder-7B)", str(config.models.code.path))
+    else:
+        table.add_row("Code Model", "[dim]Not configured[/dim]")
 
     if config.models.micro:
-        table.add_row("Micro Model", str(config.models.micro.path))
+        table.add_row("Micro Model (Router)", str(config.models.micro.path))
     else:
         table.add_row("Micro Model", "[dim]Not configured[/dim]")
+
+    # Thinking mode
+    table.add_row("Thinking Mode Default", str(config.thinking.enabled))
 
     # Settings
     table.add_row("Routing Enabled", str(config.routing.enabled))
@@ -181,36 +196,28 @@ permissions:
 """
     (entropi_dir / "config.yaml").write_text(default_config)
 
-    # Create ENTROPI.md template
-    entropi_md = """# Project Context
+    # Create ENTROPI.md in .entropi/
+    entropi_md = """# ENTROPI.md
 
-## About
-Describe your project here.
+This file provides project context to Entropi, your local AI coding assistant.
 
-## Structure
-- `src/` - Source code
-- `tests/` - Test files
+Edit this file to describe your project, its structure, coding standards, and any other context that would help Entropi assist you more effectively.
 
-## Commands
-```bash
-# Add common commands here
-```
-
-## Standards
-- Add coding standards here
+For more information, see the Entropi documentation.
 """
-    if not (project_dir / "ENTROPI.md").exists():
-        (project_dir / "ENTROPI.md").write_text(entropi_md)
+    entropi_md_path = entropi_dir / "ENTROPI.md"
+    if not entropi_md_path.exists():
+        entropi_md_path.write_text(entropi_md)
 
     click.echo(f"Initialized Entropi in {project_dir}")
     click.echo("Created:")
     click.echo(f"  - {entropi_dir}/config.yaml")
     click.echo(f"  - {entropi_dir}/commands/")
-    click.echo(f"  - {project_dir}/ENTROPI.md")
+    click.echo(f"  - {entropi_dir}/ENTROPI.md")
 
 
 @main.command()
-@click.argument("model", type=click.Choice(["primary", "workhorse", "fast", "micro", "all"]))
+@click.argument("model", type=click.Choice(["thinking", "normal", "code", "micro", "all"]))
 @click.option(
     "--output-dir",
     "-o",

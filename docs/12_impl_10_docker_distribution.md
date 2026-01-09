@@ -2,8 +2,8 @@
 
 > Docker packaging, CI/CD, and release automation
 
-**Prerequisites:** Implementation 09 complete
-**Estimated Time:** 2-3 hours with Claude Code
+**Prerequisites:** Implementation 09 complete  
+**Estimated Time:** 2-3 hours with Claude Code  
 **Checkpoint:** `docker run` works with GPU support
 
 ---
@@ -421,30 +421,34 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 
 console = Console()
 
-# Model registry
+# Model registry - Task-specialized architecture
 MODELS = {
-    "primary": {
-        "name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
-        "size_gb": 9.0,
-        "sha256": None,  # Add hash for verification
-    },
-    "workhorse": {
-        "name": "Qwen2.5-Coder-7B-Instruct-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
-        "size_gb": 4.7,
+    "thinking": {
+        "name": "qwen3-14b-q4_k_m",
+        "url": "https://huggingface.co/Qwen/Qwen3-14B-GGUF/resolve/main/qwen3-14b-q4_k_m.gguf",
+        "size_gb": 8.5,
+        "description": "Deep reasoning (thinking mode ON)",
         "sha256": None,
     },
-    "fast": {
-        "name": "qwen2.5-coder-1.5b-instruct-q4_k_m",
-        "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-        "size_gb": 1.0,
+    "normal": {
+        "name": "qwen3-8b-q4_k_m",
+        "url": "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/main/qwen3-8b-q4_k_m.gguf",
+        "size_gb": 4.5,
+        "description": "Fast reasoning (thinking mode OFF)",
+        "sha256": None,
+    },
+    "code": {
+        "name": "Qwen2.5-Coder-7B-Instruct-Q4_K_M",
+        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+        "size_gb": 4.0,
+        "description": "Code generation (always used for code)",
         "sha256": None,
     },
     "micro": {
         "name": "qwen2.5-coder-0.5b-instruct-q8_0",
         "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf",
         "size_gb": 0.5,
+        "description": "Routing (always loaded)",
         "sha256": None,
     },
 }

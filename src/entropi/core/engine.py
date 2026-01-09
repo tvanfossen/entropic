@@ -8,16 +8,20 @@ proper state management and termination conditions.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
+from entropi.config.loader import save_permission
 from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message, ToolCall
+from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
 from entropi.core.logging import get_logger
+from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
 
@@ -38,6 +42,15 @@ class AgentState(Enum):
     COMPLETE = auto()
     ERROR = auto()
     INTERRUPTED = auto()
+
+
+class ToolApproval(Enum):
+    """Tool approval responses from user."""
+
+    DENY = "deny"  # Deny this once
+    ALLOW = "allow"  # Allow this once
+    ALWAYS_DENY = "always_deny"  # Deny and save to config
+    ALWAYS_ALLOW = "always_allow"  # Allow and save to config
 
 
 @dataclass
@@ -79,6 +92,14 @@ class LoopContext:
     state: AgentState = AgentState.IDLE
     metrics: LoopMetrics = field(default_factory=LoopMetrics)
     consecutive_errors: int = 0
+    # Track recent tool calls to prevent duplicates (key: "name:args_hash")
+    recent_tool_calls: dict[str, str] = field(default_factory=dict)
+    # Track consecutive duplicate attempts to detect stuck model
+    consecutive_duplicate_attempts: int = 0
+    # Flag indicating we have tool results that should be presented
+    has_pending_tool_results: bool = False
+    # Lock model tier for the entire loop to prevent mid-task switching
+    locked_tier: Any = None  # ModelTier or None
 
 
 class AgentEngine:
@@ -116,21 +137,71 @@ class AgentEngine:
         self._context_builder = ContextBuilder(config)
         self._interrupt_event = asyncio.Event()
 
+        # Todo list for agentic task tracking
+        self._todo_list = TodoList()
+
+        # Compaction manager for context management
+        max_tokens = self._get_max_context_tokens()
+        self._token_counter = TokenCounter(max_tokens)
+        self._compaction_manager = CompactionManager(
+            config=config.compaction,
+            token_counter=self._token_counter,
+            orchestrator=orchestrator,
+        )
+
         # Callbacks
         self._on_state_change: Callable[[AgentState], None] | None = None
-        self._on_tool_call: Callable[[ToolCall], bool] | None = None
+        self._on_tool_approval: Callable[[ToolCall], Any] | None = None  # Can be sync or async
         self._on_stream_chunk: Callable[[str], None] | None = None
+        self._on_tool_start: Callable[[ToolCall], None] | None = None
+        self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
+        self._on_todo_update: Callable[[TodoList], None] | None = None
+        self._on_compaction: Callable[[CompactionResult], None] | None = None
+
+    def _get_max_context_tokens(self) -> int:
+        """Get maximum context tokens from model config."""
+        # Try to get from the default model config
+        default_model = self.config.models.default
+        model_config = getattr(self.config.models, default_model, None)
+        if model_config and hasattr(model_config, "context_length"):
+            return model_config.context_length
+        # Fallback default
+        return 16384
 
     def set_callbacks(
         self,
         on_state_change: Callable[[AgentState], None] | None = None,
-        on_tool_call: Callable[[ToolCall], bool] | None = None,
+        on_tool_call: Callable[[ToolCall], Any] | None = None,
         on_stream_chunk: Callable[[str], None] | None = None,
+        on_tool_start: Callable[[ToolCall], None] | None = None,
+        on_tool_complete: Callable[[ToolCall, str, float], None] | None = None,
+        on_todo_update: Callable[[TodoList], None] | None = None,
+        on_compaction: Callable[[CompactionResult], None] | None = None,
     ) -> None:
-        """Set callback functions for loop events."""
+        """
+        Set callback functions for loop events.
+
+        Args:
+            on_state_change: Called when agent state changes
+            on_tool_call: Called to approve tool calls (return True to allow). Can be sync or async.
+            on_stream_chunk: Called for each streamed text chunk
+            on_tool_start: Called when tool execution begins
+            on_tool_complete: Called when tool execution completes (tool, result, duration_ms)
+            on_todo_update: Called when todo list is updated
+            on_compaction: Called when context is compacted
+        """
         self._on_state_change = on_state_change
-        self._on_tool_call = on_tool_call
+        self._on_tool_approval = on_tool_call
         self._on_stream_chunk = on_stream_chunk
+        self._on_tool_start = on_tool_start
+        self._on_tool_complete = on_tool_complete
+        self._on_todo_update = on_todo_update
+        self._on_compaction = on_compaction
+
+    @property
+    def todo_list(self) -> TodoList:
+        """Get the current todo list."""
+        return self._todo_list
 
     async def run(
         self,
@@ -153,15 +224,21 @@ class AgentEngine:
         ctx = LoopContext()
         ctx.metrics.start_time = time.time()
 
-        # Build initial messages
+        # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
+        # Add internal todo tool
+        tools.append(TODO_TOOL_DEFINITION)
+        logger.debug(f"Retrieved {len(tools)} tools: {[t['name'] for t in tools]}")
+
+        # Build system prompt with todo guidance appended
+        base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
         system = self._context_builder.build_system_prompt(
-            base_prompt=system_prompt,
+            base_prompt=base_with_todos,
             tools=tools,
         )
 
         # Format system prompt with tools through adapter
-        formatted_system = self.orchestrator.adapter.format_system_prompt(system, tools)
+        formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
 
         ctx.messages = [Message(role="system", content=formatted_system)]
 
@@ -169,6 +246,9 @@ class AgentEngine:
             ctx.messages.extend(history)
 
         ctx.messages.append(Message(role="user", content=user_message))
+
+        # Log user prompt for debugging
+        logger.info(f"\n{'='*60}\n[USER PROMPT]\n{'='*60}\n{user_message}\n{'='*60}")
 
         self._set_state(ctx, AgentState.PLANNING)
 
@@ -202,20 +282,59 @@ class AgentEngine:
             if ctx.state == AgentState.ERROR:
                 break
 
+        # If we exited due to max iterations, warn the user
+        if ctx.metrics.iterations >= self.loop_config.max_iterations:
+            logger.warning("Loop ended due to max iterations")
+            yield Message(
+                role="assistant",
+                content="[Note: Maximum iterations reached. The task may be incomplete.]",
+            )
+
     async def _execute_iteration(self, ctx: LoopContext) -> AsyncIterator[Message]:
         """Execute a single loop iteration."""
         try:
+            # Check for compaction before generating
+            await self._check_compaction(ctx)
+
             self._set_state(ctx, AgentState.EXECUTING)
             content, tool_calls = await self._generate_response(ctx)
+
+            logger.debug(
+                f"Iteration {ctx.metrics.iterations}: "
+                f"content_len={len(content)}, tool_calls={len(tool_calls)}, "
+                f"content_preview={content[:100]!r}"
+            )
+
             assistant_msg = self._create_assistant_message(content, tool_calls)
             ctx.messages.append(assistant_msg)
+
+            # Log model response for debugging
+            tool_names = [tc.name for tc in tool_calls] if tool_calls else []
+            logger.info(
+                f"\n{'='*60}\n[MODEL RESPONSE]\n{'='*60}\n"
+                f"{content}\n"
+                f"{'='*60}\n"
+                f"Tool calls: {tool_names if tool_names else 'None'}\n"
+                f"{'='*60}"
+            )
+
             yield assistant_msg
 
             if tool_calls:
                 async for msg in self._process_tool_calls(ctx, tool_calls):
                     yield msg
             else:
-                self._set_state(ctx, AgentState.COMPLETE)
+                # Check if generation was cut off due to token limit
+                finish_reason = self.orchestrator.last_finish_reason
+                if finish_reason == "length":
+                    logger.debug("Generation hit token limit - continuing loop")
+                    # Don't mark complete, let loop continue
+                else:
+                    # No tool calls - check if response is complete using adapter
+                    adapter = self.orchestrator.get_adapter()
+                    if adapter.is_response_complete(content, tool_calls):
+                        self._set_state(ctx, AgentState.COMPLETE)
+                    # else: continue loop (model may still be thinking)
 
         except Exception as e:
             async for msg in self._handle_error(ctx, e):
@@ -223,20 +342,60 @@ class AgentEngine:
 
     async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate model response, streaming or not."""
+        logger.debug(f"Generating response (stream={self.loop_config.stream_output})")
+
         if self.loop_config.stream_output:
+            # Streaming mode - tools will be parsed from content after streaming
             content = ""
-            async for chunk in self.orchestrator.generate_stream(ctx.messages):
+
+            # Use locked tier if set, otherwise let orchestrator auto-route
+            async for chunk in self.orchestrator.generate_stream(
+                ctx.messages, tier=ctx.locked_tier
+            ):
                 content += chunk
+
+                # Pass ALL content to callback (including think blocks)
+                # UI layer handles styling of think blocks
                 if self._on_stream_chunk:
                     self._on_stream_chunk(chunk)
-            return self.orchestrator.adapter.parse_tool_calls(content)
 
-        result = await self.orchestrator.generate(ctx.messages)
+            logger.debug(f"\n=== Stream complete ===")
+            logger.debug(f"Total content length: {len(content)}")
+
+            # Lock tier after first generation to prevent mid-task model switching
+            if ctx.locked_tier is None:
+                ctx.locked_tier = self.orchestrator.last_used_tier
+                logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+
+            cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
+            logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
+            return cleaned_content, tool_calls
+
+        # Non-streaming mode - use locked tier if set
+        result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
+
+        # Lock tier after first generation to prevent mid-task model switching
+        if ctx.locked_tier is None:
+            ctx.locked_tier = self.orchestrator.last_used_tier
+            logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+
         ctx.metrics.tokens_used += result.token_count
+        logger.debug(f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls")
         return result.content, result.tool_calls
 
     def _create_assistant_message(self, content: str, tool_calls: list[ToolCall]) -> Message:
-        """Create assistant message with tool calls."""
+        """Create assistant message with tool calls.
+
+        Note: Empty assistant messages can cause llama_decode errors with some models
+        (especially Falcon H1R). When content is empty but tool calls exist, we preserve
+        a representation of the tool calls to ensure valid ChatML formatting.
+        """
+        # Prevent empty assistant messages which can cause KV cache issues
+        if not content.strip() and tool_calls:
+            # Reconstruct minimal tool call representation for context
+            tool_names = [tc.name for tc in tool_calls]
+            content = f"[Calling: {', '.join(tool_names)}]"
+
         return Message(
             role="assistant",
             content=content,
@@ -249,35 +408,197 @@ class AgentEngine:
         self, ctx: LoopContext, tool_calls: list[ToolCall]
     ) -> AsyncIterator[Message]:
         """Process tool calls and yield result messages."""
+        logger.info(f"Processing {len(tool_calls)} tool calls")
         self._set_state(ctx, AgentState.WAITING_TOOL)
         limited_calls = tool_calls[: self.loop_config.max_tool_calls_per_turn]
 
-        for tool_call in limited_calls:
+        for i, tool_call in enumerate(limited_calls):
+            # Check for duplicate tool calls
+            duplicate_result = self._check_duplicate_tool_call(ctx, tool_call)
+            if duplicate_result:
+                logger.warning(f"Skipping duplicate tool call: {tool_call.name}")
+                msg = self._create_duplicate_message(tool_call, duplicate_result)
+                ctx.messages.append(msg)
+                yield msg
+                continue
+
+            logger.debug(f"Executing tool {i+1}/{len(limited_calls)}: {tool_call.name}")
             msg = await self._execute_tool(ctx, tool_call)
             ctx.messages.append(msg)
             yield msg
 
+            # Track this tool call for duplicate detection
+            self._record_tool_call(ctx, tool_call, msg)
+
         ctx.consecutive_errors = 0
+
+    def _get_tool_call_key(self, tool_call: ToolCall) -> str:
+        """Generate a unique key for a tool call based on name and arguments."""
+        args_str = json.dumps(tool_call.arguments, sort_keys=True, default=str)
+        return f"{tool_call.name}:{args_str}"
+
+    def _check_duplicate_tool_call(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
+        """Check if this tool call is a duplicate. Returns previous result if duplicate."""
+        key = self._get_tool_call_key(tool_call)
+        return ctx.recent_tool_calls.get(key)
+
+    def _record_tool_call(self, ctx: LoopContext, tool_call: ToolCall, result_msg: Message) -> None:
+        """Record a tool call for duplicate detection."""
+        key = self._get_tool_call_key(tool_call)
+        # Store the result content for reuse
+        ctx.recent_tool_calls[key] = result_msg.content
+
+    def _create_duplicate_message(self, tool_call: ToolCall, previous_result: str) -> Message:
+        """Create a message indicating a duplicate tool call was skipped."""
+        content = f"""<tool_result>
+Tool: {tool_call.name}
+Status: DUPLICATE - You already called this tool with the same arguments.
+Previous Result:
+{previous_result}
+
+IMPORTANT: Do not call the same tool again. Use the result above to answer the user's question.
+</tool_result>"""
+
+        return Message(
+            role="tool",
+            content=content,
+            tool_results=[
+                {
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "result": f"[DUPLICATE] {previous_result[:500]}...",
+                }
+            ],
+        )
 
     async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
         """Execute a single tool call."""
-        if not self._is_tool_approved(tool_call):
+        logger.debug(f"Tool call: {tool_call.name}({json.dumps(tool_call.arguments, default=str)})")
+
+        # Handle internal tools first (no approval needed)
+        if tool_call.name == "entropi.todo_write":
+            return self._handle_todo_tool(tool_call)
+
+        if not await self._is_tool_approved(tool_call):
+            logger.warning(f"Tool call denied by user: {tool_call.name}")
             return self._create_denied_message(tool_call, "Permission denied by user")
 
+        # Notify tool start
+        if self._on_tool_start:
+            self._on_tool_start(tool_call)
+
+        start_time = time.time()
         try:
+            logger.debug(f"Executing tool via server manager: {tool_call.name}")
             result = await self.server_manager.execute(tool_call)
             ctx.metrics.tool_calls += 1
-            return self.orchestrator.adapter.format_tool_result(tool_call, result.result)
-        except PermissionDeniedError as e:
-            return self._create_denied_message(tool_call, str(e))
+            duration_ms = (time.time() - start_time) * 1000
 
-    def _is_tool_approved(self, tool_call: ToolCall) -> bool:
-        """Check if tool call is approved."""
+            result_str = str(result.result)
+            logger.debug(f"Tool result ({duration_ms:.0f}ms):\n{result_str}")
+
+            # Log full tool result for debugging
+            logger.info(
+                f"\n{'='*60}\n[TOOL RESULT: {tool_call.name}]\n{'='*60}\n"
+                f"{result_str}\n"
+                f"{'='*60}"
+            )
+
+            # Notify tool complete
+            if self._on_tool_complete:
+                self._on_tool_complete(tool_call, result.result, duration_ms)
+
+            return self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
+        except PermissionDeniedError as e:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.warning(f"Tool permission denied: {tool_call.name} - {e}")
+            if self._on_tool_complete:
+                self._on_tool_complete(tool_call, f"Permission denied: {e}", duration_ms)
+            return self._create_denied_message(tool_call, str(e))
+        except Exception as e:
+            duration_ms = (time.time() - start_time) * 1000
+            logger.error(f"Tool execution error: {tool_call.name} - {e}")
+            if self._on_tool_complete:
+                self._on_tool_complete(tool_call, f"Error: {e}", duration_ms)
+            # Return error message instead of raising to allow the model to recover
+            return self._create_error_message(tool_call, str(e))
+
+    async def _is_tool_approved(self, tool_call: ToolCall) -> bool:
+        """Check if tool call is approved.
+
+        Approval flow:
+        1. If auto_approve is set, always approve
+        2. If tool is explicitly in allow list, skip prompting
+        3. Otherwise, prompt user via callback
+        4. If user selects "Always allow/deny", save to config
+        """
         if self.loop_config.auto_approve_tools:
             return True
-        if self._on_tool_call is None:
+
+        # Check if explicitly allowed in config - no prompt needed
+        if self.server_manager.is_explicitly_allowed(tool_call):
             return True
-        return self._on_tool_call(tool_call)
+
+        # No callback means auto-approve (e.g., headless mode)
+        if self._on_tool_approval is None:
+            return True
+
+        # Prompt user via callback
+        # Callback can return: bool, ToolApproval enum, or awaitable of either
+        result = self._on_tool_approval(tool_call)
+        if asyncio.iscoroutine(result):
+            result = await result
+
+        # Handle ToolApproval enum responses
+        if isinstance(result, ToolApproval):
+            return self._handle_approval_result(tool_call, result)
+
+        # Legacy bool support
+        return bool(result)
+
+    def _handle_approval_result(self, tool_call: ToolCall, approval: ToolApproval) -> bool:
+        """Handle ToolApproval result and save to config if needed."""
+        # Generate permission pattern for this tool call
+        pattern = self._get_permission_pattern(tool_call)
+
+        if approval == ToolApproval.ALWAYS_ALLOW:
+            logger.info(f"Saving 'always allow' permission: {pattern}")
+            save_permission(pattern, allow=True)
+            # Also update the in-memory permissions
+            self.server_manager.add_permission(pattern, allow=True)
+            return True
+
+        elif approval == ToolApproval.ALWAYS_DENY:
+            logger.info(f"Saving 'always deny' permission: {pattern}")
+            save_permission(pattern, allow=False)
+            self.server_manager.add_permission(pattern, allow=False)
+            return False
+
+        elif approval == ToolApproval.ALLOW:
+            return True
+
+        else:  # DENY
+            return False
+
+    def _get_permission_pattern(self, tool_call: ToolCall) -> str:
+        """Generate a permission pattern for a tool call.
+
+        For bash commands, uses the command as the pattern.
+        For file operations, uses the path.
+        """
+        tool_name = tool_call.name
+        args = tool_call.arguments
+
+        # For bash.execute, use the command
+        if tool_name == "bash.execute" and "command" in args:
+            return f"{tool_name}:{args['command']}"
+
+        # For filesystem operations, use the path
+        if tool_name.startswith("filesystem.") and "path" in args:
+            return f"{tool_name}:{args['path']}"
+
+        # Default: just the tool name with wildcard
+        return f"{tool_name}:*"
 
     def _create_denied_message(self, tool_call: ToolCall, reason: str) -> Message:
         """Create a permission denied message."""
@@ -289,6 +610,55 @@ class AgentEngine:
                     "call_id": tool_call.id,
                     "name": tool_call.name,
                     "result": reason,
+                }
+            ],
+        )
+
+    def _create_error_message(self, tool_call: ToolCall, error: str) -> Message:
+        """Create a structured error message for the model to recover from."""
+        content = f"""<tool_error>
+Tool: {tool_call.name}
+Error: {error}
+
+RECOVERY SUGGESTIONS:
+- Check if the arguments are correct
+- Try a different approach to accomplish the task
+- Ask the user for clarification if needed
+
+Do NOT retry the same tool call with the same arguments.
+</tool_error>"""
+
+        return Message(
+            role="tool",
+            content=content,
+            tool_results=[
+                {
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "result": f"Error: {error}",
+                }
+            ],
+        )
+
+    def _handle_todo_tool(self, tool_call: ToolCall) -> Message:
+        """Handle the internal entropi.todo_write tool call."""
+        logger.debug(f"Handling internal todo tool: {tool_call.arguments}")
+
+        todos = tool_call.arguments.get("todos", [])
+        result = self._todo_list.update_from_tool_call(todos)
+
+        # Notify UI of todo update
+        if self._on_todo_update:
+            self._on_todo_update(self._todo_list)
+
+        return Message(
+            role="tool",
+            content=result,
+            tool_results=[
+                {
+                    "call_id": tool_call.id,
+                    "name": tool_call.name,
+                    "result": result,
                 }
             ],
         )
@@ -323,6 +693,21 @@ class AgentEngine:
         logger.debug(f"State: {state.name}")
         if self._on_state_change:
             self._on_state_change(state)
+
+    async def _check_compaction(self, ctx: LoopContext) -> None:
+        """Check if compaction is needed and perform if so."""
+        ctx.messages, result = await self._compaction_manager.check_and_compact(
+            conversation_id=None,  # TODO: pass actual conversation ID
+            messages=ctx.messages,
+        )
+
+        if result.compacted:
+            logger.info(
+                f"Compacted context: {result.old_token_count} -> {result.new_token_count} tokens"
+            )
+            # Notify via callback
+            if self._on_compaction:
+                self._on_compaction(result)
 
     def interrupt(self) -> None:
         """Interrupt the running loop."""

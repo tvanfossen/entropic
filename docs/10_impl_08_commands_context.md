@@ -2,8 +2,8 @@
 
 > Slash commands, ENTROPI.md loading, and context management
 
-**Prerequisites:** Implementation 07 complete
-**Estimated Time:** 2-3 hours with Claude Code
+**Prerequisites:** Implementation 07 complete  
+**Estimated Time:** 2-3 hours with Claude Code  
 **Checkpoint:** Slash commands and ENTROPI.md work
 
 ---
@@ -166,6 +166,7 @@ class CommandRegistry:
         self.register_builtin(StatusCommand())
         self.register_builtin(ConfigCommand())
         self.register_builtin(ModelCommand())
+        self.register_builtin(ThinkCommand())
         self.register_builtin(SaveCommand())
         self.register_builtin(LoadCommand())
 
@@ -420,7 +421,7 @@ class ModelCommand(Command):
 
     @property
     def usage(self) -> str:
-        return "/model [primary|workhorse|fast|micro]"
+        return "/model [thinking|normal|code|micro]"
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         if not args:
@@ -430,7 +431,7 @@ class ModelCommand(Command):
             )
 
         model = args.lower().strip()
-        valid = {"primary", "workhorse", "fast", "micro"}
+        valid = {"thinking", "normal", "code", "micro"}
         if model not in valid:
             return CommandResult(
                 success=False,
@@ -442,6 +443,53 @@ class ModelCommand(Command):
             message=f"Switched to {model} model",
             data={"action": "switch_model", "model": model},
         )
+
+
+class ThinkCommand(Command):
+    """Toggle thinking mode."""
+
+    @property
+    def name(self) -> str:
+        return "think"
+
+    @property
+    def description(self) -> str:
+        return "Toggle thinking mode (deep reasoning with 14B model)"
+
+    @property
+    def usage(self) -> str:
+        return "/think [on|off|status]"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        arg = args.lower().strip() if args else "toggle"
+
+        if arg == "status":
+            return CommandResult(
+                success=True,
+                data={"action": "thinking_status"},
+            )
+        elif arg == "on":
+            return CommandResult(
+                success=True,
+                message="🧠 Thinking mode enabled (using Qwen3-14B for reasoning)",
+                data={"action": "thinking_set", "enabled": True},
+            )
+        elif arg == "off":
+            return CommandResult(
+                success=True,
+                message="⚡ Thinking mode disabled (using Qwen3-8B for reasoning)",
+                data={"action": "thinking_set", "enabled": False},
+            )
+        elif arg == "toggle":
+            return CommandResult(
+                success=True,
+                data={"action": "thinking_toggle"},
+            )
+        else:
+            return CommandResult(
+                success=False,
+                message="Usage: /think [on|off|status] or just /think to toggle",
+            )
 
 
 class SaveCommand(Command):

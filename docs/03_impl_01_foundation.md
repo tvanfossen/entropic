@@ -2,8 +2,8 @@
 
 > Configuration system, base classes, and project skeleton
 
-**Prerequisites:** Pre-work checklist complete
-**Estimated Time:** 3-5 hours with Claude Code
+**Prerequisites:** Pre-work checklist complete  
+**Estimated Time:** 3-5 hours with Claude Code  
 **Checkpoint:** Basic `entropi --version` command works
 
 ---
@@ -58,34 +58,69 @@ class ModelConfig(BaseModel):
 
 
 class ModelsConfig(BaseModel):
-    """Configuration for all models."""
+    """Configuration for all models.
+    
+    Task-specialized architecture:
+    - thinking: Qwen3-14B for deep reasoning (thinking mode ON)
+    - normal: Qwen3-8B for fast reasoning (thinking mode OFF)
+    - code: Qwen2.5-Coder-7B for ALL code generation
+    - micro: Qwen2.5-Coder-0.5B for routing (always loaded)
+    """
 
-    primary: ModelConfig | None = None
-    workhorse: ModelConfig | None = None
-    fast: ModelConfig | None = None
-    micro: ModelConfig | None = None
+    thinking: ModelConfig | None = None   # Deep reasoning (Qwen3-14B)
+    normal: ModelConfig | None = None     # Fast reasoning (Qwen3-8B)
+    code: ModelConfig | None = None       # Code generation (Qwen2.5-Coder-7B)
+    micro: ModelConfig | None = None      # Routing (Qwen2.5-Coder-0.5B)
 
-    # Default model to use if routing disabled
-    default: Literal["primary", "workhorse", "fast", "micro"] = "primary"
+
+class ThinkingConfig(BaseModel):
+    """Thinking mode configuration."""
+
+    default: bool = False  # Start in normal mode
+    auto_enable_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "architect",
+            "design",
+            "think through",
+            "complex",
+            "carefully",
+        ]
+    )
+    swap_timeout_seconds: int = Field(default=10, ge=5, le=60)
 
 
 class RoutingConfig(BaseModel):
-    """Configuration for model routing."""
+    """Configuration for task-aware model routing."""
 
     enabled: bool = True
     use_heuristics: bool = True
-    fallback_model: Literal["primary", "workhorse", "fast", "micro"] = "primary"
 
-    # Thresholds for heuristic routing
-    simple_query_max_tokens: int = 50
-    complex_keywords: list[str] = Field(
+    # Keywords that indicate code generation (route to Qwen2.5-Coder)
+    code_generation_keywords: list[str] = Field(
         default_factory=lambda: [
+            "write",
             "implement",
+            "create function",
+            "create class",
+            "fix bug",
+            "fix this",
             "refactor",
-            "design",
-            "architect",
+            "add test",
+            "generate code",
+            "code for",
+        ]
+    )
+
+    # Keywords that indicate reasoning (route to Qwen3)
+    reasoning_keywords: list[str] = Field(
+        default_factory=lambda: [
+            "explain",
+            "plan",
+            "how should",
+            "what approach",
             "review",
             "analyze",
+            "compare",
         ]
     )
 
@@ -146,6 +181,8 @@ class UIConfig(BaseModel):
     stream_output: bool = True
     show_token_count: bool = True
     show_timing: bool = True
+    show_thinking_indicator: bool = True  # Show 🧠 when thinking mode is ON
+    show_model_indicator: bool = True     # Show which model is being used
     max_output_lines: int = Field(default=100, ge=10, le=1000)
 
 
@@ -189,6 +226,7 @@ class EntropyConfig(BaseSettings):
 
     # Sub-configurations
     models: ModelsConfig = Field(default_factory=ModelsConfig)
+    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     quality: QualityConfig = Field(default_factory=QualityConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)

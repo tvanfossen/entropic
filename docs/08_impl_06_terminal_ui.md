@@ -2,8 +2,8 @@
 
 > Rich terminal interface with streaming, themes, and key bindings
 
-**Prerequisites:** Implementation 05 complete
-**Estimated Time:** 2-3 hours with Claude Code
+**Prerequisites:** Implementation 05 complete  
+**Estimated Time:** 2-3 hours with Claude Code  
 **Checkpoint:** Interactive chat session works with streaming
 
 ---
@@ -114,7 +114,17 @@ class TerminalUI:
             """Clear screen."""
             self.console.clear()
 
+        @kb.add("c-t")
+        def _(event):
+            """Toggle thinking mode."""
+            if self._on_thinking_toggle:
+                self._on_thinking_toggle()
+
         return kb
+
+    def set_thinking_toggle_callback(self, callback: Callable[[], None]) -> None:
+        """Set callback for thinking mode toggle."""
+        self._on_thinking_toggle = callback
 
     def _create_prompt_style(self) -> Style:
         """Create prompt style."""
@@ -311,13 +321,15 @@ from entropi.ui.themes import Theme
 
 @dataclass
 class StatusBar:
-    """Status bar component."""
+    """Status bar component with thinking mode indicator."""
 
     model: str
     vram_used: float
     vram_total: float
     tokens: int
     theme: Theme
+    thinking_enabled: bool = False
+    current_task: str = ""  # "reasoning" or "code"
 
     def render(self) -> RenderableType:
         """Render status bar."""
@@ -331,14 +343,30 @@ class StatusBar:
         else:
             vram_color = self.theme.success_color
 
+        # Thinking mode indicator
+        if self.thinking_enabled:
+            mode_indicator = "[bold cyan]🧠 Thinking[/]"
+        else:
+            mode_indicator = "[dim]⚡ Normal[/]"
+
+        # Current task indicator
+        if self.current_task == "code":
+            task_indicator = "[yellow]</> Code[/]"
+        elif self.current_task == "reasoning":
+            task_indicator = "[blue]💭 Reasoning[/]"
+        else:
+            task_indicator = ""
+
         table = Table.grid(padding=1)
         table.add_column(justify="left")
+        table.add_column(justify="center")
         table.add_column(justify="center")
         table.add_column(justify="right")
 
         table.add_row(
-            f"[bold]Model:[/] {self.model}",
+            f"{mode_indicator} │ [bold]Model:[/] {self.model}",
             f"[{vram_color}]VRAM: {self.vram_used:.1f}/{self.vram_total:.1f} GB[/]",
+            task_indicator,
             f"[dim]Tokens: {self.tokens:,}[/]",
         )
 

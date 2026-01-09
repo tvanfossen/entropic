@@ -2,8 +2,8 @@
 
 > Model loading, inference, and multi-model orchestration
 
-**Prerequisites:** Implementation 01 complete
-**Estimated Time:** 4-6 hours with Claude Code
+**Prerequisites:** Implementation 01 complete  
+**Estimated Time:** 4-6 hours with Claude Code  
 **Checkpoint:** Can load model and generate response via CLI
 
 ---
@@ -572,9 +572,10 @@ Result:
 
 ```python
 """
-Model orchestrator for multi-model management.
+Model orchestrator for task-specialized routing.
 
-Manages loading, routing, and lifecycle of multiple models.
+Routes between Qwen3 (reasoning) and Qwen2.5-Coder (code generation)
+based on task type, with thinking mode toggle.
 """
 import asyncio
 from enum import Enum
@@ -589,21 +590,30 @@ from entropi.inference.llama_cpp import LlamaCppBackend
 logger = get_logger("inference.orchestrator")
 
 
-class ModelTier(Enum):
-    """Model tiers for routing."""
+class TaskType(Enum):
+    """Task types for routing."""
 
-    PRIMARY = "primary"
-    WORKHORSE = "workhorse"
-    FAST = "fast"
-    MICRO = "micro"
+    CODE_GENERATION = "code"     # Routes to Qwen2.5-Coder
+    REASONING = "reasoning"      # Routes to Qwen3 (8B or 14B)
+
+
+class ModelRole(Enum):
+    """Model roles in the task-specialized architecture."""
+
+    THINKING = "thinking"   # Qwen3-14B - deep reasoning
+    NORMAL = "normal"       # Qwen3-8B - fast reasoning
+    CODE = "code"           # Qwen2.5-Coder-7B - code generation
+    MICRO = "micro"         # Qwen2.5-Coder-0.5B - routing
 
 
 class ModelOrchestrator:
     """
-    Orchestrates multiple models for intelligent routing.
+    Task-specialized model orchestrator.
 
-    Manages model lifecycle, handles routing decisions,
-    and provides a unified interface for generation.
+    Routes requests between:
+    - Qwen3 (8B or 14B based on thinking mode) for reasoning/planning
+    - Qwen2.5-Coder-7B for ALL code generation tasks
+    - Qwen2.5-Coder-0.5B for routing decisions (always loaded)
     """
 
     def __init__(self, config: EntropyConfig) -> None:
@@ -614,43 +624,91 @@ class ModelOrchestrator:
             config: Application configuration
         """
         self.config = config
-        self._models: dict[ModelTier, ModelBackend] = {}
+        self._models: dict[ModelRole, ModelBackend] = {}
         self._adapter = QwenAdapter()
         self._lock = asyncio.Lock()
+        self._thinking_enabled = config.thinking.default
+
+    @property
+    def thinking_enabled(self) -> bool:
+        """Check if thinking mode is enabled."""
+        return self._thinking_enabled
+
+    async def set_thinking_mode(self, enabled: bool) -> None:
+        """
+        Toggle thinking mode.
+
+        When enabled, uses Qwen3-14B for reasoning.
+        When disabled, uses Qwen3-8B for reasoning.
+        Code generation always uses Qwen2.5-Coder-7B.
+
+        Args:
+            enabled: Whether to enable thinking mode
+        """
+        if enabled == self._thinking_enabled:
+            return
+
+        async with self._lock:
+            self._thinking_enabled = enabled
+
+            # Swap reasoning models
+            if enabled:
+                # Unload normal (8B), load thinking (14B)
+                if ModelRole.NORMAL in self._models and self._models[ModelRole.NORMAL].is_loaded:
+                    await self._models[ModelRole.NORMAL].unload()
+                    logger.info("Unloaded normal model (8B)")
+
+                if ModelRole.THINKING in self._models:
+                    await self._models[ModelRole.THINKING].load()
+                    logger.info("Loaded thinking model (14B)")
+            else:
+                # Unload thinking (14B), load normal (8B)
+                if ModelRole.THINKING in self._models and self._models[ModelRole.THINKING].is_loaded:
+                    await self._models[ModelRole.THINKING].unload()
+                    logger.info("Unloaded thinking model (14B)")
+
+                if ModelRole.NORMAL in self._models:
+                    await self._models[ModelRole.NORMAL].load()
+                    logger.info("Loaded normal model (8B)")
 
     async def initialize(self) -> None:
         """Initialize and load configured models."""
-        logger.info("Initializing model orchestrator")
+        logger.info("Initializing task-specialized model orchestrator")
 
-        # Create backends for configured models
         models_config = self.config.models
 
-        if models_config.primary:
-            self._models[ModelTier.PRIMARY] = self._create_backend(models_config.primary)
+        # Create backends for configured models
+        if models_config.thinking:
+            self._models[ModelRole.THINKING] = self._create_backend(models_config.thinking)
 
-        if models_config.workhorse:
-            self._models[ModelTier.WORKHORSE] = self._create_backend(models_config.workhorse)
+        if models_config.normal:
+            self._models[ModelRole.NORMAL] = self._create_backend(models_config.normal)
 
-        if models_config.fast:
-            self._models[ModelTier.FAST] = self._create_backend(models_config.fast)
+        if models_config.code:
+            self._models[ModelRole.CODE] = self._create_backend(models_config.code)
 
         if models_config.micro:
-            self._models[ModelTier.MICRO] = self._create_backend(models_config.micro)
+            self._models[ModelRole.MICRO] = self._create_backend(models_config.micro)
 
-        # Pre-load default model
-        default_tier = ModelTier(models_config.default)
-        if default_tier in self._models:
-            await self._models[default_tier].load()
-            logger.info(f"Pre-loaded {default_tier.value} model")
+        # Always load micro model for routing
+        if ModelRole.MICRO in self._models:
+            await self._models[ModelRole.MICRO].load()
+            logger.info("Loaded micro model for routing")
 
-        # Pre-load micro model for routing (if enabled and available)
-        if (
-            self.config.routing.enabled
-            and ModelTier.MICRO in self._models
-            and default_tier != ModelTier.MICRO
-        ):
-            await self._models[ModelTier.MICRO].load()
-            logger.info("Pre-loaded micro model for routing")
+        # Always load code model (used for all code generation)
+        if ModelRole.CODE in self._models:
+            await self._models[ModelRole.CODE].load()
+            logger.info("Loaded code model (Qwen2.5-Coder-7B)")
+
+        # Load reasoning model based on thinking mode
+        if self._thinking_enabled:
+            if ModelRole.THINKING in self._models:
+                await self._models[ModelRole.THINKING].load()
+                logger.info("Loaded thinking model (Qwen3-14B)")
+        else:
+            if ModelRole.NORMAL in self._models:
+                await self._models[ModelRole.NORMAL].load()
+                logger.info("Loaded normal model (Qwen3-8B)")
 
     def _create_backend(self, model_config: ModelConfig) -> ModelBackend:
         """Create a backend for a model configuration."""
@@ -663,15 +721,15 @@ class ModelOrchestrator:
         """Shutdown and unload all models."""
         logger.info("Shutting down model orchestrator")
 
-        for tier, model in self._models.items():
+        for role, model in self._models.items():
             if model.is_loaded:
                 await model.unload()
-                logger.info(f"Unloaded {tier.value} model")
+                logger.info(f"Unloaded {role.value} model")
 
     async def generate(
         self,
         messages: list[Message],
-        tier: ModelTier | None = None,
+        force_code_model: bool = False,
         **kwargs: Any,
     ) -> GenerationResult:
         """
@@ -679,26 +737,22 @@ class ModelOrchestrator:
 
         Args:
             messages: Conversation messages
-            tier: Specific model tier to use (auto-routes if None)
+            force_code_model: Force use of code model
             **kwargs: Additional generation parameters
 
         Returns:
             Generation result
         """
         # Determine which model to use
-        if tier is None:
-            tier = await self._route(messages)
+        model = await self._select_model(messages, force_code_model)
 
-        # Ensure model is loaded
-        model = await self._get_model(tier)
-
-        logger.debug(f"Generating with {tier.value} model")
+        logger.debug(f"Generating with {self._get_model_name(model)} model")
         return await model.generate(messages, **kwargs)
 
     async def generate_stream(
         self,
         messages: list[Message],
-        tier: ModelTier | None = None,
+        force_code_model: bool = False,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """
@@ -706,133 +760,124 @@ class ModelOrchestrator:
 
         Args:
             messages: Conversation messages
-            tier: Specific model tier to use
+            force_code_model: Force use of code model
             **kwargs: Additional generation parameters
 
         Yields:
             Response chunks
         """
-        if tier is None:
-            tier = await self._route(messages)
+        model = await self._select_model(messages, force_code_model)
 
-        model = await self._get_model(tier)
-
-        logger.debug(f"Streaming with {tier.value} model")
+        logger.debug(f"Streaming with {self._get_model_name(model)} model")
         async for chunk in model.generate_stream(messages, **kwargs):
             yield chunk
 
-    async def _get_model(self, tier: ModelTier) -> ModelBackend:
+    async def _select_model(
+        self,
+        messages: list[Message],
+        force_code_model: bool = False,
+    ) -> ModelBackend:
         """
-        Get a model, loading if necessary.
+        Select the appropriate model for the task.
 
         Args:
-            tier: Model tier
+            messages: Conversation messages
+            force_code_model: Force use of code model
 
         Returns:
-            Model backend
-
-        Raises:
-            ValueError: If tier not configured
+            Model backend to use
         """
-        if tier not in self._models:
-            # Fallback to default
-            fallback = ModelTier(self.config.routing.fallback_model)
-            if fallback not in self._models:
-                raise ValueError(f"No model available for tier {tier.value}")
-            tier = fallback
+        if force_code_model:
+            return await self._get_model(ModelRole.CODE)
 
-        model = self._models[tier]
-        if not model.is_loaded:
-            await model.load()
+        # Classify the task
+        task_type = await self._classify_task(messages)
 
-        return model
+        if task_type == TaskType.CODE_GENERATION:
+            return await self._get_model(ModelRole.CODE)
+        else:
+            # Use reasoning model based on thinking mode
+            if self._thinking_enabled:
+                return await self._get_model(ModelRole.THINKING)
+            else:
+                return await self._get_model(ModelRole.NORMAL)
 
-    async def _route(self, messages: list[Message]) -> ModelTier:
+    async def _classify_task(self, messages: list[Message]) -> TaskType:
         """
-        Route request to appropriate model tier.
+        Classify the task type (code generation vs reasoning).
 
         Args:
             messages: Conversation messages
 
         Returns:
-            Model tier to use
+            Task type
         """
         if not self.config.routing.enabled:
-            return ModelTier(self.config.models.default)
+            return TaskType.REASONING  # Default to reasoning model
 
-        # Get last user message for routing decision
+        # Get last user message
         user_message = ""
         for msg in reversed(messages):
             if msg.role == "user":
                 user_message = msg.content
                 break
 
-        # Try heuristic routing first
-        if self.config.routing.use_heuristics:
-            heuristic_result = self._route_heuristic(user_message)
-            if heuristic_result is not None:
-                return heuristic_result
+        # Try heuristic classification first
+        heuristic_result = self._classify_heuristic(user_message)
+        if heuristic_result is not None:
+            return heuristic_result
 
         # Fall back to model-based classification
-        return await self._route_with_model(user_message)
+        return await self._classify_with_model(user_message)
 
-    def _route_heuristic(self, message: str) -> ModelTier | None:
+    def _classify_heuristic(self, message: str) -> TaskType | None:
         """
-        Route using heuristics (no model call).
+        Classify task using heuristics (no model call).
 
         Args:
             message: User message
 
         Returns:
-            Model tier or None if heuristics inconclusive
+            Task type or None if heuristics inconclusive
         """
         message_lower = message.lower()
         routing_config = self.config.routing
 
-        # Short, simple questions -> FAST
-        words = message.split()
-        if len(words) <= routing_config.simple_query_max_tokens:
-            simple_patterns = [
-                "what is",
-                "what's",
-                "who is",
-                "define",
-                "explain",
-                "how do i",
-            ]
-            if any(message_lower.startswith(p) for p in simple_patterns):
-                return ModelTier.FAST
+        # Check for code generation keywords
+        for keyword in routing_config.code_generation_keywords:
+            if keyword in message_lower:
+                return TaskType.CODE_GENERATION
 
-        # Complex keywords -> PRIMARY
-        if any(kw in message_lower for kw in routing_config.complex_keywords):
-            return ModelTier.PRIMARY
+        # Check for reasoning keywords
+        for keyword in routing_config.reasoning_keywords:
+            if keyword in message_lower:
+                return TaskType.REASONING
 
-        # Inconclusive
+        # Inconclusive - will fall back to model classification
         return None
 
-    async def _route_with_model(self, message: str) -> ModelTier:
+    async def _classify_with_model(self, message: str) -> TaskType:
         """
-        Route using micro model for classification.
+        Classify task using micro model.
 
         Args:
             message: User message
 
         Returns:
-            Model tier
+            Task type
         """
-        if ModelTier.MICRO not in self._models:
-            return ModelTier(self.config.routing.fallback_model)
+        if ModelRole.MICRO not in self._models:
+            return TaskType.REASONING  # Safe default
 
-        # Create classification prompt
-        classification_prompt = f"""Classify this request into one of these categories:
-- PRIMARY: Complex coding tasks, architecture, detailed review
-- FAST: Simple questions, explanations, small tasks
+        classification_prompt = f"""Classify this request into one category:
+- CODE: Writing, implementing, fixing, or refactoring code
+- REASONING: Planning, explaining, reviewing, or analyzing
 
-Request: {message}
+Request: {message[:500]}
 
-Respond with only the category name (PRIMARY or FAST):"""
+Respond with only: CODE or REASONING"""
 
-        micro = await self._get_model(ModelTier.MICRO)
+        micro = await self._get_model(ModelRole.MICRO)
         result = await micro.generate(
             [Message(role="user", content=classification_prompt)],
             max_tokens=10,
@@ -841,12 +886,167 @@ Respond with only the category name (PRIMARY or FAST):"""
 
         response = result.content.strip().upper()
 
-        if "PRIMARY" in response:
-            return ModelTier.PRIMARY
-        elif "FAST" in response:
-            return ModelTier.FAST
+        if "CODE" in response:
+            return TaskType.CODE_GENERATION
         else:
-            return ModelTier(self.config.routing.fallback_model)
+            return TaskType.REASONING
+
+    async def _get_model(self, role: ModelRole) -> ModelBackend:
+        """
+        Get a model by role, loading if necessary.
+
+        Args:
+            role: Model role
+
+        Returns:
+            Model backend
+
+        Raises:
+            ValueError: If role not configured
+        """
+        if role not in self._models:
+            raise ValueError(f"No model configured for role: {role.value}")
+
+        model = self._models[role]
+        if not model.is_loaded:
+            await model.load()
+
+        return model
+
+    def _get_model_name(self, model: ModelBackend) -> str:
+        """Get human-readable name for a model."""
+        for role, m in self._models.items():
+            if m is model:
+                return role.value
+        return "unknown"
+
+    def get_loaded_models(self) -> list[str]:
+        """Get list of currently loaded models."""
+        return [role.value for role, model in self._models.items() if model.is_loaded]
+
+    def get_status(self) -> dict[str, Any]:
+        """Get orchestrator status."""
+        return {
+            "thinking_enabled": self._thinking_enabled,
+            "loaded_models": self.get_loaded_models(),
+            "routing_enabled": self.config.routing.enabled,
+        }
+```
+
+---
+
+## 5. Task-Aware Router (Separate Module)
+
+### File: `src/entropi/inference/router.py`
+
+```python
+"""
+Task-aware router for model selection.
+
+Provides utilities for classifying tasks and selecting models.
+"""
+import re
+from enum import Enum
+
+from entropi.config.schema import RoutingConfig
+from entropi.core.logging import get_logger
+
+logger = get_logger("inference.router")
+
+
+class TaskType(Enum):
+    """Task types for routing."""
+
+    CODE_GENERATION = "code"
+    REASONING = "reasoning"
+
+
+def classify_task_heuristic(
+    message: str,
+    config: RoutingConfig,
+) -> TaskType | None:
+    """
+    Classify a task using heuristics.
+
+    Args:
+        message: User message
+        config: Routing configuration
+
+    Returns:
+        Task type or None if inconclusive
+    """
+    message_lower = message.lower()
+
+    # Check for code generation patterns
+    code_patterns = [
+        r"\bwrite\s+(a\s+)?function\b",
+        r"\bimplement\s+",
+        r"\bcreate\s+(a\s+)?(class|function|method)\b",
+        r"\bfix\s+(this\s+)?(bug|error|issue)\b",
+        r"\brefactor\b",
+        r"\badd\s+test",
+        r"\bgenerate\s+code\b",
+        r"```",  # Code block in message
+    ]
+
+    for pattern in code_patterns:
+        if re.search(pattern, message_lower):
+            return TaskType.CODE_GENERATION
+
+    # Check for reasoning patterns
+    reasoning_patterns = [
+        r"\bexplain\s+(how|why|what)\b",
+        r"\bplan\s+(how|to)\b",
+        r"\bhow\s+should\b",
+        r"\bwhat\s+approach\b",
+        r"\breview\s+(this|my)\b",
+        r"\banalyze\b",
+        r"\bcompare\b",
+    ]
+
+    for pattern in reasoning_patterns:
+        if re.search(pattern, message_lower):
+            return TaskType.REASONING
+
+    # Check keyword lists from config
+    for keyword in config.code_generation_keywords:
+        if keyword.lower() in message_lower:
+            return TaskType.CODE_GENERATION
+
+    for keyword in config.reasoning_keywords:
+        if keyword.lower() in message_lower:
+            return TaskType.REASONING
+
+    return None
+
+
+def is_code_generation_task(message: str) -> bool:
+    """
+    Quick check if message is likely a code generation task.
+
+    Args:
+        message: User message
+
+    Returns:
+        True if likely code generation
+    """
+    code_indicators = [
+        "write",
+        "implement",
+        "create function",
+        "create class",
+        "fix bug",
+        "fix this",
+        "refactor",
+        "add test",
+        "generate code",
+        "code for",
+        "```",
+    ]
+
+    message_lower = message.lower()
+    return any(indicator in message_lower for indicator in code_indicators)
+```
 
     @property
     def adapter(self) -> QwenAdapter:

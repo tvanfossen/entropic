@@ -16,31 +16,35 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
-# Model registry
+# Model registry - Task-specialized models (bartowski quantizations)
 MODELS: dict[str, dict[str, Any]] = {
-    "primary": {
-        "name": "Qwen2.5-Coder-14B-Instruct-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-14B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf",
+    "thinking": {
+        "name": "Qwen_Qwen3-14B-Q4_K_M",
+        "url": "https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q4_K_M.gguf",
         "size_gb": 9.0,
         "sha256": None,  # Add hash for verification
+        "description": "Deep reasoning model (thinking mode)",
     },
-    "workhorse": {
+    "normal": {
+        "name": "Qwen_Qwen3-8B-Q4_K_M",
+        "url": "https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q4_K_M.gguf",
+        "size_gb": 5.0,
+        "sha256": None,
+        "description": "General reasoning model (fast mode)",
+    },
+    "code": {
         "name": "Qwen2.5-Coder-7B-Instruct-Q4_K_M",
         "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
         "size_gb": 4.7,
         "sha256": None,
-    },
-    "fast": {
-        "name": "qwen2.5-coder-1.5b-instruct-q4_k_m",
-        "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
-        "size_gb": 1.0,
-        "sha256": None,
+        "description": "Code generation model",
     },
     "micro": {
         "name": "qwen2.5-coder-0.5b-instruct-q8_0",
         "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf",
         "size_gb": 0.5,
         "sha256": None,
+        "description": "Routing classifier model",
     },
 }
 
@@ -54,7 +58,7 @@ def download_models(
     Download Entropi models.
 
     Args:
-        model: Model key ('primary', 'workhorse', 'fast', 'micro', 'all')
+        model: Model key ('thinking', 'normal', 'code', 'micro', 'all')
         output_dir: Output directory for models
         force: Overwrite existing files
     """

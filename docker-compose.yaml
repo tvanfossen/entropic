@@ -1,40 +1,20 @@
-version: "3.8"
-
 services:
   entropi:
     build:
       context: .
       dockerfile: docker/Dockerfile
     image: entropi:latest
-    runtime: nvidia
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=all
-      - ENTROPI_MODELS_DIR=/models
-    volumes:
-      - ${HOME}/models/gguf:/models:ro
-      - .:/workspace
-    stdin_open: true
-    tty: true
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
-
-  entropi-dev:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile.dev
-    image: entropi:dev
-    runtime: nvidia
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
       - ENTROPI_LOG_LEVEL=DEBUG
+      - HOME=/home/user
     volumes:
-      - ${HOME}/models/gguf:/models:ro
-      - .:/app
+      # Global models directory (read-only) - uses generic /home/user path
+      - ${HOME}/models/gguf:/home/user/models/gguf:ro
+      # Global config directory (template source, read-only)
+      - ${HOME}/.entropi:/home/user/.entropi:ro
+      # Project workspace (includes .entropi/ for per-project config/db)
       - .:/workspace
     stdin_open: true
     tty: true
@@ -43,25 +23,27 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]
 
   test:
     build:
       context: .
-      dockerfile: docker/Dockerfile.dev
-    image: entropi:dev
-    runtime: nvidia
+      dockerfile: docker/Dockerfile
+    image: entropi:latest
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all
+      - HOME=/home/user
     volumes:
-      - ${HOME}/models/gguf:/models:ro
-      - .:/app
+      - ${HOME}/models/gguf:/home/user/models/gguf:ro
+      - ${HOME}/.entropi:/home/user/.entropi:ro
+      - .:/workspace
     command: pytest tests/ -v --cov=src/entropi --cov-report=html
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: all
               capabilities: [gpu]

@@ -53,25 +53,33 @@ class ServerManager:
         mcp_config = self.config.mcp
 
         # Built-in servers
+        # Note: -W ignore suppresses RuntimeWarning about sys.modules from runpy
         if mcp_config.enable_filesystem:
             self._clients["filesystem"] = MCPClient(
                 name="filesystem",
                 command="python",
-                args=["-m", "entropi.mcp.servers.filesystem"],
+                args=["-W", "ignore", "-m", "entropi.mcp.servers.filesystem"],
             )
 
         if mcp_config.enable_bash:
             self._clients["bash"] = MCPClient(
                 name="bash",
                 command="python",
-                args=["-m", "entropi.mcp.servers.bash"],
+                args=["-W", "ignore", "-m", "entropi.mcp.servers.bash"],
             )
 
         if mcp_config.enable_git:
             self._clients["git"] = MCPClient(
                 name="git",
                 command="python",
-                args=["-m", "entropi.mcp.servers.git"],
+                args=["-W", "ignore", "-m", "entropi.mcp.servers.git"],
+            )
+
+        if mcp_config.enable_diagnostics:
+            self._clients["diagnostics"] = MCPClient(
+                name="diagnostics",
+                command="python",
+                args=["-W", "ignore", "-m", "entropi.mcp.servers.diagnostics"],
             )
 
         # External servers from config
@@ -123,8 +131,12 @@ class ServerManager:
         for client in self._clients.values():
             if client.is_connected:
                 tools = await client.list_tools()
+                logger.debug(f"Server {client.name}: {len(tools)} tools")
                 all_tools.extend(tools)
+            else:
+                logger.debug(f"Server {client.name}: not connected, skipping")
 
+        logger.debug(f"Total tools available: {len(all_tools)}")
         return all_tools
 
     async def execute(self, tool_call: ToolCall) -> ToolResult:
@@ -182,16 +194,34 @@ class ServerManager:
         """
         Check if tool execution is allowed.
 
+        Only returns False if tool is EXPLICITLY denied.
+        Unknown tools return True - engine handles prompting.
+
         Args:
             tool_name: Tool name (e.g., "filesystem.read_file")
             pattern: Tool pattern with args (e.g., "filesystem.read_file:/path")
 
         Returns:
-            True if allowed
+            True unless explicitly denied
         """
+        # Only hard-deny if in deny list
         if self._is_denied(tool_name, pattern):
             return False
-        return self._is_allowed(tool_name, pattern)
+        # Allow everything else - engine handles prompting for unknown tools
+        return True
+
+    def is_explicitly_allowed(self, tool_call: ToolCall) -> bool:
+        """
+        Check if tool is explicitly in allow list (skip prompting).
+
+        Args:
+            tool_call: Tool call to check
+
+        Returns:
+            True if explicitly allowed, False if needs prompting
+        """
+        tool_pattern = f"{tool_call.name}:{self._args_to_pattern(tool_call.arguments)}"
+        return self._is_allowed(tool_call.name, tool_pattern)
 
     def _is_denied(self, tool_name: str, pattern: str) -> bool:
         """Check if tool matches any deny pattern."""
@@ -215,6 +245,21 @@ class ServerManager:
         if ":" not in permission_pattern:
             return True
         return fnmatch.fnmatch(full_pattern, permission_pattern)
+
+    def add_permission(self, pattern: str, allow: bool) -> None:
+        """
+        Add a permission pattern to the in-memory config.
+
+        Args:
+            pattern: Permission pattern (e.g., "bash.execute:python -m venv *")
+            allow: True to add to allow list, False to add to deny list
+        """
+        if allow:
+            if pattern not in self._permissions.allow:
+                self._permissions.allow.append(pattern)
+        else:
+            if pattern not in self._permissions.deny:
+                self._permissions.deny.append(pattern)
 
     def get_connected_servers(self) -> list[str]:
         """Get list of connected server names."""

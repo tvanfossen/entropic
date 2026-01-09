@@ -27,6 +27,7 @@ class GenerationConfig:
     repeat_penalty: float = 1.1
     stop: list[str] = field(default_factory=list)
     stream: bool = False
+    grammar: str | None = None  # Optional GBNF grammar to constrain output
 
 
 @dataclass

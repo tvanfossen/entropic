@@ -78,12 +78,21 @@ class MCPClient:
 
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
+        # Close session first
         if self._session:
-            await self._session.__aexit__(None, None, None)
+            try:
+                await self._session.__aexit__(None, None, None)
+            except Exception as e:
+                logger.debug(f"Session cleanup error (non-critical): {e}")
             self._session = None
 
+        # Close stdio context - may fail if called from different task
         if self._stdio_context:
-            await self._stdio_context.__aexit__(None, None, None)
+            try:
+                await self._stdio_context.__aexit__(None, None, None)
+            except Exception as e:
+                # This is expected when closing from a different task than opened
+                logger.debug(f"Stdio cleanup error (non-critical): {e}")
             self._stdio_context = None
 
         self._tools = []

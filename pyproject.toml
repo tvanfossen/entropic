@@ -30,6 +30,7 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "httpx>=0.25.0",
     "pyyaml>=6.0.0",
+    "pylspclient>=0.0.7",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +55,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf"]
 
 [tool.black]
 line-length = 100

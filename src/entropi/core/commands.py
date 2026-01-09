@@ -144,8 +144,16 @@ class CommandRegistry:
         self.register_builtin(StatusCommand())
         self.register_builtin(ConfigCommand())
         self.register_builtin(ModelCommand())
+        self.register_builtin(ThinkCommand())
         self.register_builtin(SaveCommand())
         self.register_builtin(LoadCommand())
+        # Session commands
+        self.register_builtin(SessionsCommand())
+        self.register_builtin(SessionCommand())
+        self.register_builtin(NewCommand())
+        self.register_builtin(RenameCommand())
+        self.register_builtin(DeleteSessionCommand())
+        self.register_builtin(ExportCommand())
 
     async def _discover_custom_commands(self, directory: Path) -> None:
         """Discover custom commands from markdown files."""
@@ -407,7 +415,7 @@ class ModelCommand(Command):
 
     @property
     def usage(self) -> str:
-        return "/model [primary|workhorse|fast|micro]"
+        return "/model [thinking|normal|code|micro]"
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         if not args:
@@ -417,7 +425,7 @@ class ModelCommand(Command):
             )
 
         model = args.lower().strip()
-        valid = {"primary", "workhorse", "fast", "micro"}
+        valid = {"thinking", "normal", "code", "micro"}
         if model not in valid:
             return CommandResult(
                 success=False,
@@ -428,6 +436,50 @@ class ModelCommand(Command):
             success=True,
             message=f"Switched to {model} model",
             data={"action": "switch_model", "model": model},
+        )
+
+
+class ThinkCommand(Command):
+    """Control thinking model usage."""
+
+    @property
+    def name(self) -> str:
+        return "think"
+
+    @property
+    def description(self) -> str:
+        return "Control when the thinking model is used"
+
+    @property
+    def usage(self) -> str:
+        return "/think [on|off|status] - on=force for all, off=auto (complex tasks only)"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        args = args.lower().strip()
+
+        if not args or args == "status":
+            return CommandResult(
+                success=True,
+                data={"action": "show_thinking_status"},
+            )
+
+        if args == "on":
+            return CommandResult(
+                success=True,
+                message="Thinking model forced ON for all reasoning tasks",
+                data={"action": "set_thinking_mode", "enabled": True},
+            )
+
+        if args in ("off", "auto"):
+            return CommandResult(
+                success=True,
+                message="Thinking model AUTO - used only for complex tasks",
+                data={"action": "set_thinking_mode", "enabled": False},
+            )
+
+        return CommandResult(
+            success=False,
+            message=f"Unknown argument: {args}. Use: on, off/auto, or status",
         )
 
 
@@ -478,4 +530,157 @@ class LoadCommand(Command):
         return CommandResult(
             success=True,
             data={"action": "load_conversation", "name": args},
+        )
+
+
+# Session management commands
+
+
+class SessionsCommand(Command):
+    """List sessions for current project."""
+
+    @property
+    def name(self) -> str:
+        return "sessions"
+
+    @property
+    def description(self) -> str:
+        return "List all sessions for this project"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        return CommandResult(
+            success=True,
+            data={"action": "list_sessions"},
+        )
+
+
+class SessionCommand(Command):
+    """Switch to a specific session."""
+
+    @property
+    def name(self) -> str:
+        return "session"
+
+    @property
+    def description(self) -> str:
+        return "Switch to a specific session"
+
+    @property
+    def usage(self) -> str:
+        return "/session <id>"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        if not args:
+            return CommandResult(
+                success=False,
+                message="Usage: /session <id>. Use /sessions to list available sessions.",
+            )
+
+        return CommandResult(
+            success=True,
+            data={"action": "switch_session", "session_id": args.strip()},
+        )
+
+
+class NewCommand(Command):
+    """Start a new session."""
+
+    @property
+    def name(self) -> str:
+        return "new"
+
+    @property
+    def description(self) -> str:
+        return "Start a new conversation session"
+
+    @property
+    def usage(self) -> str:
+        return "/new [name]"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        name = args.strip() if args else "New session"
+
+        return CommandResult(
+            success=True,
+            data={"action": "new_session", "name": name},
+        )
+
+
+class RenameCommand(Command):
+    """Rename current session."""
+
+    @property
+    def name(self) -> str:
+        return "rename"
+
+    @property
+    def description(self) -> str:
+        return "Rename the current session"
+
+    @property
+    def usage(self) -> str:
+        return "/rename <new name>"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        if not args:
+            return CommandResult(
+                success=False,
+                message="Usage: /rename <new name>",
+            )
+
+        return CommandResult(
+            success=True,
+            data={"action": "rename_session", "name": args.strip()},
+        )
+
+
+class DeleteSessionCommand(Command):
+    """Delete a session."""
+
+    @property
+    def name(self) -> str:
+        return "delete"
+
+    @property
+    def description(self) -> str:
+        return "Delete a session (not the current one)"
+
+    @property
+    def usage(self) -> str:
+        return "/delete <session_id>"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        if not args:
+            return CommandResult(
+                success=False,
+                message="Usage: /delete <session_id>. Use /sessions to list sessions.",
+            )
+
+        return CommandResult(
+            success=True,
+            data={"action": "delete_session", "session_id": args.strip()},
+        )
+
+
+class ExportCommand(Command):
+    """Export a session to markdown."""
+
+    @property
+    def name(self) -> str:
+        return "export"
+
+    @property
+    def description(self) -> str:
+        return "Export a session to markdown"
+
+    @property
+    def usage(self) -> str:
+        return "/export [session_id]"
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        session_id = args.strip() if args else None
+
+        return CommandResult(
+            success=True,
+            data={"action": "export_session", "session_id": session_id},
         )

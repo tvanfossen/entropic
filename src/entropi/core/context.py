@@ -39,11 +39,12 @@ class ProjectContext:
         await self._load_gitignore()
 
     async def _load_entropi_md(self) -> None:
-        """Load ENTROPI.md if present."""
-        entropi_path = self.project_dir / "ENTROPI.md"
+        """Load ENTROPI.md if present (from .entropi/ folder)."""
+        # Primary location: .entropi/ENTROPI.md
+        entropi_path = self.project_dir / ".entropi" / "ENTROPI.md"
         if entropi_path.exists():
             self._entropi_md = entropi_path.read_text()
-            logger.info("Loaded ENTROPI.md")
+            logger.info(f"Loaded ENTROPI.md from {entropi_path}")
 
     async def _load_gitignore(self) -> None:
         """Load .gitignore patterns."""
@@ -212,14 +213,17 @@ class ContextBuilder:
 
     DEFAULT_SYSTEM_PROMPT = """You are Entropi, a local AI coding assistant.
 
-You help developers write, review, and improve code. You have access to tools for:
-- Reading and writing files
-- Executing shell commands
-- Git operations
+You help developers write, review, and improve code. You have access to tools provided via MCP servers.
 
-When you need to perform actions, use the available tools. Think step by step and explain your reasoning.
+CRITICAL: You have NO prior knowledge of this project. Tools are your ONLY source of real data.
+- NEVER guess file names, contents, or directory structures
+- USE TOOLS to get real data, then respond based on actual results
 
-Be concise but thorough. Write clean, well-documented code following best practices."""
+BEHAVIOR:
+- Be professional and concise - avoid unnecessary verbosity
+- Complete the requested task, then stop
+- Do not offer additional actions unless asked
+- Brief confirmations are sufficient after completing tasks"""
 
     def __init__(self, config: EntropyConfig) -> None:
         """
@@ -243,12 +247,12 @@ Be concise but thorough. Write clean, well-documented code following best practi
 
     def load_project_context(self, project_dir: Path) -> None:
         """
-        Load ENTROPI.md from project directory.
+        Load ENTROPI.md from project's .entropi/ directory.
 
         Args:
             project_dir: Project directory path
         """
-        entropi_md = project_dir / "ENTROPI.md"
+        entropi_md = project_dir / ".entropi" / "ENTROPI.md"
 
         if entropi_md.exists():
             self._project_context = entropi_md.read_text()

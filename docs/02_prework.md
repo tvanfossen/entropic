@@ -1,441 +1,368 @@
-# Entropi — Pre-Work Checklist
+# Pre-Work Checklist
 
-> Complete this checklist before starting development with Claude Code
+> Complete before Claude Code implementation begins
 
-**Purpose:** This document is for YOU (the human) to prepare the development environment before implementing Entropi.
+**Estimated Time:** 1-2 hours  
+**Prerequisites:** Hardware in hand, internet connection
 
 ---
 
 ## 1. Hardware Confirmation
 
-Before proceeding, confirm your hardware matches expectations:
+- [x] Lenovo ThinkPad P16 received
+- [x] Ubuntu 24.04 LTS installed
+- [x] NVIDIA drivers installed and working (`nvidia-smi` shows GPU)
+- [x] GPU confirmed: RTX PRO 4000 with 16GB VRAM
 
-- [ ] **GPU:** NVIDIA RTX PRO 4000 Ada with 16GB VRAM
-- [ ] **RAM:** 64GB system memory
-- [ ] **CPU:** Intel Core i9
-- [ ] **Storage:** At least 50GB free space
-- [ ] **OS:** Ubuntu 24.04 LTS
-
-**Verification:**
 ```bash
-# Check GPU
+# Verify GPU
 nvidia-smi
 
 # Expected output should show:
-# - RTX PRO 4000
-# - 16GB memory
-# - Driver version 535+ or 545+
+# - Driver Version: 550.x or higher
+# - CUDA Version: 12.x
+# - GPU: NVIDIA RTX 4000 Ada
+# - Memory: 16GB
 ```
 
 ---
 
-## 2. Model Downloads (~15 GB)
+## 2. Model Downloads
 
-### Create Model Directory
+Download all 4 models (~18 GB total):
+
 ```bash
+# Create models directory
 mkdir -p ~/models/gguf
 cd ~/models/gguf
-```
 
-### Install Hugging Face CLI
-```bash
+# Install huggingface-cli if not present
 pip install huggingface_hub
-```
 
-### Download All Models
-
-Run these commands (total download: ~15 GB, ~20 min on 100 Mbps):
-
-```bash
-# ═══════════════════════════════════════════════════════════════════════════════
-# PRIMARY: Qwen2.5-Coder-14B-Instruct Q4_K_M (~9GB)
-# Using bartowski for single-file download (no merge needed)
-# ═══════════════════════════════════════════════════════════════════════════════
-huggingface-cli download bartowski/Qwen2.5-Coder-14B-Instruct-GGUF \
-  --include "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf" \
+# ═══════════════════════════════════════════════════════════════
+# THINKING MODEL: Qwen3-14B (~9 GB) - bartowski quantization
+# Used when thinking mode is ON for deep reasoning
+# ═══════════════════════════════════════════════════════════════
+huggingface-cli download bartowski/Qwen_Qwen3-14B-GGUF \
+  --include "Qwen_Qwen3-14B-Q4_K_M.gguf" \
   --local-dir ~/models/gguf
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# WORKHORSE: Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.7GB)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# NORMAL MODEL: Qwen3-8B (~5 GB) - bartowski quantization
+# Used when thinking mode is OFF for fast reasoning
+# ═══════════════════════════════════════════════════════════════
+huggingface-cli download bartowski/Qwen_Qwen3-8B-GGUF \
+  --include "Qwen_Qwen3-8B-Q4_K_M.gguf" \
+  --local-dir ~/models/gguf
+
+# ═══════════════════════════════════════════════════════════════
+# CODE MODEL: Qwen2.5-Coder-7B (~4.7 GB) - bartowski quantization
+# Used for ALL code generation (regardless of thinking mode)
+# ═══════════════════════════════════════════════════════════════
 huggingface-cli download bartowski/Qwen2.5-Coder-7B-Instruct-GGUF \
   --include "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf" \
   --local-dir ~/models/gguf
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# FAST: Qwen2.5-Coder-1.5B-Instruct Q4_K_M (~1GB)
-# ═══════════════════════════════════════════════════════════════════════════════
-huggingface-cli download Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF \
-  qwen2.5-coder-1.5b-instruct-q4_k_m.gguf \
-  --local-dir ~/models/gguf
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# MICRO: Qwen2.5-Coder-0.5B-Instruct Q8_0 (~0.5GB)
-# Using Q8_0 for better routing quality (file is tiny anyway)
-# ═══════════════════════════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════════════
+# MICRO MODEL: Qwen2.5-Coder-0.5B (~0.5 GB) - Official Qwen
+# Always loaded for routing decisions
+# ═══════════════════════════════════════════════════════════════
 huggingface-cli download Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF \
-  qwen2.5-coder-0.5b-instruct-q8_0.gguf \
+  --include "qwen2.5-coder-0.5b-instruct-q8_0.gguf" \
   --local-dir ~/models/gguf
 ```
 
 ### Verify Downloads
+
 ```bash
 ls -lh ~/models/gguf/
 
 # Expected:
-# Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf  ~9.0 GB
-# Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf   ~4.7 GB
-# qwen2.5-coder-1.5b-instruct-q4_k_m.gguf ~1.0 GB
-# qwen2.5-coder-0.5b-instruct-q8_0.gguf   ~0.5 GB
+# Qwen_Qwen3-14B-Q4_K_M.gguf               ~9.0 GB
+# Qwen_Qwen3-8B-Q4_K_M.gguf                ~5.0 GB
+# Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf    ~4.7 GB
+# qwen2.5-coder-0.5b-instruct-q8_0.gguf    ~0.5 GB
 ```
-
-**Checklist:**
-- [ ] 14B model downloaded and verified
-- [ ] 7B model downloaded and verified
-- [ ] 1.5B model downloaded and verified
-- [ ] 0.5B model downloaded and verified
 
 ---
 
 ## 3. System Packages
 
-### Update System
 ```bash
+# Update system
 sudo apt update && sudo apt upgrade -y
-```
 
-### Install Build Dependencies
-```bash
+# Install build essentials
 sudo apt install -y \
-  build-essential \
-  cmake \
-  git \
-  curl \
-  wget \
-  pkg-config \
-  libssl-dev \
-  libffi-dev \
-  python3-dev \
-  python3-pip \
-  python3-venv \
-  libncurses-dev
-```
+    build-essential \
+    cmake \
+    git \
+    python3-dev \
+    python3-pip \
+    python3-venv
 
-### Install Docker
-```bash
-# Install Docker
-sudo apt install -y docker.io docker-compose-v2
-
-# Add user to docker group
+# Install Docker (for distribution)
+curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker $USER
-
-# IMPORTANT: Log out and back in for group change to take effect
-# Or run: newgrp docker
+# Log out and back in for group change
 ```
-
-**Checklist:**
-- [ ] System updated
-- [ ] Build dependencies installed
-- [ ] Docker installed
-- [ ] User added to docker group
-- [ ] Logged out and back in (or ran `newgrp docker`)
 
 ---
 
-## 4. CUDA Setup
+## 4. CUDA Toolkit
 
-### Check Current State
+> **Important:** The Ubuntu `nvidia-cuda-toolkit` package (12.0) is too old for Blackwell GPUs.
+> You must install CUDA 12.8+ from NVIDIA's repository for Blackwell (compute_120) support.
+
 ```bash
-# Check if NVIDIA driver is installed
-nvidia-smi
-
-# Check if CUDA toolkit is installed
-nvcc --version
-```
-
-### Install CUDA Toolkit 12.4 (if needed)
-```bash
-# Add NVIDIA repository
+# Add NVIDIA CUDA repository
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt update
 
-# Install CUDA Toolkit
-sudo apt install -y cuda-toolkit-12-4
+# Install CUDA 12.8 toolkit
+sudo apt install -y cuda-toolkit-12-8
 
-# Add to PATH
-echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+# Remove old Ubuntu CUDA if installed (conflicts with nvcc)
+sudo apt remove -y nvidia-cuda-toolkit nvidia-cuda-toolkit-doc 2>/dev/null || true
+
+# Add to PATH (add to ~/.bashrc)
+echo 'export PATH=/usr/local/cuda-12.8/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+echo 'export CUDACXX=/usr/local/cuda-12.8/bin/nvcc' >> ~/.bashrc
 source ~/.bashrc
-```
 
-### Verify CUDA
-```bash
+# Verify (should show 12.8.x)
 nvcc --version
-# Should show: Cuda compilation tools, release 12.4
-
-nvidia-smi
-# Should show driver and CUDA version
 ```
-
-**Checklist:**
-- [ ] NVIDIA driver working (`nvidia-smi` shows GPU)
-- [ ] CUDA Toolkit 12.4+ installed (`nvcc --version` works)
-- [ ] PATH configured
 
 ---
 
 ## 5. Python Environment
 
-### Verify Python Version
 ```bash
-python3 --version
-# Should be 3.11 or 3.12 (Ubuntu 24.04 has 3.12)
-```
+# Create project directory
+mkdir -p ~/projects/entropi
+cd ~/projects/entropi
 
-### Create Virtual Environment
-```bash
-python3 -m venv ~/.venvs/entropi
-source ~/.venvs/entropi/bin/activate
+# Create virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
 
 # Upgrade pip
 pip install --upgrade pip setuptools wheel
+
+# Install llama-cpp-python with CUDA support
+# Build from source for Blackwell GPU support (compute_120)
+# CUDACXX must point to the 12.8 nvcc for Blackwell architecture
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --no-cache-dir
+
+# Verify CUDA support
+python3 -c "from llama_cpp import Llama; print('llama-cpp-python installed successfully')"
 ```
-
-### Install llama-cpp-python with CUDA
-This is the critical step — if this fails, debug before proceeding.
-
-```bash
-# Set CUDA architecture for RTX PRO 4000 Ada (sm_89)
-CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES=89" \
-  pip install llama-cpp-python --no-cache-dir --force-reinstall
-```
-
-**If the above fails**, try without architecture flag:
-```bash
-CMAKE_ARGS="-DGGML_CUDA=on" \
-  pip install llama-cpp-python --no-cache-dir --force-reinstall
-```
-
-### Test Model Loading
-```bash
-python3 << 'EOF'
-from llama_cpp import Llama
-import os
-
-model_path = os.path.expanduser("~/models/gguf/qwen2.5-coder-0.5b-instruct-q8_0.gguf")
-if not os.path.exists(model_path):
-    print(f"❌ Model not found: {model_path}")
-    exit(1)
-
-print("Loading model...")
-llm = Llama(
-    model_path=model_path,
-    n_ctx=2048,
-    n_gpu_layers=-1,
-    verbose=False
-)
-
-print("Running inference...")
-output = llm("def fibonacci(n):", max_tokens=50, stop=["\n\n"])
-print(output["choices"][0]["text"])
-print("\n✅ Model loading and inference successful!")
-EOF
-```
-
-### Install Other Dependencies
-```bash
-pip install \
-  mcp \
-  rich \
-  prompt-toolkit \
-  click \
-  pydantic \
-  pydantic-settings \
-  aiosqlite \
-  httpx \
-  pytest \
-  pytest-asyncio \
-  pytest-bdd \
-  mypy \
-  black \
-  ruff \
-  flake8 \
-  pre-commit
-```
-
-**Checklist:**
-- [ ] Python 3.11+ available
-- [ ] Virtual environment created
-- [ ] llama-cpp-python installed with CUDA
-- [ ] Test inference successful
-- [ ] Other dependencies installed
 
 ---
 
-## 6. Project Setup
+## 6. Test Inference
 
-### Create Project Directory
+Create a quick test script to verify model loading:
+
 ```bash
-mkdir -p ~/projects/entropi
-cd ~/projects/entropi
-git init
+cat > test_inference.py << 'EOF'
+"""Quick inference test for all models."""
+import time
+from pathlib import Path
+from llama_cpp import Llama
+
+MODELS_DIR = Path.home() / "models" / "gguf"
+
+MODELS = {
+    "micro": "qwen2.5-coder-0.5b-instruct-q8_0.gguf",
+    "code": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+    "normal": "Qwen_Qwen3-8B-Q4_K_M.gguf",
+    "thinking": "Qwen_Qwen3-14B-Q4_K_M.gguf",
+}
+
+def test_model(name: str, filename: str) -> None:
+    """Test a single model."""
+    path = MODELS_DIR / filename
+    if not path.exists():
+        print(f"❌ {name}: File not found: {path}")
+        return
+
+    print(f"Testing {name} ({filename})...")
+    start = time.time()
+
+    try:
+        llm = Llama(
+            model_path=str(path),
+            n_ctx=2048,
+            n_gpu_layers=-1,  # Offload all to GPU
+            verbose=False,
+        )
+
+        load_time = time.time() - start
+        print(f"  ✓ Loaded in {load_time:.1f}s")
+
+        # Quick generation test
+        start = time.time()
+        output = llm.create_chat_completion(
+            messages=[{"role": "user", "content": "Say hello in 5 words."}],
+            max_tokens=20,
+        )
+        gen_time = time.time() - start
+
+        response = output["choices"][0]["message"]["content"]
+        print(f"  ✓ Generated in {gen_time:.1f}s: {response[:50]}...")
+
+        # Cleanup
+        del llm
+
+    except Exception as e:
+        print(f"  ❌ Error: {e}")
+
+if __name__ == "__main__":
+    print("=" * 60)
+    print("Entropi Model Verification")
+    print("=" * 60)
+
+    for name, filename in MODELS.items():
+        test_model(name, filename)
+        print()
+
+    print("=" * 60)
+    print("Verification complete!")
+EOF
+
+python3 test_inference.py
 ```
 
-### Create Directory Structure
+Expected output:
+```
+============================================================
+Entropi Model Verification
+============================================================
+Testing micro (qwen2.5-coder-0.5b-instruct-q8_0.gguf)...
+  ✓ Loaded in 0.5s
+  ✓ Generated in 0.1s: Hello there, nice to meet!...
+
+Testing code (Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf)...
+  ✓ Loaded in 2.1s
+  ✓ Generated in 0.3s: Hello, how are you today?...
+
+Testing normal (Qwen_Qwen3-8B-Q4_K_M.gguf)...
+  ✓ Loaded in 2.5s
+  ✓ Generated in 0.4s: Hello! Nice to meet you!...
+
+Testing thinking (Qwen_Qwen3-14B-Q4_K_M.gguf)...
+  ✓ Loaded in 4.2s
+  ✓ Generated in 0.5s: Hello, it's great meeting you!...
+
+============================================================
+Verification complete!
+```
+
+---
+
+## 7. Project Structure
+
 ```bash
-mkdir -p src/entropi/{config,core,inference,mcp,quality,storage,ui,prompts}
+cd ~/projects/entropi
+
+# Create directory structure
+mkdir -p src/entropi/{config,core,inference,mcp,quality,storage,ui}
 mkdir -p src/entropi/inference/adapters
 mkdir -p src/entropi/mcp/servers
 mkdir -p src/entropi/quality/analyzers
 mkdir -p src/entropi/prompts/templates
-mkdir -p tests/{features,step_defs,unit,integration}
+mkdir -p tests/{unit,integration,bdd}
 mkdir -p docker
-mkdir -p .entropi/commands
+
+# Create initial files
+touch src/entropi/__init__.py
+touch src/entropi/__main__.py
 ```
 
-### Create ENTROPI.md (for Entropi to read about itself)
-```bash
-cat > ENTROPI.md << 'EOF'
-# Entropi
+---
 
-Local AI coding assistant powered by Qwen models.
+## 8. Initial Files
 
-## Project Overview
-Entropi is a terminal-based coding assistant that runs fully locally using quantized Qwen models and llama-cpp-python with CUDA acceleration.
+### pyproject.toml
 
-## Tech Stack
-- **Language:** Python 3.12
-- **Inference:** llama-cpp-python (CUDA)
-- **Tools:** MCP (Model Context Protocol)
-- **UI:** Rich + Prompt Toolkit
-- **Storage:** SQLite (aiosqlite)
-- **Config:** Pydantic
-
-## Models (in ~/models/gguf/)
-- **Primary (14B):** Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf
-- **Workhorse (7B):** Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf
-- **Fast (1.5B):** qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
-- **Micro (0.5B):** qwen2.5-coder-0.5b-instruct-q8_0.gguf
-
-## Commands
-```bash
-# Activate environment
-source ~/.venvs/entropi/bin/activate
-
-# Run in dev mode
-python -m entropi
-
-# Run tests
-pytest tests/ -v
-
-# Type check
-mypy src/
-
-# Format
-black src/ tests/
-ruff check src/ tests/
-```
-
-## Architecture Principles
-1. **KISS** — Keep it simple
-2. **DRY** — Don't repeat yourself
-3. **Modular** — Highly encapsulated components
-4. **Configurable** — Everything is configurable
-5. **MCP-First** — All tools via MCP protocol
-6. **Quality Enforced** — Code quality checked at generation time
-
-## Key Design Decisions
-- Multi-model routing (14B/7B/1.5B/0.5B)
-- Docker-only distribution
-- Pre-commit enforcement matches generation-time enforcement
-- BDD tests with pytest-bdd
-EOF
-```
-
-### Create Initial pyproject.toml
 ```bash
 cat > pyproject.toml << 'EOF'
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "entropi"
 version = "0.1.0"
-description = "Local AI coding assistant powered by Qwen models"
+description = "Local AI Coding Assistant"
 readme = "README.md"
-license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
 authors = [
     {name = "Your Name", email = "you@example.com"}
 ]
-keywords = ["ai", "coding", "assistant", "llm", "local"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Environment :: Console",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: Apache Software License",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Software Development",
-]
-
 dependencies = [
     "llama-cpp-python>=0.2.0",
-    "mcp>=0.1.0",
-    "rich>=13.0.0",
-    "prompt-toolkit>=3.0.0",
-    "click>=8.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
+    "click>=8.0",
+    "rich>=13.0",
+    "prompt-toolkit>=3.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
     "aiosqlite>=0.19.0",
+    "mcp>=1.0.0",
+    "pyyaml>=6.0",
     "httpx>=0.25.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-bdd>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "mypy>=1.0.0",
-    "black>=23.0.0",
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "pytest-cov>=4.0",
+    "pytest-bdd>=6.0",
+    "black>=23.0",
     "ruff>=0.1.0",
-    "flake8>=6.0.0",
-    "flake8-cognitive-complexity>=0.1.0",
-    "pre-commit>=3.0.0",
+    "mypy>=1.0",
+    "pre-commit>=3.0",
 ]
 
 [project.scripts]
 entropi = "entropi.cli:main"
-
-[build-system]
-requires = ["setuptools>=61.0", "wheel"]
-build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.black]
 line-length = 100
-target-version = ["py311", "py312"]
+target-version = ["py311"]
 
 [tool.ruff]
 line-length = 100
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
-ignore = ["E501"]
+target-version = "py311"
+select = ["E", "F", "I", "N", "W", "C90"]
+
+[tool.ruff.mccabe]
+max-complexity = 15
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.11"
 strict = true
-ignore_missing_imports = true
+warn_return_any = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
 EOF
 ```
 
-### Create Pre-commit Configuration
+### .pre-commit-config.yaml
+
 ```bash
 cat > .pre-commit-config.yaml << 'EOF'
 repos:
@@ -445,34 +372,30 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-yaml
-      - id: check-json
-      - id: check-toml
-      - id: check-merge-conflict
       - id: check-added-large-files
         args: ['--maxkb=1000']
-      - id: debug-statements
+      - id: check-merge-conflict
 
   - repo: https://github.com/psf/black
-    rev: 24.3.0
+    rev: 24.1.1
     hooks:
       - id: black
-        args: ['--line-length=100']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.3.4
+    rev: v0.1.14
     hooks:
       - id: ruff
-        args: ['--fix']
+        args: [--fix, --exit-non-zero-on-fix]
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.9.0
+    rev: v1.8.0
     hooks:
       - id: mypy
         additional_dependencies:
-          - pydantic>=2.0.0
-          - types-aiofiles
+          - pydantic>=2.0
+          - types-PyYAML
 
-  - repo: https://github.com/pycqa/flake8
+  - repo: https://github.com/PyCQA/flake8
     rev: 7.0.0
     hooks:
       - id: flake8
@@ -480,21 +403,14 @@ repos:
           - flake8-cognitive-complexity
           - flake8-functions
         args:
-          - '--max-cognitive-complexity=15'
-          - '--max-returns-amount=3'
-          - '--max-line-length=100'
-          - '--ignore=E501,W503'
+          - --max-cognitive-complexity=15
+          - --max-returns-amount=4
+          - --max-line-length=100
 EOF
 ```
 
-### Initialize Pre-commit
-```bash
-cd ~/projects/entropi
-source ~/.venvs/entropi/bin/activate
-pre-commit install
-```
+### .gitignore
 
-### Create Initial .gitignore
 ```bash
 cat > .gitignore << 'EOF'
 # Python
@@ -503,58 +419,36 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# Virtual environments
 .venv/
 venv/
 ENV/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
 
-# IDEs
+# IDE
 .idea/
 .vscode/
 *.swp
 *.swo
-*~
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-.nox/
-
-# Type checking
-.mypy_cache/
-
-# Local config (don't commit)
+# Project
 .entropi/config.local.yaml
-.entropi/*.local.*
-
-# Models (too large)
-*.gguf
-
-# Database
 *.db
 *.sqlite
 
-# Logs
-*.log
-logs/
+# Models (don't commit)
+models/
+
+# Testing
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Docker
+.docker/
 
 # OS
 .DS_Store
@@ -562,281 +456,250 @@ Thumbs.db
 EOF
 ```
 
-### Create Empty __init__.py Files
-```bash
-touch src/entropi/__init__.py
-touch src/entropi/config/__init__.py
-touch src/entropi/core/__init__.py
-touch src/entropi/inference/__init__.py
-touch src/entropi/inference/adapters/__init__.py
-touch src/entropi/mcp/__init__.py
-touch src/entropi/mcp/servers/__init__.py
-touch src/entropi/quality/__init__.py
-touch src/entropi/quality/analyzers/__init__.py
-touch src/entropi/storage/__init__.py
-touch src/entropi/ui/__init__.py
-touch src/entropi/prompts/__init__.py
-touch tests/__init__.py
-```
-
-### Initial Commit
-```bash
-git add .
-git commit -m "Initial project structure"
-```
-
-**Checklist:**
-- [ ] Project directory created
-- [ ] Directory structure created
-- [ ] ENTROPI.md created
-- [ ] pyproject.toml created
-- [ ] .pre-commit-config.yaml created
-- [ ] Pre-commit installed
-- [ ] .gitignore created
-- [ ] Initial commit made
-
 ---
 
-## 7. Install Claude Code
-
-```bash
-# Via npm
-npm install -g @anthropic-ai/claude-code
-
-# Or via Anthropic's installer
-curl -fsSL https://claude.ai/install-claude-code.sh | bash
-
-# Verify
-claude --version
-```
-
-**Checklist:**
-- [ ] Claude Code installed
-- [ ] `claude --version` works
-
----
-
-## 8. Verification Script
-
-Run this script to verify everything is ready:
-
-```bash
-#!/bin/bash
-set -e
-
-echo "═══════════════════════════════════════════════════════════════"
-echo "                ENTROPI PRE-WORK VERIFICATION                   "
-echo "═══════════════════════════════════════════════════════════════"
-
-# Check GPU
-echo -n "Checking GPU... "
-if nvidia-smi > /dev/null 2>&1; then
-    echo "✅ NVIDIA GPU detected"
-else
-    echo "❌ NVIDIA GPU not found"
-    exit 1
-fi
-
-# Check CUDA
-echo -n "Checking CUDA... "
-if nvcc --version > /dev/null 2>&1; then
-    echo "✅ CUDA toolkit installed"
-else
-    echo "❌ CUDA toolkit not found"
-    exit 1
-fi
-
-# Check Docker
-echo -n "Checking Docker... "
-if docker --version > /dev/null 2>&1; then
-    echo "✅ Docker installed"
-else
-    echo "❌ Docker not found"
-    exit 1
-fi
-
-# Check models
-echo -n "Checking models... "
-MODEL_DIR="$HOME/models/gguf"
-MISSING=0
-for model in \
-    "Qwen2.5-Coder-14B-Instruct-Q4_K_M.gguf" \
-    "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf" \
-    "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf" \
-    "qwen2.5-coder-0.5b-instruct-q8_0.gguf"; do
-    if [ ! -f "$MODEL_DIR/$model" ]; then
-        echo ""
-        echo "  ❌ Missing: $model"
-        MISSING=1
-    fi
-done
-if [ $MISSING -eq 0 ]; then
-    echo "✅ All models present"
-else
-    exit 1
-fi
-
-# Check Python environment
-echo -n "Checking Python environment... "
-if [ -d "$HOME/.venvs/entropi" ]; then
-    echo "✅ Virtual environment exists"
-else
-    echo "❌ Virtual environment not found"
-    exit 1
-fi
-
-# Check llama-cpp-python
-echo -n "Checking llama-cpp-python... "
-source ~/.venvs/entropi/bin/activate
-if python -c "from llama_cpp import Llama" 2>/dev/null; then
-    echo "✅ llama-cpp-python installed"
-else
-    echo "❌ llama-cpp-python not working"
-    exit 1
-fi
-
-# Check project structure
-echo -n "Checking project structure... "
-if [ -d "$HOME/projects/entropi/src/entropi" ]; then
-    echo "✅ Project structure exists"
-else
-    echo "❌ Project structure not found"
-    exit 1
-fi
-
-# Check Claude Code
-echo -n "Checking Claude Code... "
-if command -v claude > /dev/null 2>&1; then
-    echo "✅ Claude Code installed"
-else
-    echo "❌ Claude Code not found"
-    exit 1
-fi
-
-echo ""
-echo "═══════════════════════════════════════════════════════════════"
-echo "                    ALL CHECKS PASSED ✅                        "
-echo "═══════════════════════════════════════════════════════════════"
-echo ""
-echo "Ready to start development!"
-echo ""
-echo "Next steps:"
-echo "  cd ~/projects/entropi"
-echo "  source ~/.venvs/entropi/bin/activate"
-echo "  claude"
-echo ""
-```
-
-Save this as `~/verify_entropi_prework.sh` and run:
-```bash
-chmod +x ~/verify_entropi_prework.sh
-~/verify_entropi_prework.sh
-```
-
----
-
-## 9. Summary Checklist
-
-### Hardware & OS
-- [ ] Ubuntu 24.04 LTS installed
-- [ ] NVIDIA RTX PRO 4000 (16GB VRAM) working
-- [ ] 64GB RAM available
-- [ ] 50GB+ free disk space
-
-### Models (~15 GB)
-- [ ] 14B model downloaded
-- [ ] 7B model downloaded
-- [ ] 1.5B model downloaded
-- [ ] 0.5B model downloaded
-
-### System
-- [ ] CUDA Toolkit 12.4+ installed
-- [ ] Docker installed and configured
-- [ ] Build dependencies installed
-
-### Python
-- [ ] Python 3.11+ available
-- [ ] Virtual environment created
-- [ ] llama-cpp-python with CUDA working
-- [ ] Test inference successful
-- [ ] All dependencies installed
-
-### Project
-- [ ] Project directory structure created
-- [ ] ENTROPI.md created
-- [ ] pyproject.toml created
-- [ ] Pre-commit configured
-- [ ] Git initialized with initial commit
-
-### Tools
-- [ ] Claude Code installed
-
-### Verification
-- [ ] Verification script passes all checks
-
----
-
-## 10. Troubleshooting
-
-### llama-cpp-python CUDA build fails
-
-**Symptoms:** `CMAKE_ARGS="-DGGML_CUDA=on" pip install ...` fails
-
-**Solutions:**
-1. Ensure CUDA toolkit version matches driver:
-   ```bash
-   nvidia-smi  # Shows driver CUDA version
-   nvcc --version  # Shows toolkit version
-   ```
-2. Try without architecture flag:
-   ```bash
-   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
-   ```
-3. Install from source:
-   ```bash
-   pip install llama-cpp-python --no-binary llama-cpp-python
-   ```
-
-### Model loading OOM
-
-**Symptoms:** Out of memory when loading model
-
-**Solutions:**
-1. Ensure no other GPU processes running: `nvidia-smi`
-2. Start with smaller model (0.5B) for testing
-3. Reduce context size in test
-
-### Docker permission denied
-
-**Symptoms:** `docker: permission denied`
-
-**Solutions:**
-1. Ensure user is in docker group: `groups`
-2. Log out and back in after adding to group
-3. Or run: `newgrp docker`
-
-### huggingface-cli download fails
-
-**Symptoms:** Authentication error or rate limit
-
-**Solutions:**
-1. Login to Hugging Face (free account):
-   ```bash
-   huggingface-cli login
-   ```
-2. Use `--resume-download` for interrupted downloads
-
----
-
-## Ready to Start?
-
-Once all checkboxes are complete and the verification script passes:
+## 9. Pre-commit Setup
 
 ```bash
 cd ~/projects/entropi
-source ~/.venvs/entropi/bin/activate
-claude
+source .venv/bin/activate
+
+# Install dev dependencies
+pip install -e ".[dev]"
+
+# Install pre-commit hooks
+pre-commit install
+
+# Run on all files (initial check)
+pre-commit run --all-files
 ```
 
-Then tell Claude Code:
-> "Read ENTROPI.md and the implementation documents in ~/entropi_docs/. Let's start with implementation document 01: Foundation."
+---
+
+## 10. ENTROPI.md Template
+
+Create a template for project context:
+
+```bash
+cat > ENTROPI.md << 'EOF'
+# Project: Entropi
+
+## Overview
+Local AI Coding Assistant powered by Qwen models.
+
+## Architecture
+- Task-specialized routing: Qwen3 for reasoning, Qwen2.5-Coder for code
+- Thinking mode toggle for deep vs fast reasoning
+- MCP-based tool integration
+
+## Conventions
+- Python 3.11+
+- Type hints required on all public APIs
+- Google-style docstrings
+- Max cognitive complexity: 15
+- Max returns per function: 4
+
+## Key Files
+- `src/entropi/cli.py` - CLI entry point
+- `src/entropi/app.py` - Application orchestrator
+- `src/entropi/inference/router.py` - Task-aware routing
+
+## Commands
+- `/think on|off` - Toggle thinking mode
+- `/clear` - Clear conversation
+- `/status` - Show model status
+EOF
+```
+
+---
+
+## 11. Verification Script
+
+```bash
+cat > verify_setup.py << 'EOF'
+#!/usr/bin/env python3
+"""Verify all prerequisites are met."""
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+def check(name: str, condition: bool, fix: str = "") -> bool:
+    """Check a condition and print result."""
+    if condition:
+        print(f"✓ {name}")
+        return True
+    else:
+        print(f"✗ {name}")
+        if fix:
+            print(f"  Fix: {fix}")
+        return False
+
+def main() -> int:
+    """Run all checks."""
+    print("=" * 60)
+    print("Entropi Setup Verification")
+    print("=" * 60)
+    
+    all_passed = True
+    
+    # Check Python version
+    py_version = sys.version_info
+    all_passed &= check(
+        f"Python {py_version.major}.{py_version.minor}",
+        py_version >= (3, 11),
+        "Install Python 3.11+"
+    )
+    
+    # Check nvidia-smi
+    all_passed &= check(
+        "nvidia-smi",
+        shutil.which("nvidia-smi") is not None,
+        "Install NVIDIA drivers"
+    )
+    
+    # Check CUDA
+    all_passed &= check(
+        "nvcc (CUDA compiler)",
+        shutil.which("nvcc") is not None,
+        "Install CUDA toolkit"
+    )
+    
+    # Check Docker
+    all_passed &= check(
+        "Docker",
+        shutil.which("docker") is not None,
+        "Install Docker"
+    )
+    
+    # Check models directory
+    models_dir = Path.home() / "models" / "gguf"
+    all_passed &= check(
+        f"Models directory: {models_dir}",
+        models_dir.exists(),
+        f"mkdir -p {models_dir}"
+    )
+    
+    # Check each model
+    models = {
+        "Qwen_Qwen3-14B-Q4_K_M.gguf": "Thinking model",
+        "Qwen_Qwen3-8B-Q4_K_M.gguf": "Normal model",
+        "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf": "Code model",
+        "qwen2.5-coder-0.5b-instruct-q8_0.gguf": "Micro model",
+    }
+    
+    for filename, description in models.items():
+        path = models_dir / filename
+        all_passed &= check(
+            f"{description}: {filename}",
+            path.exists(),
+            f"Download from HuggingFace"
+        )
+    
+    # Check llama-cpp-python
+    try:
+        import llama_cpp
+        all_passed &= check("llama-cpp-python", True)
+    except ImportError:
+        all_passed &= check(
+            "llama-cpp-python",
+            False,
+            "pip install llama-cpp-python with CUDA"
+        )
+    
+    # Check project structure
+    project_dir = Path.home() / "projects" / "entropi"
+    all_passed &= check(
+        f"Project directory: {project_dir}",
+        project_dir.exists(),
+        f"mkdir -p {project_dir}"
+    )
+    
+    print("=" * 60)
+    if all_passed:
+        print("All checks passed! Ready for implementation.")
+        return 0
+    else:
+        print("Some checks failed. Please fix before proceeding.")
+        return 1
+
+if __name__ == "__main__":
+    sys.exit(main())
+EOF
+
+chmod +x verify_setup.py
+python3 verify_setup.py
+```
+
+---
+
+## Checklist Summary
+
+- [x] Hardware confirmed (GPU with 16GB VRAM)
+- [x] Ubuntu 24.04 installed
+- [x] NVIDIA drivers working
+- [x] CUDA toolkit installed (12.8 for Blackwell)
+- [ ] Docker installed
+- [x] Models downloaded (4 models, ~19 GB)
+- [x] Python environment created
+- [x] llama-cpp-python with CUDA verified
+- [x] Project structure created
+- [ ] Pre-commit hooks installed
+- [x] Entropi CLI working (`entropi ask`, `entropi status`)
+
+---
+
+## Troubleshooting
+
+### CUDA not found
+```bash
+# Check CUDA 12.8 installation
+ls /usr/local/cuda-12.8/
+nvcc --version  # Should show 12.8.x
+
+# Ensure PATH is set correctly
+echo $PATH | grep cuda-12.8
+echo $CUDACXX  # Should be /usr/local/cuda-12.8/bin/nvcc
+```
+
+### llama-cpp-python fails to build
+```bash
+# Ensure cmake is installed
+sudo apt install cmake
+
+# For Blackwell GPUs: ensure CUDACXX points to 12.8 nvcc
+export CUDACXX=/usr/local/cuda-12.8/bin/nvcc
+CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --no-cache-dir --force-reinstall
+
+# If you see "Unsupported gpu architecture 'compute_120'" error:
+# - Your CUDA toolkit is too old (need 12.8+ for Blackwell)
+# - Make sure nvidia-cuda-toolkit (Ubuntu package) is removed
+# - Verify: nvcc --version shows 12.8.x
+```
+
+### Model loading fails with VRAM error
+```bash
+# Check available VRAM
+nvidia-smi
+
+# Try loading with fewer GPU layers
+# In test script, change n_gpu_layers from -1 to a specific number
+```
+
+### Pre-commit hooks fail
+```bash
+# Run specific hook to debug
+pre-commit run black --all-files
+pre-commit run ruff --all-files
+```
+
+---
+
+## Next Steps
+
+Once this checklist is complete, Claude Code can begin implementation starting with:
+
+1. **Implementation 01: Foundation** — Config, CLI, base classes
+2. Continue through all 10 implementation phases
+
+Each phase has clear checkpoints for A/B testing before proceeding.

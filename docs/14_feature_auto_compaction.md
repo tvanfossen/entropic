@@ -103,7 +103,7 @@ class TokenCounter:
 
     def _count_text(self, text: str) -> int:
         """Estimate token count for text.
-        
+
         Uses simple heuristic: ~4 chars per token for English.
         More accurate would be to use the model's tokenizer.
         """

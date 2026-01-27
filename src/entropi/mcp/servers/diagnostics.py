@@ -134,7 +134,9 @@ class DiagnosticsServer(BaseMCPServer):
         lines = []
         for path, diags in all_diags.items():
             if diags:
-                rel_path = path.relative_to(self.root_dir) if path.is_relative_to(self.root_dir) else path
+                rel_path = (
+                    path.relative_to(self.root_dir) if path.is_relative_to(self.root_dir) else path
+                )
                 lines.append(f"\n{rel_path}:")
                 for d in diags:
                     lines.append(f"  {d.format()}")
@@ -173,6 +175,7 @@ class DiagnosticsServer(BaseMCPServer):
 # Entry point for running as MCP server
 if __name__ == "__main__":
     import sys
+
     from entropi.config.schema import LSPConfig
     from entropi.lsp.manager import LSPManager
 

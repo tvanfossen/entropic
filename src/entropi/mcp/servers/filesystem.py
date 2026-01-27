@@ -256,10 +256,7 @@ class FilesystemServer(BaseMCPServer):
 
         # Require prior read
         if not self._tracker.was_read_recently(resolved):
-            return (
-                f"Cannot edit {path}: file must be read first. "
-                "Use read_file before editing."
-            )
+            return f"Cannot edit {path}: file must be read first. " "Use read_file before editing."
 
         content = resolved.read_text()
 

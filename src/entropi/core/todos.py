@@ -59,8 +59,14 @@ class TodoItem:
             active_form=data["active_form"],
             status=TodoStatus(data["status"]),
             id=data.get("id", str(uuid.uuid4())[:8]),
-            created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else datetime.utcnow(),
-            completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
+            created_at=(
+                datetime.fromisoformat(data["created_at"])
+                if data.get("created_at")
+                else datetime.utcnow()
+            ),
+            completed_at=(
+                datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None
+            ),
         )
 
 
@@ -144,11 +150,13 @@ class TodoList:
             except ValueError:
                 status = TodoStatus.PENDING
 
-            parsed_items.append(TodoItem(
-                content=content,
-                active_form=active_form,
-                status=status,
-            ))
+            parsed_items.append(
+                TodoItem(
+                    content=content,
+                    active_form=active_form,
+                    status=status,
+                )
+            )
 
         self.items = parsed_items
 

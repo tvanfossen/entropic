@@ -16,7 +16,7 @@ from rich.text import Text
 from entropi.ui.themes import Theme
 
 if TYPE_CHECKING:
-    from entropi.core.todos import TodoList, TodoStatus
+    from entropi.core.todos import TodoList
 
 
 @dataclass
@@ -45,7 +45,9 @@ class StatusBar:
             vram_color = self.theme.success_color
 
         # Context usage color
-        context_percent = (self.context_used / self.context_max * 100) if self.context_max > 0 else 0
+        context_percent = (
+            (self.context_used / self.context_max * 100) if self.context_max > 0 else 0
+        )
         if context_percent > 90:
             context_color = self.theme.error_color
         elif context_percent > 75:

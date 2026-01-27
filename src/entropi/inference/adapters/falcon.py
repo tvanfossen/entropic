@@ -137,9 +137,9 @@ class FalconAdapter(ChatAdapter):
 
         # Fallback: bare JSON on its own line
         if not tool_calls:
-            for line in content.split('\n'):
+            for line in content.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith('{') and '"name"' in stripped:
+                if stripped.startswith("{") and '"name"' in stripped:
                     try:
                         data = json.loads(stripped)
                         if "name" in data:
@@ -166,9 +166,9 @@ class FalconAdapter(ChatAdapter):
         # Clean bare JSON lines if we parsed them
         if tool_calls:
             cleaned_lines = []
-            for line in cleaned.split('\n'):
+            for line in cleaned.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith('{') and '"name"' in stripped:
+                if stripped.startswith("{") and '"name"' in stripped:
                     try:
                         data = json.loads(stripped)
                         if "name" in data:
@@ -176,7 +176,7 @@ class FalconAdapter(ChatAdapter):
                     except json.JSONDecodeError:
                         pass
                 cleaned_lines.append(line)
-            cleaned = '\n'.join(cleaned_lines).strip()
+            cleaned = "\n".join(cleaned_lines).strip()
 
         if tool_calls:
             logger.info(f"Parsed {len(tool_calls)} tool calls: {[tc.name for tc in tool_calls]}")
@@ -282,13 +282,13 @@ Use this information to respond to the user."""
         content_without_think = think_pattern.sub("", content).strip()
 
         # Check for unparsed tool call indicators in code blocks
-        if '```' in content_without_think:
-            code_block_pattern = re.compile(r'```\w*\s*\n?([\s\S]*?)\n?```', re.MULTILINE)
+        if "```" in content_without_think:
+            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
             for block in code_block_pattern.findall(content_without_think):
                 block_stripped = block.strip()
 
                 # Check for JSON-style tool call
-                if block_stripped.startswith('{') and '"name"' in block_stripped:
+                if block_stripped.startswith("{") and '"name"' in block_stripped:
                     logger.debug("Found unparsed JSON tool call in code block - continuing loop")
                     return False
 

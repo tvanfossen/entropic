@@ -2,8 +2,8 @@
 
 > Configuration system, base classes, and project skeleton
 
-**Prerequisites:** Pre-work checklist complete  
-**Estimated Time:** 3-5 hours with Claude Code  
+**Prerequisites:** Pre-work checklist complete
+**Estimated Time:** 3-5 hours with Claude Code
 **Checkpoint:** Basic `entropi --version` command works
 
 ---
@@ -59,7 +59,7 @@ class ModelConfig(BaseModel):
 
 class ModelsConfig(BaseModel):
     """Configuration for all models.
-    
+
     Task-specialized architecture:
     - thinking: Qwen3-14B for deep reasoning (thinking mode ON)
     - normal: Qwen3-8B for fast reasoning (thinking mode OFF)

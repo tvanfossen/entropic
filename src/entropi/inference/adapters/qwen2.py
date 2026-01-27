@@ -25,7 +25,9 @@ class Qwen2Adapter(ChatAdapter):
         """Get llama-cpp chat format name."""
         return "chatml"
 
-    def convert_tools_to_openai_format(self, mcp_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def convert_tools_to_openai_format(
+        self, mcp_tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert MCP tool definitions to OpenAI function calling format."""
         return [
             {
@@ -106,7 +108,7 @@ class Qwen2Adapter(ChatAdapter):
         Returns:
             Tuple of (cleaned content, tool calls)
         """
-        logger.debug(f"\n=== Parsing tool calls (Qwen2) ===")
+        logger.debug("\n=== Parsing tool calls (Qwen2) ===")
         logger.debug(f"Content length: {len(content)}")
         logger.debug(f"Content:\n{content}")
 
@@ -114,13 +116,13 @@ class Qwen2Adapter(ChatAdapter):
         lines_to_remove = []
 
         # Parse each line looking for JSON tool calls
-        for line in content.split('\n'):
+        for line in content.split("\n"):
             stripped = line.strip()
             if not stripped:
                 continue
 
             # Check if line looks like a JSON tool call
-            if stripped.startswith('{') and '"name"' in stripped:
+            if stripped.startswith("{") and '"name"' in stripped:
                 try:
                     data = json.loads(stripped)
                     if "name" in data:
@@ -165,7 +167,7 @@ class Qwen2Adapter(ChatAdapter):
                         continue
                     logger.debug(f"Found code block ({pattern.pattern}): {block_stripped}")
                     # Check if it looks like JSON with a name field
-                    if block_stripped.startswith('{') and '"name"' in block_stripped:
+                    if block_stripped.startswith("{") and '"name"' in block_stripped:
                         try:
                             data = json.loads(block_stripped)
                             if "name" in data:
@@ -190,7 +192,7 @@ class Qwen2Adapter(ChatAdapter):
         if not tool_calls:
             # Use pattern that captures content between { and } more robustly
             func_call_pattern = re.compile(
-                r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*(\{.*?\})\s*\)',
+                r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*(\{.*?\})\s*\)",
                 re.DOTALL,
             )
             for match in func_call_pattern.finditer(content):
@@ -198,11 +200,11 @@ class Qwen2Adapter(ChatAdapter):
                 args_json = match.group(2)
 
                 # Validate we have balanced braces
-                if args_json.count('{') != args_json.count('}'):
+                if args_json.count("{") != args_json.count("}"):
                     continue
 
                 # Skip if it looks like Python/JS code (has = or other code patterns)
-                if '=' in args_json and ':' not in args_json:
+                if "=" in args_json and ":" not in args_json:
                     continue
 
                 try:
@@ -238,7 +240,7 @@ class Qwen2Adapter(ChatAdapter):
         if not tool_calls:
             # Pattern for Python kwargs: tool.name(arg="value") or tool.name(arg='value')
             python_call_pattern = re.compile(
-                r'([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*([^)]+)\s*\)',
+                r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*([^)]+)\s*\)",
                 re.DOTALL,
             )
             for match in python_call_pattern.finditer(content):
@@ -246,7 +248,7 @@ class Qwen2Adapter(ChatAdapter):
                 args_str = match.group(2).strip()
 
                 # Skip if it doesn't look like a tool name (must have a dot for namespaced tools)
-                if '.' not in func_name:
+                if "." not in func_name:
                     continue
 
                 # Only match known MCP tool prefixes - skip stdlib calls like argparse.*, parser.*, etc.
@@ -254,7 +256,7 @@ class Qwen2Adapter(ChatAdapter):
                     continue
 
                 # Skip if it looks like a regular function call (no = signs)
-                if '=' not in args_str:
+                if "=" not in args_str:
                     continue
 
                 # Try to parse Python kwargs
@@ -292,7 +294,7 @@ class Qwen2Adapter(ChatAdapter):
             # Clean bare function-call lines (JSON style)
             for tc in tool_calls:
                 func_pattern = re.compile(
-                    re.escape(tc.name) + r'\s*\(\s*\{[^}]*\}\s*\)',
+                    re.escape(tc.name) + r"\s*\(\s*\{[^}]*\}\s*\)",
                     re.DOTALL,
                 )
                 cleaned = func_pattern.sub("", cleaned)
@@ -300,16 +302,18 @@ class Qwen2Adapter(ChatAdapter):
             # Clean bare function-call lines (Python kwarg style)
             for tc in tool_calls:
                 func_pattern = re.compile(
-                    re.escape(tc.name) + r'\s*\([^)]*\)',
+                    re.escape(tc.name) + r"\s*\([^)]*\)",
                     re.DOTALL,
                 )
                 cleaned = func_pattern.sub("", cleaned)
 
             # Clean code blocks containing tool calls
             tool_block_pattern = re.compile(
-                r'```\w*\s*\n?' + r'[^`]*?' +
-                r'[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)' +
-                r'[^`]*?' + r'\n?```',
+                r"```\w*\s*\n?"
+                + r"[^`]*?"
+                + r"[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)"
+                + r"[^`]*?"
+                + r"\n?```",
                 re.DOTALL,
             )
             cleaned = tool_block_pattern.sub("", cleaned)
@@ -376,9 +380,7 @@ class Qwen2Adapter(ChatAdapter):
 
         # Pattern for key=value pairs
         # Handles: key="value", key='value', key=value
-        kwarg_pattern = re.compile(
-            r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
-        )
+        kwarg_pattern = re.compile(r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 
         for match in kwarg_pattern.finditer(args_str):
             key = match.group(1)
@@ -387,11 +389,11 @@ class Qwen2Adapter(ChatAdapter):
 
             if value is not None:
                 # Try to convert to appropriate type
-                if value.lower() == 'true':
+                if value.lower() == "true":
                     arguments[key] = True
-                elif value.lower() == 'false':
+                elif value.lower() == "false":
                     arguments[key] = False
-                elif value.lower() == 'none' or value.lower() == 'null':
+                elif value.lower() == "none" or value.lower() == "null":
                     arguments[key] = None
                 else:
                     try:
@@ -409,13 +411,13 @@ class Qwen2Adapter(ChatAdapter):
         fixed = json_str.strip()
 
         # Replace JavaScript-style booleans/null
-        fixed = re.sub(r'\bfalse\b', 'false', fixed)
-        fixed = re.sub(r'\btrue\b', 'true', fixed)
-        fixed = re.sub(r'\bnull\b', 'null', fixed)
+        fixed = re.sub(r"\bfalse\b", "false", fixed)
+        fixed = re.sub(r"\btrue\b", "true", fixed)
+        fixed = re.sub(r"\bnull\b", "null", fixed)
 
         # Fix trailing commas
-        fixed = re.sub(r',\s*}', '}', fixed)
-        fixed = re.sub(r',\s*]', ']', fixed)
+        fixed = re.sub(r",\s*}", "}", fixed)
+        fixed = re.sub(r",\s*]", "]", fixed)
 
         # Fix single quotes to double quotes (carefully)
         # Only if there are no double quotes in the string
@@ -423,8 +425,8 @@ class Qwen2Adapter(ChatAdapter):
             fixed = fixed.replace("'", '"')
 
         # Fix unquoted keys: {path: "value"} -> {"path": "value"}
-        fixed = re.sub(r'{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'{"\1":', fixed)
-        fixed = re.sub(r',\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r', "\1":', fixed)
+        fixed = re.sub(r"{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r'{"\1":', fixed)
+        fixed = re.sub(r",\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:", r', "\1":', fixed)
 
         return fixed if fixed != json_str else None
 
@@ -459,20 +461,20 @@ Use this information to respond to the user."""
             return False
 
         # Check for unparsed tool call indicators in code blocks
-        if '```' in content:
-            code_block_pattern = re.compile(r'```\w*\s*([\s\S]*?)```')
+        if "```" in content:
+            code_block_pattern = re.compile(r"```\w*\s*([\s\S]*?)```")
             for block in code_block_pattern.findall(content):
                 block_stripped = block.strip()
 
                 # Check for JSON-style tool call
-                if block_stripped.startswith('{') and '"name"' in block_stripped:
+                if block_stripped.startswith("{") and '"name"' in block_stripped:
                     logger.debug("Found unparsed JSON tool call in code block - continuing loop")
                     return False
 
                 # Check for Python-style function call: tool.name(args)
                 # Only match known MCP tool prefixes to avoid false positives with explained code
                 python_call_pattern = re.compile(
-                    r'([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)'
+                    r"([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)"
                 )
                 for match in python_call_pattern.finditer(block_stripped):
                     func_name = match.group(1)

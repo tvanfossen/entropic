@@ -32,7 +32,9 @@ class Qwen3Adapter(ChatAdapter):
         """Get llama-cpp chat format name."""
         return "chatml"
 
-    def convert_tools_to_openai_format(self, mcp_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def convert_tools_to_openai_format(
+        self, mcp_tools: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """Convert MCP tool definitions to OpenAI function calling format."""
         return [
             {
@@ -113,7 +115,7 @@ class Qwen3Adapter(ChatAdapter):
         Returns:
             Tuple of (cleaned content, tool calls)
         """
-        logger.debug(f"\n=== Parsing tool calls (Qwen3) ===")
+        logger.debug("\n=== Parsing tool calls (Qwen3) ===")
         logger.debug(f"Content length: {len(content)}")
         logger.debug(f"Content:\n{content}")
 
@@ -150,9 +152,9 @@ class Qwen3Adapter(ChatAdapter):
 
         # Fallback: bare JSON (in case model doesn't use tags)
         if not tool_calls:
-            for line in content.split('\n'):
+            for line in content.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith('{') and '"name"' in stripped:
+                if stripped.startswith("{") and '"name"' in stripped:
                     try:
                         data = json.loads(stripped)
                         if "name" in data:
@@ -168,13 +170,13 @@ class Qwen3Adapter(ChatAdapter):
 
         # Fallback: shell-style command in code blocks: tool_name arg="value"
         if not tool_calls:
-            code_block_pattern = re.compile(r'```\w*\s*\n?([\s\S]*?)\n?```', re.MULTILINE)
+            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
             for block in code_block_pattern.findall(content):
                 block_stripped = block.strip()
                 # Look for: tool.name arg="value" or tool.name arg=value
                 # Must have a dot (namespaced tool) and space-separated args
                 shell_pattern = re.compile(
-                    r'^([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$'
+                    r"^([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$"
                 )
                 match = shell_pattern.match(block_stripped)
                 if match:
@@ -208,9 +210,9 @@ class Qwen3Adapter(ChatAdapter):
         # Clean bare JSON lines if we parsed them
         if tool_calls:
             cleaned_lines = []
-            for line in cleaned.split('\n'):
+            for line in cleaned.split("\n"):
                 stripped = line.strip()
-                if stripped.startswith('{') and '"name"' in stripped:
+                if stripped.startswith("{") and '"name"' in stripped:
                     try:
                         data = json.loads(stripped)
                         if "name" in data:
@@ -218,12 +220,12 @@ class Qwen3Adapter(ChatAdapter):
                     except json.JSONDecodeError:
                         pass
                 cleaned_lines.append(line)
-            cleaned = '\n'.join(cleaned_lines).strip()
+            cleaned = "\n".join(cleaned_lines).strip()
 
             # Clean shell-style code blocks
             shell_block_pattern = re.compile(
-                r'```\w*\s*\n?[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S.*?\n?```',
-                re.DOTALL
+                r"```\w*\s*\n?[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S.*?\n?```",
+                re.DOTALL,
             )
             cleaned = shell_block_pattern.sub("", cleaned).strip()
 
@@ -262,9 +264,7 @@ class Qwen3Adapter(ChatAdapter):
 
         # Pattern for key=value pairs (quoted or unquoted)
         # Handles: key="value", key='value', key=value
-        pattern = re.compile(
-            r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))'
-        )
+        pattern = re.compile(r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
 
         for match in pattern.finditer(args_str):
             key = match.group(1)
@@ -273,11 +273,11 @@ class Qwen3Adapter(ChatAdapter):
 
             if value is not None:
                 # Try to convert to appropriate type
-                if value.lower() == 'true':
+                if value.lower() == "true":
                     arguments[key] = True
-                elif value.lower() == 'false':
+                elif value.lower() == "false":
                     arguments[key] = False
-                elif value.lower() in ('none', 'null'):
+                elif value.lower() in ("none", "null"):
                     arguments[key] = None
                 else:
                     try:
@@ -372,22 +372,22 @@ Use this information to respond to the user."""
         content_without_think = think_pattern.sub("", content).strip()
 
         # Check for unparsed tool call indicators in code blocks
-        if '```' in content_without_think:
-            code_block_pattern = re.compile(r'```\w*\s*\n?([\s\S]*?)\n?```', re.MULTILINE)
+        if "```" in content_without_think:
+            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
             for block in code_block_pattern.findall(content_without_think):
                 block_stripped = block.strip()
 
                 # Check for JSON-style tool call
-                if block_stripped.startswith('{') and '"name"' in block_stripped:
+                if block_stripped.startswith("{") and '"name"' in block_stripped:
                     logger.debug("Found unparsed JSON tool call in code block - continuing loop")
                     return False
 
                 # Check for shell-style: tool.name arg="value"
-                shell_pattern = re.compile(
-                    r'^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S'
-                )
+                shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S")
                 if shell_pattern.match(block_stripped):
-                    logger.debug("Found unparsed shell-style tool call in code block - continuing loop")
+                    logger.debug(
+                        "Found unparsed shell-style tool call in code block - continuing loop"
+                    )
                     return False
 
         # If there's content outside of think blocks, that's the response

@@ -2,7 +2,7 @@
 
 > Complete before Claude Code implementation begins
 
-**Estimated Time:** 1-2 hours  
+**Estimated Time:** 1-2 hours
 **Prerequisites:** Hardware in hand, internet connection
 
 ---
@@ -540,9 +540,9 @@ def main() -> int:
     print("=" * 60)
     print("Entropi Setup Verification")
     print("=" * 60)
-    
+
     all_passed = True
-    
+
     # Check Python version
     py_version = sys.version_info
     all_passed &= check(
@@ -550,28 +550,28 @@ def main() -> int:
         py_version >= (3, 11),
         "Install Python 3.11+"
     )
-    
+
     # Check nvidia-smi
     all_passed &= check(
         "nvidia-smi",
         shutil.which("nvidia-smi") is not None,
         "Install NVIDIA drivers"
     )
-    
+
     # Check CUDA
     all_passed &= check(
         "nvcc (CUDA compiler)",
         shutil.which("nvcc") is not None,
         "Install CUDA toolkit"
     )
-    
+
     # Check Docker
     all_passed &= check(
         "Docker",
         shutil.which("docker") is not None,
         "Install Docker"
     )
-    
+
     # Check models directory
     models_dir = Path.home() / "models" / "gguf"
     all_passed &= check(
@@ -579,7 +579,7 @@ def main() -> int:
         models_dir.exists(),
         f"mkdir -p {models_dir}"
     )
-    
+
     # Check each model
     models = {
         "Qwen_Qwen3-14B-Q4_K_M.gguf": "Thinking model",
@@ -587,7 +587,7 @@ def main() -> int:
         "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf": "Code model",
         "qwen2.5-coder-0.5b-instruct-q8_0.gguf": "Micro model",
     }
-    
+
     for filename, description in models.items():
         path = models_dir / filename
         all_passed &= check(
@@ -595,7 +595,7 @@ def main() -> int:
             path.exists(),
             f"Download from HuggingFace"
         )
-    
+
     # Check llama-cpp-python
     try:
         import llama_cpp
@@ -606,7 +606,7 @@ def main() -> int:
             False,
             "pip install llama-cpp-python with CUDA"
         )
-    
+
     # Check project structure
     project_dir = Path.home() / "projects" / "entropi"
     all_passed &= check(
@@ -614,7 +614,7 @@ def main() -> int:
         project_dir.exists(),
         f"mkdir -p {project_dir}"
     )
-    
+
     print("=" * 60)
     if all_passed:
         print("All checks passed! Ready for implementation.")

@@ -2,8 +2,8 @@
 
 > Model loading, inference, and multi-model orchestration
 
-**Prerequisites:** Implementation 01 complete  
-**Estimated Time:** 4-6 hours with Claude Code  
+**Prerequisites:** Implementation 01 complete
+**Estimated Time:** 4-6 hours with Claude Code
 **Checkpoint:** Can load model and generate response via CLI
 
 ---

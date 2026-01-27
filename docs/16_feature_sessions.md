@@ -612,7 +612,7 @@ sessions:
   auto_resume: true                  # Resume last session on start
   max_sessions_per_project: 50       # Limit sessions per project
   archive_after_days: 30             # Auto-archive old sessions
-  
+
   # Session naming
   auto_name: true                    # Auto-generate name from first message
   name_max_length: 50
@@ -667,7 +667,7 @@ Running multiple Entropi instances is safe:
 Terminal 1:                    Terminal 2:
 cd ~/chess-game               cd ~/web-api
 entropi                       entropi
-                              
+
 Project: chess-game           Project: web-api
 Session: Board impl           Session: API design
 ```
@@ -702,7 +702,7 @@ Results across all projects:
 
 chess-game (2 matches):
   - Session "Initial planning": "...user authentication..."
-  
+
 web-api (5 matches):
   - Session "API design": "...JWT authentication..."
   - Session "Security review": "...OAuth authentication..."

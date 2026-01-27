@@ -403,7 +403,7 @@ class AgentEngine:
                 if self._on_stream_chunk:
                     self._on_stream_chunk(chunk)
 
-            logger.debug(f"\n=== Stream complete ===")
+            logger.debug("\n=== Stream complete ===")
             logger.debug(f"Total content length: {len(content)}")
 
             # Lock tier after first generation to prevent mid-task model switching
@@ -424,7 +424,9 @@ class AgentEngine:
             logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
 
         ctx.metrics.tokens_used += result.token_count
-        logger.debug(f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls")
+        logger.debug(
+            f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls"
+        )
         return result.content, result.tool_calls
 
     async def _handle_pause(self, ctx: LoopContext, partial_content: str) -> str:
@@ -477,25 +479,27 @@ class AgentEngine:
         """Continue generation with injected user context."""
         # Add partial response to context (if any meaningful content)
         if partial_content.strip():
-            ctx.messages.append(Message(
-                role="assistant",
-                content=partial_content + "\n\n[Generation paused by user]",
-            ))
+            ctx.messages.append(
+                Message(
+                    role="assistant",
+                    content=partial_content + "\n\n[Generation paused by user]",
+                )
+            )
 
         # Add user injection
-        ctx.messages.append(Message(
-            role="user",
-            content=f"[User interjection]: {injection}\n\nPlease continue with this in mind.",
-        ))
+        ctx.messages.append(
+            Message(
+                role="user",
+                content=f"[User interjection]: {injection}\n\nPlease continue with this in mind.",
+            )
+        )
 
         # Clear pause state and resume
         self._set_state(ctx, AgentState.EXECUTING)
 
         # Generate new response with injected context
         content = ""
-        async for chunk in self.orchestrator.generate_stream(
-            ctx.messages, tier=ctx.locked_tier
-        ):
+        async for chunk in self.orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
             # Check for another pause during continuation
             if self._pause_event.is_set():
                 logger.info("Generation paused again during continuation")

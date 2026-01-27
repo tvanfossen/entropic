@@ -2,8 +2,8 @@
 
 > Docker packaging, CI/CD, and release automation
 
-**Prerequisites:** Implementation 09 complete  
-**Estimated Time:** 2-3 hours with Claude Code  
+**Prerequisites:** Implementation 09 complete
+**Estimated Time:** 2-3 hours with Claude Code
 **Checkpoint:** `docker run` works with GPU support
 
 ---

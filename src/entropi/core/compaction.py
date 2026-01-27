@@ -5,8 +5,7 @@ Automatically summarizes conversation history when approaching
 token limits to prevent context overflow.
 """
 
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from entropi.core.base import Message
@@ -242,7 +241,7 @@ class CompactionManager:
         if preserve_count > 0 and preserve_count < len(working_messages):
             candidate_recent = working_messages[-preserve_count:]
         else:
-            candidate_recent = working_messages[-(len(working_messages) // 2):]
+            candidate_recent = working_messages[-(len(working_messages) // 2) :]
 
         recent_tokens = 0
         for msg in reversed(candidate_recent):
@@ -285,9 +284,7 @@ class CompactionManager:
         result = [summary_message, *recent_messages]
         if system_message:
             # Merge system message with summary
-            summary_message.content = (
-                system_message.content + "\n\n" + summary_message.content
-            )
+            summary_message.content = system_message.content + "\n\n" + summary_message.content
 
         return result, summary, len(old_messages)
 
@@ -326,16 +323,16 @@ Brief summary:"""
             # Enforce max length - truncate if necessary
             summary = result.content
             if len(summary) > max_chars:
-                logger.warning(f"Summary too long ({len(summary)} chars), truncating to {max_chars}")
+                logger.warning(
+                    f"Summary too long ({len(summary)} chars), truncating to {max_chars}"
+                )
                 summary = summary[:max_chars] + "..."
             return summary
         except Exception as e:
             logger.error(f"Summary generation failed: {e}")
             return self._simple_summary(messages, max_tokens)
 
-    def _simple_summary(
-        self, messages: list[Message], max_tokens: int | None = None
-    ) -> str:
+    def _simple_summary(self, messages: list[Message], max_tokens: int | None = None) -> str:
         """Create a simple summary without model generation."""
         max_chars = (max_tokens or 500) * 4
 

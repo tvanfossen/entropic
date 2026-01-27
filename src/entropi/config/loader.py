@@ -172,7 +172,7 @@ class ConfigLoader:
             global_config_dir: Global config directory (default: ~/.entropi)
             project_root: Project root (auto-detected if None, or use cwd)
         """
-        self.global_config_dir = (global_config_dir or Path.home() / ".entropi")
+        self.global_config_dir = global_config_dir or Path.home() / ".entropi"
         # Use detected project root, or fall back to current directory
         self.project_root = project_root or find_project_root() or Path.cwd()
 

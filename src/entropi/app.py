@@ -131,9 +131,7 @@ class Application:
             await self.initialize()
 
             # Get available models
-            models = (
-                self._orchestrator.get_available_models() if self._orchestrator else []
-            )
+            models = self._orchestrator.get_available_models() if self._orchestrator else []
 
             # Create new conversation
             if self._storage:
@@ -693,7 +691,9 @@ class Application:
                     summary = result[:50].replace("\n", " ")
                     if len(result) > 50:
                         summary += "..."
-                self.console.print(f"[green]Done[/green] {tool_call.name} [dim]({duration_ms:.0f}ms, {summary})[/dim]\n")
+                self.console.print(
+                    f"[green]Done[/green] {tool_call.name} [dim]({duration_ms:.0f}ms, {summary})[/dim]\n"
+                )
 
             self._engine.set_callbacks(
                 on_stream_chunk=on_chunk,

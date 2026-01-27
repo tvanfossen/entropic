@@ -30,6 +30,7 @@ class ClangdClient(BaseLSPClient):
     def is_available(self) -> bool:
         """Check if clangd is available."""
         from entropi.lsp.base import HAS_LSP
+
         if not HAS_LSP:
             return False
 

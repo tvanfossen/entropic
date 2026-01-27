@@ -202,13 +202,15 @@ class SessionManager:
         assert self._global_db is not None
 
         # Create migrations table if needed
-        await self._global_db.execute("""
+        await self._global_db.execute(
+            """
             CREATE TABLE IF NOT EXISTS migrations (
                 id INTEGER PRIMARY KEY,
                 name TEXT UNIQUE,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Get applied migrations
         rows = await self._global_db.fetchall("SELECT name FROM migrations")
@@ -221,9 +223,7 @@ class SessionManager:
                 # Execute via connection directly for multi-statement
                 async with self._global_db._get_connection() as conn:
                     await conn.executescript(sql)
-                    await conn.execute(
-                        "INSERT INTO migrations (name) VALUES (?)", (name,)
-                    )
+                    await conn.execute("INSERT INTO migrations (name) VALUES (?)", (name,))
                     await conn.commit()
 
     async def _run_session_migrations(self) -> None:
@@ -231,13 +231,15 @@ class SessionManager:
         assert self._project_db is not None
 
         # Create migrations table if needed
-        await self._project_db.execute("""
+        await self._project_db.execute(
+            """
             CREATE TABLE IF NOT EXISTS migrations (
                 id INTEGER PRIMARY KEY,
                 name TEXT UNIQUE,
                 applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Get applied migrations
         rows = await self._project_db.fetchall("SELECT name FROM migrations")
@@ -249,9 +251,7 @@ class SessionManager:
                 logger.debug(f"Running session migration: {name}")
                 async with self._project_db._get_connection() as conn:
                     await conn.executescript(sql)
-                    await conn.execute(
-                        "INSERT INTO migrations (name) VALUES (?)", (name,)
-                    )
+                    await conn.execute("INSERT INTO migrations (name) VALUES (?)", (name,))
                     await conn.commit()
 
     async def _register_project(self) -> None:
@@ -326,8 +326,16 @@ class SessionManager:
             project_id=self.project_id,
             name=row["name"],
             messages=messages,
-            created_at=datetime.fromisoformat(row["created_at"]) if isinstance(row["created_at"], str) else row["created_at"],
-            updated_at=datetime.fromisoformat(row["updated_at"]) if isinstance(row["updated_at"], str) else row["updated_at"],
+            created_at=(
+                datetime.fromisoformat(row["created_at"])
+                if isinstance(row["created_at"], str)
+                else row["created_at"]
+            ),
+            updated_at=(
+                datetime.fromisoformat(row["updated_at"])
+                if isinstance(row["updated_at"], str)
+                else row["updated_at"]
+            ),
             metadata=json.loads(row["metadata"]) if row["metadata"] else {},
             compaction_count=row["compaction_count"] or 0,
             message_count=row["message_count"] or 0,

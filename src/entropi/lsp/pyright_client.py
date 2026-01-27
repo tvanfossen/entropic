@@ -6,8 +6,8 @@ Provides Python type checking and error detection.
 Install: npm install -g pyright
 """
 
-import subprocess
 import shutil
+import subprocess
 
 from entropi.lsp.base import BaseLSPClient
 
@@ -38,6 +38,7 @@ class PyrightClient(BaseLSPClient):
     def is_available(self) -> bool:
         """Check if pyright language server is available."""
         from entropi.lsp.base import HAS_LSP
+
         if not HAS_LSP:
             return False
 

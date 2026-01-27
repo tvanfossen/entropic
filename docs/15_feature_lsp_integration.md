@@ -78,7 +78,7 @@ Entropi (internally):
 Entropi: "I see parser.py has 2 existing issues:
   - Line 45: missing return statement
   - Line 89: undefined 'config'
-  
+
 Should I fix these as well, or just add error handling?"
 ```
 
@@ -90,11 +90,11 @@ After generating code, verify it's correct:
 Entropi generates code → writes to temp buffer
   → Sends textDocument/didChange to LSP
   ← LSP returns diagnostics
-  
+
 If errors:
   → Feed errors back to model
   → Regenerate with error context
-  
+
 If clean:
   → Write to actual file
 ```
@@ -127,7 +127,7 @@ Include diagnostics in tool results:
 async def read_file_with_diagnostics(path: str) -> dict:
     content = await read_file(path)
     diagnostics = await lsp.get_diagnostics(path)
-    
+
     return {
         "content": content,
         "diagnostics": [
@@ -603,7 +603,7 @@ class LSPManager:
 # ~/.entropi/config.yaml
 lsp:
   enabled: true
-  
+
   # Languages to disable
   disabled_languages:
     - java  # Skip Java, server is slow
@@ -614,7 +614,7 @@ lsp:
       command: "pylsp"  # Use pylsp instead of pyright
       args: []
       extensions: [".py"]
-    
+
     # Add a language not in defaults
     elixir:
       command: "elixir-ls"

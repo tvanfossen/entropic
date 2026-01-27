@@ -23,9 +23,7 @@ fixes the chatml-function-calling template.
 """
 
 import asyncio
-import contextlib
 import io
-import os
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -165,7 +163,9 @@ class LlamaCppBackend(ModelBackend):
         message = result["choices"][0]["message"]
         content = message.get("content") or ""
         finish_reason = result["choices"][0].get("finish_reason", "unknown")
-        logger.debug(f"\nGeneration complete: finish_reason={finish_reason}, content_len={len(content)}")
+        logger.debug(
+            f"\nGeneration complete: finish_reason={finish_reason}, content_len={len(content)}"
+        )
 
         return GenerationResult(
             content=content,

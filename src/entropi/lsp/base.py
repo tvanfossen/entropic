@@ -204,9 +204,7 @@ class BaseLSPClient(ABC):
     def _on_diagnostics(self, params: dict[str, Any]) -> None:
         """Handle diagnostics notification."""
         uri = params["uri"]
-        self._diagnostics[uri] = [
-            Diagnostic.from_lsp(d) for d in params.get("diagnostics", [])
-        ]
+        self._diagnostics[uri] = [Diagnostic.from_lsp(d) for d in params.get("diagnostics", [])]
         logger.debug(f"Received {len(self._diagnostics[uri])} diagnostics for {uri}")
 
     def open_file(self, path: Path) -> None:
@@ -218,12 +216,14 @@ class BaseLSPClient(ABC):
             content = path.read_text()
             uri = path.as_uri()
 
-            self._client.didOpen({
-                "uri": uri,
-                "languageId": self.language,
-                "version": 1,
-                "text": content,
-            })
+            self._client.didOpen(
+                {
+                    "uri": uri,
+                    "languageId": self.language,
+                    "version": 1,
+                    "text": content,
+                }
+            )
         except Exception as e:
             logger.error(f"Failed to open file in LSP: {e}")
 

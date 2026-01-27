@@ -195,7 +195,10 @@ class ModelOrchestrator:
                     return False
 
                 # Unload THINKING to free VRAM
-                if ModelTier.THINKING in self._models and self._models[ModelTier.THINKING].is_loaded:
+                if (
+                    ModelTier.THINKING in self._models
+                    and self._models[ModelTier.THINKING].is_loaded
+                ):
                     await self._models[ModelTier.THINKING].unload()
                     logger.info("Unloaded THINKING model")
 
@@ -334,7 +337,9 @@ class ModelOrchestrator:
                                 return current  # Return the already-loaded model
                             else:
                                 # Different file - need to swap
-                                logger.info(f"Unloading {self._loaded_main_tier.value} model for swap")
+                                logger.info(
+                                    f"Unloading {self._loaded_main_tier.value} model for swap"
+                                )
                                 await current.unload()
 
                     # Load the requested model
@@ -465,6 +470,7 @@ class ModelOrchestrator:
 
         # Fallback to generic adapter
         from entropi.inference.adapters import get_adapter
+
         return get_adapter("generic")
 
     @property

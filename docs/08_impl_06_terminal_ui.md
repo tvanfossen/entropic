@@ -2,8 +2,8 @@
 
 > Rich terminal interface with streaming, themes, and key bindings
 
-**Prerequisites:** Implementation 05 complete  
-**Estimated Time:** 2-3 hours with Claude Code  
+**Prerequisites:** Implementation 05 complete
+**Estimated Time:** 2-3 hours with Claude Code
 **Checkpoint:** Interactive chat session works with streaming
 
 ---

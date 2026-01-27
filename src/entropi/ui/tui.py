@@ -153,9 +153,7 @@ class PauseScreen(ModalScreen[str | None]):
         with Vertical():
             yield Static("[yellow]Generation Paused[/]", classes="title")
             yield Static(f"[dim]{preview}[/]", classes="preview")
-            yield Static(
-                "Type to add context, [bold]Enter[/] to resume, [bold]Esc[/] to cancel"
-            )
+            yield Static("Type to add context, [bold]Enter[/] to resume, [bold]Esc[/] to cancel")
             yield Input(placeholder="Inject context...", id="inject-input")
 
     @on(Input.Submitted, "#inject-input")
@@ -383,9 +381,7 @@ class EntropiApp(App[None]):
 
     # === Callback Setters ===
 
-    def set_input_callback(
-        self, callback: Callable[[str], Coroutine[Any, Any, None]]
-    ) -> None:
+    def set_input_callback(self, callback: Callable[[str], Coroutine[Any, Any, None]]) -> None:
         """Set callback for user input."""
         self._on_user_input = callback
 
@@ -631,9 +627,7 @@ class EntropiApp(App[None]):
             return ToolApproval.ALLOW
 
         # Push modal screen and wait for result
-        result = await self.push_screen_wait(
-            ToolApprovalScreen(name, arguments, is_sensitive)
-        )
+        result = await self.push_screen_wait(ToolApprovalScreen(name, arguments, is_sensitive))
 
         # Handle session-wide auto-approve
         if result == ToolApproval.ALWAYS_ALLOW:
@@ -681,9 +675,7 @@ class EntropiApp(App[None]):
         """Compaction notice UI - must run on main thread."""
         reduction = result.old_token_count - result.new_token_count
         reduction_pct = (
-            (reduction / result.old_token_count * 100)
-            if result.old_token_count > 0
-            else 0
+            (reduction / result.old_token_count * 100) if result.old_token_count > 0 else 0
         )
 
         chat_log = self.query_one("#chat-log", VerticalScroll)

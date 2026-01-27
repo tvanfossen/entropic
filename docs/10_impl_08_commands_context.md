@@ -2,8 +2,8 @@
 
 > Slash commands, ENTROPI.md loading, and context management
 
-**Prerequisites:** Implementation 07 complete  
-**Estimated Time:** 2-3 hours with Claude Code  
+**Prerequisites:** Implementation 07 complete
+**Estimated Time:** 2-3 hours with Claude Code
 **Checkpoint:** Slash commands and ENTROPI.md work
 
 ---

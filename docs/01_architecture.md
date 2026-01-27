@@ -2,8 +2,8 @@
 
 > Local AI Coding Assistant powered by Qwen models and llama-cpp-python
 
-**Version:** 1.1.0  
-**Status:** Approved for Implementation  
+**Version:** 1.1.0
+**Status:** Approved for Implementation
 **Target Platform:** Ubuntu 24.04, NVIDIA RTX PRO 4000 (16GB VRAM), Intel i9
 
 ---
@@ -281,14 +281,14 @@ During the agentic loop, the router continuously monitors for code generation re
 async def process_turn(self, message: str) -> AsyncIterator[str]:
     # Classify the task
     task_type = await self.router.classify(message)
-    
+
     if task_type == TaskType.CODE_GENERATION:
         # Always use specialized coder model
         model = self.coder_model  # Qwen2.5-Coder-7B
     else:
         # Use reasoning model based on thinking mode
         model = self.thinking_model if self.thinking_enabled else self.normal_model
-    
+
     async for chunk in model.generate_stream(message):
         yield chunk
 ```
@@ -368,13 +368,13 @@ Before any code is written to disk:
 async def enforce_quality(code: str) -> str:
     for attempt in range(max_attempts):
         report = analyzer.analyze(code)
-        
+
         if report.passed:
             return code
-        
+
         feedback = report.format_feedback()
         code = await model.regenerate(code, feedback)
-    
+
     raise QualityError("Max regeneration attempts exceeded")
 ```
 
@@ -447,15 +447,15 @@ models:
   thinking:
     path: ~/models/gguf/qwen3-14b-q4_k_m.gguf
     context_length: 16384
-    
+
   normal:
     path: ~/models/gguf/qwen3-8b-q4_k_m.gguf
     context_length: 16384
-    
+
   code:
     path: ~/models/gguf/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf
     context_length: 16384
-    
+
   micro:
     path: ~/models/gguf/qwen2.5-coder-0.5b-instruct-q8_0.gguf
     context_length: 2048

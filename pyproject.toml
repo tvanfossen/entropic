@@ -23,7 +23,7 @@ dependencies = [
     "llama-cpp-python>=0.2.0",
     "mcp>=1.0.0",
     "rich>=13.0.0",
-    "prompt-toolkit>=3.0.0",
+    "textual>=0.47.0",
     "click>=8.0.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -57,7 +57,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf"]
+entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "ui/*.tcss"]
 
 [tool.black]
 line-length = 100
@@ -91,7 +91,7 @@ module = "entropi.mcp.servers.base"
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = "entropi.ui.terminal"
+module = "entropi.ui.tui"
 disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]

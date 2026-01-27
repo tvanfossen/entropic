@@ -1,0 +1,215 @@
+/* Entropi TUI Theme - Textual CSS */
+
+/* Root application */
+Screen {
+    background: $surface;
+    layout: vertical;
+}
+
+/* Header styling */
+Header {
+    dock: top;
+    height: 1;
+    background: $primary;
+}
+
+/* Chat log container - takes remaining space */
+#chat-log {
+    height: 1fr;
+    min-height: 5;
+    scrollbar-gutter: stable;
+    padding: 0 1;
+}
+
+/* Processing indicator - above input */
+#processing {
+    height: 1;
+    padding: 0 1;
+    background: $surface;
+}
+
+/* Input area */
+#input {
+    height: 3;
+    min-height: 3;
+    margin: 0 1;
+    border: solid $primary;
+}
+
+#input:focus {
+    border: solid $accent;
+}
+
+/* Context bar */
+#context-bar {
+    height: 1;
+    padding: 0 1;
+    background: $surface;
+}
+
+/* Status footer - very bottom */
+#status-footer {
+    height: 1;
+    background: $surface-darken-1;
+    padding: 0 1;
+    border-top: solid $primary-darken-2;
+}
+
+/* Message widgets */
+.user-message {
+    margin: 1 0;
+}
+
+.assistant-message {
+    margin: 1 0;
+}
+
+.tool-call {
+    margin: 0;
+    padding: 0 1;
+}
+
+.thinking-block {
+    margin: 0;
+    padding: 0 1;
+    color: $text-muted;
+}
+
+/* Todo widget */
+#todo-widget {
+    dock: right;
+    width: 30;
+    max-width: 40;
+    margin: 0;
+    padding: 0;
+    display: none;
+}
+
+#todo-widget.visible {
+    display: block;
+}
+
+/* Tool approval modal */
+ToolApprovalScreen {
+    align: center middle;
+}
+
+ToolApprovalScreen > Vertical {
+    width: 70%;
+    max-width: 80;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: solid $warning;
+    padding: 1 2;
+}
+
+ToolApprovalScreen .title {
+    text-align: center;
+    text-style: bold;
+    color: $warning;
+    padding-bottom: 1;
+}
+
+ToolApprovalScreen .tool-name {
+    text-style: bold;
+    color: $accent;
+}
+
+ToolApprovalScreen .args {
+    padding: 1 0;
+    color: $text-muted;
+}
+
+ToolApprovalScreen .options {
+    padding-top: 1;
+    text-align: center;
+}
+
+ToolApprovalScreen .key {
+    text-style: bold;
+    color: $primary;
+}
+
+/* Pause/Inject modal */
+PauseScreen {
+    align: center middle;
+}
+
+PauseScreen > Vertical {
+    width: 80%;
+    max-width: 100;
+    height: auto;
+    max-height: 80%;
+    background: $surface;
+    border: solid $warning;
+    padding: 1 2;
+}
+
+PauseScreen .title {
+    text-align: center;
+    text-style: bold;
+    color: $warning;
+    padding-bottom: 1;
+}
+
+PauseScreen .preview {
+    max-height: 10;
+    overflow-y: auto;
+    padding: 1;
+    background: $surface-darken-1;
+    color: $text-muted;
+}
+
+PauseScreen #inject-input {
+    margin-top: 1;
+}
+
+/* Welcome panel */
+#welcome-panel {
+    width: 100%;
+    height: auto;
+    margin: 1;
+}
+
+/* Compaction notice */
+.compaction-notice {
+    margin: 1 0;
+    padding: 1;
+    background: $warning-darken-2;
+    border: solid $warning;
+}
+
+/* Streaming indicator */
+.streaming {
+    border: solid $accent;
+}
+
+/* Error styling */
+.error {
+    color: $error;
+}
+
+.error-panel {
+    border: solid $error;
+}
+
+/* Warning styling */
+.warning {
+    color: $warning;
+}
+
+/* Info styling */
+.info {
+    color: $accent;
+}
+
+/* Success styling */
+.success {
+    color: $success;
+}
+
+/* Spinner for loading states */
+LoadingIndicator {
+    color: $primary;
+}

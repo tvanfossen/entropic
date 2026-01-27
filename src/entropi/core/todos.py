@@ -122,15 +122,35 @@ class TodoList:
         if len(in_progress) > 1:
             return "Error: Only one task can be in_progress at a time"
 
-        # Update the todo list
-        self.items = [
-            TodoItem(
-                content=t["content"],
-                active_form=t["active_form"],
-                status=TodoStatus(t["status"]),
-            )
-            for t in todos
-        ]
+        # Parse todos with defensive handling for missing fields
+        parsed_items = []
+        for t in todos:
+            # Get content with fallback
+            content = t.get("content")
+            if not content:
+                # Try alternative field names the model might use
+                content = t.get("task") or t.get("description") or t.get("text") or "Unknown task"
+
+            # Get active_form with fallback (generate from content if missing)
+            active_form = t.get("active_form") or t.get("activeForm")
+            if not active_form:
+                # Generate active form from content (add "ing" heuristic)
+                active_form = f"Working on: {content}"
+
+            # Get status with fallback
+            status_str = t.get("status", "pending")
+            try:
+                status = TodoStatus(status_str)
+            except ValueError:
+                status = TodoStatus.PENDING
+
+            parsed_items.append(TodoItem(
+                content=content,
+                active_form=active_form,
+                status=status,
+            ))
+
+        self.items = parsed_items
 
         completed, total = self.progress
         return f"Todo list updated: {completed}/{total} completed"

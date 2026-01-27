@@ -4,7 +4,6 @@ Application orchestrator.
 Coordinates all components and manages the application lifecycle.
 """
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -14,13 +13,13 @@ from entropi import __version__
 from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message
 from entropi.core.commands import CommandContext, CommandRegistry
-from entropi.core.context import ContextBuilder, ProjectContext
-from entropi.core.engine import AgentEngine, AgentState, LoopConfig
+from entropi.core.context import ProjectContext
+from entropi.core.engine import AgentEngine, LoopConfig
 from entropi.core.logging import get_logger
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import ServerManager
 from entropi.storage.backend import SQLiteStorage
-from entropi.ui.terminal import TerminalUI
+from entropi.ui.tui import EntropiApp
 
 
 class Application:
@@ -47,7 +46,7 @@ class Application:
         self._orchestrator: ModelOrchestrator | None = None
         self._mcp_manager: ServerManager | None = None
         self._storage: SQLiteStorage | None = None
-        self._ui: TerminalUI | None = None
+        self._ui: EntropiApp | None = None
         self._engine: AgentEngine | None = None
         self._command_registry: CommandRegistry | None = None
         self._project_context: ProjectContext | None = None
@@ -127,17 +126,14 @@ class Application:
         self.logger.info("Shutdown complete")
 
     async def run(self) -> None:
-        """Run the interactive application."""
+        """Run the interactive application using Textual TUI."""
         try:
             await self.initialize()
 
-            # Initialize terminal UI
-            self._ui = TerminalUI(self.config)
-            self._ui.set_interrupt_callback(self._handle_interrupt)
-
-            # Print welcome
-            models = self._orchestrator.get_available_models() if self._orchestrator else []
-            self._ui.print_welcome(__version__, models)
+            # Get available models
+            models = (
+                self._orchestrator.get_available_models() if self._orchestrator else []
+            )
 
             # Create new conversation
             if self._storage:
@@ -146,61 +142,48 @@ class Application:
                     project_path=str(self.project_dir),
                 )
 
-            # Main loop
-            await self._interactive_loop()
+            # Create and run Textual app
+            self._ui = EntropiApp(
+                config=self.config,
+                version=__version__,
+                models=models,
+            )
+            self._ui.set_input_callback(self._handle_user_input)
+            self._ui.set_interrupt_callback(self._handle_interrupt)
+            self._ui.set_pause_callback(self._handle_pause)
+
+            # Run the Textual app (this blocks until exit)
+            await self._ui.run_async()
 
         except KeyboardInterrupt:
-            if self._ui:
-                self._ui.print_warning("Interrupted")
+            pass  # Normal exit
         except Exception as e:
             self.logger.error(f"Application error: {e}")
-            if self._ui:
-                self._ui.print_error(str(e))
+            raise
         finally:
             await self.shutdown()
 
-    async def _interactive_loop(self) -> None:
-        """Main interactive loop."""
+    async def _handle_user_input(self, user_input: str) -> None:
+        """
+        Handle user input from the Textual UI.
+
+        This is called by the Textual app when user submits input.
+        """
         assert self._ui is not None
         assert self._command_registry is not None
 
-        last_interrupt_time = 0.0
+        if not user_input.strip():
+            return
 
-        while True:
-            try:
-                # Get user input
-                user_input = await self._ui.get_input("> ")
+        # Check for slash commands
+        if self._command_registry.is_command(user_input):
+            should_continue = await self._handle_command(user_input)
+            if not should_continue:
+                self._ui.exit()
+            return
 
-                if user_input is None or not user_input.strip():
-                    continue
-
-                # Check for exit
-                if user_input.strip().lower() in ("/exit", "/quit", "/q"):
-                    self._ui.print_info("Goodbye!")
-                    break
-
-                # Check for slash commands
-                if self._command_registry.is_command(user_input):
-                    should_continue = await self._handle_command(user_input)
-                    if not should_continue:
-                        break
-                    continue
-
-                # Process user message
-                await self._process_message(user_input)
-
-            except EOFError:
-                break
-            except KeyboardInterrupt:
-                import time
-                now = time.time()
-                if now - last_interrupt_time < 1.0:
-                    # Double Ctrl+C within 1 second - exit
-                    self._ui.print_info("Goodbye!")
-                    break
-                last_interrupt_time = now
-                self._ui.print_warning("Press Ctrl+C again to exit")
-                continue
+        # Process user message
+        await self._process_message(user_input)
 
     async def _handle_command(self, command_str: str) -> bool:
         """
@@ -316,122 +299,24 @@ class Application:
         if self._project_context and self._project_context.has_context:
             system_prompt = self._project_context.get_system_prompt_addition()
 
-        # Track streamed content - we buffer and display clean content
-        full_content = ""
-        displayed_length = 0
-        streaming_active = False
-        final_clean_content = ""  # Track clean content for final panel display
-        in_think_block = False  # Track if we're inside a <think> block
-        think_header_shown = False  # Track if we've shown the thinking header
-
         def on_chunk(chunk: str) -> None:
-            nonlocal full_content, displayed_length, streaming_active, final_clean_content
-            nonlocal in_think_block, think_header_shown
-
-            if not streaming_active:
-                streaming_active = True
-                full_content = ""
-                displayed_length = 0
-                final_clean_content = ""
-                in_think_block = False
-                think_header_shown = False
-                # Print assistant header for visual separation
-                self.console.print(f"[bold {self._ui.theme.assistant_color}]Assistant[/]")
-
-            full_content += chunk
-
-            # Process content for display, handling think blocks with dim styling
-            # We need to stream content char-by-char while tracking think block state
-
-            # Stop markers - tool call patterns that halt streaming
-            tool_markers = ["<tool_call>", "</tool_call>", '{"name":']
-
-            # Find earliest tool marker to stop at
-            stop_at = len(full_content)
-            for marker in tool_markers:
-                pos = full_content.find(marker)
-                if pos != -1 and pos < stop_at:
-                    stop_at = pos
-
-            # Process content from displayed_length to stop_at
-            # Handle think block transitions
-            content_to_process = full_content[displayed_length:stop_at]
-
-            output_buffer = ""
-            i = 0
-            while i < len(content_to_process):
-                remaining = content_to_process[i:]
-
-                # Check for <think> start tag
-                if remaining.startswith("<think>"):
-                    # Output any accumulated normal content first
-                    if output_buffer:
-                        self.console.print(output_buffer, end="", highlight=False)
-                        final_clean_content += output_buffer
-                        output_buffer = ""
-
-                    # Enter think block with dim styling header
-                    if not think_header_shown:
-                        self.console.print("\n[dim]💭 [/]", end="")
-                        think_header_shown = True
-                    in_think_block = True
-                    i += 7  # len("<think>")
-                    continue
-
-                # Check for </think> end tag
-                if remaining.startswith("</think>"):
-                    # Output any accumulated think content
-                    if output_buffer:
-                        self.console.print(f"[dim italic]{output_buffer}[/]", end="")
-                        output_buffer = ""
-
-                    # Exit think block - just newline, styling already closed above
-                    self.console.print("\n", end="")
-                    in_think_block = False
-                    i += 8  # len("</think>")
-                    continue
-
-                # Check for partial tag at end (could be start of <think> or </think>)
-                if i >= len(content_to_process) - 8:  # Near end, could be partial tag
-                    potential_tag = remaining
-                    if "<think>".startswith(potential_tag) or "</think>".startswith(potential_tag):
-                        # Hold back this content, might be partial tag
-                        break
-
-                # Regular character - add to buffer
-                output_buffer += content_to_process[i]
-                i += 1
-
-            # Output remaining buffer with appropriate styling
-            if output_buffer:
-                if in_think_block:
-                    self.console.print(f"[dim italic]{output_buffer}[/]", end="")
-                else:
-                    self.console.print(output_buffer, end="", highlight=False)
-                    final_clean_content += output_buffer
-
-            # Update displayed_length to what we've actually processed
-            displayed_length += i
+            """Handle streaming chunk - pass directly to Textual UI."""
+            self._ui.on_stream_chunk(chunk)
 
         def on_tool_start(tool_call: Any) -> None:
-            nonlocal streaming_active, full_content, displayed_length, final_clean_content
-            # End streaming and show panel for any accumulated content
-            if streaming_active and final_clean_content.strip():
-                self.console.print()  # End streaming line
-                # Don't show panel here - content already displayed inline
-            streaming_active = False
-            full_content = ""
-            displayed_length = 0
-            final_clean_content = ""
+            """Handle tool execution start."""
             self._ui.print_tool_start(tool_call.name, tool_call.arguments)
 
         def on_tool_complete(tool_call: Any, result: str, duration_ms: float) -> None:
+            """Handle tool execution complete."""
             self._ui.print_tool_complete(tool_call.name, result, duration_ms)
 
         def on_todo_update(todo_list: Any) -> None:
+            """Handle todo list update."""
             self._ui.print_todo_panel(todo_list)
 
         def on_compaction(result: Any) -> None:
+            """Handle context compaction."""
             self._ui.print_compaction_notice(result)
 
         self._engine.set_callbacks(
@@ -442,10 +327,14 @@ class Application:
             on_tool_complete=on_tool_complete,
             on_todo_update=on_todo_update,
             on_compaction=on_compaction,
+            on_pause_prompt=self._handle_pause_prompt,
         )
 
         # Run agent loop
         try:
+            # Mark generation active (enables Escape to pause)
+            self._ui.start_generation()
+
             new_messages: list[Message] = []
             async for msg in self._engine.run(
                 user_input,
@@ -453,11 +342,6 @@ class Application:
                 system_prompt=system_prompt,
             ):
                 new_messages.append(msg)
-
-            # End streaming with visual separator
-            if streaming_active:
-                self.console.print()  # End streaming line
-                self.console.print()  # Blank line for separation
 
             # Update conversation history
             self._messages.append(Message(role="user", content=user_input))
@@ -477,9 +361,10 @@ class Application:
                 )
 
         except Exception as e:
-            if streaming_active:
-                self.console.print()
             self._ui.print_error(f"Generation error: {e}")
+        finally:
+            # Mark generation complete
+            self._ui.end_generation()
 
     async def _handle_tool_approval(self, tool_call: Any) -> Any:
         """
@@ -505,24 +390,47 @@ class Application:
         if not is_sensitive:
             return ToolApproval.ALLOW
 
-        # For sensitive tools, prompt the user
+        # For sensitive tools, prompt the user via modal
         result = await self._ui.prompt_tool_approval(
             tool_call.name,
             tool_call.arguments,
             is_sensitive=True,
         )
 
-        # Handle feedback string as denial
-        if isinstance(result, str):
-            # User provided feedback, treat as denial
-            return ToolApproval.DENY
-
         return result
 
     def _handle_interrupt(self) -> None:
-        """Handle interrupt signal."""
+        """Handle interrupt signal (hard cancel)."""
         if self._engine:
             self._engine.interrupt()
+
+    def _handle_pause(self) -> None:
+        """Handle pause signal (Escape key during generation).
+
+        Note: For now, pause acts as interrupt since the pause modal
+        requires cross-thread coordination that causes event loop issues.
+        TODO: Implement proper pause/inject with thread-safe modal display.
+        """
+        if self._engine:
+            # For now, just interrupt - the pause modal causes event loop issues
+            # because prompt_injection uses push_screen_wait which must run on
+            # Textual's main thread, but engine.run() is in a worker thread
+            self._engine.interrupt()
+
+    async def _handle_pause_prompt(self, partial_content: str) -> str | None:
+        """
+        Handle pause prompt - called by engine when generation is paused.
+
+        Args:
+            partial_content: The partial response generated so far
+
+        Returns:
+            User's injection text, empty string to resume, or None to cancel
+        """
+        if not self._ui:
+            return None
+
+        return await self._ui.prompt_injection(partial_content)
 
     async def _show_status(self) -> None:
         """Show system status."""
@@ -733,7 +641,7 @@ class Application:
         markdown = "\n".join(lines)
         self.console.print(markdown)
 
-    async def single_turn(self, message: str, stream: bool = True) -> None:
+    async def single_turn(self, message: str, stream: bool = True) -> None:  # noqa: ARG002
         """
         Process a single message and exit.
 
@@ -743,6 +651,7 @@ class Application:
             message: User message
             stream: Whether to stream output (currently ignored, always streams)
         """
+        _ = stream  # Currently always streams
         try:
             await self.initialize()
 

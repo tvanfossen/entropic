@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
@@ -42,6 +43,15 @@ class AgentState(Enum):
     COMPLETE = auto()
     ERROR = auto()
     INTERRUPTED = auto()
+    PAUSED = auto()  # Generation paused, awaiting user input
+
+
+class InterruptMode(Enum):
+    """How to handle generation interrupt."""
+
+    CANCEL = "cancel"  # Discard partial response, stop
+    PAUSE = "pause"  # Keep partial response, await input
+    INJECT = "inject"  # Keep partial, inject context, continue
 
 
 class ToolApproval(Enum):
@@ -102,6 +112,16 @@ class LoopContext:
     locked_tier: Any = None  # ModelTier or None
 
 
+@dataclass
+class InterruptContext:
+    """Context for interrupted/paused generation."""
+
+    partial_content: str = ""
+    partial_tool_calls: list[ToolCall] = field(default_factory=list)
+    injection: str | None = None
+    mode: InterruptMode = InterruptMode.PAUSE
+
+
 class AgentEngine:
     """
     Core agent execution engine.
@@ -135,7 +155,16 @@ class AgentEngine:
         self.loop_config = loop_config or LoopConfig()
 
         self._context_builder = ContextBuilder(config)
-        self._interrupt_event = asyncio.Event()
+        # Use threading.Event for thread-safe cross-loop signaling
+        # (Textual runs on a different event loop than the generation worker)
+        self._interrupt_event = threading.Event()
+
+        # Pause/inject support for interrupting generation
+        self._pause_event = threading.Event()
+        self._interrupt_context: InterruptContext | None = None
+
+        # Callback for pause/inject prompting
+        self._on_pause_prompt: Callable[[str], Any] | None = None
 
         # Todo list for agentic task tracking
         self._todo_list = TodoList()
@@ -177,6 +206,7 @@ class AgentEngine:
         on_tool_complete: Callable[[ToolCall, str, float], None] | None = None,
         on_todo_update: Callable[[TodoList], None] | None = None,
         on_compaction: Callable[[CompactionResult], None] | None = None,
+        on_pause_prompt: Callable[[str], Any] | None = None,
     ) -> None:
         """
         Set callback functions for loop events.
@@ -189,6 +219,7 @@ class AgentEngine:
             on_tool_complete: Called when tool execution completes (tool, result, duration_ms)
             on_todo_update: Called when todo list is updated
             on_compaction: Called when context is compacted
+            on_pause_prompt: Called when generation is paused, returns injection text or None
         """
         self._on_state_change = on_state_change
         self._on_tool_approval = on_tool_call
@@ -197,6 +228,7 @@ class AgentEngine:
         self._on_tool_complete = on_tool_complete
         self._on_todo_update = on_todo_update
         self._on_compaction = on_compaction
+        self._on_pause_prompt = on_pause_prompt
 
     @property
     def todo_list(self) -> TodoList:
@@ -223,6 +255,10 @@ class AgentEngine:
         # Initialize context
         ctx = LoopContext()
         ctx.metrics.start_time = time.time()
+
+        # Reset interrupt flag from any previous run
+        self.reset_interrupt()
+        self._pause_event.clear()
 
         # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
@@ -352,6 +388,14 @@ class AgentEngine:
             async for chunk in self.orchestrator.generate_stream(
                 ctx.messages, tier=ctx.locked_tier
             ):
+                # Check for pause request during streaming
+                if self._pause_event.is_set():
+                    logger.info("Generation paused by user")
+                    content = await self._handle_pause(ctx, content)
+                    # After handling pause, check if we should continue or abort
+                    if self._interrupt_event.is_set():
+                        break
+
                 content += chunk
 
                 # Pass ALL content to callback (including think blocks)
@@ -382,6 +426,88 @@ class AgentEngine:
         ctx.metrics.tokens_used += result.token_count
         logger.debug(f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls")
         return result.content, result.tool_calls
+
+    async def _handle_pause(self, ctx: LoopContext, partial_content: str) -> str:
+        """
+        Handle pause during generation.
+
+        Prompts user for injection and either continues with context or resumes.
+        """
+        # Save partial state
+        self._interrupt_context = InterruptContext(
+            partial_content=partial_content,
+            mode=InterruptMode.PAUSE,
+        )
+        self._set_state(ctx, AgentState.PAUSED)
+
+        # Call the pause prompt callback to get user input
+        injection = None
+        if self._on_pause_prompt:
+            result = self._on_pause_prompt(partial_content)
+            if asyncio.iscoroutine(result):
+                injection = await result
+            else:
+                injection = result
+
+        # Clear pause event
+        self._pause_event.clear()
+
+        if injection is None:
+            # User cancelled - set interrupt
+            logger.info("Pause cancelled by user")
+            self._interrupt_event.set()
+            return partial_content
+
+        if injection.strip():
+            # User provided injection - continue with new context
+            logger.info(f"Continuing with injection: {injection[:50]}...")
+            return await self._continue_with_injection(ctx, partial_content, injection)
+
+        # Empty injection - just resume
+        logger.info("Resuming without injection")
+        self._set_state(ctx, AgentState.EXECUTING)
+        return partial_content
+
+    async def _continue_with_injection(
+        self,
+        ctx: LoopContext,
+        partial_content: str,
+        injection: str,
+    ) -> str:
+        """Continue generation with injected user context."""
+        # Add partial response to context (if any meaningful content)
+        if partial_content.strip():
+            ctx.messages.append(Message(
+                role="assistant",
+                content=partial_content + "\n\n[Generation paused by user]",
+            ))
+
+        # Add user injection
+        ctx.messages.append(Message(
+            role="user",
+            content=f"[User interjection]: {injection}\n\nPlease continue with this in mind.",
+        ))
+
+        # Clear pause state and resume
+        self._set_state(ctx, AgentState.EXECUTING)
+
+        # Generate new response with injected context
+        content = ""
+        async for chunk in self.orchestrator.generate_stream(
+            ctx.messages, tier=ctx.locked_tier
+        ):
+            # Check for another pause during continuation
+            if self._pause_event.is_set():
+                logger.info("Generation paused again during continuation")
+                content = await self._handle_pause(ctx, content)
+                if self._interrupt_event.is_set():
+                    break
+
+            content += chunk
+            if self._on_stream_chunk:
+                self._on_stream_chunk(chunk)
+
+        return content
 
     def _create_assistant_message(self, content: str, tool_calls: list[ToolCall]) -> Message:
         """Create assistant message with tool calls.
@@ -710,9 +836,45 @@ Do NOT retry the same tool call with the same arguments.
                 self._on_compaction(result)
 
     def interrupt(self) -> None:
-        """Interrupt the running loop."""
+        """Interrupt the running loop (hard cancel)."""
         self._interrupt_event.set()
+        # Also clear any pending pause
+        self._pause_event.clear()
 
     def reset_interrupt(self) -> None:
         """Reset interrupt flag."""
         self._interrupt_event.clear()
+
+    def pause(self) -> None:
+        """Pause generation (Escape key) to allow injection."""
+        logger.debug("Pause requested")
+        self._pause_event.set()
+
+    def inject(self, content: str) -> None:
+        """Inject user content and resume generation.
+
+        Note: Currently injection happens via _on_pause_prompt callback.
+        This method is reserved for future direct injection support.
+        """
+        logger.debug(f"Injecting content: {content[:50]}...")
+        # Injection now handled via _on_pause_prompt callback in _handle_pause()
+
+    def resume(self) -> None:
+        """Resume generation without injection.
+
+        Note: Currently resume happens via _on_pause_prompt returning empty string.
+        This method is reserved for future direct resume support.
+        """
+        logger.debug("Resume without injection")
+        # Resume now handled via _on_pause_prompt callback in _handle_pause()
+
+    def cancel_pause(self) -> None:
+        """Cancel pause and interrupt completely."""
+        logger.debug("Cancel pause requested")
+        self._pause_event.clear()
+        self._interrupt_event.set()
+
+    @property
+    def is_paused(self) -> bool:
+        """Check if generation is paused."""
+        return self._pause_event.is_set()

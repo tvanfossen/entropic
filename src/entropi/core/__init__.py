@@ -32,10 +32,21 @@ from entropi.core.todos import TodoItem, TodoList, TodoStatus
 
 def __getattr__(name: str):
     """Lazy import for engine module to avoid circular imports."""
-    if name in ("AgentEngine", "AgentState", "LoopConfig", "LoopContext", "LoopMetrics", "ToolApproval"):
+    if name in (
+        "AgentEngine",
+        "AgentState",
+        "InterruptContext",
+        "InterruptMode",
+        "LoopConfig",
+        "LoopContext",
+        "LoopMetrics",
+        "ToolApproval",
+    ):
         from entropi.core.engine import (
             AgentEngine,
             AgentState,
+            InterruptContext,
+            InterruptMode,
             LoopConfig,
             LoopContext,
             LoopMetrics,
@@ -56,6 +67,8 @@ __all__ = [
     "ContextBuilder",
     "ContextCompactor",
     "GenerationResult",
+    "InterruptContext",
+    "InterruptMode",
     "LoopConfig",
     "LoopContext",
     "LoopMetrics",

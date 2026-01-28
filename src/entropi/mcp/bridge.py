@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import threading
 from pathlib import Path
 
 from entropi.core.logging import get_logger
@@ -88,30 +89,49 @@ async def run_bridge(socket_path: Path | None = None) -> int:
 
 
 async def _forward_stdin_to_socket(writer: asyncio.StreamWriter) -> None:
-    """Forward stdin to socket."""
+    """Forward stdin to socket using a thread for blocking reads."""
     loop = asyncio.get_event_loop()
-    stdin_reader = asyncio.StreamReader()
-    protocol = asyncio.StreamReaderProtocol(stdin_reader)
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue()
 
-    await loop.connect_read_pipe(lambda: protocol, sys.stdin)
+    def _read_stdin() -> None:
+        """Read stdin in a thread (blocking)."""
+        try:
+            while True:
+                line = sys.stdin.buffer.readline()
+                if not line:
+                    logger.info("stdin EOF in thread")
+                    asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+                    break
+                logger.info(f"stdin read: {len(line)} bytes")
+                asyncio.run_coroutine_threadsafe(queue.put(line), loop)
+        except Exception as e:
+            logger.error(f"stdin reader error: {e}")
+            asyncio.run_coroutine_threadsafe(queue.put(None), loop)
+
+    # Start stdin reader thread
+    thread = threading.Thread(target=_read_stdin, daemon=True)
+    thread.start()
+    logger.info("stdin reader thread started")
 
     while True:
-        line = await stdin_reader.readline()
-        if not line:
-            logger.debug("stdin EOF")
+        line = await queue.get()
+        if line is None:
+            logger.info("stdin queue received EOF")
             break
 
-        logger.debug(f"stdin -> socket: {line[:100]}...")
+        logger.info(f"stdin -> socket: {len(line)} bytes")
         writer.write(line)
         await writer.drain()
 
 
 async def _forward_socket_to_stdout(reader: asyncio.StreamReader) -> None:
     """Forward socket to stdout."""
+    logger.info("socket reader initialized, waiting for responses...")
+
     while True:
         line = await reader.readline()
         if not line:
-            logger.debug("socket EOF")
+            logger.info("socket EOF")
             break
 
         logger.debug(f"socket -> stdout: {line[:100]}...")

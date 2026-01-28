@@ -569,21 +569,27 @@ class ExternalMCPServer:
             self._clients.append(writer)
 
         try:
+            logger.info("Waiting for client messages...")
             while True:
                 line = await reader.readline()
                 if not line:
+                    logger.info("Client sent empty line (EOF)")
                     break
 
+                logger.info(f"Received from client: {len(line)} bytes")
                 try:
                     request = json.loads(line.decode())
+                    logger.info(f"JSON-RPC request: method={request.get('method')}, id={request.get('id')}")
                     response = await self._handle_jsonrpc(request)
                     if response:
-                        writer.write(json.dumps(response).encode() + b"\n")
+                        response_bytes = json.dumps(response).encode() + b"\n"
+                        logger.info(f"Sending response: {len(response_bytes)} bytes")
+                        writer.write(response_bytes)
                         await writer.drain()
-                except json.JSONDecodeError:
-                    logger.warning("Invalid JSON from client")
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Invalid JSON from client: {e}, data: {line[:100]}")
                 except Exception as e:
-                    logger.error(f"Error handling request: {e}")
+                    logger.error(f"Error handling request: {e}", exc_info=True)
 
         finally:
             async with self._clients_lock:

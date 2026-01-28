@@ -22,6 +22,7 @@ from entropi.core.base import Message, ToolCall
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
 from entropi.core.logging import get_logger
+from entropi.core.queue import MessageSource
 from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
@@ -110,6 +111,9 @@ class LoopContext:
     has_pending_tool_results: bool = False
     # Lock model tier for the entire loop to prevent mid-task switching
     locked_tier: Any = None  # ModelTier or None
+    # External task tracking (for MCP integration)
+    task_id: str | None = None  # Associated task ID if from external source
+    source: str = MessageSource.HUMAN  # Message source (human, claude-code)
 
 
 @dataclass
@@ -186,6 +190,8 @@ class AgentEngine:
         self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
         self._on_todo_update: Callable[[TodoList], None] | None = None
         self._on_compaction: Callable[[CompactionResult], None] | None = None
+        # Task tracking callback for external MCP integration
+        self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -236,6 +242,7 @@ class AgentEngine:
         on_todo_update: Callable[[TodoList], None] | None = None,
         on_compaction: Callable[[CompactionResult], None] | None = None,
         on_pause_prompt: Callable[[str], Any] | None = None,
+        on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None,
     ) -> None:
         """
         Set callback functions for loop events.
@@ -249,6 +256,7 @@ class AgentEngine:
             on_todo_update: Called when todo list is updated
             on_compaction: Called when context is compacted
             on_pause_prompt: Called when generation is paused, returns injection text or None
+            on_tool_record: Called to record tool call for task tracking (task_id, tool, status, result, duration)
         """
         self._on_state_change = on_state_change
         self._on_tool_approval = on_tool_call
@@ -258,6 +266,7 @@ class AgentEngine:
         self._on_todo_update = on_todo_update
         self._on_compaction = on_compaction
         self._on_pause_prompt = on_pause_prompt
+        self._on_tool_record = on_tool_record
 
     @property
     def todo_list(self) -> TodoList:
@@ -269,6 +278,8 @@ class AgentEngine:
         user_message: str,
         history: list[Message] | None = None,
         system_prompt: str | None = None,
+        task_id: str | None = None,
+        source: str = MessageSource.HUMAN,
     ) -> AsyncIterator[Message]:
         """
         Run the agentic loop.
@@ -277,6 +288,8 @@ class AgentEngine:
             user_message: User's input message
             history: Optional conversation history
             system_prompt: Optional system prompt override
+            task_id: Optional task ID for external tracking (MCP integration)
+            source: Message source (human, claude-code, system)
 
         Yields:
             Messages generated during the loop
@@ -284,6 +297,8 @@ class AgentEngine:
         # Initialize context
         ctx = LoopContext()
         ctx.metrics.start_time = time.time()
+        ctx.task_id = task_id
+        ctx.source = source
 
         # Reset interrupt flag from any previous run
         self.reset_interrupt()
@@ -670,18 +685,28 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
             if self._on_tool_complete:
                 self._on_tool_complete(tool_call, result.result, duration_ms)
 
+            # Record tool call for task tracking (MCP integration)
+            if ctx.task_id and self._on_tool_record:
+                self._on_tool_record(ctx.task_id, tool_call, "success", result.result, duration_ms)
+
             return self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
         except PermissionDeniedError as e:
             duration_ms = (time.time() - start_time) * 1000
             logger.warning(f"Tool permission denied: {tool_call.name} - {e}")
             if self._on_tool_complete:
                 self._on_tool_complete(tool_call, f"Permission denied: {e}", duration_ms)
+            # Record error for task tracking
+            if ctx.task_id and self._on_tool_record:
+                self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
             return self._create_denied_message(tool_call, str(e))
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             logger.error(f"Tool execution error: {tool_call.name} - {e}")
             if self._on_tool_complete:
                 self._on_tool_complete(tool_call, f"Error: {e}", duration_ms)
+            # Record error for task tracking
+            if ctx.task_id and self._on_tool_record:
+                self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
             # Return error message instead of raising to allow the model to recover
             return self._create_error_message(tool_call, str(e))
 

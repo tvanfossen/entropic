@@ -4,6 +4,7 @@ Application orchestrator.
 Coordinates all components and manages the application lifecycle.
 """
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,12 @@ from entropi.core.commands import CommandContext, CommandRegistry
 from entropi.core.context import ProjectContext
 from entropi.core.engine import AgentEngine, LoopConfig
 from entropi.core.logging import get_logger
+from entropi.core.queue import MessageQueue, MessageSource
+from entropi.core.session import SessionManager
+from entropi.core.tasks import TaskManager
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import ServerManager
+from entropi.mcp.servers.external import ExternalMCPServer
 from entropi.storage.backend import SQLiteStorage
 from entropi.ui.tui import EntropiApp
 
@@ -50,6 +55,13 @@ class Application:
         self._engine: AgentEngine | None = None
         self._command_registry: CommandRegistry | None = None
         self._project_context: ProjectContext | None = None
+
+        # External MCP server components (for Claude Code integration)
+        self._message_queue: MessageQueue | None = None
+        self._task_manager: TaskManager | None = None
+        self._session_manager: SessionManager | None = None
+        self._external_mcp: ExternalMCPServer | None = None
+        self._external_mcp_task: asyncio.Task[None] | None = None
 
         # Session state
         self._conversation_id: str | None = None
@@ -107,11 +119,56 @@ class Application:
                 loop_config=loop_config,
             )
 
+            # Initialize external MCP server for Claude Code integration
+            if self.config.mcp.external.enabled:
+                status.update("[bold blue]Starting external MCP server...")
+                await self._initialize_external_mcp()
+
         self.logger.info("Entropi initialized")
+
+    async def _initialize_external_mcp(self) -> None:
+        """Initialize external MCP server for Claude Code integration."""
+        # Create message queue
+        self._message_queue = MessageQueue()
+
+        # Create task manager
+        self._task_manager = TaskManager()
+
+        # Create session manager with its own database
+        session_db = self.config.config_dir / "sessions.db"
+        self._session_manager = SessionManager(session_db)
+
+        # Create external MCP server
+        self._external_mcp = ExternalMCPServer(
+            config=self.config,
+            message_queue=self._message_queue,
+            task_manager=self._task_manager,
+            session_manager=self._session_manager,
+        )
+
+        # Start the socket server in the background
+        self._external_mcp_task = asyncio.create_task(
+            self._external_mcp.start(),
+            name="external-mcp-server",
+        )
+
+        self.logger.info(
+            f"External MCP server starting on {self.config.mcp.external.socket_path}"
+        )
 
     async def shutdown(self) -> None:
         """Shutdown all components."""
         self.logger.info("Shutting down...")
+
+        # Stop external MCP server
+        if self._external_mcp:
+            await self._external_mcp.stop()
+        if self._external_mcp_task:
+            self._external_mcp_task.cancel()
+            try:
+                await self._external_mcp_task
+            except asyncio.CancelledError:
+                pass
 
         # Shutdown in reverse order
         if self._mcp_manager:

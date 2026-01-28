@@ -40,6 +40,19 @@ routing:
 
 log_level: INFO
 
+# MCP configuration
+mcp:
+  enable_filesystem: true
+  enable_bash: true
+  enable_git: true
+  enable_diagnostics: true
+
+  # External MCP server for Claude Code integration
+  external:
+    enabled: false  # Set to true to enable Claude Code delegation
+    socket_path: ~/.entropi/mcp.sock
+    rate_limit: 10  # requests per minute
+
 # Voice interface configuration (NVIDIA PersonaPlex)
 voice:
   enabled: false

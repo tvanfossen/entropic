@@ -162,6 +162,23 @@ class StorageConfig(BaseModel):
         return Path(v).expanduser()
 
 
+class ExternalMCPConfig(BaseModel):
+    """Configuration for external MCP server (Claude Code integration)."""
+
+    enabled: bool = False
+    socket_path: Path = Field(
+        default_factory=lambda: Path.home() / ".entropi" / "mcp.sock"
+    )
+    # Rate limiting: requests per minute
+    rate_limit: int = Field(default=10, ge=1, le=100)
+
+    @field_validator("socket_path")
+    @classmethod
+    def validate_socket_path(cls, v: Path) -> Path:
+        """Expand user path."""
+        return Path(v).expanduser()
+
+
 class MCPConfig(BaseModel):
     """MCP server configuration."""
 
@@ -173,6 +190,9 @@ class MCPConfig(BaseModel):
 
     # External MCP servers (from .mcp.json)
     external_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # External MCP server for Claude Code integration
+    external: ExternalMCPConfig = Field(default_factory=ExternalMCPConfig)
 
     # Server timeout
     server_timeout_seconds: int = Field(default=30, ge=5, le=300)

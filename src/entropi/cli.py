@@ -233,5 +233,39 @@ def download(model: str, output_dir: Path, force: bool) -> None:
     download_models(model, output_dir, force)
 
 
+@main.command("mcp-bridge")
+@click.option(
+    "--socket",
+    type=click.Path(path_type=Path),
+    help="Path to Unix socket (default: ~/.entropi/mcp.sock)",
+)
+@click.pass_context
+def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
+    """
+    Run as MCP bridge for Claude Code integration.
+
+    This bridges stdio (used by Claude Code) to Entropi's Unix socket.
+    Entropi must already be running for the bridge to connect.
+
+    Configure Claude Code's .mcp.json:
+
+    \b
+    {
+      "mcpServers": {
+        "entropi": {
+          "type": "stdio",
+          "command": "entropi",
+          "args": ["mcp-bridge"]
+        }
+      }
+    }
+    """
+    from entropi.mcp.bridge import main as bridge_main
+
+    socket_path = str(socket) if socket else None
+    exit_code = bridge_main(socket_path)
+    sys.exit(exit_code)
+
+
 if __name__ == "__main__":
     main()

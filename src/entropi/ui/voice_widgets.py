@@ -311,6 +311,7 @@ class VoiceStatusBar(Static):
         state_colors = {
             "idle": ("dim", "Idle"),
             "initializing": ("yellow", "Loading..."),
+            "ready": ("cyan", "Ready"),
             "conversation": ("green", "Listening"),
             "thinking": ("yellow", "Thinking..."),
             "compacting": ("cyan", "Processing"),

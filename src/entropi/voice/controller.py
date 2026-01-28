@@ -280,15 +280,14 @@ class PersonaPlexController:
             # Load PersonaPlex models
             await self._load_personaplex()
 
-            # Start audio I/O with level callbacks
+            # Set up audio callbacks (but don't start yet - wait for start_conversation)
             self._audio_io.set_level_callbacks(
                 on_input=self._callbacks.on_input_level,
                 on_output=self._callbacks.on_output_level,
             )
-            await self._audio_io.start()
 
             self._set_state(VoiceState.IDLE)
-            logger.info("PersonaPlex controller initialized")
+            logger.info("PersonaPlex controller initialized (audio not started)")
             return True
 
         except Exception as e:
@@ -450,6 +449,11 @@ class PersonaPlexController:
         """Start the conversation loop."""
         if self._running:
             return
+
+        # Start audio I/O now that user is ready
+        logger.info("Starting audio I/O...")
+        await self._audio_io.start()
+        logger.info("Audio I/O started")
 
         async with self._lock:
             self._running = True

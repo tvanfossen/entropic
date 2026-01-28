@@ -2,7 +2,9 @@
 Voice mode full-screen interface.
 
 Provides the main voice conversation screen with visualizer,
-transcript, and status displays.
+transcript, and status displays. Two-phase operation:
+1. Initialization: Load models, show settings
+2. Conversation: Start after user confirms settings
 """
 
 from __future__ import annotations
@@ -15,9 +17,9 @@ from typing import TYPE_CHECKING
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.screen import Screen
-from textual.widgets import Static
+from textual.widgets import Button, Label, Select, Static
 
 from entropi.core.logging import get_logger
 from entropi.ui.voice_widgets import (
@@ -34,12 +36,148 @@ if TYPE_CHECKING:
 logger = get_logger("ui.voice_screen")
 
 
+class VoiceSettingsPanel(Static):
+    """Settings panel shown before conversation starts."""
+
+    DEFAULT_CSS = """
+    VoiceSettingsPanel {
+        width: 100%;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: solid $primary;
+    }
+
+    VoiceSettingsPanel .settings-row {
+        width: 100%;
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    VoiceSettingsPanel Label {
+        width: 20;
+    }
+
+    VoiceSettingsPanel Select {
+        width: 1fr;
+    }
+
+    VoiceSettingsPanel .button-row {
+        width: 100%;
+        height: auto;
+        margin-top: 1;
+        align: center middle;
+    }
+
+    VoiceSettingsPanel Button {
+        margin: 0 1;
+    }
+
+    VoiceSettingsPanel #start-btn {
+        background: $success;
+    }
+
+    VoiceSettingsPanel #generate-thinking-btn {
+        background: $warning;
+    }
+    """
+
+    def __init__(
+        self,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        super().__init__(name=name, id=id, classes=classes)
+        self._audio_devices: list[tuple[str, int]] = []
+        self._input_device: int | None = None
+        self._output_device: int | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Label("[bold]Voice Settings[/bold]")
+
+        with Horizontal(classes="settings-row"):
+            yield Label("Input Device:")
+            yield Select(
+                [(("Loading...", -1))],
+                id="input-device-select",
+                allow_blank=False,
+            )
+
+        with Horizontal(classes="settings-row"):
+            yield Label("Output Device:")
+            yield Select(
+                [(("Loading...", -1))],
+                id="output-device-select",
+                allow_blank=False,
+            )
+
+        with Horizontal(classes="settings-row"):
+            yield Label("Status:")
+            yield Label("Initializing...", id="init-status")
+
+        with Horizontal(classes="button-row"):
+            yield Button("Generate Thinking Audio", id="generate-thinking-btn", disabled=True)
+            yield Button("Start Conversation", id="start-btn", variant="success", disabled=True)
+
+    def set_audio_devices(
+        self,
+        devices: list[tuple[str, int, bool, bool]],  # (name, index, has_input, has_output)
+    ) -> None:
+        """Update audio device selectors."""
+        input_devices = [(name, idx) for name, idx, has_in, _ in devices if has_in]
+        output_devices = [(name, idx) for name, idx, _, has_out in devices if has_out]
+
+        try:
+            input_select = self.query_one("#input-device-select", Select)
+            input_select.set_options(input_devices if input_devices else [("No devices", -1)])
+            if input_devices:
+                input_select.value = input_devices[0][1]
+
+            output_select = self.query_one("#output-device-select", Select)
+            output_select.set_options(output_devices if output_devices else [("No devices", -1)])
+            if output_devices:
+                output_select.value = output_devices[0][1]
+        except Exception:
+            pass
+
+    def set_status(self, status: str) -> None:
+        """Update status label."""
+        try:
+            label = self.query_one("#init-status", Label)
+            label.update(status)
+        except Exception:
+            pass
+
+    def set_ready(self, ready: bool) -> None:
+        """Enable/disable start button."""
+        try:
+            start_btn = self.query_one("#start-btn", Button)
+            start_btn.disabled = not ready
+            thinking_btn = self.query_one("#generate-thinking-btn", Button)
+            thinking_btn.disabled = not ready
+        except Exception:
+            pass
+
+    def get_selected_devices(self) -> tuple[int | None, int | None]:
+        """Get selected input and output device indices."""
+        try:
+            input_select = self.query_one("#input-device-select", Select)
+            output_select = self.query_one("#output-device-select", Select)
+            input_idx = input_select.value if input_select.value != -1 else None
+            output_idx = output_select.value if output_select.value != -1 else None
+            return input_idx, output_idx
+        except Exception:
+            return None, None
+
+
 class VoiceScreen(Screen[None]):
     """
     Full-screen voice conversation interface.
 
-    Manages the voice controller lifecycle and displays conversation
-    state through visualizer and transcript widgets.
+    Two-phase operation:
+    1. Initialization phase: Load models, detect devices, show settings
+    2. Conversation phase: After user starts, run conversation loop
     """
 
     CSS = """
@@ -59,15 +197,26 @@ class VoiceScreen(Screen[None]):
         margin-bottom: 1;
     }
 
+    #settings-container {
+        height: auto;
+        width: 100%;
+        margin-bottom: 1;
+    }
+
     #transcript-container {
         height: 1fr;
         width: 100%;
+    }
+
+    .hidden {
+        display: none;
     }
     """
 
     BINDINGS = [
         Binding("escape", "exit_voice", "Exit", show=True),
         Binding("space", "toggle_pause", "Pause/Resume", show=True),
+        Binding("enter", "start_conversation", "Start", show=True),
         Binding("r", "reset_context", "Reset", show=True),
     ]
 
@@ -98,6 +247,8 @@ class VoiceScreen(Screen[None]):
         self._controller: PersonaPlexController | None = None
         self._start_time: float = 0
         self._elapsed_timer: asyncio.Task[None] | None = None
+        self._initialized: bool = False
+        self._conversation_started: bool = False
 
     def compose(self) -> ComposeResult:
         """Compose screen layout."""
@@ -107,13 +258,16 @@ class VoiceScreen(Screen[None]):
             with Container(id="visualizer-container"):
                 yield VoiceVisualizer(id="visualizer")
 
+            with Container(id="settings-container"):
+                yield VoiceSettingsPanel(id="settings-panel")
+
             with Container(id="transcript-container"):
                 yield VoiceTranscript(id="transcript")
 
         yield VoiceStatusBar(id="status-bar")
 
     async def on_mount(self) -> None:
-        """Handle screen mount - initialize voice controller."""
+        """Handle screen mount - start initialization."""
         # Create callbacks
         callbacks = VoiceCallbacks(
             on_state_change=self._on_state_change,
@@ -127,39 +281,129 @@ class VoiceScreen(Screen[None]):
         # Create controller
         self._controller = PersonaPlexController(self._config, callbacks)
 
-        # Start initialization
+        # Start initialization (but don't start conversation)
         self._run_initialization()
 
     @work(exclusive=True)
     async def _run_initialization(self) -> None:
-        """Initialize and start voice conversation."""
+        """Initialize models and audio devices (but don't start conversation)."""
         if self._controller is None:
             return
 
         status_bar = self.query_one("#status-bar", VoiceStatusBar)
         status_bar.set_state("initializing")
+        settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
 
         try:
             # Call on_enter to free GPU memory (unload chat models)
             if self._on_enter:
-                self.notify("Unloading chat models to free GPU memory...")
+                settings_panel.set_status("Unloading chat models...")
                 await self._on_enter()
 
+            # Initialize controller (loads models)
+            settings_panel.set_status("Loading PersonaPlex models...")
             success = await self._controller.initialize()
             if not success:
+                settings_panel.set_status("[red]Initialization failed[/red]")
                 self.notify("Failed to initialize voice mode", severity="error")
-                self.app.pop_screen()
                 return
 
-            # Start conversation
-            self._start_time = time.time()
-            self._elapsed_timer = asyncio.create_task(self._update_elapsed())
-            await self._controller.start_conversation()
+            # Detect audio devices
+            settings_panel.set_status("Detecting audio devices...")
+            devices = await self._detect_audio_devices()
+            settings_panel.set_audio_devices(devices)
+
+            # Ready for user to start
+            self._initialized = True
+            settings_panel.set_status("[green]Ready - Press Enter or click Start[/green]")
+            settings_panel.set_ready(True)
+            status_bar.set_state("ready")
+
+            self._on_loading_progress("Models loaded. Configure settings and press Enter to start.")
 
         except Exception as e:
             logger.error(f"Voice initialization error: {e}")
+            settings_panel.set_status(f"[red]Error: {e}[/red]")
             self.notify(f"Voice mode error: {e}", severity="error")
-            self.app.pop_screen()
+
+    async def _detect_audio_devices(self) -> list[tuple[str, int, bool, bool]]:
+        """Detect available audio devices."""
+
+        def _query_devices() -> list[tuple[str, int, bool, bool]]:
+            """Query audio devices in a dedicated thread (PortAudio is thread-sensitive)."""
+            import sys
+            import traceback
+
+            devices = []
+            try:
+                logger.info("Detecting audio devices...")
+                logger.info(f"sys.path: {sys.path[:5]}")  # First 5 entries
+                import sounddevice as sd
+
+                logger.info(f"sounddevice v{sd.__version__} from {sd.__file__}")
+                device_list = sd.query_devices()
+                logger.info(f"Found {len(device_list)} audio devices")
+
+                for i, dev in enumerate(device_list):
+                    name = dev["name"]
+                    has_input = dev["max_input_channels"] > 0
+                    has_output = dev["max_output_channels"] > 0
+                    devices.append((name, i, has_input, has_output))
+            except Exception as e:
+                logger.error(f"Audio device detection failed: {e}")
+                logger.error(f"Traceback:\n{traceback.format_exc()}")
+            return devices
+
+        # Run in thread to avoid PortAudio thread context issues
+        return await asyncio.to_thread(_query_devices)
+
+    async def action_start_conversation(self) -> None:
+        """Start the conversation after user confirms settings."""
+        if not self._initialized or self._conversation_started:
+            return
+
+        if self._controller is None:
+            return
+
+        self._conversation_started = True
+
+        # Hide settings panel
+        try:
+            settings_container = self.query_one("#settings-container", Container)
+            settings_container.add_class("hidden")
+        except Exception:
+            pass
+
+        # Get selected devices
+        settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
+        input_device, output_device = settings_panel.get_selected_devices()
+
+        # TODO: Pass selected devices to audio_io
+
+        # Start conversation
+        self._start_time = time.time()
+        self._elapsed_timer = asyncio.create_task(self._update_elapsed())
+
+        status_bar = self.query_one("#status-bar", VoiceStatusBar)
+        status_bar.set_state("conversation")
+
+        await self._controller.start_conversation()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button presses."""
+        if event.button.id == "start-btn":
+            self.run_worker(self.action_start_conversation())
+        elif event.button.id == "generate-thinking-btn":
+            self.run_worker(self._generate_thinking_audio())
+
+    async def _generate_thinking_audio(self) -> None:
+        """Generate thinking audio file using current voice."""
+        if not self._initialized or self._controller is None:
+            return
+
+        self.notify("Generating thinking audio...", timeout=5)
+        # TODO: Implement thinking audio generation
+        self.notify("Thinking audio generation not yet implemented", severity="warning")
 
     async def _update_elapsed(self) -> None:
         """Update elapsed time display periodically."""
@@ -185,6 +429,9 @@ class VoiceScreen(Screen[None]):
 
         try:
             status_bar = self.query_one("#status-bar", VoiceStatusBar)
+            # Don't override "ready" state from initialization
+            if self._initialized and not self._conversation_started:
+                return
             status_bar.set_state(state_map.get(state, "unknown"))
 
             if self._controller:
@@ -223,11 +470,8 @@ class VoiceScreen(Screen[None]):
     def _on_loading_progress(self, message: str) -> None:
         """Handle loading progress updates."""
         try:
-            # Update transcript area with loading status
             transcript = self.query_one("#transcript", VoiceTranscript)
             transcript.add_text("system", message)
-            # Also show as notification for visibility
-            self.notify(message, timeout=10)
         except Exception:
             pass
 
@@ -238,7 +482,7 @@ class VoiceScreen(Screen[None]):
 
     async def action_toggle_pause(self) -> None:
         """Toggle pause/resume."""
-        if self._controller is None:
+        if self._controller is None or not self._conversation_started:
             return
 
         if self._controller.is_paused:

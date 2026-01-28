@@ -129,14 +129,18 @@ async def _forward_socket_to_stdout(reader: asyncio.StreamReader) -> None:
     logger.info("socket reader initialized, waiting for responses...")
 
     while True:
-        line = await reader.readline()
-        if not line:
-            logger.info("socket EOF")
-            break
+        try:
+            line = await reader.readline()
+            if not line:
+                logger.info("socket EOF")
+                break
 
-        logger.debug(f"socket -> stdout: {line[:100]}...")
-        sys.stdout.buffer.write(line)
-        sys.stdout.buffer.flush()
+            logger.info(f"socket -> stdout: {len(line)} bytes")
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+        except Exception as e:
+            logger.error(f"socket reader error: {e}")
+            break
 
 
 def main(socket_path: str | None = None) -> int:

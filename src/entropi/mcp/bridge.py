@@ -18,8 +18,8 @@ from entropi.core.logging import get_logger
 
 logger = get_logger("mcp.bridge")
 
-# Default socket path
-DEFAULT_SOCKET_PATH = Path.home() / ".entropi" / "mcp.sock"
+# Default socket path (project-relative for Docker compatibility)
+DEFAULT_SOCKET_PATH = Path.cwd() / ".entropi" / "mcp.sock"
 
 
 async def run_bridge(socket_path: Path | None = None) -> int:
@@ -30,12 +30,17 @@ async def run_bridge(socket_path: Path | None = None) -> int:
     and writes responses back to stdout.
 
     Args:
-        socket_path: Path to Unix socket (default: ~/.entropi/mcp.sock)
+        socket_path: Path to Unix socket (default: .entropi/mcp.sock in cwd)
 
     Returns:
         Exit code (0 for success)
     """
     path = socket_path or DEFAULT_SOCKET_PATH
+
+    # Resolve relative paths
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    path = path.resolve()
 
     if not path.exists():
         logger.error(f"Socket not found: {path}")

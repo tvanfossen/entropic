@@ -98,8 +98,11 @@ class ExternalMCPServer:
         self._server = Server("entropi-external")
         self._rate_limiter = RateLimiter(config.mcp.external.rate_limit)
 
-        # Socket path
-        self._socket_path = config.mcp.external.socket_path
+        # Socket path - resolve relative paths from current working directory
+        socket_path = config.mcp.external.socket_path
+        if not socket_path.is_absolute():
+            socket_path = Path.cwd() / socket_path
+        self._socket_path = socket_path.resolve()
 
         # Connected clients for notifications
         self._clients: list[asyncio.StreamWriter] = []

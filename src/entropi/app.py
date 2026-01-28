@@ -150,6 +150,12 @@ class Application:
             self._ui.set_interrupt_callback(self._handle_interrupt)
             self._ui.set_pause_callback(self._handle_pause)
 
+            # Set voice mode callbacks to manage VRAM
+            self._ui.set_voice_callbacks(
+                on_enter=self._on_voice_enter,
+                on_exit=self._on_voice_exit,
+            )
+
             # Run the Textual app (this blocks until exit)
             await self._ui.run_async()
 
@@ -333,17 +339,20 @@ class Application:
             # Mark generation active (enables Escape to pause)
             self._ui.start_generation()
 
+            # Add user message to history FIRST (before generation)
+            # This ensures it's preserved even if interrupted
+            self._messages.append(Message(role="user", content=user_input))
+
             new_messages: list[Message] = []
             async for msg in self._engine.run(
                 user_input,
-                history=self._messages,
+                history=self._messages[:-1],  # Pass history without the just-added user message
                 system_prompt=system_prompt,
             ):
                 new_messages.append(msg)
-
-            # Update conversation history
-            self._messages.append(Message(role="user", content=user_input))
-            self._messages.extend(new_messages)
+                # Add messages as they arrive (preserves partial state on interrupt)
+                if msg not in self._messages:
+                    self._messages.append(msg)
 
             # Show context usage after each response
             if self._engine:
@@ -414,6 +423,18 @@ class Application:
             # because prompt_injection uses push_screen_wait which must run on
             # Textual's main thread, but engine.run() is in a worker thread
             self._engine.interrupt()
+
+    async def _on_voice_enter(self) -> None:
+        """Handle entering voice mode - unload chat models to free VRAM."""
+        if self._orchestrator:
+            self.logger.info("Voice mode: unloading chat models")
+            await self._orchestrator.unload_all_models()
+
+    async def _on_voice_exit(self) -> None:
+        """Handle exiting voice mode - reload chat models."""
+        if self._orchestrator:
+            self.logger.info("Voice mode: reloading chat models")
+            await self._orchestrator.reload_default_models()
 
     async def _handle_pause_prompt(self, partial_content: str) -> str | None:
         """

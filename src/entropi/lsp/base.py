@@ -173,6 +173,8 @@ class BaseLSPClient(ABC):
 
     def stop(self) -> None:
         """Stop the language server."""
+        import time
+
         if self._client:
             try:
                 self._client.shutdown()
@@ -180,12 +182,23 @@ class BaseLSPClient(ABC):
             except Exception:
                 pass
 
+        # Stop the endpoint's listener thread before terminating process
+        # This prevents "server quit" print errors on closed file handles
+        if self._endpoint:
+            try:
+                self._endpoint.stop()
+                # Give threads time to exit cleanly before process termination
+                time.sleep(0.1)
+            except Exception:
+                pass
+
         if self._process:
             self._process.terminate()
             try:
-                self._process.wait(timeout=5)
+                self._process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 self._process.kill()
+                self._process.wait(timeout=1)
 
         self._process = None
         self._endpoint = None

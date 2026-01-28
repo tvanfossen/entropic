@@ -184,11 +184,17 @@ class CompactionManager:
         new_tokens = self.counter.count_messages(compacted_messages)
 
         # Verify we actually reduced tokens (otherwise we might loop)
-        if new_tokens >= current_tokens * 0.9:
+        # Must reduce by at least 20% to be considered successful
+        if new_tokens >= current_tokens * 0.8:
             logger.warning(
-                f"Compaction did not significantly reduce tokens: "
-                f"{current_tokens} -> {new_tokens}. May compact again soon."
+                f"Compaction failed to reduce significantly: {current_tokens} -> {new_tokens}. "
+                "Using aggressive fallback."
             )
+            # Aggressive fallback: keep only system + last 2 messages
+            compacted_messages = self._aggressive_compact(messages)
+            self.counter.clear_cache()
+            new_tokens = self.counter.count_messages(compacted_messages)
+            logger.info(f"Aggressive compaction: {current_tokens} -> {new_tokens} tokens")
 
         logger.info(f"Compacted {current_tokens} -> {new_tokens} tokens")
 
@@ -214,8 +220,9 @@ class CompactionManager:
             Tuple of (compacted messages, summary text, count of summarized messages)
         """
         current_tokens = self.counter.count_messages(messages)
-        # Target 50% reduction - aim for half the current tokens
-        target_tokens = current_tokens // 2
+        # Target 50% of context window, not 50% of current
+        # This ensures target is always under the context limit
+        target_tokens = min(current_tokens // 2, int(self.counter.max_tokens * 0.5))
 
         # Keep system message if present
         system_message = None
@@ -276,15 +283,18 @@ class CompactionManager:
         summary = await self._generate_summary(old_messages, summary_budget)
 
         # Build compacted message list
+        # Keep system message separate - don't concatenate into summary
+        # This prevents doubling the system prompt size
         summary_message = Message(
-            role="system",
+            role="user",  # Use user role for summary to avoid system message bloat
             content=self._format_summary(summary, len(old_messages)),
         )
 
-        result = [summary_message, *recent_messages]
+        result = []
         if system_message:
-            # Merge system message with summary
-            summary_message.content = system_message.content + "\n\n" + summary_message.content
+            result.append(system_message)
+        result.append(summary_message)
+        result.extend(recent_messages)
 
         return result, summary, len(old_messages)
 
@@ -305,16 +315,18 @@ class CompactionManager:
 
         summary_prompt = f"""Summarize this conversation briefly in {target_tokens} tokens or less.
 
-Key points to capture:
-- What task is being worked on
-- Important files/code mentioned
-- Key decisions made
-- Current state/progress
+CRITICAL - You MUST include:
+1. What task the user requested
+2. ALL tool calls that were made and their results (list each tool with outcome)
+3. Current state/progress
+4. Any files that were read or modified
+
+This summary will be used to continue the conversation, so the model needs to know what tools have already been called to avoid duplicates.
 
 CONVERSATION:
 {conversation_text}
 
-Brief summary:"""
+Brief summary (include tool call history):"""
 
         try:
             result = await self.orchestrator.generate(
@@ -370,6 +382,28 @@ The following summarizes {message_count} previous messages that have been compac
 {summary}
 
 [END SUMMARY - Recent conversation continues below]"""
+
+    def _aggressive_compact(self, messages: list[Message]) -> list[Message]:
+        """Emergency compaction: keep only system + minimal recent context."""
+        result = []
+
+        # Keep system message if present
+        working_messages = messages
+        if messages and messages[0].role == "system":
+            result.append(messages[0])
+            working_messages = messages[1:]
+
+        # Keep only last 2 messages (1 turn)
+        if len(working_messages) >= 2:
+            result.extend(working_messages[-2:])
+        elif working_messages:
+            result.extend(working_messages)
+
+        logger.debug(
+            f"Aggressive compaction: kept {len(result)} messages "
+            f"from original {len(messages)}"
+        )
+        return result
 
     async def _save_snapshot(
         self,

@@ -8,6 +8,7 @@ replacing the Rich + prompt_toolkit approach.
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
@@ -182,6 +183,7 @@ class EntropiApp(App[None]):
         Binding("ctrl+c", "interrupt", "Interrupt", show=False, priority=True),
         Binding("ctrl+l", "clear_screen", "Clear", show=True),
         Binding("ctrl+b", "toggle_thinking_blocks", "Toggle Thinking", show=False),
+        Binding("f5", "voice_mode", "Voice Mode", show=True),
     ]
 
     def __init__(
@@ -207,9 +209,11 @@ class EntropiApp(App[None]):
         # State
         self._is_generating = False
         self._generation_id = 0  # Incremented each generation for stale callback detection
+        self._interrupt_count = 0  # Track repeated interrupts for force exit
         self._current_message: AssistantMessage | None = None
         self._current_thinking: ThinkingBlock | None = None
         self._in_think_block = False
+        self._in_tool_call_block = False  # Filter tool_call XML from display
         self._auto_approve_all = False
         self._input_history: list[str] = []
         self._history_index = -1
@@ -227,6 +231,10 @@ class EntropiApp(App[None]):
         # For pause/inject synchronization
         self._pause_result: str | None = None
         self._pause_event: asyncio.Event | None = None
+
+        # Voice mode callbacks (set by app to unload/reload models)
+        self._voice_on_enter: Callable[[], Coroutine[Any, Any, None]] | None = None
+        self._voice_on_exit: Callable[[], Coroutine[Any, Any, None]] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
@@ -293,20 +301,20 @@ class EntropiApp(App[None]):
         if self._on_user_input:
             self._run_generation_worker(user_input)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def _run_generation_worker(self, user_input: str) -> None:
-        """Run generation in background thread."""
+        """Run generation as async background task."""
         try:
             if self._on_user_input:
                 await self._on_user_input(user_input)
         except asyncio.CancelledError:
             # Worker was cancelled (e.g., by Esc or new input) - this is expected
             logger.debug("Generation worker cancelled")
-            self.call_from_thread(self._end_generation_ui)
+            self._end_generation_ui()
         except Exception as e:
             logger.exception("Error in generation worker")
-            self.call_from_thread(self._add_error, f"Error: {e}")
-            self.call_from_thread(self._end_generation_ui)
+            self._add_error(f"Error: {e}")
+            self._end_generation_ui()
 
     def on_key(self, event: events.Key) -> None:
         """Handle key events for history navigation."""
@@ -339,23 +347,50 @@ class EntropiApp(App[None]):
     def action_pause_generation(self) -> None:
         """Handle Escape key - interrupt generation."""
         if self._is_generating:
-            logger.debug("Pause requested via Escape")
-            # Show feedback but DON'T end generation UI - let the worker finish
-            # The worker's finally block will call end_generation()
-            self.notify("Interrupting...", timeout=2)
+            self._interrupt_count += 1
+            logger.debug(f"Pause requested via Escape (count={self._interrupt_count})")
+
+            if self._interrupt_count >= 3:
+                # Hard kill - nothing else worked
+                logger.warning("Hard exit via os._exit")
+                os._exit(1)
+
+            if self._interrupt_count >= 2:
+                # Force exit on repeated interrupt
+                self.notify("Force exit (press again for hard kill)", timeout=1)
+                self._end_generation_ui()
+                self.exit()
+                return
+
+            self.notify("Interrupting... (press again to exit)", timeout=2)
             if self._on_pause:
                 self._on_pause()
-            # Don't call _end_generation_ui() - worker handles that
+            # End UI state so user can continue or exit
+            self._end_generation_ui()
 
     def action_interrupt(self) -> None:
         """Handle Ctrl+C - interrupt."""
         if self._is_generating:
-            logger.debug("Interrupt requested via Ctrl+C")
-            # Show feedback but DON'T end generation UI - let the worker finish
-            self.notify("Interrupting...", timeout=2)
+            self._interrupt_count += 1
+            logger.debug(f"Interrupt requested via Ctrl+C (count={self._interrupt_count})")
+
+            if self._interrupt_count >= 3:
+                # Hard kill - nothing else worked
+                logger.warning("Hard exit via os._exit")
+                os._exit(1)
+
+            if self._interrupt_count >= 2:
+                # Force exit on repeated interrupt
+                self.notify("Force exit (press again for hard kill)", timeout=1)
+                self._end_generation_ui()
+                self.exit()
+                return
+
+            self.notify("Interrupting... (press again to exit)", timeout=2)
             if self._on_interrupt:
                 self._on_interrupt()
-            # Don't call _end_generation_ui() - worker handles that
+            # End UI state so user can continue or exit
+            self._end_generation_ui()
         else:
             # Not generating - exit
             self.exit()
@@ -402,14 +437,16 @@ class EntropiApp(App[None]):
     # === Generation State ===
 
     def start_generation(self) -> None:
-        """Mark generation as started. Thread-safe."""
-        self.call_from_thread(self._start_generation_ui)
+        """Mark generation as started."""
+        self._start_generation_ui()
 
     def _start_generation_ui(self) -> None:
         """UI updates for start_generation - must run on main thread."""
         self._generation_id += 1  # Invalidate any stale callbacks
         self._is_generating = True
+        self._interrupt_count = 0  # Reset interrupt counter
         self._in_think_block = False
+        self._in_tool_call_block = False
         self._current_thinking = None
         self._current_message = None  # Don't create yet - wait for non-thinking content
 
@@ -422,8 +459,8 @@ class EntropiApp(App[None]):
         footer.set_generating(True)
 
     def end_generation(self) -> None:
-        """Mark generation as ended. Thread-safe."""
-        self.call_from_thread(self._end_generation_ui)
+        """Mark generation as ended."""
+        self._end_generation_ui()
 
     def _end_generation_ui(self) -> None:
         """UI updates for end_generation - must run on main thread. Idempotent."""
@@ -467,8 +504,8 @@ class EntropiApp(App[None]):
     # === Streaming ===
 
     def on_stream_chunk(self, chunk: str) -> None:
-        """Handle streaming chunk from engine. Thread-safe."""
-        self.call_from_thread(self._on_stream_chunk_ui, chunk)
+        """Handle streaming chunk from engine."""
+        self._on_stream_chunk_ui(chunk)
 
     def _on_stream_chunk_ui(self, chunk: str) -> None:
         """Process streaming chunk - must run on main thread."""
@@ -478,7 +515,7 @@ class EntropiApp(App[None]):
 
         chat_log = self.query_one("#chat-log", VerticalScroll)
 
-        # Process chunk for think blocks
+        # Process chunk - filter think blocks and tool_call XML
         i = 0
         while i < len(chunk):
             remaining = chunk[i:]
@@ -486,7 +523,6 @@ class EntropiApp(App[None]):
             # Check for <think> start tag
             if remaining.startswith("<think>"):
                 self._in_think_block = True
-                # Create thinking block widget if needed
                 if not self._current_thinking:
                     self._current_thinking = ThinkingBlock()
                     chat_log.mount(self._current_thinking)
@@ -500,6 +536,23 @@ class EntropiApp(App[None]):
                     self._current_thinking.finish()
                 self._current_thinking = None
                 i += 8
+                continue
+
+            # Check for <tool_call> - filter from text display (shown via ToolCallWidget)
+            if remaining.startswith("<tool_call>"):
+                self._in_tool_call_block = True
+                i += 11
+                continue
+
+            # Check for </tool_call>
+            if remaining.startswith("</tool_call>"):
+                self._in_tool_call_block = False
+                i += 12
+                continue
+
+            # Skip content inside tool_call blocks
+            if self._in_tool_call_block:
+                i += 1
                 continue
 
             # Regular character
@@ -541,8 +594,8 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     def print_info(self, message: str) -> None:
-        """Print info message. Thread-safe."""
-        self.call_from_thread(self._print_info_ui, message)
+        """Print info message."""
+        self._print_info_ui(message)
 
     def _print_info_ui(self, message: str) -> None:
         """Print info UI - must run on main thread."""
@@ -551,8 +604,8 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     def print_warning(self, message: str) -> None:
-        """Print warning message. Thread-safe."""
-        self.call_from_thread(self._print_warning_ui, message)
+        """Print warning message."""
+        self._print_warning_ui(message)
 
     def _print_warning_ui(self, message: str) -> None:
         """Print warning UI - must run on main thread."""
@@ -561,14 +614,14 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     def print_error(self, message: str) -> None:
-        """Print error message. Thread-safe."""
-        self.call_from_thread(self._add_error, message)
+        """Print error message."""
+        self._add_error(message)
 
     # === Tool Handling ===
 
     def print_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
-        """Print tool execution start. Thread-safe."""
-        self.call_from_thread(self._print_tool_start_ui, name, arguments)
+        """Print tool execution start."""
+        self._print_tool_start_ui(name, arguments)
 
     def _print_tool_start_ui(self, name: str, arguments: dict[str, Any]) -> None:
         """Tool start UI - must run on main thread."""
@@ -586,8 +639,8 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     def print_tool_complete(self, name: str, result: str, duration_ms: float) -> None:
-        """Print tool execution complete. Thread-safe."""
-        self.call_from_thread(self._print_tool_complete_ui, name, result, duration_ms)
+        """Print tool execution complete."""
+        self._print_tool_complete_ui(name, result, duration_ms)
 
     def _print_tool_complete_ui(self, name: str, result: str, duration_ms: float) -> None:
         """Tool complete UI - must run on main thread."""
@@ -654,8 +707,8 @@ class EntropiApp(App[None]):
     # === Context & Status ===
 
     def print_context_usage(self, used: int, max_tokens: int) -> None:
-        """Update context usage display. Thread-safe."""
-        self.call_from_thread(self._print_context_usage_ui, used, max_tokens)
+        """Update context usage display."""
+        self._print_context_usage_ui(used, max_tokens)
 
     def _print_context_usage_ui(self, used: int, max_tokens: int) -> None:
         """Context usage UI - must run on main thread."""
@@ -668,8 +721,8 @@ class EntropiApp(App[None]):
         pass
 
     def print_compaction_notice(self, result: CompactionResult) -> None:
-        """Print compaction notification. Thread-safe."""
-        self.call_from_thread(self._print_compaction_notice_ui, result)
+        """Print compaction notification."""
+        self._print_compaction_notice_ui(result)
 
     def _print_compaction_notice_ui(self, result: CompactionResult) -> None:
         """Compaction notice UI - must run on main thread."""
@@ -696,8 +749,8 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     def print_todo_panel(self, todo_list: TodoList) -> None:
-        """Update todo display. Thread-safe."""
-        self.call_from_thread(self._print_todo_panel_ui, todo_list)
+        """Update todo display."""
+        self._print_todo_panel_ui(todo_list)
 
     def _print_todo_panel_ui(self, todo_list: TodoList) -> None:
         """Todo panel UI - must run on main thread."""
@@ -759,3 +812,46 @@ class EntropiApp(App[None]):
     def reset_auto_approve(self) -> None:
         """Reset session auto-approve mode."""
         self._auto_approve_all = False
+
+    def set_voice_callbacks(
+        self,
+        on_enter: Callable[[], Coroutine[Any, Any, None]] | None = None,
+        on_exit: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> None:
+        """
+        Set callbacks for voice mode entry/exit.
+
+        Args:
+            on_enter: Called when entering voice mode (e.g., unload chat models)
+            on_exit: Called when exiting voice mode (e.g., reload chat models)
+        """
+        self._voice_on_enter = on_enter
+        self._voice_on_exit = on_exit
+
+    def action_voice_mode(self) -> None:
+        """Launch voice mode screen (F5)."""
+        if not self.entropi_config.voice.enabled:
+            self.notify(
+                "Voice mode not enabled. Set voice.enabled: true in config.",
+                severity="warning",
+                timeout=3,
+            )
+            return
+
+        # Import here to avoid circular imports and allow graceful fallback
+        try:
+            from entropi.ui.voice_screen import VoiceScreen
+
+            self.push_screen(
+                VoiceScreen(
+                    self.entropi_config.voice,
+                    on_enter=self._voice_on_enter,
+                    on_exit=self._voice_on_exit,
+                )
+            )
+        except ImportError as e:
+            self.notify(
+                f"Voice mode dependencies not installed: {e}",
+                severity="error",
+                timeout=3,
+            )

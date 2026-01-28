@@ -4,6 +4,7 @@ MCP client implementation using official SDK.
 Provides a unified interface for communicating with MCP servers.
 """
 
+import asyncio
 import time
 from typing import Any
 
@@ -14,6 +15,9 @@ from entropi.core.base import ToolResult
 from entropi.core.logging import get_logger
 
 logger = get_logger("mcp.client")
+
+# Default timeout for MCP tool calls (seconds)
+DEFAULT_TOOL_TIMEOUT = 30.0
 
 
 class MCPClient:
@@ -131,7 +135,21 @@ class MCPClient:
         try:
             start = time.time()
 
-            result = await self._session.call_tool(local_name, arguments)
+            try:
+                result = await asyncio.wait_for(
+                    self._session.call_tool(local_name, arguments),
+                    timeout=DEFAULT_TOOL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                logger.error(
+                    f"Tool {self.name}.{local_name} timed out after {DEFAULT_TOOL_TIMEOUT}s"
+                )
+                return ToolResult(
+                    call_id=tool_name,
+                    name=tool_name,
+                    result=f"Tool execution timed out after {DEFAULT_TOOL_TIMEOUT} seconds",
+                    is_error=True,
+                )
 
             duration = int((time.time() - start) * 1000)
 

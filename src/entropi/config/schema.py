@@ -182,7 +182,7 @@ class CompactionConfig(BaseModel):
     """Auto-compaction configuration."""
 
     enabled: bool = True
-    threshold_percent: float = Field(default=0.90, ge=0.5, le=0.99)
+    threshold_percent: float = Field(default=0.75, ge=0.5, le=0.99)
     preserve_recent_turns: int = Field(default=2, ge=1, le=10)
     summary_max_tokens: int = Field(default=1500, ge=500, le=4000)
     notify_user: bool = True
@@ -221,6 +221,83 @@ class LSPConfig(BaseModel):
     servers: dict[str, LSPServerConfig] = Field(default_factory=dict)
 
 
+# === Voice Interface Configuration ===
+
+
+class PersonaPlexModelConfig(BaseModel):
+    """Configuration for PersonaPlex model source."""
+
+    hf_repo: str = "nvidia/personaplex-7b-v1"
+
+
+class PersonaPlexRuntimeConfig(BaseModel):
+    """Runtime configuration for PersonaPlex."""
+
+    device: Literal["cuda", "cpu"] = "cuda"
+    quantization: Literal["int8", "fp16", "none"] = "int8"
+    context_window: int = Field(default=187, ge=50, le=500)  # ~15 seconds at 80ms/frame
+
+
+class PersonaPlexSamplingConfig(BaseModel):
+    """Sampling parameters for PersonaPlex generation."""
+
+    text_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    audio_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
+    top_k: int = Field(default=250, ge=1, le=1000)
+
+
+class VoicePromptConfig(BaseModel):
+    """Voice prompt file configuration."""
+
+    prompt_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "voices")
+    # Voice name from PersonaPlex (NATF0-3, NATM0-3, VARF0-4, VARM0-4)
+    voice_name: str = "NATF2"
+    thinking_audio: str = "thinking_moment.wav"
+
+    @field_validator("prompt_dir")
+    @classmethod
+    def validate_prompt_dir(cls, v: Path) -> Path:
+        """Expand user path."""
+        return Path(v).expanduser()
+
+
+class VoiceConversationConfig(BaseModel):
+    """Voice conversation window configuration."""
+
+    window_duration: float = Field(default=15.0, ge=5.0, le=60.0)
+    initial_prompt: str = "You are a helpful coding assistant."
+
+
+class SecondaryModelConfig(BaseModel):
+    """Configuration for secondary LLM used in context compaction."""
+
+    model_path: Path = Field(
+        default_factory=lambda: Path.home() / "models" / "gguf" / "Qwen3-0.6B-Q8_0.gguf"
+    )
+    max_tokens: int = Field(default=300, ge=50, le=1000)
+    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
+
+    @field_validator("model_path")
+    @classmethod
+    def validate_model_path(cls, v: Path) -> Path:
+        """Expand user path."""
+        return Path(v).expanduser()
+
+
+class VoiceConfig(BaseModel):
+    """Root voice interface configuration."""
+
+    enabled: bool = False
+
+    # Sub-configurations
+    model: PersonaPlexModelConfig = Field(default_factory=PersonaPlexModelConfig)
+    runtime: PersonaPlexRuntimeConfig = Field(default_factory=PersonaPlexRuntimeConfig)
+    sampling: PersonaPlexSamplingConfig = Field(default_factory=PersonaPlexSamplingConfig)
+    voice_prompt: VoicePromptConfig = Field(default_factory=VoicePromptConfig)
+    conversation: VoiceConversationConfig = Field(default_factory=VoiceConversationConfig)
+    secondary_model: SecondaryModelConfig = Field(default_factory=SecondaryModelConfig)
+
+
 class EntropyConfig(BaseSettings):
     """Root configuration for Entropi."""
 
@@ -242,6 +319,7 @@ class EntropyConfig(BaseSettings):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     lsp: LSPConfig = Field(default_factory=LSPConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"

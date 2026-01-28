@@ -174,6 +174,7 @@ class DiagnosticsServer(BaseMCPServer):
 
 # Entry point for running as MCP server
 if __name__ == "__main__":
+    import os
     import sys
 
     from entropi.config.schema import LSPConfig
@@ -190,4 +191,14 @@ if __name__ == "__main__":
         server = DiagnosticsServer(manager, root)
         asyncio.run(server.run())
     finally:
-        manager.stop()
+        # Suppress stderr during shutdown to avoid "server quit" errors
+        # from pylspclient threads when file handles are closing
+        try:
+            sys.stderr = open(os.devnull, "w")
+            sys.stdout = open(os.devnull, "w")
+        except Exception:
+            pass
+        try:
+            manager.stop()
+        except Exception:
+            pass

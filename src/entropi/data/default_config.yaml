@@ -4,30 +4,29 @@
 
 models:
   thinking:
-    path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 8192
+    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+    adapter: falcon
+    context_length: 65536
     gpu_layers: -1
   normal:
-    path: ~/models/gguf/Qwen_Qwen3-8B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 8192
+    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+    adapter: falcon
+    context_length: 65536
     gpu_layers: -1
   code:
-    path: ~/models/gguf/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf
-    adapter: qwen2
-    context_length: 8192
+    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+    adapter: falcon
+    context_length: 65536
     gpu_layers: -1
   simple:
-    # Simple responses - uses same model as normal (can specialize later)
-    path: ~/models/gguf/Qwen_Qwen3-8B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 8192
+    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+    adapter: falcon
+    context_length: 65536
     gpu_layers: -1
   router:
     # Classification only - small model for task routing
-    path: ~/models/gguf/qwen2.5-0.5b-instruct-q8_0.gguf
-    adapter: qwen2
+    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
+    adapter: qwen3
     context_length: 4096
     gpu_layers: -1
   default: normal
@@ -40,3 +39,35 @@ routing:
   fallback_model: normal
 
 log_level: INFO
+
+# Voice interface configuration (NVIDIA PersonaPlex)
+voice:
+  enabled: false
+
+  model:
+    hf_repo: "nvidia/personaplex-7b-v1"
+
+  runtime:
+    device: "cuda"
+    quantization: "int8"
+    context_window: 187  # ~15 seconds at 80ms/frame
+
+  sampling:
+    text_temperature: 0.8
+    audio_temperature: 0.8
+    top_k: 250
+
+  voice_prompt:
+    prompt_dir: "~/.entropi/voices"
+    # Available voices: NATF0-3, NATM0-3 (natural), VARF0-4, VARM0-4 (variety)
+    voice_name: "NATF2"
+    thinking_audio: "thinking_moment.wav"
+
+  conversation:
+    window_duration: 15.0
+    initial_prompt: "You are a helpful coding assistant."
+
+  secondary_model:
+    model_path: "~/models/gguf/Qwen3-0.6B-Q8_0.gguf"
+    max_tokens: 300
+    temperature: 0.3

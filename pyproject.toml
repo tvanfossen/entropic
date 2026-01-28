@@ -45,6 +45,20 @@ dev = [
     "pre-commit>=3.0.0",
     "types-pyyaml>=6.0.0",
 ]
+voice = [
+    # From PersonaPlex requirements
+    "numpy>=1.26,<2.2",
+    "safetensors>=0.4.0,<0.5",
+    "huggingface-hub>=0.24,<0.28",
+    "einops==0.7",
+    "sentencepiece==0.2",
+    "sounddevice==0.5",
+    "sphn>=0.1.4,<0.2",
+    "torch>=2.2.0",
+    "aiohttp>=3.10.5,<3.12",
+    # Optional for INT8 quantization
+    "accelerate>=0.30.0",
+]
 
 [project.scripts]
 entropi = "entropi.cli:main"

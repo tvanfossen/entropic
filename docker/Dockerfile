@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y \
     clangd \
     nodejs \
     npm \
+    # Audio libraries for voice mode (PortAudio + ALSA)
+    libportaudio2 \
+    portaudio19-dev \
+    libasound2-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pyright LSP for Python
@@ -48,8 +52,9 @@ RUN pip install llama-cpp-python --no-cache-dir && \
 # Copy project files and install (non-editable for proper permissions)
 COPY pyproject.toml /app/
 COPY src/ /app/src/
+COPY vendor/ /app/vendor/
 WORKDIR /app
-RUN pip install ".[dev]" --no-cache-dir
+RUN pip install ".[dev,voice]" --no-cache-dir
 
 # Create user directory for volume mounting (UID set by docker-compose)
 RUN mkdir -p /home/user && chmod 777 /home/user

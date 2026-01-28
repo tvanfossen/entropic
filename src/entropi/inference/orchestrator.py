@@ -154,6 +154,57 @@ class ModelOrchestrator:
                 await model.unload()
                 logger.info(f"Unloaded {tier.value} model")
 
+    async def unload_all_models(self) -> None:
+        """
+        Unload all models to free VRAM.
+
+        Used before loading other GPU-intensive components (e.g., voice mode).
+        Call reload_default_models() to restore after.
+        """
+        import gc
+
+        async with self._lock:
+            for tier, model in self._models.items():
+                if model.is_loaded:
+                    await model.unload()
+                    logger.info(f"Unloaded {tier.value} model for VRAM release")
+            self._loaded_main_tier = None
+
+        # Force garbage collection and CUDA cache clear
+        gc.collect()
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                logger.info("Cleared CUDA cache")
+        except ImportError:
+            pass
+
+    async def reload_default_models(self) -> None:
+        """
+        Reload the default models after unload_all_models().
+
+        Restores the same models that were loaded during initialize().
+        """
+        async with self._lock:
+            # Determine default tier
+            default_tier = ModelTier(self.config.models.default)
+            if self._thinking_mode and ModelTier.THINKING in self._models:
+                default_tier = ModelTier.THINKING
+
+            # Load default main model
+            if default_tier in self._models and not self._models[default_tier].is_loaded:
+                await self._models[default_tier].load()
+                self._loaded_main_tier = default_tier
+                logger.info(f"Reloaded {default_tier.value} model")
+
+            # Load router model
+            if ModelTier.ROUTER in self._models and not self._models[ModelTier.ROUTER].is_loaded:
+                await self._models[ModelTier.ROUTER].load()
+                logger.info("Reloaded ROUTER model")
+
     # Thinking mode methods
 
     def get_thinking_mode(self) -> bool:

@@ -154,6 +154,8 @@ class CommandRegistry:
         self.register_builtin(RenameCommand())
         self.register_builtin(DeleteSessionCommand())
         self.register_builtin(ExportCommand())
+        # Voice commands
+        self.register_builtin(VoiceSetupCommand())
 
     async def _discover_custom_commands(self, directory: Path) -> None:
         """Discover custom commands from markdown files."""
@@ -683,4 +685,73 @@ class ExportCommand(Command):
         return CommandResult(
             success=True,
             data={"action": "export_session", "session_id": session_id},
+        )
+
+
+# Voice commands
+
+
+class VoiceSetupCommand(Command):
+    """Generate thinking audio using PersonaPlex."""
+
+    @property
+    def name(self) -> str:
+        return "voice-setup"
+
+    @property
+    def description(self) -> str:
+        return "Generate thinking audio clip using PersonaPlex voice"
+
+    @property
+    def usage(self) -> str:
+        return '/voice-setup [--text "Custom thinking text..."]'
+
+    async def execute(self, args: str, context: CommandContext) -> CommandResult:
+        """
+        Generate thinking audio using the configured voice prompt.
+
+        This command:
+        1. Loads the selected voice prompt from config
+        2. Initializes PersonaPlex temporarily
+        3. Generates audio from text (default: "Let me think about that...")
+        4. Saves to thinking_moment.wav in the voices directory
+        5. Unloads PersonaPlex to free VRAM
+        """
+        # Parse arguments
+        text = "Let me think about that for a moment..."
+        if args:
+            # Check for --text flag
+            if args.startswith("--text "):
+                text = args[7:].strip().strip('"').strip("'")
+            else:
+                text = args.strip()
+
+        # Verify voice is configured
+        voice_config = context.config.voice
+        if not voice_config.enabled:
+            return CommandResult(
+                success=False,
+                message="Voice mode is not enabled. Set voice.enabled: true in config first.",
+            )
+
+        # Check voice prompt exists
+        voice_prompt_path = voice_config.voice_prompt.prompt_dir / voice_config.voice_prompt.prompt_file
+        if not voice_prompt_path.exists():
+            return CommandResult(
+                success=False,
+                message=f"Voice prompt not found: {voice_prompt_path}\n"
+                "Please download or create a voice prompt file first.",
+            )
+
+        return CommandResult(
+            success=True,
+            message=f"Generating thinking audio with text: \"{text}\"",
+            data={
+                "action": "voice_setup",
+                "text": text,
+                "voice_prompt_path": str(voice_prompt_path),
+                "output_path": str(
+                    voice_config.voice_prompt.prompt_dir / voice_config.voice_prompt.thinking_audio
+                ),
+            },
         )

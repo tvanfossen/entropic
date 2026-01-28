@@ -197,6 +197,35 @@ class AgentEngine:
         # Fallback default
         return 16384
 
+    def _refresh_context_limit(self) -> None:
+        """Refresh context limit based on current model.
+
+        When models swap (e.g., normal → thinking), the context limit
+        may change. This method updates the token counter to use the
+        current model's context length.
+        """
+        # Get context length from last used tier's model config
+        last_tier = self.orchestrator.last_used_tier
+        if last_tier is None:
+            return
+
+        # Map tier to config attribute name
+        tier_to_config = {
+            "thinking": self.config.models.thinking,
+            "normal": self.config.models.normal,
+            "code": self.config.models.code,
+            "simple": self.config.models.simple,
+        }
+
+        model_config = tier_to_config.get(last_tier.value)
+        if model_config and hasattr(model_config, "context_length"):
+            new_max = model_config.context_length
+            if new_max != self._token_counter.max_tokens:
+                logger.debug(
+                    f"Updating context limit: {self._token_counter.max_tokens} -> {new_max}"
+                )
+                self._token_counter.max_tokens = new_max
+
     def set_callbacks(
         self,
         on_state_change: Callable[[AgentState], None] | None = None,
@@ -329,6 +358,9 @@ class AgentEngine:
     async def _execute_iteration(self, ctx: LoopContext) -> AsyncIterator[Message]:
         """Execute a single loop iteration."""
         try:
+            # Refresh context limit in case model changed
+            self._refresh_context_limit()
+
             # Check for compaction before generating
             await self._check_compaction(ctx)
 

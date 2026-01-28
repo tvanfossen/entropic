@@ -50,9 +50,9 @@ Header {
 /* Status footer - very bottom */
 #status-footer {
     height: 1;
-    background: $surface-darken-1;
+    background: $surface;
+    color: white;
     padding: 0 1;
-    border-top: solid $primary-darken-2;
 }
 
 /* Message widgets */

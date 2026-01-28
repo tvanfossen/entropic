@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # Entropi Installation Script
-# Builds Docker image and installs wrapper script for native CLI experience
+# Supports both Docker and native installation modes
 # ============================================================================
 
 set -e
@@ -17,10 +17,111 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Parse arguments
+INSTALL_MODE="docker"
+for arg in "$@"; do
+    case $arg in
+        --native)
+            INSTALL_MODE="native"
+            shift
+            ;;
+    esac
+done
+
+# Function to install native dependencies
+install_native_deps() {
+    echo ""
+    echo "=== Installing Native Dependencies ==="
+    echo ""
+
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Detect package manager
+        if command -v apt-get &> /dev/null; then
+            echo "Installing system packages (requires sudo)..."
+            sudo apt-get update
+            sudo apt-get install -y \
+                python3-dev \
+                build-essential \
+                libportaudio2 \
+                portaudio19-dev \
+                libasound2-dev
+            echo -e "${GREEN}✓${NC} System packages installed"
+        elif command -v dnf &> /dev/null; then
+            echo "Installing system packages (requires sudo)..."
+            sudo dnf install -y \
+                python3-devel \
+                gcc \
+                portaudio \
+                portaudio-devel \
+                alsa-lib-devel
+            echo -e "${GREEN}✓${NC} System packages installed"
+        elif command -v pacman &> /dev/null; then
+            echo "Installing system packages (requires sudo)..."
+            sudo pacman -S --needed \
+                python \
+                base-devel \
+                portaudio \
+                alsa-lib
+            echo -e "${GREEN}✓${NC} System packages installed"
+        else
+            echo -e "${YELLOW}⚠${NC} Unknown package manager. Please install manually:"
+            echo "  - portaudio (libportaudio2 / portaudio19-dev)"
+            echo "  - alsa development libraries (libasound2-dev)"
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        if command -v brew &> /dev/null; then
+            echo "Installing system packages with Homebrew..."
+            brew install portaudio
+            echo -e "${GREEN}✓${NC} System packages installed"
+        else
+            echo -e "${YELLOW}⚠${NC} Homebrew not found. Please install portaudio manually:"
+            echo "  brew install portaudio"
+        fi
+    fi
+}
+
+# Native installation mode
+if [ "$INSTALL_MODE" = "native" ]; then
+    echo "Installing in NATIVE mode (no Docker)"
+    echo ""
+
+    # Install system dependencies
+    install_native_deps
+
+    # Check for Python
+    if ! command -v python3 &> /dev/null; then
+        echo -e "${RED}ERROR: Python 3 not found.${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓${NC} Python 3 found: $(python3 --version)"
+
+    # Get script directory
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Install in editable mode
+    echo ""
+    echo "Installing Entropi package..."
+    pip install -e "$SCRIPT_DIR[voice]"
+
+    echo ""
+    echo -e "${GREEN}✓${NC} Entropi installed!"
+    echo ""
+    echo "Run 'entropi' to start."
+    exit 0
+fi
+
+# Docker installation mode (default)
+echo "Installing in DOCKER mode"
+echo "(use --native flag for native installation)"
+echo ""
+
 # Check for Docker
 if ! command -v docker &> /dev/null; then
     echo -e "${RED}ERROR: Docker not found.${NC}"
     echo "Please install Docker first: https://docs.docker.com/engine/install/"
+    echo ""
+    echo "Or run with --native flag to install without Docker:"
+    echo "  ./install.sh --native"
     exit 1
 fi
 echo -e "${GREEN}✓${NC} Docker installed"
@@ -121,9 +222,31 @@ if [ -t 0 ] && [ -t 1 ]; then
     DOCKER_FLAGS="$DOCKER_FLAGS -it"
 fi
 
+# Audio device access for voice mode
+AUDIO_FLAGS=""
+# ALSA devices
+if [ -d /dev/snd ]; then
+    AUDIO_FLAGS="$AUDIO_FLAGS --device /dev/snd"
+fi
+# PulseAudio socket (Linux)
+PULSE_SOCKET="/run/user/$(id -u)/pulse/native"
+if [ -S "$PULSE_SOCKET" ]; then
+    AUDIO_FLAGS="$AUDIO_FLAGS -v /run/user/$(id -u)/pulse:/run/user/$(id -u)/pulse"
+    AUDIO_FLAGS="$AUDIO_FLAGS -e PULSE_SERVER=unix:$PULSE_SOCKET"
+fi
+
+# Get audio group ID for ALSA access
+AUDIO_GID=$(getent group audio | cut -d: -f3 2>/dev/null || echo "")
+GROUP_ADD=""
+if [ -n "$AUDIO_GID" ]; then
+    GROUP_ADD="--group-add $AUDIO_GID"
+fi
+
 # Run entropi in Docker
 exec docker run $DOCKER_FLAGS \
     --gpus all \
+    $AUDIO_FLAGS \
+    $GROUP_ADD \
     -e HOME=/home/user \
     -e TERM="$TERM" \
     -v "$ENTROPI_MODELS_DIR:/home/user/models/gguf:ro" \

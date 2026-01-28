@@ -244,34 +244,55 @@ class LlamaCppBackend(ModelBackend):
             stream=True,
         )
 
-        # Create stream generator in thread pool
+        # Use a queue to bridge sync stream iteration with async yielding
+        # This prevents blocking the event loop while waiting for tokens
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
-        def create_stream() -> Any:
+        def stream_to_queue() -> None:
+            """Run synchronous stream iteration in thread, pushing chunks to queue."""
             assert self._model is not None
-            return self._model.create_chat_completion(
-                messages=llama_messages,
-                max_tokens=gen_config.max_tokens,
-                temperature=gen_config.temperature,
-                top_p=gen_config.top_p,
-                top_k=gen_config.top_k,
-                repeat_penalty=gen_config.repeat_penalty,
-                stop=gen_config.stop if gen_config.stop else None,
-                stream=True,
-            )
+            try:
+                stream = self._model.create_chat_completion(
+                    messages=llama_messages,
+                    max_tokens=gen_config.max_tokens,
+                    temperature=gen_config.temperature,
+                    top_p=gen_config.top_p,
+                    top_k=gen_config.top_k,
+                    repeat_penalty=gen_config.repeat_penalty,
+                    stop=gen_config.stop if gen_config.stop else None,
+                    stream=True,
+                )
 
-        stream = await loop.run_in_executor(None, create_stream)
+                for chunk in stream:
+                    choice = chunk["choices"][0]
+                    delta = choice.get("delta", {})
+                    if delta.get("content"):
+                        # Thread-safe put to queue
+                        loop.call_soon_threadsafe(queue.put_nowait, delta["content"])
+                    # Capture finish_reason from final chunk
+                    if choice.get("finish_reason"):
+                        self._last_finish_reason = choice["finish_reason"]
+                        logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
+            except Exception as e:
+                logger.error(f"Stream error: {e}")
+            finally:
+                # Signal end of stream
+                loop.call_soon_threadsafe(queue.put_nowait, None)
 
-        # Yield chunks from stream, capture finish_reason from final chunk
-        for chunk in stream:
-            choice = chunk["choices"][0]
-            delta = choice.get("delta", {})
-            if delta.get("content"):
-                yield delta["content"]
-            # Capture finish_reason from final chunk
-            if choice.get("finish_reason"):
-                self._last_finish_reason = choice["finish_reason"]
-                logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
+        # Start stream iteration in background thread
+        stream_task = loop.run_in_executor(None, stream_to_queue)
+
+        # Yield chunks from queue asynchronously (doesn't block event loop)
+        try:
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+        finally:
+            # Ensure the background task completes
+            await stream_task
 
     def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Convert Message objects to llama-cpp format."""

@@ -601,13 +601,15 @@ class StatusFooter(Static):
 
         if self._is_generating:
             parts.append("[cyan bold]Esc[/]=Pause")
-            parts.append("[dim]Ctrl+B[/]=Expand")
         else:
             parts.append("[bold]Ctrl+C[/]=Exit")
 
+        # Always show these shortcuts
+        parts.append("[dim]Ctrl+B[/]=Think")
         parts.append("[dim]Ctrl+L[/]=Clear")
 
-        self.update(Text.from_markup(" | ".join(parts)))
+        display_text = " | ".join(parts)
+        self.update(Text.from_markup(display_text))
 
     def on_mount(self) -> None:
         """Render on mount."""

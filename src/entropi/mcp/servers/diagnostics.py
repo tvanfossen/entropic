@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool
+from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
 
 if TYPE_CHECKING:
     from entropi.lsp.manager import LSPManager
@@ -40,11 +40,7 @@ class DiagnosticsServer(BaseMCPServer):
         return [
             create_tool(
                 name="diagnostics",
-                description=(
-                    "Get code errors and warnings for a file from the language server. "
-                    "Returns type errors, syntax errors, undefined variables, etc. "
-                    "Use 'all' to get diagnostics for all open files."
-                ),
+                description=load_tool_description("diagnostics"),
                 properties={
                     "file_path": {
                         "type": "string",
@@ -55,10 +51,7 @@ class DiagnosticsServer(BaseMCPServer):
             ),
             create_tool(
                 name="check_errors",
-                description=(
-                    "Check if a file has any errors (not warnings). "
-                    "Returns true/false with error count."
-                ),
+                description=load_tool_description("check_errors"),
                 properties={
                     "file_path": {
                         "type": "string",

@@ -38,6 +38,7 @@ from entropi.ui.widgets import (
 )
 
 if TYPE_CHECKING:
+    from entropi.core.queue import MessageQueue, QueuedMessage
     from entropi.core.todos import TodoList
 
 logger = get_logger("ui.tui")
@@ -236,6 +237,12 @@ class EntropiApp(App[None]):
         self._voice_on_enter: Callable[[], Coroutine[Any, Any, None]] | None = None
         self._voice_on_exit: Callable[[], Coroutine[Any, Any, None]] | None = None
 
+        # Queue consumer for MCP messages (runs as worker for proper app context)
+        self._mcp_queue: MessageQueue | None = None
+        self._queue_process_callback: (
+            Callable[[QueuedMessage], Coroutine[Any, Any, None]] | None
+        ) = None
+
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
         yield Header()
@@ -252,6 +259,10 @@ class EntropiApp(App[None]):
         footer = self.query_one("#status-footer", StatusFooter)
         footer.set_generating(False)
         self.query_one("#input", Input).focus()
+
+        # Start queue consumer if configured (runs as worker for app context)
+        if self._mcp_queue is not None and self._queue_process_callback is not None:
+            self._run_queue_consumer_worker()
 
     def _show_welcome(self) -> None:
         """Show welcome message."""
@@ -316,6 +327,41 @@ class EntropiApp(App[None]):
             self._add_error(f"Error: {e}")
             self._end_generation_ui()
 
+    @work(exclusive=False, exit_on_error=False)
+    async def _run_queue_consumer_worker(self) -> None:
+        """Run queue consumer as Textual worker for proper app context.
+
+        This runs continuously, processing messages from the MCP queue.
+        Running as a worker ensures tool approval modals work correctly.
+        """
+        assert self._mcp_queue is not None
+        assert self._queue_process_callback is not None
+
+        logger.info("Queue consumer worker started")
+
+        try:
+            while True:
+                # Block until message available
+                queued_msg = await self._mcp_queue.get()
+
+                logger.info(
+                    f"Processing queued message: {queued_msg.task_id} "
+                    f"from {queued_msg.source}"
+                )
+
+                try:
+                    await self._queue_process_callback(queued_msg)
+                except Exception as e:
+                    logger.error(f"Error processing queued message: {e}")
+                    # Note: Task failure handling is done in the callback
+                finally:
+                    # Mark message as complete in queue
+                    self._mcp_queue.mark_complete(queued_msg.id)
+
+        except asyncio.CancelledError:
+            logger.info("Queue consumer worker cancelled")
+            raise
+
     def on_key(self, event: events.Key) -> None:
         """Handle key events for history navigation."""
         input_widget = self.query_one("#input", Input)
@@ -346,6 +392,12 @@ class EntropiApp(App[None]):
 
     def action_pause_generation(self) -> None:
         """Handle Escape key - interrupt generation."""
+        # Let VoiceScreen handle its own Escape (check by method existence)
+        if hasattr(self.screen, "action_exit_voice"):
+            # action_exit_voice is async, so schedule it properly
+            self.run_worker(self.screen.action_exit_voice())
+            return
+
         if self._is_generating:
             self._interrupt_count += 1
             logger.debug(f"Pause requested via Escape (count={self._interrupt_count})")
@@ -434,6 +486,23 @@ class EntropiApp(App[None]):
         """Set callback for thinking mode toggle."""
         self._on_thinking_toggle = callback
 
+    def set_queue_consumer(
+        self,
+        queue: MessageQueue,
+        process_callback: Callable[[QueuedMessage], Coroutine[Any, Any, None]],
+    ) -> None:
+        """Set up queue consumer for MCP messages.
+
+        The queue consumer will be started as a Textual worker in on_mount,
+        ensuring it runs with proper app context for modal dialogs.
+
+        Args:
+            queue: Message queue to consume from
+            process_callback: Callback to process each message
+        """
+        self._mcp_queue = queue
+        self._queue_process_callback = process_callback
+
     # === Generation State ===
 
     def start_generation(self) -> None:
@@ -507,6 +576,14 @@ class EntropiApp(App[None]):
         """Handle streaming chunk from engine."""
         self._on_stream_chunk_ui(chunk)
 
+    def stream_chunk(self, chunk: str) -> None:
+        """Alias for on_stream_chunk - use for MCP queue processing."""
+        self._on_stream_chunk_ui(chunk)
+
+    def finalize_stream(self) -> None:
+        """Finalize the current stream (end any open message blocks)."""
+        self._end_generation_ui()
+
     def _on_stream_chunk_ui(self, chunk: str) -> None:
         """Process streaming chunk - must run on main thread."""
         # Guard against stale callbacks after generation stopped
@@ -571,6 +648,21 @@ class EntropiApp(App[None]):
         chat_log.scroll_end(animate=False)
 
     # === Message Display ===
+
+    def add_message(self, role: str, content: str) -> None:
+        """Add a message to the chat log.
+
+        Args:
+            role: Message role ('user', 'assistant', 'system')
+            content: Message content
+        """
+        if role == "user":
+            self._add_user_message(content)
+        elif role == "system":
+            self._print_info_ui(content)
+        else:
+            # For assistant messages, just print as info for now
+            self._print_info_ui(content)
 
     def _add_user_message(self, content: str) -> None:
         """Add a user message to the chat log."""

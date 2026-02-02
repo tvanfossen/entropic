@@ -167,16 +167,15 @@ class TestTokenBudget:
 class TestContextBuilder:
     """Tests for context builder."""
 
-    def test_default_system_prompt(self) -> None:
-        """Test default system prompt is set."""
+    def test_build_system_prompt_returns_base(self) -> None:
+        """Test build_system_prompt returns the base prompt."""
         from entropi.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
 
-        prompt = builder.build_system_prompt()
-        assert "Entropi" in prompt
-        assert "coding assistant" in prompt
+        prompt = builder.build_system_prompt("Test base prompt")
+        assert "Test base prompt" in prompt
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
@@ -189,13 +188,15 @@ class TestContextBuilder:
         assert builder.estimate_tokens("hello world") == 2  # 11 // 4 = 2
         assert builder.estimate_tokens("a" * 100) == 25  # 100 // 4 = 25
 
-    def test_build_system_prompt_with_override(self) -> None:
-        """Test building system prompt with override."""
+    def test_build_system_prompt_with_project_context(self) -> None:
+        """Test building system prompt appends project context."""
         from entropi.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
+        builder._project_context = "Project-specific info here"
 
-        prompt = builder.build_system_prompt(base_prompt="Custom prompt here")
-        assert "Custom prompt here" in prompt
-        assert "Entropi" not in prompt
+        prompt = builder.build_system_prompt("Base prompt")
+        assert "Base prompt" in prompt
+        assert "Project Context" in prompt
+        assert "Project-specific info here" in prompt

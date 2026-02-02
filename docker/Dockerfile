@@ -22,11 +22,25 @@ RUN apt-get update && apt-get install -y \
     clangd \
     nodejs \
     npm \
-    # Audio libraries for voice mode (PortAudio + ALSA)
-    libportaudio2 \
-    portaudio19-dev \
+    # Audio libraries for voice mode (build deps for PortAudio with PulseAudio)
     libasound2-dev \
+    libpulse-dev \
+    pulseaudio-utils \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Build PortAudio from source with PulseAudio support
+# (Ubuntu's libportaudio2 is built without PulseAudio)
+RUN git clone --depth 1 https://github.com/PortAudio/portaudio.git /tmp/portaudio && \
+    cd /tmp/portaudio && \
+    cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DPA_USE_ALSA=ON \
+        -DPA_USE_PULSEAUDIO=ON \
+        -DPA_USE_JACK=OFF && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build && \
+    ldconfig && \
+    rm -rf /tmp/portaudio
 
 # Install pyright LSP for Python
 RUN npm install -g pyright
@@ -67,8 +81,9 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 COPY src/ /app/src/
 COPY vendor/ /app/vendor/
 
-# Reinstall to register the actual package (uses cached deps)
+# Reinstall entropi and install moshi from vendor (voice mode dependency)
 RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -e /app/vendor/personaplex/moshi && \
     pip install ".[dev,voice]"
 
 # Create user directory for volume mounting (UID set by docker-compose)

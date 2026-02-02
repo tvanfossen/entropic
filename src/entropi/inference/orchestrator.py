@@ -287,9 +287,9 @@ class ModelOrchestrator:
         # Ensure model is loaded
         model = await self._get_model(tier)
 
-        # Apply default max_tokens from config if not specified
+        # Use model's context_length if max_tokens not specified
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = self.config.generation.max_tokens
+            kwargs["max_tokens"] = model.config.context_length
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Generating with {tier.value} model (adapter: {adapter_name})")
@@ -331,9 +331,9 @@ class ModelOrchestrator:
 
         model = await self._get_model(tier)
 
-        # Apply default max_tokens from config if not specified
+        # Use model's context_length if max_tokens not specified
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = self.config.generation.max_tokens
+            kwargs["max_tokens"] = model.config.context_length
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Streaming with {tier.value} model (adapter: {adapter_name})")

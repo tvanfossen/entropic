@@ -255,7 +255,7 @@ class PersonaPlexRuntimeConfig(BaseModel):
 
     device: Literal["cuda", "cpu"] = "cuda"
     quantization: Literal["int8", "fp16", "none"] = "int8"
-    context_window: int = Field(default=187, ge=50, le=500)  # ~15 seconds at 80ms/frame
+    context_window: int = Field(default=500, ge=50, le=3000)  # LM context in tokens
 
 
 class PersonaPlexSamplingConfig(BaseModel):
@@ -288,6 +288,15 @@ class VoiceConversationConfig(BaseModel):
     initial_prompt: str = "You are a helpful coding assistant."
 
 
+class VoiceServerConfig(BaseModel):
+    """Configuration for voice server subprocess."""
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8765, ge=1024, le=65535)
+    auto_start: bool = True
+    startup_timeout_seconds: int = Field(default=600, ge=10, le=1800)  # 10 min default for model loading
+
+
 class SecondaryModelConfig(BaseModel):
     """Configuration for secondary LLM used in context compaction."""
 
@@ -316,6 +325,7 @@ class VoiceConfig(BaseModel):
     voice_prompt: VoicePromptConfig = Field(default_factory=VoicePromptConfig)
     conversation: VoiceConversationConfig = Field(default_factory=VoiceConversationConfig)
     secondary_model: SecondaryModelConfig = Field(default_factory=SecondaryModelConfig)
+    server: VoiceServerConfig = Field(default_factory=VoiceServerConfig)
 
 
 class EntropyConfig(BaseSettings):

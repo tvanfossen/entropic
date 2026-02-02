@@ -36,7 +36,7 @@ class FileAccessTracker:
     content hashes to detect external modifications.
     """
 
-    def __init__(self, max_age_minutes: int = 5) -> None:
+    def __init__(self, max_age_minutes: int = 30) -> None:
         """
         Initialize tracker.
 

@@ -7,14 +7,12 @@ for the voice conversation mode.
 
 from __future__ import annotations
 
-from collections import deque
 from enum import Enum, auto
 from typing import ClassVar
 
-from textual.app import ComposeResult
 from textual.reactive import reactive
 from textual.timer import Timer
-from textual.widgets import Static
+from textual.widgets import RichLog, Static
 
 
 class AudioLevel(Enum):
@@ -167,26 +165,26 @@ class VoiceVisualizer(Static):
             self.add_class(mode)
 
 
-class VoiceTranscript(Static):
+class VoiceTranscript(RichLog):
     """
     Live transcript display with speaker attribution.
 
-    Shows recent conversation with speaker labels and scrolling.
+    Uses RichLog for proper scrolling and live updates.
     """
 
     DEFAULT_CSS = """
     VoiceTranscript {
         height: 100%;
         width: 100%;
-        border: round $surface;
-        padding: 0 1;
-        overflow-y: auto;
+        border: round $primary;
+        background: $surface;
+        scrollbar-gutter: stable;
     }
     """
 
     def __init__(
         self,
-        max_lines: int = 20,
+        max_lines: int = 100,
         name: str | None = None,
         id: str | None = None,
         classes: str | None = None,
@@ -200,67 +198,81 @@ class VoiceTranscript(Static):
             id: Widget ID
             classes: CSS classes
         """
-        super().__init__(name=name, id=id, classes=classes)
-        self._max_lines = max_lines
-        self._lines: deque[tuple[str, str]] = deque(maxlen=max_lines)
+        super().__init__(
+            max_lines=max_lines,
+            highlight=True,
+            markup=True,
+            wrap=True,
+            name=name,
+            id=id,
+            classes=classes,
+        )
         self._current_speaker: str | None = None
-        self._current_text: str = ""
+        self._pending_text: str = ""
+
+    def on_mount(self) -> None:
+        """Initialize display on mount."""
+        self.write("[dim]Initializing voice mode...[/]")
 
     def add_text(self, speaker: str, text: str) -> None:
         """
         Add text to transcript.
 
+        Accumulates tokens and writes when hitting punctuation or reaching
+        a threshold to avoid one-word-per-line display.
+
         Args:
-            speaker: Speaker label ("user" or "assistant")
+            speaker: Speaker label ("user", "assistant", "system")
             text: Text to add
         """
-        if speaker != self._current_speaker:
-            # Flush current line
-            if self._current_text:
-                self._lines.append((self._current_speaker or "unknown", self._current_text))
-            self._current_speaker = speaker
-            self._current_text = text
+        # Get speaker style
+        if speaker == "user":
+            color, label = "cyan", "You"
+        elif speaker == "system":
+            color, label = "yellow", "System"
         else:
-            self._current_text += text
+            color, label = "green", "AI"
 
-        self._update_display()
+        # Handle speaker change - flush pending text and start new
+        if speaker != self._current_speaker:
+            # Flush any pending text from previous speaker
+            if self._pending_text and self._current_speaker:
+                self._flush_pending()
+            self._current_speaker = speaker
+            self._pending_text = text
+        else:
+            # Accumulate text
+            self._pending_text += text
 
-    def _update_display(self) -> None:
-        """Update the display with current transcript."""
-        lines = []
+        # Flush on sentence-ending punctuation or long enough text
+        if any(p in text for p in ".!?") or len(self._pending_text) > 80:
+            self._flush_pending()
 
-        def get_speaker_style(speaker: str) -> tuple[str, str]:
-            """Get color and label for speaker."""
-            if speaker == "user":
-                return "cyan", "You"
-            elif speaker == "system":
-                return "yellow", "System"
-            else:
-                return "green", "AI"
+    def _flush_pending(self) -> None:
+        """Write pending text to display."""
+        if not self._pending_text.strip():
+            return
 
-        for speaker, text in self._lines:
-            color, label = get_speaker_style(speaker)
-            # Truncate long lines
-            if len(text) > 60:
-                text = text[:57] + "..."
-            lines.append(f"[{color}]{label}:[/] {text}")
+        if self._current_speaker == "user":
+            color, label = "cyan", "You"
+        elif self._current_speaker == "system":
+            color, label = "yellow", "System"
+        else:
+            color, label = "green", "AI"
 
-        # Add current in-progress line
-        if self._current_text:
-            color, label = get_speaker_style(self._current_speaker or "assistant")
-            text = self._current_text
-            if len(text) > 60:
-                text = text[:57] + "..."
-            lines.append(f"[{color}]{label}:[/] {text}[dim]|[/]")
+        self.write(f"[{color} bold]{label}:[/] {self._pending_text.strip()}")
+        self._pending_text = ""
 
-        self.update("\n".join(lines) if lines else "[dim]Listening...[/]")
+    def flush(self) -> None:
+        """Flush any pending text to display."""
+        self._flush_pending()
 
     def clear(self) -> None:
         """Clear transcript."""
-        self._lines.clear()
+        self._pending_text = ""
+        super().clear()
         self._current_speaker = None
-        self._current_text = ""
-        self._update_display()
+        self.write("[dim]Transcript cleared[/]")
 
 
 class VoiceStatusBar(Static):
@@ -272,10 +284,11 @@ class VoiceStatusBar(Static):
 
     DEFAULT_CSS = """
     VoiceStatusBar {
-        height: 1;
+        height: 3;
         width: 100%;
         background: $surface;
-        padding: 0 1;
+        padding: 1;
+        border-top: solid $primary;
     }
     """
 
@@ -329,7 +342,7 @@ class VoiceStatusBar(Static):
             f"[{color}]{label}[/]",
             f"Window: {self.window}" if self.window > 0 else "",
             f"Time: {time_str}",
-            "[dim]Esc[/]=Exit [dim]Space[/]=Pause [dim]R[/]=Reset",
+            "[dim]Esc[/]=Exit [dim]Space[/]=Pause [dim]R[/]=Reset [dim]B[/]=Back",
         ]
 
         self.update(" | ".join(p for p in parts if p))
@@ -346,18 +359,22 @@ class VoiceStatusBar(Static):
         """Set elapsed time in seconds."""
         self.elapsed = elapsed
 
+    def update_stats(self, window_number: int, frames_processed: int) -> None:
+        """Update window statistics."""
+        self.window = window_number
+        self._update_display()
+
 
 class VoiceHeader(Static):
     """Header for voice mode screen."""
 
     DEFAULT_CSS = """
     VoiceHeader {
-        height: 3;
+        height: 1;
         width: 100%;
         text-align: center;
         background: $primary;
         color: $text;
-        padding: 1;
     }
     """
 
@@ -370,8 +387,99 @@ class VoiceHeader(Static):
     ) -> None:
         """Initialize header."""
         super().__init__(name=name, id=id, classes=classes)
-        self._title = title
+        self.update(f"[bold]{title}[/] - Speak naturally")
 
-    def compose(self) -> ComposeResult:
-        """Compose header content."""
-        yield Static(f"[bold]{self._title}[/] - Speak naturally")
+
+class VoiceStatsPanel(Static):
+    """
+    Real-time stats panel for voice mode.
+
+    Shows server FPS, latency, frames processed, and connection status.
+    """
+
+    DEFAULT_CSS = """
+    VoiceStatsPanel {
+        height: 5;
+        width: 100%;
+        background: $surface;
+        padding: 0 1;
+        border-top: solid $primary;
+    }
+    """
+
+    # Reactive stats
+    server_fps: reactive[float] = reactive(0.0)
+    server_latency: reactive[float] = reactive(0.0)
+    frames_sent: reactive[int] = reactive(0)
+    frames_received: reactive[int] = reactive(0)
+    connected: reactive[bool] = reactive(False)
+
+    def __init__(
+        self,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
+    ) -> None:
+        """Initialize stats panel."""
+        super().__init__(name=name, id=id, classes=classes)
+
+    def watch_server_fps(self, fps: float) -> None:
+        self._update_display()
+
+    def watch_server_latency(self, latency: float) -> None:
+        self._update_display()
+
+    def watch_frames_sent(self, frames: int) -> None:
+        self._update_display()
+
+    def watch_frames_received(self, frames: int) -> None:
+        self._update_display()
+
+    def watch_connected(self, connected: bool) -> None:
+        self._update_display()
+
+    def _update_display(self) -> None:
+        """Update stats display."""
+        if not self.connected:
+            self.update("[dim]Disconnected[/]")
+            return
+
+        # Color-code latency
+        if self.server_latency < 50:
+            lat_color = "green"
+        elif self.server_latency < 100:
+            lat_color = "yellow"
+        else:
+            lat_color = "red"
+
+        # Color-code FPS (target is 12.5 fps)
+        if self.server_fps >= 12:
+            fps_color = "green"
+        elif self.server_fps >= 10:
+            fps_color = "yellow"
+        else:
+            fps_color = "red"
+
+        lines = [
+            f"[bold]Inference Stats[/]",
+            f"  FPS: [{fps_color}]{self.server_fps:.1f}[/]  |  "
+            f"Avg Latency: [{lat_color}]{self.server_latency:.0f}ms[/]",
+            f"  Frames Processed: {self.frames_sent}  |  "
+            f"Status: [green]Running[/]",
+        ]
+        self.update("\n".join(lines))
+
+    def update_stats(
+        self,
+        server_fps: float = 0.0,
+        server_latency_ms: float = 0.0,
+        frames_sent: int = 0,
+        frames_received: int = 0,
+        connected: bool = True,
+    ) -> None:
+        """Update all stats at once."""
+        self.connected = connected
+        self.server_fps = server_fps
+        self.server_latency = server_latency_ms
+        self.frames_sent = frames_sent
+        self.frames_received = frames_received

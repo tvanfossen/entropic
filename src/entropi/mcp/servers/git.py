@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool
+from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
 
 
 class GitServer(BaseMCPServer):
@@ -31,12 +31,12 @@ class GitServer(BaseMCPServer):
         return [
             create_tool(
                 name="status",
-                description="Get git status",
+                description=load_tool_description("status", "git"),
                 properties={},
             ),
             create_tool(
                 name="diff",
-                description="Get git diff",
+                description=load_tool_description("diff", "git"),
                 properties={
                     "staged": {
                         "type": "boolean",
@@ -50,7 +50,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="log",
-                description="Get git log",
+                description=load_tool_description("log", "git"),
                 properties={
                     "count": {
                         "type": "integer",
@@ -64,7 +64,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="commit",
-                description="Create a git commit",
+                description=load_tool_description("commit", "git"),
                 properties={
                     "message": {
                         "type": "string",
@@ -79,7 +79,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="branch",
-                description="List or create branches",
+                description=load_tool_description("branch", "git"),
                 properties={
                     "name": {
                         "type": "string",
@@ -89,7 +89,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="checkout",
-                description="Checkout a branch or file",
+                description=load_tool_description("checkout", "git"),
                 properties={
                     "target": {
                         "type": "string",
@@ -100,7 +100,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="add",
-                description="Stage files for commit",
+                description=load_tool_description("add", "git"),
                 properties={
                     "files": {
                         "type": "string",
@@ -111,7 +111,7 @@ class GitServer(BaseMCPServer):
             ),
             create_tool(
                 name="reset",
-                description="Unstage files",
+                description=load_tool_description("reset", "git"),
                 properties={
                     "files": {
                         "type": "string",

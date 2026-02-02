@@ -8,27 +8,37 @@ models:
     adapter: falcon
     context_length: 65536
     gpu_layers: -1
+    temperature: 0.5  # Some creativity for complex reasoning
+    repeat_penalty: 1.2  # Prevent duplicate think blocks
   normal:
     path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
     adapter: falcon
     context_length: 65536
     gpu_layers: -1
+    temperature: 0.4  # Balanced
+    repeat_penalty: 1.2  # Prevent repetition artifacts
   code:
     path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
     adapter: falcon
     context_length: 65536
     gpu_layers: -1
+    temperature: 0.3  # More deterministic for code generation
+    repeat_penalty: 1.2  # Prevent repetition artifacts
   simple:
     path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
     adapter: falcon
     context_length: 65536
     gpu_layers: -1
+    temperature: 0.4  # Straightforward responses
+    repeat_penalty: 1.2  # Prevent repetition artifacts
   router:
     # Classification only - small model for task routing
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: qwen3
     context_length: 4096
     gpu_layers: -1
+    temperature: 0.0  # Deterministic classification
+    repeat_penalty: 1.0  # No penalty for classification
   default: normal
 
 thinking:
@@ -71,3 +81,9 @@ voice:
     model_path: "~/models/gguf/Qwen3-0.6B-Q8_0.gguf"
     max_tokens: 300
     temperature: 0.3
+
+  server:
+    host: "127.0.0.1"
+    port: 8765
+    auto_start: true
+    startup_timeout_seconds: 600  # 10 minutes for model loading

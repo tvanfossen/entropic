@@ -178,22 +178,10 @@ class ExternalMCPServer:
                                 },
                             },
                         },
-                        "hint": {
-                            "type": "string",
-                            "description": "Optional hint about task requirements",
-                            "enum": [
-                                "code_generation",
-                                "code_review",
-                                "refactoring",
-                                "testing",
-                                "documentation",
-                                "general",
-                            ],
-                        },
                         "wait": {
                             "type": "boolean",
-                            "description": "If true, block until completion (default: false)",
-                            "default": False,
+                            "description": "If true, block until completion (default: true)",
+                            "default": True,
                         },
                     },
                     "required": ["message"],
@@ -347,15 +335,13 @@ class ExternalMCPServer:
             return {"error": "invalid_args", "message": "message is required"}
 
         context = args.get("context")
-        hint = args.get("hint")
-        wait = args.get("wait", False)
+        wait = args.get("wait", True)
 
         # Create task
         task = self._tasks.create_task(
             message=message,
             source=MessageSource.CLAUDE_CODE,
             context=context,
-            hint=hint,
         )
 
         # Add to queue with callback for completion
@@ -372,8 +358,8 @@ class ExternalMCPServer:
             source=MessageSource.CLAUDE_CODE,
             priority=MessagePriority.CLAUDE_CODE,
             context=context,
-            hint=hint,
             callback=on_complete if wait else None,
+            task_id=task.id,
         )
 
         # Update queue position
@@ -611,11 +597,15 @@ class ExternalMCPServer:
         # Handle MCP methods
         if method == "tools/list":
             tools = self._get_tools()
-            return {
+            response = {
                 "jsonrpc": "2.0",
                 "id": request_id,
-                "result": {"tools": [t.model_dump() for t in tools]},
+                "result": {"tools": [t.model_dump(exclude_none=True) for t in tools]},
             }
+            # Log the response for debugging Claude Code tool visibility issues
+            response_json = json.dumps(response)
+            logger.info(f"tools/list response ({len(response_json)} bytes): {response_json[:1000]}")
+            return response
 
         elif method == "tools/call":
             name = params.get("name", "")
@@ -628,6 +618,12 @@ class ExternalMCPServer:
             }
 
         elif method == "initialize":
+            # Get actual tool list from engine if available
+            tools_info = []
+            if self._get_capabilities:
+                caps = self._get_capabilities()
+                tools_info = caps.get("tools", [])
+
             return {
                 "jsonrpc": "2.0",
                 "id": request_id,
@@ -640,6 +636,13 @@ class ExternalMCPServer:
                     "capabilities": {
                         "tools": {},
                     },
+                    "instructions": (
+                        "Entropi is a local AI coding assistant with its own tool access. "
+                        f"Available tools: {', '.join(tools_info) if tools_info else 'filesystem, bash, git'}. "
+                        "When delegating tasks: describe WHAT to do, not HOW. "
+                        "Reference files by path - Entropi will read them itself. "
+                        "Do not pass file contents. Let Entropi make its own tool decisions."
+                    ),
                 },
             }
 

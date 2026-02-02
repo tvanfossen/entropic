@@ -124,7 +124,7 @@ class Qwen3Adapter(ChatAdapter):
         # Extract thinking blocks (for logging/display, not removed from content yet)
         thinking_content = self._extract_thinking(content)
         if thinking_content:
-            logger.debug(f"Model thinking:\n{thinking_content}")
+            logger.info(f"[THINKING] ({len(thinking_content)} chars):\n{thinking_content}")
 
         # Pattern 1: <tool_call> tags (primary format for Qwen 3)
         tool_call_pattern = re.compile(
@@ -334,7 +334,7 @@ class Qwen3Adapter(ChatAdapter):
 
 {result}
 
-Use this information to respond to the user."""
+Continue with the task. Call more tools if needed, or respond when complete."""
 
         return Message(role="user", content=content)
 

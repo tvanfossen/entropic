@@ -109,7 +109,7 @@ class FalconAdapter(ChatAdapter):
         # Extract thinking blocks for logging
         thinking_content = self._extract_thinking(content)
         if thinking_content:
-            logger.debug(f"Model thinking:\n{thinking_content}")
+            logger.info(f"[THINKING] ({len(thinking_content)} chars):\n{thinking_content}")
 
         # Pattern 1: <tool_call> tags
         tool_call_pattern = re.compile(
@@ -244,7 +244,7 @@ class FalconAdapter(ChatAdapter):
 
 {result}
 
-Use this information to respond to the user."""
+Continue with the task. Call more tools if needed, or respond when complete."""
 
         return Message(role="user", content=content)
 

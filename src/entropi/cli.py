@@ -197,13 +197,25 @@ permissions:
     (entropi_dir / "config.yaml").write_text(default_config)
 
     # Create ENTROPI.md in .entropi/
-    entropi_md = """# ENTROPI.md
+    entropi_md = """# Project Context
 
-This file provides project context to Entropi, your local AI coding assistant.
+This file provides context to Entropi. Edit it to describe your project.
 
-Edit this file to describe your project, its structure, coding standards, and any other context that would help Entropi assist you more effectively.
+## Overview
 
-For more information, see the Entropi documentation.
+<!-- Brief description of what this project does -->
+
+## Tech Stack
+
+<!-- Languages, frameworks, key dependencies -->
+
+## Structure
+
+<!-- Key directories and their purpose -->
+
+## Conventions
+
+<!-- Coding standards, naming conventions, patterns to follow -->
 """
     entropi_md_path = entropi_dir / "ENTROPI.md"
     if not entropi_md_path.exists():

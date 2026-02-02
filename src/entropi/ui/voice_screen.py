@@ -17,18 +17,21 @@ from typing import TYPE_CHECKING
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, Horizontal, Vertical
+from textual.containers import Container, Horizontal
 from textual.screen import Screen
 from textual.widgets import Button, Label, Select, Static
 
 from entropi.core.logging import get_logger
 from entropi.ui.voice_widgets import (
     VoiceHeader,
+    VoiceStatsPanel,
     VoiceStatusBar,
     VoiceTranscript,
     VoiceVisualizer,
 )
-from entropi.voice.controller import PersonaPlexController, VoiceCallbacks, VoiceState
+from entropi.voice.client import VoiceClient
+from entropi.voice.client import VoiceStats as ClientStats
+from entropi.voice.controller import VoiceState
 
 if TYPE_CHECKING:
     from entropi.config.schema import VoiceConfig
@@ -182,42 +185,64 @@ class VoiceScreen(Screen[None]):
 
     CSS = """
     VoiceScreen {
-        layout: vertical;
-    }
-
-    #voice-content {
+        layout: grid;
+        grid-size: 1;
+        grid-rows: 1 8 auto 1fr 5 3;
         height: 100%;
         width: 100%;
-        padding: 1;
+    }
+
+    VoiceHeader {
+        row-span: 1;
     }
 
     #visualizer-container {
-        height: 8;
+        row-span: 1;
+        height: 100%;
         width: 100%;
-        margin-bottom: 1;
+        padding: 0 1;
     }
 
     #settings-container {
+        row-span: 1;
         height: auto;
         width: 100%;
-        margin-bottom: 1;
+        padding: 0 1;
     }
 
     #transcript-container {
-        height: 1fr;
+        row-span: 1;
+        height: 100%;
+        width: 100%;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+
+    #transcript {
+        height: auto;
+        width: 100%;
+        border: round $primary;
+        padding: 1;
+    }
+
+    #status-bar {
+        row-span: 1;
+        height: 100%;
         width: 100%;
     }
 
     .hidden {
         display: none;
+        height: 0;
     }
     """
 
     BINDINGS = [
-        Binding("escape", "exit_voice", "Exit", show=True),
+        Binding("escape", "exit_voice", "Exit", show=True, priority=True),
         Binding("space", "toggle_pause", "Pause/Resume", show=True),
         Binding("enter", "start_conversation", "Start", show=True),
         Binding("r", "reset_context", "Reset", show=True),
+        Binding("b", "back_to_settings", "Back", show=True),
     ]
 
     def __init__(
@@ -244,7 +269,7 @@ class VoiceScreen(Screen[None]):
         self._config = config
         self._on_enter = on_enter
         self._on_exit = on_exit
-        self._controller: PersonaPlexController | None = None
+        self._client: VoiceClient | None = None
         self._start_time: float = 0
         self._elapsed_timer: asyncio.Task[None] | None = None
         self._initialized: bool = False
@@ -253,65 +278,100 @@ class VoiceScreen(Screen[None]):
     def compose(self) -> ComposeResult:
         """Compose screen layout."""
         yield VoiceHeader(title="Voice Mode")
-
-        with Vertical(id="voice-content"):
-            with Container(id="visualizer-container"):
-                yield VoiceVisualizer(id="visualizer")
-
-            with Container(id="settings-container"):
-                yield VoiceSettingsPanel(id="settings-panel")
-
-            with Container(id="transcript-container"):
-                yield VoiceTranscript(id="transcript")
-
+        yield Container(VoiceVisualizer(id="visualizer"), id="visualizer-container")
+        yield Container(VoiceSettingsPanel(id="settings-panel"), id="settings-container")
+        yield Container(VoiceTranscript(id="transcript"), id="transcript-container")
+        yield VoiceStatsPanel(id="stats-panel")
         yield VoiceStatusBar(id="status-bar")
 
     async def on_mount(self) -> None:
         """Handle screen mount - start initialization."""
-        # Create callbacks
-        callbacks = VoiceCallbacks(
-            on_state_change=self._on_state_change,
-            on_transcript_update=self._on_transcript_update,
+        # Get server config
+        host = "127.0.0.1"
+        port = 8765
+        if hasattr(self._config, 'server'):
+            host = self._config.server.host
+            port = self._config.server.port
+
+        # Create client
+        self._client = VoiceClient(
+            config=self._config,
+            host=host,
+            port=port,
+        )
+
+        # Set up callbacks
+        self._client.set_callbacks(
+            on_text=lambda t: self._on_transcript_update("assistant", t),
+            on_state_change=self._on_client_state_change,
+            on_stats_update=self._on_client_stats_update,
             on_input_level=self._on_input_level,
             on_output_level=self._on_output_level,
             on_error=self._on_error,
             on_loading_progress=self._on_loading_progress,
         )
 
-        # Create controller
-        self._controller = PersonaPlexController(self._config, callbacks)
-
         # Start initialization (but don't start conversation)
-        self._run_initialization()
+        # Note: _run_initialization is a @work decorated method, calling it starts the worker
+        _ = self._run_initialization()
 
     @work(exclusive=True)
     async def _run_initialization(self) -> None:
-        """Initialize models and audio devices (but don't start conversation)."""
-        if self._controller is None:
+        """Initialize voice server and audio devices (but don't start conversation)."""
+        if self._client is None:
+            logger.error("Client is None in _run_initialization")
             return
 
-        status_bar = self.query_one("#status-bar", VoiceStatusBar)
-        status_bar.set_state("initializing")
-        settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
+        # Give widgets time to mount
+        await asyncio.sleep(0.1)
 
         try:
+            status_bar = self.query_one("#status-bar", VoiceStatusBar)
+            status_bar.set_state("initializing")
+            settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
+            transcript = self.query_one("#transcript", VoiceTranscript)
+        except Exception as e:
+            logger.error(f"Failed to query widgets: {e}")
+            return
+
+        try:
+            # Show initial status in transcript
+            transcript.write("[yellow]Starting voice mode initialization...[/]")
+
             # Call on_enter to free GPU memory (unload chat models)
             if self._on_enter:
                 settings_panel.set_status("Unloading chat models...")
+                transcript.write("[dim]Unloading chat models to free GPU memory...[/]")
                 await self._on_enter()
 
-            # Initialize controller (loads models)
-            settings_panel.set_status("Loading PersonaPlex models...")
-            success = await self._controller.initialize()
+            # Start voice server subprocess (loads models in separate process)
+            settings_panel.set_status("Starting voice server...")
+            transcript.write("[yellow]Starting voice server (models load in subprocess)...[/]")
+
+            success = await self._client.start_server()
             if not success:
-                settings_panel.set_status("[red]Initialization failed[/red]")
-                self.notify("Failed to initialize voice mode", severity="error")
+                settings_panel.set_status("[red]Server startup failed[/red]")
+                transcript.write("[red bold]ERROR: Failed to start voice server[/]")
+                self.notify("Failed to start voice server", severity="error")
+                return
+
+            # Connect to the server
+            settings_panel.set_status("Connecting to voice server...")
+            transcript.write("[dim]Connecting to voice server...[/]")
+
+            connected = await self._client.connect()
+            if not connected:
+                settings_panel.set_status("[red]Connection failed[/red]")
+                transcript.write("[red bold]ERROR: Failed to connect to voice server[/]")
+                self.notify("Failed to connect to voice server", severity="error")
                 return
 
             # Detect audio devices
             settings_panel.set_status("Detecting audio devices...")
+            transcript.write("[dim]Detecting audio devices...[/]")
             devices = await self._detect_audio_devices()
             settings_panel.set_audio_devices(devices)
+            transcript.write(f"[green]Found {len(devices)} audio devices[/]")
 
             # Ready for user to start
             self._initialized = True
@@ -319,11 +379,16 @@ class VoiceScreen(Screen[None]):
             settings_panel.set_ready(True)
             status_bar.set_state("ready")
 
-            self._on_loading_progress("Models loaded. Configure settings and press Enter to start.")
+            transcript.write("[green bold]Ready! Press Enter to start conversation.[/]")
+            transcript.write("[dim]Shortcuts: Space=Pause, R=Reset, B=Back, Esc=Exit[/]")
 
         except Exception as e:
-            logger.error(f"Voice initialization error: {e}")
-            settings_panel.set_status(f"[red]Error: {e}[/red]")
+            logger.exception(f"Voice initialization error: {e}")
+            try:
+                settings_panel.set_status(f"[red]Error: {e}[/red]")
+                transcript.write(f"[red bold]ERROR: {e}[/]")
+            except Exception:
+                pass
             self.notify(f"Voice mode error: {e}", severity="error")
 
     async def _detect_audio_devices(self) -> list[tuple[str, int, bool, bool]]:
@@ -362,7 +427,7 @@ class VoiceScreen(Screen[None]):
         if not self._initialized or self._conversation_started:
             return
 
-        if self._controller is None:
+        if self._client is None:
             return
 
         self._conversation_started = True
@@ -374,20 +439,26 @@ class VoiceScreen(Screen[None]):
         except Exception:
             pass
 
-        # Get selected devices
+        # Get selected devices (for future device selection support)
         settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
-        input_device, output_device = settings_panel.get_selected_devices()
+        _input_device, _output_device = settings_panel.get_selected_devices()
 
-        # TODO: Pass selected devices to audio_io
-
-        # Start conversation
+        # Start conversation timer
         self._start_time = time.time()
         self._elapsed_timer = asyncio.create_task(self._update_elapsed())
 
         status_bar = self.query_one("#status-bar", VoiceStatusBar)
         status_bar.set_state("conversation")
 
-        await self._controller.start_conversation()
+        # Initialize stats panel as connected
+        try:
+            stats_panel = self.query_one("#stats-panel", VoiceStatsPanel)
+            stats_panel.connected = True
+        except Exception:
+            pass
+
+        # Start audio + networking
+        await self._client.start()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button presses."""
@@ -398,7 +469,7 @@ class VoiceScreen(Screen[None]):
 
     async def _generate_thinking_audio(self) -> None:
         """Generate thinking audio file using current voice."""
-        if not self._initialized or self._controller is None:
+        if not self._initialized or self._client is None:
             return
 
         self.notify("Generating thinking audio...", timeout=5)
@@ -417,7 +488,7 @@ class VoiceScreen(Screen[None]):
                 break
 
     def _on_state_change(self, state: VoiceState) -> None:
-        """Handle voice state changes."""
+        """Handle voice state changes from controller (enum)."""
         state_map = {
             VoiceState.IDLE: "idle",
             VoiceState.INITIALIZING: "initializing",
@@ -433,19 +504,28 @@ class VoiceScreen(Screen[None]):
             if self._initialized and not self._conversation_started:
                 return
             status_bar.set_state(state_map.get(state, "unknown"))
+        except Exception:
+            pass
 
-            if self._controller:
-                status_bar.set_window(self._controller.window_number)
+    def _on_client_state_change(self, state: str) -> None:
+        """Handle voice state changes from client (string)."""
+        try:
+            status_bar = self.query_one("#status-bar", VoiceStatusBar)
+            # Don't override "ready" state from initialization
+            if self._initialized and not self._conversation_started:
+                return
+            status_bar.set_state(state)
         except Exception:
             pass
 
     def _on_transcript_update(self, speaker: str, text: str) -> None:
         """Handle transcript updates."""
+        logger.debug(f"Transcript update: {speaker}: {text[:50]}...")
         try:
             transcript = self.query_one("#transcript", VoiceTranscript)
             transcript.add_text(speaker, text)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to update transcript: {e}")
 
     def _on_input_level(self, level: float) -> None:
         """Handle input audio level updates."""
@@ -469,9 +549,24 @@ class VoiceScreen(Screen[None]):
 
     def _on_loading_progress(self, message: str) -> None:
         """Handle loading progress updates."""
+        logger.info(f"Loading progress: {message}")
         try:
             transcript = self.query_one("#transcript", VoiceTranscript)
             transcript.add_text("system", message)
+        except Exception as e:
+            logger.warning(f"Failed to update loading progress: {e}")
+
+    def _on_client_stats_update(self, stats: "ClientStats") -> None:
+        """Handle real-time stats updates from the client."""
+        try:
+            stats_panel = self.query_one("#stats-panel", VoiceStatsPanel)
+            stats_panel.update_stats(
+                server_fps=stats.server_fps,
+                server_latency_ms=stats.server_latency_ms,
+                frames_sent=stats.frames_sent,
+                frames_received=stats.frames_received,
+                connected=True,
+            )
         except Exception:
             pass
 
@@ -482,22 +577,56 @@ class VoiceScreen(Screen[None]):
 
     async def action_toggle_pause(self) -> None:
         """Toggle pause/resume."""
-        if self._controller is None or not self._conversation_started:
+        if self._client is None:
+            self.notify("Client not ready", timeout=1)
             return
 
-        if self._controller.is_paused:
-            await self._controller.resume()
-            self.notify("Resumed", timeout=1)
-        else:
-            await self._controller.pause()
-            self.notify("Paused - Press Space to resume", timeout=2)
+        if not self._conversation_started:
+            self.notify("Start conversation first (Enter)", timeout=1)
+            return
+
+        # Note: Pause/resume not fully implemented in client/server architecture yet
+        self.notify("Pause/resume coming soon", timeout=2)
+
+    async def action_back_to_settings(self) -> None:
+        """Return to settings screen (stop conversation if running)."""
+        if self._conversation_started:
+            # Stop the audio streaming
+            if self._client:
+                await self._client.stop()
+
+            # Cancel elapsed timer
+            if self._elapsed_timer:
+                self._elapsed_timer.cancel()
+                try:
+                    await self._elapsed_timer
+                except asyncio.CancelledError:
+                    pass
+                self._elapsed_timer = None
+
+            self._conversation_started = False
+
+            # Reset server state for next conversation
+            if self._client:
+                await self._client.reset()
+
+        # Show settings panel again
+        try:
+            settings_container = self.query_one("#settings-container", Container)
+            settings_container.remove_class("hidden")
+            status_bar = self.query_one("#status-bar", VoiceStatusBar)
+            status_bar.set_state("ready")
+        except Exception:
+            pass
+
+        self.notify("Returned to settings", timeout=1)
 
     async def action_reset_context(self) -> None:
         """Reset context and transcript."""
-        if self._controller is None:
+        if self._client is None:
             return
 
-        await self._controller.reset()
+        await self._client.reset()
 
         try:
             transcript = self.query_one("#transcript", VoiceTranscript)
@@ -516,9 +645,10 @@ class VoiceScreen(Screen[None]):
             except asyncio.CancelledError:
                 pass
 
-        if self._controller:
-            await self._controller.stop()
-            self._controller = None
+        if self._client:
+            await self._client.stop()
+            await self._client.stop_server()
+            self._client = None
 
         # Call on_exit to reload chat models
         if self._on_exit:

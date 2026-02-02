@@ -255,7 +255,8 @@ class ThinkingBlock(Static):
     Collapsible thinking content display.
 
     Shows thinking content in a dimmed format while streaming,
-    then collapses to 2 lines when complete.
+    then collapses to 2 lines when complete. Respects Ctrl+B toggle
+    during streaming with rate-controlled updates.
     """
 
     DEFAULT_CSS = """
@@ -274,6 +275,10 @@ class ThinkingBlock(Static):
     # Class-level toggle for all thinking blocks
     _all_expanded: bool = False
 
+    # Streaming rate control
+    _EXPANDED_UPDATE_INTERVAL = 0.05   # 50ms - slower for readability
+    _COLLAPSED_UPDATE_INTERVAL = 0.2   # 200ms - batch updates when collapsed
+
     def __init__(self, content: str = "", **kwargs: Any) -> None:
         """
         Initialize thinking block.
@@ -285,6 +290,8 @@ class ThinkingBlock(Static):
         super().__init__(**kwargs)
         self._content = content
         self._is_streaming = True  # Start in streaming mode
+        self._pending_content: str = ""  # Buffer for batching
+        self._last_update_time: float = 0.0
 
     @property
     def content(self) -> str:
@@ -302,34 +309,61 @@ class ThinkingBlock(Static):
         """Set expanded state for all thinking blocks."""
         cls._all_expanded = expanded
 
-    def append(self, chunk: str) -> None:
-        """Append thinking content during streaming."""
+    def append_content(self, chunk: str) -> None:
+        """Append content with rate limiting based on toggle state."""
+        import time
+
         self._content += chunk
-        self._update_display()
+        self._pending_content += chunk
+
+        now = time.time()
+        interval = (
+            self._EXPANDED_UPDATE_INTERVAL
+            if ThinkingBlock._all_expanded
+            else self._COLLAPSED_UPDATE_INTERVAL
+        )
+
+        # Update display if enough time has passed
+        if now - self._last_update_time >= interval:
+            self._update_display()
+            self._pending_content = ""
+            self._last_update_time = now
+
+    def append(self, chunk: str) -> None:
+        """Append thinking content during streaming (alias for append_content)."""
+        self.append_content(chunk)
+
+    def finish_streaming(self) -> None:
+        """Mark streaming complete and flush any pending content."""
+        self._is_streaming = False
+        self._update_display()  # Final update with all content
 
     def finish(self) -> None:
         """Called when thinking block is complete - collapse it."""
-        self._is_streaming = False
+        self.finish_streaming()
         if not ThinkingBlock._all_expanded:
             self.add_class("collapsed")
-        self._update_display()
 
     def _update_display(self) -> None:
-        """Update display."""
-        # While streaming or expanded, show full content
-        if self._is_streaming or ThinkingBlock._all_expanded:
+        """Update display - respects toggle even during streaming."""
+        cursor = "▌" if self._is_streaming else ""
+
+        if ThinkingBlock._all_expanded:
             self.remove_class("collapsed")
-            display = self._content + ("▌" if self._is_streaming else "")
+            display = self._content + cursor
         else:
-            # Collapsed: show first 2 lines with hint
             self.add_class("collapsed")
             lines = self._content.split("\n")
             if len(lines) > 2:
-                display = "\n".join(lines[:2]) + "..."
+                # Show last 2 lines as rolling window during streaming
+                display = "..." + "\n".join(lines[-2:]) + cursor
             else:
-                display = self._content
+                display = self._content + cursor
 
-        self.update(Text.from_markup(f"[dim italic]💭 {display}[/]"))
+        # Build Text without markup parsing to avoid issues with brackets in content
+        text = Text(f"💭 {display}")
+        text.stylize("dim italic")
+        self.update(text)
 
     def on_mount(self) -> None:
         """Render on mount."""
@@ -607,6 +641,7 @@ class StatusFooter(Static):
         # Always show these shortcuts
         parts.append("[dim]Ctrl+B[/]=Think")
         parts.append("[dim]Ctrl+L[/]=Clear")
+        parts.append("[dim]F5[/]=Voice")
 
         display_text = " | ".join(parts)
         self.update(Text.from_markup(display_text))

@@ -216,10 +216,16 @@ class ConfigLoader:
             # Create default ENTROPI.md
             entropi_md_path = project_entropi_dir / "ENTROPI.md"
             entropi_md_path.write_text(
-                "# ENTROPI.md\n\n"
-                "This file provides project context to Entropi, your local AI coding assistant.\n\n"
-                "Edit this file to describe your project, its structure, coding standards, "
-                "and any other context that would help Entropi assist you more effectively.\n"
+                "# Project Context\n\n"
+                "This file provides context to Entropi. Edit it to describe your project.\n\n"
+                "## Overview\n\n"
+                "<!-- Brief description of what this project does -->\n\n"
+                "## Tech Stack\n\n"
+                "<!-- Languages, frameworks, key dependencies -->\n\n"
+                "## Structure\n\n"
+                "<!-- Key directories and their purpose -->\n\n"
+                "## Conventions\n\n"
+                "<!-- Coding standards, naming conventions, patterns to follow -->\n"
             )
 
         # Copy global config as template if project config doesn't exist

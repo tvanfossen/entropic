@@ -8,7 +8,6 @@ ENTROPI.md loading, and context compaction for long conversations.
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message
@@ -211,20 +210,6 @@ class ContextBuilder:
     - ENTROPI.md loading
     """
 
-    DEFAULT_SYSTEM_PROMPT = """You are Entropi, a local AI coding assistant.
-
-You help developers write, review, and improve code. You have access to tools provided via MCP servers.
-
-CRITICAL: You have NO prior knowledge of this project. Tools are your ONLY source of real data.
-- NEVER guess file names, contents, or directory structures
-- USE TOOLS to get real data, then respond based on actual results
-
-BEHAVIOR:
-- Be professional and concise - avoid unnecessary verbosity
-- Complete the requested task, then stop
-- Do not offer additional actions unless asked
-- Brief confirmations are sufficient after completing tasks"""
-
     def __init__(self, config: EntropyConfig) -> None:
         """
         Initialize context builder.
@@ -233,17 +218,7 @@ BEHAVIOR:
             config: Application configuration
         """
         self.config = config
-        self._default_system_prompt = self._load_default_prompt()
         self._project_context: str | None = None
-
-    def _load_default_prompt(self) -> str:
-        """Load default system prompt."""
-        default_path = self.config.prompts_dir / "system" / "default.md"
-
-        if default_path.exists():
-            return default_path.read_text()
-
-        return self.DEFAULT_SYSTEM_PROMPT
 
     def load_project_context(self, project_dir: Path) -> None:
         """
@@ -262,30 +237,24 @@ BEHAVIOR:
 
     def build_system_prompt(
         self,
-        base_prompt: str | None = None,
-        tools: list[dict[str, Any]] | None = None,
+        base_prompt: str,
     ) -> str:
         """
         Build complete system prompt.
 
         Args:
-            base_prompt: Optional base prompt override
-            tools: Available tools (formatted by adapter)
+            base_prompt: Base prompt (identity + tool usage assembled by adapter)
 
         Returns:
-            Complete system prompt
+            Complete system prompt with project context appended
         """
-        parts = []
-
-        # Base prompt
-        parts.append(base_prompt or self._default_system_prompt)
+        parts = [base_prompt]
 
         # Project context
         if self._project_context:
             parts.append("\n# Project Context\n")
             parts.append(self._project_context)
 
-        # Tool formatting is handled by the adapter
         return "\n".join(parts)
 
     def truncate_history(

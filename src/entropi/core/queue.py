@@ -49,8 +49,8 @@ class QueuedMessage:
     priority: MessagePriority
     timestamp: float
     context: list[dict[str, Any]] | None = None  # Optional file context
-    hint: str | None = None  # Task hint (code_generation, etc.)
     callback: Callable[[Any], None] | None = None  # Called with result
+    task_id: str | None = None  # Link to TaskManager task
 
     def __lt__(self, other: QueuedMessage) -> bool:
         """Priority queue ordering: lower priority value first, then by timestamp."""
@@ -122,8 +122,8 @@ class MessageQueue:
         source: str,
         priority: MessagePriority | None = None,
         context: list[dict[str, Any]] | None = None,
-        hint: str | None = None,
         callback: Callable[[Any], None] | None = None,
+        task_id: str | None = None,
     ) -> str:
         """
         Add a message to the queue.
@@ -133,8 +133,8 @@ class MessageQueue:
             source: Message source (human, claude-code, system)
             priority: Optional explicit priority (defaults based on source)
             context: Optional file context to include
-            hint: Optional task hint
             callback: Optional callback for when task completes
+            task_id: Optional task ID for linking to TaskManager
 
         Returns:
             Message ID
@@ -150,8 +150,8 @@ class MessageQueue:
             priority=priority,
             timestamp=time.time(),
             context=context,
-            hint=hint,
             callback=callback,
+            task_id=task_id,
         )
 
         async with self._lock:

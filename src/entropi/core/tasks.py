@@ -75,7 +75,6 @@ class Task:
 
     # Context provided by caller
     context: list[dict[str, Any]] | None = None
-    hint: str | None = None
 
     # Results
     response: str = ""
@@ -215,7 +214,6 @@ class TaskManager:
         message: str,
         source: str = "claude-code",
         context: list[dict[str, Any]] | None = None,
-        hint: str | None = None,
     ) -> Task:
         """
         Create a new task.
@@ -224,7 +222,6 @@ class TaskManager:
             message: Task message/prompt
             source: Task source
             context: Optional file context
-            hint: Optional task hint
 
         Returns:
             Created task
@@ -237,7 +234,6 @@ class TaskManager:
             message=message,
             source=source,
             context=context,
-            hint=hint,
         )
 
         self._tasks[task.id] = task

@@ -312,10 +312,7 @@ class AgentEngine:
 
         # Build system prompt with todo guidance appended
         base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
-        system = self._context_builder.build_system_prompt(
-            base_prompt=base_with_todos,
-            tools=tools,
-        )
+        system = self._context_builder.build_system_prompt(base_with_todos)
 
         # Format system prompt with tools through adapter
         formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
@@ -372,6 +369,10 @@ class AgentEngine:
 
     async def _execute_iteration(self, ctx: LoopContext) -> AsyncIterator[Message]:
         """Execute a single loop iteration."""
+        logger.info(
+            f"[LOOP START] Iteration {ctx.metrics.iterations}/{self.loop_config.max_iterations} | "
+            f"state={ctx.state.name} | messages={len(ctx.messages)} | errors={ctx.consecutive_errors}"
+        )
         try:
             # Refresh context limit in case model changed
             self._refresh_context_limit()
@@ -391,16 +392,6 @@ class AgentEngine:
             assistant_msg = self._create_assistant_message(content, tool_calls)
             ctx.messages.append(assistant_msg)
 
-            # Log model response for debugging
-            tool_names = [tc.name for tc in tool_calls] if tool_calls else []
-            logger.info(
-                f"\n{'='*60}\n[MODEL RESPONSE]\n{'='*60}\n"
-                f"{content}\n"
-                f"{'='*60}\n"
-                f"Tool calls: {tool_names if tool_names else 'None'}\n"
-                f"{'='*60}"
-            )
-
             yield assistant_msg
 
             if tool_calls:
@@ -410,16 +401,19 @@ class AgentEngine:
                 # Check if generation was cut off due to token limit
                 finish_reason = self.orchestrator.last_finish_reason
                 if finish_reason == "length":
-                    logger.debug("Generation hit token limit - continuing loop")
+                    logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
                     # Don't mark complete, let loop continue
                 else:
                     # No tool calls - check if response is complete using adapter
                     adapter = self.orchestrator.get_adapter()
-                    if adapter.is_response_complete(content, tool_calls):
+                    is_complete = adapter.is_response_complete(content, tool_calls)
+                    logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
+                    if is_complete:
                         self._set_state(ctx, AgentState.COMPLETE)
                     # else: continue loop (model may still be thinking)
 
         except Exception as e:
+            logger.exception(f"Loop iteration error: {e}")
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
@@ -453,6 +447,15 @@ class AgentEngine:
             logger.debug("\n=== Stream complete ===")
             logger.debug(f"Total content length: {len(content)}")
 
+            # Log COMPLETE raw model output including thinking blocks
+            logger.info(
+                f"\n{'='*70}\n"
+                f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
+                f"{'='*70}\n"
+                f"{content}\n"
+                f"{'='*70}"
+            )
+
             # Lock tier after first generation to prevent mid-task model switching
             if ctx.locked_tier is None:
                 ctx.locked_tier = self.orchestrator.last_used_tier
@@ -464,6 +467,15 @@ class AgentEngine:
 
         # Non-streaming mode - use locked tier if set
         result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
+
+        # Log COMPLETE raw model output including thinking blocks
+        logger.info(
+            f"\n{'='*70}\n"
+            f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
+            f"{'='*70}\n"
+            f"{result.content}\n"
+            f"{'='*70}"
+        )
 
         # Lock tier after first generation to prevent mid-task model switching
         if ctx.locked_tier is None:
@@ -616,6 +628,12 @@ class AgentEngine:
 
     def _check_duplicate_tool_call(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
         """Check if this tool call is a duplicate. Returns previous result if duplicate."""
+        # Never skip read_file - it has side effects (updates FileAccessTracker)
+        # Without this exemption, re-reads after TTL expiry get blocked as "duplicate"
+        # but the tracker doesn't update, so subsequent edits still fail with read_required
+        if tool_call.name == "filesystem.read_file":
+            return None
+
         key = self._get_tool_call_key(tool_call)
         return ctx.recent_tool_calls.get(key)
 
@@ -650,7 +668,8 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
 
     async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
         """Execute a single tool call."""
-        logger.debug(f"Tool call: {tool_call.name}({json.dumps(tool_call.arguments, default=str)})")
+        logger.info(f"[TOOL CALL] {tool_call.name}")
+        logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
 
         # Handle internal tools first (no approval needed)
         if tool_call.name == "entropi.todo_write":
@@ -680,6 +699,7 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
                 f"{result_str}\n"
                 f"{'='*60}"
             )
+            logger.info(f"[TOOL COMPLETE] {tool_call.name} -> {len(result_str)} chars result ({duration_ms:.0f}ms)")
 
             # Notify tool complete
             if self._on_tool_complete:

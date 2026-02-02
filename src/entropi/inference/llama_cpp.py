@@ -275,7 +275,7 @@ class LlamaCppBackend(ModelBackend):
                         self._last_finish_reason = choice["finish_reason"]
                         logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
             except Exception as e:
-                logger.error(f"Stream error: {e}")
+                logger.exception(f"Stream error: {e}")
             finally:
                 # Signal end of stream
                 loop.call_soon_threadsafe(queue.put_nowait, None)

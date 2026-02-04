@@ -11,7 +11,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool
+from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
 
 
 class BashServer(BaseMCPServer):
@@ -58,7 +58,7 @@ class BashServer(BaseMCPServer):
         return [
             create_tool(
                 name="execute",
-                description="Execute a shell command",
+                description=load_tool_description("execute", "bash"),
                 properties={
                     "command": {
                         "type": "string",

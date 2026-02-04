@@ -47,6 +47,7 @@ class LlamaCppBackend(ModelBackend):
     def __init__(
         self,
         config: ModelConfig,
+        tier: str,
         adapter: ChatAdapter | None = None,
         prompts_dir: Path | None = None,
     ) -> None:
@@ -55,11 +56,12 @@ class LlamaCppBackend(ModelBackend):
 
         Args:
             config: Model configuration
+            tier: Model tier (thinking, normal, code, simple, router)
             adapter: Chat adapter (resolved from config.adapter if None)
             prompts_dir: Optional directory for user prompt overrides
         """
         self.config = config
-        self._adapter = adapter or get_adapter(config.adapter, prompts_dir=prompts_dir)
+        self._adapter = adapter or get_adapter(config.adapter, tier, prompts_dir=prompts_dir)
         self._model: Llama | None = None
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"
@@ -275,7 +277,7 @@ class LlamaCppBackend(ModelBackend):
                         self._last_finish_reason = choice["finish_reason"]
                         logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
             except Exception as e:
-                logger.error(f"Stream error: {e}")
+                logger.exception(f"Stream error: {e}")
             finally:
                 # Signal end of stream
                 loop.call_soon_threadsafe(queue.put_nowait, None)

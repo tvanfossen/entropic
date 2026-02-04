@@ -6,11 +6,41 @@ using the official Python SDK.
 """
 
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
+
+# Tool descriptions directory
+_TOOLS_DIR = Path(__file__).parent.parent.parent / "data" / "prompts" / "tools"
+
+
+def load_tool_description(tool_name: str, server_prefix: str = "") -> str:
+    """
+    Load tool description from markdown file.
+
+    Args:
+        tool_name: Tool name (e.g., "read_file", "status")
+        server_prefix: Optional server prefix (e.g., "git", "bash")
+
+    Returns:
+        Tool description text, or fallback if file not found
+    """
+    # Try with prefix first (e.g., git_status.md), then without (e.g., status.md)
+    if server_prefix:
+        prefixed_path = _TOOLS_DIR / f"{server_prefix}_{tool_name}.md"
+        if prefixed_path.exists():
+            return prefixed_path.read_text().strip()
+
+    # Try direct name
+    direct_path = _TOOLS_DIR / f"{tool_name}.md"
+    if direct_path.exists():
+        return direct_path.read_text().strip()
+
+    # Fallback
+    return f"Tool: {tool_name}"
 
 
 class BaseMCPServer(ABC):

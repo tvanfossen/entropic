@@ -2,6 +2,7 @@
 # Entropi Dockerfile
 # CUDA 12.8 with Blackwell (compute_120) support
 # ============================================================================
+# syntax=docker/dockerfile:1
 
 FROM nvidia/cuda:12.8.0-devel-ubuntu24.04
 
@@ -21,11 +22,25 @@ RUN apt-get update && apt-get install -y \
     clangd \
     nodejs \
     npm \
-    # Audio libraries for voice mode (PortAudio + ALSA)
-    libportaudio2 \
-    portaudio19-dev \
+    # Audio libraries for voice mode (build deps for PortAudio with PulseAudio)
     libasound2-dev \
+    libpulse-dev \
+    pulseaudio-utils \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
+
+# Build PortAudio from source with PulseAudio support
+# (Ubuntu's libportaudio2 is built without PulseAudio)
+RUN git clone --depth 1 https://github.com/PortAudio/portaudio.git /tmp/portaudio && \
+    cd /tmp/portaudio && \
+    cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DPA_USE_ALSA=ON \
+        -DPA_USE_PULSEAUDIO=ON \
+        -DPA_USE_JACK=OFF && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build && \
+    ldconfig && \
+    rm -rf /tmp/portaudio
 
 # Install pyright LSP for Python
 RUN npm install -g pyright
@@ -49,12 +64,27 @@ RUN pip install llama-cpp-python --no-cache-dir && \
     rm /etc/ld.so.conf.d/cuda-stubs.conf && \
     ldconfig
 
-# Copy project files and install (non-editable for proper permissions)
+# Install dependencies first (cached separately from source changes)
+# Copy only pyproject.toml to install deps, then copy source
 COPY pyproject.toml /app/
+WORKDIR /app
+
+# Create minimal src structure for pip to parse pyproject.toml
+RUN mkdir -p /app/src/entropi && \
+    echo '__version__ = "0.0.0"' > /app/src/entropi/__init__.py
+
+# Install dependencies with pip cache mount (much faster rebuilds)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install ".[dev,voice]"
+
+# Now copy actual source (this layer changes often but deps are cached)
 COPY src/ /app/src/
 COPY vendor/ /app/vendor/
-WORKDIR /app
-RUN pip install ".[dev,voice]" --no-cache-dir
+
+# Reinstall entropi and install moshi from vendor (voice mode dependency)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install -e /app/vendor/personaplex/moshi && \
+    pip install ".[dev,voice]"
 
 # Create user directory for volume mounting (UID set by docker-compose)
 RUN mkdir -p /home/user && chmod 777 /home/user
@@ -68,6 +98,9 @@ VOLUME /workspace
 # Environment
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Ensure container venv is used, not any mounted .venv from host
+ENV VIRTUAL_ENV=/opt/venv
+ENV PYTHONPATH=/opt/venv/lib/python3.12/site-packages
 
 WORKDIR /workspace
 

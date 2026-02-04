@@ -9,6 +9,10 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - ENTROPI_LOG_LEVEL=DEBUG
       - HOME=/home/user
+      # PulseAudio server socket path
+      - PULSE_SERVER=unix:/run/user/1000/pulse/native
+      # PyTorch memory optimization - prevents fragmentation with large models
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
     volumes:
       # Global models directory (read-only) - uses generic /home/user path
       - ${HOME}/models/gguf:/home/user/models/gguf:ro
@@ -16,6 +20,14 @@ services:
       - ${HOME}/.entropi:/home/user/.entropi:ro
       # Project workspace (includes .entropi/ for per-project config/db)
       - .:/workspace
+      # PulseAudio socket for voice mode audio I/O
+      - /run/user/${UID:-1000}/pulse:/run/user/1000/pulse
+    devices:
+      # ALSA sound devices (fallback if PulseAudio unavailable)
+      - /dev/snd:/dev/snd
+    group_add:
+      # Add container user to audio group for device access
+      - audio
     stdin_open: true
     tty: true
     deploy:

@@ -19,10 +19,15 @@ NC='\033[0m' # No Color
 
 # Parse arguments
 INSTALL_MODE="docker"
+NO_CACHE=""
 for arg in "$@"; do
     case $arg in
         --native)
             INSTALL_MODE="native"
+            shift
+            ;;
+        --no-cache)
+            NO_CACHE="--no-cache"
             shift
             ;;
     esac
@@ -163,9 +168,12 @@ echo "=== Step 1: Building/Pulling Docker image ==="
 echo ""
 
 if [ "$BUILD_FROM_SOURCE" = true ]; then
-    # Build from local source
+    # Build from local source (BuildKit enables cache mounts for faster rebuilds)
     echo "Building Entropi image (this may take several minutes on first build)..."
-    docker build -f "$SCRIPT_DIR/docker/Dockerfile" -t entropi:latest "$SCRIPT_DIR"
+    if [ -n "$NO_CACHE" ]; then
+        echo "  (--no-cache specified, forcing full rebuild)"
+    fi
+    DOCKER_BUILDKIT=1 docker build $NO_CACHE -f "$SCRIPT_DIR/docker/Dockerfile" -t entropi:latest "$SCRIPT_DIR"
 
     IMAGE_NAME="entropi:latest"
 else
@@ -182,7 +190,83 @@ else
 fi
 
 echo ""
-echo "=== Step 2: Installing wrapper script ==="
+echo "=== Step 2: Downloading PersonaPlex models ==="
+echo ""
+
+# Check for HF_TOKEN
+HF_ENV_FILE="$SCRIPT_DIR/hf.env"
+if [ -z "$HF_TOKEN" ] && [ -f "$HF_ENV_FILE" ]; then
+    source "$HF_ENV_FILE"
+fi
+
+if [ -z "$HF_TOKEN" ]; then
+    echo "PersonaPlex models require a HuggingFace token."
+    echo "1. Accept the license at: https://huggingface.co/nvidia/personaplex-7b-v1"
+    echo "2. Get your token from: https://huggingface.co/settings/tokens"
+    echo ""
+    read -p "Enter your HuggingFace token (or press Enter to skip): " HF_TOKEN
+
+    if [ -n "$HF_TOKEN" ]; then
+        echo "HF_TOKEN=$HF_TOKEN" > "$HF_ENV_FILE"
+        chmod 600 "$HF_ENV_FILE"
+        echo -e "${GREEN}✓${NC} Token saved to hf.env"
+    fi
+fi
+
+if [ -n "$HF_TOKEN" ]; then
+    echo "Downloading PersonaPlex models (this may take a while on first run)..."
+
+    # Use the container to download models to the host HF cache
+    mkdir -p "$HOME/.cache/huggingface"
+
+    docker run --rm \
+        --entrypoint python \
+        -e HF_TOKEN="$HF_TOKEN" \
+        -e HF_HOME=/hf_cache \
+        -v "$HOME/.cache/huggingface:/hf_cache" \
+        "$IMAGE_NAME" -c "
+from huggingface_hub import hf_hub_download
+import tarfile
+from pathlib import Path
+
+repo = 'nvidia/personaplex-7b-v1'
+files = [
+    'tokenizer-e351c8d8-checkpoint125.safetensors',
+    'model.safetensors',
+    'tokenizer_spm_32k_3.model',
+    'voices.tgz'
+]
+
+print('Downloading PersonaPlex models...')
+for f in files:
+    print(f'  - {f}')
+    path = Path(hf_hub_download(repo_id=repo, filename=f))
+
+# Extract voices
+voices_tgz = Path(hf_hub_download(repo_id=repo, filename='voices.tgz'))
+voices_dir = voices_tgz.parent / 'voices'
+if not voices_dir.exists():
+    print('Extracting voice prompts...')
+    with tarfile.open(voices_tgz, 'r:gz') as tar:
+        tar.extractall(path=voices_tgz.parent)
+
+print('Done!')
+"
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓${NC} PersonaPlex models downloaded to ~/.cache/huggingface"
+    else
+        echo -e "${YELLOW}⚠${NC} Model download failed. Voice mode may not work."
+        echo "  You can re-run install.sh later to retry."
+    fi
+else
+    echo -e "${YELLOW}⚠${NC} Skipping model download (no HF_TOKEN)"
+    echo "  Voice mode will not work until models are downloaded."
+    echo "  Re-run install.sh with HF_TOKEN to download models."
+fi
+
+echo ""
+echo "=== Step 3: Installing wrapper script ==="
 echo ""
 
 # Determine install location
@@ -220,6 +304,9 @@ DOCKER_FLAGS="--rm"
 if [ -t 0 ] && [ -t 1 ]; then
     # Both stdin and stdout are TTYs - use interactive mode
     DOCKER_FLAGS="$DOCKER_FLAGS -it"
+elif [ "$1" = "mcp-bridge" ]; then
+    # MCP bridge needs stdin open even when not a TTY (piped from Claude Code)
+    DOCKER_FLAGS="$DOCKER_FLAGS -i"
 fi
 
 # Audio device access for voice mode
@@ -243,15 +330,24 @@ if [ -n "$AUDIO_GID" ]; then
 fi
 
 # Run entropi in Docker
+# Unset host Python env vars to ensure container uses /opt/venv
+# --tmpfs /workspace/.venv hides any local .venv directory
+# Mount HF cache so models don't need re-downloading
 exec docker run $DOCKER_FLAGS \
     --gpus all \
     $AUDIO_FLAGS \
     $GROUP_ADD \
     -e HOME=/home/user \
     -e TERM="$TERM" \
+    -e VIRTUAL_ENV=/opt/venv \
+    -e PYTHONPATH= \
+    -e PYTHONHOME= \
+    -e HF_HOME=/home/user/.cache/huggingface \
     -v "$ENTROPI_MODELS_DIR:/home/user/models/gguf:ro" \
+    -v "$HOME/.cache/huggingface:/home/user/.cache/huggingface:ro" \
     -v "$HOME/.entropi:/home/user/.entropi" \
     -v "$(pwd):/workspace" \
+    --tmpfs /workspace/.venv \
     -w /workspace \
     --user "$(id -u):$(id -g)" \
     "$ENTROPI_IMAGE" \
@@ -260,6 +356,12 @@ WRAPPER_EOF
 
 chmod +x "$WRAPPER_PATH"
 echo -e "${GREEN}✓${NC} Installed wrapper to: $WRAPPER_PATH"
+
+# If local .venv exists, install wrapper there too (overrides pip-installed entropi)
+if [ -d "$SCRIPT_DIR/.venv/bin" ]; then
+    cp "$WRAPPER_PATH" "$SCRIPT_DIR/.venv/bin/entropi"
+    echo -e "${GREEN}✓${NC} Also installed to .venv/bin/entropi (overrides local)"
+fi
 
 # Check if install dir is in PATH
 if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
@@ -272,7 +374,7 @@ if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
 fi
 
 echo ""
-echo "=== Step 3: Verifying installation ==="
+echo "=== Step 4: Verifying installation ==="
 echo ""
 
 # Test the wrapper

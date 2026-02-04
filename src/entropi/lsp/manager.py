@@ -142,3 +142,32 @@ class LSPManager:
     def has_errors(self, path: Path) -> bool:
         """Check if a file has any errors."""
         return len(self.get_errors(path)) > 0
+
+    def get_supported_extensions(self) -> set[str]:
+        """Get all file extensions supported by active LSP clients."""
+        extensions: set[str] = set()
+        for client in self._clients.values():
+            extensions.update(client.extensions)
+        return extensions
+
+    def supports_file(self, path: Path) -> bool:
+        """Check if a file type is supported by any active LSP client."""
+        return path.suffix.lower() in self.get_supported_extensions()
+
+    async def wait_for_diagnostics(self, path: Path, timeout: float = 2.0) -> list[Diagnostic]:
+        """
+        Wait for diagnostics to be published for a file.
+
+        Delegates to the appropriate client based on file extension.
+
+        Args:
+            path: File path
+            timeout: Maximum wait time in seconds
+
+        Returns:
+            List of diagnostics (may be empty if timeout reached)
+        """
+        client = self.get_client_for_file(path)
+        if client:
+            return await client.wait_for_diagnostics(path, timeout)
+        return []

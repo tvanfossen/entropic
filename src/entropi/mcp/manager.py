@@ -82,6 +82,13 @@ class ServerManager:
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.diagnostics"],
             )
 
+        if mcp_config.enable_system:
+            self._clients["system"] = MCPClient(
+                name="system",
+                command="python",
+                args=["-W", "ignore", "-m", "entropi.mcp.servers.system"],
+            )
+
         # External servers from config
         for name, server_config in mcp_config.external_servers.items():
             self._clients[name] = MCPClient(

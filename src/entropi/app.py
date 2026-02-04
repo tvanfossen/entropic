@@ -4,6 +4,8 @@ Application orchestrator.
 Coordinates all components and manages the application lifecycle.
 """
 
+import asyncio
+import re
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +18,12 @@ from entropi.core.commands import CommandContext, CommandRegistry
 from entropi.core.context import ProjectContext
 from entropi.core.engine import AgentEngine, LoopConfig
 from entropi.core.logging import get_logger
+from entropi.core.queue import MessageQueue, MessageSource, QueuedMessage
+from entropi.core.session import SessionManager
+from entropi.core.tasks import TaskManager
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import ServerManager
+from entropi.mcp.servers.external import ExternalMCPServer
 from entropi.storage.backend import SQLiteStorage
 from entropi.ui.tui import EntropiApp
 
@@ -50,6 +56,13 @@ class Application:
         self._engine: AgentEngine | None = None
         self._command_registry: CommandRegistry | None = None
         self._project_context: ProjectContext | None = None
+
+        # External MCP server components (for Claude Code integration)
+        self._message_queue: MessageQueue | None = None
+        self._task_manager: TaskManager | None = None
+        self._session_manager: SessionManager | None = None
+        self._external_mcp: ExternalMCPServer | None = None
+        self._external_mcp_task: asyncio.Task[None] | None = None
 
         # Session state
         self._conversation_id: str | None = None
@@ -107,11 +120,159 @@ class Application:
                 loop_config=loop_config,
             )
 
+            # Initialize external MCP server for Claude Code integration
+            if self.config.mcp.external.enabled:
+                status.update("[bold blue]Starting external MCP server...")
+                await self._initialize_external_mcp()
+
         self.logger.info("Entropi initialized")
+
+    async def _initialize_external_mcp(self) -> None:
+        """Initialize external MCP server for Claude Code integration."""
+        # Create message queue
+        self._message_queue = MessageQueue()
+
+        # Create task manager
+        self._task_manager = TaskManager()
+
+        # Create session manager with its own database
+        session_db = self.config.config_dir / "sessions.db"
+        self._session_manager = SessionManager(session_db)
+
+        # Create external MCP server
+        self._external_mcp = ExternalMCPServer(
+            config=self.config,
+            message_queue=self._message_queue,
+            task_manager=self._task_manager,
+            session_manager=self._session_manager,
+        )
+
+        # Start the socket server in the background
+        self._external_mcp_task = asyncio.create_task(
+            self._external_mcp.start(),
+            name="external-mcp-server",
+        )
+
+        self.logger.info(
+            f"External MCP server starting on {self.config.mcp.external.socket_path}"
+        )
+
+    @staticmethod
+    def _strip_thinking_blocks(content: str) -> str:
+        """Strip <think>...</think> blocks from content for MCP responses.
+
+        Claude Code doesn't need the full thinking process - just the result.
+        """
+        # Remove <think>...</think> blocks (handles multiline)
+        cleaned = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL)
+        # Clean up any resulting double newlines
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned.strip()
+
+    async def _process_queued_message(self, queued_msg: QueuedMessage) -> None:
+        """Process a message from the MCP queue through the agent loop.
+
+        This runs as a Textual worker (started by EntropiApp), so it has proper
+        app context and can use direct TUI calls and modal dialogs.
+        """
+        assert self._engine is not None
+        assert self._task_manager is not None
+        assert self._ui is not None
+
+        # Get the associated task
+        task = self._task_manager.get_task(queued_msg.task_id) if queued_msg.task_id else None
+
+        # Mark task as in-progress
+        if task:
+            self._task_manager.start_task(task.id)
+
+        # Display in TUI with source indicator
+        source_label = "[Claude Code] " if queued_msg.source == MessageSource.CLAUDE_CODE else ""
+        self._ui.add_message("user", f"{source_label}{queued_msg.content}")
+
+        # Collect response for task completion
+        response_content = ""
+
+        def on_chunk(chunk: str) -> None:
+            """Handle streaming chunk."""
+            nonlocal response_content
+            response_content += chunk
+            self._ui.on_stream_chunk(chunk)
+
+        # Set up callbacks (same as _process_message, tool approval follows config)
+        self._engine.set_callbacks(
+            on_state_change=lambda s: self._ui.update_state(s) if self._ui else None,
+            on_tool_call=self._handle_tool_approval,
+            on_stream_chunk=on_chunk,
+            on_tool_start=lambda tc: self._ui.print_tool_start(tc.name, tc.arguments),
+            on_tool_complete=lambda tc, r, d: self._ui.print_tool_complete(tc.name, r, d),
+        )
+
+        # Process through engine
+        try:
+            # Mark generation active
+            self._ui.start_generation()
+
+            new_messages: list[Message] = []
+            async for msg in self._engine.run(
+                queued_msg.content,
+                history=self._messages,
+                task_id=queued_msg.task_id,
+                source=queued_msg.source,
+            ):
+                new_messages.append(msg)
+                # Add messages to shared conversation history
+                if msg not in self._messages:
+                    self._messages.append(msg)
+
+            # Strip thinking blocks for MCP response (Claude Code doesn't need them)
+            clean_response = self._strip_thinking_blocks(response_content)
+
+            # Mark task as completed
+            if task:
+                self._task_manager.complete_task(task.id, clean_response)
+
+            # Show context usage after each response
+            if self._engine:
+                context_used = self._engine._token_counter.count_messages(self._messages)
+                context_max = self._engine._token_counter.max_tokens
+                self._ui.print_context_usage(context_used, context_max)
+
+            # Invoke callback with result
+            if queued_msg.callback:
+                queued_msg.callback({"response": clean_response})
+
+        except Exception as e:
+            self.logger.exception(f"Error in queued message processing: {e}")
+            # Mark task as failed
+            if queued_msg.task_id and self._task_manager:
+                self._task_manager.fail_task(queued_msg.task_id, str(e))
+            # Invoke callback with error
+            if queued_msg.callback:
+                try:
+                    queued_msg.callback({"error": str(e)})
+                except Exception:
+                    pass
+            raise
+        finally:
+            # Mark generation complete
+            self._ui.end_generation()
 
     async def shutdown(self) -> None:
         """Shutdown all components."""
         self.logger.info("Shutting down...")
+
+        # Note: Queue consumer worker is managed by Textual and stops with the app
+
+        # Stop external MCP server
+        if self._external_mcp:
+            await self._external_mcp.stop()
+        if self._external_mcp_task:
+            self._external_mcp_task.cancel()
+            try:
+                await self._external_mcp_task
+            except asyncio.CancelledError:
+                pass
 
         # Shutdown in reverse order
         if self._mcp_manager:
@@ -156,13 +317,20 @@ class Application:
                 on_exit=self._on_voice_exit,
             )
 
+            # Set up queue consumer for MCP messages (runs as Textual worker)
+            if self._message_queue is not None:
+                self._ui.set_queue_consumer(
+                    queue=self._message_queue,
+                    process_callback=self._process_queued_message,
+                )
+
             # Run the Textual app (this blocks until exit)
             await self._ui.run_async()
 
         except KeyboardInterrupt:
             pass  # Normal exit
         except Exception as e:
-            self.logger.error(f"Application error: {e}")
+            self.logger.exception(f"Application error: {e}")
             raise
         finally:
             await self.shutdown()

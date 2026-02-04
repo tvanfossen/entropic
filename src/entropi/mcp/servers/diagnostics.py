@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool
+from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
 
 if TYPE_CHECKING:
     from entropi.lsp.manager import LSPManager
@@ -40,11 +40,7 @@ class DiagnosticsServer(BaseMCPServer):
         return [
             create_tool(
                 name="diagnostics",
-                description=(
-                    "Get code errors and warnings for a file from the language server. "
-                    "Returns type errors, syntax errors, undefined variables, etc. "
-                    "Use 'all' to get diagnostics for all open files."
-                ),
+                description=load_tool_description("diagnostics"),
                 properties={
                     "file_path": {
                         "type": "string",
@@ -55,10 +51,7 @@ class DiagnosticsServer(BaseMCPServer):
             ),
             create_tool(
                 name="check_errors",
-                description=(
-                    "Check if a file has any errors (not warnings). "
-                    "Returns true/false with error count."
-                ),
+                description=load_tool_description("check_errors"),
                 properties={
                     "file_path": {
                         "type": "string",
@@ -110,10 +103,8 @@ class DiagnosticsServer(BaseMCPServer):
         # Open file in LSP (idempotent)
         self.lsp_manager.open_file(path)
 
-        # Small delay to allow diagnostics to be published
-        await asyncio.sleep(0.2)
-
-        diags = self.lsp_manager.get_diagnostics(path)
+        # Wait for LSP to publish diagnostics (with proper timeout)
+        diags = await self.lsp_manager.wait_for_diagnostics(path, timeout=2.0)
 
         if not diags:
             return f"No diagnostics for {file_path}"
@@ -157,9 +148,9 @@ class DiagnosticsServer(BaseMCPServer):
         if not self.lsp_manager.is_enabled:
             return "LSP is not enabled."
 
-        # Open file and wait briefly for diagnostics
+        # Open file and wait for LSP to publish diagnostics
         self.lsp_manager.open_file(path)
-        await asyncio.sleep(0.2)
+        await self.lsp_manager.wait_for_diagnostics(path, timeout=2.0)
 
         has_errors = self.lsp_manager.has_errors(path)
         errors = self.lsp_manager.get_errors(path)

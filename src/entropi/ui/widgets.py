@@ -255,7 +255,8 @@ class ThinkingBlock(Static):
     Collapsible thinking content display.
 
     Shows thinking content in a dimmed format while streaming,
-    then collapses to 2 lines when complete.
+    then collapses to 2 lines when complete. Respects Ctrl+B toggle
+    during streaming with rate-controlled updates.
     """
 
     DEFAULT_CSS = """
@@ -274,6 +275,10 @@ class ThinkingBlock(Static):
     # Class-level toggle for all thinking blocks
     _all_expanded: bool = False
 
+    # Streaming rate control
+    _EXPANDED_UPDATE_INTERVAL = 0.05   # 50ms - slower for readability
+    _COLLAPSED_UPDATE_INTERVAL = 0.2   # 200ms - batch updates when collapsed
+
     def __init__(self, content: str = "", **kwargs: Any) -> None:
         """
         Initialize thinking block.
@@ -285,6 +290,8 @@ class ThinkingBlock(Static):
         super().__init__(**kwargs)
         self._content = content
         self._is_streaming = True  # Start in streaming mode
+        self._pending_content: str = ""  # Buffer for batching
+        self._last_update_time: float = 0.0
 
     @property
     def content(self) -> str:
@@ -302,34 +309,61 @@ class ThinkingBlock(Static):
         """Set expanded state for all thinking blocks."""
         cls._all_expanded = expanded
 
-    def append(self, chunk: str) -> None:
-        """Append thinking content during streaming."""
+    def append_content(self, chunk: str) -> None:
+        """Append content with rate limiting based on toggle state."""
+        import time
+
         self._content += chunk
-        self._update_display()
+        self._pending_content += chunk
+
+        now = time.time()
+        interval = (
+            self._EXPANDED_UPDATE_INTERVAL
+            if ThinkingBlock._all_expanded
+            else self._COLLAPSED_UPDATE_INTERVAL
+        )
+
+        # Update display if enough time has passed
+        if now - self._last_update_time >= interval:
+            self._update_display()
+            self._pending_content = ""
+            self._last_update_time = now
+
+    def append(self, chunk: str) -> None:
+        """Append thinking content during streaming (alias for append_content)."""
+        self.append_content(chunk)
+
+    def finish_streaming(self) -> None:
+        """Mark streaming complete and flush any pending content."""
+        self._is_streaming = False
+        self._update_display()  # Final update with all content
 
     def finish(self) -> None:
         """Called when thinking block is complete - collapse it."""
-        self._is_streaming = False
+        self.finish_streaming()
         if not ThinkingBlock._all_expanded:
             self.add_class("collapsed")
-        self._update_display()
 
     def _update_display(self) -> None:
-        """Update display."""
-        # While streaming or expanded, show full content
-        if self._is_streaming or ThinkingBlock._all_expanded:
+        """Update display - respects toggle even during streaming."""
+        cursor = "▌" if self._is_streaming else ""
+
+        if ThinkingBlock._all_expanded:
             self.remove_class("collapsed")
-            display = self._content + ("▌" if self._is_streaming else "")
+            display = self._content + cursor
         else:
-            # Collapsed: show first 2 lines with hint
             self.add_class("collapsed")
             lines = self._content.split("\n")
             if len(lines) > 2:
-                display = "\n".join(lines[:2]) + "..."
+                # Show last 2 lines as rolling window during streaming
+                display = "..." + "\n".join(lines[-2:]) + cursor
             else:
-                display = self._content
+                display = self._content + cursor
 
-        self.update(Text.from_markup(f"[dim italic]💭 {display}[/]"))
+        # Build Text without markup parsing to avoid issues with brackets in content
+        text = Text(f"💭 {display}")
+        text.stylize("dim italic")
+        self.update(text)
 
     def on_mount(self) -> None:
         """Render on mount."""
@@ -546,7 +580,7 @@ class ProcessingIndicator(Static):
 
 
 class StatusFooter(Static):
-    """Status footer with key hints and model info."""
+    """Status footer with key hints, model info, and GPU stats."""
 
     DEFAULT_CSS = """
     StatusFooter {
@@ -573,6 +607,8 @@ class StatusFooter(Static):
         self._model = model
         self._thinking_mode = thinking_mode
         self._is_generating = False
+        self._gpu_stats: dict[str, Any] = {}
+        self._gpu_timer: Any = None
 
     def set_generating(self, generating: bool) -> None:
         """Set generating state."""
@@ -589,9 +625,55 @@ class StatusFooter(Static):
         self._thinking_mode = enabled
         self._update_display()
 
+    def _get_gpu_stats(self) -> dict[str, Any]:
+        """Fetch GPU stats from nvidia-smi."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used,memory.total,temperature.gpu,utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(", ")
+                if len(parts) >= 4:
+                    return {
+                        "vram_used": int(parts[0]),
+                        "vram_total": int(parts[1]),
+                        "temp": int(parts[2]),
+                        "util": int(parts[3]),
+                    }
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            pass
+        return {}
+
+    def _refresh_gpu_stats(self) -> None:
+        """Refresh GPU stats periodically."""
+        self._gpu_stats = self._get_gpu_stats()
+        self._update_display()
+
     def _update_display(self) -> None:
         """Update the rendered display."""
         parts = []
+
+        # GPU stats (if available)
+        if self._gpu_stats:
+            vram_used = self._gpu_stats.get("vram_used", 0)
+            vram_total = self._gpu_stats.get("vram_total", 1)
+            temp = self._gpu_stats.get("temp", 0)
+            util = self._gpu_stats.get("util", 0)
+
+            vram_gb = f"{vram_used/1024:.1f}/{vram_total/1024:.0f}GB"
+            temp_color = "red" if temp > 80 else "yellow" if temp > 70 else "green"
+            parts.append(f"[dim]VRAM:[/]{vram_gb}")
+            parts.append(f"[{temp_color}]{temp}°C[/]")
+            parts.append(f"[dim]GPU:[/]{util}%")
 
         if self._model:
             parts.append(f"[bold]{self._model}[/]")
@@ -607,10 +689,18 @@ class StatusFooter(Static):
         # Always show these shortcuts
         parts.append("[dim]Ctrl+B[/]=Think")
         parts.append("[dim]Ctrl+L[/]=Clear")
+        parts.append("[dim]F5[/]=Voice")
 
         display_text = " | ".join(parts)
         self.update(Text.from_markup(display_text))
 
     def on_mount(self) -> None:
-        """Render on mount."""
-        self._update_display()
+        """Render on mount and start GPU refresh timer."""
+        self._refresh_gpu_stats()
+        # Refresh GPU stats every 5 seconds
+        self._gpu_timer = self.set_interval(5.0, self._refresh_gpu_stats)
+
+    def on_unmount(self) -> None:
+        """Stop GPU refresh timer."""
+        if self._gpu_timer:
+            self._gpu_timer.stop()

@@ -46,22 +46,47 @@ def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
     raise FileNotFoundError(f"Prompt '{name}' not found in {prompts_dir} or {_DATA_DIR}")
 
 
-def get_identity_prompt(prompts_dir: Path | None = None) -> str:
+def get_constitution_prompt(prompts_dir: Path | None = None) -> str:
     """
-    Get the identity prompt (who the assistant is and core behaviors).
+    Get the constitution prompt (shared principles across all tiers).
 
     Args:
         prompts_dir: Optional user prompts directory
 
     Returns:
-        Identity prompt content
+        Constitution prompt content
     """
-    try:
-        return load_prompt("identity", prompts_dir)
-    except FileNotFoundError:
-        logger.warning("identity.md not found, using minimal default")
-        return """You are Entropi, a local AI coding assistant.
-You execute tools automatically - never ask the user to run commands you can run yourself."""
+    return load_prompt("constitution", prompts_dir)
+
+
+def get_tier_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
+    """
+    Get the identity prompt for a specific model tier.
+
+    Args:
+        tier: Model tier (thinking, normal, code, simple)
+        prompts_dir: Optional user prompts directory
+
+    Returns:
+        Tier-specific identity prompt
+    """
+    return load_prompt(f"identity_{tier}", prompts_dir)
+
+
+def get_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
+    """
+    Get the full identity prompt: constitution + tier-specific identity.
+
+    Args:
+        tier: Model tier (thinking, normal, code, simple)
+        prompts_dir: Optional user prompts directory
+
+    Returns:
+        Combined identity prompt
+    """
+    constitution = get_constitution_prompt(prompts_dir)
+    tier_identity = get_tier_identity_prompt(tier, prompts_dir)
+    return f"{constitution}\n\n{tier_identity}"
 
 
 def get_tool_usage_prompt(prompts_dir: Path | None = None) -> str:

@@ -171,7 +171,7 @@ class MCPClient:
             )
 
         except Exception as e:
-            logger.error(f"Tool execution failed: {e}")
+            logger.exception(f"Tool execution failed: {e}")
             return ToolResult(
                 call_id=tool_name,
                 name=tool_name,

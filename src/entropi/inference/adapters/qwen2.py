@@ -436,7 +436,7 @@ class Qwen2Adapter(ChatAdapter):
 
 {result}
 
-Use this information to respond to the user."""
+Continue with the task. Call more tools if needed, or respond when complete."""
 
         return Message(role="user", content=content)
 

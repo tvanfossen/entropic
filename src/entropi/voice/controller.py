@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from entropi.core.logging import get_logger
-from entropi.voice.audio_io import AudioIO
+from entropi.voice.audio_io import create_audio_io
 from entropi.voice.context_compactor import ContextCompactor
 from entropi.voice.thinking_audio import ThinkingAudioManager
 
@@ -94,6 +94,32 @@ class ConversationWindow:
 
 
 @dataclass
+class VoiceStats:
+    """Real-time voice stats for UI display."""
+
+    frames_processed: int = 0
+    total_inference_time: float = 0.0
+    last_frame_latency_ms: float = 0.0
+    session_start_time: float = 0.0
+
+    @property
+    def fps(self) -> float:
+        """Frames per second."""
+        if self.session_start_time > 0:
+            elapsed = time.time() - self.session_start_time
+            if elapsed > 0:
+                return self.frames_processed / elapsed
+        return 0.0
+
+    @property
+    def avg_latency_ms(self) -> float:
+        """Average inference latency in milliseconds."""
+        if self.frames_processed > 0:
+            return (self.total_inference_time / self.frames_processed) * 1000
+        return 0.0
+
+
+@dataclass
 class VoiceCallbacks:
     """Callbacks for voice interface events."""
 
@@ -104,6 +130,7 @@ class VoiceCallbacks:
     on_window_complete: Callable[[ConversationWindow], None] | None = None
     on_error: Callable[[str], None] | None = None
     on_loading_progress: Callable[[str], None] | None = None  # Loading stage message
+    on_stats_update: Callable[[VoiceStats], None] | None = None  # Real-time stats
 
 
 @dataclass
@@ -208,7 +235,7 @@ class PersonaPlexController:
         self._window_number = 0
 
         # Components
-        self._audio_io = AudioIO()
+        self._audio_io = create_audio_io()
         self._thinking_audio = ThinkingAudioManager(
             audio_dir=config.voice_prompt.prompt_dir,
             default_file=config.voice_prompt.thinking_audio,
@@ -223,6 +250,9 @@ class PersonaPlexController:
 
         # Accumulated context
         self._context_summary: str = ""
+
+        # Stats tracking
+        self._stats = VoiceStats()
 
         # Control
         self._lock = asyncio.Lock()
@@ -280,15 +310,14 @@ class PersonaPlexController:
             # Load PersonaPlex models
             await self._load_personaplex()
 
-            # Start audio I/O with level callbacks
+            # Set up audio callbacks (but don't start yet - wait for start_conversation)
             self._audio_io.set_level_callbacks(
                 on_input=self._callbacks.on_input_level,
                 on_output=self._callbacks.on_output_level,
             )
-            await self._audio_io.start()
 
             self._set_state(VoiceState.IDLE)
-            logger.info("PersonaPlex controller initialized")
+            logger.info("PersonaPlex controller initialized (audio not started)")
             return True
 
         except Exception as e:
@@ -309,9 +338,9 @@ class PersonaPlexController:
 
             device = self._config.runtime.device
             self._plex_state.device = device
-            cpu_offload = self._config.runtime.quantization == "int8"
+            use_int8 = self._config.runtime.quantization == "int8"
 
-            self._report_progress(f"Loading PersonaPlex on {device} (cpu_offload={cpu_offload})")
+            self._report_progress(f"Loading PersonaPlex on {device} (quantize_int8={use_int8})")
 
             # Download model files from HuggingFace
             self._report_progress("Downloading model files from HuggingFace...")
@@ -335,13 +364,15 @@ class PersonaPlexController:
                 )
 
                 # Load LM model (run in thread - this is the slow one!)
-                self._report_progress("Loading Moshi LM (this may take a minute)...")
+                context_window = self._config.runtime.context_window
+                self._report_progress(f"Loading Moshi LM (context={context_window})...")
                 lm_model = await asyncio.to_thread(
                     loaders.get_moshi_lm,
                     str(model_paths["moshi"]),
                     device=device,
                     dtype=torch.bfloat16,
-                    cpu_offload=cpu_offload,
+                    quantize_int8=use_int8,
+                    context=context_window,
                 )
 
                 # Create LMGen wrapper
@@ -392,8 +423,10 @@ class PersonaPlexController:
                 self._report_progress("PersonaPlex ready!")
 
             except ImportError as e:
+                import traceback
                 logger.warning(f"PersonaPlex submodule not available: {e}")
-                self._report_progress("Using stub implementation for testing")
+                logger.warning(f"Traceback:\n{traceback.format_exc()}")
+                self._report_progress(f"Using stub (import failed: {e})")
                 self._plex_state.mimi = _StubMimi()
                 self._plex_state.lm_gen = _StubLMGen()
                 self._plex_state.text_tokenizer = _StubTokenizer()
@@ -451,12 +484,35 @@ class PersonaPlexController:
         if self._running:
             return
 
+        # Start audio I/O now that user is ready
+        logger.info("Starting audio I/O...")
+        await self._audio_io.start()
+        logger.info("Audio I/O started")
+
+        # Reset streaming state before starting conversation
+        if self._plex_state.loaded and not isinstance(self._plex_state.mimi, _StubMimi):
+            logger.info("Resetting streaming state...")
+            self._plex_state.mimi.reset_streaming()
+            self._plex_state.lm_gen.reset_streaming()
+
+            # Process system prompts (voice prompt + text prompt)
+            logger.info("Processing system prompts...")
+            await asyncio.to_thread(
+                self._plex_state.lm_gen.step_system_prompts,
+                self._plex_state.mimi
+            )
+            # Reset mimi again after processing prompts (as PersonaPlex server does)
+            self._plex_state.mimi.reset_streaming()
+            logger.info("System prompts processed")
+
         async with self._lock:
             self._running = True
             self._paused = False
             self._stop_event.clear()
             self._window_number = 0
             self._context_summary = ""
+            # Reset stats and set session start time
+            self._stats = VoiceStats(session_start_time=time.time())
 
         # Run conversation loop
         asyncio.create_task(self._conversation_loop())
@@ -513,12 +569,8 @@ class PersonaPlexController:
 
             window.audio_frames_processed += 1
 
-            # Process through PersonaPlex
-            output_frame, text = await self._process_audio_frame(frame)
-
-            # Play output audio
-            if output_frame is not None:
-                await self._audio_io.write_frame(output_frame)
+            # Process through PersonaPlex (writes audio internally now)
+            text = await self._process_audio_frame(frame)
 
             # Update transcript
             if text:
@@ -546,18 +598,23 @@ class PersonaPlexController:
 
     async def _process_audio_frame(
         self, frame: NDArray[np.float32]
-    ) -> tuple[NDArray[np.float32] | None, str]:
+    ) -> str:
         """
         Process a single audio frame through PersonaPlex.
+
+        Writes audio output immediately inside the loop, mirroring
+        the PersonaPlex demo pattern for real-time streaming.
 
         Args:
             frame: Input audio frame
 
         Returns:
-            Tuple of (output_frame, generated_text)
+            Generated text (audio is written directly to audio_io)
         """
         if not self._plex_state.loaded:
-            return None, ""
+            return ""
+
+        frame_start = time.time()
 
         try:
             import torch
@@ -570,18 +627,18 @@ class PersonaPlexController:
             # Encode audio to tokens using Mimi
             codes = self._plex_state.mimi.encode(chunk)
 
-            output_pcm = None
             text = ""
 
-            # Process each code frame
+            # Process each code frame - WRITE IMMEDIATELY like PersonaPlex
             for c in range(codes.shape[-1]):
                 tokens = self._plex_state.lm_gen.step(codes[:, :, c : c + 1])
                 if tokens is None:
                     continue
 
-                # Decode audio tokens back to waveform
+                # Decode and write immediately (mirrors PersonaPlex server.py)
                 main_pcm = self._plex_state.mimi.decode(tokens[:, 1:9])
-                output_pcm = main_pcm.cpu().numpy()[0, 0]
+                pcm_chunk = main_pcm.detach().cpu().numpy()[0, 0]
+                await self._audio_io.write_frame(pcm_chunk)
 
                 # Extract text token
                 text_token = tokens[0, 0, 0].item()
@@ -590,11 +647,21 @@ class PersonaPlexController:
                     _text = _text.replace("▁", " ")
                     text += _text
 
-            return output_pcm, text
+            # Update stats
+            frame_latency = time.time() - frame_start
+            self._stats.frames_processed += 1
+            self._stats.total_inference_time += frame_latency
+            self._stats.last_frame_latency_ms = frame_latency * 1000
+
+            # Call stats callback periodically (every 10 frames to avoid overhead)
+            if self._stats.frames_processed % 10 == 0 and self._callbacks.on_stats_update:
+                self._callbacks.on_stats_update(self._stats)
+
+            return text
 
         except Exception as e:
             logger.warning(f"Frame processing error: {e}")
-            return None, ""
+            return ""
 
     async def _run_thinking_phase(self) -> None:
         """Run the thinking/compaction phase between windows."""
@@ -780,8 +847,14 @@ class _StubLMGen:
 class _StubTokenizer:
     """Stub tokenizer for testing."""
 
+    def __init__(self) -> None:
+        self._counter = 0
+
     def encode(self, text: str) -> list[int]:
         return [0] * len(text.split())
 
     def id_to_piece(self, id: int) -> str:
+        self._counter += 1
+        if self._counter % 50 == 0:
+            return "[stub] "
         return ""

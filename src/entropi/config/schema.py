@@ -162,6 +162,32 @@ class StorageConfig(BaseModel):
         return Path(v).expanduser()
 
 
+class ExternalMCPConfig(BaseModel):
+    """Configuration for external MCP server (Claude Code integration)."""
+
+    enabled: bool = False
+    socket_path: Path = Field(
+        default_factory=lambda: Path.home() / ".entropi" / "mcp.sock"
+    )
+    # Rate limiting: requests per minute
+    rate_limit: int = Field(default=10, ge=1, le=100)
+
+    @field_validator("socket_path")
+    @classmethod
+    def validate_socket_path(cls, v: Path) -> Path:
+        """Expand user path."""
+        return Path(v).expanduser()
+
+
+class FilesystemConfig(BaseModel):
+    """Filesystem server configuration."""
+
+    # Proactive diagnostics on edit/write
+    diagnostics_on_edit: bool = True
+    fail_on_errors: bool = True  # Rollback edit if it introduces errors
+    diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
+
+
 class MCPConfig(BaseModel):
     """MCP server configuration."""
 
@@ -170,9 +196,16 @@ class MCPConfig(BaseModel):
     enable_bash: bool = True
     enable_git: bool = True
     enable_diagnostics: bool = True  # LSP diagnostics tool
+    enable_system: bool = True  # System operations (handoff, etc.)
+
+    # Filesystem server config
+    filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
 
     # External MCP servers (from .mcp.json)
     external_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
+    # External MCP server for Claude Code integration
+    external: ExternalMCPConfig = Field(default_factory=ExternalMCPConfig)
 
     # Server timeout
     server_timeout_seconds: int = Field(default=30, ge=5, le=300)
@@ -235,7 +268,7 @@ class PersonaPlexRuntimeConfig(BaseModel):
 
     device: Literal["cuda", "cpu"] = "cuda"
     quantization: Literal["int8", "fp16", "none"] = "int8"
-    context_window: int = Field(default=187, ge=50, le=500)  # ~15 seconds at 80ms/frame
+    context_window: int = Field(default=500, ge=50, le=3000)  # LM context in tokens
 
 
 class PersonaPlexSamplingConfig(BaseModel):
@@ -268,6 +301,15 @@ class VoiceConversationConfig(BaseModel):
     initial_prompt: str = "You are a helpful coding assistant."
 
 
+class VoiceServerConfig(BaseModel):
+    """Configuration for voice server subprocess."""
+
+    host: str = "127.0.0.1"
+    port: int = Field(default=8765, ge=1024, le=65535)
+    auto_start: bool = True
+    startup_timeout_seconds: int = Field(default=600, ge=10, le=1800)  # 10 min default for model loading
+
+
 class SecondaryModelConfig(BaseModel):
     """Configuration for secondary LLM used in context compaction."""
 
@@ -296,6 +338,7 @@ class VoiceConfig(BaseModel):
     voice_prompt: VoicePromptConfig = Field(default_factory=VoicePromptConfig)
     conversation: VoiceConversationConfig = Field(default_factory=VoiceConversationConfig)
     secondary_model: SecondaryModelConfig = Field(default_factory=SecondaryModelConfig)
+    server: VoiceServerConfig = Field(default_factory=VoiceServerConfig)
 
 
 class EntropyConfig(BaseSettings):

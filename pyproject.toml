@@ -56,12 +56,15 @@ voice = [
     "sphn>=0.1.4,<0.2",
     "torch>=2.2.0",
     "aiohttp>=3.10.5,<3.12",
+    "websockets>=12.0,<14.0",
     # Optional for INT8 quantization
     "accelerate>=0.30.0",
+    "torchao>=0.4.0",
 ]
 
 [project.scripts]
 entropi = "entropi.cli:main"
+entropi-voice-server = "entropi.voice.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -113,3 +116,13 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# Markers for categorizing tests
+markers = [
+    "unit: Fast tests without external dependencies",
+    "integration: Tests requiring external services (docker, etc)",
+    "model: Tests requiring actual model inference (GPU recommended)",
+    "slow: Tests that take a long time to run",
+]
+# Run all tests by default including model tests
+# Skip model tests with: pytest -m "not model"
+# Run only model tests: pytest -m model

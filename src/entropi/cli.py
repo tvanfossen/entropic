@@ -197,13 +197,25 @@ permissions:
     (entropi_dir / "config.yaml").write_text(default_config)
 
     # Create ENTROPI.md in .entropi/
-    entropi_md = """# ENTROPI.md
+    entropi_md = """# Project Context
 
-This file provides project context to Entropi, your local AI coding assistant.
+This file provides context to Entropi. Edit it to describe your project.
 
-Edit this file to describe your project, its structure, coding standards, and any other context that would help Entropi assist you more effectively.
+## Overview
 
-For more information, see the Entropi documentation.
+<!-- Brief description of what this project does -->
+
+## Tech Stack
+
+<!-- Languages, frameworks, key dependencies -->
+
+## Structure
+
+<!-- Key directories and their purpose -->
+
+## Conventions
+
+<!-- Coding standards, naming conventions, patterns to follow -->
 """
     entropi_md_path = entropi_dir / "ENTROPI.md"
     if not entropi_md_path.exists():
@@ -231,6 +243,40 @@ def download(model: str, output_dir: Path, force: bool) -> None:
     from entropi.cli_download import download_models
 
     download_models(model, output_dir, force)
+
+
+@main.command("mcp-bridge")
+@click.option(
+    "--socket",
+    type=click.Path(path_type=Path),
+    help="Path to Unix socket (default: ~/.entropi/mcp.sock)",
+)
+@click.pass_context
+def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
+    """
+    Run as MCP bridge for Claude Code integration.
+
+    This bridges stdio (used by Claude Code) to Entropi's Unix socket.
+    Entropi must already be running for the bridge to connect.
+
+    Configure Claude Code's .mcp.json:
+
+    \b
+    {
+      "mcpServers": {
+        "entropi": {
+          "type": "stdio",
+          "command": "entropi",
+          "args": ["mcp-bridge"]
+        }
+      }
+    }
+    """
+    from entropi.mcp.bridge import main as bridge_main
+
+    socket_path = str(socket) if socket else None
+    exit_code = bridge_main(socket_path)
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

@@ -93,10 +93,10 @@ class TestCommandRegistry:
             config=None,
         )
 
-        result = await registry.execute("/model fast", context)
+        result = await registry.execute("/model normal", context)
         assert result.success
         assert result.data["action"] == "switch_model"
-        assert result.data["model"] == "fast"
+        assert result.data["model"] == "normal"
 
     @pytest.mark.asyncio
     async def test_model_command_invalid(self, registry: CommandRegistry) -> None:
@@ -327,8 +327,10 @@ class TestProjectContext:
 
     @pytest.mark.asyncio
     async def test_load_entropi_md(self, tmp_path: Path) -> None:
-        """Test loading ENTROPI.md."""
-        entropi_md = tmp_path / "ENTROPI.md"
+        """Test loading ENTROPI.md from .entropi/ directory."""
+        entropi_dir = tmp_path / ".entropi"
+        entropi_dir.mkdir()
+        entropi_md = entropi_dir / "ENTROPI.md"
         entropi_md.write_text("# My Project\n\nThis is a test project.")
 
         context = ProjectContext(tmp_path)
@@ -364,7 +366,9 @@ class TestProjectContext:
     @pytest.mark.asyncio
     async def test_system_prompt_addition_format(self, tmp_path: Path) -> None:
         """Test format of system prompt addition."""
-        entropi_md = tmp_path / "ENTROPI.md"
+        entropi_dir = tmp_path / ".entropi"
+        entropi_dir.mkdir()
+        entropi_md = entropi_dir / "ENTROPI.md"
         entropi_md.write_text("Project context here.")
 
         context = ProjectContext(tmp_path)

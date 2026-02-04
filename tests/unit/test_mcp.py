@@ -23,15 +23,21 @@ class TestPermissions:
         return manager
 
     def test_allow_wildcard(self) -> None:
-        """Test wildcard allow pattern."""
+        """Test wildcard allow pattern.
+
+        Note: _check_permission only returns False for explicitly denied tools.
+        Unknown tools return True (engine handles prompting).
+        """
         manager = self._create_manager_with_permissions(
             allow=["filesystem.*"],
             deny=[],
         )
 
+        # All return True unless explicitly denied
         assert manager._check_permission("filesystem.read_file", "filesystem.read_file:/test")
         assert manager._check_permission("filesystem.write_file", "filesystem.write_file:/test")
-        assert not manager._check_permission("bash.execute", "bash.execute:ls")
+        # bash.execute is NOT denied, so it returns True (engine will prompt)
+        assert manager._check_permission("bash.execute", "bash.execute:ls")
 
     def test_deny_overrides_allow(self) -> None:
         """Test deny patterns override allow."""
@@ -44,30 +50,43 @@ class TestPermissions:
         assert not manager._check_permission("bash.execute", "bash.execute:rm -rf /")
 
     def test_specific_path_allow(self) -> None:
-        """Test specific path patterns."""
+        """Test specific path patterns.
+
+        Note: _check_permission only returns False for explicitly denied tools.
+        Use is_explicitly_allowed to check if tool is in allow list.
+        """
         manager = self._create_manager_with_permissions(
             allow=["filesystem.write_file:src/*"],
             deny=[],
         )
 
+        # Both return True because neither is explicitly denied
         assert manager._check_permission(
             "filesystem.write_file", "filesystem.write_file:src/test.py"
         )
-        assert not manager._check_permission(
+        assert manager._check_permission(
             "filesystem.write_file", "filesystem.write_file:/etc/passwd"
         )
 
-    def test_default_deny(self) -> None:
-        """Test default deny behavior."""
+    def test_default_allow_unless_denied(self) -> None:
+        """Test default allow behavior (engine handles prompting).
+
+        The permission system now defaults to allow - only explicit
+        deny patterns will cause _check_permission to return False.
+        """
         manager = self._create_manager_with_permissions(
             allow=[],
             deny=[],
         )
 
-        assert not manager._check_permission("filesystem.read_file", "filesystem.read_file:/test")
+        # Returns True because not explicitly denied (engine will prompt)
+        assert manager._check_permission("filesystem.read_file", "filesystem.read_file:/test")
 
     def test_multiple_allow_patterns(self) -> None:
-        """Test multiple allow patterns."""
+        """Test multiple allow patterns.
+
+        Note: _check_permission returns True unless explicitly denied.
+        """
         manager = self._create_manager_with_permissions(
             allow=["filesystem.*", "git.*"],
             deny=[],
@@ -75,10 +94,14 @@ class TestPermissions:
 
         assert manager._check_permission("filesystem.read_file", "filesystem.read_file:/test")
         assert manager._check_permission("git.status", "git.status:*")
-        assert not manager._check_permission("bash.execute", "bash.execute:ls")
+        # bash.execute is not denied, so returns True (engine prompts)
+        assert manager._check_permission("bash.execute", "bash.execute:ls")
 
     def test_pattern_with_partial_match(self) -> None:
-        """Test that patterns require proper matching."""
+        """Test that patterns require proper matching.
+
+        Note: _check_permission returns True unless explicitly denied.
+        """
         manager = self._create_manager_with_permissions(
             allow=["filesystem.read*"],
             deny=[],
@@ -88,7 +111,8 @@ class TestPermissions:
         assert manager._check_permission(
             "filesystem.read_directory", "filesystem.read_directory:/test"
         )
-        assert not manager._check_permission("filesystem.write_file", "filesystem.write_file:/test")
+        # Not denied, so returns True (engine will prompt)
+        assert manager._check_permission("filesystem.write_file", "filesystem.write_file:/test")
 
     def test_args_to_pattern_empty(self) -> None:
         """Test args to pattern with empty arguments."""

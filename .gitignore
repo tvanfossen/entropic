@@ -71,3 +71,4 @@ Thumbs.db
 .env
 .env.local
 hf.env
+.test-reports/

@@ -47,3 +47,30 @@ repos:
           - '--max-returns-amount=3'
           - '--max-line-length=100'
           - '--ignore=E501,W503,E203'
+
+  # Local hooks for pytest - runs full test suite including model tests
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest unit tests
+        entry: .venv/bin/pytest tests/unit/ -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: pytest-model
+        name: pytest model tests
+        entry: .venv/bin/pytest tests/model/ -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: test-report
+        name: generate test verification report
+        entry: bash scripts/generate-test-report.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

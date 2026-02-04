@@ -12,6 +12,7 @@ from entropi.inference.adapters.base import (
 from entropi.inference.adapters.falcon import FalconAdapter
 from entropi.inference.adapters.qwen2 import Qwen2Adapter
 from entropi.inference.adapters.qwen3 import Qwen3Adapter
+from entropi.inference.adapters.smollm3 import SmolLM3Adapter
 
 __all__ = [
     "ChatAdapter",
@@ -19,6 +20,7 @@ __all__ = [
     "GenericAdapter",
     "Qwen2Adapter",
     "Qwen3Adapter",
+    "SmolLM3Adapter",
     "get_adapter",
     "list_adapters",
     "register_adapter",

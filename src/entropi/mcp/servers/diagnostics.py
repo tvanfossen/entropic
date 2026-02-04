@@ -103,10 +103,8 @@ class DiagnosticsServer(BaseMCPServer):
         # Open file in LSP (idempotent)
         self.lsp_manager.open_file(path)
 
-        # Small delay to allow diagnostics to be published
-        await asyncio.sleep(0.2)
-
-        diags = self.lsp_manager.get_diagnostics(path)
+        # Wait for LSP to publish diagnostics (with proper timeout)
+        diags = await self.lsp_manager.wait_for_diagnostics(path, timeout=2.0)
 
         if not diags:
             return f"No diagnostics for {file_path}"
@@ -150,9 +148,9 @@ class DiagnosticsServer(BaseMCPServer):
         if not self.lsp_manager.is_enabled:
             return "LSP is not enabled."
 
-        # Open file and wait briefly for diagnostics
+        # Open file and wait for LSP to publish diagnostics
         self.lsp_manager.open_file(path)
-        await asyncio.sleep(0.2)
+        await self.lsp_manager.wait_for_diagnostics(path, timeout=2.0)
 
         has_errors = self.lsp_manager.has_errors(path)
         errors = self.lsp_manager.get_errors(path)

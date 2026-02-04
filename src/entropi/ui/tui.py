@@ -17,9 +17,9 @@ from rich.text import Text
 from textual import events, on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Header, Input, Static
+from textual.widgets import Header, Input, Static, TextArea
 
 from entropi.config.schema import EntropyConfig
 from entropi.core.compaction import CompactionResult
@@ -45,14 +45,29 @@ logger = get_logger("ui.tui")
 
 
 class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
-    """Modal screen for tool approval."""
+    """Modal screen for tool approval with arrow-key navigation."""
 
     BINDINGS = [
-        Binding("y", "approve", "Yes", show=True),
-        Binding("a", "always_allow", "Always", show=True),
-        Binding("n", "deny", "No", show=True),
-        Binding("d", "always_deny", "Deny Always", show=True),
-        Binding("escape", "deny", "Cancel", show=False),
+        Binding("up", "move_up", "Up", show=False),
+        Binding("down", "move_down", "Down", show=False),
+        Binding("k", "move_up", "Up", show=False),  # Vim-style
+        Binding("j", "move_down", "Down", show=False),  # Vim-style
+        Binding("enter", "select", "Select", show=True),
+        Binding("escape", "cancel", "Cancel", show=True),
+        # Keep shortcut keys as alternatives
+        Binding("y", "quick_approve", "Yes", show=False),
+        Binding("a", "quick_always_allow", "Always", show=False),
+        Binding("n", "quick_deny", "No", show=False),
+        Binding("d", "quick_always_deny", "Deny", show=False),
+    ]
+
+    # Options available for selection
+    OPTIONS = [
+        ("Allow Once", ToolApproval.ALLOW),
+        ("Always Allow", ToolApproval.ALWAYS_ALLOW),
+        ("Deny Once", ToolApproval.DENY),
+        ("Always Deny", ToolApproval.ALWAYS_DENY),
+        ("Add Response + Deny", "feedback"),  # Special marker for feedback mode
     ]
 
     def __init__(
@@ -73,6 +88,8 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
         self._tool_name = tool_name
         self._arguments = arguments
         self._is_sensitive = is_sensitive
+        self._selected_index = 0
+        self._feedback_mode = False
 
     def compose(self) -> ComposeResult:
         """Compose the modal content."""
@@ -95,37 +112,301 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
             )
             yield Static(f"[bold]{self._tool_name}[/]", classes="tool-name")
             yield Static(args_text, classes="args")
-            yield Static(
-                "[bold]y[/]=yes once  [bold]a[/]=always allow  "
-                "[bold]n[/]=no  [bold]d[/]=always deny\n"
-                "Or type feedback and press Enter",
-                classes="options",
+            yield Static("", id="options-display", classes="options")
+            yield Input(
+                placeholder="Type feedback and press Enter...",
+                id="feedback-input",
+                classes="hidden",
             )
-            yield Input(placeholder="Feedback (optional)...", id="feedback-input")
+            yield Static(
+                "[dim]↑/↓ to select, Enter to confirm, Esc to cancel[/]",
+                classes="hint",
+            )
+
+    def on_mount(self) -> None:
+        """Update options display on mount."""
+        self._update_options_display()
+        # Ensure screen can receive key events
+        self.can_focus = True
+        self.focus()
+
+    def on_key(self, event: events.Key) -> None:
+        """Handle key events for arrow navigation."""
+        if self._feedback_mode:
+            return  # Let input handle keys
+
+        if event.key in ("up", "k"):
+            self._selected_index = (self._selected_index - 1) % len(self.OPTIONS)
+            self._update_options_display()
+            event.prevent_default()
+            event.stop()
+        elif event.key in ("down", "j"):
+            self._selected_index = (self._selected_index + 1) % len(self.OPTIONS)
+            self._update_options_display()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "enter":
+            self.action_select()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "y":
+            self.action_quick_approve()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "a":
+            self.action_quick_always_allow()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "n":
+            self.action_quick_deny()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "d":
+            self.action_quick_always_deny()
+            event.prevent_default()
+            event.stop()
+
+    def _update_options_display(self) -> None:
+        """Update the options display with current selection."""
+        lines = []
+        for i, (label, _) in enumerate(self.OPTIONS):
+            if i == self._selected_index:
+                lines.append(f"  [bold cyan]> {label}[/]")
+            else:
+                lines.append(f"    [dim]{label}[/]")
+
+        options_widget = self.query_one("#options-display", Static)
+        options_widget.update("\n".join(lines))
+
+    def action_move_up(self) -> None:
+        """Move selection up."""
+        if self._feedback_mode:
+            return
+        self._selected_index = (self._selected_index - 1) % len(self.OPTIONS)
+        self._update_options_display()
+
+    def action_move_down(self) -> None:
+        """Move selection down."""
+        if self._feedback_mode:
+            return
+        self._selected_index = (self._selected_index + 1) % len(self.OPTIONS)
+        self._update_options_display()
+
+    def action_select(self) -> None:
+        """Select the current option."""
+        if self._feedback_mode:
+            return  # Let input handle Enter
+
+        _, value = self.OPTIONS[self._selected_index]
+        if value == "feedback":
+            # Enter feedback mode
+            self._feedback_mode = True
+            input_widget = self.query_one("#feedback-input", Input)
+            input_widget.remove_class("hidden")
+            input_widget.focus()
+        else:
+            self.dismiss(value)
+
+    def action_cancel(self) -> None:
+        """Cancel and deny."""
+        if self._feedback_mode:
+            # Exit feedback mode without submitting
+            self._feedback_mode = False
+            input_widget = self.query_one("#feedback-input", Input)
+            input_widget.add_class("hidden")
+            input_widget.value = ""
+        else:
+            self.dismiss(ToolApproval.DENY)
 
     @on(Input.Submitted, "#feedback-input")
     def on_feedback_submitted(self, event: Input.Submitted) -> None:
         """Handle feedback submission."""
-        if event.value.strip():
-            self.dismiss(event.value)
+        feedback = event.value.strip()
+        if feedback:
+            # Return feedback string (engine will use as denial reason)
+            self.dismiss(feedback)
+        else:
+            # Empty feedback = just deny
+            self.dismiss(ToolApproval.DENY)
+
+    # Quick shortcut actions (alternative to arrow navigation)
+    def action_quick_approve(self) -> None:
+        """Approve once (y shortcut)."""
+        if not self._feedback_mode:
+            self.dismiss(ToolApproval.ALLOW)
+
+    def action_quick_always_allow(self) -> None:
+        """Always allow (a shortcut)."""
+        if not self._feedback_mode:
+            self.dismiss(ToolApproval.ALWAYS_ALLOW)
+
+    def action_quick_deny(self) -> None:
+        """Deny once (n shortcut)."""
+        if not self._feedback_mode:
+            self.dismiss(ToolApproval.DENY)
+
+    def action_quick_always_deny(self) -> None:
+        """Always deny (d shortcut)."""
+        if not self._feedback_mode:
+            self.dismiss(ToolApproval.ALWAYS_DENY)
+
+
+class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
+    """Specialized approval modal for file edit/write operations with content preview."""
+
+    OPTIONS = [
+        ("Allow Once", ToolApproval.ALLOW),
+        ("Always Allow", ToolApproval.ALWAYS_ALLOW),
+        ("Deny Once", ToolApproval.DENY),
+        ("Always Deny", ToolApproval.ALWAYS_DENY),
+        ("Add Response + Deny", "feedback"),
+    ]
+
+    def __init__(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        is_sensitive: bool = False,
+    ) -> None:
+        super().__init__()
+        self._tool_name = tool_name
+        self._arguments = arguments
+        self._is_sensitive = is_sensitive
+        self._selected_index = 0
+        self._feedback_mode = False
+
+    def compose(self) -> ComposeResult:
+        """Compose the modal with file content preview."""
+        color = "yellow" if self._is_sensitive else "cyan"
+        path = self._arguments.get("path", "unknown")
+
+        with Vertical(id="file-approval-container"):
+            yield Static(
+                f"[{color}]File Operation: {self._tool_name}[/]",
+                classes="title",
+            )
+            yield Static(f"[bold]Path:[/] {path}", classes="file-path")
+
+            # Show content based on operation type
+            if self._tool_name == "filesystem.edit_file":
+                old_str = self._arguments.get("old_string", "")
+                new_str = self._arguments.get("new_string", "")
+                insert_line = self._arguments.get("insert_line")
+
+                if insert_line is not None:
+                    yield Static(f"[dim]Insert at line {insert_line}:[/]", classes="edit-label")
+                    yield Static(
+                        Panel(new_str[:500] + ("..." if len(new_str) > 500 else ""),
+                              title="Content to Insert", border_style="green"),
+                        classes="content-preview",
+                    )
+                else:
+                    yield Static("[dim]Replace:[/]", classes="edit-label")
+                    with Horizontal(classes="diff-view"):
+                        yield Static(
+                            Panel(old_str[:300] + ("..." if len(old_str) > 300 else ""),
+                                  title="Old", border_style="red"),
+                            classes="diff-old",
+                        )
+                        yield Static(
+                            Panel(new_str[:300] + ("..." if len(new_str) > 300 else ""),
+                                  title="New", border_style="green"),
+                            classes="diff-new",
+                        )
+
+            elif self._tool_name == "filesystem.write_file":
+                content = self._arguments.get("content", "")
+                lines = content.count("\n") + 1
+                chars = len(content)
+                yield Static(f"[dim]{lines} lines, {chars} chars[/]", classes="file-stats")
+                # Show first 800 chars with line numbers
+                preview_lines = content[:800].split("\n")
+                numbered = "\n".join(f"{i+1:3} │ {line}" for i, line in enumerate(preview_lines[:20]))
+                if len(content) > 800 or len(preview_lines) > 20:
+                    numbered += "\n    │ ..."
+                yield Static(
+                    Panel(numbered, title="Content Preview", border_style="cyan"),
+                    classes="content-preview",
+                )
+
+            yield Static("", id="options-display", classes="options")
+            yield Input(
+                placeholder="Type feedback and press Enter...",
+                id="feedback-input",
+                classes="hidden",
+            )
+            yield Static(
+                "[dim]↑/↓ to select, Enter to confirm, Esc to cancel[/]",
+                classes="hint",
+            )
+
+    def on_mount(self) -> None:
+        self._update_options_display()
+        self.can_focus = True
+        self.focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if self._feedback_mode:
+            return
+        if event.key in ("up", "k"):
+            self._selected_index = (self._selected_index - 1) % len(self.OPTIONS)
+            self._update_options_display()
+            event.prevent_default()
+            event.stop()
+        elif event.key in ("down", "j"):
+            self._selected_index = (self._selected_index + 1) % len(self.OPTIONS)
+            self._update_options_display()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "enter":
+            self._do_select()
+            event.prevent_default()
+            event.stop()
+        elif event.key == "y":
+            self.dismiss(ToolApproval.ALLOW)
+        elif event.key == "a":
+            self.dismiss(ToolApproval.ALWAYS_ALLOW)
+        elif event.key == "n":
+            self.dismiss(ToolApproval.DENY)
+        elif event.key == "d":
+            self.dismiss(ToolApproval.ALWAYS_DENY)
+        elif event.key == "escape":
+            self._do_cancel()
+
+    def _update_options_display(self) -> None:
+        lines = []
+        for i, (label, _) in enumerate(self.OPTIONS):
+            if i == self._selected_index:
+                lines.append(f"  [bold cyan]> {label}[/]")
+            else:
+                lines.append(f"    [dim]{label}[/]")
+        self.query_one("#options-display", Static).update("\n".join(lines))
+
+    def _do_select(self) -> None:
+        if self._feedback_mode:
+            return
+        _, value = self.OPTIONS[self._selected_index]
+        if value == "feedback":
+            self._feedback_mode = True
+            input_widget = self.query_one("#feedback-input", Input)
+            input_widget.remove_class("hidden")
+            input_widget.focus()
+        else:
+            self.dismiss(value)
+
+    def _do_cancel(self) -> None:
+        if self._feedback_mode:
+            self._feedback_mode = False
+            input_widget = self.query_one("#feedback-input", Input)
+            input_widget.add_class("hidden")
+            input_widget.value = ""
         else:
             self.dismiss(ToolApproval.DENY)
 
-    def action_approve(self) -> None:
-        """Approve once."""
-        self.dismiss(ToolApproval.ALLOW)
-
-    def action_always_allow(self) -> None:
-        """Always allow."""
-        self.dismiss(ToolApproval.ALWAYS_ALLOW)
-
-    def action_deny(self) -> None:
-        """Deny once."""
-        self.dismiss(ToolApproval.DENY)
-
-    def action_always_deny(self) -> None:
-        """Always deny."""
-        self.dismiss(ToolApproval.ALWAYS_DENY)
+    @on(Input.Submitted, "#feedback-input")
+    def on_feedback_submitted(self, event: Input.Submitted) -> None:
+        feedback = event.value.strip()
+        self.dismiss(feedback if feedback else ToolApproval.DENY)
 
 
 class PauseScreen(ModalScreen[str | None]):
@@ -771,8 +1052,14 @@ class EntropiApp(App[None]):
         if self._auto_approve_all:
             return ToolApproval.ALLOW
 
+        # Select appropriate modal based on tool type
+        if name in ("filesystem.edit_file", "filesystem.write_file"):
+            screen = FileEditApprovalScreen(name, arguments, is_sensitive)
+        else:
+            screen = ToolApprovalScreen(name, arguments, is_sensitive)
+
         # Push modal screen and wait for result
-        result = await self.push_screen_wait(ToolApprovalScreen(name, arguments, is_sensitive))
+        result = await self.push_screen_wait(screen)
 
         # Handle session-wide auto-approve
         if result == ToolApproval.ALWAYS_ALLOW:

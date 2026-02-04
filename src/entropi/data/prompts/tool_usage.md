@@ -153,3 +153,11 @@ When a tool fails, don't retry with identical arguments. Instead:
 **Recovery limit:** Max 2 alternative attempts per error. After 2 failures, report to user with what you tried.
 
 **Never claim success without verification.** If you can't confirm the action worked, say so.
+
+## Path Error Recovery
+
+If a path operation fails with "No such file or directory":
+1. Check if user specified ~ (home) path - try expanding to /home/user/...
+2. Try the absolute path variant
+3. Ask user to confirm the correct path location
+4. Do NOT repeatedly try the same failed path

@@ -35,7 +35,7 @@ class TokenCounter:
             max_tokens: Maximum context length
         """
         self.max_tokens = max_tokens
-        self._cache: dict[str, int] = {}
+        self._cache: dict[int, int] = {}
 
     def count_message(self, message: Message) -> int:
         """Count tokens in a single message."""
@@ -423,3 +423,141 @@ The following summarizes {message_count} previous messages that have been compac
             )
         except Exception as e:
             logger.error(f"Failed to save compaction snapshot: {e}")
+
+    async def compress_for_handoff(
+        self,
+        messages: list[Message],
+        handoff_reason: str,
+        target_context_length: int,
+    ) -> list[Message]:
+        """
+        Compress context specifically for tier handoff.
+
+        Creates a focused summary for the new tier that includes:
+        - Original user request
+        - Tool calls made and their results
+        - Files touched
+        - Handoff reason and task state
+
+        Args:
+            messages: Current conversation
+            handoff_reason: Why handoff is happening
+            target_context_length: Target tier's context limit
+
+        Returns:
+            Compressed messages suitable for new tier
+        """
+        # Calculate target budget (aim for 40% of target context to leave room)
+        target_tokens = int(target_context_length * 0.4)
+
+        # Keep system message
+        system_message = None
+        working_messages = messages
+        if messages and messages[0].role == "system":
+            system_message = messages[0]
+            working_messages = messages[1:]
+
+        # Generate handoff-focused summary
+        summary = await self._generate_handoff_summary(
+            working_messages,
+            handoff_reason,
+            max_tokens=target_tokens // 2,
+        )
+
+        # Build compressed context
+        result = []
+        if system_message:
+            result.append(system_message)
+
+        # Add handoff context as user message
+        handoff_context = f"""[HANDOFF CONTEXT]
+{summary}
+
+Handoff reason: {handoff_reason}
+[END HANDOFF CONTEXT]"""
+
+        result.append(Message(role="user", content=handoff_context))
+
+        # Keep last 2 messages for immediate context (if they fit)
+        if len(working_messages) >= 2:
+            recent = working_messages[-2:]
+            recent_tokens = sum(self.counter.count_message(m) for m in recent)
+            if recent_tokens < target_tokens // 4:
+                result.extend(recent)
+
+        logger.info(
+            f"Handoff compression: {len(messages)} -> {len(result)} messages "
+            f"for target context {target_context_length}"
+        )
+
+        return result
+
+    async def _generate_handoff_summary(
+        self,
+        messages: list[Message],
+        reason: str,
+        max_tokens: int,
+    ) -> str:
+        """Generate a focused summary for handoff."""
+        if not self.orchestrator:
+            return self._simple_handoff_summary(messages, reason)
+
+        conversation_text = self._format_for_summary(messages)
+        max_chars = max_tokens * 4
+
+        summary_prompt = f"""Summarize this conversation for handoff to another model tier.
+
+The handoff reason is: {reason}
+
+You MUST include:
+1. The original user request/goal
+2. ALL tool calls made and their results (be specific)
+3. Files that were read or modified
+4. Current state and what remains to be done
+5. Any decisions made or problems encountered
+
+Keep summary under {max_tokens} tokens.
+
+CONVERSATION:
+{conversation_text}
+
+Summary:"""
+
+        try:
+            result = await self.orchestrator.generate(
+                messages=[Message(role="user", content=summary_prompt)],
+            )
+            summary = result.content
+            if len(summary) > max_chars:
+                summary = summary[:max_chars] + "..."
+            return summary
+        except Exception as e:
+            logger.error(f"Handoff summary generation failed: {e}")
+            return self._simple_handoff_summary(messages, reason)
+
+    def _simple_handoff_summary(self, messages: list[Message], reason: str) -> str:
+        """Create simple handoff summary without model generation."""
+        lines = [f"[Handoff Summary - {len(messages)} messages]"]
+        lines.append(f"Reason: {reason}")
+        lines.append("")
+
+        # Extract tool calls
+        tool_calls = []
+        for msg in messages:
+            if msg.tool_results:
+                for tr in msg.tool_results:
+                    if isinstance(tr, dict):
+                        tool_calls.append(f"- {tr.get('name', 'unknown')}: {tr.get('result', '')[:100]}")
+
+        if tool_calls:
+            lines.append("Tool calls made:")
+            lines.extend(tool_calls[:10])  # Limit to 10
+            lines.append("")
+
+        # Last user message as context
+        for msg in reversed(messages):
+            if msg.role == "user" and not msg.content.startswith("["):
+                lines.append(f"Last user request: {msg.content[:200]}")
+                break
+
+        return "\n".join(lines)

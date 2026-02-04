@@ -28,22 +28,24 @@ from entropi.prompts import get_identity_prompt, get_tool_usage_prompt
 class ChatAdapter(ABC):
     """Abstract base class for chat format adapters."""
 
-    def __init__(self, prompts_dir: Path | None = None) -> None:
+    def __init__(self, tier: str, prompts_dir: Path | None = None) -> None:
         """
         Initialize adapter.
 
         Args:
+            tier: Model tier (thinking, normal, code, simple)
             prompts_dir: Optional directory for user prompt overrides
         """
+        self._tier = tier
         self._prompts_dir = prompts_dir
         self._identity_prompt: str | None = None
         self._tool_usage_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
 
     def _get_identity_prompt(self) -> str:
-        """Get the identity prompt, loading and caching it."""
+        """Get the identity prompt (constitution + tier identity), loading and caching it."""
         if self._identity_prompt is None:
-            self._identity_prompt = get_identity_prompt(self._prompts_dir)
+            self._identity_prompt = get_identity_prompt(self._tier, self._prompts_dir)
         return self._identity_prompt
 
     def _get_tool_usage_prompt(self) -> str:
@@ -277,7 +279,7 @@ def register_adapter(name: str, adapter_class: type[ChatAdapter]) -> None:
     _ADAPTERS[name.lower()] = adapter_class
 
 
-def get_adapter(name: str, prompts_dir: Path | None = None) -> ChatAdapter:
+def get_adapter(name: str, tier: str, prompts_dir: Path | None = None) -> ChatAdapter:
     """
     Get an adapter instance by name.
 
@@ -285,6 +287,7 @@ def get_adapter(name: str, prompts_dir: Path | None = None) -> ChatAdapter:
 
     Args:
         name: Adapter name
+        tier: Model tier (thinking, normal, code, simple)
         prompts_dir: Optional directory for user prompt overrides
 
     Returns:
@@ -297,9 +300,9 @@ def get_adapter(name: str, prompts_dir: Path | None = None) -> ChatAdapter:
 
     if name_lower not in _ADAPTERS:
         logger.warning(f"Unknown adapter '{name}', falling back to generic")
-        return _ADAPTERS["generic"](prompts_dir=prompts_dir)
+        return _ADAPTERS["generic"](tier=tier, prompts_dir=prompts_dir)
 
-    return _ADAPTERS[name_lower](prompts_dir=prompts_dir)
+    return _ADAPTERS[name_lower](tier=tier, prompts_dir=prompts_dir)
 
 
 def list_adapters() -> list[str]:

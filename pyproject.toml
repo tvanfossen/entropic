@@ -116,3 +116,13 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
+# Markers for categorizing tests
+markers = [
+    "unit: Fast tests without external dependencies",
+    "integration: Tests requiring external services (docker, etc)",
+    "model: Tests requiring actual model inference (GPU recommended)",
+    "slow: Tests that take a long time to run",
+]
+# Run all tests by default including model tests
+# Skip model tests with: pytest -m "not model"
+# Run only model tests: pytest -m model

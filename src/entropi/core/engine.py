@@ -308,7 +308,7 @@ class AgentEngine:
         tools = await self.server_manager.list_tools()
         # Add internal todo tool
         tools.append(TODO_TOOL_DEFINITION)
-        logger.debug(f"Retrieved {len(tools)} tools: {[t['name'] for t in tools]}")
+        logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
         # Build system prompt with todo guidance appended
         base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
@@ -318,6 +318,7 @@ class AgentEngine:
         formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
 
         ctx.messages = [Message(role="system", content=formatted_system)]
+        logger.info(f"System prompt size: ~{len(formatted_system) // 4} tokens")
 
         if history:
             ctx.messages.extend(history)
@@ -581,9 +582,12 @@ class AgentEngine:
         """
         # Prevent empty assistant messages which can cause KV cache issues
         if not content.strip() and tool_calls:
-            # Reconstruct minimal tool call representation for context
-            tool_names = [tc.name for tc in tool_calls]
-            content = f"[Calling: {', '.join(tool_names)}]"
+            # Use proper <tool_call> format so model learns correct pattern
+            # (prevents feedback loop where model mimics [Calling: ...] format)
+            content = "\n".join([
+                f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
+                for tc in tool_calls
+            ])
 
         return Message(
             role="assistant",
@@ -605,11 +609,36 @@ class AgentEngine:
             # Check for duplicate tool calls
             duplicate_result = self._check_duplicate_tool_call(ctx, tool_call)
             if duplicate_result:
-                logger.warning(f"Skipping duplicate tool call: {tool_call.name}")
+                ctx.consecutive_duplicate_attempts += 1
+                logger.warning(
+                    f"Duplicate tool call #{ctx.consecutive_duplicate_attempts}: {tool_call.name}"
+                )
+
+                # Circuit breaker: if model is stuck in loop, force break
+                if ctx.consecutive_duplicate_attempts >= 3:
+                    logger.error(
+                        f"Model stuck in loop - {ctx.consecutive_duplicate_attempts} "
+                        f"consecutive duplicate tool calls"
+                    )
+                    break_msg = Message(
+                        role="user",
+                        content="STOP: You have called the same tool 3 times with identical arguments. "
+                        "This indicates you are stuck. Please try a completely different approach "
+                        "or respond to the user explaining what's blocking you.",
+                    )
+                    ctx.messages.append(break_msg)
+                    logger.info(f"[FEEDBACK] Circuit breaker triggered: {break_msg.content}")
+                    yield break_msg
+                    return  # Exit tool processing entirely
+
                 msg = self._create_duplicate_message(tool_call, duplicate_result)
                 ctx.messages.append(msg)
+                logger.info(f"[FEEDBACK] Duplicate message sent: {msg.content[:100]}...")
                 yield msg
                 continue
+
+            # Successful non-duplicate tool call - reset counter
+            ctx.consecutive_duplicate_attempts = 0
 
             logger.debug(f"Executing tool {i+1}/{len(limited_calls)}: {tool_call.name}")
             msg = await self._execute_tool(ctx, tool_call)
@@ -644,27 +673,19 @@ class AgentEngine:
         ctx.recent_tool_calls[key] = result_msg.content
 
     def _create_duplicate_message(self, tool_call: ToolCall, previous_result: str) -> Message:
-        """Create a message indicating a duplicate tool call was skipped."""
-        content = f"""<tool_result>
-Tool: {tool_call.name}
-Status: DUPLICATE - You already called this tool with the same arguments.
-Previous Result:
+        """Create a message indicating a duplicate tool call was skipped.
+
+        Uses role="user" because llama-cpp doesn't render role="tool" properly,
+        which would cause the model to never see the feedback and loop forever.
+        """
+        content = f"""Tool `{tool_call.name}` was already called with the same arguments.
+
+Previous result:
 {previous_result}
 
-IMPORTANT: Do not call the same tool again. Use the result above to answer the user's question.
-</tool_result>"""
+Do NOT call this tool again. Use the previous result above."""
 
-        return Message(
-            role="tool",
-            content=content,
-            tool_results=[
-                {
-                    "call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "result": f"[DUPLICATE] {previous_result[:500]}...",
-                }
-            ],
-        )
+        return Message(role="user", content=content)
 
     async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
         """Execute a single tool call."""
@@ -675,9 +696,22 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
         if tool_call.name == "entropi.todo_write":
             return self._handle_todo_tool(tool_call)
 
-        if not await self._is_tool_approved(tool_call):
-            logger.warning(f"Tool call denied by user: {tool_call.name}")
-            return self._create_denied_message(tool_call, "Permission denied by user")
+        # Handle system.handoff - auto-approve and process specially
+        if tool_call.name == "system.handoff":
+            return await self._handle_handoff(ctx, tool_call)
+
+        approval_result = await self._is_tool_approved(tool_call)
+        if approval_result is not True:
+            # Denied - check if user provided feedback
+            if isinstance(approval_result, str):
+                logger.warning(f"Tool call denied with feedback: {tool_call.name}")
+                reason = f"Permission denied by user. Feedback: {approval_result}"
+            else:
+                logger.warning(f"Tool call denied by user: {tool_call.name}")
+                reason = "Permission denied by user"
+            denied_msg = self._create_denied_message(tool_call, reason)
+            logger.info(f"[FEEDBACK] Denied message sent: {denied_msg.content[:100]}...")
+            return denied_msg
 
         # Notify tool start
         if self._on_tool_start:
@@ -718,7 +752,9 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
             # Record error for task tracking
             if ctx.task_id and self._on_tool_record:
                 self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
-            return self._create_denied_message(tool_call, str(e))
+            denied_msg = self._create_denied_message(tool_call, str(e))
+            logger.info(f"[FEEDBACK] Permission denied message sent: {denied_msg.content[:100]}...")
+            return denied_msg
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
             logger.error(f"Tool execution error: {tool_call.name} - {e}")
@@ -728,9 +764,11 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
             if ctx.task_id and self._on_tool_record:
                 self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
             # Return error message instead of raising to allow the model to recover
-            return self._create_error_message(tool_call, str(e))
+            error_msg = self._create_error_message(tool_call, str(e))
+            logger.info(f"[FEEDBACK] Error message sent: {error_msg.content[:100]}...")
+            return error_msg
 
-    async def _is_tool_approved(self, tool_call: ToolCall) -> bool:
+    async def _is_tool_approved(self, tool_call: ToolCall) -> bool | str:
         """Check if tool call is approved.
 
         Approval flow:
@@ -738,6 +776,9 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
         2. If tool is explicitly in allow list, skip prompting
         3. Otherwise, prompt user via callback
         4. If user selects "Always allow/deny", save to config
+
+        Returns:
+            True if approved, False if denied, or str with feedback if denied with feedback.
         """
         if self.loop_config.auto_approve_tools:
             return True
@@ -751,10 +792,14 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
             return True
 
         # Prompt user via callback
-        # Callback can return: bool, ToolApproval enum, or awaitable of either
+        # Callback can return: bool, ToolApproval enum, str (feedback), or awaitable
         result = self._on_tool_approval(tool_call)
         if asyncio.iscoroutine(result):
             result = await result
+
+        # Handle feedback string (denial with user message)
+        if isinstance(result, str):
+            return result  # Return feedback string as denial reason
 
         # Handle ToolApproval enum responses
         if isinstance(result, ToolApproval):
@@ -808,44 +853,31 @@ IMPORTANT: Do not call the same tool again. Use the result above to answer the u
         return f"{tool_name}:*"
 
     def _create_denied_message(self, tool_call: ToolCall, reason: str) -> Message:
-        """Create a permission denied message."""
-        return Message(
-            role="tool",
-            content=f"Permission denied: {reason}",
-            tool_results=[
-                {
-                    "call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "result": reason,
-                }
-            ],
-        )
+        """Create a permission denied message.
+
+        Uses role="user" because llama-cpp doesn't render role="tool" properly,
+        which would cause the model to never see the feedback and loop forever.
+        """
+        content = f"""Tool `{tool_call.name}` was denied: {reason}
+
+Try a different approach or ask the user for clarification."""
+
+        return Message(role="user", content=content)
 
     def _create_error_message(self, tool_call: ToolCall, error: str) -> Message:
-        """Create a structured error message for the model to recover from."""
-        content = f"""<tool_error>
-Tool: {tool_call.name}
-Error: {error}
+        """Create a structured error message for the model to recover from.
 
-RECOVERY SUGGESTIONS:
-- Check if the arguments are correct
-- Try a different approach to accomplish the task
-- Ask the user for clarification if needed
+        Uses role="user" because llama-cpp doesn't render role="tool" properly,
+        which would cause the model to never see the feedback and loop forever.
+        """
+        content = f"""Tool `{tool_call.name}` failed with error: {error}
 
-Do NOT retry the same tool call with the same arguments.
-</tool_error>"""
+RECOVERY:
+- Check arguments are correct
+- Try a different approach
+- Do NOT retry with the same arguments"""
 
-        return Message(
-            role="tool",
-            content=content,
-            tool_results=[
-                {
-                    "call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "result": f"Error: {error}",
-                }
-            ],
-        )
+        return Message(role="user", content=content)
 
     def _handle_todo_tool(self, tool_call: ToolCall) -> Message:
         """Handle the internal entropi.todo_write tool call."""
@@ -870,6 +902,42 @@ Do NOT retry the same tool call with the same arguments.
             ],
         )
 
+    async def _handle_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
+        """Handle the system.handoff tool call for tier switching."""
+        from entropi.inference.orchestrator import ModelTier
+
+        target_tier_str = tool_call.arguments.get("target_tier", "")
+        reason = tool_call.arguments.get("reason", "")
+
+        logger.info(f"[HANDOFF] Request: {ctx.locked_tier} -> {target_tier_str} ({reason})")
+
+        # Validate target tier
+        try:
+            target_tier = ModelTier(target_tier_str)
+        except ValueError:
+            error_msg = f"Invalid target tier: {target_tier_str}"
+            logger.warning(f"[HANDOFF] {error_msg}")
+            return self._create_error_message(tool_call, error_msg)
+
+        # Get current tier (may be None if not locked yet)
+        current_tier = ctx.locked_tier
+
+        # Validate routing rules
+        if not self.orchestrator.can_handoff(current_tier, target_tier):
+            current_name = current_tier.value if current_tier else "none"
+            error_msg = f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
+            logger.warning(f"[HANDOFF] {error_msg}")
+            return self._create_error_message(tool_call, error_msg)
+
+        # Update the locked tier - next generation will use the new tier
+        ctx.locked_tier = target_tier
+        logger.info(f"[HANDOFF] Success: Now using {target_tier_str} tier")
+
+        # Uses role="user" because llama-cpp doesn't render role="tool" properly
+        content = f"Handoff successful. Now operating as {target_tier_str} tier. Reason: {reason}"
+
+        return Message(role="user", content=content)
+
     async def _handle_error(self, ctx: LoopContext, error: Exception) -> AsyncIterator[Message]:
         """Handle loop iteration error."""
         logger.error(f"Loop error: {error}")
@@ -890,6 +958,11 @@ Do NOT retry the same tool call with the same arguments.
 
         if ctx.metrics.iterations >= self.loop_config.max_iterations:
             logger.warning("Max iterations reached")
+            return True
+
+        # Circuit breaker: stop if model is stuck in duplicate tool calls
+        if ctx.consecutive_duplicate_attempts >= 3:
+            logger.warning("Stopping loop: model stuck in duplicate tool calls")
             return True
 
         return False

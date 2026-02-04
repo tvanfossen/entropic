@@ -179,6 +179,15 @@ class ExternalMCPConfig(BaseModel):
         return Path(v).expanduser()
 
 
+class FilesystemConfig(BaseModel):
+    """Filesystem server configuration."""
+
+    # Proactive diagnostics on edit/write
+    diagnostics_on_edit: bool = True
+    fail_on_errors: bool = True  # Rollback edit if it introduces errors
+    diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
+
+
 class MCPConfig(BaseModel):
     """MCP server configuration."""
 
@@ -187,6 +196,10 @@ class MCPConfig(BaseModel):
     enable_bash: bool = True
     enable_git: bool = True
     enable_diagnostics: bool = True  # LSP diagnostics tool
+    enable_system: bool = True  # System operations (handoff, etc.)
+
+    # Filesystem server config
+    filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
 
     # External MCP servers (from .mcp.json)
     external_servers: dict[str, dict[str, Any]] = Field(default_factory=dict)

@@ -245,6 +245,39 @@ class BaseLSPClient(ABC):
         uri = path.as_uri()
         return self._diagnostics.get(uri, [])
 
+    async def wait_for_diagnostics(self, path: Path, timeout: float = 2.0) -> list[Diagnostic]:
+        """
+        Wait for diagnostics to be published for a file.
+
+        Polls for diagnostics with exponential backoff up to timeout.
+
+        Args:
+            path: File path
+            timeout: Maximum wait time in seconds
+
+        Returns:
+            List of diagnostics (may be empty if timeout reached)
+        """
+        import asyncio
+        import time
+
+        uri = path.as_uri()
+        start = time.monotonic()
+        poll_interval = 0.05  # Start with 50ms
+        max_poll_interval = 0.3  # Cap at 300ms
+
+        while (time.monotonic() - start) < timeout:
+            diags = self._diagnostics.get(uri, [])
+            if diags:
+                return diags
+
+            await asyncio.sleep(poll_interval)
+            # Exponential backoff
+            poll_interval = min(poll_interval * 1.5, max_poll_interval)
+
+        # Return whatever we have (possibly empty)
+        return self._diagnostics.get(uri, [])
+
     def get_all_diagnostics(self) -> dict[Path, list[Diagnostic]]:
         """Get all diagnostics."""
         result = {}

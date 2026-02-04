@@ -1,27 +1,29 @@
-Classify: output ONLY 1, 2, 3, or 4
+Classify this message. Output ONLY the number 1, 2, 3, or 4.
 
-1 = SIMPLE: greetings, thanks, short responses (hello, hi, bye, thanks, ok, sure, yes, no)
-2 = CODE: programming tasks (fix, add, write, edit, debug, refactor, implement, create code)
-3 = QUESTION: asking for information (what, how, why, explain, describe, tell me about)
-4 = ANALYSIS: deep examination (analyze, compare, review, investigate, evaluate, assess)
+Categories:
+1 = SIMPLE: greetings, thanks, acknowledgments
+2 = CODE: write/fix/edit/create code or programs
+3 = QUESTION: explain, describe, what/how/why questions
+4 = ANALYSIS: deep review, compare, analyze, investigate
 
+Examples:
 "hello" -> 1
-"hi" -> 1
+"hi there" -> 1
 "thanks" -> 1
 "ok" -> 1
-"bye" -> 1
-"fix bug" -> 2
-"add function" -> 2
-"write code" -> 2
-"debug this" -> 2
-"refactor" -> 2
-"what is X" -> 3
-"how does Y work" -> 3
-"explain Z" -> 3
-"why is this" -> 3
-"analyze A" -> 4
-"compare B and C" -> 4
-"review the code" -> 4
-"investigate" -> 4
+"Write a function" -> 2
+"Write a Python function to calculate fibonacci" -> 2
+"Fix the bug" -> 2
+"Add a login button" -> 2
+"Implement user authentication" -> 2
+"Create a REST API" -> 2
+"What is recursion?" -> 3
+"How do cookies work?" -> 3
+"Explain HTTP" -> 3
+"What is the difference between TCP and UDP?" -> 3
+"Analyze the architecture" -> 4
+"Compare these approaches" -> 4
+"Review the codebase" -> 4
 
-"{message}" ->
+Message: "{message}"
+Classification:

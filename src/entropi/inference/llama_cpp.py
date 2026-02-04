@@ -47,6 +47,7 @@ class LlamaCppBackend(ModelBackend):
     def __init__(
         self,
         config: ModelConfig,
+        tier: str,
         adapter: ChatAdapter | None = None,
         prompts_dir: Path | None = None,
     ) -> None:
@@ -55,11 +56,12 @@ class LlamaCppBackend(ModelBackend):
 
         Args:
             config: Model configuration
+            tier: Model tier (thinking, normal, code, simple, router)
             adapter: Chat adapter (resolved from config.adapter if None)
             prompts_dir: Optional directory for user prompt overrides
         """
         self.config = config
-        self._adapter = adapter or get_adapter(config.adapter, prompts_dir=prompts_dir)
+        self._adapter = adapter or get_adapter(config.adapter, tier, prompts_dir=prompts_dir)
         self._model: Llama | None = None
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"

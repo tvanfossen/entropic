@@ -1,15 +1,15 @@
 """Tests for inference engine."""
 
 from entropi.core.base import Message, ToolCall
-from entropi.inference.adapters.qwen import QwenAdapter
+from entropi.inference.adapters.qwen3 import Qwen3Adapter
 
 
-class TestQwenAdapter:
-    """Tests for Qwen adapter."""
+class TestQwen3Adapter:
+    """Tests for Qwen3 adapter."""
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.adapter = QwenAdapter()
+        self.adapter = Qwen3Adapter(tier="normal")
 
     def test_chat_format(self) -> None:
         """Test chat format is chatml."""
@@ -18,7 +18,9 @@ class TestQwenAdapter:
     def test_format_system_prompt_no_tools(self) -> None:
         """Test formatting system prompt without tools."""
         result = self.adapter.format_system_prompt("You are helpful.")
-        assert result == "You are helpful."
+        # Qwen3Adapter prepends identity prompt (constitution + tier identity)
+        assert "You are helpful." in result
+        assert "Entropi" in result  # Identity prompt should be included
 
     def test_format_system_prompt_with_tools(self) -> None:
         """Test formatting system prompt with tools."""
@@ -182,15 +184,10 @@ completely broken but has "name": "test_tool" somewhere "arguments": {"key": "va
 
         message = self.adapter.format_tool_result(tool_call, "file contents here")
 
-        assert message.role == "tool"
+        # Qwen3Adapter uses role="user" because llama-cpp doesn't render role="tool"
+        assert message.role == "user"
         assert "read_file" in message.content
-        assert "123" in message.content
         assert "file contents here" in message.content
-        assert "<tool_result>" in message.content
-        assert "</tool_result>" in message.content
-        assert message.tool_results[0]["call_id"] == "123"
-        assert message.tool_results[0]["name"] == "read_file"
-        assert message.tool_results[0]["result"] == "file contents here"
 
     def test_format_tool_result_multiline(self) -> None:
         """Test formatting tool result with multiline content."""

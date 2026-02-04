@@ -82,6 +82,14 @@ class ModelOrchestrator:
     # Auxiliary tiers that stay loaded (small models)
     AUX_TIERS = frozenset({ModelTier.ROUTER})
 
+    # Handoff routing rules - which tiers can hand off to which
+    HANDOFF_RULES: dict[ModelTier, frozenset[ModelTier]] = {
+        ModelTier.SIMPLE: frozenset({ModelTier.NORMAL, ModelTier.CODE, ModelTier.THINKING}),
+        ModelTier.NORMAL: frozenset({ModelTier.SIMPLE, ModelTier.CODE, ModelTier.THINKING}),
+        ModelTier.CODE: frozenset({ModelTier.SIMPLE, ModelTier.NORMAL}),
+        ModelTier.THINKING: frozenset({ModelTier.NORMAL, ModelTier.CODE}),  # Never to SIMPLE
+    }
+
     def __init__(self, config: EntropyConfig) -> None:
         """
         Initialize orchestrator.
@@ -104,19 +112,29 @@ class ModelOrchestrator:
         models_config = self.config.models
 
         if models_config.thinking:
-            self._models[ModelTier.THINKING] = self._create_backend(models_config.thinking)
+            self._models[ModelTier.THINKING] = self._create_backend(
+                models_config.thinking, ModelTier.THINKING
+            )
 
         if models_config.normal:
-            self._models[ModelTier.NORMAL] = self._create_backend(models_config.normal)
+            self._models[ModelTier.NORMAL] = self._create_backend(
+                models_config.normal, ModelTier.NORMAL
+            )
 
         if models_config.code:
-            self._models[ModelTier.CODE] = self._create_backend(models_config.code)
+            self._models[ModelTier.CODE] = self._create_backend(
+                models_config.code, ModelTier.CODE
+            )
 
         if models_config.simple:
-            self._models[ModelTier.SIMPLE] = self._create_backend(models_config.simple)
+            self._models[ModelTier.SIMPLE] = self._create_backend(
+                models_config.simple, ModelTier.SIMPLE
+            )
 
         if models_config.router:
-            self._models[ModelTier.ROUTER] = self._create_backend(models_config.router)
+            self._models[ModelTier.ROUTER] = self._create_backend(
+                models_config.router, ModelTier.ROUTER
+            )
 
         if not self._models:
             logger.warning("No models configured")
@@ -138,10 +156,11 @@ class ModelOrchestrator:
             await self._models[ModelTier.ROUTER].load()
             logger.info("Pre-loaded ROUTER model")
 
-    def _create_backend(self, model_config: ModelConfig) -> LlamaCppBackend:
+    def _create_backend(self, model_config: ModelConfig, tier: ModelTier) -> LlamaCppBackend:
         """Create a backend for a model configuration."""
         return LlamaCppBackend(
             config=model_config,
+            tier=tier.value,
             prompts_dir=self.config.prompts_dir,
         )
 
@@ -346,7 +365,7 @@ class ModelOrchestrator:
 
         For main model tiers (CODE, NORMAL, THINKING), only one is loaded at a time.
         When switching between main tiers, the previous one is unloaded first.
-        Auxiliary tiers (MICRO) stay loaded.
+        Auxiliary tiers (ROUTER) stay loaded.
 
         Optimization: If two tiers point to the same model file, no swap needed.
 
@@ -369,39 +388,39 @@ class ModelOrchestrator:
 
         model = self._models[tier]
 
-        # Dynamic swapping for main tiers: unload current before loading new
-        if tier in self.MAIN_TIERS and not model.is_loaded:
+        # Main tiers: require lock for all operations to prevent TOCTOU race
+        if tier in self.MAIN_TIERS:
             async with self._lock:
-                # Double-check after acquiring lock
-                if not model.is_loaded:
-                    # Check if a model with the same file path is already loaded
-                    if self._loaded_main_tier:
-                        current = self._models.get(self._loaded_main_tier)
-                        if current and current.is_loaded:
-                            if current.config.path == model.config.path:
-                                # Same file already loaded - reuse it
-                                if self._loaded_main_tier != tier:
-                                    logger.info(
-                                        f"Reusing {self._loaded_main_tier.value} model for {tier.value} "
-                                        f"(same file: {model.config.path.name})"
-                                    )
-                                return current  # Return the already-loaded model
-                            else:
-                                # Different file - need to swap
-                                logger.info(
-                                    f"Unloading {self._loaded_main_tier.value} model for swap"
-                                )
-                                await current.unload()
+                if model.is_loaded:
+                    return model
 
-                    # Load the requested model
-                    logger.info(f"Loading {tier.value} model")
-                    await model.load()
-                    self._loaded_main_tier = tier
+                # Check if a model with the same file path is already loaded
+                if self._loaded_main_tier:
+                    current = self._models.get(self._loaded_main_tier)
+                    if current and current.is_loaded:
+                        if current.config.path == model.config.path:
+                            # Same file already loaded - reuse it
+                            logger.info(
+                                f"Reusing {self._loaded_main_tier.value} model for {tier.value} "
+                                f"(same file: {model.config.path.name})"
+                            )
+                            return current  # Return the already-loaded model
+                        else:
+                            # Different file - need to swap
+                            logger.info(
+                                f"Unloading {self._loaded_main_tier.value} model for swap"
+                            )
+                            await current.unload()
 
-        elif not model.is_loaded:
-            # Auxiliary tier - just load it
+                # Load the requested model
+                logger.info(f"Loading {tier.value} model")
+                await model.load()
+                self._loaded_main_tier = tier
+                return model
+
+        # Auxiliary tier - load without lock (small models, always loaded)
+        if not model.is_loaded:
             await model.load()
-
         return model
 
     async def _route(self, messages: list[Message]) -> ModelTier:
@@ -432,7 +451,7 @@ class ModelOrchestrator:
 
         # Classify task type
         task_type = await self._classify_task(user_message)
-        logger.debug(f"Task classification: {task_type}")
+        logger.info(f"[ROUTER] Task classification: {task_type}")
 
         if task_type == "simple":
             return ModelTier.SIMPLE
@@ -453,11 +472,12 @@ class ModelOrchestrator:
 
     async def _classify_task(self, message: str) -> str:
         """
-        Classify task type using the MICRO model.
+        Classify task type using keyword heuristics + model confirmation.
 
-        The MICRO model (0.5B) with GBNF grammar constraint is the single
-        source of truth for task classification. It's fast (~10-50ms for
-        one token) and more accurate than keyword heuristics.
+        The 0.6B router model alone isn't reliable for multi-class classification,
+        so we use a hybrid approach:
+        1. Keyword heuristics identify likely CODE/REASONING/COMPLEX tasks
+        2. Model confirms SIMPLE classification (it's good at greeting detection)
 
         Args:
             message: User message
@@ -465,18 +485,73 @@ class ModelOrchestrator:
         Returns:
             Task type: 'simple', 'code', 'reasoning', or 'complex'
         """
-        if ModelTier.ROUTER in self._models:
-            return await self._classify_task_with_micro(message)
+        msg_lower = message.lower()
 
-        # Fallback if MICRO model not configured
+        # CODE keywords - programming tasks
+        code_keywords = [
+            "write", "implement", "create", "add", "fix", "debug", "refactor",
+            "edit", "modify", "update", "change", "build", "make", "function",
+            "class", "method", "code", "program", "script", "api", "endpoint",
+            "test", "unit test", "bug", "error", "feature",
+        ]
+
+        # COMPLEX/ANALYSIS keywords - deep thinking tasks
+        complex_keywords = [
+            "analyze", "analyse", "compare", "evaluate", "assess", "review",
+            "investigate", "examine", "trade-off", "tradeoff", "architecture",
+            "design pattern", "pros and cons", "advantages and disadvantages",
+        ]
+
+        # REASONING/QUESTION keywords - explanations and questions
+        question_keywords = [
+            "what is", "what are", "how does", "how do", "why is", "why does",
+            "explain", "describe", "tell me about", "difference between",
+            "when should", "can you explain",
+        ]
+
+        # SIMPLE patterns - greetings and acknowledgments (exact/near-exact matches)
+        simple_patterns = [
+            "hello", "hi", "hey", "thanks", "thank you", "ok", "okay",
+            "sure", "yes", "no", "bye", "goodbye", "good morning", "good night",
+        ]
+
+        # Check for SIMPLE first (short messages that are just greetings)
+        msg_stripped = msg_lower.strip().rstrip("!?.").strip()
+        if msg_stripped in simple_patterns or len(msg_stripped) <= 3:
+            logger.info(f"[ROUTER] Keyword match: simple (greeting pattern)")
+            return "simple"
+
+        # Check for CODE keywords
+        for kw in code_keywords:
+            if kw in msg_lower:
+                logger.info(f"[ROUTER] Keyword match: code ('{kw}')")
+                return "code"
+
+        # Check for COMPLEX keywords
+        for kw in complex_keywords:
+            if kw in msg_lower:
+                logger.info(f"[ROUTER] Keyword match: complex ('{kw}')")
+                return "complex"
+
+        # Check for QUESTION keywords
+        for kw in question_keywords:
+            if kw in msg_lower:
+                logger.info(f"[ROUTER] Keyword match: reasoning ('{kw}')")
+                return "reasoning"
+
+        # Fall back to model classification for ambiguous cases
+        if ModelTier.ROUTER in self._models:
+            return await self._classify_task_with_model(message)
+
+        # Default fallback
+        logger.info("[ROUTER] No keyword match, defaulting to reasoning")
         return "reasoning"
 
-    async def _classify_task_with_micro(self, message: str) -> str:
+    async def _classify_task_with_model(self, message: str) -> str:
         """
-        Classify task type using micro model with GBNF grammar constraint.
+        Classify task type using router model with GBNF grammar constraint.
 
-        Uses grammar to guarantee output is one of: 1, 2, 3, 4
-        which maps to: simple, code, reasoning, complex
+        Used as fallback when keyword heuristics don't match.
 
         Args:
             message: User message
@@ -484,7 +559,6 @@ class ModelOrchestrator:
         Returns:
             Task type: 'simple', 'code', 'reasoning', or 'complex'
         """
-        # Load classification prompt from prompts directory (allows user customization)
         classification_prompt = get_classification_prompt(message, self.config.prompts_dir)
 
         micro = await self._get_model(ModelTier.ROUTER)
@@ -495,10 +569,9 @@ class ModelOrchestrator:
             grammar=CLASSIFICATION_GRAMMAR,
         )
 
-        # Grammar guarantees output is 1, 2, 3, or 4
         response = result.content.strip()
-        category = CLASSIFICATION_MAP.get(response, "reasoning")  # Default to reasoning
-        logger.debug(f"Micro model classification: {response} -> {category}")
+        category = CLASSIFICATION_MAP.get(response, "reasoning")
+        logger.info(f"[ROUTER] Model classification: '{response}' -> {category}")
 
         return category
 
@@ -522,7 +595,7 @@ class ModelOrchestrator:
         # Fallback to generic adapter
         from entropi.inference.adapters import get_adapter
 
-        return get_adapter("generic")
+        return get_adapter("generic", tier.value)
 
     @property
     def last_used_tier(self) -> ModelTier | None:
@@ -543,6 +616,23 @@ class ModelOrchestrator:
     def get_available_models(self) -> list[str]:
         """Get list of configured (but not necessarily loaded) model tiers."""
         return [tier.value for tier in self._models.keys()]
+
+    def can_handoff(self, from_tier: ModelTier | None, to_tier: ModelTier) -> bool:
+        """
+        Check if handoff between tiers is permitted.
+
+        Args:
+            from_tier: Current tier (None if not yet locked)
+            to_tier: Target tier
+
+        Returns:
+            True if handoff is allowed, False otherwise
+        """
+        if from_tier is None:
+            return True  # No current tier, any target is valid
+        if from_tier not in self.HANDOFF_RULES:
+            return False  # Unknown source tier
+        return to_tier in self.HANDOFF_RULES[from_tier]
 
     def count_tokens(self, text: str, tier: ModelTier | None = None) -> int:
         """

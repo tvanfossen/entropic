@@ -580,7 +580,7 @@ class ProcessingIndicator(Static):
 
 
 class StatusFooter(Static):
-    """Status footer with key hints and model info."""
+    """Status footer with key hints, model info, and GPU stats."""
 
     DEFAULT_CSS = """
     StatusFooter {
@@ -607,6 +607,8 @@ class StatusFooter(Static):
         self._model = model
         self._thinking_mode = thinking_mode
         self._is_generating = False
+        self._gpu_stats: dict[str, Any] = {}
+        self._gpu_timer: Any = None
 
     def set_generating(self, generating: bool) -> None:
         """Set generating state."""
@@ -623,9 +625,55 @@ class StatusFooter(Static):
         self._thinking_mode = enabled
         self._update_display()
 
+    def _get_gpu_stats(self) -> dict[str, Any]:
+        """Fetch GPU stats from nvidia-smi."""
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=memory.used,memory.total,temperature.gpu,utilization.gpu",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=2,
+            )
+            if result.returncode == 0:
+                parts = result.stdout.strip().split(", ")
+                if len(parts) >= 4:
+                    return {
+                        "vram_used": int(parts[0]),
+                        "vram_total": int(parts[1]),
+                        "temp": int(parts[2]),
+                        "util": int(parts[3]),
+                    }
+        except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
+            pass
+        return {}
+
+    def _refresh_gpu_stats(self) -> None:
+        """Refresh GPU stats periodically."""
+        self._gpu_stats = self._get_gpu_stats()
+        self._update_display()
+
     def _update_display(self) -> None:
         """Update the rendered display."""
         parts = []
+
+        # GPU stats (if available)
+        if self._gpu_stats:
+            vram_used = self._gpu_stats.get("vram_used", 0)
+            vram_total = self._gpu_stats.get("vram_total", 1)
+            temp = self._gpu_stats.get("temp", 0)
+            util = self._gpu_stats.get("util", 0)
+
+            vram_gb = f"{vram_used/1024:.1f}/{vram_total/1024:.0f}GB"
+            temp_color = "red" if temp > 80 else "yellow" if temp > 70 else "green"
+            parts.append(f"[dim]VRAM:[/]{vram_gb}")
+            parts.append(f"[{temp_color}]{temp}°C[/]")
+            parts.append(f"[dim]GPU:[/]{util}%")
 
         if self._model:
             parts.append(f"[bold]{self._model}[/]")
@@ -647,5 +695,12 @@ class StatusFooter(Static):
         self.update(Text.from_markup(display_text))
 
     def on_mount(self) -> None:
-        """Render on mount."""
-        self._update_display()
+        """Render on mount and start GPU refresh timer."""
+        self._refresh_gpu_stats()
+        # Refresh GPU stats every 5 seconds
+        self._gpu_timer = self.set_interval(5.0, self._refresh_gpu_stats)
+
+    def on_unmount(self) -> None:
+        """Stop GPU refresh timer."""
+        if self._gpu_timer:
+            self._gpu_timer.stop()

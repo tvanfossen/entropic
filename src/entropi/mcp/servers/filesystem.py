@@ -5,31 +5,47 @@ Provides file reading, writing, and editing capabilities.
 Implements read-before-write safety pattern.
 """
 
+from __future__ import annotations
+
 import asyncio
 import difflib
 import json
+import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
 from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
 from entropi.mcp.servers.file_tracker import FileAccessTracker
 
+if TYPE_CHECKING:
+    from entropi.config.schema import FilesystemConfig
+    from entropi.lsp.manager import LSPManager
+
 
 class FilesystemServer(BaseMCPServer):
     """Filesystem operations MCP server with read-before-write enforcement."""
 
-    def __init__(self, root_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        root_dir: Path | None = None,
+        lsp_manager: LSPManager | None = None,
+        config: FilesystemConfig | None = None,
+    ) -> None:
         """
         Initialize filesystem server.
 
         Args:
             root_dir: Root directory for operations (default: cwd)
+            lsp_manager: Optional LSP manager for diagnostics on edit
+            config: Filesystem configuration
         """
         super().__init__("filesystem")
         self.root_dir = root_dir or Path.cwd()
         self._tracker = FileAccessTracker()
+        self._lsp_manager = lsp_manager
+        self._config = config
 
     def get_tools(self) -> list[Tool]:
         """Get available filesystem tools - unified read/edit/write pattern."""
@@ -138,7 +154,10 @@ class FilesystemServer(BaseMCPServer):
         )
 
     def _resolve_path(self, path: str) -> Path:
-        """Resolve path relative to root directory."""
+        """Resolve path relative to root directory, expanding ~ to home."""
+        # Expand tilde to home directory
+        if path.startswith("~"):
+            path = os.path.expanduser(path)
         resolved = (self.root_dir / path).resolve()
 
         # Security: ensure path is within root
@@ -147,6 +166,80 @@ class FilesystemServer(BaseMCPServer):
             raise ValueError(f"Path outside root directory: {path}")
 
         return resolved
+
+    def _supports_diagnostics(self, path: Path) -> bool:
+        """Check if file type supports LSP diagnostics."""
+        if not self._lsp_manager:
+            return False
+        return self._lsp_manager.supports_file(path)
+
+    async def _check_diagnostics_after_edit(
+        self,
+        resolved: Path,
+        original_content: str,
+        result_data: dict[str, Any],
+    ) -> str:
+        """
+        Check diagnostics after an edit and rollback if errors found.
+
+        Args:
+            resolved: Path to the edited file
+            original_content: Content before the edit (for rollback)
+            result_data: Success result data to augment with diagnostics
+
+        Returns:
+            JSON response (success with diagnostics, or error with rollback)
+        """
+        # Skip if diagnostics not configured or file type not supported
+        if not self._config or not self._config.diagnostics_on_edit:
+            return json.dumps(result_data)
+
+        if not self._lsp_manager or not self._lsp_manager.is_enabled:
+            return json.dumps(result_data)
+
+        if not self._supports_diagnostics(resolved):
+            return json.dumps(result_data)
+
+        # Open file in LSP and wait for diagnostics
+        self._lsp_manager.open_file(resolved)
+        timeout = self._config.diagnostics_timeout if self._config else 1.0
+        diagnostics = await self._lsp_manager.wait_for_diagnostics(resolved, timeout=timeout)
+
+        # Format diagnostics for response
+        diag_list = [
+            {
+                "line": d.line,
+                "severity": d.severity,
+                "message": d.message,
+                "source": d.source,
+            }
+            for d in diagnostics
+        ]
+
+        # Check for errors
+        errors = [d for d in diagnostics if d.is_error]
+
+        if errors and self._config and self._config.fail_on_errors:
+            # Rollback: restore original content or delete new file
+            if original_content:
+                resolved.write_text(original_content)
+                self._tracker.record_read(resolved, original_content)
+            else:
+                # New file - delete it
+                resolved.unlink(missing_ok=True)
+
+            return json.dumps({
+                "error": "diagnostics_failed",
+                "message": f"Edit introduced {len(errors)} error(s) - rolled back",
+                "diagnostics": diag_list,
+                "tip": "Fix the errors in your edit and try again",
+            })
+
+        # Success - include diagnostics in response
+        if diag_list:
+            result_data["diagnostics"] = diag_list
+
+        return json.dumps(result_data)
 
     async def _read_file(self, path: str) -> str:
         """Read file contents as structured JSON with line numbers."""
@@ -177,6 +270,10 @@ class FilesystemServer(BaseMCPServer):
         """Write file contents with read-before-write enforcement."""
         resolved = self._resolve_path(path)
 
+        # Save original content for potential rollback
+        original_content = ""
+        is_new_file = not resolved.exists()
+
         # For existing files, require prior read
         if resolved.exists():
             if not self._tracker.was_read_recently(resolved):
@@ -186,8 +283,8 @@ class FilesystemServer(BaseMCPServer):
                 })
 
             # Verify file hasn't changed externally
-            current_content = resolved.read_text()
-            if not self._tracker.verify_unchanged(resolved, current_content):
+            original_content = resolved.read_text()
+            if not self._tracker.verify_unchanged(resolved, original_content):
                 return json.dumps({
                     "error": "file_changed",
                     "message": f"File {path} modified since read. Read again first."
@@ -205,11 +302,18 @@ class FilesystemServer(BaseMCPServer):
         # Record the new content as read
         self._tracker.record_read(resolved, content)
 
-        return json.dumps({
+        # Check diagnostics (may rollback on errors)
+        result_data = {
             "success": True,
             "bytes_written": len(content),
             "path": path
-        })
+        }
+
+        # For new files, rollback means delete
+        if is_new_file:
+            original_content = ""  # Signal to delete on rollback
+
+        return await self._check_diagnostics_after_edit(resolved, original_content, result_data)
 
     async def _str_replace(
         self,
@@ -303,12 +407,14 @@ class FilesystemServer(BaseMCPServer):
         resolved.write_text(new_content)
         self._tracker.record_read(resolved, new_content)
 
-        return json.dumps({
+        # Check diagnostics (may rollback on errors)
+        result_data = {
             "success": True,
             "path": path,
             "mode": "str_replace",
             "changes": changes
-        })
+        }
+        return await self._check_diagnostics_after_edit(resolved, content, result_data)
 
     async def _insert_at_line(
         self,
@@ -362,7 +468,8 @@ class FilesystemServer(BaseMCPServer):
         resolved.write_text(new_file_content)
         self._tracker.record_read(resolved, new_file_content)
 
-        return json.dumps({
+        # Check diagnostics (may rollback on errors)
+        result_data = {
             "success": True,
             "path": path,
             "mode": "insert",
@@ -370,7 +477,8 @@ class FilesystemServer(BaseMCPServer):
                 "line": insert_line + 1,
                 "inserted": new_string.rstrip("\n")
             }]
-        })
+        }
+        return await self._check_diagnostics_after_edit(resolved, content, result_data)
 
     def _find_nearest_match(self, content: str, search: str) -> str:
         """Find and describe nearest matching content for debugging."""
@@ -440,6 +548,24 @@ class FilesystemServer(BaseMCPServer):
 if __name__ == "__main__":
     import sys
 
+    from entropi.config.loader import get_config
+    from entropi.lsp.manager import LSPManager
+
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-    server = FilesystemServer(root)
-    asyncio.run(server.run())
+
+    # Load config for filesystem settings
+    config = get_config()
+    fs_config = config.mcp.filesystem
+
+    # Initialize LSP manager if diagnostics enabled
+    lsp_manager = None
+    if fs_config.diagnostics_on_edit and config.lsp.enabled:
+        lsp_manager = LSPManager(config.lsp, root)
+        lsp_manager.start()
+
+    try:
+        server = FilesystemServer(root, lsp_manager=lsp_manager, config=fs_config)
+        asyncio.run(server.run())
+    finally:
+        if lsp_manager:
+            lsp_manager.stop()

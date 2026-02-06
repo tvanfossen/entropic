@@ -21,7 +21,7 @@ class TestResponseCompleteness:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """Response should end at a natural stopping point."""
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message(
                 "List three programming languages and their main use cases"
             ),
@@ -48,7 +48,7 @@ class TestNoSpecialTokens:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """Response should not contain raw special tokens."""
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message("Hello, how are you?"),
             expected_turns=1,
             name="tokens_check",

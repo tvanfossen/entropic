@@ -18,7 +18,7 @@ class TestSimpleResponses:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """'Hello' should produce a greeting in a single turn."""
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message("Hello"),
             expected_turns=1,
             name="simple_hello",
@@ -39,7 +39,7 @@ class TestSimpleResponses:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """'Thanks!' should produce an acknowledgment in a single turn."""
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message("Thanks!"),
             expected_turns=1,
             name="simple_thanks",

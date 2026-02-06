@@ -21,7 +21,7 @@ class TestReasoningResponses:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """Explanation request should produce substantive response."""
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message("What is recursion in programming?"),
             expected_turns=2,
             name="reasoning_recursion",

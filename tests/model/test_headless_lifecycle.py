@@ -20,7 +20,7 @@ class TestGenerationLifecycle:
         """Generation should properly start and end."""
         assert not headless_presenter._generating
 
-        _, elapsed = await with_timeout(
+        await with_timeout(
             headless_app._process_message("Hello"),
             expected_turns=1,
             name="lifecycle_hello",
@@ -35,7 +35,7 @@ class TestGenerationLifecycle:
         headless_presenter: HeadlessPresenter,
     ) -> None:
         """Multiple messages should build conversation history."""
-        _, elapsed1 = await with_timeout(
+        await with_timeout(
             headless_app._process_message("Hello"),
             expected_turns=1,
             name="lifecycle_first",
@@ -43,7 +43,7 @@ class TestGenerationLifecycle:
         first_response = headless_presenter.get_stream_content()
         headless_presenter.clear_captured()
 
-        _, elapsed2 = await with_timeout(
+        await with_timeout(
             headless_app._process_message("What did I just say?"),
             expected_turns=1,
             name="lifecycle_second",

@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
 from entropi.inference.orchestrator import ModelOrchestrator, ModelTier
 
 
@@ -87,7 +86,9 @@ class TestModelOrchestratorLoading:
         mocks = {
             ModelTier.NORMAL: MockModelBackend(MockModelConfig(normal_path), "normal"),
             ModelTier.CODE: MockModelBackend(MockModelConfig("/models/code.gguf"), "code"),
-            ModelTier.THINKING: MockModelBackend(MockModelConfig("/models/thinking.gguf"), "thinking"),
+            ModelTier.THINKING: MockModelBackend(
+                MockModelConfig("/models/thinking.gguf"), "thinking"
+            ),
             ModelTier.SIMPLE: MockModelBackend(MockModelConfig(simple_path), "simple"),
             ModelTier.ROUTER: MockModelBackend(MockModelConfig("/models/router.gguf"), "router"),
         }

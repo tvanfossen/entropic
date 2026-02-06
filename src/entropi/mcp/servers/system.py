@@ -64,12 +64,14 @@ class SystemServer(BaseMCPServer):
         reason = arguments.get("reason", "")
         task_state = arguments.get("task_state", "in_progress")
 
-        return json.dumps({
-            "handoff_request": True,
-            "target_tier": target_tier,
-            "reason": reason,
-            "task_state": task_state,
-        })
+        return json.dumps(
+            {
+                "handoff_request": True,
+                "target_tier": target_tier,
+                "reason": reason,
+                "task_state": task_state,
+            }
+        )
 
 
 async def main() -> None:

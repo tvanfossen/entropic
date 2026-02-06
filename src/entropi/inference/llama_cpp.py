@@ -229,12 +229,7 @@ class LlamaCppBackend(ModelBackend):
             await self.load()
 
         llama_messages = self._convert_messages(messages)
-
-        # Reset model state before generation to ensure clean KV cache
-        # This prevents llama_decode errors when context changes between calls
-        # (especially important for multi-turn tool use conversations)
-        if hasattr(self._model, "reset"):
-            self._model.reset()
+        self._reset_model_if_needed()
 
         gen_config = GenerationConfig(
             max_tokens=max_tokens,
@@ -247,43 +242,18 @@ class LlamaCppBackend(ModelBackend):
         )
 
         # Use a queue to bridge sync stream iteration with async yielding
-        # This prevents blocking the event loop while waiting for tokens
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         loop = asyncio.get_event_loop()
 
-        def stream_to_queue() -> None:
-            """Run synchronous stream iteration in thread, pushing chunks to queue."""
-            assert self._model is not None
-            try:
-                stream = self._model.create_chat_completion(
-                    messages=llama_messages,
-                    max_tokens=gen_config.max_tokens,
-                    temperature=gen_config.temperature,
-                    top_p=gen_config.top_p,
-                    top_k=gen_config.top_k,
-                    repeat_penalty=gen_config.repeat_penalty,
-                    stop=gen_config.stop if gen_config.stop else None,
-                    stream=True,
-                )
-
-                for chunk in stream:
-                    choice = chunk["choices"][0]
-                    delta = choice.get("delta", {})
-                    if delta.get("content"):
-                        # Thread-safe put to queue
-                        loop.call_soon_threadsafe(queue.put_nowait, delta["content"])
-                    # Capture finish_reason from final chunk
-                    if choice.get("finish_reason"):
-                        self._last_finish_reason = choice["finish_reason"]
-                        logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
-            except Exception as e:
-                logger.exception(f"Stream error: {e}")
-            finally:
-                # Signal end of stream
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-
         # Start stream iteration in background thread
-        stream_task = loop.run_in_executor(None, stream_to_queue)
+        stream_task = loop.run_in_executor(
+            None,
+            self._stream_to_queue,
+            llama_messages,
+            gen_config,
+            queue,
+            loop,
+        )
 
         # Yield chunks from queue asynchronously (doesn't block event loop)
         try:
@@ -293,8 +263,54 @@ class LlamaCppBackend(ModelBackend):
                     break
                 yield chunk
         finally:
-            # Ensure the background task completes
             await stream_task
+
+    def _reset_model_if_needed(self) -> None:
+        """Reset model state before generation to ensure clean KV cache."""
+        if self._model is not None and hasattr(self._model, "reset"):
+            self._model.reset()
+
+    def _stream_to_queue(
+        self,
+        messages: list[dict[str, Any]],
+        config: GenerationConfig,
+        queue: asyncio.Queue[str | None],
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Run synchronous stream iteration in thread, pushing chunks to queue."""
+        assert self._model is not None
+        try:
+            stream = self._model.create_chat_completion(
+                messages=messages,
+                max_tokens=config.max_tokens,
+                temperature=config.temperature,
+                top_p=config.top_p,
+                top_k=config.top_k,
+                repeat_penalty=config.repeat_penalty,
+                stop=config.stop if config.stop else None,
+                stream=True,
+            )
+            self._process_stream_chunks(stream, queue, loop)
+        except Exception as e:
+            logger.exception(f"Stream error: {e}")
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    def _process_stream_chunks(
+        self,
+        stream: Any,
+        queue: asyncio.Queue[str | None],
+        loop: asyncio.AbstractEventLoop,
+    ) -> None:
+        """Process stream chunks and push to queue."""
+        for chunk in stream:
+            choice = chunk["choices"][0]
+            delta = choice.get("delta", {})
+            if delta.get("content"):
+                loop.call_soon_threadsafe(queue.put_nowait, delta["content"])
+            if choice.get("finish_reason"):
+                self._last_finish_reason = choice["finish_reason"]
+                logger.debug(f"Stream finish_reason: {self._last_finish_reason}")
 
     def _convert_messages(self, messages: list[Message]) -> list[dict[str, Any]]:
         """Convert Message objects to llama-cpp format."""
@@ -310,7 +326,7 @@ class LlamaCppBackend(ModelBackend):
     @property
     def context_length(self) -> int:
         """Get the model's context length."""
-        return self.config.context_length
+        return int(self.config.context_length)
 
     @property
     def is_loaded(self) -> bool:

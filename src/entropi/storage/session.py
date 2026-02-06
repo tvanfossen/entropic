@@ -316,8 +316,8 @@ class SessionManager:
                 Message(
                     role=m["role"],
                     content=m["content"],
-                    tool_calls=json.loads(m["tool_calls"]) if m["tool_calls"] else None,
-                    tool_results=json.loads(m["tool_results"]) if m["tool_results"] else None,
+                    tool_calls=json.loads(m["tool_calls"]) if m["tool_calls"] else [],
+                    tool_results=json.loads(m["tool_results"]) if m["tool_results"] else [],
                 )
             )
 

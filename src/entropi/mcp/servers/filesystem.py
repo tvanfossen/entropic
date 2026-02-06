@@ -114,15 +114,26 @@ class FilesystemServer(BaseMCPServer):
         }
         handler = handlers.get(name)
         if not handler:
-            return json.dumps({"error": "unknown_tool", "message": f"Unknown tool: {name}"})
+            return self._error_response("unknown_tool", f"Unknown tool: {name}")
+        return await self._execute_with_error_handling(handler, arguments)
+
+    async def _execute_with_error_handling(self, handler: Any, arguments: dict[str, Any]) -> str:
+        """Execute handler with unified error handling."""
+        error_map = {
+            KeyError: ("missing_param", "Missing required parameter: {}"),
+            TypeError: ("invalid_type", "Invalid parameter type: {}"),
+        }
         try:
             return await handler(arguments)
-        except KeyError as e:
-            return json.dumps({"error": "missing_param", "message": f"Missing required parameter: {e}"})
-        except TypeError as e:
-            return json.dumps({"error": "invalid_type", "message": f"Invalid parameter type: {e}"})
+        except (KeyError, TypeError) as e:
+            error_type, msg_template = error_map[type(e)]
+            return self._error_response(error_type, msg_template.format(e))
         except Exception as e:
-            return json.dumps({"error": "execution_error", "message": str(e)})
+            return self._error_response("execution_error", str(e))
+
+    def _error_response(self, error_type: str, message: str) -> str:
+        """Create a JSON error response."""
+        return json.dumps({"error": error_type, "message": message})
 
     async def _handle_read_file(self, args: dict[str, Any]) -> str:
         return await self._read_file(args["path"])
@@ -141,10 +152,12 @@ class FilesystemServer(BaseMCPServer):
 
         # STR_REPLACE mode: old_string is required
         if "old_string" not in args:
-            return json.dumps({
-                "error": "invalid_params",
-                "message": "edit_file requires either old_string (str_replace) or insert_line (insert)"
-            })
+            return json.dumps(
+                {
+                    "error": "invalid_params",
+                    "message": "edit_file requires either old_string (str_replace) or insert_line (insert)",
+                }
+            )
 
         return await self._str_replace(
             path,
@@ -173,6 +186,14 @@ class FilesystemServer(BaseMCPServer):
             return False
         return self._lsp_manager.supports_file(path)
 
+    def _should_check_diagnostics(self, resolved: Path) -> bool:
+        """Check if diagnostics should be checked for this file."""
+        if not self._config or not self._config.diagnostics_on_edit:
+            return False
+        if not self._lsp_manager or not self._lsp_manager.is_enabled:
+            return False
+        return self._supports_diagnostics(resolved)
+
     async def _check_diagnostics_after_edit(
         self,
         resolved: Path,
@@ -191,13 +212,7 @@ class FilesystemServer(BaseMCPServer):
             JSON response (success with diagnostics, or error with rollback)
         """
         # Skip if diagnostics not configured or file type not supported
-        if not self._config or not self._config.diagnostics_on_edit:
-            return json.dumps(result_data)
-
-        if not self._lsp_manager or not self._lsp_manager.is_enabled:
-            return json.dumps(result_data)
-
-        if not self._supports_diagnostics(resolved):
+        if not self._should_check_diagnostics(resolved):
             return json.dumps(result_data)
 
         # Open file in LSP and wait for diagnostics
@@ -228,12 +243,14 @@ class FilesystemServer(BaseMCPServer):
                 # New file - delete it
                 resolved.unlink(missing_ok=True)
 
-            return json.dumps({
-                "error": "diagnostics_failed",
-                "message": f"Edit introduced {len(errors)} error(s) - rolled back",
-                "diagnostics": diag_list,
-                "tip": "Fix the errors in your edit and try again",
-            })
+            return json.dumps(
+                {
+                    "error": "diagnostics_failed",
+                    "message": f"Edit introduced {len(errors)} error(s) - rolled back",
+                    "diagnostics": diag_list,
+                    "tip": "Fix the errors in your edit and try again",
+                }
+            )
 
         # Success - include diagnostics in response
         if diag_list:
@@ -260,11 +277,13 @@ class FilesystemServer(BaseMCPServer):
 
         # Return structured JSON with line numbers as keys
         lines = content.splitlines()
-        return json.dumps({
-            "path": path,
-            "total": len(lines),
-            "lines": {str(i): line for i, line in enumerate(lines, 1)},
-        })
+        return json.dumps(
+            {
+                "path": path,
+                "total": len(lines),
+                "lines": {str(i): line for i, line in enumerate(lines, 1)},
+            }
+        )
 
     async def _write_file(self, path: str, content: str) -> str:
         """Write file contents with read-before-write enforcement."""
@@ -277,18 +296,22 @@ class FilesystemServer(BaseMCPServer):
         # For existing files, require prior read
         if resolved.exists():
             if not self._tracker.was_read_recently(resolved):
-                return json.dumps({
-                    "error": "read_required",
-                    "message": f"Cannot write to {path}: file must be read first."
-                })
+                return json.dumps(
+                    {
+                        "error": "read_required",
+                        "message": f"Cannot write to {path}: file must be read first.",
+                    }
+                )
 
             # Verify file hasn't changed externally
             original_content = resolved.read_text()
             if not self._tracker.verify_unchanged(resolved, original_content):
-                return json.dumps({
-                    "error": "file_changed",
-                    "message": f"File {path} modified since read. Read again first."
-                })
+                return json.dumps(
+                    {
+                        "error": "file_changed",
+                        "message": f"File {path} modified since read. Read again first.",
+                    }
+                )
 
         # Create parent directories
         resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -303,17 +326,93 @@ class FilesystemServer(BaseMCPServer):
         self._tracker.record_read(resolved, content)
 
         # Check diagnostics (may rollback on errors)
-        result_data = {
-            "success": True,
-            "bytes_written": len(content),
-            "path": path
-        }
+        result_data = {"success": True, "bytes_written": len(content), "path": path}
 
         # For new files, rollback means delete
         if is_new_file:
             original_content = ""  # Signal to delete on rollback
 
         return await self._check_diagnostics_after_edit(resolved, original_content, result_data)
+
+    def _validate_str_replace(
+        self, path: str, resolved: Path, old_string: str, replace_all: bool
+    ) -> tuple[str | None, str]:
+        """Validate str_replace preconditions. Returns (error_json, content) or (None, content)."""
+        # Check file exists and was read
+        error = self._validate_file_read_state(path, resolved)
+        if error:
+            return error, ""
+
+        content = resolved.read_text()
+
+        # Check file unchanged since read
+        if not self._tracker.verify_unchanged(resolved, content):
+            return self._error_response(
+                "file_changed", f"File {path} modified since read. Read again first."
+            ), ""
+
+        # Check match conditions
+        return self._validate_match_conditions(path, content, old_string, replace_all)
+
+    def _validate_file_read_state(self, path: str, resolved: Path) -> str | None:
+        """Validate file exists and was read recently. Returns error JSON or None."""
+        if not resolved.exists():
+            return self._error_response("not_found", f"File not found: {path}")
+        if not self._tracker.was_read_recently(resolved):
+            return self._error_response(
+                "read_required", f"Cannot edit {path}: file must be read first."
+            )
+        return None
+
+    def _validate_line_bounds(
+        self, insert_line: int, total_lines: int, content: str
+    ) -> tuple[str | None, str, int]:
+        """Validate line number bounds. Returns (error_json, content, total_lines)."""
+        if insert_line < 0:
+            return (
+                self._error_response("invalid_line", "insert_line must be >= 0 (0 = beginning)"),
+                "",
+                0,
+            )
+        if insert_line > total_lines:
+            return (
+                self._error_response(
+                    "invalid_line", f"insert_line {insert_line} > file length ({total_lines} lines)"
+                ),
+                "",
+                0,
+            )
+        return None, content, total_lines
+
+    def _validate_match_conditions(
+        self, path: str, content: str, old_string: str, replace_all: bool
+    ) -> tuple[str | None, str]:
+        """Validate match conditions. Returns (error_json, content) or (None, content)."""
+        match_count = content.count(old_string)
+
+        if match_count == 0:
+            hint = self._find_nearest_match(content, old_string)
+            return json.dumps(
+                {
+                    "error": "no_match",
+                    "message": f"String not found in {path}",
+                    "debug": hint,
+                    "tip": "Use edit_file with insert_line for line-based insertion",
+                }
+            ), ""
+
+        if not replace_all and match_count > 1:
+            match_lines = self._find_match_lines(content, old_string)
+            return json.dumps(
+                {
+                    "error": "multiple_matches",
+                    "message": f"Found {match_count} matches in {path}",
+                    "match_lines": match_lines[:10],
+                    "tip": "Add more context to old_string, or set replace_all=true",
+                }
+            ), ""
+
+        return None, content
 
     async def _str_replace(
         self,
@@ -325,96 +424,84 @@ class FilesystemServer(BaseMCPServer):
         """Edit a file by replacing exact string matches (str_replace mode)."""
         resolved = self._resolve_path(path)
 
-        if not resolved.exists():
-            return json.dumps({"error": "not_found", "message": f"File not found: {path}"})
+        error, content = self._validate_str_replace(path, resolved, old_string, replace_all)
+        if error:
+            return error
 
-        # Require prior read
-        if not self._tracker.was_read_recently(resolved):
-            return json.dumps({
-                "error": "read_required",
-                "message": f"Cannot edit {path}: file must be read first."
-            })
-
-        content = resolved.read_text()
-
-        # Verify file hasn't changed
-        if not self._tracker.verify_unchanged(resolved, content):
-            return json.dumps({
-                "error": "file_changed",
-                "message": f"File {path} modified since read. Read again first."
-            })
-
-        # Check for matches
-        match_count = content.count(old_string)
-
-        if match_count == 0:
-            hint = self._find_nearest_match(content, old_string)
-            return json.dumps({
-                "error": "no_match",
-                "message": f"String not found in {path}",
-                "debug": hint,
-                "tip": "Use edit_file with insert_line for line-based insertion"
-            })
-
-        if not replace_all and match_count > 1:
-            match_lines = self._find_match_lines(content, old_string)
-            return json.dumps({
-                "error": "multiple_matches",
-                "message": f"Found {match_count} matches in {path}",
-                "match_lines": match_lines[:10],
-                "tip": "Add more context to old_string, or set replace_all=true"
-            })
-
-        # Find line number(s) where replacement occurs
-        lines = content.splitlines(keepends=True)
-        changes = []
-
-        # Build line start positions for mapping
-        line_starts = [0]
-        for line in lines:
-            line_starts.append(line_starts[-1] + len(line))
-
-        def find_line_number(pos: int) -> int:
-            """Find 1-indexed line number for a character position."""
-            for i, start in enumerate(line_starts[:-1]):
-                if start <= pos < line_starts[i + 1]:
-                    return i + 1
-            return len(lines)
-
-        # Collect change info before modifying
-        search_pos = 0
-        while True:
-            idx = content.find(old_string, search_pos)
-            if idx == -1:
-                break
-            line_num = find_line_number(idx)
-            changes.append({
-                "line": line_num,
-                "before": old_string,
-                "after": new_string
-            })
-            if not replace_all:
-                break
-            search_pos = idx + len(old_string)
-
-        # Perform replacement
-        if replace_all:
-            new_content = content.replace(old_string, new_string)
-        else:
-            new_content = content.replace(old_string, new_string, 1)
+        # Collect changes and perform replacement
+        changes = self._collect_changes(content, old_string, new_string, replace_all)
+        new_content = (
+            content.replace(old_string, new_string)
+            if replace_all
+            else content.replace(old_string, new_string, 1)
+        )
 
         # Write and update tracker
         resolved.write_text(new_content)
         self._tracker.record_read(resolved, new_content)
 
         # Check diagnostics (may rollback on errors)
-        result_data = {
-            "success": True,
-            "path": path,
-            "mode": "str_replace",
-            "changes": changes
-        }
+        result_data = {"success": True, "path": path, "mode": "str_replace", "changes": changes}
         return await self._check_diagnostics_after_edit(resolved, content, result_data)
+
+    def _collect_changes(
+        self, content: str, old_string: str, new_string: str, replace_all: bool
+    ) -> list[dict[str, Any]]:
+        """Collect change info for str_replace operation."""
+        lines = content.splitlines(keepends=True)
+        line_starts = self._build_line_starts(lines)
+        changes: list[dict[str, Any]] = []
+
+        search_pos = 0
+        while True:
+            idx = content.find(old_string, search_pos)
+            if idx == -1:
+                break
+            line_num = self._find_line_number(idx, line_starts, len(lines))
+            changes.append({"line": line_num, "before": old_string, "after": new_string})
+            if not replace_all:
+                break
+            search_pos = idx + len(old_string)
+        return changes
+
+    def _build_line_starts(self, lines: list[str]) -> list[int]:
+        """Build line start positions for line number mapping."""
+        line_starts = [0]
+        for line in lines:
+            line_starts.append(line_starts[-1] + len(line))
+        return line_starts
+
+    def _find_line_number(self, pos: int, line_starts: list[int], num_lines: int) -> int:
+        """Find 1-indexed line number for a character position."""
+        for i, start in enumerate(line_starts[:-1]):
+            if start <= pos < line_starts[i + 1]:
+                return i + 1
+        return num_lines
+
+    def _validate_insert_at_line(
+        self, path: str, resolved: Path, insert_line: int
+    ) -> tuple[str | None, str, int]:
+        """Validate insert_at_line preconditions. Returns (error_json, content, total_lines)."""
+        # Check file exists and was read
+        error = self._validate_file_read_state(path, resolved)
+        if error:
+            return error, "", 0
+
+        content = resolved.read_text()
+
+        # Check file unchanged since read
+        if not self._tracker.verify_unchanged(resolved, content):
+            return (
+                self._error_response(
+                    "file_changed", f"File {path} modified since read. Read again first."
+                ),
+                "",
+                0,
+            )
+
+        # Validate line number
+        total_lines = len(content.splitlines(keepends=True))
+        return self._validate_line_bounds(insert_line, total_lines, content)
 
     async def _insert_at_line(
         self,
@@ -425,37 +512,11 @@ class FilesystemServer(BaseMCPServer):
         """Insert content at a specific line number (insert mode)."""
         resolved = self._resolve_path(path)
 
-        if not resolved.exists():
-            return json.dumps({"error": "not_found", "message": f"File not found: {path}"})
-
-        if not self._tracker.was_read_recently(resolved):
-            return json.dumps({
-                "error": "read_required",
-                "message": f"Cannot edit {path}: file must be read first."
-            })
-
-        content = resolved.read_text()
-
-        if not self._tracker.verify_unchanged(resolved, content):
-            return json.dumps({
-                "error": "file_changed",
-                "message": f"File {path} modified since read. Read again first."
-            })
+        error, content, _ = self._validate_insert_at_line(path, resolved, insert_line)
+        if error:
+            return error
 
         lines = content.splitlines(keepends=True)
-        total_lines = len(lines)
-
-        # Validate insert_line (0 = insert at beginning, N = insert after line N)
-        if insert_line < 0:
-            return json.dumps({
-                "error": "invalid_line",
-                "message": f"insert_line must be >= 0 (0 = beginning)"
-            })
-        if insert_line > total_lines:
-            return json.dumps({
-                "error": "invalid_line",
-                "message": f"insert_line {insert_line} > file length ({total_lines} lines)"
-            })
 
         # Ensure new_string ends with newline
         if new_string and not new_string.endswith("\n"):
@@ -473,10 +534,7 @@ class FilesystemServer(BaseMCPServer):
             "success": True,
             "path": path,
             "mode": "insert",
-            "changes": [{
-                "line": insert_line + 1,
-                "inserted": new_string.rstrip("\n")
-            }]
+            "changes": [{"line": insert_line + 1, "inserted": new_string.rstrip("\n")}],
         }
         return await self._check_diagnostics_after_edit(resolved, content, result_data)
 
@@ -549,7 +607,7 @@ if __name__ == "__main__":
     import sys
 
     from entropi.config.loader import get_config
-    from entropi.lsp.manager import LSPManager
+    from entropi.lsp.manager import LSPManager as _LSPManager
 
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
@@ -560,7 +618,7 @@ if __name__ == "__main__":
     # Initialize LSP manager if diagnostics enabled
     lsp_manager = None
     if fs_config.diagnostics_on_edit and config.lsp.enabled:
-        lsp_manager = LSPManager(config.lsp, root)
+        lsp_manager = _LSPManager(config.lsp, root)
         lsp_manager.start()
 
     try:

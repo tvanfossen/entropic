@@ -8,7 +8,11 @@ consistent interfaces and enable dependency injection.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from entropi.config.schema import ModelConfig
+    from entropi.inference.adapters.base import ChatAdapter
 
 
 @dataclass
@@ -55,6 +59,10 @@ class GenerationResult:
 
 class ModelBackend(ABC):
     """Abstract base class for model backends."""
+
+    # Subclasses must define these attributes
+    config: "ModelConfig"
+    _adapter: "ChatAdapter"
 
     @abstractmethod
     async def load(self) -> None:
@@ -104,6 +112,11 @@ class ModelBackend(ABC):
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
         pass
+
+    @property
+    def adapter(self) -> "ChatAdapter":
+        """Get the adapter for this backend."""
+        return self._adapter
 
 
 class ToolProvider(ABC):

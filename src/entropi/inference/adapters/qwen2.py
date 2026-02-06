@@ -108,226 +108,221 @@ class Qwen2Adapter(ChatAdapter):
         Returns:
             Tuple of (cleaned content, tool calls)
         """
+        self._log_parse_start(content)
+
+        tool_calls, lines_to_remove = self._parse_json_lines(content)
+        if not tool_calls:
+            tool_calls = self._parse_markdown_blocks(content)
+        if not tool_calls:
+            tool_calls = self._parse_function_call_syntax(content)
+        if not tool_calls:
+            tool_calls = self._parse_python_style_calls(content)
+
+        cleaned = self._clean_content(content, tool_calls, lines_to_remove)
+        self._log_parse_result(content, tool_calls)
+
+        return cleaned, tool_calls
+
+    def _log_parse_start(self, content: str) -> None:
+        """Log debug info at start of parsing."""
         logger.debug("\n=== Parsing tool calls (Qwen2) ===")
         logger.debug(f"Content length: {len(content)}")
         logger.debug(f"Content:\n{content}")
 
+    def _parse_json_lines(self, content: str) -> tuple[list[ToolCall], list[str]]:
+        """Parse bare JSON tool calls from lines."""
         tool_calls = []
         lines_to_remove = []
-
-        # Parse each line looking for JSON tool calls
         for line in content.split("\n"):
             stripped = line.strip()
-            if not stripped:
+            if not stripped or not (stripped.startswith("{") and '"name"' in stripped):
                 continue
+            tool_call = self._try_parse_json_tool_call(stripped)
+            if tool_call:
+                tool_calls.append(tool_call)
+                lines_to_remove.append(line)
+                logger.info(f"Parsed Qwen2 tool call: {tool_call.name}")
+            else:
+                recovered = self._try_recover_json(stripped)
+                if recovered:
+                    tool_calls.append(recovered)
+                    lines_to_remove.append(line)
+        return tool_calls, lines_to_remove
 
-            # Check if line looks like a JSON tool call
-            if stripped.startswith("{") and '"name"' in stripped:
-                try:
-                    data = json.loads(stripped)
-                    if "name" in data:
-                        # Handle both {"name": ..., "arguments": ...}
-                        # and {"name": ..., "parameters": ...} formats
-                        arguments = data.get("arguments", data.get("parameters", {}))
-                        tool_call = ToolCall(
-                            id=str(uuid.uuid4()),
-                            name=data["name"],
-                            arguments=arguments,
-                        )
-                        tool_calls.append(tool_call)
-                        lines_to_remove.append(line)
-                        logger.info(f"Parsed Qwen2 tool call: {tool_call.name}")
-                except json.JSONDecodeError:
-                    # Try to recover malformed JSON
-                    recovered = self._try_recover_json(stripped)
-                    if recovered:
-                        tool_calls.append(recovered)
-                        lines_to_remove.append(line)
+    def _try_parse_json_tool_call(self, json_str: str) -> ToolCall | None:
+        """Try to parse a JSON string as a tool call."""
+        try:
+            data = json.loads(json_str)
+            if "name" in data:
+                arguments = data.get("arguments", data.get("parameters", {}))
+                return ToolCall(id=str(uuid.uuid4()), name=data["name"], arguments=arguments)
+        except json.JSONDecodeError:
+            pass
+        return None
 
-        # Also check for markdown-wrapped JSON (any language: ```json, ```bash, etc.)
-        if not tool_calls:
-            # Multiple patterns to catch various code block formats
-            code_block_patterns = [
-                # Standard: ```lang\ncontent\n```
-                re.compile(r"```\w*\s*\n([\s\S]*?)\n```", re.MULTILINE),
-                # No trailing newline: ```lang\ncontent```
-                re.compile(r"```\w*\s*\n([\s\S]*?)```", re.MULTILINE),
-                # Content on same line: ```lang content```
-                re.compile(r"```\w*\s+(\{[^`]*\})```", re.MULTILINE),
-                # Most permissive: anything between triple backticks
-                re.compile(r"```(?:\w*\s*)?([\s\S]*?)```", re.MULTILINE),
-            ]
-
-            for pattern in code_block_patterns:
-                if tool_calls:
-                    break  # Already found tool calls
-                for block_content in pattern.findall(content):
-                    block_stripped = block_content.strip()
-                    if not block_stripped:
-                        continue
-                    logger.debug(f"Found code block ({pattern.pattern}): {block_stripped}")
-                    # Check if it looks like JSON with a name field
-                    if block_stripped.startswith("{") and '"name"' in block_stripped:
-                        try:
-                            data = json.loads(block_stripped)
-                            if "name" in data:
-                                arguments = data.get("arguments", data.get("parameters", {}))
-                                tool_call = ToolCall(
-                                    id=str(uuid.uuid4()),
-                                    name=data["name"],
-                                    arguments=arguments,
-                                )
-                                tool_calls.append(tool_call)
-                                logger.info(f"Parsed Qwen2 markdown tool call: {tool_call.name}")
-                        except json.JSONDecodeError as e:
-                            logger.debug(f"JSON parse failed in code block: {e}")
-                            # Try recovery
-                            recovered = self._try_recover_json(block_stripped)
-                            if recovered:
-                                tool_calls.append(recovered)
-                                logger.info(f"Recovered Qwen2 markdown tool call: {recovered.name}")
-
-        # Check for function-call syntax: tool_name({...}) in code blocks or bare
-        # Pattern: tool.name({ ... }) or tool.name({"key": "value", ...})
-        if not tool_calls:
-            # Use pattern that captures content between { and } more robustly
-            func_call_pattern = re.compile(
-                r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*(\{.*?\})\s*\)",
-                re.DOTALL,
-            )
-            for match in func_call_pattern.finditer(content):
-                func_name = match.group(1)
-                args_json = match.group(2)
-
-                # Validate we have balanced braces
-                if args_json.count("{") != args_json.count("}"):
-                    continue
-
-                # Skip if it looks like Python/JS code (has = or other code patterns)
-                if "=" in args_json and ":" not in args_json:
-                    continue
-
-                try:
-                    # Try to parse the arguments as JSON
-                    arguments = json.loads(args_json)
-                    if isinstance(arguments, dict):
-                        tool_call = ToolCall(
-                            id=str(uuid.uuid4()),
-                            name=func_name,
-                            arguments=arguments,
-                        )
-                        tool_calls.append(tool_call)
-                        logger.info(f"Parsed Qwen2 function-call syntax: {func_name}")
-                except json.JSONDecodeError:
-                    # Try to fix common JSON issues
-                    fixed_args = self._fix_json_syntax(args_json)
-                    if fixed_args:
-                        try:
-                            arguments = json.loads(fixed_args)
-                            if isinstance(arguments, dict):
-                                tool_call = ToolCall(
-                                    id=str(uuid.uuid4()),
-                                    name=func_name,
-                                    arguments=arguments,
-                                )
-                                tool_calls.append(tool_call)
-                                logger.info(f"Parsed Qwen2 function-call (recovered): {func_name}")
-                        except json.JSONDecodeError:
-                            pass
-
-        # Check for Python-style function calls: tool_name(key="value", key2="value2")
-        # Only match known MCP tool prefixes to avoid false positives with regular code
-        if not tool_calls:
-            # Pattern for Python kwargs: tool.name(arg="value") or tool.name(arg='value')
-            python_call_pattern = re.compile(
-                r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*([^)]+)\s*\)",
-                re.DOTALL,
-            )
-            for match in python_call_pattern.finditer(content):
-                func_name = match.group(1)
-                args_str = match.group(2).strip()
-
-                # Skip if it doesn't look like a tool name (must have a dot for namespaced tools)
-                if "." not in func_name:
-                    continue
-
-                # Only match known MCP tool prefixes - skip stdlib calls like argparse.*, parser.*, etc.
-                if not self._is_known_tool_prefix(func_name):
-                    continue
-
-                # Skip if it looks like a regular function call (no = signs)
-                if "=" not in args_str:
-                    continue
-
-                # Try to parse Python kwargs
-                arguments = self._parse_python_kwargs(args_str)
-                if arguments:
-                    tool_call = ToolCall(
-                        id=str(uuid.uuid4()),
-                        name=func_name,
-                        arguments=arguments,
-                    )
+    def _parse_markdown_blocks(self, content: str) -> list[ToolCall]:
+        """Parse tool calls from markdown code blocks."""
+        tool_calls = []
+        patterns = self._get_code_block_patterns()
+        for pattern in patterns:
+            if tool_calls:
+                break
+            for block_content in pattern.findall(content):
+                tool_call = self._try_parse_code_block(block_content.strip(), pattern)
+                if tool_call:
                     tool_calls.append(tool_call)
-                    logger.info(f"Parsed Qwen2 Python-style call: {func_name}")
+        return tool_calls
 
-        # Clean content
+    def _get_code_block_patterns(self) -> list[re.Pattern[str]]:
+        """Get patterns for matching code blocks."""
+        return [
+            re.compile(r"```\w*\s*\n([\s\S]*?)\n```", re.MULTILINE),
+            re.compile(r"```\w*\s*\n([\s\S]*?)```", re.MULTILINE),
+            re.compile(r"```\w*\s+(\{[^`]*\})```", re.MULTILINE),
+            re.compile(r"```(?:\w*\s*)?([\s\S]*?)```", re.MULTILINE),
+        ]
+
+    def _try_parse_code_block(self, block: str, pattern: re.Pattern[str]) -> ToolCall | None:
+        """Try to parse a tool call from a code block."""
+        if not block or not (block.startswith("{") and '"name"' in block):
+            return None
+        logger.debug(f"Found code block ({pattern.pattern}): {block}")
+        tool_call = self._try_parse_json_tool_call(block)
+        if tool_call:
+            logger.info(f"Parsed Qwen2 markdown tool call: {tool_call.name}")
+            return tool_call
+        recovered = self._try_recover_json(block)
+        if recovered:
+            logger.info(f"Recovered Qwen2 markdown tool call: {recovered.name}")
+        return recovered
+
+    def _parse_function_call_syntax(self, content: str) -> list[ToolCall]:
+        """Parse function-call syntax: tool_name({...})."""
+        tool_calls = []
+        pattern = re.compile(r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*(\{.*?\})\s*\)", re.DOTALL)
+        for match in pattern.finditer(content):
+            tool_call = self._try_parse_func_call_match(match)
+            if tool_call:
+                tool_calls.append(tool_call)
+        return tool_calls
+
+    def _try_parse_func_call_match(self, match: re.Match[str]) -> ToolCall | None:
+        """Try to parse a function call match."""
+        func_name, args_json = match.group(1), match.group(2)
+        if not self._is_valid_func_call_args(args_json):
+            return None
+        arguments = self._try_parse_func_arguments(args_json)
+        result = None
+        if arguments is not None:
+            logger.info(f"Parsed Qwen2 function-call syntax: {func_name}")
+            result = ToolCall(id=str(uuid.uuid4()), name=func_name, arguments=arguments)
+        return result
+
+    def _is_valid_func_call_args(self, args_json: str) -> bool:
+        """Check if function call arguments are valid for parsing."""
+        if args_json.count("{") != args_json.count("}"):
+            return False
+        if "=" in args_json and ":" not in args_json:
+            return False
+        return True
+
+    def _try_parse_func_arguments(self, args_json: str) -> dict[str, Any] | None:
+        """Try to parse function arguments as JSON."""
+        try:
+            arguments = json.loads(args_json)
+            if isinstance(arguments, dict):
+                return arguments
+        except json.JSONDecodeError:
+            fixed_args = self._fix_json_syntax(args_json)
+            if fixed_args:
+                try:
+                    arguments = json.loads(fixed_args)
+                    if isinstance(arguments, dict):
+                        return arguments
+                except json.JSONDecodeError:
+                    pass
+        return None
+
+    def _parse_python_style_calls(self, content: str) -> list[ToolCall]:
+        """Parse Python-style function calls: tool_name(key="value")."""
+        tool_calls = []
+        pattern = re.compile(r"([a-zA-Z_][a-zA-Z0-9_.]*)\s*\(\s*([^)]+)\s*\)", re.DOTALL)
+        for match in pattern.finditer(content):
+            tool_call = self._try_parse_python_call_match(match)
+            if tool_call:
+                tool_calls.append(tool_call)
+        return tool_calls
+
+    def _try_parse_python_call_match(self, match: re.Match[str]) -> ToolCall | None:
+        """Try to parse a Python-style call match."""
+        func_name, args_str = match.group(1), match.group(2).strip()
+        if not self._is_valid_python_call(func_name, args_str):
+            return None
+        arguments = self._parse_python_kwargs(args_str)
+        result = None
+        if arguments:
+            logger.info(f"Parsed Qwen2 Python-style call: {func_name}")
+            result = ToolCall(id=str(uuid.uuid4()), name=func_name, arguments=arguments)
+        return result
+
+    def _is_valid_python_call(self, func_name: str, args_str: str) -> bool:
+        """Check if this looks like a valid Python-style tool call."""
+        if "." not in func_name or not self._is_known_tool_prefix(func_name):
+            return False
+        return "=" in args_str
+
+    def _clean_content(
+        self, content: str, tool_calls: list[ToolCall], lines_to_remove: list[str]
+    ) -> str:
+        """Remove tool call artifacts from content."""
         cleaned = content
         for line in lines_to_remove:
             cleaned = cleaned.replace(line, "")
-
-        # Clean markdown blocks if we parsed from them
         if tool_calls:
-            # Clean JSON markdown blocks
-            markdown_pattern = re.compile(
-                r"```(?:\w+)?\s*\n?\s*\{[^`]*\"name\"\s*:\s*\"[^\"]+\"[^`]*\}\s*\n?\s*```",
-                re.DOTALL,
-            )
-            cleaned = markdown_pattern.sub("", cleaned)
+            cleaned = self._remove_markdown_tool_blocks(cleaned)
+            cleaned = self._remove_function_call_blocks(cleaned, tool_calls)
+        return cleaned.strip()
 
-            # Clean function-call syntax blocks
-            func_block_pattern = re.compile(
-                r"```(?:\w+)?\s*\n[^`]*?[a-zA-Z_][a-zA-Z0-9_.]*\s*\(\s*\{[^}]*\}\s*\)[^`]*```",
-                re.DOTALL,
-            )
-            cleaned = func_block_pattern.sub("", cleaned)
+    def _remove_markdown_tool_blocks(self, content: str) -> str:
+        """Remove markdown blocks containing tool calls."""
+        pattern = re.compile(
+            r"```(?:\w+)?\s*\n?\s*\{[^`]*\"name\"\s*:\s*\"[^\"]+\"[^`]*\}\s*\n?\s*```",
+            re.DOTALL,
+        )
+        return pattern.sub("", content)
 
-            # Clean bare function-call lines (JSON style)
-            for tc in tool_calls:
-                func_pattern = re.compile(
-                    re.escape(tc.name) + r"\s*\(\s*\{[^}]*\}\s*\)",
-                    re.DOTALL,
-                )
-                cleaned = func_pattern.sub("", cleaned)
+    def _remove_function_call_blocks(self, content: str, tool_calls: list[ToolCall]) -> str:
+        """Remove function call syntax from content."""
+        cleaned = content
+        func_block_pattern = re.compile(
+            r"```(?:\w+)?\s*\n[^`]*?[a-zA-Z_][a-zA-Z0-9_.]*\s*\(\s*\{[^}]*\}\s*\)[^`]*```",
+            re.DOTALL,
+        )
+        cleaned = func_block_pattern.sub("", cleaned)
+        for tc in tool_calls:
+            cleaned = self._remove_tool_call_patterns(cleaned, tc.name)
+        tool_block_pattern = re.compile(
+            r"```\w*\s*\n?[^`]*?[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)[^`]*?\n?```",
+            re.DOTALL,
+        )
+        cleaned = tool_block_pattern.sub("", cleaned)
+        return cleaned
 
-            # Clean bare function-call lines (Python kwarg style)
-            for tc in tool_calls:
-                func_pattern = re.compile(
-                    re.escape(tc.name) + r"\s*\([^)]*\)",
-                    re.DOTALL,
-                )
-                cleaned = func_pattern.sub("", cleaned)
+    def _remove_tool_call_patterns(self, content: str, tool_name: str) -> str:
+        """Remove patterns for a specific tool call."""
+        json_pattern = re.compile(re.escape(tool_name) + r"\s*\(\s*\{[^}]*\}\s*\)", re.DOTALL)
+        content = json_pattern.sub("", content)
+        kwarg_pattern = re.compile(re.escape(tool_name) + r"\s*\([^)]*\)", re.DOTALL)
+        return kwarg_pattern.sub("", content)
 
-            # Clean code blocks containing tool calls
-            tool_block_pattern = re.compile(
-                r"```\w*\s*\n?"
-                + r"[^`]*?"
-                + r"[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s*\([^)]*\)"
-                + r"[^`]*?"
-                + r"\n?```",
-                re.DOTALL,
-            )
-            cleaned = tool_block_pattern.sub("", cleaned)
-
-        cleaned = cleaned.strip()
-
+    def _log_parse_result(self, content: str, tool_calls: list[ToolCall]) -> None:
+        """Log parsing results."""
         if tool_calls:
             logger.info(f"Parsed {len(tool_calls)} tool calls: {[tc.name for tc in tool_calls]}")
         else:
             logger.debug("No tool calls parsed")
             logger.debug(f"  - Contains '{{': {'{' in content}")
             logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
-
-        return cleaned, tool_calls
 
     def _try_recover_json(self, json_str: str) -> ToolCall | None:
         """Attempt to recover malformed JSON."""
@@ -376,35 +371,32 @@ class Qwen2Adapter(ChatAdapter):
 
         Handles: key="value", key='value', key=123, key=True
         """
-        arguments = {}
-
-        # Pattern for key=value pairs
-        # Handles: key="value", key='value', key=value
+        arguments: dict[str, Any] = {}
         kwarg_pattern = re.compile(r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
-
         for match in kwarg_pattern.finditer(args_str):
             key = match.group(1)
-            # Value is in one of the capture groups
             value = match.group(2) or match.group(3) or match.group(4)
-
             if value is not None:
-                # Try to convert to appropriate type
-                if value.lower() == "true":
-                    arguments[key] = True
-                elif value.lower() == "false":
-                    arguments[key] = False
-                elif value.lower() == "none" or value.lower() == "null":
-                    arguments[key] = None
-                else:
-                    try:
-                        arguments[key] = int(value)
-                    except ValueError:
-                        try:
-                            arguments[key] = float(value)
-                        except ValueError:
-                            arguments[key] = value
-
+                arguments[key] = self._convert_kwarg_value(value)
         return arguments if arguments else None
+
+    def _convert_kwarg_value(self, value: str) -> Any:
+        """Convert keyword argument value to appropriate Python type."""
+        lower = value.lower()
+        literal_map = {"true": True, "false": False, "none": None, "null": None}
+        if lower in literal_map:
+            return literal_map[lower]
+        return self._try_numeric_conversion(value)
+
+    def _try_numeric_conversion(self, value: str) -> int | float | str:
+        """Try to convert value to int or float, fall back to string."""
+        try:
+            return int(value)
+        except ValueError:
+            try:
+                return float(value)
+            except ValueError:
+                return value
 
     def _fix_json_syntax(self, json_str: str) -> str | None:
         """Fix common JSON syntax issues from model output."""
@@ -462,28 +454,34 @@ Continue with the task. Call more tools if needed, or respond when complete."""
 
         # Check for unparsed tool call indicators in code blocks
         if "```" in content:
-            code_block_pattern = re.compile(r"```\w*\s*([\s\S]*?)```")
-            for block in code_block_pattern.findall(content):
-                block_stripped = block.strip()
-
-                # Check for JSON-style tool call
-                if block_stripped.startswith("{") and '"name"' in block_stripped:
-                    logger.debug("Found unparsed JSON tool call in code block - continuing loop")
-                    return False
-
-                # Check for Python-style function call: tool.name(args)
-                # Only match known MCP tool prefixes to avoid false positives with explained code
-                python_call_pattern = re.compile(
-                    r"([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)"
-                )
-                for match in python_call_pattern.finditer(block_stripped):
-                    func_name = match.group(1)
-                    # Only trigger if it matches a known tool prefix
-                    if self._is_known_tool_prefix(func_name):
-                        logger.debug(f"Found unparsed tool call: {func_name} - continuing loop")
-                        return False
+            if self._has_unparsed_tool_calls(content):
+                return False
 
         return True
+
+    def _has_unparsed_tool_calls(self, content: str) -> bool:
+        """Check if content has unparsed tool calls in code blocks."""
+        code_block_pattern = re.compile(r"```\w*\s*([\s\S]*?)```")
+        python_call_pattern = re.compile(
+            r"([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s*\([^)]*\)"
+        )
+
+        for block in code_block_pattern.findall(content):
+            block_stripped = block.strip()
+
+            # Check for JSON-style tool call
+            if block_stripped.startswith("{") and '"name"' in block_stripped:
+                logger.debug("Found unparsed JSON tool call in code block - continuing loop")
+                return True
+
+            # Check for Python-style function call matching known tools
+            for match in python_call_pattern.finditer(block_stripped):
+                func_name = match.group(1)
+                if self._is_known_tool_prefix(func_name):
+                    logger.debug(f"Found unparsed tool call: {func_name} - continuing loop")
+                    return True
+
+        return False
 
 
 # Register adapter

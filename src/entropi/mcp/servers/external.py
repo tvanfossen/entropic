@@ -10,16 +10,17 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
 from entropi.core.logging import get_logger
-from entropi.core.queue import MessagePriority, MessageQueue, MessageSource
+from entropi.core.queue import MessagePriority, MessageQueue, MessageRequest, MessageSource
 from entropi.core.session import SessionManager
-from entropi.core.tasks import Task, TaskManager, TaskStatus
+from entropi.core.tasks import Task, TaskManager
 
 if TYPE_CHECKING:
     from entropi.config.schema import EntropyConfig
@@ -44,10 +45,7 @@ class RateLimiter:
             self._last_update = now
 
             # Refill tokens
-            self._tokens = min(
-                float(self._rate),
-                self._tokens + elapsed * (self._rate / 60.0)
-            )
+            self._tokens = min(float(self._rate), self._tokens + elapsed * (self._rate / 60.0))
 
             if self._tokens >= 1.0:
                 self._tokens -= 1.0
@@ -150,150 +148,154 @@ class ExternalMCPServer:
     def _get_tools(self) -> list[Tool]:
         """Get list of available tools."""
         return [
-            Tool(
-                name="chat",
-                description=(
-                    "Submit a task to Entropi, a local AI coding assistant. "
-                    "Use for tasks that don't require frontier-level reasoning: "
-                    "implementing functions, writing boilerplate, running tests, "
-                    "file operations. Runs locally (free). Returns immediately "
-                    "with task_id - use poll_task to get results. "
-                    "Conversation is shared with human user."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "Your message to Entropi",
-                        },
-                        "context": {
-                            "type": "array",
-                            "description": "Optional file contents to include as context",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "path": {"type": "string"},
-                                    "content": {"type": "string"},
-                                },
+            self._tool_chat(),
+            self._tool_poll_task(),
+            self._tool_cancel(),
+            self._tool_get_history(),
+            self._tool_get_capabilities(),
+            self._tool_report_issue(),
+            self._tool_status(),
+        ]
+
+    def _tool_chat(self) -> Tool:
+        """Define chat tool."""
+        return Tool(
+            name="chat",
+            description=(
+                "Submit a task to Entropi, a local AI coding assistant. "
+                "Use for tasks that don't require frontier-level reasoning: "
+                "implementing functions, writing boilerplate, running tests, "
+                "file operations. Runs locally (free). Returns immediately "
+                "with task_id - use poll_task to get results. "
+                "Conversation is shared with human user."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "message": {"type": "string", "description": "Your message to Entropi"},
+                    "context": {
+                        "type": "array",
+                        "description": "Optional file contents to include as context",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "path": {"type": "string"},
+                                "content": {"type": "string"},
                             },
                         },
-                        "wait": {
-                            "type": "boolean",
-                            "description": "If true, block until completion (default: true)",
-                            "default": True,
-                        },
                     },
-                    "required": ["message"],
-                },
-            ),
-            Tool(
-                name="poll_task",
-                description="Check the status of a previously submitted task.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "Task ID returned from chat",
-                        },
-                    },
-                    "required": ["task_id"],
-                },
-            ),
-            Tool(
-                name="cancel",
-                description="Cancel a queued or in-progress task.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "Task ID to cancel",
-                        },
-                        "reason": {
-                            "type": "string",
-                            "description": "Optional reason for cancellation",
-                        },
-                    },
-                    "required": ["task_id"],
-                },
-            ),
-            Tool(
-                name="get_history",
-                description=(
-                    "Get recent conversation history from Entropi, "
-                    "including messages from both you and the human user."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum messages to return",
-                            "default": 20,
-                        },
-                        "include_tool_results": {
-                            "type": "boolean",
-                            "description": "Whether to include tool results",
-                            "default": True,
-                        },
+                    "wait": {
+                        "type": "boolean",
+                        "description": "If true, block until completion (default: true)",
+                        "default": True,
                     },
                 },
-            ),
-            Tool(
-                name="get_capabilities",
-                description=(
-                    "Query what models and tools Entropi has available. "
-                    "Use to understand what tasks can be delegated effectively."
-                ),
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
+                "required": ["message"],
+            },
+        )
+
+    def _tool_poll_task(self) -> Tool:
+        """Define poll_task tool."""
+        return Tool(
+            name="poll_task",
+            description="Check the status of a previously submitted task.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID returned from chat"}
                 },
+                "required": ["task_id"],
+            },
+        )
+
+    def _tool_cancel(self) -> Tool:
+        """Define cancel tool."""
+        return Tool(
+            name="cancel",
+            description="Cancel a queued or in-progress task.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {"type": "string", "description": "Task ID to cancel"},
+                    "reason": {"type": "string", "description": "Optional reason for cancellation"},
+                },
+                "required": ["task_id"],
+            },
+        )
+
+    def _tool_get_history(self) -> Tool:
+        """Define get_history tool."""
+        return Tool(
+            name="get_history",
+            description=(
+                "Get recent conversation history from Entropi, "
+                "including messages from both you and the human user."
             ),
-            Tool(
-                name="report_issue",
-                description="Report a quality issue with Entropi's response.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {
-                        "task_id": {
-                            "type": "string",
-                            "description": "Task ID of the problematic response",
-                        },
-                        "issue_type": {
-                            "type": "string",
-                            "enum": [
-                                "incorrect",
-                                "incomplete",
-                                "hallucination",
-                                "off_topic",
-                                "slow",
-                                "other",
-                            ],
-                        },
-                        "description": {
-                            "type": "string",
-                            "description": "Description of the issue",
-                        },
-                        "expected": {
-                            "type": "string",
-                            "description": "What you expected instead",
-                        },
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum messages to return",
+                        "default": 20,
                     },
-                    "required": ["issue_type", "description"],
+                    "include_tool_results": {
+                        "type": "boolean",
+                        "description": "Whether to include tool results",
+                        "default": True,
+                    },
                 },
+            },
+        )
+
+    def _tool_get_capabilities(self) -> Tool:
+        """Define get_capabilities tool."""
+        return Tool(
+            name="get_capabilities",
+            description=(
+                "Query what models and tools Entropi has available. "
+                "Use to understand what tasks can be delegated effectively."
             ),
-            Tool(
-                name="status",
-                description="Check Entropi's current status including queue depth and active tasks.",
-                inputSchema={
-                    "type": "object",
-                    "properties": {},
+            inputSchema={"type": "object", "properties": {}},
+        )
+
+    def _tool_report_issue(self) -> Tool:
+        """Define report_issue tool."""
+        return Tool(
+            name="report_issue",
+            description="Report a quality issue with Entropi's response.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID of the problematic response",
+                    },
+                    "issue_type": {
+                        "type": "string",
+                        "enum": [
+                            "incorrect",
+                            "incomplete",
+                            "hallucination",
+                            "off_topic",
+                            "slow",
+                            "other",
+                        ],
+                    },
+                    "description": {"type": "string", "description": "Description of the issue"},
+                    "expected": {"type": "string", "description": "What you expected instead"},
                 },
-            ),
-        ]
+                "required": ["issue_type", "description"],
+            },
+        )
+
+    def _tool_status(self) -> Tool:
+        """Define status tool."""
+        return Tool(
+            name="status",
+            description="Check Entropi's current status including queue depth and active tasks.",
+            inputSchema={"type": "object", "properties": {}},
+        )
 
     async def _execute_tool(
         self,
@@ -319,9 +321,17 @@ class ExternalMCPServer:
         }
 
         handler = handlers.get(name)
+        return await self._run_handler(name, handler, arguments)
+
+    async def _run_handler(
+        self,
+        name: str,
+        handler: Any,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Run a handler with error handling."""
         if not handler:
             return {"error": "unknown_tool", "message": f"Unknown tool: {name}"}
-
         try:
             return await handler(arguments)
         except Exception as e:
@@ -354,12 +364,14 @@ class ExternalMCPServer:
             completion_event.set()
 
         await self._queue.put(
-            content=message,
-            source=MessageSource.CLAUDE_CODE,
-            priority=MessagePriority.CLAUDE_CODE,
-            context=context,
-            callback=on_complete if wait else None,
-            task_id=task.id,
+            MessageRequest(
+                content=message,
+                source=MessageSource.CLAUDE_CODE,
+                priority=MessagePriority.CLAUDE_CODE,
+                context=context,
+                callback=on_complete if wait else None,
+                task_id=task.id,
+            )
         )
 
         # Update queue position
@@ -419,9 +431,7 @@ class ExternalMCPServer:
 
         # Default capabilities
         return {
-            "models": [
-                {"name": "default", "context_length": 16384, "strengths": ["general"]}
-            ],
+            "models": [{"name": "default", "context_length": 16384, "strengths": ["general"]}],
             "tools": [
                 "filesystem.read_file",
                 "filesystem.write_file",
@@ -463,10 +473,14 @@ class ExternalMCPServer:
 
         return {
             "state": "busy" if current else "idle",
-            "active_task": {
-                "task_id": current.id,
-                "elapsed_seconds": int(current.elapsed_seconds),
-            } if current else None,
+            "active_task": (
+                {
+                    "task_id": current.id,
+                    "elapsed_seconds": int(current.elapsed_seconds),
+                }
+                if current
+                else None
+            ),
             "queue_depth": self._queue.depth,
             "model_loaded": True,  # TODO: Get from orchestrator
         }
@@ -475,28 +489,34 @@ class ExternalMCPServer:
 
     def _on_task_progress(self, task: Task, message: str, percent: int) -> None:
         """Called when task progress updates."""
-        asyncio.create_task(self._send_notification(
-            "notifications/task_progress",
-            {
-                "task_id": task.id,
-                "progress": message,
-                "percent": percent,
-            },
-        ))
+        asyncio.create_task(
+            self._send_notification(
+                "notifications/task_progress",
+                {
+                    "task_id": task.id,
+                    "progress": message,
+                    "percent": percent,
+                },
+            )
+        )
 
     def _on_task_completed(self, task: Task) -> None:
         """Called when task completes."""
-        asyncio.create_task(self._send_notification(
-            "notifications/task_completed",
-            task.to_completed_notification(),
-        ))
+        asyncio.create_task(
+            self._send_notification(
+                "notifications/task_completed",
+                task.to_completed_notification(),
+            )
+        )
 
     def _on_task_preempted(self, task: Task, reason: str) -> None:
         """Called when task is preempted."""
-        asyncio.create_task(self._send_notification(
-            "notifications/task_preempted",
-            task.to_preempted_notification(reason),
-        ))
+        asyncio.create_task(
+            self._send_notification(
+                "notifications/task_preempted",
+                task.to_preempted_notification(reason),
+            )
+        )
 
     async def _send_notification(
         self,
@@ -504,11 +524,13 @@ class ExternalMCPServer:
         params: dict[str, Any],
     ) -> None:
         """Send notification to all connected clients."""
-        notification = json.dumps({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params,
-        })
+        notification = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "method": method,
+                "params": params,
+            }
+        )
 
         async with self._clients_lock:
             for writer in self._clients[:]:  # Copy to allow removal
@@ -565,7 +587,9 @@ class ExternalMCPServer:
                 logger.info(f"Received from client: {len(line)} bytes")
                 try:
                     request = json.loads(line.decode())
-                    logger.info(f"JSON-RPC request: method={request.get('method')}, id={request.get('id')}")
+                    logger.info(
+                        f"JSON-RPC request: method={request.get('method')}, id={request.get('id')}"
+                    )
                     response = await self._handle_jsonrpc(request)
                     if response:
                         response_bytes = json.dumps(response).encode() + b"\n"
@@ -573,7 +597,7 @@ class ExternalMCPServer:
                         writer.write(response_bytes)
                         await writer.drain()
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Invalid JSON from client: {e}, data: {line[:100]}")
+                    logger.warning(f"Invalid JSON from client: {e}, data: {line[:100].decode()}")
                 except Exception as e:
                     logger.error(f"Error handling request: {e}", exc_info=True)
 
@@ -594,67 +618,72 @@ class ExternalMCPServer:
         params = request.get("params", {})
         request_id = request.get("id")
 
-        # Handle MCP methods
-        if method == "tools/list":
-            tools = self._get_tools()
-            response = {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {"tools": [t.model_dump(exclude_none=True) for t in tools]},
-            }
-            # Log the response for debugging Claude Code tool visibility issues
-            response_json = json.dumps(response)
-            logger.info(f"tools/list response ({len(response_json)} bytes): {response_json[:1000]}")
-            return response
+        # Method handlers
+        handlers: dict[str, Any] = {
+            "tools/list": lambda: self._handle_tools_list(request_id),
+            "tools/call": lambda: self._handle_tools_call(request_id, params),
+            "initialize": lambda: self._handle_initialize(request_id),
+        }
 
-        elif method == "tools/call":
-            name = params.get("name", "")
-            arguments = params.get("arguments", {})
-            result = await self._execute_tool(name, arguments)
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {"content": [{"type": "text", "text": json.dumps(result)}]},
-            }
-
-        elif method == "initialize":
-            # Get actual tool list from engine if available
-            tools_info = []
-            if self._get_capabilities:
-                caps = self._get_capabilities()
-                tools_info = caps.get("tools", [])
-
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "result": {
-                    "protocolVersion": "2024-11-05",
-                    "serverInfo": {
-                        "name": "entropi-external",
-                        "version": "1.0.0",
-                    },
-                    "capabilities": {
-                        "tools": {},
-                    },
-                    "instructions": (
-                        "Entropi is a local AI coding assistant with its own tool access. "
-                        f"Available tools: {', '.join(tools_info) if tools_info else 'filesystem, bash, git'}. "
-                        "When delegating tasks: describe WHAT to do, not HOW. "
-                        "Reference files by path - Entropi will read them itself. "
-                        "Do not pass file contents. Let Entropi make its own tool decisions."
-                    ),
-                },
-            }
+        if handler := handlers.get(method):
+            result = handler()
+            return await result if asyncio.iscoroutine(result) else result
 
         # Unknown method
         if request_id:
-            return {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "error": {"code": -32601, "message": f"Method not found: {method}"},
-            }
-
+            return self._jsonrpc_error(request_id, -32601, f"Method not found: {method}")
         return None
+
+    def _handle_tools_list(self, request_id: Any) -> dict[str, Any]:
+        """Handle tools/list method."""
+        tools = self._get_tools()
+        response = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"tools": [t.model_dump(exclude_none=True) for t in tools]},
+        }
+        response_json = json.dumps(response)
+        logger.info(f"tools/list response ({len(response_json)} bytes): {response_json[:1000]}")
+        return response
+
+    async def _handle_tools_call(self, request_id: Any, params: dict[str, Any]) -> dict[str, Any]:
+        """Handle tools/call method."""
+        name = params.get("name", "")
+        arguments = params.get("arguments", {})
+        result = await self._execute_tool(name, arguments)
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"content": [{"type": "text", "text": json.dumps(result)}]},
+        }
+
+    def _handle_initialize(self, request_id: Any) -> dict[str, Any]:
+        """Handle initialize method."""
+        tools_info = []
+        if self._get_capabilities:
+            caps = self._get_capabilities()
+            tools_info = caps.get("tools", [])
+
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {"name": "entropi-external", "version": "1.0.0"},
+                "capabilities": {"tools": {}},
+                "instructions": (
+                    "Entropi is a local AI coding assistant with its own tool access. "
+                    f"Available tools: {', '.join(tools_info) if tools_info else 'filesystem, bash, git'}. "
+                    "When delegating tasks: describe WHAT to do, not HOW. "
+                    "Reference files by path - Entropi will read them itself. "
+                    "Do not pass file contents. Let Entropi make its own tool decisions."
+                ),
+            },
+        }
+
+    def _jsonrpc_error(self, request_id: Any, code: int, message: str) -> dict[str, Any]:
+        """Create a JSON-RPC error response."""
+        return {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}}
 
     async def stop(self) -> None:
         """Stop the socket server."""

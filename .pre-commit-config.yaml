@@ -12,28 +12,12 @@ repos:
         args: ['--maxkb=1000']
       - id: debug-statements
 
-  - repo: https://github.com/psf/black
-    rev: 24.3.0
-    hooks:
-      - id: black
-        args: ['--line-length=100']
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.4
     hooks:
       - id: ruff
         args: ['--fix']
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.9.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - pydantic>=2.0.0
-          - pydantic-settings>=2.0.0
-          - types-pyyaml
-        args: ['--ignore-missing-imports']
-        exclude: ^tests/
+      - id: ruff-format
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0

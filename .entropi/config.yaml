@@ -7,7 +7,8 @@ models:
   thinking:
     path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
     adapter: falcon
-    context_length: 16384  # Constrained to prevent runaway thinking
+    context_length: 32768  # 32k for multi-file operations
+    max_output_tokens: 4096
     gpu_layers: -1
     temperature: 0.5
     repeat_penalty: 1.2
@@ -16,6 +17,7 @@ models:
     path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
     adapter: qwen3
     context_length: 32768
+    max_output_tokens: 4096
     gpu_layers: -1
     temperature: 0.4
     repeat_penalty: 1.1
@@ -24,6 +26,7 @@ models:
     path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
     adapter: qwen3
     context_length: 32768
+    max_output_tokens: 4096
     gpu_layers: -1
     temperature: 0.3  # More deterministic for code
     repeat_penalty: 1.1
@@ -32,6 +35,7 @@ models:
     path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
     adapter: qwen3
     context_length: 32768
+    max_output_tokens: 256
     gpu_layers: -1
     temperature: 0.4
     repeat_penalty: 1.1
@@ -40,6 +44,7 @@ models:
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: qwen3
     context_length: 4096
+    max_output_tokens: 16
     gpu_layers: -1
     temperature: 0.0  # Deterministic classification
     repeat_penalty: 1.0
@@ -64,14 +69,14 @@ mcp:
 
   # External MCP server for Claude Code integration
   external:
-    enabled: false  # Set to true to enable Claude Code delegation
+    enabled: true  # Set to true to enable Claude Code delegation
     # Socket in project dir for Docker compatibility (/workspace/.entropi/ in container)
     socket_path: .entropi/mcp.sock
     rate_limit: 10  # requests per minute
 
 # Voice interface configuration (NVIDIA PersonaPlex)
 voice:
-  enabled: false
+  enabled: true
 
   model:
     hf_repo: "nvidia/personaplex-7b-v1"

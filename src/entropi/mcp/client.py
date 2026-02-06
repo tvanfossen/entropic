@@ -140,7 +140,7 @@ class MCPClient:
                     self._session.call_tool(local_name, arguments),
                     timeout=DEFAULT_TOOL_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     f"Tool {self.name}.{local_name} timed out after {DEFAULT_TOOL_TIMEOUT}s"
                 )

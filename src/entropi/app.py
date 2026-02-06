@@ -16,7 +16,7 @@ from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message
 from entropi.core.commands import CommandContext, CommandRegistry
 from entropi.core.context import ProjectContext
-from entropi.core.engine import AgentEngine, LoopConfig
+from entropi.core.engine import AgentEngine, EngineCallbacks, LoopConfig
 from entropi.core.logging import get_logger
 from entropi.core.queue import MessageQueue, MessageSource, QueuedMessage
 from entropi.core.session import SessionManager
@@ -25,7 +25,7 @@ from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.servers.external import ExternalMCPServer
 from entropi.storage.backend import SQLiteStorage
-from entropi.ui.tui import EntropiApp
+from entropi.ui.presenter import Presenter, StatusInfo
 
 
 class Application:
@@ -35,6 +35,8 @@ class Application:
         self,
         config: EntropyConfig,
         project_dir: Path | None = None,
+        presenter: Presenter | None = None,
+        orchestrator: ModelOrchestrator | None = None,
     ) -> None:
         """
         Initialize application.
@@ -42,6 +44,8 @@ class Application:
         Args:
             config: Application configuration
             project_dir: Project directory
+            presenter: Optional presenter for UI (defaults to TUIPresenter)
+            orchestrator: Optional pre-loaded orchestrator (for test reuse)
         """
         self.config = config
         self.project_dir = project_dir or Path.cwd()
@@ -49,10 +53,11 @@ class Application:
         self.console = Console()
 
         # Components (initialized lazily)
-        self._orchestrator: ModelOrchestrator | None = None
+        self._orchestrator: ModelOrchestrator | None = orchestrator
+        self._orchestrator_owned = orchestrator is None  # Only shutdown if we created it
         self._mcp_manager: ServerManager | None = None
         self._storage: SQLiteStorage | None = None
-        self._ui: EntropiApp | None = None
+        self._presenter: Presenter | None = presenter
         self._engine: AgentEngine | None = None
         self._command_registry: CommandRegistry | None = None
         self._project_context: ProjectContext | None = None
@@ -76,10 +81,11 @@ class Application:
         self.logger.info("Initializing Entropi...")
 
         with Status("[bold blue]Starting Entropi...", console=self.console) as status:
-            # Initialize model orchestrator
-            status.update("[bold blue]Loading models...")
-            self._orchestrator = ModelOrchestrator(self.config)
-            await self._orchestrator.initialize()
+            # Initialize model orchestrator (skip if injected)
+            if self._orchestrator is None:
+                status.update("[bold blue]Loading models...")
+                self._orchestrator = ModelOrchestrator(self.config)
+                await self._orchestrator.initialize()
 
             # Initialize MCP server manager
             status.update("[bold blue]Starting tool servers...")
@@ -153,9 +159,7 @@ class Application:
             name="external-mcp-server",
         )
 
-        self.logger.info(
-            f"External MCP server starting on {self.config.mcp.external.socket_path}"
-        )
+        self.logger.info(f"External MCP server starting on {self.config.mcp.external.socket_path}")
 
     @staticmethod
     def _strip_thinking_blocks(content: str) -> str:
@@ -172,12 +176,15 @@ class Application:
     async def _process_queued_message(self, queued_msg: QueuedMessage) -> None:
         """Process a message from the MCP queue through the agent loop.
 
-        This runs as a Textual worker (started by EntropiApp), so it has proper
-        app context and can use direct TUI calls and modal dialogs.
+        This runs as a Textual worker (started by presenter), so it has proper
+        app context and can use direct presenter calls and modal dialogs.
         """
         assert self._engine is not None
         assert self._task_manager is not None
-        assert self._ui is not None
+        assert self._presenter is not None
+
+        # Capture presenter in local variable for closures
+        presenter = self._presenter
 
         # Get the associated task
         task = self._task_manager.get_task(queued_msg.task_id) if queued_msg.task_id else None
@@ -186,9 +193,9 @@ class Application:
         if task:
             self._task_manager.start_task(task.id)
 
-        # Display in TUI with source indicator
+        # Display with source indicator
         source_label = "[Claude Code] " if queued_msg.source == MessageSource.CLAUDE_CODE else ""
-        self._ui.add_message("user", f"{source_label}{queued_msg.content}")
+        presenter.add_message("user", f"{source_label}{queued_msg.content}")
 
         # Collect response for task completion
         response_content = ""
@@ -197,21 +204,23 @@ class Application:
             """Handle streaming chunk."""
             nonlocal response_content
             response_content += chunk
-            self._ui.on_stream_chunk(chunk)
+            presenter.on_stream_chunk(chunk)
 
         # Set up callbacks (same as _process_message, tool approval follows config)
         self._engine.set_callbacks(
-            on_state_change=lambda s: self._ui.update_state(s) if self._ui else None,
-            on_tool_call=self._handle_tool_approval,
-            on_stream_chunk=on_chunk,
-            on_tool_start=lambda tc: self._ui.print_tool_start(tc.name, tc.arguments),
-            on_tool_complete=lambda tc, r, d: self._ui.print_tool_complete(tc.name, r, d),
+            EngineCallbacks(
+                on_state_change=lambda s: presenter.update_state(s),
+                on_tool_call=self._handle_tool_approval,
+                on_stream_chunk=on_chunk,
+                on_tool_start=lambda tc: presenter.print_tool_start(tc.name, tc.arguments),
+                on_tool_complete=lambda tc, r, d: presenter.print_tool_complete(tc.name, r, d),
+            )
         )
 
         # Process through engine
         try:
             # Mark generation active
-            self._ui.start_generation()
+            presenter.start_generation()
 
             new_messages: list[Message] = []
             async for msg in self._engine.run(
@@ -225,22 +234,8 @@ class Application:
                 if msg not in self._messages:
                     self._messages.append(msg)
 
-            # Strip thinking blocks for MCP response (Claude Code doesn't need them)
-            clean_response = self._strip_thinking_blocks(response_content)
-
-            # Mark task as completed
-            if task:
-                self._task_manager.complete_task(task.id, clean_response)
-
-            # Show context usage after each response
-            if self._engine:
-                context_used = self._engine._token_counter.count_messages(self._messages)
-                context_max = self._engine._token_counter.max_tokens
-                self._ui.print_context_usage(context_used, context_max)
-
-            # Invoke callback with result
-            if queued_msg.callback:
-                queued_msg.callback({"response": clean_response})
+            # Handle successful completion
+            self._complete_queued_message(queued_msg, response_content, task, presenter)
 
         except Exception as e:
             self.logger.exception(f"Error in queued message processing: {e}")
@@ -256,7 +251,32 @@ class Application:
             raise
         finally:
             # Mark generation complete
-            self._ui.end_generation()
+            presenter.end_generation()
+
+    def _complete_queued_message(
+        self,
+        queued_msg: QueuedMessage,
+        response_content: str,
+        task: Any,
+        presenter: Presenter,
+    ) -> None:
+        """Handle successful completion of a queued message."""
+        # Strip thinking blocks for MCP response (Claude Code doesn't need them)
+        clean_response = self._strip_thinking_blocks(response_content)
+
+        # Mark task as completed
+        if task:
+            self._task_manager.complete_task(task.id, clean_response)
+
+        # Show context usage after each response
+        if self._engine:
+            context_used = self._engine._token_counter.count_messages(self._messages)
+            context_max = self._engine._token_counter.max_tokens
+            presenter.print_context_usage(context_used, context_max)
+
+        # Invoke callback with result
+        if queued_msg.callback:
+            queued_msg.callback({"response": clean_response})
 
     async def shutdown(self) -> None:
         """Shutdown all components."""
@@ -281,13 +301,13 @@ class Application:
         if self._storage:
             await self._storage.close()
 
-        if self._orchestrator:
+        if self._orchestrator and self._orchestrator_owned:
             await self._orchestrator.shutdown()
 
         self.logger.info("Shutdown complete")
 
     async def run(self) -> None:
-        """Run the interactive application using Textual TUI."""
+        """Run the interactive application using presenter."""
         try:
             await self.initialize()
 
@@ -301,31 +321,38 @@ class Application:
                     project_path=str(self.project_dir),
                 )
 
-            # Create and run Textual app
-            self._ui = EntropiApp(
-                config=self.config,
-                version=__version__,
-                models=models,
-            )
-            self._ui.set_input_callback(self._handle_user_input)
-            self._ui.set_interrupt_callback(self._handle_interrupt)
-            self._ui.set_pause_callback(self._handle_pause)
+            # Create default TUI presenter if none provided
+            if self._presenter is None:
+                from entropi.ui.tui_presenter import TUIPresenter
+
+                self._presenter = TUIPresenter(
+                    config=self.config,
+                    version=__version__,
+                    models=models,
+                )
+
+            # Wire up callbacks (presenter is guaranteed non-None after above block)
+            assert self._presenter is not None
+            presenter = self._presenter
+            presenter.set_input_callback(self._handle_user_input)
+            presenter.set_interrupt_callback(self._handle_interrupt)
+            presenter.set_pause_callback(self._handle_pause)
 
             # Set voice mode callbacks to manage VRAM
-            self._ui.set_voice_callbacks(
+            presenter.set_voice_callbacks(
                 on_enter=self._on_voice_enter,
                 on_exit=self._on_voice_exit,
             )
 
             # Set up queue consumer for MCP messages (runs as Textual worker)
             if self._message_queue is not None:
-                self._ui.set_queue_consumer(
+                presenter.set_queue_consumer(
                     queue=self._message_queue,
                     process_callback=self._process_queued_message,
                 )
 
-            # Run the Textual app (this blocks until exit)
-            await self._ui.run_async()
+            # Run the presenter (this blocks until exit)
+            await presenter.run_async()
 
         except KeyboardInterrupt:
             pass  # Normal exit
@@ -341,7 +368,7 @@ class Application:
 
         This is called by the Textual app when user submits input.
         """
-        assert self._ui is not None
+        assert self._presenter is not None
         assert self._command_registry is not None
 
         if not user_input.strip():
@@ -351,7 +378,7 @@ class Application:
         if self._command_registry.is_command(user_input):
             should_continue = await self._handle_command(user_input)
             if not should_continue:
-                self._ui.exit()
+                self._presenter.exit()
             return
 
         # Process user message
@@ -368,7 +395,7 @@ class Application:
             True to continue loop, False to exit
         """
         assert self._command_registry is not None
-        assert self._ui is not None
+        assert self._presenter is not None
 
         context = CommandContext(
             app=self,
@@ -381,9 +408,9 @@ class Application:
 
         if result.message:
             if result.success:
-                self._ui.print_info(result.message)
+                self._presenter.print_info(result.message)
             else:
-                self._ui.print_error(result.message)
+                self._presenter.print_error(result.message)
 
         # Handle special actions
         if result.data:
@@ -394,77 +421,81 @@ class Application:
     async def _handle_command_action(self, data: dict[str, Any]) -> None:
         """Handle command action data."""
         action = data.get("action")
+        handlers: dict[str, Any] = {
+            "clear_history": self._action_clear_history,
+            "show_status": self._show_status,
+            "set_thinking_mode": self._action_set_thinking_mode,
+            "show_thinking_status": self._action_show_thinking_status,
+            "switch_model": self._action_switch_model,
+            "save_conversation": lambda d: self._save_conversation(d.get("name")),
+            "load_conversation": self._action_load_conversation,
+            "list_sessions": lambda _: self._list_sessions(),
+            "new_session": lambda d: self._new_session(d.get("name", "New session")),
+            "switch_session": lambda d: self._switch_session(d.get("session_id")),
+            "rename_session": lambda d: self._rename_session(d.get("name")),
+            "delete_session": lambda d: self._delete_session(d.get("session_id")),
+            "export_session": lambda d: self._export_session(d.get("session_id")),
+        }
+        if action and (handler := handlers.get(action)):
+            result = handler(data)
+            if asyncio.iscoroutine(result):
+                await result
 
-        if action == "clear_history":
-            self._messages = []
-            if self._storage and self._conversation_id:
-                self._conversation_id = await self._storage.create_conversation(
-                    title="New Conversation",
-                    project_path=str(self.project_dir),
-                )
+    async def _action_clear_history(self, _data: dict[str, Any]) -> None:
+        """Clear conversation history."""
+        self._messages = []
+        if self._storage and self._conversation_id:
+            self._conversation_id = await self._storage.create_conversation(
+                title="New Conversation",
+                project_path=str(self.project_dir),
+            )
 
-        elif action == "show_status":
-            await self._show_status()
+    async def _action_set_thinking_mode(self, data: dict[str, Any]) -> None:
+        """Set thinking mode enabled/disabled."""
+        enabled = data.get("enabled", False)
+        if not self._orchestrator:
+            if self._presenter:
+                self._presenter.print_error("Orchestrator not available")
+            return
+        success = await self._orchestrator.set_thinking_mode(enabled)
+        if not self._presenter:
+            return
+        if success:
+            self._thinking_mode = enabled
+            mode = "enabled" if enabled else "disabled"
+            self._presenter.print_info(f"Thinking mode {mode}")
+        else:
+            self._presenter.print_error("Thinking model not configured")
 
-        elif action == "set_thinking_mode":
-            enabled = data.get("enabled", False)
-            if self._orchestrator:
-                success = await self._orchestrator.set_thinking_mode(enabled)
-                if success:
-                    self._thinking_mode = enabled
-                    if self._ui:
-                        mode = "enabled" if enabled else "disabled"
-                        self._ui.print_info(f"Thinking mode {mode}")
-                else:
-                    if self._ui:
-                        self._ui.print_error("Thinking model not configured")
-            else:
-                if self._ui:
-                    self._ui.print_error("Orchestrator not available")
+    def _action_show_thinking_status(self, _data: dict[str, Any]) -> None:
+        """Show current thinking mode status."""
+        if not self._presenter:
+            return
+        if self._thinking_mode:
+            self._presenter.print_info("Thinking: ON (forced for all reasoning)")
+        else:
+            self._presenter.print_info("Thinking: AUTO (complex tasks only)")
 
-        elif action == "show_thinking_status":
-            if self._ui:
-                if self._thinking_mode:
-                    self._ui.print_info("Thinking: ON (forced for all reasoning)")
-                else:
-                    self._ui.print_info("Thinking: AUTO (complex tasks only)")
+    def _action_switch_model(self, data: dict[str, Any]) -> None:
+        """Switch the default model."""
+        model = data.get("model")
+        if model and self._orchestrator and self._presenter:
+            self.config.models.default = model
+            self._presenter.print_info(f"Switched to {model} model")
 
-        elif action == "switch_model":
-            model = data.get("model")
-            if model and self._orchestrator:
-                self.config.models.default = model
-                if self._ui:
-                    self._ui.print_info(f"Switched to {model} model")
-
-        elif action == "save_conversation":
-            await self._save_conversation(data.get("name"))
-
-        elif action == "load_conversation":
-            await self._load_conversation(data.get("name"))
-
-        # Session management actions
-        elif action == "list_sessions":
-            await self._list_sessions()
-
-        elif action == "new_session":
-            await self._new_session(data.get("name", "New session"))
-
-        elif action == "switch_session":
-            await self._switch_session(data.get("session_id"))
-
-        elif action == "rename_session":
-            await self._rename_session(data.get("name"))
-
-        elif action == "delete_session":
-            await self._delete_session(data.get("session_id"))
-
-        elif action == "export_session":
-            await self._export_session(data.get("session_id"))
+    async def _action_load_conversation(self, data: dict[str, Any]) -> None:
+        """Load a conversation by name."""
+        name = data.get("name")
+        if name:
+            await self._load_conversation(name)
 
     async def _process_message(self, user_input: str) -> None:
         """Process a user message through the agent loop."""
-        assert self._ui is not None
+        assert self._presenter is not None
         assert self._engine is not None
+
+        # Capture presenter in local variable for closures
+        presenter = self._presenter
 
         # Build system prompt with project context
         system_prompt = None
@@ -472,40 +503,42 @@ class Application:
             system_prompt = self._project_context.get_system_prompt_addition()
 
         def on_chunk(chunk: str) -> None:
-            """Handle streaming chunk - pass directly to Textual UI."""
-            self._ui.on_stream_chunk(chunk)
+            """Handle streaming chunk - pass directly to presenter."""
+            presenter.on_stream_chunk(chunk)
 
         def on_tool_start(tool_call: Any) -> None:
             """Handle tool execution start."""
-            self._ui.print_tool_start(tool_call.name, tool_call.arguments)
+            presenter.print_tool_start(tool_call.name, tool_call.arguments)
 
         def on_tool_complete(tool_call: Any, result: str, duration_ms: float) -> None:
             """Handle tool execution complete."""
-            self._ui.print_tool_complete(tool_call.name, result, duration_ms)
+            presenter.print_tool_complete(tool_call.name, result, duration_ms)
 
         def on_todo_update(todo_list: Any) -> None:
             """Handle todo list update."""
-            self._ui.print_todo_panel(todo_list)
+            presenter.print_todo_panel(todo_list)
 
         def on_compaction(result: Any) -> None:
             """Handle context compaction."""
-            self._ui.print_compaction_notice(result)
+            presenter.print_compaction_notice(result)
 
         self._engine.set_callbacks(
-            on_state_change=lambda s: self._ui.update_state(s) if self._ui else None,
-            on_tool_call=self._handle_tool_approval,
-            on_stream_chunk=on_chunk,
-            on_tool_start=on_tool_start,
-            on_tool_complete=on_tool_complete,
-            on_todo_update=on_todo_update,
-            on_compaction=on_compaction,
-            on_pause_prompt=self._handle_pause_prompt,
+            EngineCallbacks(
+                on_state_change=lambda s: presenter.update_state(s),
+                on_tool_call=self._handle_tool_approval,
+                on_stream_chunk=on_chunk,
+                on_tool_start=on_tool_start,
+                on_tool_complete=on_tool_complete,
+                on_todo_update=on_todo_update,
+                on_compaction=on_compaction,
+                on_pause_prompt=self._handle_pause_prompt,
+            )
         )
 
         # Run agent loop
         try:
             # Mark generation active (enables Escape to pause)
-            self._ui.start_generation()
+            self._presenter.start_generation()
 
             # Add user message to history FIRST (before generation)
             # This ensures it's preserved even if interrupted
@@ -526,7 +559,7 @@ class Application:
             if self._engine:
                 context_used = self._engine._token_counter.count_messages(self._messages)
                 context_max = self._engine._token_counter.max_tokens
-                self._ui.print_context_usage(context_used, context_max)
+                self._presenter.print_context_usage(context_used, context_max)
 
             # Save to storage
             if self._storage and self._conversation_id:
@@ -536,10 +569,10 @@ class Application:
                 )
 
         except Exception as e:
-            self._ui.print_error(f"Generation error: {e}")
+            self._presenter.print_error(f"Generation error: {e}")
         finally:
             # Mark generation complete
-            self._ui.end_generation()
+            self._presenter.end_generation()
 
     async def _handle_tool_approval(self, tool_call: Any) -> Any:
         """
@@ -552,27 +585,21 @@ class Application:
         """
         from entropi.core.engine import ToolApproval
 
-        if self.config.permissions.auto_approve:
-            return ToolApproval.ALLOW
-
-        if not self._ui:
-            return ToolApproval.ALLOW
-
-        # Check if this is a sensitive tool
-        is_sensitive = self._ui.is_sensitive_tool(tool_call.name, tool_call.arguments)
-
-        # For non-sensitive tools, auto-approve
-        if not is_sensitive:
+        # Auto-approve if configured or no presenter or non-sensitive
+        should_auto_approve = (
+            self.config.permissions.auto_approve
+            or not self._presenter
+            or not self._presenter.is_sensitive_tool(tool_call.name, tool_call.arguments)
+        )
+        if should_auto_approve:
             return ToolApproval.ALLOW
 
         # For sensitive tools, prompt the user via modal
-        result = await self._ui.prompt_tool_approval(
+        return await self._presenter.prompt_tool_approval(
             tool_call.name,
             tool_call.arguments,
             is_sensitive=True,
         )
-
-        return result
 
     def _handle_interrupt(self) -> None:
         """Handle interrupt signal (hard cancel)."""
@@ -614,14 +641,14 @@ class Application:
         Returns:
             User's injection text, empty string to resume, or None to cancel
         """
-        if not self._ui:
+        if not self._presenter:
             return None
 
-        return await self._ui.prompt_injection(partial_content)
+        return await self._presenter.prompt_injection(partial_content)
 
-    async def _show_status(self) -> None:
+    async def _show_status(self, _data: dict[str, Any] | None = None) -> None:
         """Show system status."""
-        if not self._ui:
+        if not self._presenter:
             return
 
         vram_used = 0.0
@@ -642,32 +669,34 @@ class Application:
             context_used = self._engine._token_counter.count_messages(self._messages)
             context_max = self._engine._token_counter.max_tokens
 
-        self._ui.print_status(
-            model=model,
-            vram_used=vram_used,
-            vram_total=vram_total,
-            tokens=tokens,
-            thinking_mode=self._thinking_mode,
-            context_used=context_used,
-            context_max=context_max,
+        self._presenter.print_status(
+            StatusInfo(
+                model=model,
+                vram_used=vram_used,
+                vram_total=vram_total,
+                tokens=tokens,
+                thinking_mode=self._thinking_mode,
+                context_used=context_used,
+                context_max=context_max,
+            )
         )
 
     async def _save_conversation(self, name: str | None) -> None:
         """Save current conversation."""
         if not self._storage or not self._conversation_id:
-            if self._ui:
-                self._ui.print_error("No conversation to save")
+            if self._presenter:
+                self._presenter.print_error("No conversation to save")
             return
 
         if name:
             await self._storage.update_conversation_title(self._conversation_id, name)
 
-        if self._ui:
-            self._ui.print_info(f"Conversation saved: {name or self._conversation_id}")
+        if self._presenter:
+            self._presenter.print_info(f"Conversation saved: {name or self._conversation_id}")
 
     async def _load_conversation(self, name: str) -> None:
         """Load a conversation by name/ID."""
-        if not self._storage or not self._ui:
+        if not self._storage or not self._presenter:
             return
 
         # Search for conversation
@@ -679,24 +708,24 @@ class Application:
                 break
 
         if not match:
-            self._ui.print_error(f"Conversation not found: {name}")
+            self._presenter.print_error(f"Conversation not found: {name}")
             return
 
         # Load messages
         messages, _ = await self._storage.load_conversation(match["id"])
         self._messages = messages
         self._conversation_id = match["id"]
-        self._ui.print_info(f"Loaded conversation: {match['title']}")
+        self._presenter.print_info(f"Loaded conversation: {match['title']}")
 
     async def _list_sessions(self) -> None:
         """List all sessions (conversations) for this project."""
-        if not self._storage or not self._ui:
+        if not self._storage or not self._presenter:
             return
 
         conversations = await self._storage.list_conversations()
 
         if not conversations:
-            self._ui.print_info("No sessions found. Use /new to create one.")
+            self._presenter.print_info("No sessions found. Use /new to create one.")
             return
 
         lines = ["**Sessions:**\n"]
@@ -705,11 +734,11 @@ class Application:
             msg_count = conv.get("message_count", 0)
             lines.append(f"  `{conv['id'][:8]}` - {conv['title']} ({msg_count} messages){marker}")
 
-        self._ui.print_info("\n".join(lines))
+        self._presenter.print_info("\n".join(lines))
 
     async def _new_session(self, name: str) -> None:
         """Create a new session and switch to it."""
-        if not self._storage or not self._ui:
+        if not self._storage or not self._presenter:
             return
 
         # Clear current messages
@@ -721,13 +750,13 @@ class Application:
             project_path=str(self.project_dir),
         )
 
-        self._ui.print_info(f"Created new session: {name}")
+        self._presenter.print_info(f"Created new session: {name}")
 
     async def _switch_session(self, session_id: str | None) -> None:
         """Switch to an existing session."""
-        if not self._storage or not self._ui or not session_id:
-            if self._ui:
-                self._ui.print_error("Session ID required")
+        if not self._storage or not self._presenter or not session_id:
+            if self._presenter:
+                self._presenter.print_error("Session ID required")
             return
 
         # Find the conversation (support partial IDs)
@@ -739,41 +768,41 @@ class Application:
                 break
 
         if not match:
-            self._ui.print_error(f"Session not found: {session_id}")
+            self._presenter.print_error(f"Session not found: {session_id}")
             return
 
         # Load messages
         messages, _ = await self._storage.load_conversation(match["id"])
         self._messages = messages
         self._conversation_id = match["id"]
-        self._ui.print_info(f"Switched to: {match['title']}")
+        self._presenter.print_info(f"Switched to: {match['title']}")
 
     async def _rename_session(self, name: str | None) -> None:
         """Rename the current session."""
-        if not self._storage or not self._ui:
+        if not self._storage or not self._presenter:
             return
 
         if not name:
-            self._ui.print_error("Name required")
+            self._presenter.print_error("Name required")
             return
 
         if not self._conversation_id:
-            self._ui.print_error("No active session")
+            self._presenter.print_error("No active session")
             return
 
         await self._storage.update_conversation_title(self._conversation_id, name)
-        self._ui.print_info(f"Renamed to: {name}")
+        self._presenter.print_info(f"Renamed to: {name}")
 
     async def _delete_session(self, session_id: str | None) -> None:
         """Delete a session."""
-        if not self._storage or not self._ui or not session_id:
-            if self._ui:
-                self._ui.print_error("Session ID required")
+        if not self._storage or not self._presenter or not session_id:
+            if self._presenter:
+                self._presenter.print_error("Session ID required")
             return
 
         # Don't allow deleting current session
         if self._conversation_id and self._conversation_id.startswith(session_id):
-            self._ui.print_error("Cannot delete current session. Switch to another first.")
+            self._presenter.print_error("Cannot delete current session. Switch to another first.")
             return
 
         # Find the conversation
@@ -785,21 +814,21 @@ class Application:
                 break
 
         if not match:
-            self._ui.print_error(f"Session not found: {session_id}")
+            self._presenter.print_error(f"Session not found: {session_id}")
             return
 
         await self._storage.delete_conversation(match["id"])
-        self._ui.print_info(f"Deleted session: {match['title']}")
+        self._presenter.print_info(f"Deleted session: {match['title']}")
 
     async def _export_session(self, session_id: str | None) -> None:
         """Export a session to markdown."""
-        if not self._storage or not self._ui:
+        if not self._storage or not self._presenter:
             return
 
         # Use current session if no ID provided
         conv_id = session_id or self._conversation_id
         if not conv_id:
-            self._ui.print_error("No session to export")
+            self._presenter.print_error("No session to export")
             return
 
         # Find conversation
@@ -811,7 +840,7 @@ class Application:
                 break
 
         if not match:
-            self._ui.print_error(f"Session not found: {conv_id}")
+            self._presenter.print_error(f"Session not found: {conv_id}")
             return
 
         # Load messages
@@ -885,9 +914,11 @@ class Application:
                 )
 
             self._engine.set_callbacks(
-                on_stream_chunk=on_chunk,
-                on_tool_start=on_tool_start,
-                on_tool_complete=on_tool_complete,
+                EngineCallbacks(
+                    on_stream_chunk=on_chunk,
+                    on_tool_start=on_tool_start,
+                    on_tool_complete=on_tool_complete,
+                )
             )
 
             # Run agent loop (tool results are shown via on_tool_complete callback)

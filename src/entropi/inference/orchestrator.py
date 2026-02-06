@@ -90,6 +90,82 @@ class ModelOrchestrator:
         ModelTier.THINKING: frozenset({ModelTier.NORMAL, ModelTier.CODE}),  # Never to SIMPLE
     }
 
+    # Task classification keyword patterns
+    _CODE_KEYWORDS = (
+        "write",
+        "implement",
+        "create",
+        "add",
+        "fix",
+        "debug",
+        "refactor",
+        "edit",
+        "modify",
+        "update",
+        "change",
+        "build",
+        "make",
+        "function",
+        "class",
+        "method",
+        "code",
+        "program",
+        "script",
+        "api",
+        "endpoint",
+        "test",
+        "unit test",
+        "bug",
+        "error",
+        "feature",
+    )
+    _COMPLEX_KEYWORDS = (
+        "analyze",
+        "analyse",
+        "compare",
+        "evaluate",
+        "assess",
+        "review",
+        "investigate",
+        "examine",
+        "trade-off",
+        "tradeoff",
+        "architecture",
+        "design pattern",
+        "pros and cons",
+        "advantages and disadvantages",
+    )
+    _QUESTION_KEYWORDS = (
+        "what is",
+        "what are",
+        "how does",
+        "how do",
+        "why is",
+        "why does",
+        "explain",
+        "describe",
+        "tell me about",
+        "difference between",
+        "when should",
+        "can you explain",
+    )
+    _SIMPLE_PATTERNS = (
+        "hello",
+        "hi",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "sure",
+        "yes",
+        "no",
+        "bye",
+        "goodbye",
+        "good morning",
+        "good night",
+    )
+
     def __init__(self, config: EntropyConfig) -> None:
         """
         Initialize orchestrator.
@@ -122,9 +198,7 @@ class ModelOrchestrator:
             )
 
         if models_config.code:
-            self._models[ModelTier.CODE] = self._create_backend(
-                models_config.code, ModelTier.CODE
-            )
+            self._models[ModelTier.CODE] = self._create_backend(models_config.code, ModelTier.CODE)
 
         if models_config.simple:
             self._models[ModelTier.SIMPLE] = self._create_backend(
@@ -243,28 +317,23 @@ class ModelOrchestrator:
         if enabled == self._thinking_mode:
             return True
 
+        # Pre-validate required model exists
+        required_tier = ModelTier.THINKING if enabled else ModelTier.NORMAL
+        if required_tier not in self._models:
+            logger.warning(f"{required_tier.name} model not configured")
+            return False
+
         async with self._lock:
             if enabled:
                 # Enable thinking mode: load THINKING, optionally unload NORMAL
-                if ModelTier.THINKING not in self._models:
-                    logger.warning("THINKING model not configured")
-                    return False
-
-                # Unload NORMAL to free VRAM if needed
                 if ModelTier.NORMAL in self._models and self._models[ModelTier.NORMAL].is_loaded:
                     await self._models[ModelTier.NORMAL].unload()
                     logger.info("Unloaded NORMAL model to free VRAM")
 
-                # Load THINKING
                 await self._models[ModelTier.THINKING].load()
                 logger.info("Loaded THINKING model")
             else:
                 # Disable thinking mode: load NORMAL, unload THINKING
-                if ModelTier.NORMAL not in self._models:
-                    logger.warning("NORMAL model not configured")
-                    return False
-
-                # Unload THINKING to free VRAM
                 if (
                     ModelTier.THINKING in self._models
                     and self._models[ModelTier.THINKING].is_loaded
@@ -272,7 +341,6 @@ class ModelOrchestrator:
                     await self._models[ModelTier.THINKING].unload()
                     logger.info("Unloaded THINKING model")
 
-                # Load NORMAL
                 await self._models[ModelTier.NORMAL].load()
                 logger.info("Loaded NORMAL model")
 
@@ -308,7 +376,7 @@ class ModelOrchestrator:
 
         # Use model's context_length if max_tokens not specified
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.context_length
+            kwargs["max_tokens"] = model.config.max_output_tokens
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Generating with {tier.value} model (adapter: {adapter_name})")
@@ -352,7 +420,7 @@ class ModelOrchestrator:
 
         # Use model's context_length if max_tokens not specified
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.context_length
+            kwargs["max_tokens"] = model.config.max_output_tokens
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Streaming with {tier.value} model (adapter: {adapter_name})")
@@ -378,50 +446,68 @@ class ModelOrchestrator:
         Raises:
             ValueError: If tier not configured
         """
-        if tier not in self._models:
-            # Fallback to default
-            fallback = ModelTier(self.config.routing.fallback_model)
-            if fallback not in self._models:
-                raise ValueError(f"No model available for tier {tier.value}")
-            tier = fallback
-            logger.debug(f"Falling back to {tier.value} model")
-
+        tier = self._resolve_tier(tier)
         model = self._models[tier]
 
         # Main tiers: require lock for all operations to prevent TOCTOU race
         if tier in self.MAIN_TIERS:
-            async with self._lock:
-                if model.is_loaded:
-                    return model
-
-                # Check if a model with the same file path is already loaded
-                if self._loaded_main_tier:
-                    current = self._models.get(self._loaded_main_tier)
-                    if current and current.is_loaded:
-                        if current.config.path == model.config.path:
-                            # Same file already loaded - reuse it
-                            logger.info(
-                                f"Reusing {self._loaded_main_tier.value} model for {tier.value} "
-                                f"(same file: {model.config.path.name})"
-                            )
-                            return current  # Return the already-loaded model
-                        else:
-                            # Different file - need to swap
-                            logger.info(
-                                f"Unloading {self._loaded_main_tier.value} model for swap"
-                            )
-                            await current.unload()
-
-                # Load the requested model
-                logger.info(f"Loading {tier.value} model")
-                await model.load()
-                self._loaded_main_tier = tier
-                return model
+            return await self._get_main_tier_model(tier, model)
 
         # Auxiliary tier - load without lock (small models, always loaded)
         if not model.is_loaded:
             await model.load()
         return model
+
+    def _resolve_tier(self, tier: ModelTier) -> ModelTier:
+        """Resolve tier to an available model, using fallback if needed."""
+        if tier in self._models:
+            return tier
+        fallback = ModelTier(self.config.routing.fallback_model)
+        if fallback not in self._models:
+            raise ValueError(f"No model available for tier {tier.value}")
+        logger.debug(f"Falling back to {fallback.value} model")
+        return fallback
+
+    async def _get_main_tier_model(self, tier: ModelTier, model: ModelBackend) -> ModelBackend:
+        """Get a main tier model with proper locking and swap handling."""
+        async with self._lock:
+            if model.is_loaded:
+                return model
+
+            # Check for reusable already-loaded model with same path
+            if reusable := self._find_reusable_model(tier, model):
+                return reusable
+
+            # Need to swap - unload current if different file
+            await self._unload_current_if_needed(model)
+
+            # Load the requested model
+            logger.info(f"Loading {tier.value} model")
+            await model.load()
+            self._loaded_main_tier = tier
+            return model
+
+    def _find_reusable_model(self, tier: ModelTier, model: ModelBackend) -> ModelBackend | None:
+        """Find an already-loaded model that can be reused (same file path)."""
+        if not self._loaded_main_tier:
+            return None
+        current = self._models.get(self._loaded_main_tier)
+        if current and current.is_loaded and current.config.path == model.config.path:
+            logger.info(
+                f"Reusing {self._loaded_main_tier.value} model for {tier.value} "
+                f"(same file: {model.config.path.name})"
+            )
+            return current
+        return None
+
+    async def _unload_current_if_needed(self, model: ModelBackend) -> None:
+        """Unload currently loaded model if it's a different file."""
+        if not self._loaded_main_tier:
+            return
+        current = self._models.get(self._loaded_main_tier)
+        if current and current.is_loaded and current.config.path != model.config.path:
+            logger.info(f"Unloading {self._loaded_main_tier.value} model for swap")
+            await current.unload()
 
     async def _route(self, messages: list[Message]) -> ModelTier:
         """
@@ -442,33 +528,32 @@ class ModelOrchestrator:
         if not self.config.routing.enabled:
             return ModelTier(self.config.models.default)
 
-        # Get last user message for routing decision
-        user_message = ""
-        for msg in reversed(messages):
-            if msg.role == "user":
-                user_message = msg.content
-                break
-
-        # Classify task type
+        # Classify task based on last user message
+        user_message = self._get_last_user_message(messages)
         task_type = await self._classify_task(user_message)
         logger.info(f"[ROUTER] Task classification: {task_type}")
 
-        if task_type == "simple":
-            return ModelTier.SIMPLE
+        return self._select_tier_for_task(task_type)
 
-        if task_type == "code":
-            return ModelTier.CODE
+    def _get_last_user_message(self, messages: list[Message]) -> str:
+        """Extract last user message for routing decision."""
+        for msg in reversed(messages):
+            if msg.role == "user":
+                return msg.content
+        return ""
 
-        if task_type == "complex":
-            # Complex tasks auto-route to THINKING (if available)
-            if ModelTier.THINKING in self._models:
-                return ModelTier.THINKING
-            return ModelTier.NORMAL  # Fallback if no THINKING model
+    def _select_tier_for_task(self, task_type: str) -> ModelTier:
+        """Select model tier for a task type."""
+        # Direct mappings
+        direct_tiers = {"simple": ModelTier.SIMPLE, "code": ModelTier.CODE}
+        if tier := direct_tiers.get(task_type):
+            return tier
 
-        # Standard reasoning: use THINKING only if user forced it on
-        if self._thinking_mode and ModelTier.THINKING in self._models:
-            return ModelTier.THINKING
-        return ModelTier.NORMAL
+        # Complex/reasoning tasks: check if THINKING should be used
+        use_thinking = (
+            task_type == "complex" or self._thinking_mode
+        ) and ModelTier.THINKING in self._models
+        return ModelTier.THINKING if use_thinking else ModelTier.NORMAL
 
     async def _classify_task(self, message: str) -> str:
         """
@@ -485,67 +570,45 @@ class ModelOrchestrator:
         Returns:
             Task type: 'simple', 'code', 'reasoning', or 'complex'
         """
-        msg_lower = message.lower()
-
-        # CODE keywords - programming tasks
-        code_keywords = [
-            "write", "implement", "create", "add", "fix", "debug", "refactor",
-            "edit", "modify", "update", "change", "build", "make", "function",
-            "class", "method", "code", "program", "script", "api", "endpoint",
-            "test", "unit test", "bug", "error", "feature",
-        ]
-
-        # COMPLEX/ANALYSIS keywords - deep thinking tasks
-        complex_keywords = [
-            "analyze", "analyse", "compare", "evaluate", "assess", "review",
-            "investigate", "examine", "trade-off", "tradeoff", "architecture",
-            "design pattern", "pros and cons", "advantages and disadvantages",
-        ]
-
-        # REASONING/QUESTION keywords - explanations and questions
-        question_keywords = [
-            "what is", "what are", "how does", "how do", "why is", "why does",
-            "explain", "describe", "tell me about", "difference between",
-            "when should", "can you explain",
-        ]
-
-        # SIMPLE patterns - greetings and acknowledgments (exact/near-exact matches)
-        simple_patterns = [
-            "hello", "hi", "hey", "thanks", "thank you", "ok", "okay",
-            "sure", "yes", "no", "bye", "goodbye", "good morning", "good night",
-        ]
-
-        # Check for SIMPLE first (short messages that are just greetings)
-        msg_stripped = msg_lower.strip().rstrip("!?.").strip()
-        if msg_stripped in simple_patterns or len(msg_stripped) <= 3:
-            logger.info(f"[ROUTER] Keyword match: simple (greeting pattern)")
-            return "simple"
-
-        # Check for CODE keywords
-        for kw in code_keywords:
-            if kw in msg_lower:
-                logger.info(f"[ROUTER] Keyword match: code ('{kw}')")
-                return "code"
-
-        # Check for COMPLEX keywords
-        for kw in complex_keywords:
-            if kw in msg_lower:
-                logger.info(f"[ROUTER] Keyword match: complex ('{kw}')")
-                return "complex"
-
-        # Check for QUESTION keywords
-        for kw in question_keywords:
-            if kw in msg_lower:
-                logger.info(f"[ROUTER] Keyword match: reasoning ('{kw}')")
-                return "reasoning"
+        # Try keyword-based classification first
+        if result := self._classify_by_keywords(message):
+            return result
 
         # Fall back to model classification for ambiguous cases
         if ModelTier.ROUTER in self._models:
             return await self._classify_task_with_model(message)
 
-        # Default fallback
         logger.info("[ROUTER] No keyword match, defaulting to reasoning")
         return "reasoning"
+
+    def _classify_by_keywords(self, message: str) -> str | None:
+        """Classify task by keyword matching. Returns None if no match."""
+        msg_lower = message.lower()
+        msg_stripped = msg_lower.strip().rstrip("!?.").strip()
+
+        # Check for SIMPLE first (short messages that are just greetings)
+        if msg_stripped in self._SIMPLE_PATTERNS or len(msg_stripped) <= 3:
+            logger.info("[ROUTER] Keyword match: simple (greeting pattern)")
+            return "simple"
+
+        # Check keyword categories in order
+        keyword_checks = [
+            (self._CODE_KEYWORDS, "code"),
+            (self._COMPLEX_KEYWORDS, "complex"),
+            (self._QUESTION_KEYWORDS, "reasoning"),
+        ]
+        for keywords, task_type in keyword_checks:
+            if matched_kw := self._find_keyword_match(msg_lower, keywords):
+                logger.info(f"[ROUTER] Keyword match: {task_type} ('{matched_kw}')")
+                return task_type
+        return None
+
+    def _find_keyword_match(self, text: str, keywords: tuple[str, ...]) -> str | None:
+        """Find first matching keyword in text."""
+        for kw in keywords:
+            if kw in text:
+                return kw
+        return None
 
     async def _classify_task_with_model(self, message: str) -> str:
         """

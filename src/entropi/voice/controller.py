@@ -191,7 +191,9 @@ def _download_model_files(
         else:
             # List available files for debugging
             available = list(voices_dir.glob("*.pt")) if voices_dir.exists() else []
-            logger.warning(f"Voice {voice_name} not found. Available: {[f.name for f in available]}")
+            logger.warning(
+                f"Voice {voice_name} not found. Available: {[f.name for f in available]}"
+            )
             if available:
                 voice_path = available[0]
                 logger.info(f"Using fallback voice: {voice_path.name}")
@@ -328,125 +330,135 @@ class PersonaPlexController:
             return False
 
     async def _load_personaplex(self) -> None:
-        """Load PersonaPlex model components using the submodule.
-
-        Runs blocking model loading operations in a thread executor
-        to keep the TUI responsive during loading.
-        """
+        """Load PersonaPlex model components using the submodule."""
         try:
-            import torch
-
-            device = self._config.runtime.device
-            self._plex_state.device = device
-            use_int8 = self._config.runtime.quantization == "int8"
-
-            self._report_progress(f"Loading PersonaPlex on {device} (quantize_int8={use_int8})")
-
-            # Download model files from HuggingFace
-            self._report_progress("Downloading model files from HuggingFace...")
-            voice_name = self._config.voice_prompt.voice_name
-            model_paths = await asyncio.to_thread(
-                _download_model_files, voice_name=voice_name
-            )
-
-            # Try to use the submodule loaders
-            try:
-                from moshi.models import loaders
-                from moshi.models.lm import LMGen
-                import sentencepiece
-
-                # Load Mimi codec (run in thread - blocking I/O)
-                self._report_progress("Loading Mimi audio codec...")
-                self._plex_state.mimi = await asyncio.to_thread(
-                    loaders.get_mimi,
-                    str(model_paths["mimi"]),
-                    device=device,
-                )
-
-                # Load LM model (run in thread - this is the slow one!)
-                context_window = self._config.runtime.context_window
-                self._report_progress(f"Loading Moshi LM (context={context_window})...")
-                lm_model = await asyncio.to_thread(
-                    loaders.get_moshi_lm,
-                    str(model_paths["moshi"]),
-                    device=device,
-                    dtype=torch.bfloat16,
-                    quantize_int8=use_int8,
-                    context=context_window,
-                )
-
-                # Create LMGen wrapper
-                self._report_progress("Initializing LM generator...")
-                self._plex_state.lm_gen = LMGen(
-                    lm_model,
-                    audio_silence_frame_cnt=int(0.5 * self._plex_state.mimi.frame_rate),
-                    sample_rate=self._plex_state.mimi.sample_rate,
-                    device=device,
-                    frame_rate=self._plex_state.mimi.frame_rate,
-                )
-
-                # Load text tokenizer
-                self._report_progress("Loading tokenizer...")
-                self._plex_state.text_tokenizer = sentencepiece.SentencePieceProcessor(
-                    str(model_paths["tokenizer"])
-                )
-
-                # Load voice prompt
-                self._report_progress("Loading voice prompt...")
-                await asyncio.to_thread(
-                    self._plex_state.lm_gen.load_voice_prompt_embeddings,
-                    str(model_paths["voice_prompt"]),
-                )
-
-                # Set frame size
-                self._plex_state.frame_size = int(
-                    self._plex_state.mimi.sample_rate / self._plex_state.mimi.frame_rate
-                )
-
-                # Set initial text prompt
-                initial_prompt = self._config.conversation.initial_prompt
-                if initial_prompt:
-                    wrapped = f"<system> {initial_prompt} <system>"
-                    self._plex_state.lm_gen.text_prompt_tokens = (
-                        self._plex_state.text_tokenizer.encode(wrapped)
-                    )
-
-                # Enable streaming mode
-                self._plex_state.mimi.streaming_forever(1)
-                self._plex_state.lm_gen.streaming_forever(1)
-
-                # Warmup (run in thread)
-                self._report_progress("Warming up models...")
-                await asyncio.to_thread(self._warmup)
-
-                self._plex_state.loaded = True
-                self._report_progress("PersonaPlex ready!")
-
-            except ImportError as e:
-                import traceback
-                logger.warning(f"PersonaPlex submodule not available: {e}")
-                logger.warning(f"Traceback:\n{traceback.format_exc()}")
-                self._report_progress(f"Using stub (import failed: {e})")
-                self._plex_state.mimi = _StubMimi()
-                self._plex_state.lm_gen = _StubLMGen()
-                self._plex_state.text_tokenizer = _StubTokenizer()
-                self._plex_state.loaded = True
-
-            except RuntimeError as e:
-                if "CUDA" in str(e) or "kernel" in str(e):
-                    logger.error(
-                        f"CUDA error: {e}\n"
-                        "Try one of:\n"
-                        "  1. Set voice.runtime.device: 'cpu' in config\n"
-                        "  2. Update PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu130"
-                    )
-                raise
-
+            await self._load_personaplex_impl()
         except ImportError as e:
             raise ImportError(
-                f"Missing dependency for voice mode: {e}. "
-                "Install with: pip install entropi[voice]"
+                f"Missing dependency for voice mode: {e}. Install with: pip install entropi[voice]"
             ) from e
+
+    async def _load_personaplex_impl(self) -> None:
+        """Implementation of PersonaPlex loading."""
+        import torch
+
+        device = self._config.runtime.device
+        self._plex_state.device = device
+        use_int8 = self._config.runtime.quantization == "int8"
+        self._report_progress(f"Loading PersonaPlex on {device} (quantize_int8={use_int8})")
+        self._report_progress("Downloading model files from HuggingFace...")
+        voice_name = self._config.voice_prompt.voice_name
+        model_paths = await asyncio.to_thread(_download_model_files, voice_name=voice_name)
+        try:
+            await self._load_moshi_components(model_paths, device, torch)
+        except ImportError as e:
+            self._use_stub_components(e)
+        except RuntimeError as e:
+            self._handle_cuda_error(e)
+
+    async def _load_moshi_components(
+        self, model_paths: dict[str, Any], device: str, torch: Any
+    ) -> None:
+        """Load Moshi model components."""
+        import sentencepiece
+        from moshi.models import loaders
+        from moshi.models.lm import LMGen
+
+        await self._load_mimi(loaders, model_paths, device)
+        await self._load_lm_model(loaders, LMGen, model_paths, torch)
+        self._load_tokenizer(sentencepiece, model_paths)
+        await self._load_voice_prompt(model_paths)
+        self._configure_streaming()
+        self._report_progress("Warming up models...")
+        await asyncio.to_thread(self._warmup)
+        self._plex_state.loaded = True
+        self._report_progress("PersonaPlex ready!")
+
+    async def _load_mimi(self, loaders: Any, model_paths: dict[str, Any], device: str) -> None:
+        """Load Mimi audio codec."""
+        self._report_progress("Loading Mimi audio codec...")
+        self._plex_state.mimi = await asyncio.to_thread(
+            loaders.get_mimi, str(model_paths["mimi"]), device=device
+        )
+
+    async def _load_lm_model(
+        self,
+        loaders: Any,
+        lm_gen_cls: Any,
+        model_paths: dict[str, Any],
+        torch: Any,
+    ) -> None:
+        """Load LM model and create generator."""
+        device = self._config.runtime.device
+        use_int8 = self._config.runtime.quantization == "int8"
+        context_window = self._config.runtime.context_window
+        self._report_progress(f"Loading Moshi LM (context={context_window})...")
+        lm_model = await asyncio.to_thread(
+            loaders.get_moshi_lm,
+            str(model_paths["moshi"]),
+            device=device,
+            dtype=torch.bfloat16,
+            quantize_int8=use_int8,
+            context=context_window,
+        )
+        self._report_progress("Initializing LM generator...")
+        self._plex_state.lm_gen = lm_gen_cls(
+            lm_model,
+            audio_silence_frame_cnt=int(0.5 * self._plex_state.mimi.frame_rate),
+            sample_rate=self._plex_state.mimi.sample_rate,
+            device=device,
+            frame_rate=self._plex_state.mimi.frame_rate,
+        )
+
+    def _load_tokenizer(self, sentencepiece: Any, model_paths: dict[str, Any]) -> None:
+        """Load text tokenizer."""
+        self._report_progress("Loading tokenizer...")
+        self._plex_state.text_tokenizer = sentencepiece.SentencePieceProcessor(
+            str(model_paths["tokenizer"])
+        )
+
+    async def _load_voice_prompt(self, model_paths: dict[str, Any]) -> None:
+        """Load voice prompt embeddings."""
+        self._report_progress("Loading voice prompt...")
+        await asyncio.to_thread(
+            self._plex_state.lm_gen.load_voice_prompt_embeddings, str(model_paths["voice_prompt"])
+        )
+        self._plex_state.frame_size = int(
+            self._plex_state.mimi.sample_rate / self._plex_state.mimi.frame_rate
+        )
+        initial_prompt = self._config.conversation.initial_prompt
+        if initial_prompt:
+            wrapped = f"<system> {initial_prompt} <system>"
+            self._plex_state.lm_gen.text_prompt_tokens = self._plex_state.text_tokenizer.encode(
+                wrapped
+            )
+
+    def _configure_streaming(self) -> None:
+        """Enable streaming mode on models."""
+        self._plex_state.mimi.streaming_forever(1)
+        self._plex_state.lm_gen.streaming_forever(1)
+
+    def _use_stub_components(self, error: ImportError) -> None:
+        """Fall back to stub components."""
+        import traceback
+
+        logger.warning(f"PersonaPlex submodule not available: {error}")
+        logger.warning(f"Traceback:\n{traceback.format_exc()}")
+        self._report_progress(f"Using stub (import failed: {error})")
+        self._plex_state.mimi = _StubMimi()
+        self._plex_state.lm_gen = _StubLMGen()
+        self._plex_state.text_tokenizer = _StubTokenizer()
+        self._plex_state.loaded = True
+
+    def _handle_cuda_error(self, error: RuntimeError) -> None:
+        """Handle CUDA runtime errors."""
+        if "CUDA" in str(error) or "kernel" in str(error):
+            logger.error(
+                f"CUDA error: {error}\nTry one of:\n"
+                "  1. Set voice.runtime.device: 'cpu' in config\n"
+                "  2. Update PyTorch: pip install torch --index-url https://download.pytorch.org/whl/cu130"
+            )
+        raise error
 
     def _warmup(self) -> None:
         """Warmup models with dummy data."""
@@ -459,7 +471,7 @@ class PersonaPlexController:
             for _ in range(2):  # Reduced iterations
                 chunk = torch.zeros(1, 1, frame_size, dtype=torch.float32)
                 # Move to same device as mimi encoder expects
-                if hasattr(self._plex_state.mimi, 'device'):
+                if hasattr(self._plex_state.mimi, "device"):
                     chunk = chunk.to(self._plex_state.mimi.device)
                 elif self._plex_state.device == "cuda" and torch.cuda.is_available():
                     chunk = chunk.cuda()
@@ -498,8 +510,7 @@ class PersonaPlexController:
             # Process system prompts (voice prompt + text prompt)
             logger.info("Processing system prompts...")
             await asyncio.to_thread(
-                self._plex_state.lm_gen.step_system_prompts,
-                self._plex_state.mimi
+                self._plex_state.lm_gen.step_system_prompts, self._plex_state.mimi
             )
             # Reset mimi again after processing prompts (as PersonaPlex server does)
             self._plex_state.mimi.reset_streaming()
@@ -596,9 +607,7 @@ class PersonaPlexController:
             f"{len(window.assistant_transcript)} chars"
         )
 
-    async def _process_audio_frame(
-        self, frame: NDArray[np.float32]
-    ) -> str:
+    async def _process_audio_frame(self, frame: NDArray[np.float32]) -> str:
         """
         Process a single audio frame through PersonaPlex.
 
@@ -693,8 +702,8 @@ class PersonaPlexController:
                     format="plain",  # PersonaPlex uses plain text prompts
                 )
                 wrapped = f"<system> {injection} <system>"
-                self._plex_state.lm_gen.text_prompt_tokens = (
-                    self._plex_state.text_tokenizer.encode(wrapped)
+                self._plex_state.lm_gen.text_prompt_tokens = self._plex_state.text_tokenizer.encode(
+                    wrapped
                 )
 
             logger.debug(
@@ -755,8 +764,8 @@ class PersonaPlexController:
             initial_prompt = self._config.conversation.initial_prompt
             if initial_prompt:
                 wrapped = f"<system> {initial_prompt} <system>"
-                self._plex_state.lm_gen.text_prompt_tokens = (
-                    self._plex_state.text_tokenizer.encode(wrapped)
+                self._plex_state.lm_gen.text_prompt_tokens = self._plex_state.text_tokenizer.encode(
+                    wrapped
                 )
 
         logger.info("Context reset")
@@ -780,28 +789,27 @@ class PersonaPlexController:
         Returns:
             True if successful
         """
+        # Validate preconditions
         if voice_name not in VOICE_PROMPTS:
             logger.error(f"Unknown voice: {voice_name}")
-            return False
-
-        if not self._plex_state.loaded:
+        elif not self._plex_state.loaded:
             logger.error("PersonaPlex not loaded")
-            return False
+        else:
+            try:
+                from huggingface_hub import hf_hub_download
 
-        try:
-            from huggingface_hub import hf_hub_download
+                voice_path = hf_hub_download(
+                    repo_id=HF_REPO,
+                    filename=VOICE_PROMPTS[voice_name],
+                )
+                self._plex_state.lm_gen.load_voice_prompt_embeddings(voice_path)
+                logger.info(f"Voice changed to {voice_name}")
+                return True
 
-            voice_path = hf_hub_download(
-                repo_id=HF_REPO,
-                filename=VOICE_PROMPTS[voice_name],
-            )
-            self._plex_state.lm_gen.load_voice_prompt_embeddings(voice_path)
-            logger.info(f"Voice changed to {voice_name}")
-            return True
+            except Exception as e:
+                logger.error(f"Failed to change voice: {e}")
 
-        except Exception as e:
-            logger.error(f"Failed to change voice: {e}")
-            return False
+        return False
 
 
 # Stub classes for testing without full PersonaPlex dependencies

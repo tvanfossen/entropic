@@ -1,0 +1,50 @@
+"""Test code generation responses through headless Application."""
+
+import pytest
+from entropi.app import Application
+from entropi.ui.headless import HeadlessPresenter
+
+from .conftest import with_timeout
+
+
+@pytest.mark.model
+class TestCodeResponses:
+    """Test CODE tier responses for programming tasks.
+
+    Code prompts may trigger 2 agent turns: generate code + tool call to write/verify.
+    """
+
+    @pytest.mark.asyncio
+    async def test_code_request_produces_code(
+        self,
+        headless_app: Application,
+        headless_presenter: HeadlessPresenter,
+    ) -> None:
+        """Code request should produce actual code."""
+        _, elapsed = await with_timeout(
+            headless_app._process_message("Write a Python function to check if a number is even"),
+            expected_turns=2,
+            name="code_even",
+        )
+
+        content = headless_presenter.get_stream_content()
+        assert len(content) > 0, "Expected code response"
+        assert "def " in content, f"Expected function definition, got: {content[:300]}"
+
+    @pytest.mark.asyncio
+    async def test_code_response_has_python_syntax(
+        self,
+        headless_app: Application,
+        headless_presenter: HeadlessPresenter,
+    ) -> None:
+        """Code response should have Python syntax markers."""
+        _, elapsed = await with_timeout(
+            headless_app._process_message("Write a function that returns the sum of a list"),
+            expected_turns=2,
+            name="code_sum",
+        )
+
+        content = headless_presenter.get_stream_content()
+        python_markers = ["def ", "return", "for ", "sum"]
+        has_python = any(marker in content for marker in python_markers)
+        assert has_python, f"Expected Python code, got: {content[:300]}"

@@ -242,7 +242,7 @@ class CompactionManager:
 
         # Start with configured preserve count and reduce if needed
         preserve_count = self.config.preserve_recent_turns * 2
-        recent_messages = []
+        recent_messages: list[Message] = []
 
         # Work backwards from most recent, adding messages until we hit budget
         if preserve_count > 0 and preserve_count < len(working_messages):
@@ -329,8 +329,15 @@ CONVERSATION:
 Brief summary (include tool call history):"""
 
         try:
+            # Import ModelTier here to avoid circular import
+            from entropi.inference.orchestrator import ModelTier
+
+            # Use NORMAL tier explicitly - compaction should NOT be routed
+            # (the summary prompt contains code-related keywords that would
+            # incorrectly route to CODE model)
             result = await self.orchestrator.generate(
                 messages=[Message(role="user", content=summary_prompt)],
+                tier=ModelTier.NORMAL,
             )
             # Enforce max length - truncate if necessary
             summary = result.content
@@ -400,8 +407,7 @@ The following summarizes {message_count} previous messages that have been compac
             result.extend(working_messages)
 
         logger.debug(
-            f"Aggressive compaction: kept {len(result)} messages "
-            f"from original {len(messages)}"
+            f"Aggressive compaction: kept {len(result)} messages " f"from original {len(messages)}"
         )
         return result
 
@@ -524,8 +530,13 @@ CONVERSATION:
 Summary:"""
 
         try:
+            # Import ModelTier here to avoid circular import
+            from entropi.inference.orchestrator import ModelTier
+
+            # Use NORMAL tier explicitly - handoff summaries should NOT be routed
             result = await self.orchestrator.generate(
                 messages=[Message(role="user", content=summary_prompt)],
+                tier=ModelTier.NORMAL,
             )
             summary = result.content
             if len(summary) > max_chars:
@@ -547,7 +558,9 @@ Summary:"""
             if msg.tool_results:
                 for tr in msg.tool_results:
                     if isinstance(tr, dict):
-                        tool_calls.append(f"- {tr.get('name', 'unknown')}: {tr.get('result', '')[:100]}")
+                        tool_calls.append(
+                            f"- {tr.get('name', 'unknown')}: {tr.get('result', '')[:100]}"
+                        )
 
         if tool_calls:
             lines.append("Tool calls made:")

@@ -457,31 +457,33 @@ class ThinkCommand(Command):
         return "/think [on|off|status] - on=force for all, off=auto (complex tasks only)"
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        args = args.lower().strip()
+        arg = args.lower().strip()
 
-        if not args or args == "status":
-            return CommandResult(
-                success=True,
-                data={"action": "show_thinking_status"},
-            )
-
-        if args == "on":
-            return CommandResult(
+        results = {
+            "": CommandResult(success=True, data={"action": "show_thinking_status"}),
+            "status": CommandResult(success=True, data={"action": "show_thinking_status"}),
+            "on": CommandResult(
                 success=True,
                 message="Thinking model forced ON for all reasoning tasks",
                 data={"action": "set_thinking_mode", "enabled": True},
-            )
-
-        if args in ("off", "auto"):
-            return CommandResult(
+            ),
+            "off": CommandResult(
                 success=True,
                 message="Thinking model AUTO - used only for complex tasks",
                 data={"action": "set_thinking_mode", "enabled": False},
-            )
+            ),
+            "auto": CommandResult(
+                success=True,
+                message="Thinking model AUTO - used only for complex tasks",
+                data={"action": "set_thinking_mode", "enabled": False},
+            ),
+        }
 
-        return CommandResult(
-            success=False,
-            message=f"Unknown argument: {args}. Use: on, off/auto, or status",
+        return results.get(
+            arg,
+            CommandResult(
+                success=False, message=f"Unknown argument: {arg}. Use: on, off/auto, or status"
+            ),
         )
 
 
@@ -735,7 +737,9 @@ class VoiceSetupCommand(Command):
             )
 
         # Check voice prompt exists
-        voice_prompt_path = voice_config.voice_prompt.prompt_dir / voice_config.voice_prompt.prompt_file
+        voice_prompt_path = (
+            voice_config.voice_prompt.prompt_dir / voice_config.voice_prompt.prompt_file
+        )
         if not voice_prompt_path.exists():
             return CommandResult(
                 success=False,
@@ -745,7 +749,7 @@ class VoiceSetupCommand(Command):
 
         return CommandResult(
             success=True,
-            message=f"Generating thinking audio with text: \"{text}\"",
+            message=f'Generating thinking audio with text: "{text}"',
             data={
                 "action": "voice_setup",
                 "text": text,

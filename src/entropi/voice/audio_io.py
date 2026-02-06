@@ -15,10 +15,9 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
-import struct
 import subprocess
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -40,7 +39,9 @@ DTYPE = np.float32
 SUPPORTED_SAMPLE_RATES = [24000, 48000, 44100, 96000, 16000]
 
 
-def _resample_linear(audio: NDArray[np.float32], from_rate: int, to_rate: int) -> NDArray[np.float32]:
+def _resample_linear(
+    audio: NDArray[np.float32], from_rate: int, to_rate: int
+) -> NDArray[np.float32]:
     """
     Resample audio using linear interpolation (fallback method).
 
@@ -95,7 +96,8 @@ def _resample(audio: NDArray[np.float32], from_rate: int, to_rate: int) -> NDArr
         up = to_rate // g
         down = from_rate // g
 
-        return resample_poly(audio, up, down).astype(np.float32)
+        resampled: NDArray[np.float32] = resample_poly(audio, up, down).astype(np.float32)
+        return resampled
 
     except ImportError:
         # Fallback to linear interpolation if scipy unavailable
@@ -140,7 +142,7 @@ class AudioIO:
         self._needs_resampling: bool = False
 
         # Import sounddevice lazily to allow graceful handling if unavailable
-        self._sd: object | None = None
+        self._sd: Any = None
 
         # Buffers (contain frames at TARGET rate, i.e., 24kHz)
         self._input_buffer: asyncio.Queue[NDArray[np.float32]] = asyncio.Queue(
@@ -151,15 +153,15 @@ class AudioIO:
         )
 
         # Stream handles
-        self._input_stream: object | None = None
-        self._output_stream: object | None = None
+        self._input_stream: Any = None
+        self._output_stream: Any = None
         self._running = False
 
         # Callbacks for audio level monitoring
         self._on_input_level: Callable[[float], None] | None = None
         self._on_output_level: Callable[[float], None] | None = None
 
-    def _ensure_sounddevice(self) -> object:
+    def _ensure_sounddevice(self) -> Any:
         """Import and return sounddevice module."""
         if self._sd is None:
             try:
@@ -208,7 +210,7 @@ class AudioIO:
         self._on_input_level = on_input
         self._on_output_level = on_output
 
-    def _find_supported_sample_rate(self, sd: object) -> int:
+    def _find_supported_sample_rate(self, sd: Any) -> int:
         """Find a sample rate supported by the default audio device."""
         for rate in SUPPORTED_SAMPLE_RATES:
             try:
@@ -220,8 +222,8 @@ class AudioIO:
 
         # Fallback to device default
         try:
-            device_info = sd.query_devices(kind='input')
-            return int(device_info['default_samplerate'])
+            device_info = sd.query_devices(kind="input")
+            return int(device_info["default_samplerate"])
         except Exception:
             return 48000  # Common fallback
 
@@ -231,101 +233,110 @@ class AudioIO:
             return
 
         sd = self._ensure_sounddevice()
+        self._configure_sample_rates(sd)
+        self._running = True
+        self._start_input_stream(sd)
+        self._start_output_stream(sd)
+        self._log_start_info()
 
-        # Find supported sample rate
+    def _configure_sample_rates(self, sd: Any) -> None:
+        """Configure sample rates and frame sizes."""
         self._device_sample_rate = self._find_supported_sample_rate(sd)
         self._needs_resampling = self._device_sample_rate != self._target_sample_rate
-
-        # Calculate device frame size to match target frame duration
-        self._device_frame_size = int(
-            self._device_sample_rate * FRAME_DURATION_MS / 1000
-        )
-
+        self._device_frame_size = int(self._device_sample_rate * FRAME_DURATION_MS / 1000)
         if self._needs_resampling:
             logger.info(
                 f"Device sample rate {self._device_sample_rate}Hz, "
                 f"will resample to {self._target_sample_rate}Hz"
             )
 
-        self._running = True
-
-        # Create input stream
-        def input_callback(
-            indata: NDArray[np.float32],
-            frames: int,
-            time_info: object,
-            status: object,
-        ) -> None:
-            _ = frames, time_info
-            if status:
-                logger.warning(f"Input stream status: {status}")
-
-            # Copy frame data
-            frame = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
-
-            # Resample to target rate if needed
-            if self._needs_resampling:
-                frame = _resample(frame, self._device_sample_rate, self._target_sample_rate)
-
-            # Calculate RMS level for visualization
-            if self._on_input_level:
-                rms = float(np.sqrt(np.mean(frame**2)))
-                self._on_input_level(min(1.0, rms * 5))  # Scale for visibility
-
-            # Add to buffer (non-blocking)
-            try:
-                self._input_buffer.put_nowait(frame)
-            except asyncio.QueueFull:
-                pass  # Drop frame if buffer full
-
+    def _start_input_stream(self, sd: Any) -> None:
+        """Create and start input stream."""
         self._input_stream = sd.InputStream(
             samplerate=self._device_sample_rate,
             channels=self._channels,
             dtype=DTYPE,
             blocksize=self._device_frame_size,
-            callback=input_callback,
+            callback=self._make_input_callback(),
         )
         self._input_stream.start()
 
-        # Create output stream
-        def output_callback(
-            outdata: NDArray[np.float32],
-            frames: int,
-            time_info: object,
-            status: object,
+    def _make_input_callback(self) -> Callable[..., None]:
+        """Create input stream callback."""
+
+        def callback(
+            indata: NDArray[np.float32], frames: int, time_info: object, status: object
         ) -> None:
             _ = frames, time_info
             if status:
-                logger.warning(f"Output stream status: {status}")
+                logger.warning(f"Input stream status: {status}")
+            frame = indata[:, 0].copy() if indata.ndim > 1 else indata.copy()
+            if self._needs_resampling:
+                frame = _resample(frame, self._device_sample_rate, self._target_sample_rate)
+            self._report_input_level(frame)
+            self._queue_input_frame(frame)
 
-            try:
-                frame = self._output_buffer.get_nowait()
+        return callback
 
-                # Resample from target rate to device rate if needed
-                if self._needs_resampling:
-                    frame = _resample(frame, self._target_sample_rate, self._device_sample_rate)
+    def _report_input_level(self, frame: NDArray[np.float32]) -> None:
+        """Report input level to callback if set."""
+        if self._on_input_level:
+            rms = float(np.sqrt(np.mean(frame**2)))
+            self._on_input_level(min(1.0, rms * 5))
 
-                if outdata.ndim > 1:
-                    outdata[:, 0] = frame[: len(outdata)]
-                else:
-                    outdata[:] = frame[: len(outdata)]
+    def _queue_input_frame(self, frame: NDArray[np.float32]) -> None:
+        """Queue input frame, dropping if buffer full."""
+        try:
+            self._input_buffer.put_nowait(frame)
+        except asyncio.QueueFull:
+            pass
 
-                # Calculate RMS level for visualization
-                if self._on_output_level:
-                    rms = float(np.sqrt(np.mean(frame**2)))
-                    self._on_output_level(min(1.0, rms * 5))
-            except asyncio.QueueEmpty:
-                outdata.fill(0)  # Silence if no data
-
+    def _start_output_stream(self, sd: Any) -> None:
+        """Create and start output stream."""
         self._output_stream = sd.OutputStream(
             samplerate=self._device_sample_rate,
             channels=self._channels,
             dtype=DTYPE,
             blocksize=self._device_frame_size,
-            callback=output_callback,
+            callback=self._make_output_callback(),
         )
         self._output_stream.start()
 
+    def _make_output_callback(self) -> Callable[..., None]:
+        """Create output stream callback."""
+
+        def callback(
+            outdata: NDArray[np.float32], frames: int, time_info: object, status: object
+        ) -> None:
+            _ = frames, time_info
+            if status:
+                logger.warning(f"Output stream status: {status}")
+            self._fill_output_data(outdata)
+
+        return callback
+
+    def _fill_output_data(self, outdata: NDArray[np.float32]) -> None:
+        """Fill output buffer with audio data."""
+        try:
+            frame = self._output_buffer.get_nowait()
+            if self._needs_resampling:
+                frame = _resample(frame, self._target_sample_rate, self._device_sample_rate)
+            if outdata.ndim > 1:
+                outdata[:, 0] = frame[: len(outdata)]
+            else:
+                outdata[:] = frame[: len(outdata)]
+            self._report_output_level(frame)
+        except asyncio.QueueEmpty:
+            outdata.fill(0)
+
+    def _report_output_level(self, frame: NDArray[np.float32]) -> None:
+        """Report output level to callback if set."""
+        if self._on_output_level:
+            rms = float(np.sqrt(np.mean(frame**2)))
+            self._on_output_level(min(1.0, rms * 5))
+
+    def _log_start_info(self) -> None:
+        """Log audio I/O start info."""
         logger.info(
             f"Audio I/O started: device={self._device_sample_rate}Hz, "
             f"target={self._target_sample_rate}Hz, "
@@ -379,7 +390,7 @@ class AudioIO:
 
         try:
             return await asyncio.wait_for(self._input_buffer.get(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
     async def write_frame(self, frame: NDArray[np.float32]) -> bool:
@@ -398,7 +409,9 @@ class AudioIO:
 
         try:
             self._output_buffer.put_nowait(frame)
-            logger.info(f"write_frame: queued {len(frame)} samples, queue size={self._output_buffer.qsize()}")
+            logger.info(
+                f"write_frame: queued {len(frame)} samples, queue size={self._output_buffer.qsize()}"
+            )
             return True
         except asyncio.QueueFull:
             logger.warning(f"write_frame: buffer full, dropped {len(frame)} samples")
@@ -415,20 +428,20 @@ class AudioIO:
             await self.start()
 
         # Split into frames and queue
-        num_frames = len(audio) // self._frame_size
+        num_frames = len(audio) // self._target_frame_size
         for i in range(num_frames):
-            start = i * self._frame_size
-            end = start + self._frame_size
+            start = i * self._target_frame_size
+            end = start + self._target_frame_size
             frame = audio[start:end]
             await self.write_frame(frame)
             # Small delay to allow playback
             await asyncio.sleep(self.frame_duration_ms / 1000 * 0.9)
 
         # Handle remaining samples
-        remainder = len(audio) % self._frame_size
+        remainder = len(audio) % self._target_frame_size
         if remainder > 0:
             # Pad final frame with zeros
-            final_frame = np.zeros(self._frame_size, dtype=DTYPE)
+            final_frame = np.zeros(self._target_frame_size, dtype=DTYPE)
             final_frame[:remainder] = audio[-remainder:]
             await self.write_frame(final_frame)
             await asyncio.sleep(self.frame_duration_ms / 1000)
@@ -481,13 +494,13 @@ class PulseAudioIO:
         )
 
         # Subprocess handles
-        self._record_proc: subprocess.Popen | None = None
-        self._play_proc: subprocess.Popen | None = None
+        self._record_proc: subprocess.Popen[bytes] | None = None
+        self._play_proc: subprocess.Popen[bytes] | None = None
         self._running = False
 
         # Background tasks
-        self._input_task: asyncio.Task | None = None
-        self._output_task: asyncio.Task | None = None
+        self._input_task: asyncio.Task[None] | None = None
+        self._output_task: asyncio.Task[None] | None = None
 
         # Callbacks for audio level monitoring
         self._on_input_level: Callable[[float], None] | None = None
@@ -561,9 +574,7 @@ class PulseAudioIO:
         self._input_task = asyncio.create_task(self._read_input_loop())
         self._output_task = asyncio.create_task(self._write_output_loop())
 
-        logger.info(
-            f"PulseAudio I/O started: device=48000Hz, target={self._target_sample_rate}Hz"
-        )
+        logger.info(f"PulseAudio I/O started: device=48000Hz, target={self._target_sample_rate}Hz")
 
     async def _read_input_loop(self) -> None:
         """Background task to read from parecord and buffer frames."""
@@ -571,53 +582,53 @@ class PulseAudioIO:
             logger.error("PulseAudio read loop: no record process or stdout")
             return
 
-        # Bytes per frame at device rate (48kHz, 16-bit, mono)
-        bytes_per_frame = self._device_frame_size * 2  # 2 bytes per sample (s16)
-
+        bytes_per_frame = self._device_frame_size * 2
         loop = asyncio.get_event_loop()
         frame_count = 0
         logger.info(f"PulseAudio read loop started, expecting {bytes_per_frame} bytes per frame")
 
         while self._running and self._record_proc.poll() is None:
             try:
-                # Read frame from subprocess (blocking, run in executor)
                 raw_data = await loop.run_in_executor(
                     None, self._record_proc.stdout.read, bytes_per_frame
                 )
-
                 if not raw_data or len(raw_data) < bytes_per_frame:
                     continue
-
-                # Convert s16le to float32
-                samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
-                samples /= 32768.0  # Normalize to -1.0 to 1.0
-
-                # Resample from 48kHz to 24kHz
-                frame = _resample(samples, 48000, self._target_sample_rate)
-
-                # Apply input gain and clip to prevent distortion
-                frame = np.clip(frame * self._input_gain, -1.0, 1.0)
-
-                # Calculate RMS level for visualization
-                if self._on_input_level:
-                    rms = float(np.sqrt(np.mean(frame**2)))
-                    self._on_input_level(min(1.0, rms * 5))
-
-                # Add to buffer (non-blocking)
-                frame_count += 1
-                try:
-                    self._input_buffer.put_nowait(frame)
-                    if frame_count <= 3 or frame_count % 500 == 0:
-                        logger.info(f"PulseAudio captured frame {frame_count}, queue size={self._input_buffer.qsize()}")
-                except asyncio.QueueFull:
-                    pass  # Drop frame if buffer full
-
+                frame = self._process_pulse_input_raw_data(raw_data)
+                self._report_pulse_input_level(frame)
+                frame_count = self._queue_pulse_input_frame(frame, frame_count)
             except Exception as e:
                 if self._running:
                     logger.warning(f"PulseAudio input error: {e}")
                 break
 
         logger.info(f"PulseAudio read loop exiting, captured {frame_count} frames")
+
+    def _process_pulse_input_raw_data(self, raw_data: bytes) -> NDArray[np.float32]:
+        """Convert raw audio data to processed frame."""
+        samples = np.frombuffer(raw_data, dtype=np.int16).astype(np.float32)
+        samples /= 32768.0
+        frame = _resample(samples, 48000, self._target_sample_rate)
+        return np.clip(frame * self._input_gain, -1.0, 1.0)
+
+    def _report_pulse_input_level(self, frame: NDArray[np.float32]) -> None:
+        """Report input level to callback if set."""
+        if self._on_input_level:
+            rms = float(np.sqrt(np.mean(frame**2)))
+            self._on_input_level(min(1.0, rms * 5))
+
+    def _queue_pulse_input_frame(self, frame: NDArray[np.float32], frame_count: int) -> int:
+        """Queue input frame and return updated count."""
+        frame_count += 1
+        try:
+            self._input_buffer.put_nowait(frame)
+            if frame_count <= 3 or frame_count % 500 == 0:
+                logger.info(
+                    f"PulseAudio captured frame {frame_count}, queue size={self._input_buffer.qsize()}"
+                )
+        except asyncio.QueueFull:
+            pass
+        return frame_count
 
     async def _write_output_loop(self) -> None:
         """Background task to write frames to paplay."""
@@ -630,10 +641,8 @@ class PulseAudioIO:
             try:
                 # Get frame from buffer (with timeout to check running state)
                 try:
-                    frame = await asyncio.wait_for(
-                        self._output_buffer.get(), timeout=0.1
-                    )
-                except asyncio.TimeoutError:
+                    frame = await asyncio.wait_for(self._output_buffer.get(), timeout=0.1)
+                except TimeoutError:
                     continue
 
                 # Calculate RMS level for visualization
@@ -649,9 +658,7 @@ class PulseAudioIO:
                 raw_data = samples_int.tobytes()
 
                 # Write to subprocess (blocking, run in executor)
-                await loop.run_in_executor(
-                    None, self._play_proc.stdin.write, raw_data
-                )
+                await loop.run_in_executor(None, self._play_proc.stdin.write, raw_data)
                 await loop.run_in_executor(None, self._play_proc.stdin.flush)
 
             except Exception as e:
@@ -665,30 +672,41 @@ class PulseAudioIO:
             return
 
         self._running = False
+        await self._cancel_background_tasks()
+        self._terminate_subprocesses()
+        self._clear_buffers()
+        logger.info("PulseAudio I/O stopped")
 
-        # Cancel background tasks
-        if self._input_task:
-            self._input_task.cancel()
+    async def _cancel_background_tasks(self) -> None:
+        """Cancel and clean up background tasks."""
+        await self._cancel_task(self._input_task)
+        self._input_task = None
+        await self._cancel_task(self._output_task)
+        self._output_task = None
+
+    async def _cancel_task(self, task: asyncio.Task[None] | None) -> None:
+        """Cancel a single task safely."""
+        if task:
+            task.cancel()
             try:
-                await self._input_task
+                await task
             except asyncio.CancelledError:
                 pass
-            self._input_task = None
 
-        if self._output_task:
-            self._output_task.cancel()
-            try:
-                await self._output_task
-            except asyncio.CancelledError:
-                pass
-            self._output_task = None
+    def _terminate_subprocesses(self) -> None:
+        """Terminate subprocess handles."""
+        self._terminate_record_proc()
+        self._terminate_play_proc()
 
-        # Terminate subprocesses
+    def _terminate_record_proc(self) -> None:
+        """Terminate record subprocess."""
         if self._record_proc:
             self._record_proc.terminate()
             self._record_proc.wait()
             self._record_proc = None
 
+    def _terminate_play_proc(self) -> None:
+        """Terminate play subprocess."""
         if self._play_proc:
             if self._play_proc.stdin:
                 self._play_proc.stdin.close()
@@ -696,20 +714,18 @@ class PulseAudioIO:
             self._play_proc.wait()
             self._play_proc = None
 
-        # Clear buffers
-        while not self._input_buffer.empty():
+    def _clear_buffers(self) -> None:
+        """Clear audio buffers."""
+        self._drain_queue(self._input_buffer)
+        self._drain_queue(self._output_buffer)
+
+    def _drain_queue(self, queue: asyncio.Queue[NDArray[np.float32]]) -> None:
+        """Drain all items from a queue."""
+        while not queue.empty():
             try:
-                self._input_buffer.get_nowait()
+                queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
-
-        while not self._output_buffer.empty():
-            try:
-                self._output_buffer.get_nowait()
-            except asyncio.QueueEmpty:
-                break
-
-        logger.info("PulseAudio I/O stopped")
 
     async def read_frame(self, timeout: float = 0.2) -> NDArray[np.float32] | None:
         """Read an audio frame from input."""
@@ -718,7 +734,7 @@ class PulseAudioIO:
 
         try:
             return await asyncio.wait_for(self._input_buffer.get(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return None
 
     async def write_frame(self, frame: NDArray[np.float32]) -> bool:

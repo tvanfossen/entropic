@@ -9,7 +9,6 @@ Skip with: pytest -m "not model"
 """
 
 import pytest
-
 from entropi.core.base import Message
 from entropi.inference.orchestrator import ModelOrchestrator, ModelTier
 
@@ -43,25 +42,25 @@ class TestRoutingClassification:
     @pytest.mark.asyncio
     async def test_write_code_routes_to_code(self, orchestrator: ModelOrchestrator):
         """Code writing request should route to CODE tier."""
-        tier = await orchestrator._route([
-            Message(role="user", content="Write a Python function to calculate fibonacci numbers")
-        ])
+        tier = await orchestrator._route(
+            [Message(role="user", content="Write a Python function to calculate fibonacci numbers")]
+        )
         assert tier == ModelTier.CODE, f"Expected CODE, got {tier}"
 
     @pytest.mark.asyncio
     async def test_fix_bug_routes_to_code(self, orchestrator: ModelOrchestrator):
         """Bug fix request should route to CODE tier."""
-        tier = await orchestrator._route([
-            Message(role="user", content="Fix the bug in the authentication module")
-        ])
+        tier = await orchestrator._route(
+            [Message(role="user", content="Fix the bug in the authentication module")]
+        )
         assert tier == ModelTier.CODE, f"Expected CODE, got {tier}"
 
     @pytest.mark.asyncio
     async def test_add_feature_routes_to_code(self, orchestrator: ModelOrchestrator):
         """Feature request should route to CODE tier."""
-        tier = await orchestrator._route([
-            Message(role="user", content="Add a login button to the header component")
-        ])
+        tier = await orchestrator._route(
+            [Message(role="user", content="Add a login button to the header component")]
+        )
         assert tier == ModelTier.CODE, f"Expected CODE, got {tier}"
 
     # === NORMAL (reasoning) tier tests ===
@@ -69,17 +68,17 @@ class TestRoutingClassification:
     @pytest.mark.asyncio
     async def test_explain_routes_to_reasoning(self, orchestrator: ModelOrchestrator):
         """Explanation request should route to NORMAL (reasoning) tier."""
-        tier = await orchestrator._route([
-            Message(role="user", content="Explain how HTTP cookies work")
-        ])
+        tier = await orchestrator._route(
+            [Message(role="user", content="Explain how HTTP cookies work")]
+        )
         assert tier == ModelTier.NORMAL, f"Expected NORMAL, got {tier}"
 
     @pytest.mark.asyncio
     async def test_question_routes_to_reasoning(self, orchestrator: ModelOrchestrator):
         """Question should route to NORMAL (reasoning) tier."""
-        tier = await orchestrator._route([
-            Message(role="user", content="What is the difference between TCP and UDP?")
-        ])
+        tier = await orchestrator._route(
+            [Message(role="user", content="What is the difference between TCP and UDP?")]
+        )
         assert tier == ModelTier.NORMAL, f"Expected NORMAL, got {tier}"
 
     # === THINKING (complex) tier tests ===
@@ -89,14 +88,16 @@ class TestRoutingClassification:
         self, orchestrator: ModelOrchestrator, models_available: dict
     ):
         """Complex analysis should route to THINKING tier (if available)."""
-        tier = await orchestrator._route([
-            Message(
-                role="user",
-                content="Analyze the trade-offs between microservices and monolithic "
-                        "architecture for a high-traffic e-commerce platform, considering "
-                        "scalability, maintainability, and team structure implications"
-            )
-        ])
+        tier = await orchestrator._route(
+            [
+                Message(
+                    role="user",
+                    content="Analyze the trade-offs between microservices and monolithic "
+                    "architecture for a high-traffic e-commerce platform, considering "
+                    "scalability, maintainability, and team structure implications",
+                )
+            ]
+        )
 
         if models_available.get("thinking", False):
             assert tier == ModelTier.THINKING, f"Expected THINKING, got {tier}"

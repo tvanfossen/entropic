@@ -4,9 +4,9 @@ These tests verify fixes for the infinite loop bug where models didn't receive
 feedback because role="tool" messages aren't rendered by llama-cpp.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from entropi.core.base import Message, ToolCall
 from entropi.core.engine import AgentEngine, LoopContext
 
@@ -25,16 +25,14 @@ class TestFeedbackMessageRoles:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
-        with patch.object(AgentEngine, '_get_max_context_tokens', return_value=16384):
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             return AgentEngine(orchestrator, server_manager, config)
 
     @pytest.fixture
     def tool_call(self):
         """Create a sample tool call."""
         return ToolCall(
-            id="test-123",
-            name="filesystem.read_file",
-            arguments={"path": "/test/file.py"}
+            id="test-123", name="filesystem.read_file", arguments={"path": "/test/file.py"}
         )
 
     def test_duplicate_message_uses_user_role(self, engine, tool_call):
@@ -72,7 +70,7 @@ class TestCircuitBreaker:
     def test_consecutive_duplicate_counter_exists(self):
         """Verify LoopContext has consecutive_duplicate_attempts field."""
         ctx = LoopContext()
-        assert hasattr(ctx, 'consecutive_duplicate_attempts')
+        assert hasattr(ctx, "consecutive_duplicate_attempts")
         assert ctx.consecutive_duplicate_attempts == 0
 
     def test_should_stop_on_duplicate_threshold(self):
@@ -85,7 +83,7 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
-        with patch.object(AgentEngine, '_get_max_context_tokens', return_value=16384):
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
         ctx = LoopContext()
@@ -109,7 +107,7 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
-        with patch.object(AgentEngine, '_get_max_context_tokens', return_value=16384):
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
         ctx = LoopContext()
@@ -124,8 +122,9 @@ class TestCircuitBreaker:
         async for msg in engine._process_tool_calls(ctx, [tool_call]):
             messages.append(msg)
 
-        assert ctx.consecutive_duplicate_attempts == 1, \
-            f"Expected counter=1, got {ctx.consecutive_duplicate_attempts}"
+        assert (
+            ctx.consecutive_duplicate_attempts == 1
+        ), f"Expected counter=1, got {ctx.consecutive_duplicate_attempts}"
         assert len(messages) == 1
         assert messages[0].role == "user"
 
@@ -133,9 +132,11 @@ class TestCircuitBreaker:
     async def test_process_tool_calls_resets_counter_on_success(self):
         """Verify successful tool execution resets duplicate counter."""
         orchestrator = MagicMock()
-        orchestrator.get_adapter = MagicMock(return_value=MagicMock(
-            format_tool_result=MagicMock(return_value=Message(role="user", content="result"))
-        ))
+        orchestrator.get_adapter = MagicMock(
+            return_value=MagicMock(
+                format_tool_result=MagicMock(return_value=Message(role="user", content="result"))
+            )
+        )
 
         server_manager = MagicMock()
         server_manager.execute = AsyncMock(return_value=MagicMock(result="success"))
@@ -146,7 +147,7 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
-        with patch.object(AgentEngine, '_get_max_context_tokens', return_value=16384):
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
         # Mock approval
@@ -163,8 +164,9 @@ class TestCircuitBreaker:
         async for msg in engine._process_tool_calls(ctx, [tool_call]):
             messages.append(msg)
 
-        assert ctx.consecutive_duplicate_attempts == 0, \
-            f"Expected counter reset to 0, got {ctx.consecutive_duplicate_attempts}"
+        assert (
+            ctx.consecutive_duplicate_attempts == 0
+        ), f"Expected counter reset to 0, got {ctx.consecutive_duplicate_attempts}"
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_triggers_at_threshold(self):
@@ -177,7 +179,7 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
-        with patch.object(AgentEngine, '_get_max_context_tokens', return_value=16384):
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
         ctx = LoopContext()

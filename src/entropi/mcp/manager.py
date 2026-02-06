@@ -7,6 +7,7 @@ unified tool access.
 
 import asyncio
 import fnmatch
+import sys
 from typing import Any
 
 from entropi.config.schema import EntropyConfig
@@ -57,35 +58,35 @@ class ServerManager:
         if mcp_config.enable_filesystem:
             self._clients["filesystem"] = MCPClient(
                 name="filesystem",
-                command="python",
+                command=sys.executable,
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.filesystem"],
             )
 
         if mcp_config.enable_bash:
             self._clients["bash"] = MCPClient(
                 name="bash",
-                command="python",
+                command=sys.executable,
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.bash"],
             )
 
         if mcp_config.enable_git:
             self._clients["git"] = MCPClient(
                 name="git",
-                command="python",
+                command=sys.executable,
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.git"],
             )
 
         if mcp_config.enable_diagnostics:
             self._clients["diagnostics"] = MCPClient(
                 name="diagnostics",
-                command="python",
+                command=sys.executable,
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.diagnostics"],
             )
 
         if mcp_config.enable_system:
             self._clients["system"] = MCPClient(
                 name="system",
-                command="python",
+                command=sys.executable,
                 args=["-W", "ignore", "-m", "entropi.mcp.servers.system"],
             )
 

@@ -3,7 +3,6 @@
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-
 from entropi.config.schema import CompactionConfig
 from entropi.core.base import GenerationResult, Message
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter

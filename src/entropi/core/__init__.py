@@ -1,5 +1,7 @@
 """Core module for Entropi."""
 
+from typing import Any
+
 from entropi.core.base import (
     GenerationResult,
     Message,
@@ -30,7 +32,7 @@ from entropi.core.todos import TodoItem, TodoList, TodoStatus
 # Import AgentEngine, AgentState, etc. directly from entropi.core.engine when needed
 
 
-def __getattr__(name: str):
+def __getattr__(name: str) -> Any:
     """Lazy import for engine module to avoid circular imports."""
     if name in (
         "AgentEngine",
@@ -42,18 +44,9 @@ def __getattr__(name: str):
         "LoopMetrics",
         "ToolApproval",
     ):
-        from entropi.core.engine import (
-            AgentEngine,
-            AgentState,
-            InterruptContext,
-            InterruptMode,
-            LoopConfig,
-            LoopContext,
-            LoopMetrics,
-            ToolApproval,
-        )
+        from entropi.core import engine as _engine_module
 
-        return locals()[name]
+        return getattr(_engine_module, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

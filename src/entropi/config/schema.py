@@ -20,6 +20,7 @@ class ModelConfig(BaseModel):
     path: Path
     adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, generic
     context_length: int = Field(default=16384, ge=512, le=131072)
+    max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
@@ -166,9 +167,7 @@ class ExternalMCPConfig(BaseModel):
     """Configuration for external MCP server (Claude Code integration)."""
 
     enabled: bool = False
-    socket_path: Path = Field(
-        default_factory=lambda: Path.home() / ".entropi" / "mcp.sock"
-    )
+    socket_path: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "mcp.sock")
     # Rate limiting: requests per minute
     rate_limit: int = Field(default=10, ge=1, le=100)
 
@@ -307,7 +306,9 @@ class VoiceServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1024, le=65535)
     auto_start: bool = True
-    startup_timeout_seconds: int = Field(default=600, ge=10, le=1800)  # 10 min default for model loading
+    startup_timeout_seconds: int = Field(
+        default=600, ge=10, le=1800
+    )  # 10 min default for model loading
 
 
 class SecondaryModelConfig(BaseModel):

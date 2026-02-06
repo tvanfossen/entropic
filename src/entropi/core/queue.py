@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Callable
+from typing import Any
 
 from entropi.core.logging import get_logger
 
@@ -57,6 +58,18 @@ class QueuedMessage:
         if self.priority != other.priority:
             return self.priority < other.priority
         return self.timestamp < other.timestamp
+
+
+@dataclass
+class MessageRequest:
+    """Request to add a message to the queue."""
+
+    content: str
+    source: str
+    priority: MessagePriority | None = None
+    context: list[dict[str, Any]] | None = None
+    callback: Callable[[Any], None] | None = None
+    task_id: str | None = None
 
 
 @dataclass
@@ -116,42 +129,30 @@ class MessageQueue:
         self._on_preempt = on_preempt
         self._on_resume = on_resume
 
-    async def put(
-        self,
-        content: str,
-        source: str,
-        priority: MessagePriority | None = None,
-        context: list[dict[str, Any]] | None = None,
-        callback: Callable[[Any], None] | None = None,
-        task_id: str | None = None,
-    ) -> str:
+    async def put(self, request: MessageRequest) -> str:
         """
         Add a message to the queue.
 
         Args:
-            content: Message content
-            source: Message source (human, claude-code, system)
-            priority: Optional explicit priority (defaults based on source)
-            context: Optional file context to include
-            callback: Optional callback for when task completes
-            task_id: Optional task ID for linking to TaskManager
+            request: Message request data
 
         Returns:
             Message ID
         """
         # Determine priority from source if not specified
+        priority = request.priority
         if priority is None:
-            priority = self._priority_for_source(source)
+            priority = self._priority_for_source(request.source)
 
         message = QueuedMessage(
             id=str(uuid.uuid4()),
-            content=content,
-            source=source,
+            content=request.content,
+            source=request.source,
             priority=priority,
             timestamp=time.time(),
-            context=context,
-            callback=callback,
-            task_id=task_id,
+            context=request.context,
+            callback=request.callback,
+            task_id=request.task_id,
         )
 
         async with self._lock:
@@ -163,15 +164,13 @@ class MessageQueue:
             self._queue.sort()
 
             logger.debug(
-                f"Queued message {message.id[:8]} from {source} "
+                f"Queued message {message.id[:8]} from {request.source} "
                 f"(priority={priority.name}, depth={len(self._queue)})"
             )
 
             # Check if we should preempt current task
             if self._current and priority < self._current.priority:
-                logger.info(
-                    f"Preempting {self._current.source} task for {source} input"
-                )
+                logger.info(f"Preempting {self._current.source} task for {request.source} input")
                 self._preemption_event.set()
 
             self._not_empty.set()
@@ -198,9 +197,7 @@ class MessageQueue:
                     if not self._queue:
                         self._not_empty.clear()
 
-                    logger.debug(
-                        f"Dequeued message {message.id[:8]} from {message.source}"
-                    )
+                    logger.debug(f"Dequeued message {message.id[:8]} from {message.source}")
                     return message
 
                 self._not_empty.clear()
@@ -243,7 +240,9 @@ class MessageQueue:
         # Remove from preempted if present
         self._preempted.pop(message_id, None)
 
-    def preempt_current(self, partial_content: str = "", partial_tool_calls: list | None = None) -> PreemptionState | None:
+    def preempt_current(
+        self, partial_content: str = "", partial_tool_calls: list[Any] | None = None
+    ) -> PreemptionState | None:
         """
         Preempt the currently processing message.
 
@@ -315,7 +314,7 @@ class MessageQueue:
         try:
             await asyncio.wait_for(self._preemption_event.wait(), timeout)
             return True
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return False
 
     @property
@@ -351,15 +350,20 @@ class MessageQueue:
         """Get queue status for MCP status endpoint."""
         return {
             "depth": self.depth,
-            "current": {
-                "id": self._current.id,
-                "source": self._current.source,
-                "priority": self._current.priority.name,
-            } if self._current else None,
+            "current": (
+                {
+                    "id": self._current.id,
+                    "source": self._current.source,
+                    "priority": self._current.priority.name,
+                }
+                if self._current
+                else None
+            ),
             "preempted_count": len(self._preempted),
         }
 
 
 class QueueFullError(Exception):
     """Raised when queue is full."""
+
     pass

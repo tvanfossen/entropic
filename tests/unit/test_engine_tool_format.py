@@ -15,10 +15,12 @@ def test_empty_content_tool_call_format():
 
     # Apply the fix logic (from engine._create_assistant_message)
     if not content.strip() and tool_calls:
-        content = "\n".join([
-            f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
-            for tc in tool_calls
-        ])
+        content = "\n".join(
+            [
+                f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
+                for tc in tool_calls
+            ]
+        )
 
     assert "<tool_call>" in content
     assert "[Calling:" not in content
@@ -35,10 +37,12 @@ def test_multiple_tool_calls_format():
     content = ""
 
     if not content.strip() and tool_calls:
-        content = "\n".join([
-            f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
-            for tc in tool_calls
-        ])
+        content = "\n".join(
+            [
+                f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
+                for tc in tool_calls
+            ]
+        )
 
     assert content.count("<tool_call>") == 2
     assert content.count("</tool_call>") == 2
@@ -56,10 +60,12 @@ def test_non_empty_content_preserved():
     # The fix only applies when content is empty
     original_content = content
     if not content.strip() and tool_calls:
-        content = "\n".join([
-            f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
-            for tc in tool_calls
-        ])
+        content = "\n".join(
+            [
+                f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
+                for tc in tool_calls
+            ]
+        )
 
     assert content == original_content
     assert "<tool_call>" not in content

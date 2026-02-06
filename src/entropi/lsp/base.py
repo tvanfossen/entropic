@@ -26,8 +26,8 @@ try:
     HAS_LSP = True
 except ImportError:
     HAS_LSP = False
-    LspClient = None  # type: ignore
-    LspEndpoint = None  # type: ignore
+    LspClient = None
+    LspEndpoint = None
 
 logger = get_logger("lsp.base")
 
@@ -111,6 +111,16 @@ class BaseLSPClient(ABC):
         except (FileNotFoundError, subprocess.TimeoutExpired):
             return False
 
+    def _can_start(self) -> bool:
+        """Check if LSP can be started. Logs warnings for failures."""
+        if not HAS_LSP:
+            logger.warning("pylspclient not installed - LSP disabled")
+            return False
+        if not self.is_available:
+            logger.warning(f"{self.language} LSP server not found: {self.command[0]}")
+            return False
+        return True
+
     def start(self) -> bool:
         """
         Start the language server.
@@ -118,12 +128,7 @@ class BaseLSPClient(ABC):
         Returns:
             True if started successfully
         """
-        if not HAS_LSP:
-            logger.warning("pylspclient not installed - LSP disabled")
-            return False
-
-        if not self.is_available:
-            logger.warning(f"{self.language} LSP server not found: {self.command[0]}")
+        if not self._can_start():
             return False
 
         try:

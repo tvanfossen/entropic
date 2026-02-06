@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from textual import work
@@ -29,7 +30,7 @@ from entropi.ui.voice_widgets import (
     VoiceTranscript,
     VoiceVisualizer,
 )
-from entropi.voice.client import VoiceClient
+from entropi.voice.client import VoiceCallbacks, VoiceClient
 from entropi.voice.client import VoiceStats as ClientStats
 from entropi.voice.controller import VoiceState
 
@@ -37,6 +38,14 @@ if TYPE_CHECKING:
     from entropi.config.schema import VoiceConfig
 
 logger = get_logger("ui.voice_screen")
+
+
+@dataclass
+class VoiceScreenCallbacks:
+    """Callbacks for voice screen lifecycle events."""
+
+    on_enter: Callable[[], Awaitable[None]] | None = None
+    on_exit: Callable[[], Awaitable[None]] | None = None
 
 
 class VoiceSettingsPanel(Static):
@@ -167,8 +176,12 @@ class VoiceSettingsPanel(Static):
         try:
             input_select = self.query_one("#input-device-select", Select)
             output_select = self.query_one("#output-device-select", Select)
-            input_idx = input_select.value if input_select.value != -1 else None
-            output_idx = output_select.value if output_select.value != -1 else None
+            input_val = input_select.value
+            output_val = output_select.value
+            input_idx = int(input_val) if isinstance(input_val, int) and input_val != -1 else None
+            output_idx = (
+                int(output_val) if isinstance(output_val, int) and output_val != -1 else None
+            )
             return input_idx, output_idx
         except Exception:
             return None, None
@@ -248,27 +261,22 @@ class VoiceScreen(Screen[None]):
     def __init__(
         self,
         config: VoiceConfig,
-        on_enter: Callable[[], Awaitable[None]] | None = None,
-        on_exit: Callable[[], Awaitable[None]] | None = None,
-        name: str | None = None,
-        id: str | None = None,
-        classes: str | None = None,
+        callbacks: VoiceScreenCallbacks | None = None,
+        **kwargs: str | None,
     ) -> None:
         """
         Initialize voice screen.
 
         Args:
             config: Voice configuration
-            on_enter: Async callback when entering voice mode (e.g., unload chat models)
-            on_exit: Async callback when exiting voice mode (e.g., reload chat models)
-            name: Screen name
-            id: Screen ID
-            classes: CSS classes
+            callbacks: Lifecycle callbacks (on_enter, on_exit)
+            **kwargs: Standard Textual Screen kwargs (name, id, classes)
         """
-        super().__init__(name=name, id=id, classes=classes)
+        super().__init__(**kwargs)
         self._config = config
-        self._on_enter = on_enter
-        self._on_exit = on_exit
+        cbs = callbacks or VoiceScreenCallbacks()
+        self._enter_callback = cbs.on_enter
+        self._exit_callback = cbs.on_exit
         self._client: VoiceClient | None = None
         self._start_time: float = 0
         self._elapsed_timer: asyncio.Task[None] | None = None
@@ -289,7 +297,7 @@ class VoiceScreen(Screen[None]):
         # Get server config
         host = "127.0.0.1"
         port = 8765
-        if hasattr(self._config, 'server'):
+        if hasattr(self._config, "server"):
             host = self._config.server.host
             port = self._config.server.port
 
@@ -302,13 +310,15 @@ class VoiceScreen(Screen[None]):
 
         # Set up callbacks
         self._client.set_callbacks(
-            on_text=lambda t: self._on_transcript_update("assistant", t),
-            on_state_change=self._on_client_state_change,
-            on_stats_update=self._on_client_stats_update,
-            on_input_level=self._on_input_level,
-            on_output_level=self._on_output_level,
-            on_error=self._on_error,
-            on_loading_progress=self._on_loading_progress,
+            VoiceCallbacks(
+                on_text=lambda t: self._on_transcript_update("assistant", t),
+                on_state_change=self._on_client_state_change,
+                on_stats_update=self._on_client_stats_update,
+                on_input_level=self._on_input_level,
+                on_output_level=self._on_output_level,
+                on_error=self._on_error,
+                on_loading_progress=self._on_loading_progress,
+            )
         )
 
         # Start initialization (but don't start conversation)
@@ -318,53 +328,15 @@ class VoiceScreen(Screen[None]):
     @work(exclusive=True)
     async def _run_initialization(self) -> None:
         """Initialize voice server and audio devices (but don't start conversation)."""
-        if self._client is None:
-            logger.error("Client is None in _run_initialization")
+        widgets = await self._get_initialization_widgets()
+        if widgets is None:
             return
 
-        # Give widgets time to mount
-        await asyncio.sleep(0.1)
+        status_bar, settings_panel, transcript = widgets
+        status_bar.set_state("initializing")
 
         try:
-            status_bar = self.query_one("#status-bar", VoiceStatusBar)
-            status_bar.set_state("initializing")
-            settings_panel = self.query_one("#settings-panel", VoiceSettingsPanel)
-            transcript = self.query_one("#transcript", VoiceTranscript)
-        except Exception as e:
-            logger.error(f"Failed to query widgets: {e}")
-            return
-
-        try:
-            # Show initial status in transcript
-            transcript.write("[yellow]Starting voice mode initialization...[/]")
-
-            # Call on_enter to free GPU memory (unload chat models)
-            if self._on_enter:
-                settings_panel.set_status("Unloading chat models...")
-                transcript.write("[dim]Unloading chat models to free GPU memory...[/]")
-                await self._on_enter()
-
-            # Start voice server subprocess (loads models in separate process)
-            settings_panel.set_status("Starting voice server...")
-            transcript.write("[yellow]Starting voice server (models load in subprocess)...[/]")
-
-            success = await self._client.start_server()
-            if not success:
-                settings_panel.set_status("[red]Server startup failed[/red]")
-                transcript.write("[red bold]ERROR: Failed to start voice server[/]")
-                self.notify("Failed to start voice server", severity="error")
-                return
-
-            # Connect to the server
-            settings_panel.set_status("Connecting to voice server...")
-            transcript.write("[dim]Connecting to voice server...[/]")
-
-            connected = await self._client.connect()
-            if not connected:
-                settings_panel.set_status("[red]Connection failed[/red]")
-                transcript.write("[red bold]ERROR: Failed to connect to voice server[/]")
-                self.notify("Failed to connect to voice server", severity="error")
-                return
+            await self._do_initialization(settings_panel, transcript)
 
             # Detect audio devices
             settings_panel.set_status("Detecting audio devices...")
@@ -390,6 +362,52 @@ class VoiceScreen(Screen[None]):
             except Exception:
                 pass
             self.notify(f"Voice mode error: {e}", severity="error")
+
+    async def _get_initialization_widgets(
+        self,
+    ) -> tuple[VoiceStatusBar, VoiceSettingsPanel, VoiceTranscript] | None:
+        """Get widgets needed for initialization. Returns None on failure."""
+        if self._client is None:
+            logger.error("Client is None in _run_initialization")
+            return None
+        await asyncio.sleep(0.1)  # Give widgets time to mount
+        try:
+            return (
+                self.query_one("#status-bar", VoiceStatusBar),
+                self.query_one("#settings-panel", VoiceSettingsPanel),
+                self.query_one("#transcript", VoiceTranscript),
+            )
+        except Exception as e:
+            logger.error(f"Failed to query widgets: {e}")
+            return None
+
+    async def _do_initialization(
+        self, settings_panel: VoiceSettingsPanel, transcript: VoiceTranscript
+    ) -> None:
+        """Perform the initialization steps. Raises on failure."""
+        assert self._client is not None
+        transcript.write("[yellow]Starting voice mode initialization...[/]")
+
+        if self._enter_callback:
+            settings_panel.set_status("Unloading chat models...")
+            transcript.write("[dim]Unloading chat models to free GPU memory...[/]")
+            await self._enter_callback()
+
+        settings_panel.set_status("Starting voice server...")
+        transcript.write("[yellow]Starting voice server (models load in subprocess)...[/]")
+        if not await self._client.start_server():
+            settings_panel.set_status("[red]Server startup failed[/red]")
+            transcript.write("[red bold]ERROR: Failed to start voice server[/]")
+            self.notify("Failed to start voice server", severity="error")
+            raise RuntimeError("Failed to start voice server")
+
+        settings_panel.set_status("Connecting to voice server...")
+        transcript.write("[dim]Connecting to voice server...[/]")
+        if not await self._client.connect():
+            settings_panel.set_status("[red]Connection failed[/red]")
+            transcript.write("[red bold]ERROR: Failed to connect to voice server[/]")
+            self.notify("Failed to connect to voice server", severity="error")
+            raise RuntimeError("Failed to connect to voice server")
 
     async def _detect_audio_devices(self) -> list[tuple[str, int, bool, bool]]:
         """Detect available audio devices."""
@@ -556,7 +574,7 @@ class VoiceScreen(Screen[None]):
         except Exception as e:
             logger.warning(f"Failed to update loading progress: {e}")
 
-    def _on_client_stats_update(self, stats: "ClientStats") -> None:
+    def _on_client_stats_update(self, stats: ClientStats) -> None:
         """Handle real-time stats updates from the client."""
         try:
             stats_panel = self.query_one("#stats-panel", VoiceStatsPanel)
@@ -630,7 +648,7 @@ class VoiceScreen(Screen[None]):
 
         try:
             transcript = self.query_one("#transcript", VoiceTranscript)
-            transcript.clear()
+            transcript.clear_transcript()
         except Exception:
             pass
 
@@ -651,9 +669,9 @@ class VoiceScreen(Screen[None]):
             self._client = None
 
         # Call on_exit to reload chat models
-        if self._on_exit:
+        if self._exit_callback:
             try:
-                await self._on_exit()
+                await self._exit_callback()
             except Exception as e:
                 logger.warning(f"Error in on_exit callback: {e}")
 

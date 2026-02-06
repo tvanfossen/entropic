@@ -100,84 +100,111 @@ class FalconAdapter(ChatAdapter):
         Returns:
             Tuple of (cleaned content, tool calls)
         """
+        self._log_parse_start(content)
+        self._log_thinking_content(content)
+
+        tool_calls = self._parse_tagged_tool_calls(content)
+        if not tool_calls:
+            tool_calls = self._parse_bare_json_tool_calls(content)
+
+        cleaned = self._clean_content(content, tool_calls)
+        self._log_parse_result(content, tool_calls)
+
+        return cleaned, tool_calls
+
+    def _log_parse_start(self, content: str) -> None:
+        """Log debug info at start of parsing."""
         logger.debug("\n=== Parsing tool calls (Falcon) ===")
         logger.debug(f"Content length: {len(content)}")
         logger.debug(f"Content:\n{content}")
 
-        tool_calls = []
-
-        # Extract thinking blocks for logging
+    def _log_thinking_content(self, content: str) -> None:
+        """Extract and log thinking content."""
         thinking_content = self._extract_thinking(content)
         if thinking_content:
             logger.info(f"[THINKING] ({len(thinking_content)} chars):\n{thinking_content}")
 
-        # Pattern 1: <tool_call> tags
-        tool_call_pattern = re.compile(
+    def _parse_tagged_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse tool calls from <tool_call> tags."""
+        tool_calls = []
+        pattern = re.compile(
             rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
             re.DOTALL,
         )
-        matches = tool_call_pattern.findall(content)
-
-        for match in matches:
-            try:
-                data = json.loads(match.strip())
-                tool_call = ToolCall(
-                    id=str(uuid.uuid4()),
-                    name=data.get("name", ""),
-                    arguments=data.get("arguments", {}),
-                )
+        for match in pattern.findall(content):
+            tool_call = self._parse_single_tool_call(match.strip())
+            if tool_call:
                 tool_calls.append(tool_call)
                 logger.info(f"Parsed Falcon tool call: {tool_call.name}")
-            except json.JSONDecodeError:
-                recovered = self._try_recover_json(match.strip())
-                if recovered:
-                    tool_calls.append(recovered)
-                else:
-                    logger.warning(f"Failed to parse tool call: {match}")
+        return tool_calls
 
-        # Fallback: bare JSON on its own line
-        if not tool_calls:
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("{") and '"name"' in stripped:
-                    try:
-                        data = json.loads(stripped)
-                        if "name" in data:
-                            tool_call = ToolCall(
-                                id=str(uuid.uuid4()),
-                                name=data["name"],
-                                arguments=data.get("arguments", {}),
-                            )
-                            tool_calls.append(tool_call)
-                            logger.info(f"Parsed Falcon bare JSON tool call: {tool_call.name}")
-                    except json.JSONDecodeError:
-                        pass
+    def _parse_single_tool_call(self, json_str: str) -> ToolCall | None:
+        """Parse a single tool call JSON string."""
+        try:
+            data = json.loads(json_str)
+            return ToolCall(
+                id=str(uuid.uuid4()),
+                name=data.get("name", ""),
+                arguments=data.get("arguments", {}),
+            )
+        except json.JSONDecodeError:
+            recovered = self._try_recover_json(json_str)
+            if not recovered:
+                logger.warning(f"Failed to parse tool call: {json_str}")
+            return recovered
 
-        # Clean content - remove tool call blocks
-        cleaned = tool_call_pattern.sub("", content).strip()
+    def _parse_bare_json_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse bare JSON tool calls from lines."""
+        tool_calls = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if not (stripped.startswith("{") and '"name"' in stripped):
+                continue
+            tool_call = self._try_parse_bare_json_line(stripped)
+            if tool_call:
+                tool_calls.append(tool_call)
+                logger.info(f"Parsed Falcon bare JSON tool call: {tool_call.name}")
+        return tool_calls
 
-        # Remove thinking blocks from displayed output
-        think_pattern = re.compile(
-            rf"{re.escape(self.THINK_START)}.*?{re.escape(self.THINK_END)}",
+    def _try_parse_bare_json_line(self, line: str) -> ToolCall | None:
+        """Try to parse a bare JSON line as a tool call."""
+        try:
+            data = json.loads(line)
+            if "name" in data:
+                return ToolCall(
+                    id=str(uuid.uuid4()),
+                    name=data["name"],
+                    arguments=data.get("arguments", {}),
+                )
+        except json.JSONDecodeError:
+            pass
+        return None
+
+    def _clean_content(self, content: str, tool_calls: list[ToolCall]) -> str:
+        """Remove tool calls and think blocks from content."""
+        tool_pattern = re.compile(
+            rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
             re.DOTALL,
         )
-        cleaned = think_pattern.sub("", cleaned).strip()
-
-        # Clean bare JSON lines if we parsed them
+        cleaned = tool_pattern.sub("", content).strip()
+        cleaned = self._strip_think_blocks(cleaned)
         if tool_calls:
-            cleaned_lines = []
-            for line in cleaned.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("{") and '"name"' in stripped:
-                    try:
-                        data = json.loads(stripped)
-                        if "name" in data:
-                            continue  # Skip this line
-                    except json.JSONDecodeError:
-                        pass
-                cleaned_lines.append(line)
-            cleaned = "\n".join(cleaned_lines).strip()
+            cleaned = self._remove_bare_json_lines(cleaned)
+        return cleaned
 
+    def _remove_bare_json_lines(self, content: str) -> str:
+        """Remove lines that are bare JSON tool calls."""
+        cleaned_lines = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("{") and '"name"' in stripped:
+                if self._try_parse_bare_json_line(stripped):
+                    continue
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
+
+    def _log_parse_result(self, content: str, tool_calls: list[ToolCall]) -> None:
+        """Log parsing results."""
         if tool_calls:
             logger.info(f"Parsed {len(tool_calls)} tool calls: {[tc.name for tc in tool_calls]}")
         else:
@@ -185,8 +212,6 @@ class FalconAdapter(ChatAdapter):
             logger.debug(f"  - Contains '{{': {'{' in content}")
             logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
             logger.debug(f"  - Contains '<tool_call>': {'<tool_call>' in content}")
-
-        return cleaned, tool_calls
 
     def _extract_thinking(self, content: str) -> str | None:
         """Extract thinking content from <think> blocks."""
@@ -263,41 +288,49 @@ Continue with the task. Call more tools if needed, or respond when complete."""
         Returns:
             True if this is a final response, False if model is still working
         """
-        # If there are tool calls, not complete - need to execute them
-        if tool_calls:
+        # Early exit conditions that indicate incomplete response
+        if self._has_incomplete_indicators(content, tool_calls):
             return False
 
-        # Check for unclosed think block (model was cut off mid-generation)
+        # Remove think blocks and check remaining content
+        content_without_think = self._strip_think_blocks(content)
+
+        # Check for unparsed tool calls in code blocks
+        if self._has_unparsed_tool_calls(content_without_think):
+            return False
+
+        # Complete if there's content outside think blocks
+        return bool(content_without_think)
+
+    def _has_incomplete_indicators(self, content: str, tool_calls: list[ToolCall]) -> bool:
+        """Check for indicators that response is incomplete."""
+        if tool_calls:
+            return True
         has_think_start = self.THINK_START in content
         has_think_end = self.THINK_END in content
         if has_think_start and not has_think_end:
             logger.debug("Unclosed think block detected - continuing loop")
-            return False
+            return True
+        return False
 
-        # Remove complete think blocks and see if there's any content left
+    def _strip_think_blocks(self, content: str) -> str:
+        """Remove complete think blocks from content."""
         think_pattern = re.compile(
             rf"{re.escape(self.THINK_START)}.*?{re.escape(self.THINK_END)}",
             re.DOTALL,
         )
-        content_without_think = think_pattern.sub("", content).strip()
+        return think_pattern.sub("", content).strip()
 
-        # Check for unparsed tool call indicators in code blocks
-        if "```" in content_without_think:
-            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
-            for block in code_block_pattern.findall(content_without_think):
-                block_stripped = block.strip()
-
-                # Check for JSON-style tool call
-                if block_stripped.startswith("{") and '"name"' in block_stripped:
-                    logger.debug("Found unparsed JSON tool call in code block - continuing loop")
-                    return False
-
-        # If there's content outside of think blocks, that's the response
-        if content_without_think:
-            return True
-
-        # Only think block(s) with no other content - model still working
-        logger.debug("Response is only think block(s) - continuing loop")
+    def _has_unparsed_tool_calls(self, content: str) -> bool:
+        """Check for unparsed tool call JSON in code blocks."""
+        if "```" not in content:
+            return False
+        code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
+        for block in code_block_pattern.findall(content):
+            block_stripped = block.strip()
+            if block_stripped.startswith("{") and '"name"' in block_stripped:
+                logger.debug("Found unparsed JSON tool call in code block - continuing loop")
+                return True
         return False
 
 

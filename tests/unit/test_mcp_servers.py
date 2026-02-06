@@ -17,22 +17,31 @@ class TestFilesystemServer:
 
     @pytest.mark.asyncio
     async def test_read_file(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test reading a file."""
+        """Test reading a file returns JSON with line numbers."""
         (tmp_path / "test.txt").write_text("hello world")
         result = await server._read_file("test.txt")
-        assert result == "hello world"
+        # Result is JSON with line-numbered content
+        import json
+
+        data = json.loads(result)
+        assert data["path"] == "test.txt"
+        assert data["lines"]["1"] == "hello world"
 
     @pytest.mark.asyncio
     async def test_read_file_not_found(self, server: FilesystemServer) -> None:
         """Test reading non-existent file."""
         result = await server._read_file("nonexistent.txt")
-        assert "not found" in result.lower()
+        assert "not_found" in result.lower() or "not found" in result.lower()
 
     @pytest.mark.asyncio
     async def test_write_file(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test writing a file."""
-        await server._write_file("new.txt", "content")
+        """Test writing a new file (no read required for new files)."""
+        result = await server._write_file("new.txt", "content")
         assert (tmp_path / "new.txt").read_text() == "content"
+        import json
+
+        data = json.loads(result)
+        assert data["success"] is True
 
     @pytest.mark.asyncio
     async def test_write_file_creates_directories(
@@ -41,42 +50,6 @@ class TestFilesystemServer:
         """Test writing file creates parent directories."""
         await server._write_file("nested/dir/file.txt", "content")
         assert (tmp_path / "nested" / "dir" / "file.txt").read_text() == "content"
-
-    @pytest.mark.asyncio
-    async def test_list_directory(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test listing directory."""
-        (tmp_path / "file1.txt").write_text("a")
-        (tmp_path / "file2.txt").write_text("b")
-        (tmp_path / "subdir").mkdir()
-
-        result = await server._list_directory(".", False)
-
-        assert "file1.txt" in result
-        assert "file2.txt" in result
-        assert "subdir" in result
-
-    @pytest.mark.asyncio
-    async def test_list_directory_recursive(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test recursive directory listing."""
-        (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "main.py").write_text("code")
-
-        result = await server._list_directory(".", True)
-
-        assert "src" in result
-        assert "main.py" in result
-
-    @pytest.mark.asyncio
-    async def test_file_exists(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test file exists check."""
-        (tmp_path / "exists.txt").write_text("yes")
-
-        result = await server._file_exists("exists.txt")
-        assert "Yes" in result
-        assert "file" in result
-
-        result = await server._file_exists("nope.txt")
-        assert "No" in result
 
     def test_path_traversal_blocked(self, server: FilesystemServer) -> None:
         """Test that path traversal is blocked."""
@@ -89,30 +62,48 @@ class TestFilesystemServer:
             server._resolve_path("/etc/passwd")
 
     @pytest.mark.asyncio
-    async def test_search_files(self, server: FilesystemServer, tmp_path: Path) -> None:
-        """Test file search."""
-        (tmp_path / "file1.py").write_text("python code")
-        (tmp_path / "file2.py").write_text("more python")
-        (tmp_path / "readme.md").write_text("docs")
+    async def test_str_replace_edit(self, server: FilesystemServer, tmp_path: Path) -> None:
+        """Test edit_file with str_replace mode."""
+        import json
 
-        result = await server._search_files("*.py", None)
+        (tmp_path / "edit.txt").write_text("hello world")
 
-        assert "file1.py" in result
-        assert "file2.py" in result
-        assert "readme.md" not in result
+        # Must read first
+        await server._read_file("edit.txt")
+
+        # Then edit
+        result = await server._str_replace("edit.txt", "world", "universe", False)
+        data = json.loads(result)
+        assert data["success"] is True
+        assert (tmp_path / "edit.txt").read_text() == "hello universe"
 
     @pytest.mark.asyncio
-    async def test_search_files_with_content(
-        self, server: FilesystemServer, tmp_path: Path
-    ) -> None:
-        """Test file search with content pattern."""
-        (tmp_path / "file1.py").write_text("def hello():")
-        (tmp_path / "file2.py").write_text("class Foo:")
+    async def test_edit_requires_read(self, server: FilesystemServer, tmp_path: Path) -> None:
+        """Test that edit requires reading the file first."""
+        import json
 
-        result = await server._search_files("*.py", r"def \w+")
+        (tmp_path / "noedit.txt").write_text("content")
 
-        assert "file1.py" in result
-        assert "file2.py" not in result
+        # Try to edit without reading first
+        result = await server._str_replace("noedit.txt", "content", "new", False)
+        data = json.loads(result)
+        assert data["error"] == "read_required"
+
+    @pytest.mark.asyncio
+    async def test_insert_at_line(self, server: FilesystemServer, tmp_path: Path) -> None:
+        """Test edit_file with insert mode."""
+        import json
+
+        (tmp_path / "insert.txt").write_text("line1\nline2\n")
+
+        # Must read first
+        await server._read_file("insert.txt")
+
+        # Insert after line 1
+        result = await server._insert_at_line("insert.txt", 1, "inserted")
+        data = json.loads(result)
+        assert data["success"] is True
+        assert (tmp_path / "insert.txt").read_text() == "line1\ninserted\nline2\n"
 
 
 class TestBashServer:

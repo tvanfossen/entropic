@@ -8,7 +8,11 @@ def test_tilde_expansion():
     path_str = "~/test/path"
     expanded = os.path.expanduser(path_str) if path_str.startswith("~") else path_str
 
-    assert expanded.startswith("/home/") or expanded.startswith("/Users/") or expanded.startswith("/root")
+    assert (
+        expanded.startswith("/home/")
+        or expanded.startswith("/Users/")
+        or expanded.startswith("/root")
+    )
     assert "~" not in expanded
 
 

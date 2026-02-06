@@ -36,56 +36,65 @@ async def run_bridge(socket_path: Path | None = None) -> int:
     Returns:
         Exit code (0 for success)
     """
-    path = socket_path or DEFAULT_SOCKET_PATH
+    path = _resolve_socket_path(socket_path)
+    connection = await _connect_to_socket(path)
+    if connection is None:
+        return 1
 
-    # Resolve relative paths
+    reader, writer = connection
+    exit_code = await _run_bridge_loop(reader, writer)
+    logger.info("Bridge disconnected")
+    return exit_code
+
+
+def _resolve_socket_path(socket_path: Path | None) -> Path:
+    """Resolve socket path to absolute path."""
+    path = socket_path or DEFAULT_SOCKET_PATH
     if not path.is_absolute():
         path = Path.cwd() / path
-    path = path.resolve()
+    return path.resolve()
 
+
+async def _connect_to_socket(
+    path: Path,
+) -> tuple[asyncio.StreamReader, asyncio.StreamWriter] | None:
+    """Connect to socket. Returns (reader, writer) or None on error."""
     if not path.exists():
         logger.error(f"Socket not found: {path}")
         logger.error("Make sure Entropi is running first.")
-        return 1
-
+        return None
     try:
         reader, writer = await asyncio.open_unix_connection(str(path))
         logger.info(f"Connected to Entropi at {path}")
+        return reader, writer
     except Exception as e:
         logger.error(f"Failed to connect to socket: {e}")
-        return 1
+        return None
 
-    # Create tasks for bidirectional forwarding
+
+async def _run_bridge_loop(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> int:
+    """Run the bridge forwarding loop. Returns exit code."""
     stdin_task = asyncio.create_task(_forward_stdin_to_socket(writer))
     socket_task = asyncio.create_task(_forward_socket_to_stdout(reader))
 
     try:
-        # Wait for either direction to complete (usually stdin EOF)
         done, pending = await asyncio.wait(
-            [stdin_task, socket_task],
-            return_when=asyncio.FIRST_COMPLETED,
+            [stdin_task, socket_task], return_when=asyncio.FIRST_COMPLETED
         )
-
-        # Cancel pending tasks
         for task in pending:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-
-        # Check for errors
         for task in done:
             if task.exception():
                 logger.error(f"Bridge error: {task.exception()}")
                 return 1
-
+        return 0
     finally:
         writer.close()
         await writer.wait_closed()
-
-    logger.info("Bridge disconnected")
-    return 0
 
 
 async def _forward_stdin_to_socket(writer: asyncio.StreamWriter) -> None:

@@ -11,10 +11,11 @@ import json
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from entropi.core.base import Message
 from entropi.core.logging import get_logger
@@ -118,7 +119,8 @@ class SessionManager:
     def _init_db(self) -> None:
         """Initialize database schema."""
         with self._connection() as conn:
-            conn.executescript("""
+            conn.executescript(
+                """
                 CREATE TABLE IF NOT EXISTS schema_version (
                     version INTEGER PRIMARY KEY
                 );
@@ -152,16 +154,14 @@ class SessionManager:
 
                 CREATE INDEX IF NOT EXISTS idx_sessions_updated
                 ON sessions(updated_at DESC);
-            """)
+            """
+            )
 
             # Check/set schema version
             cursor = conn.execute("SELECT version FROM schema_version LIMIT 1")
             row = cursor.fetchone()
             if row is None:
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)",
-                    (SCHEMA_VERSION,)
-                )
+                conn.execute("INSERT INTO schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
 
     @contextmanager
     def _connection(self) -> Iterator[sqlite3.Connection]:
@@ -342,9 +342,7 @@ class SessionManager:
                 (time.time(), session_id),
             )
 
-        logger.debug(
-            f"Added {message.role} message from {source} to session {session_id[:8]}"
-        )
+        logger.debug(f"Added {message.role} message from {source} to session {session_id[:8]}")
         return session_message
 
     def get_messages(

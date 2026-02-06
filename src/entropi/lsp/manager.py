@@ -50,15 +50,15 @@ class LSPManager:
 
         # Start Python LSP if enabled
         if self.config.python_enabled:
-            client = PyrightClient(self.root_path)
-            if client.start():
-                self._clients["python"] = client
+            py_client: BaseLSPClient = PyrightClient(self.root_path)
+            if py_client.start():
+                self._clients["python"] = py_client
 
         # Start C LSP if enabled
         if self.config.c_enabled:
-            client = ClangdClient(self.root_path)
-            if client.start():
-                self._clients["c"] = client
+            c_client: BaseLSPClient = ClangdClient(self.root_path)
+            if c_client.start():
+                self._clients["c"] = c_client
 
         logger.info(f"LSP started: {list(self._clients.keys())}")
 

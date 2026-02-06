@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Callable
+from typing import Any
 
 from entropi.core.logging import get_logger
 
@@ -46,7 +47,7 @@ class ToolCallRecord:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict for MCP response."""
-        d = {
+        d: dict[str, Any] = {
             "tool": self.tool,
             "status": self.status,
         }
@@ -417,42 +418,17 @@ class TaskManager:
 
         return True
 
-    def add_tool_call(
-        self,
-        task_id: str,
-        tool: str,
-        arguments: dict[str, Any],
-        status: str = "pending",
-        result: str | None = None,
-        duration_ms: float = 0.0,
-        **kwargs: Any,
-    ) -> None:
+    def add_tool_call(self, task_id: str, record: ToolCallRecord) -> None:
         """
         Record a tool call for a task.
 
         Args:
             task_id: Task ID
-            tool: Tool name
-            arguments: Tool arguments
-            status: Call status
-            result: Result or error
-            duration_ms: Duration in milliseconds
-            **kwargs: Additional fields (path, lines, exit_code)
+            record: Tool call record
         """
         task = self._tasks.get(task_id)
         if not task:
             return
-
-        record = ToolCallRecord(
-            tool=tool,
-            arguments=arguments,
-            status=status,
-            result=result,
-            duration_ms=duration_ms,
-            path=kwargs.get("path"),
-            lines=kwargs.get("lines"),
-            exit_code=kwargs.get("exit_code"),
-        )
 
         task.tool_calls.append(record)
 
@@ -460,7 +436,7 @@ class TaskManager:
         percent = min(95, len(task.tool_calls) * 10)  # Rough estimate
 
         if self._on_progress:
-            progress = f"Executing: {tool}"
+            progress = f"Executing: {record.tool}"
             self._on_progress(task, progress, percent)
 
     def update_tool_call(
@@ -470,18 +446,16 @@ class TaskManager:
         status: str,
         result: str | None = None,
         duration_ms: float = 0.0,
-        **kwargs: Any,
     ) -> None:
         """
         Update the most recent matching tool call.
 
         Args:
             task_id: Task ID
-            tool: Tool name
+            tool: Tool name to match
             status: New status
             result: Result or error
             duration_ms: Duration in milliseconds
-            **kwargs: Additional fields
         """
         task = self._tasks.get(task_id)
         if not task:
@@ -493,9 +467,6 @@ class TaskManager:
                 tc.status = status
                 tc.result = result
                 tc.duration_ms = duration_ms
-                for key, value in kwargs.items():
-                    if hasattr(tc, key):
-                        setattr(tc, key, value)
                 break
 
     def report_progress(self, task_id: str, message: str, percent: int) -> None:
@@ -529,7 +500,8 @@ class TaskManager:
     def get_active_tasks(self) -> list[Task]:
         """Get all active (queued or in_progress) tasks."""
         return [
-            task for task in self._tasks.values()
+            task
+            for task in self._tasks.values()
             if task.status in (TaskStatus.QUEUED, TaskStatus.IN_PROGRESS, TaskStatus.PREEMPTED)
         ]
 
@@ -544,7 +516,8 @@ class TaskManager:
 
         # Find completed tasks sorted by completion time
         completed = [
-            t for t in self._tasks.values()
+            t
+            for t in self._tasks.values()
             if t.status in (TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED)
         ]
         completed.sort(key=lambda t: t.completed_at or 0)

@@ -6,6 +6,7 @@ Provides reusable message and UI components for the Textual-based interface.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from rich.markdown import Markdown
@@ -15,6 +16,17 @@ from textual.widgets import Static
 
 if TYPE_CHECKING:
     from entropi.core.todos import TodoList
+
+
+@dataclass
+class ToolCallData:
+    """Data for a tool call display."""
+
+    name: str
+    arguments: dict[str, Any]
+    status: str = "pending"
+    result: str | None = None
+    duration_ms: float | None = None
 
 
 class UserMessage(Static):
@@ -80,13 +92,13 @@ class AssistantMessage(Static):
         self._is_streaming = False
 
     @property
-    def content(self) -> str:
-        """Get current content."""
+    def message_text(self) -> str:
+        """Get current message text."""
         return self._content
 
-    @content.setter
-    def content(self, value: str) -> None:
-        """Set content and update display."""
+    @message_text.setter
+    def message_text(self, value: str) -> None:
+        """Set message text and update display."""
         self._content = value
         self._update_display()
 
@@ -112,6 +124,7 @@ class AssistantMessage(Static):
 
     def _update_display(self) -> None:
         """Update the rendered display."""
+        display: Text | Markdown
         if self._is_streaming:
             # Show with cursor
             display = Text(self._content + "▌")
@@ -144,32 +157,20 @@ class ToolCallWidget(Static):
     }
     """
 
-    def __init__(
-        self,
-        name: str,
-        arguments: dict[str, Any],
-        status: str = "pending",
-        result: str | None = None,
-        duration_ms: float | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def __init__(self, data: ToolCallData, **kwargs: Any) -> None:
         """
         Initialize tool call widget.
 
         Args:
-            name: Tool name
-            arguments: Tool arguments
-            status: Status (pending, running, complete, error)
-            result: Tool result (if complete)
-            duration_ms: Execution duration in milliseconds
+            data: Tool call data
             **kwargs: Additional widget arguments
         """
         super().__init__(**kwargs)
-        self._name = name
-        self._arguments = arguments
-        self._status = status
-        self._result = result
-        self._duration_ms = duration_ms
+        self._tool_name = data.name
+        self._arguments = data.arguments
+        self._status = data.status
+        self._result = data.result
+        self._duration_ms = data.duration_ms
 
     def set_running(self) -> None:
         """Mark as running."""
@@ -192,32 +193,25 @@ class ToolCallWidget(Static):
 
     def _format_tool_info(self) -> str:
         """Format tool name and arguments for display."""
-        tool_base = self._name.split(".")[-1]
+        tool_base = self._tool_name.split(".")[-1]
 
         # Format based on common tool patterns
-        if "read_file" in self._name:
-            path = self._arguments.get("path", "")
-            return f"Reading: {path}"
-        elif "write_file" in self._name:
-            path = self._arguments.get("path", "")
-            return f"Writing: {path}"
-        elif "edit_file" in self._name:
-            path = self._arguments.get("path", "")
-            return f"Editing: {path}"
-        elif "list_directory" in self._name:
-            path = self._arguments.get("path", ".")
-            return f"Listing: {path}"
-        elif "search_files" in self._name:
-            pattern = self._arguments.get("pattern", "")
-            return f"Searching: {pattern}"
-        elif "execute" in self._name:
-            cmd = self._arguments.get("command", "")[:60]
-            return f"Running: {cmd}"
-        elif "git" in self._name:
-            return f"Git: {tool_base}"
-        else:
-            args_preview = ", ".join(f"{v}"[:20] for v in self._arguments.values())[:40]
-            return f"{tool_base}: {args_preview}"
+        formatters = [
+            ("read_file", lambda: f"Reading: {self._arguments.get('path', '')}"),
+            ("write_file", lambda: f"Writing: {self._arguments.get('path', '')}"),
+            ("edit_file", lambda: f"Editing: {self._arguments.get('path', '')}"),
+            ("list_directory", lambda: f"Listing: {self._arguments.get('path', '.')}"),
+            ("search_files", lambda: f"Searching: {self._arguments.get('pattern', '')}"),
+            ("execute", lambda: f"Running: {self._arguments.get('command', '')[:60]}"),
+            ("git", lambda: f"Git: {tool_base}"),
+        ]
+        for pattern, formatter in formatters:
+            if pattern in self._tool_name:
+                return formatter()
+
+        # Default: show tool base with args preview
+        args_preview = ", ".join(f"{v}"[:20] for v in self._arguments.values())[:40]
+        return f"{tool_base}: {args_preview}"
 
     def _update_display(self) -> None:
         """Update the rendered display."""
@@ -276,8 +270,8 @@ class ThinkingBlock(Static):
     _all_expanded: bool = False
 
     # Streaming rate control
-    _EXPANDED_UPDATE_INTERVAL = 0.05   # 50ms - slower for readability
-    _COLLAPSED_UPDATE_INTERVAL = 0.2   # 200ms - batch updates when collapsed
+    _EXPANDED_UPDATE_INTERVAL = 0.05  # 50ms - slower for readability
+    _COLLAPSED_UPDATE_INTERVAL = 0.2  # 200ms - batch updates when collapsed
 
     def __init__(self, content: str = "", **kwargs: Any) -> None:
         """
@@ -294,7 +288,7 @@ class ThinkingBlock(Static):
         self._last_update_time: float = 0.0
 
     @property
-    def content(self) -> str:
+    def thinking_content(self) -> str:
         """Get full thinking content."""
         return self._content
 
@@ -669,7 +663,7 @@ class StatusFooter(Static):
             temp = self._gpu_stats.get("temp", 0)
             util = self._gpu_stats.get("util", 0)
 
-            vram_gb = f"{vram_used/1024:.1f}/{vram_total/1024:.0f}GB"
+            vram_gb = f"{vram_used / 1024:.1f}/{vram_total / 1024:.0f}GB"
             temp_color = "red" if temp > 80 else "yellow" if temp > 70 else "green"
             parts.append(f"[dim]VRAM:[/]{vram_gb}")
             parts.append(f"[{temp_color}]{temp}°C[/]")

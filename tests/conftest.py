@@ -5,11 +5,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
 from entropi.config.loader import ConfigLoader
 from entropi.config.schema import EntropyConfig
 from entropi.inference.orchestrator import ModelOrchestrator, ModelTier
-
 
 # =============================================================================
 # Basic Fixtures
@@ -130,6 +128,6 @@ def pytest_collection_modifyitems(config, items):
         if "integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
 
-        # Auto-mark tests in tests/model as model tests
+        # Auto-mark tests in tests/model as model tests with timeout
         if "model" in str(item.fspath):
             item.add_marker(pytest.mark.model)

@@ -16,11 +16,11 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="llama_cpp
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*found in sys.modules.*")
 warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 
-import click
+import click  # noqa: E402
 
-from entropi import __version__
-from entropi.config.loader import reload_config
-from entropi.core.logging import setup_logging
+from entropi import __version__  # noqa: E402
+from entropi.config.loader import reload_config  # noqa: E402
+from entropi.core.logging import setup_logging  # noqa: E402
 
 
 @click.group(invoke_without_command=True)
@@ -49,6 +49,11 @@ from entropi.core.logging import setup_logging
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Project directory",
 )
+@click.option(
+    "--headless",
+    is_flag=True,
+    help="Run without TUI (for testing/automation)",
+)
 @click.pass_context
 def main(
     ctx: click.Context,
@@ -56,6 +61,7 @@ def main(
     model: str | None,
     log_level: str | None,
     project: Path | None,
+    headless: bool,
 ) -> None:
     """
     Entropi - Local AI Coding Assistant
@@ -86,11 +92,25 @@ def main(
     ctx.obj["logger"] = logger
     ctx.obj["project"] = project_dir
 
+    # Store headless flag for subcommands
+    ctx.obj["headless"] = headless
+
     # If no subcommand, start interactive mode
     if ctx.invoked_subcommand is None:
         from entropi.app import Application
 
-        app = Application(config=app_config, project_dir=ctx.obj["project"])
+        # Create presenter based on headless flag
+        presenter = None
+        if headless:
+            from entropi.ui.headless import HeadlessPresenter
+
+            presenter = HeadlessPresenter()
+
+        app = Application(
+            config=app_config,
+            project_dir=ctx.obj["project"],
+            presenter=presenter,
+        )
         asyncio.run(app.run())
 
 

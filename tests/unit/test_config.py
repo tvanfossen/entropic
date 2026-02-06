@@ -106,9 +106,8 @@ class TestEntropyConfig:
     def test_default_routing_config(self) -> None:
         """Test default routing configuration."""
         config = EntropyConfig()
-        assert config.routing.use_heuristics is True
-        assert config.routing.fallback_model == "primary"
-        assert "implement" in config.routing.complex_keywords
+        assert config.routing.enabled is True
+        assert config.routing.fallback_model == "normal"
 
     def test_default_quality_rules(self) -> None:
         """Test default quality rules."""
@@ -175,15 +174,10 @@ class TestConfigLoader:
 
             config = EntropyConfig(
                 config_dir=tmpdir / "config",
-                prompts_dir=tmpdir / "prompts",
-                commands_dir=tmpdir / "commands",
-                storage={"database_path": tmpdir / "db" / "history.db"},
             )
 
             loader = ConfigLoader()
             loader.ensure_directories(config)
 
+            # Only config_dir is created by ensure_directories
             assert (tmpdir / "config").exists()
-            assert (tmpdir / "prompts").exists()
-            assert (tmpdir / "commands").exists()
-            assert (tmpdir / "db").exists()

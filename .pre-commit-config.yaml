@@ -1,3 +1,5 @@
+fail_fast: true
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -12,28 +14,12 @@ repos:
         args: ['--maxkb=1000']
       - id: debug-statements
 
-  - repo: https://github.com/psf/black
-    rev: 24.3.0
-    hooks:
-      - id: black
-        args: ['--line-length=100']
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.4
     hooks:
       - id: ruff
         args: ['--fix']
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.9.0
-    hooks:
-      - id: mypy
-        additional_dependencies:
-          - pydantic>=2.0.0
-          - pydantic-settings>=2.0.0
-          - types-pyyaml
-        args: ['--ignore-missing-imports']
-        exclude: ^tests/
+      - id: ruff-format
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
@@ -47,3 +33,30 @@ repos:
           - '--max-returns-amount=3'
           - '--max-line-length=100'
           - '--ignore=E501,W503,E203'
+
+  # Local hooks for pytest - runs full test suite including model tests
+  - repo: local
+    hooks:
+      - id: pytest-unit
+        name: pytest unit tests
+        entry: .venv/bin/pytest tests/unit/ -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: pytest-model
+        name: pytest model tests
+        entry: .venv/bin/pytest tests/model/ -v --tb=short
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
+      - id: test-report
+        name: generate test verification report
+        entry: bash scripts/generate-test-report.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

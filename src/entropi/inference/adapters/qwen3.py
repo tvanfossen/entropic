@@ -115,120 +115,156 @@ class Qwen3Adapter(ChatAdapter):
         Returns:
             Tuple of (cleaned content, tool calls)
         """
+        self._log_parse_start(content)
+        self._log_thinking_content(content)
+
+        tool_calls = self._parse_tagged_tool_calls(content)
+        if not tool_calls:
+            tool_calls = self._parse_bare_json_tool_calls(content)
+        if not tool_calls:
+            tool_calls = self._parse_shell_style_tool_calls(content)
+
+        cleaned = self._clean_content(content, tool_calls)
+        self._log_parse_result(content, tool_calls)
+
+        return cleaned, tool_calls
+
+    def _log_parse_start(self, content: str) -> None:
+        """Log debug info at start of parsing."""
         logger.debug("\n=== Parsing tool calls (Qwen3) ===")
         logger.debug(f"Content length: {len(content)}")
         logger.debug(f"Content:\n{content}")
 
-        tool_calls = []
-
-        # Extract thinking blocks (for logging/display, not removed from content yet)
+    def _log_thinking_content(self, content: str) -> None:
+        """Extract and log thinking content."""
         thinking_content = self._extract_thinking(content)
         if thinking_content:
             logger.info(f"[THINKING] ({len(thinking_content)} chars):\n{thinking_content}")
 
-        # Pattern 1: <tool_call> tags (primary format for Qwen 3)
-        tool_call_pattern = re.compile(
+    def _parse_tagged_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse tool calls from <tool_call> tags."""
+        tool_calls = []
+        pattern = re.compile(
             rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
             re.DOTALL,
         )
-        matches = tool_call_pattern.findall(content)
-
-        for match in matches:
-            try:
-                data = json.loads(match.strip())
-                tool_call = ToolCall(
-                    id=str(uuid.uuid4()),
-                    name=data.get("name", ""),
-                    arguments=data.get("arguments", {}),
-                )
+        for match in pattern.findall(content):
+            tool_call = self._parse_single_tool_call(match.strip())
+            if tool_call:
                 tool_calls.append(tool_call)
                 logger.info(f"Parsed Qwen3 tool call: {tool_call.name}")
-            except json.JSONDecodeError:
-                recovered = self._try_recover_json(match.strip())
-                if recovered:
-                    tool_calls.append(recovered)
-                else:
-                    logger.warning(f"Failed to parse tool call: {match}")
+        return tool_calls
 
-        # Fallback: bare JSON (in case model doesn't use tags)
-        if not tool_calls:
-            for line in content.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("{") and '"name"' in stripped:
-                    try:
-                        data = json.loads(stripped)
-                        if "name" in data:
-                            tool_call = ToolCall(
-                                id=str(uuid.uuid4()),
-                                name=data["name"],
-                                arguments=data.get("arguments", {}),
-                            )
-                            tool_calls.append(tool_call)
-                            logger.info(f"Parsed Qwen3 bare JSON tool call: {tool_call.name}")
-                    except json.JSONDecodeError:
-                        pass
+    def _parse_single_tool_call(self, json_str: str) -> ToolCall | None:
+        """Parse a single tool call JSON string."""
+        try:
+            data = json.loads(json_str)
+            return ToolCall(
+                id=str(uuid.uuid4()),
+                name=data.get("name", ""),
+                arguments=data.get("arguments", {}),
+            )
+        except json.JSONDecodeError:
+            recovered = self._try_recover_json(json_str)
+            if not recovered:
+                logger.warning(f"Failed to parse tool call: {json_str}")
+            return recovered
 
-        # Fallback: shell-style command in code blocks: tool_name arg="value"
-        if not tool_calls:
-            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
-            for block in code_block_pattern.findall(content):
-                block_stripped = block.strip()
-                # Look for: tool.name arg="value" or tool.name arg=value
-                # Must have a dot (namespaced tool) and space-separated args
-                shell_pattern = re.compile(
-                    r"^([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$"
+    def _parse_bare_json_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse bare JSON tool calls from lines."""
+        tool_calls = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if not (stripped.startswith("{") and '"name"' in stripped):
+                continue
+            tool_call = self._try_parse_bare_json_line(stripped)
+            if tool_call:
+                tool_calls.append(tool_call)
+                logger.info(f"Parsed Qwen3 bare JSON tool call: {tool_call.name}")
+        return tool_calls
+
+    def _try_parse_bare_json_line(self, line: str) -> ToolCall | None:
+        """Try to parse a bare JSON line as a tool call."""
+        try:
+            data = json.loads(line)
+            if "name" in data:
+                return ToolCall(
+                    id=str(uuid.uuid4()),
+                    name=data["name"],
+                    arguments=data.get("arguments", {}),
                 )
-                match = shell_pattern.match(block_stripped)
-                if match:
-                    tool_name = match.group(1)
-                    args_str = match.group(2)
+        except json.JSONDecodeError:
+            pass
+        return None
 
-                    # Only match known MCP tool prefixes
-                    if not self._is_known_tool_prefix(tool_name):
-                        continue
+    def _parse_shell_style_tool_calls(self, content: str) -> list[ToolCall]:
+        """Parse shell-style tool calls from code blocks."""
+        tool_calls = []
+        code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
+        shell_pattern = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$")
+        for block in code_block_pattern.findall(content):
+            tool_call = self._try_parse_shell_block(block.strip(), shell_pattern)
+            if tool_call:
+                tool_calls.append(tool_call)
+        return tool_calls
 
-                    arguments = self._parse_shell_args(args_str)
-                    if arguments is not None:
-                        tool_call = ToolCall(
-                            id=str(uuid.uuid4()),
-                            name=tool_name,
-                            arguments=arguments,
-                        )
-                        tool_calls.append(tool_call)
-                        logger.info(f"Parsed Qwen3 shell-style tool call: {tool_name}")
+    def _try_parse_shell_block(self, block: str, shell_pattern: re.Pattern[str]) -> ToolCall | None:
+        """Try to parse a shell-style tool call from a code block."""
+        match = shell_pattern.match(block)
+        if not match:
+            return None
+        tool_name, args_str = match.group(1), match.group(2)
+        if not self._is_known_tool_prefix(tool_name):
+            return None
+        arguments = self._parse_shell_args(args_str)
+        result = None
+        if arguments is not None:
+            logger.info(f"Parsed Qwen3 shell-style tool call: {tool_name}")
+            result = ToolCall(id=str(uuid.uuid4()), name=tool_name, arguments=arguments)
+        return result
 
-        # Clean content - remove tool call blocks
-        cleaned = tool_call_pattern.sub("", content).strip()
+    def _clean_content(self, content: str, tool_calls: list[ToolCall]) -> str:
+        """Remove tool calls and think blocks from content."""
+        tool_pattern = re.compile(
+            rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
+            re.DOTALL,
+        )
+        cleaned = tool_pattern.sub("", content).strip()
+        cleaned = self._strip_think_blocks(cleaned)
+        if tool_calls:
+            cleaned = self._remove_bare_json_lines(cleaned)
+            cleaned = self._remove_shell_blocks(cleaned)
+        return cleaned
 
-        # Remove thinking blocks from displayed output (but we logged them above)
+    def _strip_think_blocks(self, content: str) -> str:
+        """Remove complete think blocks from content."""
         think_pattern = re.compile(
             rf"{re.escape(self.THINK_START)}.*?{re.escape(self.THINK_END)}",
             re.DOTALL,
         )
-        cleaned = think_pattern.sub("", cleaned).strip()
+        return think_pattern.sub("", content).strip()
 
-        # Clean bare JSON lines if we parsed them
-        if tool_calls:
-            cleaned_lines = []
-            for line in cleaned.split("\n"):
-                stripped = line.strip()
-                if stripped.startswith("{") and '"name"' in stripped:
-                    try:
-                        data = json.loads(stripped)
-                        if "name" in data:
-                            continue  # Skip this line
-                    except json.JSONDecodeError:
-                        pass
-                cleaned_lines.append(line)
-            cleaned = "\n".join(cleaned_lines).strip()
+    def _remove_bare_json_lines(self, content: str) -> str:
+        """Remove lines that are bare JSON tool calls."""
+        cleaned_lines = []
+        for line in content.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("{") and '"name"' in stripped:
+                if self._try_parse_bare_json_line(stripped):
+                    continue
+            cleaned_lines.append(line)
+        return "\n".join(cleaned_lines).strip()
 
-            # Clean shell-style code blocks
-            shell_block_pattern = re.compile(
-                r"```\w*\s*\n?[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S.*?\n?```",
-                re.DOTALL,
-            )
-            cleaned = shell_block_pattern.sub("", cleaned).strip()
+    def _remove_shell_blocks(self, content: str) -> str:
+        """Remove shell-style code blocks."""
+        shell_block_pattern = re.compile(
+            r"```\w*\s*\n?[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S.*?\n?```",
+            re.DOTALL,
+        )
+        return shell_block_pattern.sub("", content).strip()
 
+    def _log_parse_result(self, content: str, tool_calls: list[ToolCall]) -> None:
+        """Log parsing results."""
         if tool_calls:
             logger.info(f"Parsed {len(tool_calls)} tool calls: {[tc.name for tc in tool_calls]}")
         else:
@@ -236,8 +272,6 @@ class Qwen3Adapter(ChatAdapter):
             logger.debug(f"  - Contains '{{': {'{' in content}")
             logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
             logger.debug(f"  - Contains '<tool_call>': {'<tool_call>' in content}")
-
-        return cleaned, tool_calls
 
     def _extract_thinking(self, content: str) -> str | None:
         """Extract thinking content from <think> blocks."""
@@ -260,35 +294,32 @@ class Qwen3Adapter(ChatAdapter):
         Returns:
             Dict of arguments or None if parsing fails
         """
-        arguments = {}
-
-        # Pattern for key=value pairs (quoted or unquoted)
-        # Handles: key="value", key='value', key=value
+        arguments: dict[str, Any] = {}
         pattern = re.compile(r'(\w+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|(\S+))')
-
         for match in pattern.finditer(args_str):
             key = match.group(1)
-            # Value is in one of the capture groups
             value = match.group(2) or match.group(3) or match.group(4)
-
             if value is not None:
-                # Try to convert to appropriate type
-                if value.lower() == "true":
-                    arguments[key] = True
-                elif value.lower() == "false":
-                    arguments[key] = False
-                elif value.lower() in ("none", "null"):
-                    arguments[key] = None
-                else:
-                    try:
-                        arguments[key] = int(value)
-                    except ValueError:
-                        try:
-                            arguments[key] = float(value)
-                        except ValueError:
-                            arguments[key] = value
-
+                arguments[key] = self._convert_shell_value(value)
         return arguments if arguments else None
+
+    def _convert_shell_value(self, value: str) -> Any:
+        """Convert shell argument value to appropriate Python type."""
+        lower = value.lower()
+        literal_map = {"true": True, "false": False, "none": None, "null": None}
+        if lower in literal_map:
+            return literal_map[lower]
+        return self._try_numeric_conversion(value)
+
+    def _try_numeric_conversion(self, value: str) -> int | float | str:
+        """Try to convert value to int or float, fall back to string."""
+        try:
+            return int(value)
+        except ValueError:
+            try:
+                return float(value)
+            except ValueError:
+                return value
 
     def _try_recover_json(self, json_str: str) -> ToolCall | None:
         """Attempt to recover malformed JSON."""
@@ -353,50 +384,50 @@ Continue with the task. Call more tools if needed, or respond when complete."""
         Returns:
             True if this is a final response, False if model is still working
         """
-        # If there are tool calls, not complete - need to execute them
-        if tool_calls:
+        # Early exit conditions that indicate incomplete response
+        if self._has_incomplete_indicators(content, tool_calls):
             return False
 
-        # Check for unclosed think block (model was cut off mid-generation)
+        # Remove think blocks and check remaining content
+        content_without_think = self._strip_think_blocks(content)
+
+        # Check for unparsed tool calls in code blocks
+        if self._has_unparsed_tool_calls(content_without_think):
+            return False
+
+        # Complete if there's content outside think blocks
+        return bool(content_without_think)
+
+    def _has_incomplete_indicators(self, content: str, tool_calls: list[ToolCall]) -> bool:
+        """Check for indicators that response is incomplete."""
+        if tool_calls:
+            return True
         has_think_start = self.THINK_START in content
         has_think_end = self.THINK_END in content
         if has_think_start and not has_think_end:
             logger.debug("Unclosed think block detected (likely token limit) - continuing loop")
-            return False
-
-        # Remove complete think blocks and see if there's any content left
-        think_pattern = re.compile(
-            rf"{re.escape(self.THINK_START)}.*?{re.escape(self.THINK_END)}",
-            re.DOTALL,
-        )
-        content_without_think = think_pattern.sub("", content).strip()
-
-        # Check for unparsed tool call indicators in code blocks
-        if "```" in content_without_think:
-            code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
-            for block in code_block_pattern.findall(content_without_think):
-                block_stripped = block.strip()
-
-                # Check for JSON-style tool call
-                if block_stripped.startswith("{") and '"name"' in block_stripped:
-                    logger.debug("Found unparsed JSON tool call in code block - continuing loop")
-                    return False
-
-                # Check for shell-style: tool.name arg="value"
-                shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S")
-                if shell_pattern.match(block_stripped):
-                    logger.debug(
-                        "Found unparsed shell-style tool call in code block - continuing loop"
-                    )
-                    return False
-
-        # If there's content outside of think blocks, that's the response
-        if content_without_think:
             return True
+        return False
 
-        # Only think block(s) with no other content - model still working
-        # This happens when tool call parsing failed but model intended to call a tool
-        logger.debug("Response is only think block(s) - continuing loop")
+    def _has_unparsed_tool_calls(self, content: str) -> bool:
+        """Check for unparsed tool call indicators in code blocks."""
+        if "```" not in content:
+            return False
+        code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
+        shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S")
+        for block in code_block_pattern.findall(content):
+            if self._is_unparsed_tool_block(block.strip(), shell_pattern):
+                return True
+        return False
+
+    def _is_unparsed_tool_block(self, block: str, shell_pattern: re.Pattern[str]) -> bool:
+        """Check if a code block contains an unparsed tool call."""
+        if block.startswith("{") and '"name"' in block:
+            logger.debug("Found unparsed JSON tool call in code block - continuing loop")
+            return True
+        if shell_pattern.match(block):
+            logger.debug("Found unparsed shell-style tool call in code block - continuing loop")
+            return True
         return False
 
 

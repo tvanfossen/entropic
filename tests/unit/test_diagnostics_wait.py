@@ -6,21 +6,21 @@ import pytest
 def test_diagnostics_timeout_sufficient():
     """Verify diagnostics uses adequate timeout (not 0.2s)."""
     # This is a regression test - the fix uses 2.0s timeout
-    MINIMUM_TIMEOUT = 1.0  # At least 1 second
-    CONFIGURED_TIMEOUT = 2.0  # What we configure
+    minimum_timeout = 1.0  # At least 1 second
+    configured_timeout = 2.0  # What we configure
 
-    assert CONFIGURED_TIMEOUT >= MINIMUM_TIMEOUT
+    assert configured_timeout >= minimum_timeout
 
 
 def test_timeout_values():
     """Verify timeout configuration values are sensible."""
     # The old timeout was 0.2s which was too short
-    OLD_TIMEOUT = 0.2
-    NEW_TIMEOUT = 2.0
+    old_timeout = 0.2
+    new_timeout = 2.0
 
     # New timeout should be significantly longer
-    assert NEW_TIMEOUT >= OLD_TIMEOUT * 5  # At least 5x longer
-    assert NEW_TIMEOUT <= 10.0  # But not too long (user experience)
+    assert new_timeout >= old_timeout * 5  # At least 5x longer
+    assert new_timeout <= 10.0  # But not too long (user experience)
 
 
 @pytest.mark.asyncio

@@ -19,12 +19,13 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Header, Input, Static, TextArea
+from textual.widgets import Header, Input, Static
 
 from entropi.config.schema import EntropyConfig
 from entropi.core.compaction import CompactionResult
 from entropi.core.engine import AgentState, ToolApproval
 from entropi.core.logging import get_logger
+from entropi.ui.presenter import StatusInfo
 from entropi.ui.themes import get_theme
 from entropi.ui.widgets import (
     AssistantMessage,
@@ -33,6 +34,7 @@ from entropi.ui.widgets import (
     StatusFooter,
     ThinkingBlock,
     TodoWidget,
+    ToolCallData,
     ToolCallWidget,
     UserMessage,
 )
@@ -62,7 +64,7 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
     ]
 
     # Options available for selection
-    OPTIONS = [
+    OPTIONS: list[tuple[str, ToolApproval | str]] = [
         ("Allow Once", ToolApproval.ALLOW),
         ("Always Allow", ToolApproval.ALWAYS_ALLOW),
         ("Deny Once", ToolApproval.DENY),
@@ -254,7 +256,7 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
 class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
     """Specialized approval modal for file edit/write operations with content preview."""
 
-    OPTIONS = [
+    OPTIONS: list[tuple[str, ToolApproval | str]] = [
         ("Allow Once", ToolApproval.ALLOW),
         ("Always Allow", ToolApproval.ALWAYS_ALLOW),
         ("Deny Once", ToolApproval.DENY),
@@ -296,21 +298,30 @@ class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
                 if insert_line is not None:
                     yield Static(f"[dim]Insert at line {insert_line}:[/]", classes="edit-label")
                     yield Static(
-                        Panel(new_str[:500] + ("..." if len(new_str) > 500 else ""),
-                              title="Content to Insert", border_style="green"),
+                        Panel(
+                            new_str[:500] + ("..." if len(new_str) > 500 else ""),
+                            title="Content to Insert",
+                            border_style="green",
+                        ),
                         classes="content-preview",
                     )
                 else:
                     yield Static("[dim]Replace:[/]", classes="edit-label")
                     with Horizontal(classes="diff-view"):
                         yield Static(
-                            Panel(old_str[:300] + ("..." if len(old_str) > 300 else ""),
-                                  title="Old", border_style="red"),
+                            Panel(
+                                old_str[:300] + ("..." if len(old_str) > 300 else ""),
+                                title="Old",
+                                border_style="red",
+                            ),
                             classes="diff-old",
                         )
                         yield Static(
-                            Panel(new_str[:300] + ("..." if len(new_str) > 300 else ""),
-                                  title="New", border_style="green"),
+                            Panel(
+                                new_str[:300] + ("..." if len(new_str) > 300 else ""),
+                                title="New",
+                                border_style="green",
+                            ),
                             classes="diff-new",
                         )
 
@@ -321,7 +332,9 @@ class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
                 yield Static(f"[dim]{lines} lines, {chars} chars[/]", classes="file-stats")
                 # Show first 800 chars with line numbers
                 preview_lines = content[:800].split("\n")
-                numbered = "\n".join(f"{i+1:3} │ {line}" for i, line in enumerate(preview_lines[:20]))
+                numbered = "\n".join(
+                    f"{i + 1:3} │ {line}" for i, line in enumerate(preview_lines[:20])
+                )
                 if len(content) > 800 or len(preview_lines) > 20:
                     numbered += "\n    │ ..."
                 yield Static(
@@ -626,8 +639,7 @@ class EntropiApp(App[None]):
                 queued_msg = await self._mcp_queue.get()
 
                 logger.info(
-                    f"Processing queued message: {queued_msg.task_id} "
-                    f"from {queued_msg.source}"
+                    f"Processing queued message: {queued_msg.task_id} " f"from {queued_msg.source}"
                 )
 
                 try:
@@ -867,66 +879,71 @@ class EntropiApp(App[None]):
 
     def _on_stream_chunk_ui(self, chunk: str) -> None:
         """Process streaming chunk - must run on main thread."""
-        # Guard against stale callbacks after generation stopped
         if not self._is_generating:
             return
 
         chat_log = self.query_one("#chat-log", VerticalScroll)
-
-        # Process chunk - filter think blocks and tool_call XML
         i = 0
         while i < len(chunk):
-            remaining = chunk[i:]
-
-            # Check for <think> start tag
-            if remaining.startswith("<think>"):
-                self._in_think_block = True
-                if not self._current_thinking:
-                    self._current_thinking = ThinkingBlock()
-                    chat_log.mount(self._current_thinking)
-                i += 7
-                continue
-
-            # Check for </think> end tag
-            if remaining.startswith("</think>"):
-                self._in_think_block = False
-                if self._current_thinking:
-                    self._current_thinking.finish()
-                self._current_thinking = None
-                i += 8
-                continue
-
-            # Check for <tool_call> - filter from text display (shown via ToolCallWidget)
-            if remaining.startswith("<tool_call>"):
-                self._in_tool_call_block = True
-                i += 11
-                continue
-
-            # Check for </tool_call>
-            if remaining.startswith("</tool_call>"):
-                self._in_tool_call_block = False
-                i += 12
-                continue
-
-            # Skip content inside tool_call blocks
-            if self._in_tool_call_block:
-                i += 1
-                continue
-
-            # Regular character
-            if self._in_think_block and self._current_thinking:
-                self._current_thinking.append(chunk[i])
-            else:
-                # Create assistant message on first non-thinking content
-                if not self._current_message:
-                    self._current_message = AssistantMessage("")
-                    self._current_message.start_streaming()
-                    chat_log.mount(self._current_message)
-                self._current_message.append(chunk[i])
-            i += 1
-
-        # Keep scrolled to bottom
+            skip = self._process_chunk_char(chunk, i, chat_log)
+            i += skip
         chat_log.scroll_end(animate=False)
+
+    def _process_chunk_char(self, chunk: str, i: int, chat_log: VerticalScroll) -> int:
+        """Process a single character position in chunk. Returns chars to skip."""
+        remaining = chunk[i:]
+
+        # Check for tag transitions
+        tag_skip = self._check_tag_transition(remaining, chat_log)
+        if tag_skip > 0:
+            return tag_skip
+
+        # Skip content inside tool_call blocks
+        if self._in_tool_call_block:
+            return 1
+
+        # Regular character handling
+        self._append_char_to_output(chunk[i], chat_log)
+        return 1
+
+    def _check_tag_transition(self, remaining: str, chat_log: VerticalScroll) -> int:
+        """Check for XML tag transitions. Returns chars to skip, 0 if no tag."""
+        tags = [
+            ("<think>", 7, lambda: self._start_think_block(chat_log)),
+            ("</think>", 8, self._end_think_block),
+            ("<tool_call>", 11, lambda: setattr(self, "_in_tool_call_block", True)),
+            ("</tool_call>", 12, lambda: setattr(self, "_in_tool_call_block", False)),
+        ]
+        for tag, skip_len, handler in tags:
+            if remaining.startswith(tag):
+                handler()
+                return skip_len
+        return 0
+
+    def _start_think_block(self, chat_log: VerticalScroll) -> None:
+        """Start a thinking block."""
+        self._in_think_block = True
+        if not self._current_thinking:
+            self._current_thinking = ThinkingBlock()
+            chat_log.mount(self._current_thinking)
+
+    def _end_think_block(self) -> None:
+        """End current thinking block."""
+        self._in_think_block = False
+        if self._current_thinking:
+            self._current_thinking.finish()
+        self._current_thinking = None
+
+    def _append_char_to_output(self, char: str, chat_log: VerticalScroll) -> None:
+        """Append character to appropriate output widget."""
+        if self._in_think_block and self._current_thinking:
+            self._current_thinking.append(char)
+        else:
+            if not self._current_message:
+                self._current_message = AssistantMessage("")
+                self._current_message.start_streaming()
+                chat_log.mount(self._current_message)
+            self._current_message.append(char)
 
     # === Message Display ===
 
@@ -1007,7 +1024,7 @@ class EntropiApp(App[None]):
             self._current_message.stop_streaming()
 
         chat_log = self.query_one("#chat-log", VerticalScroll)
-        tool_widget = ToolCallWidget(name, arguments, status="running")
+        tool_widget = ToolCallWidget(ToolCallData(name, arguments, status="running"))
         chat_log.mount(tool_widget)
         chat_log.scroll_end(animate=False)
 
@@ -1053,6 +1070,7 @@ class EntropiApp(App[None]):
             return ToolApproval.ALLOW
 
         # Select appropriate modal based on tool type
+        screen: ToolApprovalScreen | FileEditApprovalScreen
         if name in ("filesystem.edit_file", "filesystem.write_file"):
             screen = FileEditApprovalScreen(name, arguments, is_sensitive)
         else:
@@ -1081,7 +1099,7 @@ class EntropiApp(App[None]):
             Injection text, empty string to resume, or None to cancel
         """
         result = await self.push_screen_wait(PauseScreen(partial_content))
-        return result
+        return str(result) if result is not None else None
 
     # === Context & Status ===
 
@@ -1144,25 +1162,15 @@ class EntropiApp(App[None]):
             # Todo widget might not exist in layout
             pass
 
-    def print_status(
-        self,
-        model: str,
-        vram_used: float,  # noqa: ARG002 - reserved for future VRAM display
-        vram_total: float,  # noqa: ARG002 - reserved for future VRAM display
-        tokens: int,  # noqa: ARG002 - reserved for future token display
-        thinking_mode: bool = False,
-        context_used: int = 0,
-        context_max: int = 0,
-    ) -> None:
+    def print_status(self, status: StatusInfo) -> None:
         """Print status information."""
-        _ = (vram_used, vram_total, tokens)  # Reserved for future use
         footer = self.query_one("#status-footer", StatusFooter)
-        footer.set_model(model)
-        footer.set_thinking_mode(thinking_mode)
+        footer.set_model(status.model)
+        footer.set_thinking_mode(status.thinking_mode)
 
-        if context_max > 0:
+        if status.context_max > 0:
             context_bar = self.query_one("#context-bar", ContextBar)
-            context_bar.update_usage(context_used, context_max)
+            context_bar.update_usage(status.context_used, status.context_max)
 
     # === Utility Methods ===
 
@@ -1219,13 +1227,15 @@ class EntropiApp(App[None]):
 
         # Import here to avoid circular imports and allow graceful fallback
         try:
-            from entropi.ui.voice_screen import VoiceScreen
+            from entropi.ui.voice_screen import VoiceScreen, VoiceScreenCallbacks
 
             self.push_screen(
                 VoiceScreen(
                     self.entropi_config.voice,
-                    on_enter=self._voice_on_enter,
-                    on_exit=self._voice_on_exit,
+                    callbacks=VoiceScreenCallbacks(
+                        on_enter=self._voice_on_enter,
+                        on_exit=self._voice_on_exit,
+                    ),
                 )
             )
         except ImportError as e:

@@ -392,8 +392,7 @@ class ContextCompactor:
         self._structured_prompt.bump_version()
 
         logger.debug(
-            f"Compacted {len(transcript)} chars -> {len(summary)} chars "
-            f"in {elapsed:.0f}ms"
+            f"Compacted {len(transcript)} chars -> {len(summary)} chars " f"in {elapsed:.0f}ms"
         )
 
         return CompactionResult(
@@ -472,21 +471,17 @@ class ContextCompactor:
         self._structured_prompt.bump_version()
 
         # Format output
-        if format == "xml":
-            return self._structured_prompt.to_xml()
-        elif format == "json":
-            return self._structured_prompt.to_json()
-        else:
-            # Plain text fallback
-            if not summary:
-                return initial_prompt
+        formatters = {
+            "xml": self._structured_prompt.to_xml,
+            "json": self._structured_prompt.to_json,
+        }
+        if format in formatters:
+            return formatters[format]()
 
-            return f"""{initial_prompt}
-
-Context from previous conversation:
-{summary}
-
-Continue assisting based on this context."""
+        # Plain text fallback
+        if not summary:
+            return initial_prompt
+        return f"{initial_prompt}\n\nContext from previous conversation:\n{summary}\n\nContinue assisting based on this context."
 
     def get_structured_prompt(self) -> StructuredPrompt:
         """Get the current structured prompt."""

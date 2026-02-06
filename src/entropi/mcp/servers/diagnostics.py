@@ -142,25 +142,28 @@ class DiagnosticsServer(BaseMCPServer):
         file_path = args["file_path"]
         path = self._resolve_path(file_path)
 
-        if not path.exists():
-            return f"File not found: {file_path}"
-
-        if not self.lsp_manager.is_enabled:
-            return "LSP is not enabled."
+        # Validate preconditions
+        error_msg = self._validate_check_errors(path, file_path)
+        if error_msg:
+            return error_msg
 
         # Open file and wait for LSP to publish diagnostics
         self.lsp_manager.open_file(path)
         await self.lsp_manager.wait_for_diagnostics(path, timeout=2.0)
 
-        has_errors = self.lsp_manager.has_errors(path)
         errors = self.lsp_manager.get_errors(path)
+        if errors:
+            error_lines = "\n".join(f"  {e.format()}" for e in errors)
+            return f"Yes, {file_path} has {len(errors)} error(s):\n{error_lines}"
+        return f"No, {file_path} has no errors."
 
-        if has_errors:
-            return f"Yes, {file_path} has {len(errors)} error(s):\n" + "\n".join(
-                f"  {e.format()}" for e in errors
-            )
-        else:
-            return f"No, {file_path} has no errors."
+    def _validate_check_errors(self, path: Path, file_path: str) -> str | None:
+        """Validate preconditions for check_errors, return error message or None."""
+        if not path.exists():
+            return f"File not found: {file_path}"
+        if not self.lsp_manager.is_enabled:
+            return "LSP is not enabled."
+        return None
 
 
 # Entry point for running as MCP server
@@ -169,13 +172,13 @@ if __name__ == "__main__":
     import sys
 
     from entropi.config.schema import LSPConfig
-    from entropi.lsp.manager import LSPManager
+    from entropi.lsp.manager import LSPManager as _LSPManager
 
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
 
     # Create LSP manager with default config
     config = LSPConfig()
-    manager = LSPManager(config, root)
+    manager = _LSPManager(config, root)
     manager.start()
 
     try:

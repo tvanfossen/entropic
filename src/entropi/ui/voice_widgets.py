@@ -62,14 +62,13 @@ class VoiceVisualizerFrames:
     @classmethod
     def get_frames(cls, level: AudioLevel) -> list[str]:
         """Get animation frames for an audio level."""
-        if level == AudioLevel.SILENT:
-            return cls.IDLE
-        elif level == AudioLevel.LOW:
-            return cls.LOW
-        elif level == AudioLevel.MEDIUM:
-            return cls.MEDIUM
-        else:
-            return cls.HIGH
+        frames_map = {
+            AudioLevel.SILENT: cls.IDLE,
+            AudioLevel.LOW: cls.LOW,
+            AudioLevel.MEDIUM: cls.MEDIUM,
+            AudioLevel.HIGH: cls.HIGH,
+        }
+        return frames_map.get(level, cls.HIGH)
 
 
 class VoiceVisualizer(Static):
@@ -114,23 +113,20 @@ class VoiceVisualizer(Static):
 
     def on_mount(self) -> None:
         """Start animation timer on mount."""
-        self._timer = self.set_interval(0.1, self._animate)
+        self._timer = self.set_interval(0.1, self._advance_frame)
 
-    def _animate(self) -> None:
+    def _advance_frame(self) -> None:
         """Advance animation frame."""
         self._frame_index = (self._frame_index + 1) % 4
         self._update_display()
 
     def _get_audio_level(self) -> AudioLevel:
         """Convert numeric level to category."""
-        if self.level < 0.05:
-            return AudioLevel.SILENT
-        elif self.level < 0.3:
-            return AudioLevel.LOW
-        elif self.level < 0.6:
-            return AudioLevel.MEDIUM
-        else:
-            return AudioLevel.HIGH
+        thresholds = [(0.05, AudioLevel.SILENT), (0.3, AudioLevel.LOW), (0.6, AudioLevel.MEDIUM)]
+        for threshold, level in thresholds:
+            if self.level < threshold:
+                return level
+        return AudioLevel.HIGH
 
     def _update_display(self) -> None:
         """Update the display with current animation frame."""
@@ -225,14 +221,6 @@ class VoiceTranscript(RichLog):
             speaker: Speaker label ("user", "assistant", "system")
             text: Text to add
         """
-        # Get speaker style
-        if speaker == "user":
-            color, label = "cyan", "You"
-        elif speaker == "system":
-            color, label = "yellow", "System"
-        else:
-            color, label = "green", "AI"
-
         # Handle speaker change - flush pending text and start new
         if speaker != self._current_speaker:
             # Flush any pending text from previous speaker
@@ -267,7 +255,7 @@ class VoiceTranscript(RichLog):
         """Flush any pending text to display."""
         self._flush_pending()
 
-    def clear(self) -> None:
+    def clear_transcript(self) -> None:
         """Clear transcript."""
         self._pending_text = ""
         super().clear()
@@ -461,11 +449,10 @@ class VoiceStatsPanel(Static):
             fps_color = "red"
 
         lines = [
-            f"[bold]Inference Stats[/]",
+            "[bold]Inference Stats[/]",
             f"  FPS: [{fps_color}]{self.server_fps:.1f}[/]  |  "
             f"Avg Latency: [{lat_color}]{self.server_latency:.0f}ms[/]",
-            f"  Frames Processed: {self.frames_sent}  |  "
-            f"Status: [green]Running[/]",
+            f"  Frames Processed: {self.frames_sent}  |  " f"Status: [green]Running[/]",
         ]
         self.update("\n".join(lines))
 

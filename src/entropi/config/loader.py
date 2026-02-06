@@ -35,7 +35,8 @@ def get_default_config_path() -> Path:
     """Get the path to the default config file bundled with the package."""
     # Use importlib.resources for Python 3.9+ compatible package data access
     try:
-        with importlib.resources.files("entropi.data").joinpath("default_config.yaml") as p:
+        resource = importlib.resources.files("entropi.data").joinpath("default_config.yaml")
+        with importlib.resources.as_file(resource) as p:
             return Path(p)
     except (TypeError, FileNotFoundError):
         # Fallback for editable installs

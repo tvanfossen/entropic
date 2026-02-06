@@ -126,6 +126,21 @@ class InterruptContext:
     mode: InterruptMode = InterruptMode.PAUSE
 
 
+@dataclass
+class EngineCallbacks:
+    """Callback configuration for engine events."""
+
+    on_state_change: Callable[[AgentState], None] | None = None
+    on_tool_call: Callable[[ToolCall], Any] | None = None
+    on_stream_chunk: Callable[[str], None] | None = None
+    on_tool_start: Callable[[ToolCall], None] | None = None
+    on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
+    on_todo_update: Callable[[TodoList], None] | None = None
+    on_compaction: Callable[[CompactionResult], None] | None = None
+    on_pause_prompt: Callable[[str], Any] | None = None
+    on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
+
+
 class AgentEngine:
     """
     Core agent execution engine.
@@ -199,7 +214,7 @@ class AgentEngine:
         default_model = self.config.models.default
         model_config = getattr(self.config.models, default_model, None)
         if model_config and hasattr(model_config, "context_length"):
-            return model_config.context_length
+            return int(model_config.context_length)
         # Fallback default
         return 16384
 
@@ -232,41 +247,21 @@ class AgentEngine:
                 )
                 self._token_counter.max_tokens = new_max
 
-    def set_callbacks(
-        self,
-        on_state_change: Callable[[AgentState], None] | None = None,
-        on_tool_call: Callable[[ToolCall], Any] | None = None,
-        on_stream_chunk: Callable[[str], None] | None = None,
-        on_tool_start: Callable[[ToolCall], None] | None = None,
-        on_tool_complete: Callable[[ToolCall, str, float], None] | None = None,
-        on_todo_update: Callable[[TodoList], None] | None = None,
-        on_compaction: Callable[[CompactionResult], None] | None = None,
-        on_pause_prompt: Callable[[str], Any] | None = None,
-        on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None,
-    ) -> None:
-        """
-        Set callback functions for loop events.
+    def set_callbacks(self, callbacks: EngineCallbacks) -> None:
+        """Set callback functions for loop events.
 
         Args:
-            on_state_change: Called when agent state changes
-            on_tool_call: Called to approve tool calls (return True to allow). Can be sync or async.
-            on_stream_chunk: Called for each streamed text chunk
-            on_tool_start: Called when tool execution begins
-            on_tool_complete: Called when tool execution completes (tool, result, duration_ms)
-            on_todo_update: Called when todo list is updated
-            on_compaction: Called when context is compacted
-            on_pause_prompt: Called when generation is paused, returns injection text or None
-            on_tool_record: Called to record tool call for task tracking (task_id, tool, status, result, duration)
+            callbacks: Callback configuration for engine events
         """
-        self._on_state_change = on_state_change
-        self._on_tool_approval = on_tool_call
-        self._on_stream_chunk = on_stream_chunk
-        self._on_tool_start = on_tool_start
-        self._on_tool_complete = on_tool_complete
-        self._on_todo_update = on_todo_update
-        self._on_compaction = on_compaction
-        self._on_pause_prompt = on_pause_prompt
-        self._on_tool_record = on_tool_record
+        self._on_state_change = callbacks.on_state_change
+        self._on_tool_approval = callbacks.on_tool_call
+        self._on_stream_chunk = callbacks.on_stream_chunk
+        self._on_tool_start = callbacks.on_tool_start
+        self._on_tool_complete = callbacks.on_tool_complete
+        self._on_todo_update = callbacks.on_todo_update
+        self._on_compaction = callbacks.on_compaction
+        self._on_pause_prompt = callbacks.on_pause_prompt
+        self._on_tool_record = callbacks.on_tool_record
 
     @property
     def todo_list(self) -> TodoList:
@@ -326,7 +321,7 @@ class AgentEngine:
         ctx.messages.append(Message(role="user", content=user_message))
 
         # Log user prompt for debugging
-        logger.info(f"\n{'='*60}\n[USER PROMPT]\n{'='*60}\n{user_message}\n{'='*60}")
+        logger.info(f"\n{'=' * 60}\n[USER PROMPT]\n{'=' * 60}\n{user_message}\n{'=' * 60}")
 
         self._set_state(ctx, AgentState.PLANNING)
 
@@ -450,11 +445,11 @@ class AgentEngine:
 
             # Log COMPLETE raw model output including thinking blocks
             logger.info(
-                f"\n{'='*70}\n"
+                f"\n{'=' * 70}\n"
                 f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
-                f"{'='*70}\n"
+                f"{'=' * 70}\n"
                 f"{content}\n"
-                f"{'='*70}"
+                f"{'=' * 70}"
             )
 
             # Lock tier after first generation to prevent mid-task model switching
@@ -471,11 +466,11 @@ class AgentEngine:
 
         # Log COMPLETE raw model output including thinking blocks
         logger.info(
-            f"\n{'='*70}\n"
+            f"\n{'=' * 70}\n"
             f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
-            f"{'='*70}\n"
+            f"{'=' * 70}\n"
             f"{result.content}\n"
-            f"{'='*70}"
+            f"{'=' * 70}"
         )
 
         # Lock tier after first generation to prevent mid-task model switching
@@ -584,10 +579,12 @@ class AgentEngine:
         if not content.strip() and tool_calls:
             # Use proper <tool_call> format so model learns correct pattern
             # (prevents feedback loop where model mimics [Calling: ...] format)
-            content = "\n".join([
-                f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
-                for tc in tool_calls
-            ])
+            content = "\n".join(
+                [
+                    f'<tool_call>{{"name": "{tc.name}", "arguments": {json.dumps(tc.arguments)}}}</tool_call>'
+                    for tc in tool_calls
+                ]
+            )
 
         return Message(
             role="assistant",
@@ -640,7 +637,7 @@ class AgentEngine:
             # Successful non-duplicate tool call - reset counter
             ctx.consecutive_duplicate_attempts = 0
 
-            logger.debug(f"Executing tool {i+1}/{len(limited_calls)}: {tool_call.name}")
+            logger.debug(f"Executing tool {i + 1}/{len(limited_calls)}: {tool_call.name}")
             msg = await self._execute_tool(ctx, tool_call)
             ctx.messages.append(msg)
             yield msg
@@ -693,80 +690,104 @@ Do NOT call this tool again. Use the previous result above."""
         logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
 
         # Handle internal tools first (no approval needed)
-        if tool_call.name == "entropi.todo_write":
-            return self._handle_todo_tool(tool_call)
+        internal_handlers = {
+            "entropi.todo_write": lambda: self._handle_todo_tool(tool_call),
+            "system.handoff": lambda: self._handle_handoff(ctx, tool_call),
+        }
+        if handler := internal_handlers.get(tool_call.name):
+            result = handler()
+            return await result if asyncio.iscoroutine(result) else result
 
-        # Handle system.handoff - auto-approve and process specially
-        if tool_call.name == "system.handoff":
-            return await self._handle_handoff(ctx, tool_call)
+        # Check approval (returns denial message if not approved)
+        if denial_msg := await self._check_tool_approval(tool_call):
+            return denial_msg
 
-        approval_result = await self._is_tool_approved(tool_call)
-        if approval_result is not True:
-            # Denied - check if user provided feedback
-            if isinstance(approval_result, str):
-                logger.warning(f"Tool call denied with feedback: {tool_call.name}")
-                reason = f"Permission denied by user. Feedback: {approval_result}"
-            else:
-                logger.warning(f"Tool call denied by user: {tool_call.name}")
-                reason = "Permission denied by user"
-            denied_msg = self._create_denied_message(tool_call, reason)
-            logger.info(f"[FEEDBACK] Denied message sent: {denied_msg.content[:100]}...")
-            return denied_msg
-
-        # Notify tool start
+        # Execute the tool
         if self._on_tool_start:
             self._on_tool_start(tool_call)
+        return await self._do_execute_tool(ctx, tool_call)
 
+    async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
+        """Check tool approval. Returns denial message if not approved, None if approved."""
+        approval_result = await self._is_tool_approved(tool_call)
+        if approval_result is True:
+            return None
+        # Denied - format reason based on whether feedback was provided
+        if isinstance(approval_result, str):
+            logger.warning(f"Tool call denied with feedback: {tool_call.name}")
+            reason = f"Permission denied by user. Feedback: {approval_result}"
+        else:
+            logger.warning(f"Tool call denied by user: {tool_call.name}")
+            reason = "Permission denied by user"
+        denied_msg = self._create_denied_message(tool_call, reason)
+        logger.info(f"[FEEDBACK] Denied message sent: {denied_msg.content[:100]}...")
+        return denied_msg
+
+    async def _do_execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
+        """Execute tool and handle success/error. Always returns a Message."""
         start_time = time.time()
         try:
             logger.debug(f"Executing tool via server manager: {tool_call.name}")
             result = await self.server_manager.execute(tool_call)
             ctx.metrics.tool_calls += 1
             duration_ms = (time.time() - start_time) * 1000
-
-            result_str = str(result.result)
-            logger.debug(f"Tool result ({duration_ms:.0f}ms):\n{result_str}")
-
-            # Log full tool result for debugging
-            logger.info(
-                f"\n{'='*60}\n[TOOL RESULT: {tool_call.name}]\n{'='*60}\n"
-                f"{result_str}\n"
-                f"{'='*60}"
-            )
-            logger.info(f"[TOOL COMPLETE] {tool_call.name} -> {len(result_str)} chars result ({duration_ms:.0f}ms)")
-
-            # Notify tool complete
-            if self._on_tool_complete:
-                self._on_tool_complete(tool_call, result.result, duration_ms)
-
-            # Record tool call for task tracking (MCP integration)
-            if ctx.task_id and self._on_tool_record:
-                self._on_tool_record(ctx.task_id, tool_call, "success", result.result, duration_ms)
-
+            self._log_tool_success(ctx, tool_call, result.result, duration_ms)
             return self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
         except PermissionDeniedError as e:
             duration_ms = (time.time() - start_time) * 1000
-            logger.warning(f"Tool permission denied: {tool_call.name} - {e}")
-            if self._on_tool_complete:
-                self._on_tool_complete(tool_call, f"Permission denied: {e}", duration_ms)
-            # Record error for task tracking
-            if ctx.task_id and self._on_tool_record:
-                self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
-            denied_msg = self._create_denied_message(tool_call, str(e))
-            logger.info(f"[FEEDBACK] Permission denied message sent: {denied_msg.content[:100]}...")
-            return denied_msg
+            return self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=True)
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
-            logger.error(f"Tool execution error: {tool_call.name} - {e}")
-            if self._on_tool_complete:
-                self._on_tool_complete(tool_call, f"Error: {e}", duration_ms)
-            # Record error for task tracking
-            if ctx.task_id and self._on_tool_record:
-                self._on_tool_record(ctx.task_id, tool_call, "error", str(e), duration_ms)
-            # Return error message instead of raising to allow the model to recover
-            error_msg = self._create_error_message(tool_call, str(e))
-            logger.info(f"[FEEDBACK] Error message sent: {error_msg.content[:100]}...")
-            return error_msg
+            return self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=False)
+
+    def _log_tool_success(
+        self, ctx: LoopContext, tool_call: ToolCall, result: str, duration_ms: float
+    ) -> None:
+        """Log and notify about successful tool execution."""
+        result_str = str(result)
+        logger.debug(f"Tool result ({duration_ms:.0f}ms):\n{result_str}")
+        logger.info(
+            f"\n{'=' * 60}\n[TOOL RESULT: {tool_call.name}]\n{'=' * 60}\n"
+            f"{result_str}\n{'=' * 60}"
+        )
+        logger.info(
+            f"[TOOL COMPLETE] {tool_call.name} -> {len(result_str)} chars result ({duration_ms:.0f}ms)"
+        )
+        if self._on_tool_complete:
+            self._on_tool_complete(tool_call, result, duration_ms)
+        if ctx.task_id and self._on_tool_record:
+            self._on_tool_record(ctx.task_id, tool_call, "success", result, duration_ms)
+
+    def _handle_tool_error(
+        self,
+        ctx: LoopContext,
+        tool_call: ToolCall,
+        error: Exception,
+        duration_ms: float,
+        *,
+        is_permission: bool,
+    ) -> Message:
+        """Handle tool execution error and return appropriate message."""
+        error_str = str(error)
+        if is_permission:
+            logger.warning(f"Tool permission denied: {tool_call.name} - {error_str}")
+            display_msg = f"Permission denied: {error_str}"
+        else:
+            logger.error(f"Tool execution error: {tool_call.name} - {error_str}")
+            display_msg = f"Error: {error_str}"
+
+        if self._on_tool_complete:
+            self._on_tool_complete(tool_call, display_msg, duration_ms)
+        if ctx.task_id and self._on_tool_record:
+            self._on_tool_record(ctx.task_id, tool_call, "error", error_str, duration_ms)
+
+        msg = (
+            self._create_denied_message(tool_call, error_str)
+            if is_permission
+            else self._create_error_message(tool_call, error_str)
+        )
+        logger.info(f"[FEEDBACK] {'Permission denied' if is_permission else 'Error'} message sent")
+        return msg
 
     async def _is_tool_approved(self, tool_call: ToolCall) -> bool | str:
         """Check if tool call is approved.
@@ -780,57 +801,52 @@ Do NOT call this tool again. Use the previous result above."""
         Returns:
             True if approved, False if denied, or str with feedback if denied with feedback.
         """
+        # Early approval checks (no prompting needed)
+        if self._should_auto_approve(tool_call):
+            return True
+
+        # Prompt user via callback and convert result
+        result = await self._get_approval_result(tool_call)
+        return self._convert_approval_result(tool_call, result)
+
+    def _convert_approval_result(
+        self, tool_call: ToolCall, result: bool | str | ToolApproval
+    ) -> bool | str:
+        """Convert callback result to approval decision."""
+        if isinstance(result, str):
+            return result  # Feedback string as denial reason
+        if isinstance(result, ToolApproval):
+            return self._handle_approval_result(tool_call, result)
+        return bool(result)  # Legacy bool support
+
+    def _should_auto_approve(self, tool_call: ToolCall) -> bool:
+        """Check if tool should be auto-approved without prompting."""
         if self.loop_config.auto_approve_tools:
             return True
-
-        # Check if explicitly allowed in config - no prompt needed
         if self.server_manager.is_explicitly_allowed(tool_call):
             return True
+        return self._on_tool_approval is None  # No callback = headless mode
 
-        # No callback means auto-approve (e.g., headless mode)
-        if self._on_tool_approval is None:
-            return True
-
-        # Prompt user via callback
-        # Callback can return: bool, ToolApproval enum, str (feedback), or awaitable
+    async def _get_approval_result(self, tool_call: ToolCall) -> bool | str | ToolApproval:
+        """Get approval result from callback."""
+        assert self._on_tool_approval is not None
         result = self._on_tool_approval(tool_call)
         if asyncio.iscoroutine(result):
             result = await result
-
-        # Handle feedback string (denial with user message)
-        if isinstance(result, str):
-            return result  # Return feedback string as denial reason
-
-        # Handle ToolApproval enum responses
-        if isinstance(result, ToolApproval):
-            return self._handle_approval_result(tool_call, result)
-
-        # Legacy bool support
-        return bool(result)
+        return result
 
     def _handle_approval_result(self, tool_call: ToolCall, approval: ToolApproval) -> bool:
         """Handle ToolApproval result and save to config if needed."""
-        # Generate permission pattern for this tool call
-        pattern = self._get_permission_pattern(tool_call)
+        allowed = approval in (ToolApproval.ALLOW, ToolApproval.ALWAYS_ALLOW)
 
-        if approval == ToolApproval.ALWAYS_ALLOW:
-            logger.info(f"Saving 'always allow' permission: {pattern}")
-            save_permission(pattern, allow=True)
-            # Also update the in-memory permissions
-            self.server_manager.add_permission(pattern, allow=True)
-            return True
+        # Save permanent permissions
+        if approval in (ToolApproval.ALWAYS_ALLOW, ToolApproval.ALWAYS_DENY):
+            pattern = self._get_permission_pattern(tool_call)
+            logger.info(f"Saving 'always {'allow' if allowed else 'deny'}' permission: {pattern}")
+            save_permission(pattern, allow=allowed)
+            self.server_manager.add_permission(pattern, allow=allowed)
 
-        elif approval == ToolApproval.ALWAYS_DENY:
-            logger.info(f"Saving 'always deny' permission: {pattern}")
-            save_permission(pattern, allow=False)
-            self.server_manager.add_permission(pattern, allow=False)
-            return False
-
-        elif approval == ToolApproval.ALLOW:
-            return True
-
-        else:  # DENY
-            return False
+        return allowed
 
     def _get_permission_pattern(self, tool_call: ToolCall) -> str:
         """Generate a permission pattern for a tool call.
@@ -925,7 +941,9 @@ RECOVERY:
         # Validate routing rules
         if not self.orchestrator.can_handoff(current_tier, target_tier):
             current_name = current_tier.value if current_tier else "none"
-            error_msg = f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
+            error_msg = (
+                f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
+            )
             logger.warning(f"[HANDOFF] {error_msg}")
             return self._create_error_message(tool_call, error_msg)
 
@@ -953,19 +971,19 @@ RECOVERY:
 
     def _should_stop(self, ctx: LoopContext) -> bool:
         """Check if loop should stop."""
+        # Check termination states
         if ctx.state in (AgentState.COMPLETE, AgentState.ERROR, AgentState.INTERRUPTED):
             return True
 
+        # Check limits with logging
         if ctx.metrics.iterations >= self.loop_config.max_iterations:
             logger.warning("Max iterations reached")
-            return True
-
-        # Circuit breaker: stop if model is stuck in duplicate tool calls
-        if ctx.consecutive_duplicate_attempts >= 3:
+        elif ctx.consecutive_duplicate_attempts >= 3:
             logger.warning("Stopping loop: model stuck in duplicate tool calls")
-            return True
+        else:
+            return False
 
-        return False
+        return True
 
     def _set_state(self, ctx: LoopContext, state: AgentState) -> None:
         """Set agent state and notify callback."""

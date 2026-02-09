@@ -214,6 +214,7 @@ class Application:
                 on_stream_chunk=on_chunk,
                 on_tool_start=lambda tc: presenter.print_tool_start(tc.name, tc.arguments),
                 on_tool_complete=lambda tc, r, d: presenter.print_tool_complete(tc.name, r, d),
+                on_tier_selected=lambda t: presenter.set_tier(t),
             )
         )
 
@@ -532,6 +533,7 @@ class Application:
                 on_todo_update=on_todo_update,
                 on_compaction=on_compaction,
                 on_pause_prompt=self._handle_pause_prompt,
+                on_tier_selected=lambda t: presenter.set_tier(t),
             )
         )
 
@@ -876,8 +878,7 @@ class Application:
                 self.console.print(f"[dim]You: {message}[/dim]")
                 self.console.print("\n[yellow]No models configured.[/yellow]")
                 self.console.print(
-                    "[dim]Configure models in ~/.entropi/config.yaml or "
-                    ".entropi/config.yaml[/dim]"
+                    "[dim]Configure models in ~/.entropi/config.yaml or .entropi/config.yaml[/dim]"
                 )
                 return
 

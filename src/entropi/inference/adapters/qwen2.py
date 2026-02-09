@@ -322,7 +322,8 @@ class Qwen2Adapter(ChatAdapter):
         else:
             logger.debug("No tool calls parsed")
             logger.debug(f"  - Contains '{{': {'{' in content}")
-            logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
+            has_name = '"name"' in content
+            logger.debug(f"  - Contains '\"name\"': {has_name}")
 
     def _try_recover_json(self, json_str: str) -> ToolCall | None:
         """Attempt to recover malformed JSON."""

@@ -509,6 +509,7 @@ class EntropiApp(App[None]):
         self._current_thinking: ThinkingBlock | None = None
         self._in_think_block = False
         self._in_tool_call_block = False  # Filter tool_call XML from display
+        self._current_tier: str | None = None  # Active model tier for display
         self._auto_approve_all = False
         self._input_history: list[str] = []
         self._history_index = -1
@@ -639,7 +640,7 @@ class EntropiApp(App[None]):
                 queued_msg = await self._mcp_queue.get()
 
                 logger.info(
-                    f"Processing queued message: {queued_msg.task_id} " f"from {queued_msg.source}"
+                    f"Processing queued message: {queued_msg.task_id} from {queued_msg.source}"
                 )
 
                 try:
@@ -796,6 +797,14 @@ class EntropiApp(App[None]):
         self._mcp_queue = queue
         self._queue_process_callback = process_callback
 
+    # === Tier Display ===
+
+    def set_tier(self, tier: str) -> None:
+        """Set the active model tier, updating current and future messages."""
+        self._current_tier = tier
+        if self._current_message:
+            self._current_message.set_tier(tier)
+
     # === Generation State ===
 
     def start_generation(self) -> None:
@@ -809,6 +818,7 @@ class EntropiApp(App[None]):
         self._interrupt_count = 0  # Reset interrupt counter
         self._in_think_block = False
         self._in_tool_call_block = False
+        self._current_tier = None  # Reset tier - will be set by on_tier_selected callback
         self._current_thinking = None
         self._current_message = None  # Don't create yet - wait for non-thinking content
 
@@ -941,6 +951,8 @@ class EntropiApp(App[None]):
         else:
             if not self._current_message:
                 self._current_message = AssistantMessage("")
+                if self._current_tier:
+                    self._current_message.set_tier(self._current_tier)
                 self._current_message.start_streaming()
                 chat_log.mount(self._current_message)
             self._current_message.append(char)
@@ -1045,9 +1057,12 @@ class EntropiApp(App[None]):
         except Exception:
             pass
 
-        # Resume streaming on current message if still generating
+        # Force a new green box for post-tool content by clearing current message.
+        # _append_char_to_output will create a fresh AssistantMessage that inherits
+        # the current tier.
         if self._is_generating and self._current_message:
-            self._current_message.start_streaming()
+            self._current_message.stop_streaming()
+            self._current_message = None
 
     async def prompt_tool_approval(
         self,

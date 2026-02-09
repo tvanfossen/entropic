@@ -45,7 +45,7 @@ class TestGenerationLifecycle:
 
         await with_timeout(
             headless_app._process_message("What did I just say?"),
-            expected_turns=1,
+            expected_turns=2,  # Second message has longer context (prior exchange in history)
             name="lifecycle_second",
         )
         second_response = headless_presenter.get_stream_content()

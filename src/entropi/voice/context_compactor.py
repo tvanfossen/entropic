@@ -392,7 +392,7 @@ class ContextCompactor:
         self._structured_prompt.bump_version()
 
         logger.debug(
-            f"Compacted {len(transcript)} chars -> {len(summary)} chars " f"in {elapsed:.0f}ms"
+            f"Compacted {len(transcript)} chars -> {len(summary)} chars in {elapsed:.0f}ms"
         )
 
         return CompactionResult(

@@ -79,6 +79,13 @@ class AssistantMessage(Static):
     }
     """
 
+    TIER_STYLES: dict[str, str] = {
+        "code": "cyan",
+        "thinking": "magenta",
+        "normal": "green",
+        "simple": "dim",
+    }
+
     def __init__(self, content: str = "", **kwargs: Any) -> None:
         """
         Initialize assistant message.
@@ -90,6 +97,7 @@ class AssistantMessage(Static):
         super().__init__(**kwargs)
         self._content = content
         self._is_streaming = False
+        self._tier: str | None = None
 
     @property
     def message_text(self) -> str:
@@ -100,6 +108,15 @@ class AssistantMessage(Static):
     def message_text(self, value: str) -> None:
         """Set message text and update display."""
         self._content = value
+        self._update_display()
+
+    def set_tier(self, tier: str) -> None:
+        """Set the model tier and update display.
+
+        Args:
+            tier: Tier name (e.g., 'code', 'thinking', 'normal', 'simple')
+        """
+        self._tier = tier
         self._update_display()
 
     def start_streaming(self) -> None:
@@ -122,6 +139,14 @@ class AssistantMessage(Static):
         self._content += chunk
         self._update_display()
 
+    def _build_title(self) -> str:
+        """Build panel title with optional tier label."""
+        if self._tier:
+            tier_upper = self._tier.upper()
+            color = self.TIER_STYLES.get(self._tier, "dim")
+            return f"[bold green]Assistant[/] [{color}]{tier_upper}[/]"
+        return "[bold green]Assistant[/]"
+
     def _update_display(self) -> None:
         """Update the rendered display."""
         display: Text | Markdown
@@ -135,7 +160,7 @@ class AssistantMessage(Static):
         self.update(
             Panel(
                 display,
-                title="[bold green]Assistant[/]",
+                title=self._build_title(),
                 title_align="left",
                 border_style="green",
                 padding=(0, 1),
@@ -153,7 +178,7 @@ class ToolCallWidget(Static):
     DEFAULT_CSS = """
     ToolCallWidget {
         margin: 0 1;
-        padding: 0;
+        padding: 0 1;
     }
     """
 
@@ -237,7 +262,16 @@ class ToolCallWidget(Static):
         else:
             text = f"{icon} {info}"
 
-        self.update(Text.from_markup(text))
+        tool_base = self._tool_name.split(".")[-1]
+        self.update(
+            Panel(
+                Text.from_markup(text),
+                title=f"[bold green]Tool[/] [dim]{tool_base}[/]",
+                title_align="left",
+                border_style="green",
+                padding=(0, 1),
+            )
+        )
 
     def on_mount(self) -> None:
         """Render on mount."""

@@ -85,6 +85,12 @@ class TUIPresenter(Presenter):
         """Set voice mode callbacks."""
         self._app.set_voice_callbacks(on_enter, on_exit)
 
+    # === Tier Display ===
+
+    def set_tier(self, tier: str) -> None:
+        """Set the active model tier for display."""
+        self._app.set_tier(tier)
+
     # === Generation Lifecycle ===
 
     def start_generation(self) -> None:

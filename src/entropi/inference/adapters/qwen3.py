@@ -270,7 +270,8 @@ class Qwen3Adapter(ChatAdapter):
         else:
             logger.debug("No tool calls parsed")
             logger.debug(f"  - Contains '{{': {'{' in content}")
-            logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
+            has_name = '"name"' in content
+            logger.debug(f"  - Contains '\"name\"': {has_name}")
             logger.debug(f"  - Contains '<tool_call>': {'<tool_call>' in content}")
 
     def _extract_thinking(self, content: str) -> str | None:
@@ -414,7 +415,7 @@ Continue with the task. Call more tools if needed, or respond when complete."""
         if "```" not in content:
             return False
         code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
-        shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S")
+        shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*[^\S\n]+\S")
         for block in code_block_pattern.findall(content):
             if self._is_unparsed_tool_block(block.strip(), shell_pattern):
                 return True

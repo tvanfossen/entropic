@@ -123,6 +123,12 @@ class HeadlessPresenter(Presenter):
         """Set voice mode callbacks - no-op for headless."""
         _ = (on_enter, on_exit)
 
+    # === Tier Display ===
+
+    def set_tier(self, tier: str) -> None:
+        """Set the active model tier - logged only."""
+        self._logger.debug(f"Tier: {tier}")
+
     # === Generation Lifecycle ===
 
     def start_generation(self) -> None:

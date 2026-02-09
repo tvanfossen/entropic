@@ -210,7 +210,8 @@ class FalconAdapter(ChatAdapter):
         else:
             logger.debug("No tool calls parsed")
             logger.debug(f"  - Contains '{{': {'{' in content}")
-            logger.debug(f"  - Contains '\"name\"': {'\"name\"' in content}")
+            has_name = '"name"' in content
+            logger.debug(f"  - Contains '\"name\"': {has_name}")
             logger.debug(f"  - Contains '<tool_call>': {'<tool_call>' in content}")
 
     def _extract_thinking(self, content: str) -> str | None:

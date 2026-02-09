@@ -111,6 +111,18 @@ class Presenter(ABC):
         """
         _ = (on_enter, on_exit)
 
+    # === Tier Display ===
+
+    def set_tier(self, tier: str) -> None:
+        """Set the active model tier for display.
+
+        Optional - implementations may no-op if tier display not supported.
+
+        Args:
+            tier: Tier name (e.g., 'code', 'thinking', 'normal', 'simple')
+        """
+        _ = tier
+
     # === Generation Lifecycle ===
 
     @abstractmethod

@@ -24,7 +24,7 @@ from entropi.core.context import ContextBuilder
 from entropi.core.logging import get_logger
 from entropi.core.queue import MessageSource
 from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
 
 if TYPE_CHECKING:
@@ -114,6 +114,9 @@ class LoopContext:
     # External task tracking (for MCP integration)
     task_id: str | None = None  # Associated task ID if from external source
     source: str = MessageSource.HUMAN  # Message source (human, claude-code)
+    # Stored for system prompt rebuild on tier change
+    all_tools: list[dict[str, Any]] = field(default_factory=list)
+    base_system: str = ""
 
 
 @dataclass
@@ -140,6 +143,7 @@ class EngineCallbacks:
     on_pause_prompt: Callable[[str], Any] | None = None
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
     on_tier_selected: Callable[[str], None] | None = None
+    on_routing_complete: Callable[[RoutingResult], None] | None = None
 
 
 class AgentEngine:
@@ -209,6 +213,7 @@ class AgentEngine:
         # Task tracking callback for external MCP integration
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
         self._on_tier_selected: Callable[[str], None] | None = None
+        self._on_routing_complete: Callable[[RoutingResult], None] | None = None
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -265,6 +270,7 @@ class AgentEngine:
         self._on_pause_prompt = callbacks.on_pause_prompt
         self._on_tool_record = callbacks.on_tool_record
         self._on_tier_selected = callbacks.on_tier_selected
+        self._on_routing_complete = callbacks.on_routing_complete
 
     @property
     def todo_list(self) -> TodoList:
@@ -308,11 +314,15 @@ class AgentEngine:
         tools.append(TODO_TOOL_DEFINITION)
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
-        # Build system prompt with todo guidance appended
+        # Build base system prompt (before adapter formatting)
         base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
         system = self._context_builder.build_system_prompt(base_with_todos)
 
-        # Format system prompt with tools through adapter
+        # Store on ctx for system prompt rebuild on tier change
+        ctx.all_tools = tools
+        ctx.base_system = system
+
+        # Format system prompt with tools through default adapter (rebuilt on tier lock)
         formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
 
         ctx.messages = [Message(role="system", content=formatted_system)]
@@ -329,7 +339,7 @@ class AgentEngine:
         self._set_state(ctx, AgentState.PLANNING)
 
         try:
-            async for message in self._loop(ctx, tools):
+            async for message in self._loop(ctx):
                 yield message
         finally:
             ctx.metrics.end_time = time.time()
@@ -342,7 +352,6 @@ class AgentEngine:
     async def _loop(
         self,
         ctx: LoopContext,
-        tools: list[dict[str, Any]],
     ) -> AsyncIterator[Message]:
         """Main loop implementation."""
         while not self._should_stop(ctx):
@@ -426,14 +435,56 @@ class AgentEngine:
             f"{'=' * 70}"
         )
 
-    def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
-        """Lock tier after first generation and notify callback."""
+    def _filter_tools_for_tier(
+        self, tools: list[dict[str, Any]], tier: Any
+    ) -> list[dict[str, Any]]:
+        """Filter tool list based on tier's allowed_tools config.
+
+        Args:
+            tools: Full tool list
+            tier: ModelTier to filter for
+
+        Returns:
+            Filtered tool list (unchanged if tier allows all tools)
+        """
+        allowed = self.orchestrator.get_allowed_tools(tier)
+        if allowed is None:
+            return tools
+        return [t for t in tools if t["name"] in allowed]
+
+    def _build_formatted_system_prompt(self, tier: Any, ctx: LoopContext) -> str:
+        """Build system prompt formatted for a specific tier's adapter.
+
+        Args:
+            tier: ModelTier to build prompt for
+            ctx: Loop context with base_system and all_tools
+
+        Returns:
+            Formatted system prompt string
+        """
+        filtered = self._filter_tools_for_tier(ctx.all_tools, tier)
+        adapter = self.orchestrator.get_adapter(tier)
+        return adapter.format_system_prompt(ctx.base_system, filtered)
+
+    async def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
+        """Route and lock tier before first generation, emitting callbacks."""
         if ctx.locked_tier is not None:
             return
-        ctx.locked_tier = self.orchestrator.last_used_tier
+        # Route to determine tier before generation starts
+        tier = await self.orchestrator.route(ctx.messages)
+        ctx.locked_tier = tier
         logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
-        if ctx.locked_tier and self._on_tier_selected:
-            self._on_tier_selected(ctx.locked_tier.value)
+
+        # Rebuild system prompt for the routed tier's adapter and tool filter
+        ctx.messages[0] = Message(
+            role="system", content=self._build_formatted_system_prompt(tier, ctx)
+        )
+
+        if self._on_tier_selected:
+            self._on_tier_selected(tier.value)
+        routing_result = self.orchestrator.last_routing_result
+        if routing_result and self._on_routing_complete:
+            self._on_routing_complete(routing_result)
 
     def _notify_tier_selected(self, tier_value: str) -> None:
         """Notify callback of tier selection (for handoff)."""
@@ -441,8 +492,15 @@ class AgentEngine:
             self._on_tier_selected(tier_value)
 
     async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
-        """Generate model response, streaming or not."""
+        """Generate model response, streaming or not.
+
+        Routes first (if no tier locked), emits routing callback,
+        then generates with the resolved tier.
+        """
         logger.debug(f"Generating response (stream={self.loop_config.stream_output})")
+
+        # Route and lock tier before generation starts
+        await self._lock_tier_if_needed(ctx)
 
         if self.loop_config.stream_output:
             return await self._generate_streaming(ctx)
@@ -467,7 +525,6 @@ class AgentEngine:
 
         logger.debug(f"Stream complete: {len(content)} chars")
         self._log_model_output(ctx, content)
-        self._lock_tier_if_needed(ctx)
 
         cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
         logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
@@ -478,7 +535,6 @@ class AgentEngine:
         result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
 
         self._log_model_output(ctx, result.content)
-        self._lock_tier_if_needed(ctx)
 
         ctx.metrics.tokens_used += result.token_count
         logger.debug(
@@ -850,24 +906,15 @@ Do NOT call this tool again. Use the previous result above."""
         return allowed
 
     def _get_permission_pattern(self, tool_call: ToolCall) -> str:
-        """Generate a permission pattern for a tool call.
+        """Generate permission pattern via server class inheritance.
 
-        For bash commands, uses the command as the pattern.
-        For file operations, uses the path.
+        Delegates to ServerManager which routes to the server
+        class's get_permission_pattern() for proper granularity.
         """
-        tool_name = tool_call.name
-        args = tool_call.arguments
-
-        # For bash.execute, use the command
-        if tool_name == "bash.execute" and "command" in args:
-            return f"{tool_name}:{args['command']}"
-
-        # For filesystem operations, use the path
-        if tool_name.startswith("filesystem.") and "path" in args:
-            return f"{tool_name}:{args['path']}"
-
-        # Default: just the tool name with wildcard
-        return f"{tool_name}:*"
+        return self.server_manager.get_permission_pattern(
+            tool_call.name,
+            tool_call.arguments,
+        )
 
     def _create_denied_message(self, tool_call: ToolCall, reason: str) -> Message:
         """Create a permission denied message.
@@ -951,6 +998,12 @@ RECOVERY:
         # Update the locked tier - next generation will use the new tier
         ctx.locked_tier = target_tier
         logger.info(f"[HANDOFF] Success: Now using {target_tier_str} tier")
+
+        # Rebuild system prompt for new tier's adapter and tool filter
+        ctx.messages[0] = Message(
+            role="system", content=self._build_formatted_system_prompt(target_tier, ctx)
+        )
+
         self._notify_tier_selected(target_tier_str)
 
         # Uses role="user" because llama-cpp doesn't render role="tool" properly

@@ -121,6 +121,11 @@ ToolApprovalScreen .args {
     color: $text-muted;
 }
 
+#approval-content {
+    max-height: 60%;
+    min-height: 5;
+}
+
 ToolApprovalScreen .options {
     padding-top: 1;
     text-align: center;
@@ -129,6 +134,62 @@ ToolApprovalScreen .options {
 ToolApprovalScreen .key {
     text-style: bold;
     color: $primary;
+}
+
+/* Tool detail modal (read-only, click on completed tool) */
+ToolDetailScreen {
+    align: center middle;
+}
+
+ToolDetailScreen > Vertical {
+    width: 80%;
+    max-width: 100;
+    height: auto;
+    max-height: 85%;
+    background: $surface;
+    border: solid green;
+    padding: 1 2;
+}
+
+.detail-header {
+    height: auto;
+    width: 100%;
+}
+
+.detail-header .title {
+    width: 1fr;
+}
+
+.close-btn {
+    width: auto;
+    min-width: 3;
+    text-align: right;
+    color: $text-muted;
+}
+
+.close-btn:hover {
+    color: $error;
+    text-style: bold;
+}
+
+#detail-content {
+    max-height: 70%;
+    min-height: 5;
+}
+
+/* File edit approval modal */
+FileEditApprovalScreen {
+    align: center middle;
+}
+
+FileEditApprovalScreen > Vertical {
+    width: 80%;
+    max-width: 100;
+    height: auto;
+    max-height: 85%;
+    background: $surface;
+    border: solid $warning;
+    padding: 1 2;
 }
 
 /* Pause/Inject modal */

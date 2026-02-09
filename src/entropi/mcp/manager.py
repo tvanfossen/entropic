@@ -14,6 +14,7 @@ from entropi.config.schema import EntropyConfig
 from entropi.core.base import ToolCall, ToolResult
 from entropi.core.logging import get_logger
 from entropi.mcp.client import MCPClient
+from entropi.mcp.servers.base import BaseMCPServer
 
 logger = get_logger("mcp.manager")
 
@@ -45,6 +46,7 @@ class ServerManager:
         """
         self.config = config
         self._clients: dict[str, MCPClient] = {}
+        self._server_classes: dict[str, type[BaseMCPServer]] = {}
         self._permissions = config.permissions
 
     async def initialize(self) -> None:
@@ -53,42 +55,9 @@ class ServerManager:
 
         mcp_config = self.config.mcp
 
-        # Built-in servers
+        # Built-in servers (registers classes + clients)
         # Note: -W ignore suppresses RuntimeWarning about sys.modules from runpy
-        if mcp_config.enable_filesystem:
-            self._clients["filesystem"] = MCPClient(
-                name="filesystem",
-                command=sys.executable,
-                args=["-W", "ignore", "-m", "entropi.mcp.servers.filesystem"],
-            )
-
-        if mcp_config.enable_bash:
-            self._clients["bash"] = MCPClient(
-                name="bash",
-                command=sys.executable,
-                args=["-W", "ignore", "-m", "entropi.mcp.servers.bash"],
-            )
-
-        if mcp_config.enable_git:
-            self._clients["git"] = MCPClient(
-                name="git",
-                command=sys.executable,
-                args=["-W", "ignore", "-m", "entropi.mcp.servers.git"],
-            )
-
-        if mcp_config.enable_diagnostics:
-            self._clients["diagnostics"] = MCPClient(
-                name="diagnostics",
-                command=sys.executable,
-                args=["-W", "ignore", "-m", "entropi.mcp.servers.diagnostics"],
-            )
-
-        if mcp_config.enable_system:
-            self._clients["system"] = MCPClient(
-                name="system",
-                command=sys.executable,
-                args=["-W", "ignore", "-m", "entropi.mcp.servers.system"],
-            )
+        self._register_builtin_servers(mcp_config)
 
         # External servers from config
         for name, server_config in mcp_config.external_servers.items():
@@ -108,6 +77,52 @@ class ServerManager:
 
         connected = self.get_connected_servers()
         logger.info(f"Connected to {len(connected)} servers: {connected}")
+
+    def _register_builtin_servers(self, mcp_config: Any) -> None:
+        """Register built-in MCP servers with their classes."""
+        from entropi.mcp.servers.bash import BashServer
+        from entropi.mcp.servers.diagnostics import DiagnosticsServer
+        from entropi.mcp.servers.filesystem import FilesystemServer
+        from entropi.mcp.servers.git import GitServer
+        from entropi.mcp.servers.system import SystemServer
+
+        _mod = "entropi.mcp.servers"
+        builtins: list[tuple[bool, str, str, type[BaseMCPServer]]] = [
+            (mcp_config.enable_filesystem, "filesystem", f"{_mod}.filesystem", FilesystemServer),
+            (mcp_config.enable_bash, "bash", f"{_mod}.bash", BashServer),
+            (mcp_config.enable_git, "git", f"{_mod}.git", GitServer),
+            (
+                mcp_config.enable_diagnostics,
+                "diagnostics",
+                f"{_mod}.diagnostics",
+                DiagnosticsServer,
+            ),
+            (mcp_config.enable_system, "system", f"{_mod}.system", SystemServer),
+        ]
+
+        for enabled, name, module, server_cls in builtins:
+            if enabled:
+                self._server_classes[name] = server_cls
+                self._clients[name] = MCPClient(
+                    name=name,
+                    command=sys.executable,
+                    args=["-W", "ignore", "-m", module],
+                )
+
+    def get_permission_pattern(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """Generate permission pattern via server class inheritance.
+
+        Delegates to the server class's get_permission_pattern().
+        Falls back to BaseMCPServer default (tool-level) for
+        external or unregistered servers.
+        """
+        prefix = tool_name.split(".")[0]
+        server_cls = self._server_classes.get(prefix, BaseMCPServer)
+        return server_cls.get_permission_pattern(tool_name, arguments)
 
     async def _safe_connect(self, client: MCPClient) -> None:
         """Connect to a client, logging errors but not failing."""

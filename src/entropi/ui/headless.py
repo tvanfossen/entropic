@@ -129,6 +129,10 @@ class HeadlessPresenter(Presenter):
         """Set the active model tier - logged only."""
         self._logger.debug(f"Tier: {tier}")
 
+    def show_routing_info(self, info_text: str) -> None:
+        """Display routing info - logged only."""
+        self._logger.info(f"Routing: {info_text}")
+
     # === Generation Lifecycle ===
 
     def start_generation(self) -> None:

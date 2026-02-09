@@ -21,7 +21,7 @@ from entropi.core.logging import get_logger
 from entropi.core.queue import MessageQueue, MessageSource, QueuedMessage
 from entropi.core.session import SessionManager
 from entropi.core.tasks import TaskManager
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.servers.external import ExternalMCPServer
 from entropi.storage.backend import SQLiteStorage
@@ -153,6 +153,11 @@ class Application:
             session_manager=self._session_manager,
         )
 
+        # Provide live conversation history to MCP get_history
+        self._external_mcp.set_history_provider(
+            lambda: self._messages,
+        )
+
         # Start the socket server in the background
         self._external_mcp_task = asyncio.create_task(
             self._external_mcp.start(),
@@ -206,6 +211,10 @@ class Application:
             response_content += chunk
             presenter.on_stream_chunk(chunk)
 
+        def on_tool_complete(tc: Any, r: str, d: float) -> None:
+            presenter.print_tool_complete(tc.name, r, d)
+            self._emit_context_update()
+
         # Set up callbacks (same as _process_message, tool approval follows config)
         self._engine.set_callbacks(
             EngineCallbacks(
@@ -213,8 +222,11 @@ class Application:
                 on_tool_call=self._handle_tool_approval,
                 on_stream_chunk=on_chunk,
                 on_tool_start=lambda tc: presenter.print_tool_start(tc.name, tc.arguments),
-                on_tool_complete=lambda tc, r, d: presenter.print_tool_complete(tc.name, r, d),
+                on_tool_complete=on_tool_complete,
                 on_tier_selected=lambda t: presenter.set_tier(t),
+                on_routing_complete=lambda r: presenter.show_routing_info(
+                    self._format_routing_info(r)
+                ),
             )
         )
 
@@ -514,6 +526,7 @@ class Application:
         def on_tool_complete(tool_call: Any, result: str, duration_ms: float) -> None:
             """Handle tool execution complete."""
             presenter.print_tool_complete(tool_call.name, result, duration_ms)
+            self._emit_context_update()
 
         def on_todo_update(todo_list: Any) -> None:
             """Handle todo list update."""
@@ -534,6 +547,9 @@ class Application:
                 on_compaction=on_compaction,
                 on_pause_prompt=self._handle_pause_prompt,
                 on_tier_selected=lambda t: presenter.set_tier(t),
+                on_routing_complete=lambda r: presenter.show_routing_info(
+                    self._format_routing_info(r)
+                ),
             )
         )
 
@@ -580,28 +596,41 @@ class Application:
         """
         Handle tool approval request.
 
-        If auto_approve is enabled, approve all tools.
-        Otherwise, prompt the user for approval on sensitive tools.
+        All tools require approval unless explicitly in allow list
+        (checked by engine before this callback is reached).
 
-        Returns ToolApproval enum for new behavior, or bool for legacy.
+        Returns ToolApproval enum or feedback string.
         """
         from entropi.core.engine import ToolApproval
 
-        # Auto-approve if configured or no presenter or non-sensitive
-        should_auto_approve = (
-            self.config.permissions.auto_approve
-            or not self._presenter
-            or not self._presenter.is_sensitive_tool(tool_call.name, tool_call.arguments)
-        )
-        if should_auto_approve:
+        if not self._presenter:
             return ToolApproval.ALLOW
 
-        # For sensitive tools, prompt the user via modal
+        # is_sensitive controls UI styling only (yellow vs cyan)
+        is_sensitive = self._presenter.is_sensitive_tool(
+            tool_call.name,
+            tool_call.arguments,
+        )
         return await self._presenter.prompt_tool_approval(
             tool_call.name,
             tool_call.arguments,
-            is_sensitive=True,
+            is_sensitive=is_sensitive,
         )
+
+    def _emit_context_update(self) -> None:
+        """Push current context usage to the presenter."""
+        if self._engine and self._presenter:
+            used = self._engine._token_counter.count_messages(self._messages)
+            max_t = self._engine._token_counter.max_tokens
+            self._presenter.print_context_usage(used, max_t)
+
+    def _format_routing_info(self, result: RoutingResult) -> str:
+        """Format a RoutingResult into a compact display string."""
+        prev = result.previous_tier.value.upper() if result.previous_tier else "—"
+        tier = result.tier.value.upper()
+        swap = result.swap_action
+        ms = f"{result.routing_ms:.0f}ms"
+        return f"{prev} → {tier} | {swap} | {ms}"
 
     def _handle_interrupt(self) -> None:
         """Handle interrupt signal (hard cancel)."""

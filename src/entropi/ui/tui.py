@@ -8,6 +8,7 @@ replacing the Rich + prompt_toolkit approach.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import os
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
@@ -31,6 +32,7 @@ from entropi.ui.widgets import (
     AssistantMessage,
     ContextBar,
     ProcessingIndicator,
+    RouterInfoWidget,
     StatusFooter,
     ThinkingBlock,
     TodoWidget,
@@ -98,12 +100,10 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
         color = "yellow" if self._is_sensitive else "cyan"
         icon = "!" if self._is_sensitive else "?"
 
-        # Format arguments
+        # Format arguments — show full content, scroll handles overflow
         args_lines = []
         for key, value in self._arguments.items():
             value_str = repr(value)
-            if len(value_str) > 100:
-                value_str = value_str[:50] + " ... " + value_str[-30:]
             args_lines.append(f"  [dim]{key}:[/] {value_str}")
         args_text = "\n".join(args_lines) if args_lines else "  (no arguments)"
 
@@ -113,7 +113,8 @@ class ToolApprovalScreen(ModalScreen[ToolApproval | str]):
                 classes="title",
             )
             yield Static(f"[bold]{self._tool_name}[/]", classes="tool-name")
-            yield Static(args_text, classes="args")
+            with VerticalScroll(id="approval-content"):
+                yield Static(args_text, classes="args")
             yield Static("", id="options-display", classes="options")
             yield Input(
                 placeholder="Type feedback and press Enter...",
@@ -289,58 +290,42 @@ class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
             )
             yield Static(f"[bold]Path:[/] {path}", classes="file-path")
 
-            # Show content based on operation type
-            if self._tool_name == "filesystem.edit_file":
-                old_str = self._arguments.get("old_string", "")
-                new_str = self._arguments.get("new_string", "")
-                insert_line = self._arguments.get("insert_line")
+            # Scrollable content area — show full content, no truncation
+            with VerticalScroll(id="approval-content"):
+                if self._tool_name == "filesystem.edit_file":
+                    old_str = self._arguments.get("old_string", "")
+                    new_str = self._arguments.get("new_string", "")
+                    insert_line = self._arguments.get("insert_line")
 
-                if insert_line is not None:
-                    yield Static(f"[dim]Insert at line {insert_line}:[/]", classes="edit-label")
+                    if insert_line is not None:
+                        yield Static(
+                            f"[dim]Insert at line {insert_line}:[/]",
+                            classes="edit-label",
+                        )
+                        yield Static(
+                            Panel(new_str, title="Content to Insert", border_style="green"),
+                            classes="content-preview",
+                        )
+                    else:
+                        diff_text = self._format_diff(old_str, new_str)
+                        yield Static(
+                            Panel(diff_text, title="Diff", border_style="cyan"),
+                            classes="content-preview",
+                        )
+
+                elif self._tool_name == "filesystem.write_file":
+                    content = self._arguments.get("content", "")
+                    lines = content.count("\n") + 1
+                    chars = len(content)
+                    yield Static(f"[dim]{lines} lines, {chars} chars[/]", classes="file-stats")
+                    preview_lines = content.split("\n")
+                    numbered = "\n".join(
+                        f"{i + 1:3} │ {line}" for i, line in enumerate(preview_lines)
+                    )
                     yield Static(
-                        Panel(
-                            new_str[:500] + ("..." if len(new_str) > 500 else ""),
-                            title="Content to Insert",
-                            border_style="green",
-                        ),
+                        Panel(numbered, title="Content Preview", border_style="cyan"),
                         classes="content-preview",
                     )
-                else:
-                    yield Static("[dim]Replace:[/]", classes="edit-label")
-                    with Horizontal(classes="diff-view"):
-                        yield Static(
-                            Panel(
-                                old_str[:300] + ("..." if len(old_str) > 300 else ""),
-                                title="Old",
-                                border_style="red",
-                            ),
-                            classes="diff-old",
-                        )
-                        yield Static(
-                            Panel(
-                                new_str[:300] + ("..." if len(new_str) > 300 else ""),
-                                title="New",
-                                border_style="green",
-                            ),
-                            classes="diff-new",
-                        )
-
-            elif self._tool_name == "filesystem.write_file":
-                content = self._arguments.get("content", "")
-                lines = content.count("\n") + 1
-                chars = len(content)
-                yield Static(f"[dim]{lines} lines, {chars} chars[/]", classes="file-stats")
-                # Show first 800 chars with line numbers
-                preview_lines = content[:800].split("\n")
-                numbered = "\n".join(
-                    f"{i + 1:3} │ {line}" for i, line in enumerate(preview_lines[:20])
-                )
-                if len(content) > 800 or len(preview_lines) > 20:
-                    numbered += "\n    │ ..."
-                yield Static(
-                    Panel(numbered, title="Content Preview", border_style="cyan"),
-                    classes="content-preview",
-                )
 
             yield Static("", id="options-display", classes="options")
             yield Input(
@@ -352,6 +337,31 @@ class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
                 "[dim]↑/↓ to select, Enter to confirm, Esc to cancel[/]",
                 classes="hint",
             )
+
+    @staticmethod
+    def _format_diff(old: str, new: str) -> str:
+        """Format old/new strings as a unified diff with Rich markup."""
+        old_lines = old.splitlines(keepends=True)
+        new_lines = new.splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            old_lines,
+            new_lines,
+            lineterm="",
+        )
+        parts: list[str] = []
+        for line in diff:
+            stripped = line.rstrip("\n")
+            if stripped.startswith("---") or stripped.startswith("+++"):
+                continue
+            if stripped.startswith("@@"):
+                parts.append(f"[dim]{stripped}[/]")
+            elif stripped.startswith("-"):
+                parts.append(f"[red]{stripped}[/]")
+            elif stripped.startswith("+"):
+                parts.append(f"[green]{stripped}[/]")
+            else:
+                parts.append(f"[dim]{stripped}[/]")
+        return "\n".join(parts) if parts else "[dim](no changes)[/]"
 
     def on_mount(self) -> None:
         self._update_options_display()
@@ -420,6 +430,74 @@ class FileEditApprovalScreen(ModalScreen[ToolApproval | str]):
     def on_feedback_submitted(self, event: Input.Submitted) -> None:
         feedback = event.value.strip()
         self.dismiss(feedback if feedback else ToolApproval.DENY)
+
+
+class ToolDetailScreen(ModalScreen[None]):
+    """Read-only modal showing full tool call details."""
+
+    BINDINGS = [
+        Binding("escape", "close", "Close", show=True),
+        Binding("q", "close", "Close", show=False),
+    ]
+
+    def __init__(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        result: str | None,
+        duration_ms: float | None,
+        status: str,
+    ) -> None:
+        super().__init__()
+        self._tool_name = name
+        self._arguments = arguments
+        self._result = result
+        self._duration_ms = duration_ms
+        self._status = status
+
+    def compose(self) -> ComposeResult:
+        """Compose the detail modal."""
+        icon = "[green]✓[/]" if self._status == "complete" else "[red]✗[/]"
+        duration = f" ({self._duration_ms:.0f}ms)" if self._duration_ms else ""
+        header = f"{icon} [bold]{self._tool_name}[/]{duration}"
+
+        import json
+
+        args_str = json.dumps(self._arguments, indent=2, default=str)
+
+        with Vertical():
+            with Horizontal(classes="detail-header"):
+                yield Static(header, classes="title")
+                yield Static(
+                    "[bold]\\[x][/]",
+                    classes="close-btn",
+                    id="detail-close",
+                )
+            with VerticalScroll(id="detail-content"):
+                yield Static(
+                    Panel(args_str, title="Arguments", border_style="cyan"),
+                    classes="detail-args",
+                )
+                if self._result:
+                    result_panel = Panel(
+                        self._result,
+                        title="Result",
+                        border_style="green",
+                    )
+                    yield Static(
+                        result_panel,
+                        classes="detail-result",
+                    )
+            yield Static("[dim]Esc or q to close[/]", classes="hint")
+
+    @on(events.Click, "#detail-close")
+    def on_close_click(self) -> None:
+        """Close modal when clicking the close button."""
+        self.dismiss(None)
+
+    def action_close(self) -> None:
+        """Close the detail modal."""
+        self.dismiss(None)
 
 
 class PauseScreen(ModalScreen[str | None]):
@@ -622,7 +700,7 @@ class EntropiApp(App[None]):
             self._add_error(f"Error: {e}")
             self._end_generation_ui()
 
-    @work(exclusive=False, exit_on_error=False)
+    @work(exclusive=False, exit_on_error=False, group="queue-consumer")
     async def _run_queue_consumer_worker(self) -> None:
         """Run queue consumer as Textual worker for proper app context.
 
@@ -805,6 +883,12 @@ class EntropiApp(App[None]):
         if self._current_message:
             self._current_message.set_tier(tier)
 
+    def show_routing_info(self, info_text: str) -> None:
+        """Display routing decision in a compact yellow panel."""
+        chat_log = self.query_one("#chat-log", VerticalScroll)
+        chat_log.mount(RouterInfoWidget(info_text))
+        chat_log.scroll_end(animate=False)
+
     # === Generation State ===
 
     def start_generation(self) -> None:
@@ -950,6 +1034,10 @@ class EntropiApp(App[None]):
             self._current_thinking.append(char)
         else:
             if not self._current_message:
+                # Skip leading whitespace — avoids empty Assistant panels
+                # between </think> and <tool_call> tags
+                if char.isspace():
+                    return
                 self._current_message = AssistantMessage("")
                 if self._current_tier:
                     self._current_message.set_tier(self._current_tier)
@@ -1063,6 +1151,20 @@ class EntropiApp(App[None]):
         if self._is_generating and self._current_message:
             self._current_message.stop_streaming()
             self._current_message = None
+
+    @on(ToolCallWidget.ShowDetail)
+    def on_tool_detail(self, event: ToolCallWidget.ShowDetail) -> None:
+        """Show full tool call details when clicking a completed tool widget."""
+        w = event.tool_widget
+        self.push_screen(
+            ToolDetailScreen(
+                name=w._tool_name,
+                arguments=w._arguments,
+                result=w._result,
+                duration_ms=w._duration_ms,
+                status=w._status,
+            )
+        )
 
     async def prompt_tool_approval(
         self,

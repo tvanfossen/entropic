@@ -92,6 +92,25 @@ class BaseMCPServer(ABC):
         """
         pass
 
+    @staticmethod
+    def get_permission_pattern(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """Generate permission pattern for 'Always Allow/Deny'.
+
+        Default: tool-level (e.g., "filesystem.read_file").
+        Override in subclasses for finer granularity.
+
+        Args:
+            tool_name: Fully-qualified tool name
+            arguments: Tool call arguments
+
+        Returns:
+            Permission pattern string
+        """
+        return tool_name
+
     async def run(self) -> None:
         """Run the server."""
         async with stdio_server() as (read_stream, write_stream):

@@ -109,7 +109,10 @@ class ExternalMCPServer:
         # Callback to get capabilities from engine
         self._get_capabilities: Callable[[], dict[str, Any]] | None = None
 
-        # Current session ID
+        # History provider: returns live conversation messages
+        self._history_provider: Callable[[], list[Any]] | None = None
+
+        # Current session ID (legacy — prefer _history_provider)
         self._session_id: str | None = None
 
         # Register handlers
@@ -125,6 +128,17 @@ class ExternalMCPServer:
     def set_session(self, session_id: str) -> None:
         """Set the current session ID."""
         self._session_id = session_id
+
+    def set_history_provider(
+        self,
+        provider: Callable[[], list[Any]],
+    ) -> None:
+        """Set callback that returns live conversation messages.
+
+        Args:
+            provider: Callable returning list of Message objects
+        """
+        self._history_provider = provider
 
     def set_capabilities_callback(
         self,
@@ -408,21 +422,57 @@ class ExternalMCPServer:
             return {"status": "cancelled", "task_id": task_id}
         return {"error": "cannot_cancel", "message": f"Cannot cancel task {task_id}"}
 
-    async def _handle_get_history(self, args: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_get_history(
+        self,
+        args: dict[str, Any],
+    ) -> dict[str, Any]:
         """Handle get_history tool."""
-        if not self._session_id:
-            return {"error": "no_session", "message": "No active session"}
-
         limit = args.get("limit", 20)
-        include_tool_results = args.get("include_tool_results", True)
+        include_tools = args.get("include_tool_results", True)
+
+        # Prefer live history provider over session DB
+        if self._history_provider is not None:
+            return self._format_live_history(limit, include_tools)
+
+        # Fallback to session manager
+        if not self._session_id:
+            return {
+                "error": "no_session",
+                "message": "No active session",
+            }
 
         messages = self._sessions.get_history_for_mcp(
             self._session_id,
             limit=limit,
-            include_tool_results=include_tool_results,
+            include_tool_results=include_tools,
         )
-
         return {"messages": messages, "count": len(messages)}
+
+    def _format_live_history(
+        self,
+        limit: int,
+        include_tools: bool,
+    ) -> dict[str, Any]:
+        """Format live conversation messages for MCP response."""
+        assert self._history_provider is not None
+        all_msgs = self._history_provider()
+
+        formatted = []
+        for msg in all_msgs:
+            if not include_tools and msg.role == "tool":
+                continue
+            formatted.append(
+                {
+                    "role": msg.role,
+                    "content": msg.content[:4000],
+                    "source": msg.metadata.get("source", "human"),
+                    "has_tool_calls": len(msg.tool_calls) > 0,
+                }
+            )
+
+        # Apply limit (most recent messages)
+        trimmed = formatted[-limit:]
+        return {"messages": trimmed, "count": len(trimmed)}
 
     async def _handle_get_capabilities(self, args: dict[str, Any]) -> dict[str, Any]:
         """Handle get_capabilities tool."""

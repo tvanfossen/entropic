@@ -123,6 +123,16 @@ class Presenter(ABC):
         """
         _ = tier
 
+    def show_routing_info(self, info_text: str) -> None:
+        """Display routing decision info.
+
+        Optional - implementations may no-op or log only.
+
+        Args:
+            info_text: Formatted routing info string
+        """
+        _ = info_text
+
     # === Generation Lifecycle ===
 
     @abstractmethod

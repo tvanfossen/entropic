@@ -206,6 +206,75 @@ class LlamaCppBackend(ModelBackend):
         result: dict[str, Any] = self._model.create_chat_completion(**kwargs)
         return result
 
+    async def complete(
+        self,
+        prompt: str,
+        max_tokens: int = 16,
+        grammar: str | None = None,
+        **kwargs: Any,
+    ) -> GenerationResult:
+        """Raw text completion (no chat template).
+
+        Used for classification and other tasks where the model should
+        continue a prompt directly without chat scaffolding.
+
+        Args:
+            prompt: Raw text prompt to complete
+            max_tokens: Maximum tokens to generate
+            grammar: Optional GBNF grammar to constrain output
+            **kwargs: Additional generation parameters
+
+        Returns:
+            Generation result
+        """
+        if self._model is None:
+            await self.load()
+
+        gen_config = GenerationConfig(
+            max_tokens=max_tokens,
+            temperature=kwargs.get("temperature", self.config.temperature),
+            top_p=kwargs.get("top_p", self.config.top_p),
+            top_k=kwargs.get("top_k", self.config.top_k),
+            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
+            grammar=grammar,
+        )
+
+        start = time.time()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._complete_sync(prompt, gen_config),
+        )
+        elapsed = int((time.time() - start) * 1000)
+
+        content = result["choices"][0].get("text", "")
+        return GenerationResult(
+            content=content,
+            tool_calls=[],
+            finish_reason=result["choices"][0].get("finish_reason", "stop"),
+            token_count=result.get("usage", {}).get("completion_tokens", 0),
+            generation_time_ms=elapsed,
+        )
+
+    def _complete_sync(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
+        """Synchronous raw text completion."""
+        assert self._model is not None
+
+        kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "max_tokens": config.max_tokens,
+            "temperature": config.temperature,
+            "top_p": config.top_p,
+            "top_k": config.top_k,
+            "repeat_penalty": config.repeat_penalty,
+        }
+
+        if config.grammar:
+            kwargs["grammar"] = LlamaGrammar.from_string(config.grammar)
+
+        result: dict[str, Any] = self._model.create_completion(**kwargs)
+        return result
+
     async def generate_stream(
         self,
         messages: list[Message],

@@ -73,6 +73,20 @@ class BashServer(BaseMCPServer):
             ),
         ]
 
+    @staticmethod
+    def get_permission_pattern(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """Generate base-command-level permission pattern.
+
+        Extracts the base command so "Always Allow" on `ls -la /foo`
+        saves `bash.execute:ls *` — allowing all `ls` but not `rm`.
+        """
+        command = arguments.get("command", "")
+        base_cmd = command.split()[0] if command.strip() else "*"
+        return f"{tool_name}:{base_cmd} *"
+
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Execute a bash tool."""
         if name != "execute":

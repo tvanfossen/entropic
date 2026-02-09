@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.text import Text
+from textual import events
+from textual.message import Message as TextualMessage
 from textual.widgets import Static
 
 if TYPE_CHECKING:
@@ -27,6 +29,39 @@ class ToolCallData:
     status: str = "pending"
     result: str | None = None
     duration_ms: float | None = None
+
+
+class RouterInfoWidget(Static):
+    """Compact router decision display widget."""
+
+    DEFAULT_CSS = """
+    RouterInfoWidget {
+        margin: 0 1;
+        padding: 0;
+    }
+    """
+
+    def __init__(self, info_text: str, **kwargs: Any) -> None:
+        """
+        Initialize router info widget.
+
+        Args:
+            info_text: Formatted routing info string
+            **kwargs: Additional widget arguments
+        """
+        super().__init__(**kwargs)
+        self._info_text = info_text
+
+    def on_mount(self) -> None:
+        """Render on mount."""
+        self.update(
+            Panel(
+                Text.from_markup(self._info_text),
+                title="Router",
+                border_style="yellow",
+                padding=(0, 1),
+            )
+        )
 
 
 class UserMessage(Static):
@@ -173,7 +208,14 @@ class AssistantMessage(Static):
 
 
 class ToolCallWidget(Static):
-    """Tool call display with status indicator."""
+    """Tool call display with status indicator. Click completed calls for details."""
+
+    class ShowDetail(TextualMessage):
+        """Posted when user clicks a completed/errored tool call."""
+
+        def __init__(self, widget: ToolCallWidget) -> None:
+            super().__init__()
+            self.tool_widget = widget
 
     DEFAULT_CSS = """
     ToolCallWidget {
@@ -238,6 +280,15 @@ class ToolCallWidget(Static):
         args_preview = ", ".join(f"{v}"[:20] for v in self._arguments.values())[:40]
         return f"{tool_base}: {args_preview}"
 
+    def _format_result_preview(self) -> str:
+        """Format tool result for display — show meaningful content."""
+        clean = self._result.replace(chr(10), " ").strip() if self._result else ""
+        if not clean:
+            return ""
+        max_len = 120
+        truncated = clean if len(clean) <= max_len else f"{clean[:max_len]}..."
+        return f" - {truncated}"
+
     def _update_display(self) -> None:
         """Update the rendered display."""
         status_icons = {
@@ -252,12 +303,7 @@ class ToolCallWidget(Static):
 
         if self._status in ("complete", "error"):
             duration = f" ({self._duration_ms:.0f}ms)" if self._duration_ms else ""
-            result_preview = ""
-            if self._result:
-                if len(self._result) > 60:
-                    result_preview = f" - {len(self._result)} chars"
-                else:
-                    result_preview = f" - {self._result[:40].replace(chr(10), ' ')}"
+            result_preview = self._format_result_preview()
             text = f"{icon} {info}{duration}{result_preview}"
         else:
             text = f"{icon} {info}"
@@ -272,6 +318,11 @@ class ToolCallWidget(Static):
                 padding=(0, 1),
             )
         )
+
+    def on_click(self, event: events.Click) -> None:
+        """Open detail modal when clicking a completed/errored tool call."""
+        if self._status in ("complete", "error"):
+            self.post_message(self.ShowDetail(self))
 
     def on_mount(self) -> None:
         """Render on mount."""

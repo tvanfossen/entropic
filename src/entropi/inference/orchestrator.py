@@ -5,7 +5,9 @@ Manages loading, routing, and lifecycle of multiple models.
 """
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -56,17 +58,24 @@ class ModelTier(Enum):
     ROUTER = "router"  # Classification only (small model, e.g., 0.5B)
 
 
-# Load classification grammar from file
-# Output: 1, 2, 3, or 4 (single-token for better accuracy)
-CLASSIFICATION_GRAMMAR = load_grammar("classification")
-
-# Map numeric output to category names
-CLASSIFICATION_MAP = {
-    "1": "simple",
-    "2": "code",
-    "3": "reasoning",
-    "4": "complex",
+# Map numeric output to model tiers directly
+CLASSIFICATION_MAP: dict[str, "ModelTier"] = {
+    "1": ModelTier.SIMPLE,
+    "2": ModelTier.CODE,
+    "3": ModelTier.NORMAL,
+    "4": ModelTier.THINKING,
 }
+
+
+@dataclass
+class RoutingResult:
+    """Metadata from a routing decision."""
+
+    tier: ModelTier
+    previous_tier: ModelTier | None = None
+    model_raw: str = ""  # raw model output (e.g. "2")
+    swap_action: str = "none"  # "none", "reused", "loaded"
+    routing_ms: float = 0.0  # total routing time
 
 
 class ModelOrchestrator:
@@ -90,82 +99,6 @@ class ModelOrchestrator:
         ModelTier.THINKING: frozenset({ModelTier.NORMAL, ModelTier.CODE}),  # Never to SIMPLE
     }
 
-    # Task classification keyword patterns
-    _CODE_KEYWORDS = (
-        "write",
-        "implement",
-        "create",
-        "add",
-        "fix",
-        "debug",
-        "refactor",
-        "edit",
-        "modify",
-        "update",
-        "change",
-        "build",
-        "make",
-        "function",
-        "class",
-        "method",
-        "code",
-        "program",
-        "script",
-        "api",
-        "endpoint",
-        "test",
-        "unit test",
-        "bug",
-        "error",
-        "feature",
-    )
-    _COMPLEX_KEYWORDS = (
-        "analyze",
-        "analyse",
-        "compare",
-        "evaluate",
-        "assess",
-        "review",
-        "investigate",
-        "examine",
-        "trade-off",
-        "tradeoff",
-        "architecture",
-        "design pattern",
-        "pros and cons",
-        "advantages and disadvantages",
-    )
-    _QUESTION_KEYWORDS = (
-        "what is",
-        "what are",
-        "how does",
-        "how do",
-        "why is",
-        "why does",
-        "explain",
-        "describe",
-        "tell me about",
-        "difference between",
-        "when should",
-        "can you explain",
-    )
-    _SIMPLE_PATTERNS = (
-        "hello",
-        "hi",
-        "hey",
-        "thanks",
-        "thank you",
-        "ok",
-        "okay",
-        "sure",
-        "yes",
-        "no",
-        "bye",
-        "goodbye",
-        "good morning",
-        "good night",
-    )
-
     def __init__(self, config: EntropyConfig) -> None:
         """
         Initialize orchestrator.
@@ -179,6 +112,8 @@ class ModelOrchestrator:
         self._thinking_mode: bool = config.thinking.enabled
         self._last_used_tier: ModelTier | None = None
         self._loaded_main_tier: ModelTier | None = None  # Track which main model is loaded
+        self._last_routed_tier: ModelTier | None = None  # Track last router-selected tier
+        self._last_routing_result: RoutingResult | None = None
 
     async def initialize(self) -> None:
         """Initialize and load configured models."""
@@ -366,7 +301,7 @@ class ModelOrchestrator:
         """
         # Determine which model to use
         if tier is None:
-            tier = await self._route(messages)
+            tier = await self.route(messages)
 
         # Track last used tier for adapter lookup
         self._last_used_tier = tier
@@ -411,7 +346,7 @@ class ModelOrchestrator:
             Response chunks
         """
         if tier is None:
-            tier = await self._route(messages)
+            tier = await self.route(messages)
 
         # Track last used tier for adapter lookup
         self._last_used_tier = tier
@@ -472,10 +407,12 @@ class ModelOrchestrator:
         """Get a main tier model with proper locking and swap handling."""
         async with self._lock:
             if model.is_loaded:
+                self._update_swap_action("none")
                 return model
 
             # Check for reusable already-loaded model with same path
             if reusable := self._find_reusable_model(tier, model):
+                self._update_swap_action("reused")
                 return reusable
 
             # Need to swap - unload current if different file
@@ -485,7 +422,13 @@ class ModelOrchestrator:
             logger.info(f"Loading {tier.value} model")
             await model.load()
             self._loaded_main_tier = tier
+            self._update_swap_action("loaded")
             return model
+
+    def _update_swap_action(self, action: str) -> None:
+        """Update the swap action on the last routing result."""
+        if self._last_routing_result:
+            self._last_routing_result.swap_action = action
 
     def _find_reusable_model(self, tier: ModelTier, model: ModelBackend) -> ModelBackend | None:
         """Find an already-loaded model that can be reused (same file path)."""
@@ -509,15 +452,17 @@ class ModelOrchestrator:
             logger.info(f"Unloading {self._loaded_main_tier.value} model for swap")
             await current.unload()
 
-    async def _route(self, messages: list[Message]) -> ModelTier:
-        """
-        Route request to appropriate model tier based on task type.
+    @property
+    def last_routing_result(self) -> RoutingResult | None:
+        """Get the last routing result for display."""
+        return self._last_routing_result
 
-        Task routing:
-        - SIMPLE (greetings, thanks) -> MICRO model (fast, no swap)
-        - CODE (write/edit code) -> CODE model
-        - REASONING (standard questions) -> NORMAL model (or THINKING if forced)
-        - COMPLEX (deep analysis) -> THINKING model (auto, no toggle needed)
+    async def route(self, messages: list[Message]) -> ModelTier:
+        """
+        Route request to appropriate model tier.
+
+        Uses the router model for classification. Falls back to default
+        tier if no router is configured.
 
         Args:
             messages: Conversation messages
@@ -526,117 +471,110 @@ class ModelOrchestrator:
             Model tier to use
         """
         if not self.config.routing.enabled:
-            return ModelTier(self.config.models.default)
+            default = ModelTier(self.config.models.default)
+            self._last_routing_result = RoutingResult(tier=default)
+            return default
 
-        # Classify task based on last user message
-        user_message = self._get_last_user_message(messages)
-        task_type = await self._classify_task(user_message)
-        logger.info(f"[ROUTER] Task classification: {task_type}")
+        start = time.perf_counter()
+        previous_tier = self._last_routed_tier
 
-        return self._select_tier_for_task(task_type)
+        tier, raw_output = await self._classify_task(messages)
 
-    def _get_last_user_message(self, messages: list[Message]) -> str:
-        """Extract last user message for routing decision."""
-        for msg in reversed(messages):
-            if msg.role == "user":
-                return msg.content
-        return ""
+        # Thinking mode override: upgrade NORMAL → THINKING if forced on
+        if self._thinking_mode and tier == ModelTier.NORMAL and ModelTier.THINKING in self._models:
+            tier = ModelTier.THINKING
 
-    def _select_tier_for_task(self, task_type: str) -> ModelTier:
-        """Select model tier for a task type."""
-        # Direct mappings
-        direct_tiers = {"simple": ModelTier.SIMPLE, "code": ModelTier.CODE}
-        if tier := direct_tiers.get(task_type):
-            return tier
-
-        # Complex/reasoning tasks: check if THINKING should be used
-        use_thinking = (
-            task_type == "complex" or self._thinking_mode
-        ) and ModelTier.THINKING in self._models
-        return ModelTier.THINKING if use_thinking else ModelTier.NORMAL
-
-    async def _classify_task(self, message: str) -> str:
-        """
-        Classify task type using keyword heuristics + model confirmation.
-
-        The 0.6B router model alone isn't reliable for multi-class classification,
-        so we use a hybrid approach:
-        1. Keyword heuristics identify likely CODE/REASONING/COMPLEX tasks
-        2. Model confirms SIMPLE classification (it's good at greeting detection)
-
-        Args:
-            message: User message
-
-        Returns:
-            Task type: 'simple', 'code', 'reasoning', or 'complex'
-        """
-        # Try keyword-based classification first
-        if result := self._classify_by_keywords(message):
-            return result
-
-        # Fall back to model classification for ambiguous cases
-        if ModelTier.ROUTER in self._models:
-            return await self._classify_task_with_model(message)
-
-        logger.info("[ROUTER] No keyword match, defaulting to reasoning")
-        return "reasoning"
-
-    def _classify_by_keywords(self, message: str) -> str | None:
-        """Classify task by keyword matching. Returns None if no match."""
-        msg_lower = message.lower()
-        msg_stripped = msg_lower.strip().rstrip("!?.").strip()
-
-        # Check for SIMPLE first (short messages that are just greetings)
-        if msg_stripped in self._SIMPLE_PATTERNS or len(msg_stripped) <= 3:
-            logger.info("[ROUTER] Keyword match: simple (greeting pattern)")
-            return "simple"
-
-        # Check keyword categories in order
-        keyword_checks = [
-            (self._CODE_KEYWORDS, "code"),
-            (self._COMPLEX_KEYWORDS, "complex"),
-            (self._QUESTION_KEYWORDS, "reasoning"),
-        ]
-        for keywords, task_type in keyword_checks:
-            if matched_kw := self._find_keyword_match(msg_lower, keywords):
-                logger.info(f"[ROUTER] Keyword match: {task_type} ('{matched_kw}')")
-                return task_type
-        return None
-
-    def _find_keyword_match(self, text: str, keywords: tuple[str, ...]) -> str | None:
-        """Find first matching keyword in text."""
-        for kw in keywords:
-            if kw in text:
-                return kw
-        return None
-
-    async def _classify_task_with_model(self, message: str) -> str:
-        """
-        Classify task type using router model with GBNF grammar constraint.
-
-        Used as fallback when keyword heuristics don't match.
-
-        Args:
-            message: User message
-
-        Returns:
-            Task type: 'simple', 'code', 'reasoning', or 'complex'
-        """
-        classification_prompt = get_classification_prompt(message, self.config.prompts_dir)
-
-        micro = await self._get_model(ModelTier.ROUTER)
-        result = await micro.generate(
-            [Message(role="user", content=classification_prompt)],
-            max_tokens=10,
-            temperature=0.0,
-            grammar=CLASSIFICATION_GRAMMAR,
+        # Create result early so _get_model can populate swap_action
+        self._last_routing_result = RoutingResult(
+            tier=tier,
+            previous_tier=previous_tier,
+            model_raw=raw_output,
         )
 
-        response = result.content.strip()
-        category = CLASSIFICATION_MAP.get(response, "reasoning")
-        logger.info(f"[ROUTER] Model classification: '{response}' -> {category}")
+        # Prepare the model (load/swap) — populates swap_action
+        await self._get_model(tier)
 
-        return category
+        routing_ms = (time.perf_counter() - start) * 1000
+        self._last_routing_result.routing_ms = routing_ms
+        self._last_routed_tier = tier
+
+        swap = self._last_routing_result.swap_action
+        logger.info(f"[ROUTER] {tier.value} | {swap} | {routing_ms:.0f}ms")
+        return tier
+
+    async def _classify_task(self, messages: list[Message]) -> tuple[ModelTier, str]:
+        """
+        Classify task type using router model.
+
+        Args:
+            messages: Full conversation messages
+
+        Returns:
+            Tuple of (ModelTier, raw model output string)
+        """
+        if ModelTier.ROUTER not in self._models:
+            logger.warning("[ROUTER] No router model configured, using default tier")
+            default = ModelTier(self.config.models.default)
+            return default, ""
+
+        # Extract last user message and history for context
+        user_message = ""
+        history_messages: list[str] = []
+        for msg in reversed(messages):
+            if msg.role == "user":
+                if not user_message:
+                    user_message = msg.content
+                else:
+                    history_messages.append(msg.content)
+                    if len(history_messages) >= 5:
+                        break
+
+        history_messages.reverse()  # Chronological order
+
+        classification_prompt = get_classification_prompt(
+            user_message, self.config.prompts_dir, history=history_messages
+        )
+
+        router = await self._get_model(ModelTier.ROUTER)
+        result = await router.complete(
+            classification_prompt,
+            max_tokens=16,
+            temperature=0.0,
+        )
+
+        raw = result.content.strip()
+        tier, digit = self._parse_classification(raw)
+        return tier, digit
+
+    def _parse_classification(self, raw_output: str) -> tuple[ModelTier, str]:
+        """Extract classification tier from raw completion output.
+
+        Scans for the first valid digit (1-4) in the model output.
+        The model continues the ``"message" -> N`` pattern, so the
+        first classification digit is the answer.
+
+        Returns:
+            Tuple of (tier, digit string) for display purposes.
+        """
+        for char in raw_output:
+            if char in CLASSIFICATION_MAP:
+                return CLASSIFICATION_MAP[char], char
+        logger.warning(f"[ROUTER] No valid digit in output: {raw_output!r}, defaulting to NORMAL")
+        return ModelTier.NORMAL, ""
+
+    def get_allowed_tools(self, tier: ModelTier) -> set[str] | None:
+        """Get allowed tools for a tier, or None if all tools allowed.
+
+        Args:
+            tier: Model tier to check
+
+        Returns:
+            Set of allowed tool names, or None if no filtering
+        """
+        model = self._models.get(tier)
+        if model and model.config.allowed_tools is not None:
+            return set(model.config.allowed_tools)
+        return None
 
     def get_adapter(self, tier: ModelTier | None = None) -> ChatAdapter:
         """

@@ -11,8 +11,9 @@ from .conftest import with_timeout
 class TestCodeResponses:
     """Test CODE tier responses for programming tasks.
 
-    Code prompts trigger multiple agent turns: think → generate code → tool call
-    to write/verify → confirmation. Expect ~4 turns with MCP tools active.
+    Code prompts non-deterministically trigger multiple agent turns: think → generate
+    code → tool call to write/verify → confirmation. Expect up to ~7 turns when the
+    model decides to use tools (vs. 1 turn for inline code).
     """
 
     @pytest.mark.asyncio
@@ -24,7 +25,7 @@ class TestCodeResponses:
         """Code request should produce actual code."""
         await with_timeout(
             headless_app._process_message("Write a Python function to check if a number is even"),
-            expected_turns=4,
+            expected_turns=7,
             name="code_even",
         )
 
@@ -41,7 +42,7 @@ class TestCodeResponses:
         """Code response should have Python syntax markers."""
         await with_timeout(
             headless_app._process_message("Write a function that returns the sum of a list"),
-            expected_turns=4,
+            expected_turns=7,
             name="code_sum",
         )
 

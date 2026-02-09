@@ -46,16 +46,8 @@ repos:
         stages: [pre-commit]
 
       - id: pytest-model
-        name: pytest model tests
-        entry: .venv/bin/pytest tests/model/ -v --tb=short
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-
-      - id: test-report
-        name: generate test verification report
-        entry: bash scripts/generate-test-report.sh
+        name: pytest model tests (cached)
+        entry: bash scripts/run-model-tests.sh
         language: system
         pass_filenames: false
         always_run: true

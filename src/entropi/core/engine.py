@@ -139,6 +139,7 @@ class EngineCallbacks:
     on_compaction: Callable[[CompactionResult], None] | None = None
     on_pause_prompt: Callable[[str], Any] | None = None
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
+    on_tier_selected: Callable[[str], None] | None = None
 
 
 class AgentEngine:
@@ -207,6 +208,7 @@ class AgentEngine:
         self._on_compaction: Callable[[CompactionResult], None] | None = None
         # Task tracking callback for external MCP integration
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
+        self._on_tier_selected: Callable[[str], None] | None = None
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -262,6 +264,7 @@ class AgentEngine:
         self._on_compaction = callbacks.on_compaction
         self._on_pause_prompt = callbacks.on_pause_prompt
         self._on_tool_record = callbacks.on_tool_record
+        self._on_tier_selected = callbacks.on_tier_selected
 
     @property
     def todo_list(self) -> TodoList:
@@ -413,70 +416,69 @@ class AgentEngine:
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
+    def _log_model_output(self, ctx: LoopContext, content: str) -> None:
+        """Log complete raw model output."""
+        logger.info(
+            f"\n{'=' * 70}\n"
+            f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
+            f"{'=' * 70}\n"
+            f"{content}\n"
+            f"{'=' * 70}"
+        )
+
+    def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
+        """Lock tier after first generation and notify callback."""
+        if ctx.locked_tier is not None:
+            return
+        ctx.locked_tier = self.orchestrator.last_used_tier
+        logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+        if ctx.locked_tier and self._on_tier_selected:
+            self._on_tier_selected(ctx.locked_tier.value)
+
+    def _notify_tier_selected(self, tier_value: str) -> None:
+        """Notify callback of tier selection (for handoff)."""
+        if self._on_tier_selected:
+            self._on_tier_selected(tier_value)
+
     async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate model response, streaming or not."""
         logger.debug(f"Generating response (stream={self.loop_config.stream_output})")
 
         if self.loop_config.stream_output:
-            # Streaming mode - tools will be parsed from content after streaming
-            content = ""
+            return await self._generate_streaming(ctx)
 
-            # Use locked tier if set, otherwise let orchestrator auto-route
-            async for chunk in self.orchestrator.generate_stream(
-                ctx.messages, tier=ctx.locked_tier
-            ):
-                # Check for pause request during streaming
-                if self._pause_event.is_set():
-                    logger.info("Generation paused by user")
-                    content = await self._handle_pause(ctx, content)
-                    # After handling pause, check if we should continue or abort
-                    if self._interrupt_event.is_set():
-                        break
+        return await self._generate_non_streaming(ctx)
 
-                content += chunk
+    async def _generate_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
+        """Generate response via streaming."""
+        content = ""
 
-                # Pass ALL content to callback (including think blocks)
-                # UI layer handles styling of think blocks
-                if self._on_stream_chunk:
-                    self._on_stream_chunk(chunk)
+        async for chunk in self.orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
+            if self._pause_event.is_set():
+                logger.info("Generation paused by user")
+                content = await self._handle_pause(ctx, content)
+                if self._interrupt_event.is_set():
+                    break
 
-            logger.debug("\n=== Stream complete ===")
-            logger.debug(f"Total content length: {len(content)}")
+            content += chunk
 
-            # Log COMPLETE raw model output including thinking blocks
-            logger.info(
-                f"\n{'=' * 70}\n"
-                f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
-                f"{'=' * 70}\n"
-                f"{content}\n"
-                f"{'=' * 70}"
-            )
+            if self._on_stream_chunk:
+                self._on_stream_chunk(chunk)
 
-            # Lock tier after first generation to prevent mid-task model switching
-            if ctx.locked_tier is None:
-                ctx.locked_tier = self.orchestrator.last_used_tier
-                logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+        logger.debug(f"Stream complete: {len(content)} chars")
+        self._log_model_output(ctx, content)
+        self._lock_tier_if_needed(ctx)
 
-            cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
-            logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
-            return cleaned_content, tool_calls
+        cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
+        logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
+        return cleaned_content, tool_calls
 
-        # Non-streaming mode - use locked tier if set
+    async def _generate_non_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
+        """Generate response without streaming."""
         result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
 
-        # Log COMPLETE raw model output including thinking blocks
-        logger.info(
-            f"\n{'=' * 70}\n"
-            f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
-            f"{'=' * 70}\n"
-            f"{result.content}\n"
-            f"{'=' * 70}"
-        )
-
-        # Lock tier after first generation to prevent mid-task model switching
-        if ctx.locked_tier is None:
-            ctx.locked_tier = self.orchestrator.last_used_tier
-            logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+        self._log_model_output(ctx, result.content)
+        self._lock_tier_if_needed(ctx)
 
         ctx.metrics.tokens_used += result.token_count
         logger.debug(
@@ -950,6 +952,7 @@ RECOVERY:
         # Update the locked tier - next generation will use the new tier
         ctx.locked_tier = target_tier
         logger.info(f"[HANDOFF] Success: Now using {target_tier_str} tier")
+        self._notify_tier_selected(target_tier_str)
 
         # Uses role="user" because llama-cpp doesn't render role="tool" properly
         content = f"Handoff successful. Now operating as {target_tier_str} tier. Reason: {reason}"

@@ -214,6 +214,7 @@ class Application:
                 on_stream_chunk=on_chunk,
                 on_tool_start=lambda tc: presenter.print_tool_start(tc.name, tc.arguments),
                 on_tool_complete=lambda tc, r, d: presenter.print_tool_complete(tc.name, r, d),
+                on_tier_selected=lambda t: presenter.set_tier(t),
             )
         )
 
@@ -532,6 +533,7 @@ class Application:
                 on_todo_update=on_todo_update,
                 on_compaction=on_compaction,
                 on_pause_prompt=self._handle_pause_prompt,
+                on_tier_selected=lambda t: presenter.set_tier(t),
             )
         )
 

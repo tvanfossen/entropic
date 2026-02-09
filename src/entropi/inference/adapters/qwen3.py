@@ -415,7 +415,7 @@ Continue with the task. Call more tools if needed, or respond when complete."""
         if "```" not in content:
             return False
         code_block_pattern = re.compile(r"```\w*\s*\n?([\s\S]*?)\n?```", re.MULTILINE)
-        shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*\s+\S")
+        shell_pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_.]*\.[a-zA-Z_][a-zA-Z0-9_]*[^\S\n]+\S")
         for block in code_block_pattern.findall(content):
             if self._is_unparsed_tool_block(block.strip(), shell_pattern):
                 return True

@@ -747,8 +747,7 @@ Do NOT call this tool again. Use the previous result above."""
         result_str = str(result)
         logger.debug(f"Tool result ({duration_ms:.0f}ms):\n{result_str}")
         logger.info(
-            f"\n{'=' * 60}\n[TOOL RESULT: {tool_call.name}]\n{'=' * 60}\n"
-            f"{result_str}\n{'=' * 60}"
+            f"\n{'=' * 60}\n[TOOL RESULT: {tool_call.name}]\n{'=' * 60}\n{result_str}\n{'=' * 60}"
         )
         logger.info(
             f"[TOOL COMPLETE] {tool_call.name} -> {len(result_str)} chars result ({duration_ms:.0f}ms)"

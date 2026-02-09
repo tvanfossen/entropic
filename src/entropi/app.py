@@ -878,8 +878,7 @@ class Application:
                 self.console.print(f"[dim]You: {message}[/dim]")
                 self.console.print("\n[yellow]No models configured.[/yellow]")
                 self.console.print(
-                    "[dim]Configure models in ~/.entropi/config.yaml or "
-                    ".entropi/config.yaml[/dim]"
+                    "[dim]Configure models in ~/.entropi/config.yaml or .entropi/config.yaml[/dim]"
                 )
                 return
 

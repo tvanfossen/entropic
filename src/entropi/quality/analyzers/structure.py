@@ -57,8 +57,7 @@ class StructureAnalyzer(CodeAnalyzer):
         if func_lines > rules.max_function_lines:
             result.add_violation(
                 "function_too_long",
-                f"Function '{node.name}' has {func_lines} lines "
-                f"(max: {rules.max_function_lines})",
+                f"Function '{node.name}' has {func_lines} lines (max: {rules.max_function_lines})",
                 line=node.lineno,
             )
 

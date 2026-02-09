@@ -407,7 +407,7 @@ The following summarizes {message_count} previous messages that have been compac
             result.extend(working_messages)
 
         logger.debug(
-            f"Aggressive compaction: kept {len(result)} messages " f"from original {len(messages)}"
+            f"Aggressive compaction: kept {len(result)} messages from original {len(messages)}"
         )
         return result
 
@@ -424,8 +424,7 @@ The following summarizes {message_count} previous messages that have been compac
             # Storage would need a method like save_compaction_snapshot
             # For now, log that we would save
             logger.debug(
-                f"Would save compaction snapshot for {conversation_id} "
-                f"({len(messages)} messages)"
+                f"Would save compaction snapshot for {conversation_id} ({len(messages)} messages)"
             )
         except Exception as e:
             logger.error(f"Failed to save compaction snapshot: {e}")

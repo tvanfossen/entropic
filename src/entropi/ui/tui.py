@@ -640,7 +640,7 @@ class EntropiApp(App[None]):
                 queued_msg = await self._mcp_queue.get()
 
                 logger.info(
-                    f"Processing queued message: {queued_msg.task_id} " f"from {queued_msg.source}"
+                    f"Processing queued message: {queued_msg.task_id} from {queued_msg.source}"
                 )
 
                 try:

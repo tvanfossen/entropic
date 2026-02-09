@@ -197,8 +197,7 @@ class CommandRegistry:
         return CommandDefinition(
             name=frontmatter.get("name", path.stem),
             description=frontmatter.get("description", "Custom command"),
-            usage=f"/{frontmatter.get('name', path.stem)} "
-            f"{frontmatter.get('usage', '')}".strip(),
+            usage=f"/{frontmatter.get('name', path.stem)} {frontmatter.get('usage', '')}".strip(),
             arguments=frontmatter.get("arguments"),
             prompt_template=template,
         )

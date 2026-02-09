@@ -452,7 +452,7 @@ class VoiceStatsPanel(Static):
             "[bold]Inference Stats[/]",
             f"  FPS: [{fps_color}]{self.server_fps:.1f}[/]  |  "
             f"Avg Latency: [{lat_color}]{self.server_latency:.0f}ms[/]",
-            f"  Frames Processed: {self.frames_sent}  |  " f"Status: [green]Running[/]",
+            f"  Frames Processed: {self.frames_sent}  |  Status: [green]Running[/]",
         ]
         self.update("\n".join(lines))
 

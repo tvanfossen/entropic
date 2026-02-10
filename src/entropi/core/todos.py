@@ -113,6 +113,20 @@ class TodoList:
         """Clear all items."""
         self.items = []
 
+    def format_for_context(self) -> str:
+        """Format todo list for injection into conversation context."""
+        if self.is_empty:
+            return ""
+        status_icons = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
+        lines = ["[CURRENT TODO STATE]"]
+        for item in self.items:
+            icon = status_icons.get(item.status.value, "[ ]")
+            lines.append(f"  {icon} {item.content}")
+        completed, total = self.progress
+        lines.append(f"Progress: {completed}/{total} completed")
+        lines.append("[END TODO STATE]")
+        return "\n".join(lines)
+
     def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
         """
         Update the todo list from a tool call.

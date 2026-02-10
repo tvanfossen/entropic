@@ -331,6 +331,9 @@ class AgentEngine:
 
         ctx.messages.append(Message(role="user", content=user_message))
 
+        # Inject todo state from previous runs (survives across run() calls)
+        self._inject_todo_state(ctx)
+
         # Log user prompt for debugging
         logger.info(f"\n{'=' * 60}\n[USER PROMPT]\n{'=' * 60}\n{user_message}\n{'=' * 60}")
 
@@ -453,6 +456,19 @@ class AgentEngine:
             f"tool_calls={len(tool_calls)}"
         )
 
+    def _log_assembled_prompt(self, ctx: LoopContext, event: str) -> None:
+        """Log complete assembled prompt. Called at routing and handoff only."""
+        tier_value = ctx.locked_tier.value if ctx.locked_tier else "none"
+        model_logger.info(
+            f"\n{'~' * 70}\n"
+            f"[PROMPT] event={event} tier={tier_value} "
+            f"messages={len(ctx.messages)}\n"
+            f"{'~' * 70}"
+        )
+        for i, msg in enumerate(ctx.messages):
+            model_logger.info(f"  [{i}] {msg.role} ({len(msg.content)} chars):\n{msg.content}")
+        model_logger.info(f"{'~' * 70}")
+
     def _filter_tools_for_tier(
         self, tools: list[dict[str, Any]], tier: Any
     ) -> list[dict[str, Any]]:
@@ -497,6 +513,10 @@ class AgentEngine:
         formatted = self._build_formatted_system_prompt(tier, ctx)
         ctx.messages[0] = Message(role="system", content=formatted)
         logger.info(f"System prompt size: ~{len(formatted) // 4} tokens")
+
+        # Log routing decision and full assembled prompt to model log
+        model_logger.info(f"\n{'#' * 70}\n" f"[ROUTED] tier={tier.value}\n" f"{'#' * 70}")
+        self._log_assembled_prompt(ctx, "routed")
 
         if self._on_tier_selected:
             self._on_tier_selected(tier.value)
@@ -1030,7 +1050,19 @@ RECOVERY:
             role="system", content=self._build_formatted_system_prompt(target_tier, ctx)
         )
 
+        # Log handoff and full assembled prompt to model log
+        current_name = current_tier.value if current_tier else "none"
+        model_logger.info(
+            f"\n{'#' * 70}\n"
+            f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
+            f"{'#' * 70}"
+        )
+        self._log_assembled_prompt(ctx, "handoff")
+
         self._notify_tier_selected(target_tier_str)
+
+        # Inject todo state for the new tier's awareness
+        self._inject_todo_state(ctx)
 
         # Uses role="user" because llama-cpp doesn't render role="tool" properly
         content = f"Handoff successful. Now operating as {target_tier_str} tier. Reason: {reason}"
@@ -1087,6 +1119,16 @@ RECOVERY:
             # Notify via callback
             if self._on_compaction:
                 self._on_compaction(result)
+            # Inject current todo state so model retains awareness
+            self._inject_todo_state(ctx)
+
+    def _inject_todo_state(self, ctx: LoopContext) -> None:
+        """Inject current todo state into context after compaction."""
+        todo_context = self._todo_list.format_for_context()
+        if not todo_context:
+            return
+        ctx.messages.append(Message(role="user", content=todo_context))
+        logger.info(f"Injected todo state after compaction ({len(self._todo_list.items)} items)")
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""

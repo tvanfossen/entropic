@@ -23,7 +23,7 @@ from entropi.ui.headless import HeadlessPresenter
 
 # Timing constants derived from observed performance
 AVG_SECONDS_PER_TURN = 15
-TURN_TIME_BUFFER = 1.5  # overestimate factor for variance
+TURN_TIME_BUFFER = 2.5  # buffer for tool-call path (model writes full files)
 
 REPORT_DIR = Path(".test-reports")
 

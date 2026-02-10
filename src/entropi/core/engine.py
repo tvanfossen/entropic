@@ -322,11 +322,8 @@ class AgentEngine:
         ctx.all_tools = tools
         ctx.base_system = system
 
-        # Format system prompt with tools through default adapter (rebuilt on tier lock)
-        formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
-
-        ctx.messages = [Message(role="system", content=formatted_system)]
-        logger.info(f"System prompt size: ~{len(formatted_system) // 4} tokens")
+        # Placeholder system message — rebuilt with tier-filtered tools in _lock_tier_if_needed
+        ctx.messages = [Message(role="system", content=system)]
 
         if history:
             ctx.messages.extend(history)
@@ -476,9 +473,9 @@ class AgentEngine:
         logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
 
         # Rebuild system prompt for the routed tier's adapter and tool filter
-        ctx.messages[0] = Message(
-            role="system", content=self._build_formatted_system_prompt(tier, ctx)
-        )
+        formatted = self._build_formatted_system_prompt(tier, ctx)
+        ctx.messages[0] = Message(role="system", content=formatted)
+        logger.info(f"System prompt size: ~{len(formatted) // 4} tokens")
 
         if self._on_tier_selected:
             self._on_tier_selected(tier.value)

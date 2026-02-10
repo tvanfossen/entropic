@@ -2,10 +2,10 @@ Edit a file using one of two modes.
 
 **Requirements:** You must read the file first.
 
-**When NOT to use edit_file:**
-- Don't use with old_string containing entire file content - use write_file instead
-- Don't use for major rewrites (>50% of file) - use write_file instead
-- If "no_match" error on large old_string, switch to write_file
+**When NOT to use:**
+- Don't use with old_string containing entire file content - use the write tool instead
+- Don't use for major rewrites (>50% of file) - use the write tool instead
+- If "no_match" error on large old_string, switch to the write tool
 
 ## STR_REPLACE Mode
 Provide `old_string` + `new_string` for exact string replacement.
@@ -57,7 +57,7 @@ Provide `insert_line` + `new_string` to insert at a line number.
 ## Common Errors
 | Error | Fix |
 |-------|-----|
-| `read_required` | Call read_file first |
+| `read_required` | Read the file first |
 | `file_changed` | File modified externally, re-read it |
 | `no_match` | Check debug info, try insert mode |
 | `multiple_matches` | Add more context to old_string |

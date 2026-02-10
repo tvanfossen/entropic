@@ -8,4 +8,4 @@ Create a git commit.
 - Commit staged files: `{"message": "Fix bug in parser"}`
 - Stage and commit all: `{"message": "Update docs", "all": true}`
 
-**Note:** Files must be staged first (use git.add) unless using `all: true`.
+**Note:** Files must be staged first unless using `all: true`.

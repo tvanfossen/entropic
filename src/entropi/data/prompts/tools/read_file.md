@@ -12,4 +12,4 @@ You MUST read a file before editing or overwriting.
 {"error": "not_found", "message": "File not found: path"}
 ```
 
-Use line numbers with edit_file insert mode when string matching fails.
+Use line numbers with the edit tool's insert mode when string matching fails.

@@ -20,7 +20,7 @@ import click  # noqa: E402
 
 from entropi import __version__  # noqa: E402
 from entropi.config.loader import reload_config  # noqa: E402
-from entropi.core.logging import setup_logging  # noqa: E402
+from entropi.core.logging import setup_logging, setup_model_logger  # noqa: E402
 
 
 @click.group(invoke_without_command=True)
@@ -83,8 +83,9 @@ def main(
     # Determine project directory
     project_dir = project or Path.cwd()
 
-    # Setup logging (writes to .entropi/session.log)
+    # Setup logging (writes to .entropi/session.log and session_model.log)
     logger = setup_logging(app_config, project_dir=project_dir)
+    setup_model_logger(project_dir=project_dir)
 
     # Store in context for subcommands
     ctx.ensure_object(dict)

@@ -72,6 +72,42 @@ def setup_logging(
     return logger
 
 
+def setup_model_logger(project_dir: Path | None = None) -> logging.Logger:
+    """
+    Set up dedicated model output logger.
+
+    Writes raw model output to .entropi/session_model.log,
+    separate from operational logs in session.log.
+
+    Args:
+        project_dir: Project directory for log file location
+
+    Returns:
+        Model output logger
+    """
+    model_logger = logging.getLogger("entropi.model_output")
+    model_logger.setLevel(logging.INFO)
+    model_logger.handlers.clear()
+    # Don't propagate to parent (entropi) logger — keeps session.log clean
+    model_logger.propagate = False
+
+    log_dir = (project_dir or Path.cwd()) / ".entropi"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "session_model.log"
+
+    file_handler = logging.FileHandler(log_path, mode="w")
+    file_handler.setLevel(logging.INFO)
+    file_format = logging.Formatter(
+        "%(asctime)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    file_handler.setFormatter(file_format)
+    model_logger.addHandler(file_handler)
+
+    model_logger.info("Model output log started")
+    return model_logger
+
+
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger for a specific component.
@@ -83,3 +119,13 @@ def get_logger(name: str) -> logging.Logger:
         Logger instance
     """
     return logging.getLogger(f"entropi.{name}")
+
+
+def get_model_logger() -> logging.Logger:
+    """
+    Get the dedicated model output logger.
+
+    Returns:
+        Model output logger (must call setup_model_logger first)
+    """
+    return logging.getLogger("entropi.model_output")

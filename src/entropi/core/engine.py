@@ -21,7 +21,7 @@ from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message, ToolCall
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
-from entropi.core.logging import get_logger
+from entropi.core.logging import get_logger, get_model_logger
 from entropi.core.queue import MessageSource
 from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     pass
 
 logger = get_logger("core.engine")
+model_logger = get_model_logger()
 
 
 class AgentState(Enum):
@@ -422,14 +423,34 @@ class AgentEngine:
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
-    def _log_model_output(self, ctx: LoopContext, content: str) -> None:
-        """Log complete raw model output."""
-        logger.info(
+    def _log_model_output(
+        self,
+        ctx: LoopContext,
+        raw_content: str,
+        cleaned_content: str,
+        tool_calls: list[ToolCall],
+        finish_reason: str,
+    ) -> None:
+        """Log raw and parsed model output to dedicated model log."""
+        # Detailed raw + parsed output to dedicated model log
+        model_logger.info(
             f"\n{'=' * 70}\n"
-            f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
+            f"[TURN {ctx.metrics.iterations}] finish_reason={finish_reason}\n"
             f"{'=' * 70}\n"
-            f"{content}\n"
+            f"--- RAW OUTPUT ---\n"
+            f"{raw_content}\n"
+            f"--- PARSED ---\n"
+            f"cleaned_content_len={len(cleaned_content)}\n"
+            f"tool_calls={len(tool_calls)}: {[tc.name for tc in tool_calls]}\n"
             f"{'=' * 70}"
+        )
+        # Summary only in session.log
+        logger.info(
+            f"[MODEL OUTPUT] Turn {ctx.metrics.iterations} | "
+            f"finish_reason={finish_reason} | "
+            f"raw_len={len(raw_content)} | "
+            f"cleaned_len={len(cleaned_content)} | "
+            f"tool_calls={len(tool_calls)}"
         )
 
     def _filter_tools_for_tier(
@@ -521,22 +542,30 @@ class AgentEngine:
                 self._on_stream_chunk(chunk)
 
         logger.debug(f"Stream complete: {len(content)} chars")
-        self._log_model_output(ctx, content)
 
         cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
-        logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
+        self._log_model_output(
+            ctx,
+            raw_content=content,
+            cleaned_content=cleaned_content,
+            tool_calls=tool_calls,
+            finish_reason=self.orchestrator.last_finish_reason,
+        )
         return cleaned_content, tool_calls
 
     async def _generate_non_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate response without streaming."""
         result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
 
-        self._log_model_output(ctx, result.content)
+        self._log_model_output(
+            ctx,
+            raw_content=result.content,
+            cleaned_content=result.content,
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
+        )
 
         ctx.metrics.tokens_used += result.token_count
-        logger.debug(
-            f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls"
-        )
         return result.content, result.tool_calls
 
     async def _handle_pause(self, ctx: LoopContext, partial_content: str) -> str:

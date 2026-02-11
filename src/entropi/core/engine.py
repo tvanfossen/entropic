@@ -1027,6 +1027,35 @@ RECOVERY:
             ],
         )
 
+    def _validate_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
+        """Validate handoff request. Returns error message or None if valid."""
+        from entropi.inference.orchestrator import ModelTier
+
+        target_tier_str = tool_call.arguments.get("target_tier", "")
+        error = None
+
+        # Validate target tier
+        try:
+            target_tier = ModelTier(target_tier_str)
+        except ValueError:
+            error = f"Invalid target tier: {target_tier_str}"
+
+        # Validate routing rules
+        if not error and not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
+            current_name = ctx.locked_tier.value if ctx.locked_tier else "none"
+            error = f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
+
+        # Gate: if todos exist, some must target the handoff tier
+        if not error:
+            target_todos = self._todo_list.get_todos_for_tier(target_tier_str)
+            if not target_todos and not self._todo_list.is_empty:
+                error = (
+                    f"No todos targeting {target_tier_str} tier. "
+                    f"Create todos with target_tier='{target_tier_str}' before handing off."
+                )
+
+        return error
+
     async def _handle_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
         """Handle the system.handoff tool call for tier switching."""
         from entropi.inference.orchestrator import ModelTier
@@ -1036,25 +1065,12 @@ RECOVERY:
 
         logger.info(f"[HANDOFF] Request: {ctx.locked_tier} -> {target_tier_str} ({reason})")
 
-        # Validate target tier
-        try:
-            target_tier = ModelTier(target_tier_str)
-        except ValueError:
-            error_msg = f"Invalid target tier: {target_tier_str}"
+        if error_msg := self._validate_handoff(ctx, tool_call):
             logger.warning(f"[HANDOFF] {error_msg}")
             return self._create_error_message(tool_call, error_msg)
 
-        # Get current tier (may be None if not locked yet)
+        target_tier = ModelTier(target_tier_str)
         current_tier = ctx.locked_tier
-
-        # Validate routing rules
-        if not self.orchestrator.can_handoff(current_tier, target_tier):
-            current_name = current_tier.value if current_tier else "none"
-            error_msg = (
-                f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
-            )
-            logger.warning(f"[HANDOFF] {error_msg}")
-            return self._create_error_message(tool_call, error_msg)
 
         # Update the locked tier - next generation will use the new tier
         ctx.locked_tier = target_tier

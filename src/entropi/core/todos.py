@@ -27,6 +27,7 @@ class TodoItem:
     content: str  # Task description (imperative: "Fix bug")
     active_form: str  # Present continuous ("Fixing bug")
     status: TodoStatus = TodoStatus.PENDING
+    target_tier: str | None = None  # Which tier should execute (None = self)
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     created_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
@@ -42,7 +43,7 @@ class TodoItem:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "id": self.id,
             "content": self.content,
             "active_form": self.active_form,
@@ -50,6 +51,9 @@ class TodoItem:
             "created_at": self.created_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+        if self.target_tier is not None:
+            result["target_tier"] = self.target_tier
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TodoItem":
@@ -58,6 +62,7 @@ class TodoItem:
             content=data["content"],
             active_form=data["active_form"],
             status=TodoStatus(data["status"]),
+            target_tier=data.get("target_tier"),
             id=data.get("id", str(uuid.uuid4())[:8]),
             created_at=(
                 datetime.fromisoformat(data["created_at"])
@@ -98,6 +103,10 @@ class TodoList:
         """Get all completed items."""
         return [i for i in self.items if i.status == TodoStatus.COMPLETED]
 
+    def get_todos_for_tier(self, tier: str) -> list[TodoItem]:
+        """Get todos targeting a specific tier."""
+        return [i for i in self.items if i.target_tier == tier]
+
     @property
     def progress(self) -> tuple[int, int]:
         """Return (completed, total) counts."""
@@ -119,13 +128,42 @@ class TodoList:
             return ""
         status_icons = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
         lines = ["[CURRENT TODO STATE]"]
-        for item in self.items:
-            icon = status_icons.get(item.status.value, "[ ]")
-            lines.append(f"  {icon} {item.content}")
+
+        # Check if items have mixed target tiers
+        tiers = {item.target_tier for item in self.items}
+        has_mixed_tiers = len(tiers) > 1 or (len(tiers) == 1 and None not in tiers)
+
+        if has_mixed_tiers:
+            self._format_grouped(lines, status_icons)
+        else:
+            self._format_flat(lines, status_icons)
+
         completed, total = self.progress
         lines.append(f"Progress: {completed}/{total} completed")
         lines.append("[END TODO STATE]")
         return "\n".join(lines)
+
+    def _format_flat(self, lines: list[str], icons: dict[str, str]) -> None:
+        """Format items as a flat list."""
+        for item in self.items:
+            icon = icons.get(item.status.value, "[ ]")
+            lines.append(f"  {icon} {item.content}")
+
+    def _format_grouped(self, lines: list[str], icons: dict[str, str]) -> None:
+        """Format items grouped by target tier."""
+        # Group items: tier name -> items
+        groups: dict[str, list[TodoItem]] = {}
+        for item in self.items:
+            key = item.target_tier or "self"
+            groups.setdefault(key, []).append(item)
+
+        # Named tiers first, then self
+        for tier_name in sorted(groups, key=lambda t: (t == "self", t)):
+            label = "self" if tier_name == "self" else f"{tier_name} tier"
+            lines.append(f"  For {label}:")
+            for item in groups[tier_name]:
+                icon = icons.get(item.status.value, "[ ]")
+                lines.append(f"    {icon} {item.content}")
 
     def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
         """
@@ -166,6 +204,7 @@ class TodoList:
                     content=t["content"],
                     active_form=t["active_form"],
                     status=TodoStatus(t["status"]),
+                    target_tier=t.get("target_tier"),
                 )
             )
 

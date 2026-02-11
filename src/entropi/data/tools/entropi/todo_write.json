@@ -21,6 +21,11 @@
             "status": {
               "type": "string",
               "enum": ["pending", "in_progress", "completed"]
+            },
+            "target_tier": {
+              "type": "string",
+              "description": "Which tier should execute this todo (e.g., 'code', 'thinking'). Omit for self-directed tasks.",
+              "enum": ["thinking", "normal", "code", "simple"]
             }
           },
           "required": ["content", "status", "active_form"]

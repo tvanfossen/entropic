@@ -399,3 +399,107 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
 
         assert executed == ["system.handoff", "bash.execute"]
         assert len(messages) == 2
+
+
+class TestHandoffGate(_EngineTestBase):
+    """Handoff gate rejects when todos exist but none target the handoff tier."""
+
+    def _make_handoff_engine(self):
+        """Create engine with mocked dependencies for handoff testing."""
+        engine = self._make_engine()
+        engine.orchestrator = MagicMock()
+        engine.orchestrator.can_handoff = MagicMock(return_value=True)
+        engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
+        engine._log_assembled_prompt = MagicMock()
+        engine._notify_tier_selected = MagicMock()
+        engine._inject_todo_state = MagicMock()
+        engine._create_error_message = lambda tc, msg: Message(role="user", content=f"Error: {msg}")
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_handoff_rejected_when_todos_exist_but_none_target_tier(self) -> None:
+        """Handoff rejected when todos exist but none target the requested tier."""
+        from entropi.core.todos import TodoList
+
+        engine = self._make_handoff_engine()
+        engine._todo_list = TodoList()
+        engine._todo_list.update_from_tool_call(
+            [
+                {
+                    "content": "Read files",
+                    "active_form": "Reading",
+                    "status": "completed",
+                },
+                {
+                    "content": "Investigate patterns",
+                    "active_form": "Investigating",
+                    "status": "pending",
+                },
+            ]
+        )
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        tool_call = ToolCall(
+            id="1",
+            name="system.handoff",
+            arguments={"target_tier": "code", "reason": "plan ready"},
+        )
+
+        msg = await engine._handle_handoff(ctx, tool_call)
+        assert "Error" in msg.content
+        assert "No todos targeting code tier" in msg.content
+
+    @pytest.mark.asyncio
+    async def test_handoff_allowed_when_todos_target_tier(self) -> None:
+        """Handoff allowed when todos target the requested tier."""
+        from entropi.core.todos import TodoList
+
+        engine = self._make_handoff_engine()
+        engine._todo_list = TodoList()
+        engine._todo_list.update_from_tool_call(
+            [
+                {
+                    "content": "Fix engine.py",
+                    "active_form": "Fixing",
+                    "status": "pending",
+                    "target_tier": "code",
+                },
+            ]
+        )
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        tool_call = ToolCall(
+            id="1",
+            name="system.handoff",
+            arguments={"target_tier": "code", "reason": "plan ready"},
+        )
+
+        msg = await engine._handle_handoff(ctx, tool_call)
+        assert "Handoff successful" in msg.content
+
+    @pytest.mark.asyncio
+    async def test_handoff_allowed_when_todo_list_empty(self) -> None:
+        """Handoff allowed when no todos at all (not all interactions need plans)."""
+        from entropi.core.todos import TodoList
+
+        engine = self._make_handoff_engine()
+        engine._todo_list = TodoList()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        tool_call = ToolCall(
+            id="1",
+            name="system.handoff",
+            arguments={"target_tier": "code", "reason": "simple task"},
+        )
+
+        msg = await engine._handle_handoff(ctx, tool_call)
+        assert "Handoff successful" in msg.content

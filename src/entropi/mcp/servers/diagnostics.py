@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 
 if TYPE_CHECKING:
     from entropi.lsp.manager import LSPManager
@@ -38,28 +38,8 @@ class DiagnosticsServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available diagnostics tools."""
         return [
-            create_tool(
-                name="diagnostics",
-                description=load_tool_description("diagnostics"),
-                properties={
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file to check, or 'all' for all files",
-                    },
-                },
-                required=["file_path"],
-            ),
-            create_tool(
-                name="check_errors",
-                description=load_tool_description("check_errors"),
-                properties={
-                    "file_path": {
-                        "type": "string",
-                        "description": "Path to the file to check",
-                    },
-                },
-                required=["file_path"],
-            ),
+            load_tool_definition("diagnostics", "diagnostics"),
+            load_tool_definition("check_errors", "diagnostics"),
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:

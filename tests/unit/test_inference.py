@@ -43,7 +43,7 @@ class TestQwen3Adapter:
         assert "Read a file" in result
         assert "path" in result
         assert "<tool_call>" in result
-        assert "(required)" in result
+        assert '"required"' in result
 
     def test_format_system_prompt_multiple_tools(self) -> None:
         """Test formatting with multiple tools."""

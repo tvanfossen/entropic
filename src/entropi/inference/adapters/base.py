@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from entropi.core.base import Message, ToolCall
-from entropi.prompts import get_identity_prompt, get_per_tool_guidance, get_tool_usage_prompt
+from entropi.prompts import get_identity_prompt, get_tool_usage_prompt
 
 
 class ChatAdapter(ABC):
@@ -53,16 +53,6 @@ class ChatAdapter(ABC):
         if self._tool_usage_prompt is None:
             self._tool_usage_prompt = get_tool_usage_prompt(self._prompts_dir)
         return self._tool_usage_prompt
-
-    def _get_per_tool_guidance(self, tools: list[dict[str, Any]]) -> str:
-        """Get per-tool guidance for the given tool list only.
-
-        Loads guidance from prompts/tools/ for each tool in the filtered
-        list. Tools not in the list get no guidance loaded — the model
-        never sees their names.
-        """
-        tool_names = [t.get("name", "") for t in tools if t.get("name")]
-        return get_per_tool_guidance(tool_names, self._prompts_dir)
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
         """
@@ -113,8 +103,10 @@ class ChatAdapter(ABC):
         1. Identity (constitution + tier identity)
         2. Base prompt (todo system, project context)
         3. Tool usage guidelines (generic syntax, no tool names)
-        4. Tool definitions (filtered per tier)
-        5. Per-tool guidance (loaded dynamically for filtered tools only)
+        4. Tool definitions (description + JSON inputSchema, filtered per tier)
+
+        Tool guidance is embedded in each tool's JSON description field —
+        no separate per-tool guidance step needed.
 
         Subclasses should NOT override this — tool isolation depends on
         this assembly order. Override _format_tools() if tool formatting
@@ -134,14 +126,14 @@ class ChatAdapter(ABC):
         prompt_parts.append(self._get_tool_usage_prompt())
         prompt_parts.append(self._format_tools(tools))
 
-        per_tool = self._get_per_tool_guidance(tools)
-        if per_tool:
-            prompt_parts.append(per_tool)
-
         return "\n\n".join(prompt_parts)
 
     def _format_tools(self, tools: list[dict[str, Any]]) -> str:
         """Format tool definitions for the prompt.
+
+        Renders each tool as: heading, full description, raw JSON inputSchema.
+        The model sees both behavioral guidance (description) and exact
+        parameter schema (JSON) — no information loss.
 
         Override in subclasses if the model needs a different tool format.
         """
@@ -152,17 +144,11 @@ class ChatAdapter(ABC):
             schema = tool.get("inputSchema", {})
 
             lines.append(f"### {name}")
-            lines.append(f"{description}")
-
-            if schema.get("properties"):
-                lines.append("Parameters:")
-                for param, details in schema["properties"].items():
-                    param_type = details.get("type", "any")
-                    param_desc = details.get("description", "")
-                    required = param in schema.get("required", [])
-                    req_marker = " (required)" if required else ""
-                    lines.append(f"  - {param} ({param_type}){req_marker}: {param_desc}")
-
+            lines.append(description)
+            lines.append("\nSchema:")
+            lines.append("```json")
+            lines.append(json.dumps(schema, indent=2))
+            lines.append("```")
             lines.append("")
 
         return "\n".join(lines)

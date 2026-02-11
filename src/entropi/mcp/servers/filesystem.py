@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 from entropi.mcp.servers.file_tracker import FileAccessTracker
 
 if TYPE_CHECKING:
@@ -50,59 +50,9 @@ class FilesystemServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available filesystem tools - unified read/edit/write pattern."""
         return [
-            create_tool(
-                name="read_file",
-                description=load_tool_description("read_file"),
-                properties={
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file",
-                    },
-                },
-                required=["path"],
-            ),
-            create_tool(
-                name="edit_file",
-                description=load_tool_description("edit_file"),
-                properties={
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file to edit",
-                    },
-                    "old_string": {
-                        "type": "string",
-                        "description": "STR_REPLACE mode: exact string to find and replace",
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "Replacement string (or content to insert)",
-                    },
-                    "insert_line": {
-                        "type": "integer",
-                        "description": "INSERT mode: line number to insert AFTER (0 = beginning)",
-                    },
-                    "replace_all": {
-                        "type": "boolean",
-                        "description": "STR_REPLACE mode: replace all occurrences (default: false)",
-                    },
-                },
-                required=["path", "new_string"],
-            ),
-            create_tool(
-                name="write_file",
-                description=load_tool_description("write_file"),
-                properties={
-                    "path": {
-                        "type": "string",
-                        "description": "Path to the file",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Full file content",
-                    },
-                },
-                required=["path", "content"],
-            ),
+            load_tool_definition("read_file", "filesystem"),
+            load_tool_definition("edit_file", "filesystem"),
+            load_tool_definition("write_file", "filesystem"),
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:

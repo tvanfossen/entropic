@@ -1,0 +1,30 @@
+{
+  "name": "edit_file",
+  "description": "Edit a file using one of two modes.\n\n**Requirements:** You must read the file first.\n\n**When NOT to use:**\n- Don't use with old_string containing entire file content - use the write tool instead\n- Don't use for major rewrites (>50% of file) - use the write tool instead\n- If \"no_match\" error on large old_string, switch to the write tool\n\n## STR_REPLACE Mode\nProvide `old_string` + `new_string` for exact string replacement.\n\n```json\n{\"path\": \"file.py\", \"old_string\": \"def hello():\", \"new_string\": \"def greet():\"}\n```\n\n- `old_string` must match EXACTLY including whitespace\n- If multiple matches, add more context or set `replace_all: true`\n\n## INSERT Mode\nProvide `insert_line` + `new_string` to insert at a line number.\n\n```json\n{\"path\": \"file.py\", \"insert_line\": 5, \"new_string\": \"    # New comment\"}\n```\n\n- `insert_line: 0` = insert at beginning of file\n- `insert_line: N` = insert AFTER line N\n\n## Response Format\n\n**STR_REPLACE success:**\n```json\n{\n  \"success\": true,\n  \"path\": \"file.py\",\n  \"mode\": \"str_replace\",\n  \"changes\": [{\"line\": 45, \"before\": \"def hello():\", \"after\": \"def greet():\"}]\n}\n```\n\n**INSERT success:**\n```json\n{\n  \"success\": true,\n  \"path\": \"file.py\",\n  \"mode\": \"insert\",\n  \"changes\": [{\"line\": 5, \"inserted\": \"from pieces import Piece\"}]\n}\n```\n\n**Error:**\n```json\n{\"error\": \"no_match\", \"message\": \"String not found\", \"debug\": \"...\", \"tip\": \"...\"}\n```\n\n## Common Errors\n| Error | Fix |\n|-------|-----|\n| `read_required` | Read the file first |\n| `file_changed` | File modified externally, re-read it |\n| `no_match` | Check debug info, try insert mode |\n| `multiple_matches` | Add more context to old_string |",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file to edit"
+      },
+      "old_string": {
+        "type": "string",
+        "description": "STR_REPLACE mode: exact string to find and replace"
+      },
+      "new_string": {
+        "type": "string",
+        "description": "Replacement string (or content to insert)"
+      },
+      "insert_line": {
+        "type": "integer",
+        "description": "INSERT mode: line number to insert AFTER (0 = beginning)"
+      },
+      "replace_all": {
+        "type": "boolean",
+        "description": "STR_REPLACE mode: replace all occurrences (default: false)"
+      }
+    },
+    "required": ["path", "new_string"]
+  }
+}

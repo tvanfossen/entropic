@@ -1,0 +1,14 @@
+{
+  "name": "add",
+  "description": "Stage files for commit.\n\n**Examples:**\n- Stage specific file: `{\"files\": \"src/main.py\"}`\n- Stage all changes: `{\"files\": \".\"}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "string",
+        "description": "Files to add (space-separated, or '.' for all)"
+      }
+    },
+    "required": ["files"]
+  }
+}

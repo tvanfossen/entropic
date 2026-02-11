@@ -109,45 +109,6 @@ def get_tool_usage_prompt(prompts_dir: Path | None = None) -> str:
 IMPORTANT: Use tools to get real data. Do not guess or hallucinate file contents."""
 
 
-def _tool_name_to_guidance_filename(tool_name: str) -> str:
-    """Convert a dotted tool name to its guidance filename.
-
-    Strips the server prefix and replaces dots with underscores.
-    Examples: filesystem.read_file → read_file, bash.execute → bash_execute,
-    system.handoff → system_handoff, entropi.todo_write → todo_write.
-    """
-    parts = tool_name.split(".", 1)
-    base = parts[1] if len(parts) > 1 else parts[0]
-    return base.replace(".", "_")
-
-
-def get_per_tool_guidance(tool_names: list[str], prompts_dir: Path | None = None) -> str:
-    """Load per-tool guidance for the given tool names only.
-
-    For each tool name, looks up a corresponding guidance file in
-    prompts/tools/. Only guidance for tools in the provided list is
-    returned — tools not in the list are invisible to the model.
-
-    Args:
-        tool_names: Filtered list of allowed tool names
-        prompts_dir: Optional user prompts directory
-
-    Returns:
-        Concatenated per-tool guidance sections (may be empty)
-    """
-    sections: list[str] = []
-    for name in tool_names:
-        filename = _tool_name_to_guidance_filename(name)
-        try:
-            content = load_prompt(f"tools/{filename}", prompts_dir)
-            sections.append(f"### {name}\n{content.strip()}")
-        except FileNotFoundError:
-            logger.debug(f"No guidance file for tool '{name}' ({filename}.md)")
-    if not sections:
-        return ""
-    return "## Tool Guidance\n\n" + "\n\n".join(sections)
-
-
 def _extract_focus_points(identity_content: str, tier_name: str = "") -> str:
     """Extract Focus bullet points from an identity file.
 

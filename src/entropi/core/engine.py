@@ -23,9 +23,11 @@ from entropi.core.compaction import CompactionManager, CompactionResult, TokenCo
 from entropi.core.context import ContextBuilder
 from entropi.core.logging import get_logger, get_model_logger
 from entropi.core.queue import MessageSource
-from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
+from entropi.core.todos import TodoList
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
+from entropi.mcp.servers.base import load_tool_definition
+from entropi.prompts import load_prompt
 
 if TYPE_CHECKING:
     pass
@@ -311,12 +313,16 @@ class AgentEngine:
 
         # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
-        # Add internal todo tool
-        tools.append(TODO_TOOL_DEFINITION)
+        # Add internal todo tool (loaded from validated JSON definition)
+        todo_tool = load_tool_definition("todo_write", "entropi")
+        todo_dict = todo_tool.model_dump()
+        todo_dict["name"] = f"entropi.{todo_dict['name']}"
+        tools.append(todo_dict)
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
         # Build base system prompt (before adapter formatting)
-        base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
+        task_mgmt_prompt = load_prompt("task_management")
+        base_with_todos = (system_prompt or "") + "\n\n" + task_mgmt_prompt
         system = self._context_builder.build_system_prompt(base_with_todos)
 
         # Store on ctx for system prompt rebuild on tier change

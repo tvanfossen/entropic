@@ -1,0 +1,14 @@
+{
+  "name": "read_file",
+  "description": "Read a file's contents. Returns JSON with line numbers as keys.\n\nYou MUST read a file before editing or overwriting.\n\n**Response format:**\n```json\n{\"path\": \"...\", \"total\": N, \"lines\": {\"1\": \"line content\", \"2\": \"...\", ...}}\n```\n\n**Error format:**\n```json\n{\"error\": \"not_found\", \"message\": \"File not found: path\"}\n```\n\nUse line numbers with the edit tool's insert mode when string matching fails.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file"
+      }
+    },
+    "required": ["path"]
+  }
+}

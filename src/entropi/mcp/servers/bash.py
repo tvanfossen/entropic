@@ -11,7 +11,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 
 
 class BashServer(BaseMCPServer):
@@ -56,21 +56,7 @@ class BashServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available bash tools."""
         return [
-            create_tool(
-                name="execute",
-                description=load_tool_description("execute", "bash"),
-                properties={
-                    "command": {
-                        "type": "string",
-                        "description": "Command to execute",
-                    },
-                    "working_dir": {
-                        "type": "string",
-                        "description": "Working directory (optional)",
-                    },
-                },
-                required=["command"],
-            ),
+            load_tool_definition("execute", "bash"),
         ]
 
     @staticmethod

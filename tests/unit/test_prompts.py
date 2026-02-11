@@ -4,8 +4,6 @@ import pytest
 from entropi.inference.adapters.base import GenericAdapter
 from entropi.prompts import (
     _extract_focus_points,
-    _tool_name_to_guidance_filename,
-    get_per_tool_guidance,
     get_tier_identity_prompt,
     get_tool_usage_prompt,
 )
@@ -57,48 +55,6 @@ class TestIdentityFilesHaveFocus:
         # Should not raise — if it does, the identity file is broken
         focus = _extract_focus_points(identity, tier)
         assert len(focus) > 0, f"identity_{tier}.md has empty Focus section"
-
-
-class TestToolNameToGuidanceFilename:
-    """Tests for _tool_name_to_guidance_filename."""
-
-    def test_strips_server_prefix(self) -> None:
-        assert _tool_name_to_guidance_filename("filesystem.read_file") == "read_file"
-
-    def test_no_prefix(self) -> None:
-        assert _tool_name_to_guidance_filename("read_file") == "read_file"
-
-    def test_replaces_remaining_dots(self) -> None:
-        assert _tool_name_to_guidance_filename("server.some.nested") == "some_nested"
-
-    def test_entropi_prefix(self) -> None:
-        assert _tool_name_to_guidance_filename("entropi.todo_write") == "todo_write"
-
-    def test_system_prefix(self) -> None:
-        assert _tool_name_to_guidance_filename("system.handoff") == "handoff"
-
-
-class TestGetPerToolGuidance:
-    """Tests for get_per_tool_guidance."""
-
-    def test_loads_existing_guidance(self) -> None:
-        result = get_per_tool_guidance(["filesystem.read_file"])
-        assert "## Tool Guidance" in result
-        assert "filesystem.read_file" in result
-
-    def test_skips_missing_guidance(self) -> None:
-        result = get_per_tool_guidance(["nonexistent.fake_tool"])
-        assert result == ""
-
-    def test_empty_list_returns_empty(self) -> None:
-        result = get_per_tool_guidance([])
-        assert result == ""
-
-    def test_multiple_tools(self) -> None:
-        tools = ["filesystem.read_file", "filesystem.write_file"]
-        result = get_per_tool_guidance(tools)
-        assert "filesystem.read_file" in result
-        assert "filesystem.write_file" in result
 
 
 class TestToolUsageHasNoToolNames:
@@ -202,12 +158,12 @@ class TestToolIsolation:
             assert name not in identity, f"identity_thinking.md mentions unauthorized tool '{name}'"
 
     @pytest.mark.parametrize("tier", TIERS)
-    def test_per_tool_guidance_only_for_allowed(self, tier: str) -> None:
-        """Per-tool guidance must only load for tools in the filtered set."""
+    def test_tool_definitions_only_for_allowed(self, tier: str) -> None:
+        """Tool definitions must only include tools in the filtered set."""
         allowed = ["filesystem.read_file"]
-        # Tools that should never appear in guidance/tool-definition sections
+        # Tools that should never appear in tool-definition sections
         # (identity prompts may mention tool names — that's expected coupling)
-        leaked_guidance_names = [
+        leaked_names = [
             "filesystem.write_file",
             "filesystem.edit_file",
         ]
@@ -216,9 +172,9 @@ class TestToolIsolation:
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 
-        # Check tool definition and guidance sections only (not identity)
+        # Check tool definition sections only (not identity)
         identity = adapter._get_identity_prompt()
         non_identity = prompt[len(identity) :]
 
-        for name in leaked_guidance_names:
-            assert name not in non_identity, f"Guidance for '{name}' leaked into {tier} tier"
+        for name in leaked_names:
+            assert name not in non_identity, f"Tool '{name}' leaked into {tier} tier"

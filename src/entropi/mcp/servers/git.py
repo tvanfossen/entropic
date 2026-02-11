@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 
 
 class GitServer(BaseMCPServer):
@@ -29,96 +29,14 @@ class GitServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available git tools."""
         return [
-            create_tool(
-                name="status",
-                description=load_tool_description("status", "git"),
-                properties={},
-            ),
-            create_tool(
-                name="diff",
-                description=load_tool_description("diff", "git"),
-                properties={
-                    "staged": {
-                        "type": "boolean",
-                        "description": "Show staged changes only",
-                    },
-                    "file": {
-                        "type": "string",
-                        "description": "Specific file to diff",
-                    },
-                },
-            ),
-            create_tool(
-                name="log",
-                description=load_tool_description("log", "git"),
-                properties={
-                    "count": {
-                        "type": "integer",
-                        "description": "Number of commits",
-                    },
-                    "oneline": {
-                        "type": "boolean",
-                        "description": "One line per commit",
-                    },
-                },
-            ),
-            create_tool(
-                name="commit",
-                description=load_tool_description("commit", "git"),
-                properties={
-                    "message": {
-                        "type": "string",
-                        "description": "Commit message",
-                    },
-                    "add_all": {
-                        "type": "boolean",
-                        "description": "Stage all changes first",
-                    },
-                },
-                required=["message"],
-            ),
-            create_tool(
-                name="branch",
-                description=load_tool_description("branch", "git"),
-                properties={
-                    "name": {
-                        "type": "string",
-                        "description": "Branch name to create (omit to list)",
-                    },
-                },
-            ),
-            create_tool(
-                name="checkout",
-                description=load_tool_description("checkout", "git"),
-                properties={
-                    "target": {
-                        "type": "string",
-                        "description": "Branch name or file path",
-                    },
-                },
-                required=["target"],
-            ),
-            create_tool(
-                name="add",
-                description=load_tool_description("add", "git"),
-                properties={
-                    "files": {
-                        "type": "string",
-                        "description": "Files to add (space-separated, or '.' for all)",
-                    },
-                },
-                required=["files"],
-            ),
-            create_tool(
-                name="reset",
-                description=load_tool_description("reset", "git"),
-                properties={
-                    "files": {
-                        "type": "string",
-                        "description": "Files to unstage (space-separated)",
-                    },
-                },
-            ),
+            load_tool_definition("status", "git"),
+            load_tool_definition("diff", "git"),
+            load_tool_definition("log", "git"),
+            load_tool_definition("commit", "git"),
+            load_tool_definition("branch", "git"),
+            load_tool_definition("checkout", "git"),
+            load_tool_definition("add", "git"),
+            load_tool_definition("reset", "git"),
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:

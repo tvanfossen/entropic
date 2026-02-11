@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 
 
 class SystemServer(BaseMCPServer):
@@ -23,27 +23,7 @@ class SystemServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available system tools."""
         return [
-            create_tool(
-                name="handoff",
-                description=load_tool_description("system_handoff"),
-                properties={
-                    "target_tier": {
-                        "type": "string",
-                        "enum": ["simple", "normal", "code", "thinking"],
-                        "description": "Target model tier to hand off to",
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Brief explanation of why handoff is needed",
-                    },
-                    "task_state": {
-                        "type": "string",
-                        "enum": ["not_started", "in_progress", "blocked", "plan_ready"],
-                        "description": "Current state of the task",
-                    },
-                },
-                required=["target_tier", "reason", "task_state"],
-            ),
+            load_tool_definition("handoff", "system"),
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:

@@ -1,0 +1,18 @@
+{
+  "name": "diff",
+  "description": "Get git diff showing changes.\n\n**Examples:**\n- All unstaged changes: `{}`\n- Staged changes only: `{\"staged\": true}`\n- Specific file: `{\"file\": \"src/main.py\"}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "staged": {
+        "type": "boolean",
+        "description": "Show staged changes only"
+      },
+      "file": {
+        "type": "string",
+        "description": "Specific file to diff"
+      }
+    },
+    "required": []
+  }
+}

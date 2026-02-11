@@ -1,0 +1,32 @@
+{
+  "name": "todo_write",
+  "description": "Manage your task list for tracking progress on complex tasks.\n\nUse this tool when:\n- Starting a multi-step task (3+ steps)\n- User provides multiple things to do\n- You need to track progress on a complex operation\n- After completing a task to mark it done\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nIMPORTANT:\n- Mark tasks complete IMMEDIATELY after finishing\n- Only have ONE task in_progress at a time\n- Use imperative form for content (\"Fix bug\") and active form for display (\"Fixing bug\")",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "todos": {
+        "type": "array",
+        "description": "The complete updated todo list",
+        "items": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Task description in imperative form"
+            },
+            "active_form": {
+              "type": "string",
+              "description": "Task description in present continuous"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["pending", "in_progress", "completed"]
+            }
+          },
+          "required": ["content", "status", "active_form"]
+        }
+      }
+    },
+    "required": ["todos"]
+  }
+}

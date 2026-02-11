@@ -6,6 +6,7 @@ import pytest
 from entropi.config.schema import CompactionConfig
 from entropi.core.base import GenerationResult, Message
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
+from entropi.inference.orchestrator import ModelTier
 
 
 class TestTokenCounter:
@@ -360,3 +361,63 @@ class TestCompactionResult:
         assert result.summary == "Summary of conversation"
         assert result.preserved_messages == 5
         assert result.messages_summarized == 20
+
+
+class TestCompactionTierSelection:
+    """Tests that compaction uses the currently-active model tier."""
+
+    def _make_orchestrator(self, last_tier: ModelTier | None) -> MagicMock:
+        """Create a mock orchestrator with a given last_used_tier."""
+        orch = MagicMock()
+        orch.last_used_tier = last_tier
+
+        async def mock_generate(messages, **kwargs):
+            return GenerationResult(content="Summary.", finish_reason="stop")
+
+        orch.generate = AsyncMock(side_effect=mock_generate)
+        return orch
+
+    @pytest.mark.asyncio
+    async def test_summary_uses_current_tier(self) -> None:
+        """_generate_summary passes last_used_tier to orchestrator."""
+        orch = self._make_orchestrator(ModelTier.THINKING)
+        config = CompactionConfig(enabled=True)
+        counter = TokenCounter(max_tokens=1000)
+        manager = CompactionManager(config, counter, orchestrator=orch)
+
+        messages = [Message(role="user", content="Hello")]
+        await manager._generate_summary(messages)
+
+        orch.generate.assert_called_once()
+        _, kwargs = orch.generate.call_args
+        assert kwargs["tier"] == ModelTier.THINKING
+
+    @pytest.mark.asyncio
+    async def test_summary_falls_back_to_normal(self) -> None:
+        """_generate_summary uses NORMAL when no tier has been used."""
+        orch = self._make_orchestrator(None)
+        config = CompactionConfig(enabled=True)
+        counter = TokenCounter(max_tokens=1000)
+        manager = CompactionManager(config, counter, orchestrator=orch)
+
+        messages = [Message(role="user", content="Hello")]
+        await manager._generate_summary(messages)
+
+        orch.generate.assert_called_once()
+        _, kwargs = orch.generate.call_args
+        assert kwargs["tier"] == ModelTier.NORMAL
+
+    @pytest.mark.asyncio
+    async def test_handoff_summary_uses_current_tier(self) -> None:
+        """_generate_handoff_summary passes last_used_tier to orchestrator."""
+        orch = self._make_orchestrator(ModelTier.THINKING)
+        config = CompactionConfig(enabled=True)
+        counter = TokenCounter(max_tokens=1000)
+        manager = CompactionManager(config, counter, orchestrator=orch)
+
+        messages = [Message(role="user", content="Hello")]
+        await manager._generate_handoff_summary(messages, "plan_ready", 500)
+
+        orch.generate.assert_called_once()
+        _, kwargs = orch.generate.call_args
+        assert kwargs["tier"] == ModelTier.THINKING

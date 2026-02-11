@@ -335,12 +335,13 @@ Brief summary (include tool call history):"""
             # Import ModelTier here to avoid circular import
             from entropi.inference.orchestrator import ModelTier
 
-            # Use NORMAL tier explicitly - compaction should NOT be routed
-            # (the summary prompt contains code-related keywords that would
-            # incorrectly route to CODE model)
+            # Use the currently-active tier so compaction preserves analysis
+            # quality (e.g. thinking tier's detailed summaries stay detailed).
+            # Falls back to NORMAL if no tier has been used yet.
+            tier = self.orchestrator.last_used_tier or ModelTier.NORMAL
             result = await self.orchestrator.generate(
                 messages=[Message(role="user", content=summary_prompt)],
-                tier=ModelTier.NORMAL,
+                tier=tier,
             )
             # Enforce max length - truncate if necessary
             summary = result.content
@@ -535,10 +536,11 @@ Summary:"""
             # Import ModelTier here to avoid circular import
             from entropi.inference.orchestrator import ModelTier
 
-            # Use NORMAL tier explicitly - handoff summaries should NOT be routed
+            # Use the currently-active tier to preserve summary quality
+            tier = self.orchestrator.last_used_tier or ModelTier.NORMAL
             result = await self.orchestrator.generate(
                 messages=[Message(role="user", content=summary_prompt)],
-                tier=ModelTier.NORMAL,
+                tier=tier,
             )
             summary = result.content
             if len(summary) > max_chars:

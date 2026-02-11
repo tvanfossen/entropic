@@ -131,6 +131,8 @@ class CompactionManager:
         self,
         conversation_id: str | None,
         messages: list[Message],
+        *,
+        force: bool = False,
     ) -> tuple[list[Message], CompactionResult]:
         """
         Check if compaction needed and perform if so.
@@ -138,6 +140,7 @@ class CompactionManager:
         Args:
             conversation_id: Current conversation ID
             messages: Current message list
+            force: Bypass threshold check and compact immediately
 
         Returns:
             Tuple of (possibly compacted messages, result info)
@@ -150,8 +153,8 @@ class CompactionManager:
             f"(threshold: {threshold_tokens})"
         )
 
-        # No compaction needed
-        if current_tokens < threshold_tokens:
+        # No compaction needed (unless forced)
+        if not force and current_tokens < threshold_tokens:
             return messages, CompactionResult(
                 compacted=False,
                 old_token_count=current_tokens,

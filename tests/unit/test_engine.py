@@ -1,7 +1,11 @@
 """Tests for agent engine."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+from entropi.core.base import Message, ToolCall
 from entropi.core.context import ContextBuilder, TokenBudget
-from entropi.core.engine import AgentState, LoopConfig, LoopContext, LoopMetrics
+from entropi.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
 from entropi.core.parser import ToolCallParser
 
 
@@ -200,3 +204,198 @@ class TestContextBuilder:
         assert "Base prompt" in prompt
         assert "Project Context" in prompt
         assert "Project-specific info here" in prompt
+
+
+class _EngineTestBase:
+    """Shared helper for engine tests that need a mocked engine."""
+
+    def _make_engine(self):
+        """Create an Engine with mocked dependencies."""
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+        engine.loop_config = LoopConfig()
+        engine._on_state_change = None
+        engine._todo_list = MagicMock()
+        engine._todo_list.is_empty = True
+        return engine
+
+
+class TestCompactionAfterToolResults(_EngineTestBase):
+    """Compaction must be checked after each tool result."""
+
+    @pytest.mark.asyncio
+    async def test_compaction_called_after_tool_result(self) -> None:
+        """_check_compaction is called after each tool result."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
+            ToolCall(id="2", name="bash.execute", arguments={"command": "pwd"}),
+        ]
+
+        compaction_calls = []
+
+        async def mock_execute(ctx, tool_call):
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            compaction_calls.append(force)
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert len(messages) == 2
+        # _check_compaction called once per tool result
+        assert len(compaction_calls) == 2
+        assert all(f is False for f in compaction_calls)
+
+
+class TestOverflowRecovery(_EngineTestBase):
+    """Context overflow triggers forced compaction, not error state."""
+
+    @pytest.mark.asyncio
+    async def test_overflow_triggers_forced_compaction(self) -> None:
+        """ValueError with 'exceed context window' triggers forced compaction."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        error = ValueError("Requested tokens (16875) exceed context window of 16384")
+
+        compaction_calls = []
+
+        async def mock_check_compaction(ctx, *, force=False):
+            compaction_calls.append(force)
+
+        engine._check_compaction = mock_check_compaction
+        engine._set_state = MagicMock()
+
+        messages = []
+        async for msg in engine._handle_error(ctx, error):
+            messages.append(msg)
+
+        # Should trigger forced compaction
+        assert len(compaction_calls) == 1
+        assert compaction_calls[0] is True
+        # Should NOT increment error counter
+        assert ctx.consecutive_errors == 0
+        assert ctx.metrics.errors == 0
+        # Should NOT yield any error messages
+        assert len(messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_non_overflow_error_increments_counter(self) -> None:
+        """Non-overflow errors still increment the error counter."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        error = RuntimeError("Some other error")
+        engine._set_state = MagicMock()
+
+        messages = []
+        async for msg in engine._handle_error(ctx, error):
+            messages.append(msg)
+
+        assert ctx.consecutive_errors == 1
+        assert ctx.metrics.errors == 1
+
+
+class TestHandoffStopsToolProcessing(_EngineTestBase):
+    """Handoff must stop processing remaining tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_handoff_stops_remaining_tool_calls(self) -> None:
+        """Tool calls after a successful handoff are dropped."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
+            ToolCall(id="2", name="system.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
+        ]
+
+        executed = []
+
+        async def mock_execute(ctx, tool_call):
+            executed.append(tool_call.name)
+            if tool_call.name == "system.handoff":
+                return Message(
+                    role="user",
+                    content="Handoff successful. Now operating as code tier. Reason: plan ready",
+                )
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            pass
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert executed == ["bash.execute", "system.handoff"]
+        assert len(messages) == 2
+        assert "Handoff successful" in messages[1].content
+
+    @pytest.mark.asyncio
+    async def test_failed_handoff_continues_processing(self) -> None:
+        """Tool calls continue after a failed handoff."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="system.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
+        ]
+
+        executed = []
+
+        async def mock_execute(ctx, tool_call):
+            executed.append(tool_call.name)
+            if tool_call.name == "system.handoff":
+                return Message(role="user", content="Error: Invalid target tier: invalid")
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            pass
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert executed == ["system.handoff", "bash.execute"]
+        assert len(messages) == 2

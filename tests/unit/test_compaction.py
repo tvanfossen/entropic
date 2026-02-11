@@ -284,6 +284,33 @@ class TestCompactionManager:
         assert "[Summary of" in summary_msg.content
 
     @pytest.mark.asyncio
+    async def test_forced_compaction_bypasses_threshold(self) -> None:
+        """force=True compacts even when under threshold."""
+        manager = CompactionManager(self.config, self.counter)
+
+        # Small message list - well under 75% threshold
+        messages = [
+            Message(role="system", content="You are helpful."),
+            Message(role="user", content="x" * 400),
+            Message(role="assistant", content="y" * 400),
+            Message(role="user", content="z" * 400),
+            Message(role="assistant", content="w" * 400),
+        ]
+
+        # Verify we're under threshold
+        usage = self.counter.usage_percent(messages)
+        assert usage < 0.75
+
+        # Without force: no compaction
+        _, result_normal = await manager.check_and_compact("conv-1", messages)
+        assert result_normal.compacted is False
+
+        # With force: compaction happens
+        _, result_forced = await manager.check_and_compact("conv-1", messages, force=True)
+        assert result_forced.compacted is True
+        assert result_forced.new_token_count < result_forced.old_token_count
+
+    @pytest.mark.asyncio
     async def test_compaction_disabled(self) -> None:
         """Compaction disabled in config → no compaction even at threshold."""
         disabled_config = CompactionConfig(

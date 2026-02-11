@@ -220,6 +220,8 @@ class CompactionConfig(BaseModel):
     summary_max_tokens: int = Field(default=1500, ge=500, le=4000)
     notify_user: bool = True
     save_full_history: bool = True
+    tool_result_ttl: int = Field(default=2, ge=1, le=10)
+    warning_threshold_percent: float = Field(default=0.6, ge=0.3, le=0.9)
 
 
 class GenerationConfig(BaseModel):

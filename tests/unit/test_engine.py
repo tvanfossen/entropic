@@ -217,6 +217,7 @@ class _EngineTestBase:
         engine._on_state_change = None
         engine._todo_list = MagicMock()
         engine._todo_list.is_empty = True
+        engine._inject_context_warning = MagicMock()
         return engine
 
 
@@ -484,6 +485,7 @@ class TestHandoffGate(_EngineTestBase):
         assert "Handoff successful" in msg.content
 
     @pytest.mark.asyncio
+    @pytest.mark.asyncio
     async def test_handoff_allowed_when_todo_list_empty(self) -> None:
         """Handoff allowed when no todos at all (not all interactions need plans)."""
         from entropi.core.todos import TodoList
@@ -503,3 +505,208 @@ class TestHandoffGate(_EngineTestBase):
 
         msg = await engine._handle_handoff(ctx, tool_call)
         assert "Handoff successful" in msg.content
+
+
+class TestAutoPruneToolResults:
+    """Auto-prune replaces old tool results with stubs."""
+
+    def _make_engine_with_compaction(self):
+        """Create engine with real compaction config for pruning tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig(tool_result_ttl=2)
+        counter = TokenCounter(max_tokens=16384)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_prune_old_tool_results(self) -> None:
+        """Tool results older than TTL are replaced with stubs."""
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="file contents here...",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 0, "tool_name": "filesystem.read_file"},
+                ),
+                Message(role="assistant", content="I see the file."),
+                Message(
+                    role="user",
+                    content="another file",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 2, "tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+        ctx.metrics.iterations = (
+            3  # TTL=2: iteration 0 is stale (age 3), iteration 2 is fresh (age 1)
+        )
+
+        engine._prune_old_tool_results(ctx)
+
+        # First tool result (iteration 0, age=3) should be pruned
+        assert ctx.messages[1].content.startswith("[Previous:")
+        assert "filesystem.read_file" in ctx.messages[1].content
+        # Second tool result (iteration 2, age=1) should still be intact
+        assert ctx.messages[3].content == "another file"
+
+    def test_prune_preserves_recent(self) -> None:
+        """Tool results within TTL are preserved."""
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="recent file",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 2, "tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+        ctx.metrics.iterations = 3  # TTL=2, iteration 2 is within TTL
+
+        engine._prune_old_tool_results(ctx)
+
+        assert ctx.messages[1].content == "recent file"
+
+
+class TestPruneContextTool:
+    """system.prune_context internal handler."""
+
+    def _make_engine_with_compaction(self):
+        """Create engine with compaction manager for prune tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig()
+        counter = TokenCounter(max_tokens=16384)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_prune_context_handler(self) -> None:
+        """Manual prune replaces old tool results with stubs."""
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="x" * 1000,
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"tool_name": "filesystem.read_file"},
+                ),
+                Message(role="assistant", content="noted"),
+                Message(
+                    role="user",
+                    content="y" * 500,
+                    tool_results=[{"name": "bash", "result": "..."}],
+                    metadata={"tool_name": "bash.execute"},
+                ),
+                Message(
+                    role="user",
+                    content="z" * 200,
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+
+        tool_call = ToolCall(
+            id="1",
+            name="system.prune_context",
+            arguments={"keep_recent": 1},
+        )
+
+        msg = engine._handle_prune_context(ctx, tool_call)
+
+        assert "Pruned 2" in msg.content
+        # Oldest 2 tool results pruned, newest 1 kept
+        assert ctx.messages[1].content.startswith("[Previous:")
+        assert ctx.messages[3].content.startswith("[Previous:")
+        assert ctx.messages[4].content == "z" * 200  # Kept
+
+
+class TestContextWarningInjection:
+    """Context warning injected when usage exceeds threshold."""
+
+    def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
+        """Create engine with compaction for warning tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig(warning_threshold_percent=threshold)
+        counter = TokenCounter(max_tokens=max_tokens)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_warning_injected_above_threshold(self) -> None:
+        """Warning message injected when context usage exceeds threshold."""
+        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+
+        # Create context that uses ~70% (well above 50% threshold)
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="x" * 100),
+                Message(role="user", content="y" * 100),
+                Message(role="assistant", content="z" * 100),
+            ],
+        )
+        ctx.metrics.iterations = 1
+        initial_count = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+
+        assert len(ctx.messages) == initial_count + 1
+        assert "[CONTEXT WARNING]" in ctx.messages[-1].content
+        assert ctx.metadata["last_warning_iteration"] == 1
+
+    def test_warning_not_repeated_same_iteration(self) -> None:
+        """Warning not injected twice in same iteration."""
+        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="x" * 100),
+                Message(role="user", content="y" * 100),
+            ],
+        )
+        ctx.metrics.iterations = 1
+
+        engine._inject_context_warning(ctx)
+        count_after_first = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+        assert len(ctx.messages) == count_after_first  # No new message
+
+    def test_no_warning_below_threshold(self) -> None:
+        """No warning when context usage is below threshold."""
+        engine = self._make_engine_with_compaction(max_tokens=10000, threshold=0.6)
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="short"),
+                Message(role="user", content="hello"),
+            ],
+        )
+        ctx.metrics.iterations = 1
+        initial_count = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+
+        assert len(ctx.messages) == initial_count

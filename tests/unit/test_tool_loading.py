@@ -19,6 +19,7 @@ ALL_TOOLS = [
     ("add", "git"),
     ("reset", "git"),
     ("handoff", "system"),
+    ("prune_context", "system"),
     ("diagnostics", "diagnostics"),
     ("check_errors", "diagnostics"),
     ("todo_write", "entropi"),

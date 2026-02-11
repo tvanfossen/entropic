@@ -24,12 +24,15 @@ class SystemServer(BaseMCPServer):
         """Get available system tools."""
         return [
             load_tool_definition("handoff", "system"),
+            load_tool_definition("prune_context", "system"),
         ]
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Execute a system tool."""
         if name == "handoff":
             return await self._execute_handoff(arguments)
+        if name == "prune_context":
+            return json.dumps({"note": "Handled internally by engine"})
         return json.dumps({"error": f"Unknown tool: {name}"})
 
     async def _execute_handoff(self, arguments: dict[str, Any]) -> str:

@@ -1021,8 +1021,7 @@ RECOVERY:
         """Handle the internal entropi.todo_write tool call."""
         logger.debug(f"Handling internal todo tool: {tool_call.arguments}")
 
-        todos = tool_call.arguments.get("todos", [])
-        result = self._todo_list.update_from_tool_call(todos)
+        result = self._todo_list.handle_tool_call(tool_call.arguments)
 
         # Notify UI of todo update
         if self._on_todo_update:

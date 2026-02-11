@@ -144,37 +144,153 @@ class TodoList:
         return "\n".join(lines)
 
     def _format_flat(self, lines: list[str], icons: dict[str, str]) -> None:
-        """Format items as a flat list."""
-        for item in self.items:
+        """Format items as a flat list with indices."""
+        for i, item in enumerate(self.items):
             icon = icons.get(item.status.value, "[ ]")
-            lines.append(f"  {icon} {item.content}")
+            lines.append(f"  [{i}] {icon} {item.content}")
 
     def _format_grouped(self, lines: list[str], icons: dict[str, str]) -> None:
-        """Format items grouped by target tier."""
-        # Group items: tier name -> items
-        groups: dict[str, list[TodoItem]] = {}
-        for item in self.items:
+        """Format items grouped by target tier with global indices."""
+        # Build index -> item mapping first to preserve global indices
+        groups: dict[str, list[tuple[int, TodoItem]]] = {}
+        for i, item in enumerate(self.items):
             key = item.target_tier or "self"
-            groups.setdefault(key, []).append(item)
+            groups.setdefault(key, []).append((i, item))
 
         # Named tiers first, then self
         for tier_name in sorted(groups, key=lambda t: (t == "self", t)):
             label = "self" if tier_name == "self" else f"{tier_name} tier"
             lines.append(f"  For {label}:")
-            for item in groups[tier_name]:
+            for idx, item in groups[tier_name]:
                 icon = icons.get(item.status.value, "[ ]")
-                lines.append(f"    {icon} {item.content}")
+                lines.append(f"    [{idx}] {icon} {item.content}")
 
-    def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
+    def handle_tool_call(self, arguments: dict[str, Any]) -> str:
         """
-        Update the todo list from a tool call.
+        Handle a todo_write tool call with action-based dispatch.
 
         Args:
-            todos: List of todo dicts with content, active_form, status
+            arguments: Tool call arguments with 'action' and action-specific fields
 
         Returns:
             Status message
         """
+        action = arguments.get("action", "replace")
+        handlers = {
+            "add": self._handle_add,
+            "update": self._handle_update,
+            "remove": self._handle_remove,
+            "replace": self._handle_replace,
+        }
+        handler = handlers.get(action)
+        if not handler:
+            return f"Error: Unknown action '{action}'. Use: add, update, remove, replace"
+        return handler(arguments)
+
+    def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
+        """Legacy wrapper — delegates to handle_tool_call with replace action."""
+        return self.handle_tool_call({"action": "replace", "todos": todos})
+
+    def _handle_add(self, args: dict[str, Any]) -> str:
+        """Append new items to the todo list."""
+        todos = args.get("todos", [])
+        if not todos:
+            return "Error: 'add' action requires 'todos' array"
+
+        errors = self._validate_items(todos)
+        if errors:
+            return "Error: Invalid todo format.\n" + "\n".join(errors)
+
+        for t in todos:
+            self.items.append(
+                TodoItem(
+                    content=t["content"],
+                    active_form=t["active_form"],
+                    status=TodoStatus(t["status"]),
+                    target_tier=t.get("target_tier"),
+                )
+            )
+
+        return f"Added {len(todos)} item(s). Total: {len(self.items)}"
+
+    def _resolve_index(self, args: dict[str, Any], action: str) -> tuple[int, str | None]:
+        """Validate and return index from args. Returns (index, error_or_None)."""
+        if "index" not in args:
+            return -1, f"Error: '{action}' action requires 'index'"
+        index = args["index"]
+        if not 0 <= index < len(self.items):
+            return -1, f"Error: Index {index} out of range (0-{len(self.items) - 1})"
+        return index, None
+
+    def _apply_status(self, item: TodoItem, status_str: str) -> str | None:
+        """Apply status change to item. Returns error string or None on success."""
+        if status_str not in ("pending", "in_progress", "completed"):
+            return f"Error: Invalid status '{status_str}'"
+        new_status = TodoStatus(status_str)
+        if new_status == TodoStatus.IN_PROGRESS:
+            current = self.get_current()
+            if current and current is not item:
+                return "Error: Only one task can be in_progress at a time"
+        item.status = new_status
+        if new_status == TodoStatus.COMPLETED:
+            item.completed_at = datetime.utcnow()
+        return None
+
+    def _handle_update(self, args: dict[str, Any]) -> str:
+        """Update a single item by index."""
+        index, error = self._resolve_index(args, "update")
+        if error:
+            return error
+
+        item = self.items[index]
+
+        if "status" in args:
+            status_error = self._apply_status(item, args["status"])
+            if status_error:
+                return status_error
+
+        for attr in ("content", "active_form", "target_tier"):
+            if attr in args:
+                setattr(item, attr, args[attr])
+
+        return f"Updated item {index}: {item.content[:50]}"
+
+    def _handle_remove(self, args: dict[str, Any]) -> str:
+        """Remove an item by index."""
+        index, error = self._resolve_index(args, "remove")
+        if error:
+            return error
+
+        removed = self.items.pop(index)
+        return f"Removed item {index}: {removed.content[:50]}"
+
+    def _handle_replace(self, args: dict[str, Any]) -> str:
+        """Replace the entire todo list (legacy behavior)."""
+        todos = args.get("todos", [])
+        errors = self._validate_items(todos)
+        if errors:
+            return "Error: Invalid todo format.\n" + "\n".join(errors)
+
+        # Validate: only one in_progress
+        in_progress = [t for t in todos if t["status"] == "in_progress"]
+        if len(in_progress) > 1:
+            return "Error: Only one task can be in_progress at a time"
+
+        self.items = [
+            TodoItem(
+                content=t["content"],
+                active_form=t["active_form"],
+                status=TodoStatus(t["status"]),
+                target_tier=t.get("target_tier"),
+            )
+            for t in todos
+        ]
+
+        completed, total = self.progress
+        return f"Todo list replaced: {completed}/{total} completed"
+
+    def _validate_items(self, todos: list[dict[str, Any]]) -> list[str]:
+        """Validate todo item dicts. Returns list of error strings (empty = valid)."""
         errors = []
         for i, t in enumerate(todos):
             if "content" not in t:
@@ -188,30 +304,7 @@ class TodoList:
                     f"Item {i}: invalid status '{t['status']}' "
                     f"(must be: pending, in_progress, completed)"
                 )
-
-        if errors:
-            return "Error: Invalid todo format.\n" + "\n".join(errors)
-
-        # Validate: only one in_progress
-        in_progress = [t for t in todos if t["status"] == "in_progress"]
-        if len(in_progress) > 1:
-            return "Error: Only one task can be in_progress at a time"
-
-        parsed_items = []
-        for t in todos:
-            parsed_items.append(
-                TodoItem(
-                    content=t["content"],
-                    active_form=t["active_form"],
-                    status=TodoStatus(t["status"]),
-                    target_tier=t.get("target_tier"),
-                )
-            )
-
-        self.items = parsed_items
-
-        completed, total = self.progress
-        return f"Todo list updated: {completed}/{total} completed"
+        return errors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""

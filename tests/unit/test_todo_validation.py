@@ -260,3 +260,271 @@ class TestTargetTier:
         assert "For " not in output
         assert "[ ] Task A" in output
         assert "[ ] Task B" in output
+
+
+class TestActionBasedOperations:
+    """Tests for action-based todo_write operations."""
+
+    def test_add_appends_items(self) -> None:
+        """'add' action appends to existing list."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
+            }
+        )
+        assert len(todo_list.items) == 1
+
+        result = todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Task B", "active_form": "Doing B", "status": "pending"}],
+            }
+        )
+        assert "Added 1" in result
+        assert "Total: 2" in result
+        assert len(todo_list.items) == 2
+        assert todo_list.items[0].content == "Task A"
+        assert todo_list.items[1].content == "Task B"
+
+    def test_add_validates_fields(self) -> None:
+        """'add' rejects items with missing required fields."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "No status"}],
+            }
+        )
+        assert "Error" in result
+        assert len(todo_list.items) == 0
+
+    def test_add_requires_todos(self) -> None:
+        """'add' without todos array returns error."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call({"action": "add"})
+        assert "Error" in result
+
+    def test_add_with_target_tier(self) -> None:
+        """'add' preserves target_tier on items."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {
+                        "content": "Fix bug",
+                        "active_form": "Fixing",
+                        "status": "pending",
+                        "target_tier": "code",
+                    }
+                ],
+            }
+        )
+        assert todo_list.items[0].target_tier == "code"
+
+    def test_update_by_index(self) -> None:
+        """'update' changes status of specific item."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "Doing A", "status": "pending"},
+                    {"content": "Task B", "active_form": "Doing B", "status": "pending"},
+                ],
+            }
+        )
+
+        result = todo_list.handle_tool_call(
+            {
+                "action": "update",
+                "index": 1,
+                "status": "in_progress",
+            }
+        )
+        assert "Updated item 1" in result
+        assert todo_list.items[0].status == TodoStatus.PENDING
+        assert todo_list.items[1].status == TodoStatus.IN_PROGRESS
+
+    def test_update_bounds_check(self) -> None:
+        """'update' rejects out-of-range index."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Only", "active_form": "Only", "status": "pending"}],
+            }
+        )
+
+        result = todo_list.handle_tool_call({"action": "update", "index": 5, "status": "completed"})
+        assert "Error" in result
+        assert "out of range" in result
+
+    def test_update_requires_index(self) -> None:
+        """'update' without index returns error."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call({"action": "update", "status": "completed"})
+        assert "Error" in result
+        assert "requires 'index'" in result
+
+    def test_update_single_in_progress(self) -> None:
+        """'update' rejects second in_progress item."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "A", "status": "in_progress"},
+                    {"content": "Task B", "active_form": "B", "status": "pending"},
+                ],
+            }
+        )
+
+        result = todo_list.handle_tool_call(
+            {"action": "update", "index": 1, "status": "in_progress"}
+        )
+        assert "Error" in result
+        assert "Only one task" in result
+        assert todo_list.items[1].status == TodoStatus.PENDING
+
+    def test_update_partial_fields(self) -> None:
+        """'update' only changes provided fields."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Original", "active_form": "Working", "status": "pending"}],
+            }
+        )
+
+        todo_list.handle_tool_call({"action": "update", "index": 0, "content": "Updated"})
+        assert todo_list.items[0].content == "Updated"
+        assert todo_list.items[0].active_form == "Working"
+        assert todo_list.items[0].status == TodoStatus.PENDING
+
+    def test_update_completed_sets_timestamp(self) -> None:
+        """'update' to completed status sets completed_at."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Task", "active_form": "Working", "status": "pending"}],
+            }
+        )
+
+        todo_list.handle_tool_call({"action": "update", "index": 0, "status": "completed"})
+        assert todo_list.items[0].completed_at is not None
+
+    def test_remove_by_index(self) -> None:
+        """'remove' deletes item and shifts indices."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "A", "status": "pending"},
+                    {"content": "Task B", "active_form": "B", "status": "pending"},
+                    {"content": "Task C", "active_form": "C", "status": "pending"},
+                ],
+            }
+        )
+
+        result = todo_list.handle_tool_call({"action": "remove", "index": 1})
+        assert "Removed item 1" in result
+        assert "Task B" in result
+        assert len(todo_list.items) == 2
+        assert todo_list.items[0].content == "Task A"
+        assert todo_list.items[1].content == "Task C"
+
+    def test_remove_bounds_check(self) -> None:
+        """'remove' rejects out-of-range index."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call({"action": "remove", "index": 0})
+        assert "Error" in result
+        assert "out of range" in result
+
+    def test_remove_requires_index(self) -> None:
+        """'remove' without index returns error."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call({"action": "remove"})
+        assert "Error" in result
+
+    def test_replace_backward_compat(self) -> None:
+        """'replace' action works like old full-list replacement."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [{"content": "Old", "active_form": "Old", "status": "pending"}],
+            }
+        )
+
+        result = todo_list.handle_tool_call(
+            {
+                "action": "replace",
+                "todos": [
+                    {"content": "New A", "active_form": "A", "status": "pending"},
+                    {"content": "New B", "active_form": "B", "status": "completed"},
+                ],
+            }
+        )
+        assert "replaced" in result
+        assert len(todo_list.items) == 2
+        assert todo_list.items[0].content == "New A"
+
+    def test_no_action_defaults_to_replace(self) -> None:
+        """Missing action field defaults to replace for backward compat."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call(
+            {
+                "todos": [{"content": "Task", "active_form": "Working", "status": "pending"}],
+            }
+        )
+        assert "replaced" in result
+        assert len(todo_list.items) == 1
+
+    def test_unknown_action_rejected(self) -> None:
+        """Invalid action returns error."""
+        todo_list = TodoList()
+        result = todo_list.handle_tool_call({"action": "delete"})
+        assert "Error" in result
+        assert "Unknown action" in result
+
+    def test_format_shows_indices(self) -> None:
+        """format_for_context includes [0], [1] indices."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "A", "status": "pending"},
+                    {"content": "Task B", "active_form": "B", "status": "in_progress"},
+                ],
+            }
+        )
+        output = todo_list.format_for_context()
+        assert "[0] [ ] Task A" in output
+        assert "[1] [>] Task B" in output
+
+    def test_format_grouped_shows_global_indices(self) -> None:
+        """Grouped format shows global indices, not per-group."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Read files", "active_form": "Reading", "status": "completed"},
+                    {
+                        "content": "Fix bug",
+                        "active_form": "Fixing",
+                        "status": "pending",
+                        "target_tier": "code",
+                    },
+                ],
+            }
+        )
+        output = todo_list.format_for_context()
+        assert "[0]" in output
+        assert "[1]" in output

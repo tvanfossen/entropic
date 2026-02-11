@@ -23,6 +23,15 @@ DO NOT use todos for:
 4. **Break complex tasks into concrete steps** - "Implement auth" → specific files/functions
 5. **Update list as you learn more** - Add discovered subtasks
 
+## Target Tier
+
+Each todo can optionally specify which tier should execute it:
+- Omit `target_tier` for self-directed tasks (discovery, reading, investigation)
+- Set `target_tier: "code"` for tasks the code tier should execute
+- Set `target_tier: "thinking"` for tasks requiring deep analysis
+
+Planning tiers build two categories: discovery todos (for themselves) and implementation todos (for the executing tier).
+
 ## Examples
 
 User: "Add dark mode to the settings page"

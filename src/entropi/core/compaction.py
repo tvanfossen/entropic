@@ -184,25 +184,18 @@ class CompactionManager:
         if self.config.save_full_history and self.storage and conversation_id:
             await self._save_snapshot(conversation_id, messages)
 
-        # Perform compaction
-        compacted_messages, summary, summarized_count = await self._compact(messages)
+        # Perform value-density compaction (single pass, no fallback chain)
+        compacted_messages, summary, stripped_count = await self._compact(messages)
 
         # Clear token cache since message objects changed
         self.counter.clear_cache()
         new_tokens = self.counter.count_messages(compacted_messages)
 
-        # Verify we actually reduced tokens (otherwise we might loop)
-        # Must reduce by at least 20% to be considered successful
-        if new_tokens >= current_tokens * 0.8:
-            logger.warning(
-                f"Compaction failed to reduce significantly: {current_tokens} -> {new_tokens}. "
-                "Using aggressive fallback."
+        if new_tokens >= current_tokens:
+            logger.error(
+                f"Compaction did not reduce tokens: {current_tokens} -> {new_tokens}. "
+                "System prompt may exceed context budget."
             )
-            # Aggressive fallback: keep only system + last 2 messages
-            compacted_messages = self._aggressive_compact(messages)
-            self.counter.clear_cache()
-            new_tokens = self.counter.count_messages(compacted_messages)
-            logger.info(f"Aggressive compaction: {current_tokens} -> {new_tokens} tokens")
 
         logger.info(f"Compacted {current_tokens} -> {new_tokens} tokens")
 
@@ -211,100 +204,67 @@ class CompactionManager:
             old_token_count=current_tokens,
             new_token_count=new_tokens,
             summary=summary,
-            preserved_messages=len(compacted_messages) - 1,  # -1 for summary
-            messages_summarized=summarized_count,
+            preserved_messages=len(compacted_messages) - 1,
+            messages_summarized=stripped_count,
         )
 
     async def _compact(
         self,
         messages: list[Message],
     ) -> tuple[list[Message], str, int]:
-        """
-        Perform the actual compaction.
+        """Compact by value density: strip tool results, keep user messages.
 
-        Targets 50% of current tokens to ensure meaningful reduction.
+        Classifies messages by disposability:
+        - System message: always kept
+        - Real user input (source=user): always kept
+        - Tool results, injections, warnings: stripped (captured in summary)
+        - Assistant messages: keep only the most recent
 
         Returns:
-            Tuple of (compacted messages, summary text, count of summarized messages)
+            Tuple of (compacted messages, summary text, count stripped)
         """
-        current_tokens = self.counter.count_messages(messages)
-        # Target 50% of context window, not 50% of current
-        # This ensures target is always under the context limit
-        target_tokens = min(current_tokens // 2, int(self.counter.max_tokens * 0.5))
-
-        # Keep system message if present
         system_message = None
-        system_tokens = 0
-        working_messages = messages
+        working = messages
         if messages and messages[0].role == "system":
             system_message = messages[0]
-            system_tokens = self.counter.count_message(system_message)
-            working_messages = messages[1:]
+            working = messages[1:]
 
-        # Reserve tokens: system prompt + summary wrapper + buffer
-        wrapper_tokens = 100  # Approximate tokens for wrapper text
-        summary_budget = min(self.config.summary_max_tokens, target_tokens // 4)
+        # Classify by value density
+        user_messages: list[Message] = []
+        assistant_messages: list[Message] = []
+        stripped_count = 0
 
-        # Calculate how many recent messages we can preserve
-        available_for_recent = target_tokens - system_tokens - wrapper_tokens - summary_budget
-
-        # Start with configured preserve count and reduce if needed
-        preserve_count = self.config.preserve_recent_turns * 2
-        recent_messages: list[Message] = []
-
-        # Work backwards from most recent, adding messages until we hit budget
-        if preserve_count > 0 and preserve_count < len(working_messages):
-            candidate_recent = working_messages[-preserve_count:]
-        else:
-            candidate_recent = working_messages[-(len(working_messages) // 2) :]
-
-        recent_tokens = 0
-        for msg in reversed(candidate_recent):
-            msg_tokens = self.counter.count_message(msg)
-            if recent_tokens + msg_tokens <= available_for_recent:
-                recent_messages.insert(0, msg)
-                recent_tokens += msg_tokens
+        for msg in working:
+            if msg.metadata.get("source") == "user":
+                user_messages.append(msg)
+            elif msg.role == "assistant":
+                assistant_messages.append(msg)
             else:
-                break
+                stripped_count += 1
 
-        # Ensure we keep at least 2 messages (1 turn) if possible
-        if len(recent_messages) < 2 and len(candidate_recent) >= 2:
-            recent_messages = candidate_recent[-2:]
-            recent_tokens = sum(self.counter.count_message(m) for m in recent_messages)
-
-        # Messages to summarize = everything except system and recent
-        if recent_messages:
-            # Find the split point
-            recent_start_idx = len(working_messages) - len(recent_messages)
-            old_messages = working_messages[:recent_start_idx]
-        else:
-            old_messages = working_messages
-            recent_messages = []
+        # Build structured summary from ALL working messages (before stripping)
+        summary = self._structured_summary(working)
+        summary_msg = Message(
+            role="user",
+            content=self._format_summary(summary, len(working)),
+        )
 
         logger.debug(
-            f"Compaction plan: summarize {len(old_messages)} msgs, "
-            f"keep {len(recent_messages)} recent msgs, "
-            f"summary budget: {summary_budget} tokens"
+            f"Value-density compaction: {len(user_messages)} user msgs kept, "
+            f"{len(assistant_messages)} assistant msgs (keeping last), "
+            f"{stripped_count} stripped"
         )
 
-        # Build structured summary from old messages (deterministic, no model)
-        summary = self._structured_summary(old_messages)
-
-        # Build compacted message list
-        # Keep system message separate - don't concatenate into summary
-        # This prevents doubling the system prompt size
-        summary_message = Message(
-            role="user",  # Use user role for summary to avoid system message bloat
-            content=self._format_summary(summary, len(old_messages)),
-        )
-
-        result = []
+        # Assemble: system + summary + user messages + last assistant
+        result: list[Message] = []
         if system_message:
             result.append(system_message)
-        result.append(summary_message)
-        result.extend(recent_messages)
+        result.append(summary_msg)
+        result.extend(user_messages)
+        if assistant_messages:
+            result.append(assistant_messages[-1])
 
-        return result, summary, len(old_messages)
+        return result, summary, stripped_count
 
     def _structured_summary(self, messages: list[Message]) -> str:
         """Build a deterministic structured summary from message history.
@@ -334,9 +294,17 @@ class CompactionManager:
         return "\n".join(lines)
 
     def _extract_original_task(self, messages: list[Message]) -> str:
-        """Find the first non-system user message (the original task)."""
+        """Find the first real user message (the original task)."""
+        # Primary: use source metadata tag
         for msg in messages:
-            if msg.role == "user" and not msg.content.startswith("["):
+            if msg.metadata.get("source") == "user":
+                content = msg.content
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                return content
+        # Fallback: heuristic for untagged messages
+        for msg in messages:
+            if msg.role == "user" and not msg.content.startswith(("[", "Tool ")):
                 content = msg.content
                 if len(content) > 500:
                     content = content[:500] + "..."
@@ -413,40 +381,6 @@ The following summarizes {message_count} previous messages that have been compac
 
 [END SUMMARY - Recent conversation continues below]"""
 
-    def _aggressive_compact(self, messages: list[Message]) -> list[Message]:
-        """Emergency compaction: structured summary + last 2 messages.
-
-        Unlike the old approach (system + last 2 only), this preserves the
-        original task and tool call history via structured extraction.
-        """
-        result = []
-
-        # Keep system message if present
-        working_messages = messages
-        if messages and messages[0].role == "system":
-            result.append(messages[0])
-            working_messages = messages[1:]
-
-        # Build structured summary from all non-system messages
-        summary = self._structured_summary(working_messages)
-        result.append(
-            Message(
-                role="user",
-                content=self._format_summary(summary, len(working_messages)),
-            )
-        )
-
-        # Keep last 2 messages (1 turn) for immediate context
-        if len(working_messages) >= 2:
-            result.extend(working_messages[-2:])
-        elif working_messages:
-            result.extend(working_messages)
-
-        logger.debug(
-            f"Aggressive compaction: kept {len(result)} messages from original {len(messages)}"
-        )
-        return result
-
     async def _save_snapshot(
         self,
         conversation_id: str,
@@ -471,10 +405,10 @@ The following summarizes {message_count} previous messages that have been compac
         handoff_reason: str,
         target_context_length: int,
     ) -> list[Message]:
-        """
-        Compress context specifically for tier handoff.
+        """Compress context for tier handoff using value-density stripping.
 
-        Uses structured extraction (same as compaction) plus handoff reason.
+        Keeps system message, user messages, and handoff context.
+        Strips tool results and old assistant messages.
 
         Args:
             messages: Current conversation
@@ -484,34 +418,27 @@ The following summarizes {message_count} previous messages that have been compac
         Returns:
             Compressed messages suitable for new tier
         """
-        target_tokens = int(target_context_length * 0.4)
-
-        # Keep system message
         system_message = None
-        working_messages = messages
+        working = messages
         if messages and messages[0].role == "system":
             system_message = messages[0]
-            working_messages = messages[1:]
+            working = messages[1:]
 
-        # Build structured summary (deterministic, no model inference)
-        summary = self._structured_summary(working_messages)
+        # Keep real user messages
+        user_messages = [m for m in working if m.metadata.get("source") == "user"]
 
-        result = []
-        if system_message:
-            result.append(system_message)
-
+        # Build structured summary + handoff reason
+        summary = self._structured_summary(working)
         handoff_context = (
             f"[HANDOFF CONTEXT]\n{summary}\n\n"
             f"Handoff reason: {handoff_reason}\n[END HANDOFF CONTEXT]"
         )
-        result.append(Message(role="user", content=handoff_context))
 
-        # Keep last 2 messages for immediate context (if they fit)
-        if len(working_messages) >= 2:
-            recent = working_messages[-2:]
-            recent_tokens = sum(self.counter.count_message(m) for m in recent)
-            if recent_tokens < target_tokens // 4:
-                result.extend(recent)
+        result: list[Message] = []
+        if system_message:
+            result.append(system_message)
+        result.append(Message(role="user", content=handoff_context))
+        result.extend(user_messages)
 
         logger.info(
             f"Handoff compression: {len(messages)} -> {len(result)} messages "

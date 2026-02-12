@@ -120,6 +120,24 @@ class TestTokenCounter:
         assert len(counter._cache) == 0
 
 
+def _user_msg(content: str) -> Message:
+    """Create a tagged user message (simulates real user input)."""
+    msg = Message(role="user", content=content)
+    msg.metadata["source"] = "user"
+    return msg
+
+
+def _tool_result_msg(tool_name: str, content: str, result: str = "") -> Message:
+    """Create a tool result message (simulates adapter format_tool_result)."""
+    msg = Message(
+        role="user",
+        content=content,
+        tool_results=[{"name": tool_name, "result": result}],
+    )
+    msg.metadata["tool_name"] = tool_name
+    return msg
+
+
 class TestCompactionManager:
     """Tests for CompactionManager class."""
 
@@ -133,14 +151,6 @@ class TestCompactionManager:
         )
         self.counter = TokenCounter(max_tokens=1000)
 
-    def _create_messages(self, count: int, content_size: int = 100) -> list[Message]:
-        """Helper to create test messages."""
-        messages = [Message(role="system", content="You are helpful.")]
-        for i in range(count):
-            role = "user" if i % 2 == 0 else "assistant"
-            messages.append(Message(role=role, content="x" * content_size))
-        return messages
-
     @pytest.mark.asyncio
     async def test_check_below_threshold_no_compact(self) -> None:
         """Below threshold -> no compaction."""
@@ -149,7 +159,7 @@ class TestCompactionManager:
         # Small message list - well under threshold
         messages = [
             Message(role="system", content="You are helpful."),
-            Message(role="user", content="Hello"),
+            _user_msg("Hello"),
             Message(role="assistant", content="Hi!"),
         ]
 
@@ -164,10 +174,12 @@ class TestCompactionManager:
         """At threshold -> triggers compaction."""
         manager = CompactionManager(self.config, self.counter)
 
-        # Create messages that exceed 75% of 1000 tokens
-        # Each message is ~30 tokens (100 chars / 4 + 1 + 4 role = ~29)
-        # Need ~25+ messages to hit 750 tokens
-        messages = self._create_messages(30, content_size=100)
+        # Build messages that exceed 75% of 1000 tokens
+        messages = [Message(role="system", content="You are helpful.")]
+        messages.append(_user_msg("Analyze error handling"))
+        for _ in range(15):
+            messages.append(Message(role="assistant", content="x" * 100))
+            messages.append(_tool_result_msg("bash.execute", "y" * 100, "output"))
 
         # Verify we're above threshold
         usage = self.counter.usage_percent(messages)
@@ -183,42 +195,28 @@ class TestCompactionManager:
         """System message always preserved."""
         manager = CompactionManager(self.config, self.counter)
 
-        messages = self._create_messages(30, content_size=100)
-        system_content = messages[0].content
+        messages = [Message(role="system", content="You are helpful.")]
+        messages.append(_user_msg("Task"))
+        for _ in range(15):
+            messages.append(Message(role="assistant", content="x" * 100))
+            messages.append(_tool_result_msg("bash.execute", "y" * 100))
 
         result_messages, result = await manager.check_and_compact("conv-1", messages)
 
         assert result.compacted is True
         assert result_messages[0].role == "system"
-        assert result_messages[0].content == system_content
-
-    @pytest.mark.asyncio
-    async def test_compact_preserves_recent_turns(self) -> None:
-        """Recent messages kept per config (preserve_recent_turns)."""
-        manager = CompactionManager(self.config, self.counter)
-
-        messages = self._create_messages(30, content_size=100)
-        # Mark the last few messages with unique content
-        messages[-1] = Message(role="assistant", content="LAST_ASSISTANT_MESSAGE")
-        messages[-2] = Message(role="user", content="LAST_USER_MESSAGE")
-
-        result_messages, result = await manager.check_and_compact("conv-1", messages)
-
-        assert result.compacted is True
-        # Last 2 messages should be preserved (but may be more depending on budget)
-        message_contents = [m.content for m in result_messages]
-        assert "LAST_ASSISTANT_MESSAGE" in message_contents
-        assert "LAST_USER_MESSAGE" in message_contents
+        assert result_messages[0].content == "You are helpful."
 
     @pytest.mark.asyncio
     async def test_compact_uses_structured_summary(self) -> None:
         """Compaction produces structured summary (not model-generated)."""
-        # No orchestrator needed — structured summary is deterministic
         manager = CompactionManager(self.config, self.counter, orchestrator=None)
 
-        messages = self._create_messages(30, content_size=100)
-        # Set first user message to a recognizable task
-        messages[1] = Message(role="user", content="Analyze the error handling")
+        messages = [Message(role="system", content="System")]
+        messages.append(_user_msg("Analyze the error handling"))
+        for _ in range(15):
+            messages.append(Message(role="assistant", content="x" * 100))
+            messages.append(_tool_result_msg("bash.execute", "y" * 100))
 
         result_messages, result = await manager.check_and_compact("conv-1", messages)
 
@@ -229,36 +227,15 @@ class TestCompactionManager:
         assert "Original task: Analyze the error handling" in summary_msg.content
 
     @pytest.mark.asyncio
-    async def test_aggressive_compact_structure(self) -> None:
-        """Aggressive compact: system + structured summary + last 2 messages."""
-        manager = CompactionManager(self.config, self.counter)
-
-        messages = self._create_messages(10, content_size=100)
-        messages[1] = Message(role="user", content="Original task here")
-        messages[-1] = Message(role="assistant", content="LAST")
-        messages[-2] = Message(role="user", content="SECOND_LAST")
-
-        result = manager._aggressive_compact(messages)
-
-        # system + summary + last 2 = 4 messages
-        assert len(result) == 4
-        assert result[0].role == "system"
-        assert "[CONVERSATION SUMMARY]" in result[1].content
-        assert "Original task: Original task here" in result[1].content
-        assert result[2].content == "SECOND_LAST"
-        assert result[3].content == "LAST"
-
-    @pytest.mark.asyncio
     async def test_forced_compaction_bypasses_threshold(self) -> None:
         """force=True compacts even when under threshold."""
         manager = CompactionManager(self.config, self.counter)
 
-        # Small message list - well under 75% threshold
         messages = [
-            Message(role="system", content="You are helpful."),
-            Message(role="user", content="x" * 400),
+            Message(role="system", content="System"),
+            _user_msg("Task here"),
             Message(role="assistant", content="y" * 400),
-            Message(role="user", content="z" * 400),
+            _tool_result_msg("bash.execute", "z" * 400, "output"),
             Message(role="assistant", content="w" * 400),
         ]
 
@@ -284,12 +261,134 @@ class TestCompactionManager:
         )
         manager = CompactionManager(disabled_config, self.counter)
 
-        messages = self._create_messages(30, content_size=100)
+        messages = [Message(role="system", content="System")]
+        messages.append(_user_msg("Task"))
+        for _ in range(15):
+            messages.append(Message(role="assistant", content="x" * 100))
+            messages.append(_tool_result_msg("bash.execute", "y" * 100))
 
         result_messages, result = await manager.check_and_compact("conv-1", messages)
 
         assert result.compacted is False
         assert result_messages == messages
+
+
+class TestValueDensityCompaction:
+    """Tests for value-density compaction behavior."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.config = CompactionConfig(enabled=True, threshold_percent=0.5)
+        self.counter = TokenCounter(max_tokens=1000)
+        self.manager = CompactionManager(self.config, self.counter)
+
+    @pytest.mark.asyncio
+    async def test_user_messages_always_survive(self) -> None:
+        """Real user messages (source=user) are never stripped."""
+        messages = [
+            Message(role="system", content="System"),
+            _user_msg("First task"),
+            Message(role="assistant", content="x" * 200),
+            _tool_result_msg("filesystem.read_file", "y" * 500, "big file"),
+            Message(role="assistant", content="z" * 200),
+            _user_msg("Follow-up question"),
+            Message(role="assistant", content="w" * 200),
+            _tool_result_msg("bash.execute", "v" * 500, "output"),
+        ]
+
+        result_msgs, result = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        contents = [m.content for m in result_msgs]
+        assert "First task" in contents
+        assert "Follow-up question" in contents
+
+    @pytest.mark.asyncio
+    async def test_tool_results_stripped(self) -> None:
+        """Tool result messages are removed during compaction."""
+        messages = [
+            Message(role="system", content="System"),
+            _user_msg("Task"),
+            Message(role="assistant", content="checking..."),
+            _tool_result_msg("filesystem.read_file", "x" * 500, "big content"),
+            Message(role="assistant", content="done"),
+        ]
+
+        result_msgs, _ = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        # No message should contain the large tool result content
+        for msg in result_msgs:
+            assert "x" * 500 not in msg.content
+
+    @pytest.mark.asyncio
+    async def test_last_assistant_kept(self) -> None:
+        """Most recent assistant message is preserved."""
+        messages = [
+            Message(role="system", content="System"),
+            _user_msg("Task"),
+            Message(role="assistant", content="OLD_ASSISTANT"),
+            _tool_result_msg("bash.execute", "tool output" * 50, "output"),
+            Message(role="assistant", content="LAST_ASSISTANT"),
+        ]
+
+        result_msgs, _ = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        contents = [m.content for m in result_msgs]
+        assert "LAST_ASSISTANT" in contents
+        assert "OLD_ASSISTANT" not in contents
+
+    @pytest.mark.asyncio
+    async def test_compaction_never_increases_tokens(self) -> None:
+        """Compaction always reduces token count."""
+        messages = [
+            Message(role="system", content="System prompt " * 20),
+            _user_msg("Task"),
+            Message(role="assistant", content="a" * 200),
+            _tool_result_msg("filesystem.read_file", "b" * 500, "content"),
+            Message(role="assistant", content="c" * 200),
+            _tool_result_msg("bash.execute", "d" * 300, "output"),
+            Message(role="assistant", content="e" * 100),
+        ]
+
+        old_tokens = self.counter.count_messages(messages)
+        result_msgs, result = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        assert result.new_token_count < old_tokens
+
+    @pytest.mark.asyncio
+    async def test_system_injections_stripped(self) -> None:
+        """Context warnings, todo state, and other injections are stripped."""
+        messages = [
+            Message(role="system", content="System"),
+            _user_msg("Task"),
+            Message(role="assistant", content="working..."),
+            Message(role="user", content="[CONTEXT WARNING] At 80%"),
+            Message(role="user", content="[CURRENT TODO STATE]\n..."),
+            Message(role="assistant", content="continuing..."),
+        ]
+
+        result_msgs, _ = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        for msg in result_msgs:
+            assert "[CONTEXT WARNING]" not in msg.content
+            assert "[CURRENT TODO STATE]" not in msg.content
+
+    @pytest.mark.asyncio
+    async def test_result_structure(self) -> None:
+        """Compacted messages follow: system + summary + user msgs + last assistant."""
+        messages = [
+            Message(role="system", content="System"),
+            _user_msg("Task"),
+            Message(role="assistant", content="first"),
+            _tool_result_msg("bash.execute", "output" * 50, "out"),
+            Message(role="assistant", content="LAST"),
+        ]
+
+        result_msgs, _ = await self.manager.check_and_compact("conv-1", messages, force=True)
+
+        assert result_msgs[0].role == "system"
+        assert "[CONVERSATION SUMMARY]" in result_msgs[1].content
+        assert result_msgs[2].content == "Task"  # User message
+        assert result_msgs[3].content == "LAST"  # Last assistant
 
 
 class TestCompactionResult:
@@ -336,8 +435,18 @@ class TestStructuredSummary:
         self.counter = TokenCounter(max_tokens=1000)
         self.manager = CompactionManager(self.config, self.counter)
 
-    def test_extract_original_task(self) -> None:
-        """First non-system user message extracted as original task."""
+    def test_extract_original_task_with_source_tag(self) -> None:
+        """Source-tagged user message extracted as original task."""
+        messages = [
+            _user_msg("Analyze the error handling in base.py"),
+            Message(role="assistant", content="I'll look at that."),
+        ]
+
+        result = self.manager._extract_original_task(messages)
+        assert result == "Analyze the error handling in base.py"
+
+    def test_extract_original_task_fallback_heuristic(self) -> None:
+        """Untagged user message found by heuristic fallback."""
         messages = [
             Message(role="user", content="Analyze the error handling in base.py"),
             Message(role="assistant", content="I'll look at that."),
@@ -349,16 +458,26 @@ class TestStructuredSummary:
     def test_extract_original_task_truncates_long(self) -> None:
         """Messages over 500 chars are truncated."""
         long_content = "a" * 600
-        messages = [Message(role="user", content=long_content)]
+        messages = [_user_msg(long_content)]
 
         result = self.manager._extract_original_task(messages)
         assert len(result) == 503  # 500 + "..."
         assert result.endswith("...")
 
     def test_extract_original_task_skips_summary(self) -> None:
-        """Messages starting with '[' (summaries) are skipped."""
+        """Messages starting with '[' (summaries) are skipped by fallback."""
         messages = [
             Message(role="user", content="[CONVERSATION SUMMARY] old stuff"),
+            Message(role="user", content="The real task"),
+        ]
+
+        result = self.manager._extract_original_task(messages)
+        assert result == "The real task"
+
+    def test_extract_original_task_skips_tool_results(self) -> None:
+        """Messages starting with 'Tool ' are skipped by fallback."""
+        messages = [
+            Message(role="user", content="Tool `bash.execute` returned:\noutput"),
             Message(role="user", content="The real task"),
         ]
 
@@ -520,7 +639,7 @@ class TestStructuredSummary:
         """Full structured summary includes task, tools, and files."""
         read_result = json.dumps({"path": "/workspace/src/base.py"})
         messages = [
-            Message(role="user", content="Analyze error handling"),
+            _user_msg("Analyze error handling"),
             Message(role="assistant", content="I'll check that."),
             Message(
                 role="tool",
@@ -549,7 +668,7 @@ class TestStructuredSummary:
     def test_structured_summary_no_tools(self) -> None:
         """Summary with no tool calls only includes original task."""
         messages = [
-            Message(role="user", content="Hello world"),
+            _user_msg("Hello world"),
             Message(role="assistant", content="Hi there!"),
         ]
 
@@ -588,7 +707,7 @@ class TestCompressForHandoff:
         """Handoff compression includes the handoff reason."""
         messages = [
             Message(role="system", content="System prompt"),
-            Message(role="user", content="Build a feature"),
+            _user_msg("Build a feature"),
             Message(role="assistant", content="Planning..."),
         ]
 
@@ -606,7 +725,7 @@ class TestCompressForHandoff:
         """System message preserved in handoff compression."""
         messages = [
             Message(role="system", content="System prompt"),
-            Message(role="user", content="Task"),
+            _user_msg("Task"),
         ]
 
         result = await self.manager.compress_for_handoff(
@@ -617,14 +736,15 @@ class TestCompressForHandoff:
         assert result[0].content == "System prompt"
 
     @pytest.mark.asyncio
-    async def test_handoff_keeps_recent_if_fits(self) -> None:
-        """Recent messages preserved if they fit in target budget."""
+    async def test_handoff_keeps_user_messages(self) -> None:
+        """User messages preserved, tool results stripped in handoff."""
         messages = [
             Message(role="system", content="System prompt"),
-            Message(role="user", content="Short task"),
-            Message(role="assistant", content="Short reply"),
-            Message(role="user", content="RECENT_USER"),
-            Message(role="assistant", content="RECENT_ASSISTANT"),
+            _user_msg("First task"),
+            Message(role="assistant", content="working..."),
+            _tool_result_msg("filesystem.read_file", "big content" * 50, "data"),
+            Message(role="assistant", content="done"),
+            _user_msg("Follow-up"),
         ]
 
         result = await self.manager.compress_for_handoff(
@@ -632,5 +752,8 @@ class TestCompressForHandoff:
         )
 
         contents = [m.content for m in result]
-        assert "RECENT_USER" in contents
-        assert "RECENT_ASSISTANT" in contents
+        assert "First task" in contents
+        assert "Follow-up" in contents
+        # Tool result content should not appear
+        for msg in result:
+            assert "big content" * 50 not in msg.content

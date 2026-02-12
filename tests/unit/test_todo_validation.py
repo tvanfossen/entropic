@@ -262,6 +262,57 @@ class TestTargetTier:
         assert "[ ] Task B" in output
 
 
+class TestClearSelfTodos:
+    """Tests for clear_self_todos — removing self-directed items."""
+
+    def test_clears_only_self_directed(self) -> None:
+        """Removes items with target_tier=None, keeps targeted items."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Self task", "active_form": "Self", "status": "pending"},
+                    {
+                        "content": "Code task",
+                        "active_form": "Coding",
+                        "status": "pending",
+                        "target_tier": "code",
+                    },
+                    {"content": "Another self", "active_form": "Self2", "status": "completed"},
+                ],
+            }
+        )
+        removed = todo_list.clear_self_todos()
+        assert removed == 2
+        assert len(todo_list.items) == 1
+        assert todo_list.items[0].content == "Code task"
+
+    def test_returns_zero_when_no_self_todos(self) -> None:
+        """Returns 0 when all todos have target_tier."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {
+                        "content": "Code task",
+                        "active_form": "Coding",
+                        "status": "pending",
+                        "target_tier": "code",
+                    },
+                ],
+            }
+        )
+        assert todo_list.clear_self_todos() == 0
+        assert len(todo_list.items) == 1
+
+    def test_returns_zero_on_empty_list(self) -> None:
+        """Returns 0 on empty list."""
+        todo_list = TodoList()
+        assert todo_list.clear_self_todos() == 0
+
+
 class TestActionBasedOperations:
     """Tests for action-based todo_write operations."""
 

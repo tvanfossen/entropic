@@ -82,13 +82,13 @@ class TestToolIsolation:
         "git.checkout",
         "git.reset",
         "entropi.todo_write",
-        "system.handoff",
+        "entropi.handoff",
         "diagnostics.check_errors",
     ]
 
     def test_thinking_tier_only_sees_allowed_tools(self) -> None:
         """Thinking tier with allowed tools must not leak other names."""
-        allowed = ["entropi.todo_write", "system.handoff", "filesystem.read_file", "bash.execute"]
+        allowed = ["entropi.todo_write", "entropi.handoff", "filesystem.read_file", "bash.execute"]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
         adapter = GenericAdapter(tier="thinking")
@@ -103,14 +103,14 @@ class TestToolIsolation:
 
     def test_simple_tier_only_sees_handoff(self) -> None:
         """Simple tier with only handoff must not leak any other tools."""
-        allowed = ["system.handoff"]
+        allowed = ["entropi.handoff"]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
         adapter = GenericAdapter(tier="simple")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 
-        assert "system.handoff" in prompt
+        assert "entropi.handoff" in prompt
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
@@ -118,7 +118,7 @@ class TestToolIsolation:
         """Thinking tier identity must not mention tools outside its set."""
         thinking_allowed = {
             "entropi.todo_write",
-            "system.handoff",
+            "entropi.handoff",
             "filesystem.read_file",
             "bash.execute",
         }

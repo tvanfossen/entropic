@@ -122,6 +122,16 @@ class TodoList:
         """Clear all items."""
         self.items = []
 
+    def clear_self_todos(self) -> int:
+        """Remove all self-directed todos (target_tier is None).
+
+        Returns:
+            Number of items removed
+        """
+        before = len(self.items)
+        self.items = [i for i in self.items if i.target_tier is not None]
+        return before - len(self.items)
+
     def format_for_context(self) -> str:
         """Format todo list for injection into conversation context."""
         if self.is_empty:

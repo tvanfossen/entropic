@@ -82,9 +82,9 @@ class ServerManager:
         """Register built-in MCP servers with their classes."""
         from entropi.mcp.servers.bash import BashServer
         from entropi.mcp.servers.diagnostics import DiagnosticsServer
+        from entropi.mcp.servers.entropi import EntropiServer
         from entropi.mcp.servers.filesystem import FilesystemServer
         from entropi.mcp.servers.git import GitServer
-        from entropi.mcp.servers.system import SystemServer
 
         _mod = "entropi.mcp.servers"
         builtins: list[tuple[bool, str, str, type[BaseMCPServer]]] = [
@@ -97,7 +97,7 @@ class ServerManager:
                 f"{_mod}.diagnostics",
                 DiagnosticsServer,
             ),
-            (mcp_config.enable_system, "system", f"{_mod}.system", SystemServer),
+            (True, "entropi", f"{_mod}.entropi", EntropiServer),
         ]
 
         for enabled, name, module, server_cls in builtins:
@@ -123,6 +123,20 @@ class ServerManager:
         prefix = tool_name.split(".")[0]
         server_cls = self._server_classes.get(prefix, BaseMCPServer)
         return server_cls.get_permission_pattern(tool_name, arguments)
+
+    def skip_duplicate_check(self, tool_call: ToolCall) -> bool:
+        """Check if a tool should skip duplicate detection.
+
+        Delegates to the server class's skip_duplicate_check().
+        """
+        prefix = tool_call.name.split(".")[0]
+        server_cls = self._server_classes.get(prefix)
+        if server_cls:
+            local_name = (
+                tool_call.name.split(".", 1)[1] if "." in tool_call.name else tool_call.name
+            )
+            return server_cls.skip_duplicate_check(local_name)
+        return False
 
     async def _safe_connect(self, client: MCPClient) -> None:
         """Connect to a client, logging errors but not failing."""

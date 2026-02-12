@@ -21,12 +21,11 @@ from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message, ToolCall
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
+from entropi.core.directives import DirectiveProcessor, DirectiveResult, extract_directives
 from entropi.core.logging import get_logger, get_model_logger
 from entropi.core.queue import MessageSource
-from entropi.core.todos import TodoList
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
-from entropi.mcp.servers.base import load_tool_definition
 
 if TYPE_CHECKING:
     pass
@@ -142,7 +141,7 @@ class EngineCallbacks:
     on_stream_chunk: Callable[[str], None] | None = None
     on_tool_start: Callable[[ToolCall], None] | None = None
     on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-    on_todo_update: Callable[[TodoList], None] | None = None
+    on_todo_update: Callable[[dict[str, Any]], None] | None = None
     on_compaction: Callable[[CompactionResult], None] | None = None
     on_pause_prompt: Callable[[str], Any] | None = None
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
@@ -194,8 +193,12 @@ class AgentEngine:
         # Callback for pause/inject prompting
         self._on_pause_prompt: Callable[[str], Any] | None = None
 
-        # Todo list for agentic task tracking
-        self._todo_list = TodoList()
+        # Cached todo state (updated via todo_state_changed directive)
+        self._cached_todo_state: str = ""
+
+        # Directive processor for tool-to-engine communication
+        self._directive_processor = DirectiveProcessor()
+        self._register_directive_handlers()
 
         # Compaction manager for context management
         max_tokens = self._get_max_context_tokens()
@@ -212,12 +215,140 @@ class AgentEngine:
         self._on_stream_chunk: Callable[[str], None] | None = None
         self._on_tool_start: Callable[[ToolCall], None] | None = None
         self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-        self._on_todo_update: Callable[[TodoList], None] | None = None
+        self._on_todo_update: Callable[[dict[str, Any]], None] | None = None
         self._on_compaction: Callable[[CompactionResult], None] | None = None
         # Task tracking callback for external MCP integration
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
         self._on_tier_selected: Callable[[str], None] | None = None
         self._on_routing_complete: Callable[[RoutingResult], None] | None = None
+
+    def _register_directive_handlers(self) -> None:
+        """Register handlers for all known directive types."""
+        from entropi.core.directives import (
+            CLEAR_SELF_TODOS,
+            INJECT_CONTEXT,
+            PRUNE_MESSAGES,
+            STOP_PROCESSING,
+            TIER_CHANGE,
+            TODO_STATE_CHANGED,
+        )
+
+        self._directive_processor.register(STOP_PROCESSING, self._directive_stop_processing)
+        self._directive_processor.register(TIER_CHANGE, self._directive_tier_change)
+        self._directive_processor.register(CLEAR_SELF_TODOS, self._directive_clear_self_todos)
+        self._directive_processor.register(INJECT_CONTEXT, self._directive_inject_context)
+        self._directive_processor.register(PRUNE_MESSAGES, self._directive_prune_messages)
+        self._directive_processor.register(TODO_STATE_CHANGED, self._directive_todo_state_changed)
+
+    def _directive_stop_processing(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle stop_processing directive."""
+        logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
+        result.stop_processing = True
+
+    def _directive_tier_change(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle tier_change directive — validate and execute tier switch."""
+        from entropi.inference.orchestrator import ModelTier
+
+        target_tier_str = params.get("tier", "")
+        reason = params.get("reason", "")
+
+        try:
+            target_tier = ModelTier(target_tier_str)
+        except ValueError:
+            logger.error(f"[DIRECTIVE] Invalid tier in tier_change: {target_tier_str}")
+            return
+
+        if not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
+            current_name = ctx.locked_tier.value if ctx.locked_tier else "none"
+            logger.warning(
+                f"[DIRECTIVE] Handoff not permitted: {current_name} -> {target_tier_str}"
+            )
+            return
+
+        current_tier = ctx.locked_tier
+        ctx.locked_tier = target_tier
+        result.tier_changed = True
+
+        # Rebuild system prompt for new tier
+        ctx.messages[0] = Message(
+            role="system",
+            content=self._build_formatted_system_prompt(target_tier, ctx),
+        )
+
+        current_name = current_tier.value if current_tier else "none"
+        model_logger.info(
+            f"\n{'#' * 70}\n"
+            f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
+            f"{'#' * 70}"
+        )
+        self._log_assembled_prompt(ctx, "handoff")
+        self._notify_tier_selected(target_tier_str)
+
+        # Inject cached todo state for new tier's awareness
+        self._inject_todo_state(ctx)
+
+        logger.info(f"[DIRECTIVE] tier_change: {current_name} -> {target_tier_str}")
+
+    def _directive_clear_self_todos(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle clear_self_todos directive — not applicable in directive arch.
+
+        In the directive architecture, the EntropiServer owns the TodoList
+        and clears self-todos internally during handoff. This directive is
+        a no-op on the engine side (the server already did the work).
+        """
+        logger.debug("[DIRECTIVE] clear_self_todos acknowledged")
+
+    def _directive_inject_context(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle inject_context directive — add message to context."""
+        content = params.get("content", "")
+        if content:
+            result.injected_messages.append(Message(role="user", content=content))
+            logger.info(f"[DIRECTIVE] inject_context: {content[:80]}")
+
+    def _directive_prune_messages(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle prune_messages directive — prune old tool results."""
+        keep_recent = params.get("keep_recent", 2)
+        pruned_count, freed_chars = self._prune_tool_results(ctx, keep_recent)
+        logger.info(
+            f"[DIRECTIVE] prune_messages: pruned {pruned_count} results "
+            f"(~{freed_chars // 4} tokens freed)"
+        )
+
+    def _directive_todo_state_changed(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle todo_state_changed directive — cache state, notify TUI."""
+        self._cached_todo_state = params.get("state", "")
+        if self._on_todo_update:
+            self._on_todo_update(params)
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -276,11 +407,6 @@ class AgentEngine:
         self._on_tier_selected = callbacks.on_tier_selected
         self._on_routing_complete = callbacks.on_routing_complete
 
-    @property
-    def todo_list(self) -> TodoList:
-        """Get the current todo list."""
-        return self._todo_list
-
     async def run(
         self,
         user_message: str,
@@ -314,11 +440,6 @@ class AgentEngine:
 
         # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
-        # Add internal todo tool (loaded from validated JSON definition)
-        todo_tool = load_tool_definition("todo_write", "entropi")
-        todo_dict = todo_tool.model_dump()
-        todo_dict["name"] = f"entropi.{todo_dict['name']}"
-        tools.append(todo_dict)
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
         # Build base system prompt (before adapter formatting)
@@ -769,13 +890,10 @@ class AgentEngine:
             # Warn if context usage is high after this tool result
             self._inject_context_warning(ctx)
 
-            # Nudge to capture findings and prune after large results
-            self._inject_result_nudge(ctx, msg)
-
-            # Handoff means "I'm done" — stop processing remaining tool calls.
-            # Subsequent calls were generated by the old tier for the old prompt.
-            if tool_call.name == "system.handoff" and "Handoff successful" in msg.content:
-                logger.info("[HANDOFF] Stopping tool processing — tier switch complete")
+            # Process directives from tool result (tier changes, pruning, etc.)
+            directive_result = self._process_directives(ctx, msg)
+            if directive_result.stop_processing:
+                logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
                 return
 
         ctx.consecutive_errors = 0
@@ -787,10 +905,8 @@ class AgentEngine:
 
     def _check_duplicate_tool_call(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
         """Check if this tool call is a duplicate. Returns previous result if duplicate."""
-        # Never skip read_file - it has side effects (updates FileAccessTracker)
-        # Without this exemption, re-reads after TTL expiry get blocked as "duplicate"
-        # but the tracker doesn't update, so subsequent edits still fail with read_required
-        if tool_call.name == "filesystem.read_file":
+        # Delegate to server's skip_duplicate_check for tools with side effects
+        if self.server_manager.skip_duplicate_check(tool_call):
             return None
 
         key = self._get_tool_call_key(tool_call)
@@ -818,28 +934,45 @@ Do NOT call this tool again. Use the previous result above."""
         return Message(role="user", content=content)
 
     async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Execute a single tool call."""
+        """Execute a single tool call.
+
+        All tools go through the same path: approval → start callback →
+        execute via ServerManager → complete callback. No tool-specific
+        handlers in the engine.
+        """
         logger.info(f"[TOOL CALL] {tool_call.name}")
         logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
-
-        # Handle internal tools first (no approval needed)
-        internal_handlers = {
-            "entropi.todo_write": lambda: self._handle_todo_tool(tool_call),
-            "system.handoff": lambda: self._handle_handoff(ctx, tool_call),
-            "system.prune_context": lambda: self._handle_prune_context(ctx, tool_call),
-        }
-        if handler := internal_handlers.get(tool_call.name):
-            result = handler()
-            return await result if asyncio.iscoroutine(result) else result
 
         # Check approval (returns denial message if not approved)
         if denial_msg := await self._check_tool_approval(tool_call):
             return denial_msg
 
-        # Execute the tool
+        # Execute the tool (all tools, including entropi.*, go through ServerManager)
         if self._on_tool_start:
             self._on_tool_start(tool_call)
         return await self._do_execute_tool(ctx, tool_call)
+
+    def _process_directives(self, ctx: LoopContext, msg: Message) -> DirectiveResult:
+        """Extract and process directives from a tool result message.
+
+        Args:
+            ctx: Current loop context
+            msg: Tool result message (may contain JSON with _directives)
+
+        Returns:
+            Aggregate directive result
+        """
+        directives = extract_directives(msg.content)
+        if not directives:
+            return DirectiveResult()
+
+        result = self._directive_processor.process(ctx, directives)
+
+        # Append any injected messages to context
+        for injected in result.injected_messages:
+            ctx.messages.append(injected)
+
+        return result
 
     async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
         """Check tool approval. Returns denial message if not approved, None if approved."""
@@ -1019,111 +1152,6 @@ RECOVERY:
 
         return Message(role="user", content=content)
 
-    def _handle_todo_tool(self, tool_call: ToolCall) -> Message:
-        """Handle the internal entropi.todo_write tool call."""
-        logger.debug(f"Handling internal todo tool: {tool_call.arguments}")
-
-        result = self._todo_list.handle_tool_call(tool_call.arguments)
-
-        # Notify UI of todo update
-        if self._on_todo_update:
-            self._on_todo_update(self._todo_list)
-
-        return Message(
-            role="tool",
-            content=result,
-            tool_results=[
-                {
-                    "call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "result": result,
-                }
-            ],
-        )
-
-    def _validate_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
-        """Validate handoff request. Returns error message or None if valid."""
-        from entropi.inference.orchestrator import ModelTier
-
-        target_tier_str = tool_call.arguments.get("target_tier", "")
-        error = None
-
-        # Validate target tier
-        try:
-            target_tier = ModelTier(target_tier_str)
-        except ValueError:
-            error = f"Invalid target tier: {target_tier_str}"
-
-        # Validate routing rules
-        if not error and not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
-            current_name = ctx.locked_tier.value if ctx.locked_tier else "none"
-            error = f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
-
-        # Gate: if todos exist, some must target the handoff tier
-        if not error:
-            target_todos = self._todo_list.get_todos_for_tier(target_tier_str)
-            if not target_todos and not self._todo_list.is_empty:
-                error = (
-                    f"No todos targeting {target_tier_str} tier. "
-                    f"Create todos with target_tier='{target_tier_str}' before handing off."
-                )
-
-        return error
-
-    async def _handle_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Handle the system.handoff tool call for tier switching."""
-        from entropi.inference.orchestrator import ModelTier
-
-        target_tier_str = tool_call.arguments.get("target_tier", "")
-        reason = tool_call.arguments.get("reason", "")
-
-        logger.info(f"[HANDOFF] Request: {ctx.locked_tier} -> {target_tier_str} ({reason})")
-
-        if error_msg := self._validate_handoff(ctx, tool_call):
-            logger.warning(f"[HANDOFF] {error_msg}")
-            return self._create_error_message(tool_call, error_msg)
-
-        target_tier = ModelTier(target_tier_str)
-        current_tier = ctx.locked_tier
-
-        # Update the locked tier - next generation will use the new tier
-        ctx.locked_tier = target_tier
-        logger.info(f"[HANDOFF] Success: Now using {target_tier_str} tier")
-
-        # Rebuild system prompt for new tier's adapter and tool filter
-        ctx.messages[0] = Message(
-            role="system", content=self._build_formatted_system_prompt(target_tier, ctx)
-        )
-
-        # Log handoff and full assembled prompt to model log
-        current_name = current_tier.value if current_tier else "none"
-        model_logger.info(
-            f"\n{'#' * 70}\n"
-            f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
-            f"{'#' * 70}"
-        )
-        self._log_assembled_prompt(ctx, "handoff")
-
-        self._notify_tier_selected(target_tier_str)
-
-        # Inject todo state for the new tier's awareness
-        self._inject_todo_state(ctx)
-
-        # Uses role="user" because llama-cpp doesn't render role="tool" properly
-        content = f"Handoff successful. Now operating as {target_tier_str} tier. Reason: {reason}"
-
-        return Message(role="user", content=content)
-
-    def _handle_prune_context(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Handle manual context pruning via system.prune_context."""
-        keep_recent = tool_call.arguments.get("keep_recent", 2)
-        pruned_count, freed_chars = self._prune_tool_results(ctx, keep_recent)
-
-        content = f"Pruned {pruned_count} old tool results (~{freed_chars // 4} tokens freed)."
-        logger.info(f"[PRUNE] Manual prune: {content}")
-
-        return Message(role="user", content=content)
-
     def _prune_tool_results(self, ctx: LoopContext, keep_recent: int) -> tuple[int, int]:
         """Replace old tool results with stubs. Returns (pruned_count, freed_chars)."""
         # Find all tool result messages (newest first for keep_recent logic)
@@ -1210,29 +1238,11 @@ RECOVERY:
         warning = (
             f"[CONTEXT WARNING] Context at {pct}% capacity ({current_tokens}/{max_tokens} tokens). "
             f"Capture findings with entropi.todo_write if needed, "
-            f"then call system.prune_context."
+            f"then call entropi.prune_context."
         )
         ctx.messages.append(Message(role="user", content=warning))
         ctx.metadata["last_warning_iteration"] = ctx.metrics.iterations
         logger.info(f"[WARNING] Context at {pct}% — warning injected")
-
-    # Threshold for "large" tool results that warrant a prune nudge
-    LARGE_RESULT_CHARS = 2000
-
-    def _inject_result_nudge(self, ctx: LoopContext, msg: Message) -> None:
-        """Nudge model to capture findings and prune after large tool results."""
-        if len(msg.content) <= self.LARGE_RESULT_CHARS:
-            return
-
-        nudge = Message(
-            role="user",
-            content=(
-                "[SYSTEM] Capture findings with entropi.todo_write if needed, "
-                "then call system.prune_context."
-            ),
-        )
-        ctx.messages.append(nudge)
-        logger.debug(f"[NUDGE] Large result ({len(msg.content)} chars) — prune nudge injected")
 
     async def _handle_error(self, ctx: LoopContext, error: Exception) -> AsyncIterator[Message]:
         """Handle loop iteration error."""
@@ -1295,12 +1305,11 @@ RECOVERY:
             self._inject_todo_state(ctx)
 
     def _inject_todo_state(self, ctx: LoopContext) -> None:
-        """Inject current todo state into context after compaction."""
-        todo_context = self._todo_list.format_for_context()
-        if not todo_context:
+        """Inject cached todo state into context (after compaction or handoff)."""
+        if not self._cached_todo_state:
             return
-        ctx.messages.append(Message(role="user", content=todo_context))
-        logger.info(f"Injected todo state after compaction ({len(self._todo_list.items)} items)")
+        ctx.messages.append(Message(role="user", content=self._cached_todo_state))
+        logger.info("Injected cached todo state into context")
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""

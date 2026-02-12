@@ -264,15 +264,18 @@ class TestTodoCompactionPersistence:
         assert todo_list.format_for_context() == ""
 
     def test_inject_todo_state_after_compaction(self) -> None:
-        """After compaction, todo state message is appended to context."""
+        """After compaction, cached todo state is appended to context."""
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
-        engine._todo_list = TodoList()
-        engine._todo_list.items = [
+
+        # Build cached state from a TodoList (as the directive handler would)
+        todo_list = TodoList()
+        todo_list.items = [
             TodoItem(content="Fix bug", active_form="Fixing bug", status=TodoStatus.IN_PROGRESS),
             TodoItem(content="Add test", active_form="Adding test", status=TodoStatus.PENDING),
         ]
+        engine._cached_todo_state = todo_list.format_for_context()
 
         ctx = LoopContext(
             messages=[
@@ -291,11 +294,11 @@ class TestTodoCompactionPersistence:
         assert "[ ] Add test" in todo_msg.content
 
     def test_empty_todo_not_injected(self) -> None:
-        """No message appended when todo list is empty."""
+        """No message appended when cached todo state is empty."""
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
-        engine._todo_list = TodoList()
+        engine._cached_todo_state = ""
 
         ctx = LoopContext(
             messages=[

@@ -55,6 +55,11 @@ class FilesystemServer(BaseMCPServer):
             load_tool_definition("write_file", "filesystem"),
         ]
 
+    @staticmethod
+    def skip_duplicate_check(tool_name: str) -> bool:
+        """read_file must always execute — updates FileAccessTracker."""
+        return tool_name == "read_file"
+
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Execute a filesystem tool with JSON schema validation."""
         handlers = {
@@ -212,11 +217,29 @@ class FilesystemServer(BaseMCPServer):
         """Read file contents as structured JSON with line numbers."""
         resolved = self._resolve_path(path)
 
-        if not resolved.exists():
-            return json.dumps({"error": "not_found", "message": f"File not found: {path}"})
+        if not resolved.exists() or not resolved.is_file():
+            kind = "not_found" if not resolved.exists() else "not_a_file"
+            label = "File not found" if kind == "not_found" else "Not a file"
+            return json.dumps({"error": kind, "message": f"{label}: {path}"})
 
-        if not resolved.is_file():
-            return json.dumps({"error": "not_a_file", "message": f"Not a file: {path}"})
+        # Size gate: block reads that would blow the context window
+        file_bytes = resolved.stat().st_size
+        max_bytes = self._config.max_read_bytes if self._config else 50_000
+        if file_bytes > max_bytes:
+            est_tokens = file_bytes // 4
+            return json.dumps(
+                {
+                    "blocked": True,
+                    "reason": (
+                        f"File '{path}' is {file_bytes:,} bytes (~{est_tokens:,} tokens) "
+                        f"which exceeds the max read size ({max_bytes:,} bytes)."
+                    ),
+                    "suggestion": (
+                        "Capture current findings with entropi.todo_write, "
+                        "then call entropi.prune_context to free space before reading."
+                    ),
+                }
+            )
 
         # Run in executor for non-blocking I/O
         loop = asyncio.get_event_loop()
@@ -231,6 +254,7 @@ class FilesystemServer(BaseMCPServer):
             {
                 "path": path,
                 "total": len(lines),
+                "bytes": file_bytes,
                 "lines": {str(i): line for i, line in enumerate(lines, 1)},
             }
         )

@@ -528,8 +528,12 @@ class Application:
             presenter.print_tool_complete(tool_call.name, result, duration_ms)
             self._emit_context_update()
 
-        def on_todo_update(todo_list: Any) -> None:
-            """Handle todo list update."""
+        def on_todo_update(params: Any) -> None:
+            """Handle todo list update from directive."""
+            from entropi.core.todos import TodoList
+
+            items_data = params.get("items", {})
+            todo_list = TodoList.from_dict(items_data) if items_data else TodoList()
             presenter.print_todo_panel(todo_list)
 
         def on_compaction(result: Any) -> None:

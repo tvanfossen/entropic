@@ -186,6 +186,9 @@ class FilesystemConfig(BaseModel):
     diagnostics_on_edit: bool = True
     fail_on_errors: bool = True  # Rollback edit if it introduces errors
     diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
+    # Max file size for read_file (bytes). Files exceeding this are blocked
+    # to prevent context blowout. ~50K bytes ≈ 12.5K tokens.
+    max_read_bytes: int = Field(default=50_000, ge=1_000, le=500_000)
 
 
 class MCPConfig(BaseModel):
@@ -196,7 +199,6 @@ class MCPConfig(BaseModel):
     enable_bash: bool = True
     enable_git: bool = True
     enable_diagnostics: bool = True  # LSP diagnostics tool
-    enable_system: bool = True  # System operations (handoff, etc.)
 
     # Filesystem server config
     filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
@@ -220,7 +222,7 @@ class CompactionConfig(BaseModel):
     summary_max_tokens: int = Field(default=1500, ge=500, le=4000)
     notify_user: bool = True
     save_full_history: bool = True
-    tool_result_ttl: int = Field(default=2, ge=1, le=10)
+    tool_result_ttl: int = Field(default=10, ge=1, le=20)
     warning_threshold_percent: float = Field(default=0.6, ge=0.3, le=0.9)
 
 

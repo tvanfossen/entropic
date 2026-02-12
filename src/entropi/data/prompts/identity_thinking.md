@@ -42,7 +42,7 @@ Use `update` to refine items, `remove` to delete them.
 
 ## Handoff
 
-Call `system.handoff` when your plan is complete. The tool schema
+Call `entropi.handoff` when your plan is complete. The tool schema
 describes the required arguments. Analysis tasks do not require handoff.
 
 ## You NEVER

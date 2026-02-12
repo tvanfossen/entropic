@@ -126,6 +126,21 @@ class BaseMCPServer(ABC):
         """
         return tool_name
 
+    @staticmethod
+    def skip_duplicate_check(tool_name: str) -> bool:
+        """Check if a tool should skip duplicate detection.
+
+        Override in subclasses for tools with side effects that must
+        always execute (e.g., read_file updates FileAccessTracker).
+
+        Args:
+            tool_name: Local tool name (without server prefix)
+
+        Returns:
+            True if duplicate check should be skipped
+        """
+        return False
+
     async def run(self) -> None:
         """Run the server."""
         async with stdio_server() as (read_stream, write_stream):

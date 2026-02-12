@@ -107,6 +107,8 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
+        server_manager.skip_duplicate_check = MagicMock(return_value=False)
+
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
@@ -175,6 +177,7 @@ class TestCircuitBreaker:
         """Verify circuit breaker sends STOP message at 3 consecutive duplicates."""
         orchestrator = MagicMock()
         server_manager = MagicMock()
+        server_manager.skip_duplicate_check = MagicMock(return_value=False)
         config = MagicMock()
         config.compaction = MagicMock()
         config.models = MagicMock()

@@ -211,13 +211,17 @@ class _EngineTestBase:
 
     def _make_engine(self):
         """Create an Engine with mocked dependencies."""
+        from entropi.core.directives import DirectiveProcessor
+
         with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
         engine._on_state_change = None
-        engine._todo_list = MagicMock()
-        engine._todo_list.is_empty = True
+        engine._cached_todo_state = ""
+        engine._directive_processor = DirectiveProcessor()
+        engine._register_directive_handlers()
         engine._inject_context_warning = MagicMock()
+        engine._on_todo_update = None
         return engine
 
 
@@ -317,12 +321,14 @@ class TestOverflowRecovery(_EngineTestBase):
         assert ctx.metrics.errors == 1
 
 
-class TestHandoffStopsToolProcessing(_EngineTestBase):
-    """Handoff must stop processing remaining tool calls."""
+class TestDirectiveStopsToolProcessing(_EngineTestBase):
+    """Directive stop_processing must halt remaining tool calls."""
 
     @pytest.mark.asyncio
-    async def test_handoff_stops_remaining_tool_calls(self) -> None:
-        """Tool calls after a successful handoff are dropped."""
+    async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
+        """Tool calls after a stop_processing directive are dropped."""
+        import json
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -331,7 +337,7 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
 
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
-            ToolCall(id="2", name="system.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="2", name="entropi.handoff", arguments={"target_tier": "code"}),
             ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
         ]
 
@@ -339,10 +345,15 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            if tool_call.name == "system.handoff":
+            if tool_call.name == "entropi.handoff":
                 return Message(
                     role="user",
-                    content="Handoff successful. Now operating as code tier. Reason: plan ready",
+                    content=json.dumps(
+                        {
+                            "result": "Handoff requested to code.",
+                            "_directives": [{"type": "stop_processing"}],
+                        }
+                    ),
                 )
             return Message(role="user", content=f"Result of {tool_call.name}")
 
@@ -359,13 +370,12 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["bash.execute", "system.handoff"]
+        assert executed == ["bash.execute", "entropi.handoff"]
         assert len(messages) == 2
-        assert "Handoff successful" in messages[1].content
 
     @pytest.mark.asyncio
-    async def test_failed_handoff_continues_processing(self) -> None:
-        """Tool calls continue after a failed handoff."""
+    async def test_no_directive_continues_processing(self) -> None:
+        """Tool calls continue when no stop directive is returned."""
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -373,7 +383,7 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
         )
 
         calls = [
-            ToolCall(id="1", name="system.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="1", name="entropi.handoff", arguments={"target_tier": "invalid"}),
             ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
         ]
 
@@ -381,8 +391,6 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            if tool_call.name == "system.handoff":
-                return Message(role="user", content="Error: Invalid target tier: invalid")
             return Message(role="user", content=f"Result of {tool_call.name}")
 
         async def mock_check_compaction(ctx, *, force=False):
@@ -398,15 +406,15 @@ class TestHandoffStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["system.handoff", "bash.execute"]
+        assert executed == ["entropi.handoff", "bash.execute"]
         assert len(messages) == 2
 
 
-class TestHandoffGate(_EngineTestBase):
-    """Handoff gate rejects when todos exist but none target the handoff tier."""
+class TestDirectiveTierChange(_EngineTestBase):
+    """Directive tier_change validates routing and updates context."""
 
     def _make_handoff_engine(self):
-        """Create engine with mocked dependencies for handoff testing."""
+        """Create engine with mocked dependencies for directive testing."""
         engine = self._make_engine()
         engine.orchestrator = MagicMock()
         engine.orchestrator.can_handoff = MagicMock(return_value=True)
@@ -414,97 +422,72 @@ class TestHandoffGate(_EngineTestBase):
         engine._log_assembled_prompt = MagicMock()
         engine._notify_tier_selected = MagicMock()
         engine._inject_todo_state = MagicMock()
-        engine._create_error_message = lambda tc, msg: Message(role="user", content=f"Error: {msg}")
         return engine
 
-    @pytest.mark.asyncio
-    async def test_handoff_rejected_when_todos_exist_but_none_target_tier(self) -> None:
-        """Handoff rejected when todos exist but none target the requested tier."""
-        from entropi.core.todos import TodoList
+    def test_tier_change_directive_updates_locked_tier(self) -> None:
+        """tier_change directive updates ctx.locked_tier."""
+        from entropi.core.directives import DirectiveResult
+        from entropi.inference.orchestrator import ModelTier
 
         engine = self._make_handoff_engine()
-        engine._todo_list = TodoList()
-        engine._todo_list.update_from_tool_call(
-            [
-                {
-                    "content": "Read files",
-                    "active_form": "Reading",
-                    "status": "completed",
-                },
-                {
-                    "content": "Investigate patterns",
-                    "active_form": "Investigating",
-                    "status": "pending",
-                },
-            ]
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
         )
+        ctx.locked_tier = ModelTier.THINKING
+
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "code", "reason": "plan ready"},
+            result,
+        )
+
+        assert ctx.locked_tier == ModelTier.CODE
+        assert result.tier_changed is True
+        engine._build_formatted_system_prompt.assert_called_once()
+
+    def test_tier_change_directive_rejects_invalid_tier(self) -> None:
+        """tier_change with invalid tier is a no-op."""
+        from entropi.core.directives import DirectiveResult
+
+        engine = self._make_handoff_engine()
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
 
-        tool_call = ToolCall(
-            id="1",
-            name="system.handoff",
-            arguments={"target_tier": "code", "reason": "plan ready"},
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "nonexistent", "reason": "test"},
+            result,
         )
 
-        msg = await engine._handle_handoff(ctx, tool_call)
-        assert "Error" in msg.content
-        assert "No todos targeting code tier" in msg.content
+        assert result.tier_changed is False
 
-    @pytest.mark.asyncio
-    async def test_handoff_allowed_when_todos_target_tier(self) -> None:
-        """Handoff allowed when todos target the requested tier."""
-        from entropi.core.todos import TodoList
+    def test_tier_change_directive_rejects_disallowed_route(self) -> None:
+        """tier_change blocked when orchestrator rejects the route."""
+        from entropi.core.directives import DirectiveResult
+        from entropi.inference.orchestrator import ModelTier
 
         engine = self._make_handoff_engine()
-        engine._todo_list = TodoList()
-        engine._todo_list.update_from_tool_call(
-            [
-                {
-                    "content": "Fix engine.py",
-                    "active_form": "Fixing",
-                    "status": "pending",
-                    "target_tier": "code",
-                },
-            ]
-        )
+        engine.orchestrator.can_handoff = MagicMock(return_value=False)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
+        ctx.locked_tier = ModelTier.CODE
 
-        tool_call = ToolCall(
-            id="1",
-            name="system.handoff",
-            arguments={"target_tier": "code", "reason": "plan ready"},
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "thinking", "reason": "test"},
+            result,
         )
 
-        msg = await engine._handle_handoff(ctx, tool_call)
-        assert "Handoff successful" in msg.content
-
-    @pytest.mark.asyncio
-    @pytest.mark.asyncio
-    async def test_handoff_allowed_when_todo_list_empty(self) -> None:
-        """Handoff allowed when no todos at all (not all interactions need plans)."""
-        from entropi.core.todos import TodoList
-
-        engine = self._make_handoff_engine()
-        engine._todo_list = TodoList()
-
-        ctx = LoopContext(
-            messages=[Message(role="system", content="test")],
-        )
-
-        tool_call = ToolCall(
-            id="1",
-            name="system.handoff",
-            arguments={"target_tier": "code", "reason": "simple task"},
-        )
-
-        msg = await engine._handle_handoff(ctx, tool_call)
-        assert "Handoff successful" in msg.content
+        assert result.tier_changed is False
+        assert ctx.locked_tier == ModelTier.CODE
 
 
 class TestAutoPruneToolResults:
@@ -579,8 +562,8 @@ class TestAutoPruneToolResults:
         assert ctx.messages[1].content == "recent file"
 
 
-class TestPruneContextTool:
-    """system.prune_context internal handler."""
+class TestPruneDirective:
+    """prune_messages directive prunes old tool results."""
 
     def _make_engine_with_compaction(self):
         """Create engine with compaction manager for prune tests."""
@@ -595,8 +578,10 @@ class TestPruneContextTool:
         engine._compaction_manager = CompactionManager(config, counter)
         return engine
 
-    def test_prune_context_handler(self) -> None:
-        """Manual prune replaces old tool results with stubs."""
+    def test_prune_directive_replaces_old_results(self) -> None:
+        """prune_messages directive replaces old tool results with stubs."""
+        from entropi.core.directives import DirectiveResult
+
         engine = self._make_engine_with_compaction()
 
         ctx = LoopContext(
@@ -624,15 +609,9 @@ class TestPruneContextTool:
             ],
         )
 
-        tool_call = ToolCall(
-            id="1",
-            name="system.prune_context",
-            arguments={"keep_recent": 1},
-        )
+        result = DirectiveResult()
+        engine._directive_prune_messages(ctx, {"keep_recent": 1}, result)
 
-        msg = engine._handle_prune_context(ctx, tool_call)
-
-        assert "Pruned 2" in msg.content
         # Oldest 2 tool results pruned, newest 1 kept
         assert ctx.messages[1].content.startswith("[Previous:")
         assert ctx.messages[3].content.startswith("[Previous:")

@@ -3,8 +3,13 @@ Auto-compaction for context management.
 
 Automatically summarizes conversation history when approaching
 token limits to prevent context overflow.
+
+Uses deterministic structured extraction (not model-generated summaries)
+to produce predictable, compact briefings that preserve original task,
+tool call history, and files touched.
 """
 
+import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -282,8 +287,8 @@ class CompactionManager:
             f"summary budget: {summary_budget} tokens"
         )
 
-        # Generate summary of old messages with budget
-        summary = await self._generate_summary(old_messages, summary_budget)
+        # Build structured summary from old messages (deterministic, no model)
+        summary = self._structured_summary(old_messages)
 
         # Build compacted message list
         # Keep system message separate - don't concatenate into summary
@@ -301,89 +306,103 @@ class CompactionManager:
 
         return result, summary, len(old_messages)
 
-    async def _generate_summary(
-        self, messages: list[Message], max_tokens: int | None = None
-    ) -> str:
-        """Generate a summary of conversation history."""
-        if not self.orchestrator:
-            # Fallback: simple truncation if no orchestrator
-            return self._simple_summary(messages, max_tokens)
+    def _structured_summary(self, messages: list[Message]) -> str:
+        """Build a deterministic structured summary from message history.
 
-        # Build context for summarization
-        conversation_text = self._format_for_summary(messages)
-
-        # Calculate target summary length
-        target_tokens = max_tokens or self.config.summary_max_tokens
-        max_chars = target_tokens * 4  # ~4 chars per token
-
-        summary_prompt = f"""Summarize this conversation briefly in {target_tokens} tokens or less.
-
-CRITICAL - You MUST include:
-1. What task the user requested
-2. ALL tool calls that were made and their results (list each tool with outcome)
-3. Current state/progress
-4. Any files that were read or modified
-
-This summary will be used to continue the conversation, so the model needs to know what tools have already been called to avoid duplicates.
-
-CONVERSATION:
-{conversation_text}
-
-Brief summary (include tool call history):"""
-
-        try:
-            # Import ModelTier here to avoid circular import
-            from entropi.inference.orchestrator import ModelTier
-
-            # Use the currently-active tier so compaction preserves analysis
-            # quality (e.g. thinking tier's detailed summaries stay detailed).
-            # Falls back to NORMAL if no tier has been used yet.
-            tier = self.orchestrator.last_used_tier or ModelTier.NORMAL
-            result = await self.orchestrator.generate(
-                messages=[Message(role="user", content=summary_prompt)],
-                tier=tier,
-            )
-            # Enforce max length - truncate if necessary
-            summary = result.content
-            if len(summary) > max_chars:
-                logger.warning(
-                    f"Summary too long ({len(summary)} chars), truncating to {max_chars}"
-                )
-                summary = summary[:max_chars] + "..."
-            return summary
-        except Exception as e:
-            logger.error(f"Summary generation failed: {e}")
-            return self._simple_summary(messages, max_tokens)
-
-    def _simple_summary(self, messages: list[Message], max_tokens: int | None = None) -> str:
-        """Create a simple summary without model generation."""
-        max_chars = (max_tokens or 500) * 4
-
-        lines = [f"[Summary of {len(messages)} messages]"]
-
-        # Extract key points from recent messages
-        for msg in messages[-5:]:  # Last 5 messages
-            preview = msg.content[:100].replace("\n", " ")
-            if len(msg.content) > 100:
-                preview += "..."
-            lines.append(f"- {msg.role}: {preview}")
-
-        result = "\n".join(lines)
-        if len(result) > max_chars:
-            result = result[:max_chars] + "..."
-        return result
-
-    def _format_for_summary(self, messages: list[Message]) -> str:
-        """Format messages for summarization prompt."""
+        Extracts facts (original task, tool calls, files touched) without
+        model inference. Predictable size proportional to tool call count.
+        """
         lines = []
+
+        task = self._extract_original_task(messages)
+        lines.append(f"Original task: {task}")
+
+        tool_log = self._extract_tool_log(messages)
+        if tool_log:
+            lines.append("")
+            lines.append("Tool calls made (oldest first):")
+            for name, brief in tool_log:
+                lines.append(f"- {name}: {brief}")
+
+        files_read, files_modified = self._extract_files_touched(messages)
+        if files_read:
+            lines.append("")
+            lines.append(f"Files read: {', '.join(files_read)}")
+        if files_modified:
+            lines.append(f"Files modified: {', '.join(files_modified)}")
+
+        return "\n".join(lines)
+
+    def _extract_original_task(self, messages: list[Message]) -> str:
+        """Find the first non-system user message (the original task)."""
         for msg in messages:
-            role = msg.role.upper()
-            # Truncate very long messages
-            content = msg.content
-            if len(content) > 2000:
-                content = content[:2000] + "..."
-            lines.append(f"[{role}]: {content}")
-        return "\n\n".join(lines)
+            if msg.role == "user" and not msg.content.startswith("["):
+                content = msg.content
+                if len(content) > 500:
+                    content = content[:500] + "..."
+                return content
+        return "(no user message found)"
+
+    def _extract_tool_log(self, messages: list[Message]) -> list[tuple[str, str]]:
+        """Extract tool call names and brief results from messages."""
+        log: list[tuple[str, str]] = []
+        for msg in messages:
+            if not msg.tool_results:
+                continue
+            if msg.content.startswith("[Previous:"):
+                tool_name = msg.metadata.get("tool_name", "unknown")
+                log.append((tool_name, "(pruned)"))
+                continue
+            for tr in msg.tool_results:
+                if not isinstance(tr, dict):
+                    continue
+                name = tr.get("name", msg.metadata.get("tool_name", "unknown"))
+                result_text = tr.get("result", "")
+                brief = result_text.split("\n")[0][:100]
+                log.append((name, brief))
+        return log
+
+    def _extract_files_touched(self, messages: list[Message]) -> tuple[list[str], list[str]]:
+        """Extract file paths from filesystem tool results."""
+        files_read: list[str] = []
+        files_modified: list[str] = []
+        for msg in messages:
+            self._collect_file_paths(msg, files_read, files_modified)
+        return files_read, files_modified
+
+    def _collect_file_paths(
+        self,
+        msg: Message,
+        files_read: list[str],
+        files_modified: list[str],
+    ) -> None:
+        """Collect file paths from a single message's tool results."""
+        if not msg.tool_results:
+            return
+        for tr in msg.tool_results:
+            if not isinstance(tr, dict):
+                continue
+            name = tr.get("name", "")
+            if not name.startswith("filesystem."):
+                continue
+            path = self._parse_path_from_result(tr.get("result", ""))
+            if not path:
+                continue
+            if "read" in name and path not in files_read:
+                files_read.append(path)
+            elif "read" not in name and path not in files_modified:
+                files_modified.append(path)
+
+    @staticmethod
+    def _parse_path_from_result(result: str) -> str | None:
+        """Try to extract a file path from a tool result JSON string."""
+        try:
+            data = json.loads(result)
+            if isinstance(data, dict):
+                return data.get("path")
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+        return None
 
     def _format_summary(self, summary: str, message_count: int) -> str:
         """Format the summary as a system message."""
@@ -395,7 +414,11 @@ The following summarizes {message_count} previous messages that have been compac
 [END SUMMARY - Recent conversation continues below]"""
 
     def _aggressive_compact(self, messages: list[Message]) -> list[Message]:
-        """Emergency compaction: keep only system + minimal recent context."""
+        """Emergency compaction: structured summary + last 2 messages.
+
+        Unlike the old approach (system + last 2 only), this preserves the
+        original task and tool call history via structured extraction.
+        """
         result = []
 
         # Keep system message if present
@@ -404,7 +427,16 @@ The following summarizes {message_count} previous messages that have been compac
             result.append(messages[0])
             working_messages = messages[1:]
 
-        # Keep only last 2 messages (1 turn)
+        # Build structured summary from all non-system messages
+        summary = self._structured_summary(working_messages)
+        result.append(
+            Message(
+                role="user",
+                content=self._format_summary(summary, len(working_messages)),
+            )
+        )
+
+        # Keep last 2 messages (1 turn) for immediate context
         if len(working_messages) >= 2:
             result.extend(working_messages[-2:])
         elif working_messages:
@@ -442,11 +474,7 @@ The following summarizes {message_count} previous messages that have been compac
         """
         Compress context specifically for tier handoff.
 
-        Creates a focused summary for the new tier that includes:
-        - Original user request
-        - Tool calls made and their results
-        - Files touched
-        - Handoff reason and task state
+        Uses structured extraction (same as compaction) plus handoff reason.
 
         Args:
             messages: Current conversation
@@ -456,7 +484,6 @@ The following summarizes {message_count} previous messages that have been compac
         Returns:
             Compressed messages suitable for new tier
         """
-        # Calculate target budget (aim for 40% of target context to leave room)
         target_tokens = int(target_context_length * 0.4)
 
         # Keep system message
@@ -466,25 +493,17 @@ The following summarizes {message_count} previous messages that have been compac
             system_message = messages[0]
             working_messages = messages[1:]
 
-        # Generate handoff-focused summary
-        summary = await self._generate_handoff_summary(
-            working_messages,
-            handoff_reason,
-            max_tokens=target_tokens // 2,
-        )
+        # Build structured summary (deterministic, no model inference)
+        summary = self._structured_summary(working_messages)
 
-        # Build compressed context
         result = []
         if system_message:
             result.append(system_message)
 
-        # Add handoff context as user message
-        handoff_context = f"""[HANDOFF CONTEXT]
-{summary}
-
-Handoff reason: {handoff_reason}
-[END HANDOFF CONTEXT]"""
-
+        handoff_context = (
+            f"[HANDOFF CONTEXT]\n{summary}\n\n"
+            f"Handoff reason: {handoff_reason}\n[END HANDOFF CONTEXT]"
+        )
         result.append(Message(role="user", content=handoff_context))
 
         # Keep last 2 messages for immediate context (if they fit)
@@ -500,81 +519,3 @@ Handoff reason: {handoff_reason}
         )
 
         return result
-
-    async def _generate_handoff_summary(
-        self,
-        messages: list[Message],
-        reason: str,
-        max_tokens: int,
-    ) -> str:
-        """Generate a focused summary for handoff."""
-        if not self.orchestrator:
-            return self._simple_handoff_summary(messages, reason)
-
-        conversation_text = self._format_for_summary(messages)
-        max_chars = max_tokens * 4
-
-        summary_prompt = f"""Summarize this conversation for handoff to another model tier.
-
-The handoff reason is: {reason}
-
-You MUST include:
-1. The original user request/goal
-2. ALL tool calls made and their results (be specific)
-3. Files that were read or modified
-4. Current state and what remains to be done
-5. Any decisions made or problems encountered
-
-Keep summary under {max_tokens} tokens.
-
-CONVERSATION:
-{conversation_text}
-
-Summary:"""
-
-        try:
-            # Import ModelTier here to avoid circular import
-            from entropi.inference.orchestrator import ModelTier
-
-            # Use the currently-active tier to preserve summary quality
-            tier = self.orchestrator.last_used_tier or ModelTier.NORMAL
-            result = await self.orchestrator.generate(
-                messages=[Message(role="user", content=summary_prompt)],
-                tier=tier,
-            )
-            summary = result.content
-            if len(summary) > max_chars:
-                summary = summary[:max_chars] + "..."
-            return summary
-        except Exception as e:
-            logger.error(f"Handoff summary generation failed: {e}")
-            return self._simple_handoff_summary(messages, reason)
-
-    def _simple_handoff_summary(self, messages: list[Message], reason: str) -> str:
-        """Create simple handoff summary without model generation."""
-        lines = [f"[Handoff Summary - {len(messages)} messages]"]
-        lines.append(f"Reason: {reason}")
-        lines.append("")
-
-        # Extract tool calls
-        tool_calls = []
-        for msg in messages:
-            if msg.tool_results:
-                for tr in msg.tool_results:
-                    if isinstance(tr, dict):
-                        tool_calls.append(
-                            f"- {tr.get('name', 'unknown')}: {tr.get('result', '')[:100]}"
-                        )
-
-        if tool_calls:
-            lines.append("Tool calls made:")
-            lines.extend(tool_calls[:10])  # Limit to 10
-            lines.append("")
-
-        # Last user message as context
-        for msg in reversed(messages):
-            if msg.role == "user" and not msg.content.startswith("["):
-                lines.append(f"Last user request: {msg.content[:200]}")
-                break
-
-        return "\n".join(lines)

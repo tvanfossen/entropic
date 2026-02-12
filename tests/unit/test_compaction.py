@@ -1,12 +1,11 @@
 """Tests for context compaction system."""
 
-from unittest.mock import AsyncMock, MagicMock
+import json
 
 import pytest
 from entropi.config.schema import CompactionConfig
-from entropi.core.base import GenerationResult, Message
+from entropi.core.base import Message
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
-from entropi.inference.orchestrator import ModelTier
 
 
 class TestTokenCounter:
@@ -144,7 +143,7 @@ class TestCompactionManager:
 
     @pytest.mark.asyncio
     async def test_check_below_threshold_no_compact(self) -> None:
-        """Below threshold → no compaction."""
+        """Below threshold -> no compaction."""
         manager = CompactionManager(self.config, self.counter)
 
         # Small message list - well under threshold
@@ -162,7 +161,7 @@ class TestCompactionManager:
 
     @pytest.mark.asyncio
     async def test_check_at_threshold_triggers_compact(self) -> None:
-        """At threshold → triggers compaction."""
+        """At threshold -> triggers compaction."""
         manager = CompactionManager(self.config, self.counter)
 
         # Create messages that exceed 75% of 1000 tokens
@@ -212,77 +211,42 @@ class TestCompactionManager:
         assert "LAST_USER_MESSAGE" in message_contents
 
     @pytest.mark.asyncio
-    async def test_simple_summary_fallback(self) -> None:
-        """No orchestrator → _simple_summary() is used."""
-        # Manager without orchestrator
+    async def test_compact_uses_structured_summary(self) -> None:
+        """Compaction produces structured summary (not model-generated)."""
+        # No orchestrator needed — structured summary is deterministic
         manager = CompactionManager(self.config, self.counter, orchestrator=None)
 
         messages = self._create_messages(30, content_size=100)
+        # Set first user message to a recognizable task
+        messages[1] = Message(role="user", content="Analyze the error handling")
 
         result_messages, result = await manager.check_and_compact("conv-1", messages)
 
         assert result.compacted is True
-        # Summary should contain "[Summary of X messages]"
+        # Summary message should contain structured format
         summary_msg = result_messages[1]  # After system message
-        assert "[Summary of" in summary_msg.content
+        assert "[CONVERSATION SUMMARY]" in summary_msg.content
+        assert "Original task: Analyze the error handling" in summary_msg.content
 
     @pytest.mark.asyncio
-    async def test_aggressive_compact_fallback(self) -> None:
-        """<20% reduction → aggressive fallback."""
-        # Create a mock orchestrator that returns a summary as long as input
-        mock_orchestrator = MagicMock()
-
-        async def mock_generate(messages, **kwargs):
-            # Return a summary that's intentionally too long
-            return GenerationResult(content="x" * 10000, finish_reason="stop")
-
-        mock_orchestrator.generate = mock_generate
-
-        manager = CompactionManager(self.config, self.counter, orchestrator=mock_orchestrator)
-
-        messages = self._create_messages(30, content_size=100)
-        original_count = len(messages)
-
-        result_messages, result = await manager.check_and_compact("conv-1", messages)
-
-        assert result.compacted is True
-        # Aggressive compact keeps system + last 2 messages
-        # Result should be much smaller than original
-        assert len(result_messages) < original_count
-
-    @pytest.mark.asyncio
-    async def test_aggressive_compact_keeps_system_plus_two(self) -> None:
-        """Aggressive fallback keeps system + last 2 messages."""
+    async def test_aggressive_compact_structure(self) -> None:
+        """Aggressive compact: system + structured summary + last 2 messages."""
         manager = CompactionManager(self.config, self.counter)
 
         messages = self._create_messages(10, content_size=100)
+        messages[1] = Message(role="user", content="Original task here")
         messages[-1] = Message(role="assistant", content="LAST")
         messages[-2] = Message(role="user", content="SECOND_LAST")
 
         result = manager._aggressive_compact(messages)
 
-        # Should be system + last 2 = 3 messages
-        assert len(result) == 3
+        # system + summary + last 2 = 4 messages
+        assert len(result) == 4
         assert result[0].role == "system"
-        assert result[1].content == "SECOND_LAST"
-        assert result[2].content == "LAST"
-
-    @pytest.mark.asyncio
-    async def test_generate_summary_exception_fallback(self) -> None:
-        """Exception during summary generation → graceful fallback."""
-        mock_orchestrator = MagicMock()
-        mock_orchestrator.generate = AsyncMock(side_effect=Exception("Model error"))
-
-        manager = CompactionManager(self.config, self.counter, orchestrator=mock_orchestrator)
-
-        messages = self._create_messages(30, content_size=100)
-
-        result_messages, result = await manager.check_and_compact("conv-1", messages)
-
-        # Should still compact using simple summary fallback
-        assert result.compacted is True
-        summary_msg = result_messages[1]
-        assert "[Summary of" in summary_msg.content
+        assert "[CONVERSATION SUMMARY]" in result[1].content
+        assert "Original task: Original task here" in result[1].content
+        assert result[2].content == "SECOND_LAST"
+        assert result[3].content == "LAST"
 
     @pytest.mark.asyncio
     async def test_forced_compaction_bypasses_threshold(self) -> None:
@@ -313,7 +277,7 @@ class TestCompactionManager:
 
     @pytest.mark.asyncio
     async def test_compaction_disabled(self) -> None:
-        """Compaction disabled in config → no compaction even at threshold."""
+        """Compaction disabled in config -> no compaction even at threshold."""
         disabled_config = CompactionConfig(
             enabled=False,
             threshold_percent=0.75,
@@ -363,61 +327,310 @@ class TestCompactionResult:
         assert result.messages_summarized == 20
 
 
-class TestCompactionTierSelection:
-    """Tests that compaction uses the currently-active model tier."""
+class TestStructuredSummary:
+    """Tests for deterministic structured summary extraction."""
 
-    def _make_orchestrator(self, last_tier: ModelTier | None) -> MagicMock:
-        """Create a mock orchestrator with a given last_used_tier."""
-        orch = MagicMock()
-        orch.last_used_tier = last_tier
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.config = CompactionConfig(enabled=True)
+        self.counter = TokenCounter(max_tokens=1000)
+        self.manager = CompactionManager(self.config, self.counter)
 
-        async def mock_generate(messages, **kwargs):
-            return GenerationResult(content="Summary.", finish_reason="stop")
+    def test_extract_original_task(self) -> None:
+        """First non-system user message extracted as original task."""
+        messages = [
+            Message(role="user", content="Analyze the error handling in base.py"),
+            Message(role="assistant", content="I'll look at that."),
+        ]
 
-        orch.generate = AsyncMock(side_effect=mock_generate)
-        return orch
+        result = self.manager._extract_original_task(messages)
+        assert result == "Analyze the error handling in base.py"
+
+    def test_extract_original_task_truncates_long(self) -> None:
+        """Messages over 500 chars are truncated."""
+        long_content = "a" * 600
+        messages = [Message(role="user", content=long_content)]
+
+        result = self.manager._extract_original_task(messages)
+        assert len(result) == 503  # 500 + "..."
+        assert result.endswith("...")
+
+    def test_extract_original_task_skips_summary(self) -> None:
+        """Messages starting with '[' (summaries) are skipped."""
+        messages = [
+            Message(role="user", content="[CONVERSATION SUMMARY] old stuff"),
+            Message(role="user", content="The real task"),
+        ]
+
+        result = self.manager._extract_original_task(messages)
+        assert result == "The real task"
+
+    def test_extract_original_task_no_user_message(self) -> None:
+        """Returns fallback when no user message found."""
+        messages = [Message(role="assistant", content="Hello")]
+
+        result = self.manager._extract_original_task(messages)
+        assert result == "(no user message found)"
+
+    def test_extract_tool_log(self) -> None:
+        """Tool results extracted with name and brief result."""
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {
+                        "name": "bash.execute",
+                        "result": "Command output line 1\nline 2\nline 3",
+                    }
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {
+                        "name": "filesystem.read_file",
+                        "result": "File contents here",
+                    }
+                ],
+            ),
+        ]
+
+        log = self.manager._extract_tool_log(messages)
+
+        assert len(log) == 2
+        assert log[0] == ("bash.execute", "Command output line 1")
+        assert log[1] == ("filesystem.read_file", "File contents here")
+
+    def test_extract_tool_log_pruned_messages(self) -> None:
+        """Pruned tool results logged as '(pruned)'."""
+        messages = [
+            Message(
+                role="tool",
+                content="[Previous: filesystem.read_file result -- 5000 chars, pruned]",
+                tool_results=[{"name": "filesystem.read_file", "result": ""}],
+                metadata={"tool_name": "filesystem.read_file"},
+            ),
+        ]
+
+        log = self.manager._extract_tool_log(messages)
+
+        assert len(log) == 1
+        assert log[0] == ("filesystem.read_file", "(pruned)")
+
+    def test_extract_tool_log_falls_back_to_metadata(self) -> None:
+        """When tool result has no name, falls back to metadata tool_name."""
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[{"result": "some output"}],
+                metadata={"tool_name": "bash.execute"},
+            ),
+        ]
+
+        log = self.manager._extract_tool_log(messages)
+
+        assert len(log) == 1
+        assert log[0][0] == "bash.execute"
+
+    def test_extract_tool_log_brief_truncated(self) -> None:
+        """Brief result truncated to 100 chars of first line."""
+        long_result = "x" * 200
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[{"name": "test.tool", "result": long_result}],
+            ),
+        ]
+
+        log = self.manager._extract_tool_log(messages)
+
+        assert len(log) == 1
+        assert len(log[0][1]) == 100
+
+    def test_extract_files_touched(self) -> None:
+        """Filesystem tool results parsed for file paths."""
+        read_result = json.dumps({"path": "/workspace/src/base.py"})
+        write_result = json.dumps({"path": "/workspace/src/engine.py"})
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "filesystem.read_file", "result": read_result},
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "filesystem.write_file", "result": write_result},
+                ],
+            ),
+        ]
+
+        files_read, files_modified = self.manager._extract_files_touched(messages)
+
+        assert files_read == ["/workspace/src/base.py"]
+        assert files_modified == ["/workspace/src/engine.py"]
+
+    def test_extract_files_touched_deduplicates(self) -> None:
+        """Same file path not listed twice."""
+        read_result = json.dumps({"path": "/workspace/src/base.py"})
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "filesystem.read_file", "result": read_result},
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "filesystem.read_file", "result": read_result},
+                ],
+            ),
+        ]
+
+        files_read, _ = self.manager._extract_files_touched(messages)
+        assert files_read == ["/workspace/src/base.py"]
+
+    def test_extract_files_ignores_non_filesystem(self) -> None:
+        """Non-filesystem tools don't contribute to files touched."""
+        messages = [
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "bash.execute", "result": "output"},
+                ],
+            ),
+        ]
+
+        files_read, files_modified = self.manager._extract_files_touched(messages)
+        assert files_read == []
+        assert files_modified == []
+
+    def test_structured_summary_complete(self) -> None:
+        """Full structured summary includes task, tools, and files."""
+        read_result = json.dumps({"path": "/workspace/src/base.py"})
+        messages = [
+            Message(role="user", content="Analyze error handling"),
+            Message(role="assistant", content="I'll check that."),
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "filesystem.read_file", "result": read_result},
+                ],
+            ),
+            Message(
+                role="tool",
+                content="Tool result",
+                tool_results=[
+                    {"name": "bash.execute", "result": "ls output"},
+                ],
+            ),
+        ]
+
+        summary = self.manager._structured_summary(messages)
+
+        assert "Original task: Analyze error handling" in summary
+        assert "Tool calls made (oldest first):" in summary
+        assert "- filesystem.read_file:" in summary
+        assert "- bash.execute: ls output" in summary
+        assert "Files read: /workspace/src/base.py" in summary
+
+    def test_structured_summary_no_tools(self) -> None:
+        """Summary with no tool calls only includes original task."""
+        messages = [
+            Message(role="user", content="Hello world"),
+            Message(role="assistant", content="Hi there!"),
+        ]
+
+        summary = self.manager._structured_summary(messages)
+
+        assert summary == "Original task: Hello world"
+        assert "Tool calls" not in summary
+        assert "Files" not in summary
+
+    def test_parse_path_from_result_valid(self) -> None:
+        """Valid JSON with 'path' key extracted."""
+        result = json.dumps({"path": "/workspace/test.py", "content": "..."})
+        assert CompactionManager._parse_path_from_result(result) == "/workspace/test.py"
+
+    def test_parse_path_from_result_invalid_json(self) -> None:
+        """Invalid JSON returns None."""
+        assert CompactionManager._parse_path_from_result("not json") is None
+
+    def test_parse_path_from_result_no_path_key(self) -> None:
+        """JSON without 'path' key returns None."""
+        result = json.dumps({"output": "something"})
+        assert CompactionManager._parse_path_from_result(result) is None
+
+
+class TestCompressForHandoff:
+    """Tests for tier handoff compression."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.config = CompactionConfig(enabled=True)
+        self.counter = TokenCounter(max_tokens=1000)
+        self.manager = CompactionManager(self.config, self.counter)
 
     @pytest.mark.asyncio
-    async def test_summary_uses_current_tier(self) -> None:
-        """_generate_summary passes last_used_tier to orchestrator."""
-        orch = self._make_orchestrator(ModelTier.THINKING)
-        config = CompactionConfig(enabled=True)
-        counter = TokenCounter(max_tokens=1000)
-        manager = CompactionManager(config, counter, orchestrator=orch)
+    async def test_handoff_includes_reason(self) -> None:
+        """Handoff compression includes the handoff reason."""
+        messages = [
+            Message(role="system", content="System prompt"),
+            Message(role="user", content="Build a feature"),
+            Message(role="assistant", content="Planning..."),
+        ]
 
-        messages = [Message(role="user", content="Hello")]
-        await manager._generate_summary(messages)
+        result = await self.manager.compress_for_handoff(
+            messages, "plan_ready", target_context_length=4000
+        )
 
-        orch.generate.assert_called_once()
-        _, kwargs = orch.generate.call_args
-        assert kwargs["tier"] == ModelTier.THINKING
-
-    @pytest.mark.asyncio
-    async def test_summary_falls_back_to_normal(self) -> None:
-        """_generate_summary uses NORMAL when no tier has been used."""
-        orch = self._make_orchestrator(None)
-        config = CompactionConfig(enabled=True)
-        counter = TokenCounter(max_tokens=1000)
-        manager = CompactionManager(config, counter, orchestrator=orch)
-
-        messages = [Message(role="user", content="Hello")]
-        await manager._generate_summary(messages)
-
-        orch.generate.assert_called_once()
-        _, kwargs = orch.generate.call_args
-        assert kwargs["tier"] == ModelTier.NORMAL
+        handoff_msg = result[1]  # After system
+        assert "[HANDOFF CONTEXT]" in handoff_msg.content
+        assert "Handoff reason: plan_ready" in handoff_msg.content
+        assert "Original task: Build a feature" in handoff_msg.content
 
     @pytest.mark.asyncio
-    async def test_handoff_summary_uses_current_tier(self) -> None:
-        """_generate_handoff_summary passes last_used_tier to orchestrator."""
-        orch = self._make_orchestrator(ModelTier.THINKING)
-        config = CompactionConfig(enabled=True)
-        counter = TokenCounter(max_tokens=1000)
-        manager = CompactionManager(config, counter, orchestrator=orch)
+    async def test_handoff_preserves_system(self) -> None:
+        """System message preserved in handoff compression."""
+        messages = [
+            Message(role="system", content="System prompt"),
+            Message(role="user", content="Task"),
+        ]
 
-        messages = [Message(role="user", content="Hello")]
-        await manager._generate_handoff_summary(messages, "plan_ready", 500)
+        result = await self.manager.compress_for_handoff(
+            messages, "escalation", target_context_length=4000
+        )
 
-        orch.generate.assert_called_once()
-        _, kwargs = orch.generate.call_args
-        assert kwargs["tier"] == ModelTier.THINKING
+        assert result[0].role == "system"
+        assert result[0].content == "System prompt"
+
+    @pytest.mark.asyncio
+    async def test_handoff_keeps_recent_if_fits(self) -> None:
+        """Recent messages preserved if they fit in target budget."""
+        messages = [
+            Message(role="system", content="System prompt"),
+            Message(role="user", content="Short task"),
+            Message(role="assistant", content="Short reply"),
+            Message(role="user", content="RECENT_USER"),
+            Message(role="assistant", content="RECENT_ASSISTANT"),
+        ]
+
+        result = await self.manager.compress_for_handoff(
+            messages, "reason", target_context_length=4000
+        )
+
+        contents = [m.content for m in result]
+        assert "RECENT_USER" in contents
+        assert "RECENT_ASSISTANT" in contents

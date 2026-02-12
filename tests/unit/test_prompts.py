@@ -5,7 +5,6 @@ from entropi.inference.adapters.base import GenericAdapter
 from entropi.prompts import (
     _extract_focus_points,
     get_tier_identity_prompt,
-    get_tool_usage_prompt,
 )
 
 TIERS = ["simple", "code", "normal", "thinking"]
@@ -57,11 +56,19 @@ class TestIdentityFilesHaveFocus:
         assert len(focus) > 0, f"identity_{tier}.md has empty Focus section"
 
 
-class TestToolUsageHasNoToolNames:
-    """tool_usage.md must contain zero specific tool names."""
+def _make_tool_def(name: str) -> dict[str, object]:
+    """Create a minimal tool definition for testing."""
+    return {
+        "name": name,
+        "description": f"Tool {name}",
+        "inputSchema": {"type": "object", "properties": {}},
+    }
 
-    # Every dotted tool name that exists in the system
-    ALL_TOOL_NAMES = [
+
+class TestToolIsolation:
+    """Assembled system prompt must contain ZERO unauthorized tool names."""
+
+    ALL_TOOLS = [
         "filesystem.read_file",
         "filesystem.write_file",
         "filesystem.edit_file",
@@ -78,42 +85,6 @@ class TestToolUsageHasNoToolNames:
         "system.handoff",
         "diagnostics.check_errors",
     ]
-
-    def test_no_dotted_tool_names(self) -> None:
-        """tool_usage.md must not contain any dotted tool names."""
-        prompt = get_tool_usage_prompt()
-        for name in self.ALL_TOOL_NAMES:
-            assert name not in prompt, f"tool_usage.md contains '{name}'"
-
-    def test_no_bare_tool_names(self) -> None:
-        """tool_usage.md must not contain bare tool names like write_file."""
-        prompt = get_tool_usage_prompt()
-        bare_names = [
-            "read_file",
-            "write_file",
-            "edit_file",
-            "bash_execute",
-            "todo_write",
-            "check_errors",
-        ]
-        for name in bare_names:
-            assert name not in prompt, f"tool_usage.md contains '{name}'"
-
-
-def _make_tool_def(name: str) -> dict[str, object]:
-    """Create a minimal tool definition for testing."""
-    return {
-        "name": name,
-        "description": f"Tool {name}",
-        "inputSchema": {"type": "object", "properties": {}},
-    }
-
-
-class TestToolIsolation:
-    """Assembled system prompt must contain ZERO unauthorized tool names."""
-
-    # All tools that exist in the system
-    ALL_TOOLS = TestToolUsageHasNoToolNames.ALL_TOOL_NAMES
 
     def test_thinking_tier_only_sees_allowed_tools(self) -> None:
         """Thinking tier with allowed tools must not leak other names."""

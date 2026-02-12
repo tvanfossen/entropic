@@ -19,7 +19,7 @@ def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
     2. Bundled defaults in package data
 
     Args:
-        name: Prompt name (e.g., "tool_usage" loads "tool_usage.md")
+        name: Prompt name (e.g., "constitution" loads "constitution.md")
         prompts_dir: Optional user prompts directory
 
     Returns:
@@ -87,26 +87,6 @@ def get_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
     constitution = get_constitution_prompt(prompts_dir)
     tier_identity = get_tier_identity_prompt(tier, prompts_dir)
     return f"{constitution}\n\n{tier_identity}"
-
-
-def get_tool_usage_prompt(prompts_dir: Path | None = None) -> str:
-    """
-    Get the tool usage prompt.
-
-    Args:
-        prompts_dir: Optional user prompts directory
-
-    Returns:
-        Tool usage prompt content
-    """
-    try:
-        return load_prompt("tool_usage", prompts_dir)
-    except FileNotFoundError:
-        logger.warning("tool_usage.md not found, using minimal default")
-        return """You have access to tools. To call a tool, output JSON:
-{"name": "tool_name", "arguments": {...}}
-
-IMPORTANT: Use tools to get real data. Do not guess or hallucinate file contents."""
 
 
 def _extract_focus_points(identity_content: str, tier_name: str = "") -> str:

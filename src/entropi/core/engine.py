@@ -27,7 +27,6 @@ from entropi.core.todos import TodoList
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
 from entropi.mcp.servers.base import load_tool_definition
-from entropi.prompts import load_prompt
 
 if TYPE_CHECKING:
     pass
@@ -323,9 +322,7 @@ class AgentEngine:
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
         # Build base system prompt (before adapter formatting)
-        task_mgmt_prompt = load_prompt("task_management")
-        base_with_todos = (system_prompt or "") + "\n\n" + task_mgmt_prompt
-        system = self._context_builder.build_system_prompt(base_with_todos)
+        system = self._context_builder.build_system_prompt(system_prompt or "")
 
         # Store on ctx for system prompt rebuild on tier change
         ctx.all_tools = tools

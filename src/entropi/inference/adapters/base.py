@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from entropi.core.base import Message, ToolCall
-from entropi.prompts import get_identity_prompt, get_tool_usage_prompt
+from entropi.prompts import get_identity_prompt
 
 
 class ChatAdapter(ABC):
@@ -39,7 +39,6 @@ class ChatAdapter(ABC):
         self._tier = tier
         self._prompts_dir = prompts_dir
         self._identity_prompt: str | None = None
-        self._tool_usage_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
 
     def _get_identity_prompt(self) -> str:
@@ -47,12 +46,6 @@ class ChatAdapter(ABC):
         if self._identity_prompt is None:
             self._identity_prompt = get_identity_prompt(self._tier, self._prompts_dir)
         return self._identity_prompt
-
-    def _get_tool_usage_prompt(self) -> str:
-        """Get the tool usage prompt, loading and caching it."""
-        if self._tool_usage_prompt is None:
-            self._tool_usage_prompt = get_tool_usage_prompt(self._prompts_dir)
-        return self._tool_usage_prompt
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
         """
@@ -97,13 +90,12 @@ class ChatAdapter(ABC):
         base_prompt: str,
         tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Format system prompt with identity, tool usage, and tool definitions.
+        """Format system prompt with identity and tool definitions.
 
         Assembles the prompt in order:
         1. Identity (constitution + tier identity)
-        2. Base prompt (todo system, project context)
-        3. Tool usage guidelines (generic syntax, no tool names)
-        4. Tool definitions (description + JSON inputSchema, filtered per tier)
+        2. Base prompt (todo state, project context)
+        3. Tool definitions (description + JSON inputSchema, filtered per tier)
 
         Tool guidance is embedded in each tool's JSON description field —
         no separate per-tool guidance step needed.
@@ -122,8 +114,6 @@ class ChatAdapter(ABC):
             return "\n\n".join(prompt_parts)
 
         self._extract_tool_prefixes(tools)
-
-        prompt_parts.append(self._get_tool_usage_prompt())
         prompt_parts.append(self._format_tools(tools))
 
         return "\n\n".join(prompt_parts)
@@ -137,7 +127,10 @@ class ChatAdapter(ABC):
 
         Override in subclasses if the model needs a different tool format.
         """
-        lines = ["## Available Tools\n"]
+        lines = [
+            "## Tools\n",
+            'Call tools with: `<tool_call>{"name": "tool.name", "arguments": {...}}</tool_call>`\n',
+        ]
         for tool in tools:
             name = tool.get("name", "unknown")
             description = tool.get("description", "No description")

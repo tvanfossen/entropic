@@ -24,6 +24,9 @@ from typing import Any
 from entropi.core.base import Message, ToolCall
 from entropi.prompts import get_identity_prompt
 
+# Shared continuation text for tool results — used by all adapters
+TOOL_RESULT_SUFFIX = "Continue. Batch multiple tool calls in one response when possible."
+
 
 class ChatAdapter(ABC):
     """Abstract base class for chat format adapters."""
@@ -129,7 +132,8 @@ class ChatAdapter(ABC):
         """
         lines = [
             "## Tools\n",
-            'Call tools with: `<tool_call>{"name": "tool.name", "arguments": {...}}</tool_call>`\n',
+            'Call tools with: `<tool_call>{"name": "tool.name", "arguments": {...}}</tool_call>`',
+            "Batch independent calls in one response with multiple `<tool_call>` blocks.\n",
         ]
         for tool in tools:
             name = tool.get("name", "unknown")
@@ -159,19 +163,14 @@ class ChatAdapter(ABC):
         """
         pass
 
-    @abstractmethod
     def format_tool_result(self, tool_call: ToolCall, result: str) -> Message:
-        """
-        Format tool result for injection into conversation.
+        """Format tool result as user message.
 
-        Args:
-            tool_call: Original tool call
-            result: Tool execution result
-
-        Returns:
-            Message to inject
+        Default implementation used by all adapters. Override only if
+        the model needs a fundamentally different format.
         """
-        pass
+        content = f"Tool `{tool_call.name}` returned:\n\n{result}\n\n{TOOL_RESULT_SUFFIX}"
+        return Message(role="user", content=content)
 
     def is_response_complete(self, content: str, tool_calls: list[ToolCall]) -> bool:
         """
@@ -233,16 +232,6 @@ class GenericAdapter(ChatAdapter):
 
         cleaned = pattern.sub("", content).strip()
         return cleaned, tool_calls
-
-    def format_tool_result(self, tool_call: ToolCall, result: str) -> Message:
-        """Format tool result as user message (tool role not rendered properly by llama-cpp)."""
-        content = f"""Tool `{tool_call.name}` returned:
-
-{result}
-
-Continue with the task. Call more tools if needed, or respond when complete."""
-
-        return Message(role="user", content=content)
 
 
 # Adapter registry

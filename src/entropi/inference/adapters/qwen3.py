@@ -11,7 +11,7 @@ import re
 import uuid
 from typing import Any
 
-from entropi.core.base import Message, ToolCall
+from entropi.core.base import ToolCall
 from entropi.core.logging import get_logger
 from entropi.inference.adapters.base import ChatAdapter, register_adapter
 
@@ -306,16 +306,6 @@ class Qwen3Adapter(ChatAdapter):
             )
 
         return None
-
-    def format_tool_result(self, tool_call: ToolCall, result: str) -> Message:
-        """Format tool result as a user message."""
-        content = f"""Tool `{tool_call.name}` returned:
-
-{result}
-
-Continue with the task. Call more tools if needed, or respond when complete."""
-
-        return Message(role="user", content=content)
 
     def is_response_complete(self, content: str, tool_calls: list[ToolCall]) -> bool:
         """

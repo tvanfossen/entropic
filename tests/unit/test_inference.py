@@ -44,6 +44,7 @@ class TestQwen3Adapter:
         assert "path" in result
         assert "<tool_call>" in result
         assert '"required"' in result
+        assert "Batch independent calls" in result
 
     def test_format_system_prompt_multiple_tools(self) -> None:
         """Test formatting with multiple tools."""
@@ -188,6 +189,7 @@ completely broken but has "name": "test_tool" somewhere "arguments": {"key": "va
         assert message.role == "user"
         assert "read_file" in message.content
         assert "file contents here" in message.content
+        assert "Batch multiple tool calls" in message.content
 
     def test_format_tool_result_multiline(self) -> None:
         """Test formatting tool result with multiline content."""

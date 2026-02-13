@@ -114,6 +114,12 @@ class TestToolIsolation:
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
+    def test_thinking_identity_has_first_action_section(self) -> None:
+        """Thinking tier must instruct model to create todos before tool use."""
+        identity = get_tier_identity_prompt("thinking")
+        assert "## First Action" in identity
+        assert "entropi.todo_write" in identity
+
     def test_thinking_identity_has_no_unauthorized_tools(self) -> None:
         """Thinking tier identity must not mention tools outside its set."""
         thinking_allowed = {

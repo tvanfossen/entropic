@@ -681,11 +681,17 @@ class AgentEngine:
         """Generate response via streaming."""
         content = ""
 
+        interrupted = False
         async for chunk in self.orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
+            if self._interrupt_event.is_set():
+                interrupted = True
+                break
+
             if self._pause_event.is_set():
                 logger.info("Generation paused by user")
                 content = await self._handle_pause(ctx, content)
                 if self._interrupt_event.is_set():
+                    interrupted = True
                     break
 
             content += chunk
@@ -693,7 +699,8 @@ class AgentEngine:
             if self._on_stream_chunk:
                 self._on_stream_chunk(chunk)
 
-        logger.debug(f"Stream complete: {len(content)} chars")
+        if interrupted:
+            logger.info(f"Stream interrupted after {len(content)} chars")
 
         cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
         self._log_model_output(
@@ -701,7 +708,7 @@ class AgentEngine:
             raw_content=content,
             cleaned_content=cleaned_content,
             tool_calls=tool_calls,
-            finish_reason=self.orchestrator.last_finish_reason,
+            finish_reason="interrupted" if interrupted else self.orchestrator.last_finish_reason,
         )
         return cleaned_content, tool_calls
 
@@ -791,7 +798,9 @@ class AgentEngine:
         # Generate new response with injected context
         content = ""
         async for chunk in self.orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
-            # Check for another pause during continuation
+            if self._interrupt_event.is_set():
+                break
+
             if self._pause_event.is_set():
                 logger.info("Generation paused again during continuation")
                 content = await self._handle_pause(ctx, content)
@@ -1283,7 +1292,7 @@ RECOVERY:
     def _set_state(self, ctx: LoopContext, state: AgentState) -> None:
         """Set agent state and notify callback."""
         ctx.state = state
-        logger.debug(f"State: {state.name}")
+        logger.info(f"State: {state.name}")
         if self._on_state_change:
             self._on_state_change(state)
 
@@ -1324,6 +1333,7 @@ RECOVERY:
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""
+        logger.info("Engine interrupted by user")
         self._interrupt_event.set()
         # Also clear any pending pause
         self._pause_event.clear()
@@ -1334,7 +1344,7 @@ RECOVERY:
 
     def pause(self) -> None:
         """Pause generation (Escape key) to allow injection."""
-        logger.debug("Pause requested")
+        logger.info("Engine paused by user")
         self._pause_event.set()
 
     def inject(self, content: str) -> None:
@@ -1357,7 +1367,7 @@ RECOVERY:
 
     def cancel_pause(self) -> None:
         """Cancel pause and interrupt completely."""
-        logger.debug("Cancel pause requested")
+        logger.info("Pause cancelled, interrupting")
         self._pause_event.clear()
         self._interrupt_event.set()
 

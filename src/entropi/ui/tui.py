@@ -772,7 +772,7 @@ class EntropiApp(App[None]):
 
         if self._is_generating:
             self._interrupt_count += 1
-            logger.debug(f"Pause requested via Escape (count={self._interrupt_count})")
+            logger.info(f"User pause via Escape (count={self._interrupt_count})")
 
             if self._interrupt_count >= 3:
                 # Hard kill - nothing else worked
@@ -796,7 +796,7 @@ class EntropiApp(App[None]):
         """Handle Ctrl+C - interrupt."""
         if self._is_generating:
             self._interrupt_count += 1
-            logger.debug(f"Interrupt requested via Ctrl+C (count={self._interrupt_count})")
+            logger.info(f"User interrupt via Ctrl+C (count={self._interrupt_count})")
 
             if self._interrupt_count >= 3:
                 # Hard kill - nothing else worked

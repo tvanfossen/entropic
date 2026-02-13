@@ -32,6 +32,7 @@ class FilesystemServer(BaseMCPServer):
         root_dir: Path | None = None,
         lsp_manager: LSPManager | None = None,
         config: FilesystemConfig | None = None,
+        model_context_bytes: int | None = None,
     ) -> None:
         """
         Initialize filesystem server.
@@ -40,12 +41,29 @@ class FilesystemServer(BaseMCPServer):
             root_dir: Root directory for operations (default: cwd)
             lsp_manager: Optional LSP manager for diagnostics on edit
             config: Filesystem configuration
+            model_context_bytes: Model context window in bytes (context_length * 4)
         """
         super().__init__("filesystem")
         self.root_dir = root_dir or Path.cwd()
         self._tracker = FileAccessTracker()
         self._lsp_manager = lsp_manager
         self._config = config
+        self._max_read_bytes = self._compute_max_read_bytes(config, model_context_bytes)
+
+    @staticmethod
+    def _compute_max_read_bytes(
+        config: FilesystemConfig | None,
+        model_context_bytes: int | None,
+    ) -> int:
+        """Compute max read bytes from config or model context.
+
+        Priority: explicit config value > dynamic from model context > fallback 50K.
+        """
+        if config and config.max_read_bytes is not None:
+            return config.max_read_bytes
+        pct = config.max_read_context_pct if config else 0.25
+        context_bytes = model_context_bytes or 50_000
+        return max(1_000, int(context_bytes * pct))
 
     def get_tools(self) -> list[Tool]:
         """Get available filesystem tools - unified read/edit/write pattern."""
@@ -224,19 +242,20 @@ class FilesystemServer(BaseMCPServer):
 
         # Size gate: block reads that would blow the context window
         file_bytes = resolved.stat().st_size
-        max_bytes = self._config.max_read_bytes if self._config else 50_000
-        if file_bytes > max_bytes:
+        if file_bytes > self._max_read_bytes:
             est_tokens = file_bytes // 4
             return json.dumps(
                 {
                     "blocked": True,
                     "reason": (
                         f"File '{path}' is {file_bytes:,} bytes (~{est_tokens:,} tokens) "
-                        f"which exceeds the max read size ({max_bytes:,} bytes)."
+                        f"which exceeds the max read size ({self._max_read_bytes:,} bytes)."
                     ),
                     "suggestion": (
-                        "Capture current findings with entropi.todo_write, "
-                        "then call entropi.prune_context to free space before reading."
+                        "Read specific sections with bash: "
+                        "grep -n 'pattern' to find lines, "
+                        "head -n 100 / tail -n 100 for sections. "
+                        "Or read smaller related files instead."
                     ),
                 }
             )
@@ -595,8 +614,18 @@ if __name__ == "__main__":
         lsp_manager = _LSPManager(config.lsp, root)
         lsp_manager.start()
 
+    # Compute model context in bytes for dynamic size gate
+    default_tier = config.models.default
+    model_cfg = getattr(config.models, default_tier, None)
+    model_context_bytes = (model_cfg.context_length * 4) if model_cfg else None
+
     try:
-        server = FilesystemServer(root, lsp_manager=lsp_manager, config=fs_config)
+        server = FilesystemServer(
+            root,
+            lsp_manager=lsp_manager,
+            config=fs_config,
+            model_context_bytes=model_context_bytes,
+        )
         asyncio.run(server.run())
     finally:
         if lsp_manager:

@@ -186,9 +186,11 @@ class FilesystemConfig(BaseModel):
     diagnostics_on_edit: bool = True
     fail_on_errors: bool = True  # Rollback edit if it introduces errors
     diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
-    # Max file size for read_file (bytes). Files exceeding this are blocked
-    # to prevent context blowout. ~50K bytes ≈ 12.5K tokens.
-    max_read_bytes: int = Field(default=50_000, ge=1_000, le=500_000)
+    # Max file size for read_file (bytes). None = derive from model context.
+    # Explicit value overrides dynamic calculation.
+    max_read_bytes: int | None = Field(default=None, ge=1_000, le=500_000)
+    # Percentage of model context window for single file read (dynamic gate)
+    max_read_context_pct: float = Field(default=0.25, ge=0.05, le=0.75)
 
 
 class MCPConfig(BaseModel):

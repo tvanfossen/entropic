@@ -111,7 +111,7 @@ class TestFilesystemSizeGate:
 
     @pytest.fixture
     def server(self, tmp_path: Path) -> FilesystemServer:
-        """Create server with a small max_read_bytes for testing."""
+        """Create server with explicit max_read_bytes for testing."""
         from entropi.config.schema import FilesystemConfig
 
         config = FilesystemConfig(max_read_bytes=1000)
@@ -127,7 +127,7 @@ class TestFilesystemSizeGate:
         data = json.loads(result)
         assert data["blocked"] is True
         assert "2,000" in data["reason"]
-        assert "entropi.todo_write" in data["suggestion"]
+        assert "grep -n" in data["suggestion"]
 
     @pytest.mark.asyncio
     async def test_allows_small_file(self, server: FilesystemServer, tmp_path: Path) -> None:
@@ -140,6 +140,28 @@ class TestFilesystemSizeGate:
         assert "blocked" not in data
         assert data["path"] == "small.txt"
         assert "bytes" in data
+
+    def test_dynamic_threshold_from_model_context(self, tmp_path: Path) -> None:
+        """Dynamic gate derives threshold from model context window."""
+        from entropi.config.schema import FilesystemConfig
+
+        # 32K tokens * 4 bytes/token = 131072 bytes, 25% = 32768
+        config = FilesystemConfig()  # max_read_bytes=None (dynamic)
+        server = FilesystemServer(tmp_path, config=config, model_context_bytes=131_072)
+        assert server._max_read_bytes == 32_768
+
+    def test_explicit_max_overrides_dynamic(self, tmp_path: Path) -> None:
+        """Explicit max_read_bytes overrides dynamic calculation."""
+        from entropi.config.schema import FilesystemConfig
+
+        config = FilesystemConfig(max_read_bytes=5000)
+        server = FilesystemServer(tmp_path, config=config, model_context_bytes=131_072)
+        assert server._max_read_bytes == 5000
+
+    def test_no_config_falls_back_to_default(self, tmp_path: Path) -> None:
+        """No config and no model context falls back to 50K * 25% = 12500."""
+        server = FilesystemServer(tmp_path)
+        assert server._max_read_bytes == 12_500
 
 
 class TestSkipDuplicateCheck:

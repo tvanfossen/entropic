@@ -295,7 +295,7 @@ class AgentEngine:
         self._notify_tier_selected(target_tier_str)
 
         # Inject cached todo state for new tier's awareness
-        self._inject_todo_state(ctx)
+        self._update_todo_anchor(ctx)
 
         logger.info(f"[DIRECTIVE] tier_change: {current_name} -> {target_tier_str}")
 
@@ -345,8 +345,9 @@ class AgentEngine:
         params: dict[str, Any],
         result: DirectiveResult,
     ) -> None:
-        """Handle todo_state_changed directive — cache state, notify TUI."""
+        """Handle todo_state_changed directive — cache state, update anchor, notify TUI."""
         self._cached_todo_state = params.get("state", "")
+        self._update_todo_anchor(ctx)
         if self._on_todo_update:
             self._on_todo_update(params)
 
@@ -460,7 +461,7 @@ class AgentEngine:
         ctx.messages.append(user_msg)
 
         # Inject todo state from previous runs (survives across run() calls)
-        self._inject_todo_state(ctx)
+        self._update_todo_anchor(ctx)
 
         # Log user prompt for debugging
         logger.info(f"\n{'=' * 60}\n[USER PROMPT]\n{'=' * 60}\n{user_message}\n{'=' * 60}")
@@ -1302,14 +1303,24 @@ RECOVERY:
             if self._on_compaction:
                 self._on_compaction(result)
             # Inject current todo state so model retains awareness
-            self._inject_todo_state(ctx)
+            self._update_todo_anchor(ctx)
 
-    def _inject_todo_state(self, ctx: LoopContext) -> None:
-        """Inject cached todo state into context (after compaction or handoff)."""
+    def _update_todo_anchor(self, ctx: LoopContext) -> None:
+        """Update or create the persistent todo state anchor.
+
+        Maintains a single message in ctx.messages with is_todo_anchor
+        metadata. Removes old anchor and appends at end (recency bias).
+        Zero context growth — one message, always current.
+        """
         if not self._cached_todo_state:
             return
-        ctx.messages.append(Message(role="user", content=self._cached_todo_state))
-        logger.info("Injected cached todo state into context")
+        # Remove existing anchor
+        ctx.messages = [m for m in ctx.messages if not m.metadata.get("is_todo_anchor")]
+        # Append at end (recency)
+        anchor = Message(role="user", content=self._cached_todo_state)
+        anchor.metadata["is_todo_anchor"] = True
+        ctx.messages.append(anchor)
+        logger.info("Updated todo state anchor")
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""

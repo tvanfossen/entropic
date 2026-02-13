@@ -263,8 +263,8 @@ class TestTodoCompactionPersistence:
         todo_list = TodoList()
         assert todo_list.format_for_context() == ""
 
-    def test_inject_todo_state_after_compaction(self) -> None:
-        """After compaction, cached todo state is appended to context."""
+    def test_todo_anchor_created_after_compaction(self) -> None:
+        """After compaction, todo anchor is appended with metadata."""
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
@@ -284,17 +284,41 @@ class TestTodoCompactionPersistence:
             ],
         )
 
-        engine._inject_todo_state(ctx)
+        engine._update_todo_anchor(ctx)
 
         assert len(ctx.messages) == 3
         todo_msg = ctx.messages[2]
         assert todo_msg.role == "user"
+        assert todo_msg.metadata.get("is_todo_anchor") is True
         assert "[CURRENT TODO STATE]" in todo_msg.content
         assert "[>] Fix bug" in todo_msg.content
         assert "[ ] Add test" in todo_msg.content
 
-    def test_empty_todo_not_injected(self) -> None:
-        """No message appended when cached todo state is empty."""
+    def test_todo_anchor_replaces_existing(self) -> None:
+        """Updating anchor removes old one and appends new at end."""
+        from entropi.core.engine import AgentEngine
+
+        engine = AgentEngine.__new__(AgentEngine)
+        engine._cached_todo_state = "state v1"
+
+        ctx = LoopContext(messages=[Message(role="system", content="sys")])
+        engine._update_todo_anchor(ctx)
+        assert len(ctx.messages) == 2  # system + anchor
+
+        # Add an assistant message after
+        ctx.messages.append(Message(role="assistant", content="reply"))
+
+        # Update state and re-anchor
+        engine._cached_todo_state = "state v2"
+        engine._update_todo_anchor(ctx)
+
+        # Still only 1 anchor, now at end
+        anchors = [m for m in ctx.messages if m.metadata.get("is_todo_anchor")]
+        assert len(anchors) == 1
+        assert ctx.messages[-1].content == "state v2"
+
+    def test_empty_todo_not_anchored(self) -> None:
+        """No anchor created when cached todo state is empty."""
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
@@ -307,6 +331,6 @@ class TestTodoCompactionPersistence:
             ],
         )
 
-        engine._inject_todo_state(ctx)
+        engine._update_todo_anchor(ctx)
 
-        assert len(ctx.messages) == 2  # No injection
+        assert len(ctx.messages) == 2  # No anchor

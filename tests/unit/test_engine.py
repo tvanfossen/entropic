@@ -421,7 +421,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
         engine._log_assembled_prompt = MagicMock()
         engine._notify_tier_selected = MagicMock()
-        engine._inject_todo_state = MagicMock()
+        engine._update_todo_anchor = MagicMock()
         return engine
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:

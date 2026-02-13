@@ -3,21 +3,20 @@ Configuration loader with hierarchy support.
 
 Hierarchy (lowest to highest priority):
 1. Defaults (built into schema)
-2. Global config (~/.entropi/config.yaml)
-3. Project config (.entropi/config.yaml) - auto-created from global
-4. Local config (.entropi/config.local.yaml) - gitignored
-5. Environment variables (ENTROPI_*)
-6. CLI arguments
+2. Global config (~/.entropi/config.yaml) — user defaults for all projects
+3. Project config (.entropi/config.local.yaml) — source of truth per project
+4. Environment variables (ENTROPI_*)
+5. CLI arguments
 
-Installation flow:
-1. Package includes default_config.yaml in entropi/data/
-2. On first run, if ~/.entropi/config.yaml doesn't exist, copy from package
-3. On first run in a project, copy from ~/.entropi/config.yaml to .entropi/config.yaml
+Seeding flow:
+1. Package default_config.yaml → ~/.entropi/config.yaml (on first global run)
+2. ~/.entropi/config.yaml → .entropi/config.local.yaml (on first project run)
 
 Per-project architecture:
 - Each project gets its own .entropi/ folder
-- Auto-created on first run with config copied from global
+- Auto-created on first run with config seeded from global
 - Database is per-project for conversation history
+- User decides whether to commit config.local.yaml (not gitignored)
 """
 
 import importlib.resources
@@ -199,26 +198,28 @@ class ConfigLoader:
         """
         Ensure project .entropi/ directory and config exist.
 
-        Auto-creates from global config if not present.
+        Seeding: global config.yaml → .entropi/config.local.yaml
+        Migration: existing config.yaml → config.local.yaml
         """
         project_entropi_dir = self.project_root / ".entropi"
-        project_config_path = project_entropi_dir / "config.yaml"
         local_config_path = project_entropi_dir / "config.local.yaml"
+        legacy_config_path = project_entropi_dir / "config.yaml"
         global_config_path = self.global_config_dir / "config.yaml"
 
         # Create .entropi directory if it doesn't exist
         if not project_entropi_dir.exists():
             project_entropi_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create .gitignore to ignore db, logs, and local config
+            # Create .gitignore for transient files only
             gitignore_path = project_entropi_dir / ".gitignore"
-            gitignore_path.write_text("*.db\n*.log\nconfig.local.yaml\n")
+            gitignore_path.write_text("*.db\n*.log\n")
 
             # Create default ENTROPI.md
             entropi_md_path = project_entropi_dir / "ENTROPI.md"
             entropi_md_path.write_text(
                 "# Project Context\n\n"
-                "This file provides context to Entropi. Edit it to describe your project.\n\n"
+                "This file provides context to Entropi."
+                " Edit it to describe your project.\n\n"
                 "## Overview\n\n"
                 "<!-- Brief description of what this project does -->\n\n"
                 "## Tech Stack\n\n"
@@ -226,74 +227,39 @@ class ConfigLoader:
                 "## Structure\n\n"
                 "<!-- Key directories and their purpose -->\n\n"
                 "## Conventions\n\n"
-                "<!-- Coding standards, naming conventions, patterns to follow -->\n"
+                "<!-- Coding standards, naming conventions,"
+                " patterns to follow -->\n"
             )
 
-        # Copy global config as template if project config doesn't exist
-        if not project_config_path.exists():
-            try:
-                if global_config_path.exists():
-                    shutil.copy(global_config_path, project_config_path)
-            except PermissionError:
-                # Global config not accessible - copy from package default
-                default_config = get_default_config_path()
-                if default_config.exists():
-                    shutil.copy(default_config, project_config_path)
+        # Migration: if legacy config.yaml exists but
+        # config.local.yaml doesn't, adopt the legacy file
+        if legacy_config_path.exists() and not local_config_path.exists():
+            shutil.copy(legacy_config_path, local_config_path)
 
-        # Create local config template if it doesn't exist
+        # Seed from global config if config.local.yaml doesn't exist
         if not local_config_path.exists():
-            self._create_local_config_template(local_config_path)
+            self._seed_project_config(
+                local_config_path,
+                global_config_path,
+            )
 
-    def _create_local_config_template(self, path: Path) -> None:
-        """
-        Create a template config.local.yaml with common override fields.
+    def _seed_project_config(
+        self,
+        target: Path,
+        global_config: Path,
+    ) -> None:
+        """Seed project config.local.yaml from global config."""
+        try:
+            if global_config.exists():
+                shutil.copy(global_config, target)
+                return
+        except PermissionError:
+            pass
 
-        This file is gitignored and intended for personal/machine-specific settings.
-        """
-        template = """\
-# Entropi Local Configuration
-# This file is gitignored - use for personal/machine-specific settings
-# Overrides values from config.yaml
-
-# Permissions - control tool execution
-permissions:
-  # Auto-approve all tool calls (skip confirmation prompts)
-  auto_approve: false
-
-  # Tools to allow (glob patterns supported)
-  # allow:
-  #   - "filesystem.*"
-  #   - "git.*"
-  #   - "bash.execute:pytest *"
-
-  # Tools to deny (glob patterns supported)
-  # deny:
-  #   - "bash.execute:rm -rf *"
-
-  # Tools that require confirmation (glob patterns)
-  # prompt:
-  #   - "bash.execute:*"
-  #   - "filesystem.write_file:*"
-
-# UI preferences
-ui:
-  theme: dark  # dark, light, auto
-  # stream_output: true
-  # show_token_count: true
-  # show_timing: true
-
-# Logging (useful for debugging)
-# log_level: INFO  # DEBUG, INFO, WARNING, ERROR
-
-# Model overrides (if you have different local paths)
-# models:
-#   default: normal  # thinking, normal, code, micro
-#   normal:
-#     path: ~/models/gguf/your-model.gguf
-#     context_length: 16384
-#     gpu_layers: -1
-"""
-        path.write_text(template)
+        # Fallback to package default
+        default_config = get_default_config_path()
+        if default_config.exists():
+            shutil.copy(default_config, target)
 
     def load(self, cli_overrides: dict[str, Any] | None = None) -> EntropyConfig:
         """
@@ -318,34 +284,31 @@ ui:
         # Start with empty dict (defaults come from Pydantic)
         config: dict[str, Any] = {}
 
-        # Layer 1: Global config (for defaults/templates)
+        # Layer 1: Global config (user defaults for all projects)
         try:
-            global_config_path = self.global_config_dir / "config.yaml"
-            global_config = _migrate_config(load_yaml_config(global_config_path))
+            global_path = self.global_config_dir / "config.yaml"
+            global_config = _migrate_config(
+                load_yaml_config(global_path),
+            )
             config = deep_merge(config, global_config)
         except PermissionError:
-            # Global config not accessible (e.g., in container)
             pass
 
-        # Layer 2: Project config (primary source)
-        project_config_path = self.project_root / ".entropi" / "config.yaml"
-        project_config = _migrate_config(load_yaml_config(project_config_path))
-        config = deep_merge(config, project_config)
-
-        # Layer 3: Local config (gitignored, for personal overrides)
-        local_config_path = self.project_root / ".entropi" / "config.local.yaml"
-        local_config = _migrate_config(load_yaml_config(local_config_path))
+        # Layer 2: Project config (source of truth)
+        local_path = self.project_root / ".entropi" / "config.local.yaml"
+        local_config = _migrate_config(
+            load_yaml_config(local_path),
+        )
         config = deep_merge(config, local_config)
 
-        # Layer 4: CLI overrides
+        # Layer 3: CLI overrides
         if cli_overrides:
             config = deep_merge(config, cli_overrides)
 
         # Override config_dir to use project-level .entropi
         config["config_dir"] = str(self.project_root / ".entropi")
 
-        # Layer 5: Environment variable overrides (for debugging)
-        # These take highest priority after CLI args
+        # Layer 4: Environment variable overrides (for debugging)
         env_overrides = {
             "ENTROPI_LOG_LEVEL": "log_level",
         }
@@ -397,15 +360,14 @@ def reload_config(cli_overrides: dict[str, Any] | None = None) -> EntropyConfig:
 
 def save_permission(pattern: str, allow: bool) -> None:
     """
-    Save a permission pattern to the local project config.
+    Save a permission pattern to the project config.
 
     Args:
-        pattern: Permission pattern (e.g., "bash.execute:python -m venv *")
-        allow: True to add to allow list, False to add to deny list
+        pattern: Permission pattern (e.g., "bash.execute:pytest *")
+        allow: True to add to allow list, False to deny list
     """
-    # Find project root
     project_root = find_project_root() or Path.cwd()
-    config_path = project_root / ".entropi" / "config.yaml"
+    config_path = project_root / ".entropi" / "config.local.yaml"
 
     # Load existing config
     config = load_yaml_config(config_path)

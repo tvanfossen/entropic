@@ -41,58 +41,6 @@ class Qwen2Adapter(ChatAdapter):
             for tool in mcp_tools
         ]
 
-    def format_system_prompt(
-        self,
-        base_prompt: str,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> str:
-        """Format system prompt with identity and tool definitions for Qwen 2.5."""
-        # Start with identity (who the assistant is and core behaviors)
-        identity = self._get_identity_prompt()
-        prompt_parts = [identity]
-
-        # Add user-provided base prompt if any
-        if base_prompt:
-            prompt_parts.append(base_prompt)
-
-        if not tools:
-            return "\n\n".join(prompt_parts)
-
-        # Extract tool prefixes for use in parse_tool_calls
-        self._extract_tool_prefixes(tools)
-
-        tools_text = self._format_tools(tools)
-        tool_usage = self._get_tool_usage_prompt()
-
-        prompt_parts.append(tool_usage)
-        prompt_parts.append(tools_text)
-
-        return "\n\n".join(prompt_parts)
-
-    def _format_tools(self, tools: list[dict[str, Any]]) -> str:
-        """Format tool definitions for the prompt."""
-        lines = ["## Available Tools\n"]
-        for tool in tools:
-            name = tool.get("name", "unknown")
-            description = tool.get("description", "No description")
-            schema = tool.get("inputSchema", {})
-
-            lines.append(f"### {name}")
-            lines.append(f"{description}")
-
-            if schema.get("properties"):
-                lines.append("Parameters:")
-                for param, details in schema["properties"].items():
-                    param_type = details.get("type", "any")
-                    param_desc = details.get("description", "")
-                    required = param in schema.get("required", [])
-                    req_marker = " (required)" if required else ""
-                    lines.append(f"  - {param} ({param_type}){req_marker}: {param_desc}")
-
-            lines.append("")
-
-        return "\n".join(lines)
-
     def parse_tool_calls(self, content: str) -> tuple[str, list[ToolCall]]:
         """
         Parse tool calls from Qwen 2.5 output.

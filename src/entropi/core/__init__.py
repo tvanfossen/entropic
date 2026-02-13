@@ -24,7 +24,7 @@ from entropi.core.context import (
     ProjectContext,
     TokenBudget,
 )
-from entropi.core.logging import get_logger, setup_logging
+from entropi.core.logging import get_logger, get_model_logger, setup_logging, setup_model_logger
 from entropi.core.parser import ToolCallParser
 from entropi.core.todos import TodoItem, TodoList, TodoStatus
 
@@ -80,5 +80,7 @@ __all__ = [
     "ToolProvider",
     "ToolResult",
     "get_logger",
+    "get_model_logger",
     "setup_logging",
+    "setup_model_logger",
 ]

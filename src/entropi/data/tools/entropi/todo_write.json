@@ -1,0 +1,64 @@
+{
+  "name": "todo_write",
+  "description": "Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nIMPORTANT:\n- Use 'add' to build the list incrementally\n- Use 'update' with an index to change status\n- Indices are shown in [CURRENT TODO STATE] context",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["add", "update", "remove", "replace"],
+        "description": "Operation: 'add' appends items, 'update' changes an item by index, 'remove' deletes an item by index, 'replace' overwrites the full list"
+      },
+      "todos": {
+        "type": "array",
+        "description": "Items to add or replace (for 'add' and 'replace' actions)",
+        "items": {
+          "type": "object",
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Task description in imperative form"
+            },
+            "active_form": {
+              "type": "string",
+              "description": "Task description in present continuous"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["pending", "in_progress", "completed"]
+            },
+            "target_tier": {
+              "type": "string",
+              "description": "Which tier should execute this todo. Omit for self-directed tasks.",
+              "enum": ["thinking", "normal", "code", "simple"]
+            }
+          },
+          "required": ["content", "status", "active_form"]
+        }
+      },
+      "index": {
+        "type": "integer",
+        "description": "Item index for 'update' and 'remove' actions (shown in todo state as [0], [1], etc.)"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "in_progress", "completed"],
+        "description": "New status (for 'update' action)"
+      },
+      "content": {
+        "type": "string",
+        "description": "New content (for 'update' action)"
+      },
+      "active_form": {
+        "type": "string",
+        "description": "New active form (for 'update' action)"
+      },
+      "target_tier": {
+        "type": "string",
+        "enum": ["thinking", "normal", "code", "simple"],
+        "description": "New target tier (for 'update' action)"
+      }
+    },
+    "required": ["action"]
+  }
+}

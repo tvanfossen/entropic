@@ -1,7 +1,11 @@
 """Tests for agent engine."""
 
+from unittest.mock import MagicMock, patch
+
+import pytest
+from entropi.core.base import Message, ToolCall
 from entropi.core.context import ContextBuilder, TokenBudget
-from entropi.core.engine import AgentState, LoopConfig, LoopContext, LoopMetrics
+from entropi.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
 from entropi.core.parser import ToolCallParser
 
 
@@ -200,3 +204,488 @@ class TestContextBuilder:
         assert "Base prompt" in prompt
         assert "Project Context" in prompt
         assert "Project-specific info here" in prompt
+
+
+class _EngineTestBase:
+    """Shared helper for engine tests that need a mocked engine."""
+
+    def _make_engine(self):
+        """Create an Engine with mocked dependencies."""
+        from entropi.core.directives import DirectiveProcessor
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+        engine.loop_config = LoopConfig()
+        engine._on_state_change = None
+        engine._cached_todo_state = ""
+        engine._directive_processor = DirectiveProcessor()
+        engine._register_directive_handlers()
+        engine._inject_context_warning = MagicMock()
+        engine._on_todo_update = None
+        return engine
+
+
+class TestCompactionAfterToolResults(_EngineTestBase):
+    """Compaction must be checked after each tool result."""
+
+    @pytest.mark.asyncio
+    async def test_compaction_called_after_tool_result(self) -> None:
+        """_check_compaction is called after each tool result."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
+            ToolCall(id="2", name="bash.execute", arguments={"command": "pwd"}),
+        ]
+
+        compaction_calls = []
+
+        async def mock_execute(ctx, tool_call):
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            compaction_calls.append(force)
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert len(messages) == 2
+        # _check_compaction called once per tool result
+        assert len(compaction_calls) == 2
+        assert all(f is False for f in compaction_calls)
+
+
+class TestOverflowRecovery(_EngineTestBase):
+    """Context overflow triggers forced compaction, not error state."""
+
+    @pytest.mark.asyncio
+    async def test_overflow_triggers_forced_compaction(self) -> None:
+        """ValueError with 'exceed context window' triggers forced compaction."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        error = ValueError("Requested tokens (16875) exceed context window of 16384")
+
+        compaction_calls = []
+
+        async def mock_check_compaction(ctx, *, force=False):
+            compaction_calls.append(force)
+
+        engine._check_compaction = mock_check_compaction
+        engine._set_state = MagicMock()
+
+        messages = []
+        async for msg in engine._handle_error(ctx, error):
+            messages.append(msg)
+
+        # Should trigger forced compaction
+        assert len(compaction_calls) == 1
+        assert compaction_calls[0] is True
+        # Should NOT increment error counter
+        assert ctx.consecutive_errors == 0
+        assert ctx.metrics.errors == 0
+        # Should NOT yield any error messages
+        assert len(messages) == 0
+
+    @pytest.mark.asyncio
+    async def test_non_overflow_error_increments_counter(self) -> None:
+        """Non-overflow errors still increment the error counter."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        error = RuntimeError("Some other error")
+        engine._set_state = MagicMock()
+
+        messages = []
+        async for msg in engine._handle_error(ctx, error):
+            messages.append(msg)
+
+        assert ctx.consecutive_errors == 1
+        assert ctx.metrics.errors == 1
+
+
+class TestDirectiveStopsToolProcessing(_EngineTestBase):
+    """Directive stop_processing must halt remaining tool calls."""
+
+    @pytest.mark.asyncio
+    async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
+        """Tool calls after a stop_processing directive are dropped."""
+        import json
+
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
+            ToolCall(id="2", name="entropi.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
+        ]
+
+        executed = []
+
+        async def mock_execute(ctx, tool_call):
+            executed.append(tool_call.name)
+            if tool_call.name == "entropi.handoff":
+                return Message(
+                    role="user",
+                    content=json.dumps(
+                        {
+                            "result": "Handoff requested to code.",
+                            "_directives": [{"type": "stop_processing"}],
+                        }
+                    ),
+                )
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            pass
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert executed == ["bash.execute", "entropi.handoff"]
+        assert len(messages) == 2
+
+    @pytest.mark.asyncio
+    async def test_no_directive_continues_processing(self) -> None:
+        """Tool calls continue when no stop directive is returned."""
+        engine = self._make_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        calls = [
+            ToolCall(id="1", name="entropi.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
+        ]
+
+        executed = []
+
+        async def mock_execute(ctx, tool_call):
+            executed.append(tool_call.name)
+            return Message(role="user", content=f"Result of {tool_call.name}")
+
+        async def mock_check_compaction(ctx, *, force=False):
+            pass
+
+        engine._execute_tool = mock_execute
+        engine._set_state = MagicMock()
+        engine._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._record_tool_call = MagicMock()
+        engine._check_compaction = mock_check_compaction
+
+        messages = []
+        async for msg in engine._process_tool_calls(ctx, calls):
+            messages.append(msg)
+
+        assert executed == ["entropi.handoff", "bash.execute"]
+        assert len(messages) == 2
+
+
+class TestDirectiveTierChange(_EngineTestBase):
+    """Directive tier_change validates routing and updates context."""
+
+    def _make_handoff_engine(self):
+        """Create engine with mocked dependencies for directive testing."""
+        engine = self._make_engine()
+        engine.orchestrator = MagicMock()
+        engine.orchestrator.can_handoff = MagicMock(return_value=True)
+        engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
+        engine._log_assembled_prompt = MagicMock()
+        engine._notify_tier_selected = MagicMock()
+        engine._inject_todo_state = MagicMock()
+        return engine
+
+    def test_tier_change_directive_updates_locked_tier(self) -> None:
+        """tier_change directive updates ctx.locked_tier."""
+        from entropi.core.directives import DirectiveResult
+        from entropi.inference.orchestrator import ModelTier
+
+        engine = self._make_handoff_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+        ctx.locked_tier = ModelTier.THINKING
+
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "code", "reason": "plan ready"},
+            result,
+        )
+
+        assert ctx.locked_tier == ModelTier.CODE
+        assert result.tier_changed is True
+        engine._build_formatted_system_prompt.assert_called_once()
+
+    def test_tier_change_directive_rejects_invalid_tier(self) -> None:
+        """tier_change with invalid tier is a no-op."""
+        from entropi.core.directives import DirectiveResult
+
+        engine = self._make_handoff_engine()
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "nonexistent", "reason": "test"},
+            result,
+        )
+
+        assert result.tier_changed is False
+
+    def test_tier_change_directive_rejects_disallowed_route(self) -> None:
+        """tier_change blocked when orchestrator rejects the route."""
+        from entropi.core.directives import DirectiveResult
+        from entropi.inference.orchestrator import ModelTier
+
+        engine = self._make_handoff_engine()
+        engine.orchestrator.can_handoff = MagicMock(return_value=False)
+
+        ctx = LoopContext(
+            messages=[Message(role="system", content="test")],
+        )
+        ctx.locked_tier = ModelTier.CODE
+
+        result = DirectiveResult()
+        engine._directive_tier_change(
+            ctx,
+            {"tier": "thinking", "reason": "test"},
+            result,
+        )
+
+        assert result.tier_changed is False
+        assert ctx.locked_tier == ModelTier.CODE
+
+
+class TestAutoPruneToolResults:
+    """Auto-prune replaces old tool results with stubs."""
+
+    def _make_engine_with_compaction(self):
+        """Create engine with real compaction config for pruning tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig(tool_result_ttl=2)
+        counter = TokenCounter(max_tokens=16384)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_prune_old_tool_results(self) -> None:
+        """Tool results older than TTL are replaced with stubs."""
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="file contents here...",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 0, "tool_name": "filesystem.read_file"},
+                ),
+                Message(role="assistant", content="I see the file."),
+                Message(
+                    role="user",
+                    content="another file",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 2, "tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+        ctx.metrics.iterations = (
+            3  # TTL=2: iteration 0 is stale (age 3), iteration 2 is fresh (age 1)
+        )
+
+        engine._prune_old_tool_results(ctx)
+
+        # First tool result (iteration 0, age=3) should be pruned
+        assert ctx.messages[1].content.startswith("[Previous:")
+        assert "filesystem.read_file" in ctx.messages[1].content
+        # Second tool result (iteration 2, age=1) should still be intact
+        assert ctx.messages[3].content == "another file"
+
+    def test_prune_preserves_recent(self) -> None:
+        """Tool results within TTL are preserved."""
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="recent file",
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"added_at_iteration": 2, "tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+        ctx.metrics.iterations = 3  # TTL=2, iteration 2 is within TTL
+
+        engine._prune_old_tool_results(ctx)
+
+        assert ctx.messages[1].content == "recent file"
+
+
+class TestPruneDirective:
+    """prune_messages directive prunes old tool results."""
+
+    def _make_engine_with_compaction(self):
+        """Create engine with compaction manager for prune tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig()
+        counter = TokenCounter(max_tokens=16384)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_prune_directive_replaces_old_results(self) -> None:
+        """prune_messages directive replaces old tool results with stubs."""
+        from entropi.core.directives import DirectiveResult
+
+        engine = self._make_engine_with_compaction()
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="system"),
+                Message(
+                    role="user",
+                    content="x" * 1000,
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"tool_name": "filesystem.read_file"},
+                ),
+                Message(role="assistant", content="noted"),
+                Message(
+                    role="user",
+                    content="y" * 500,
+                    tool_results=[{"name": "bash", "result": "..."}],
+                    metadata={"tool_name": "bash.execute"},
+                ),
+                Message(
+                    role="user",
+                    content="z" * 200,
+                    tool_results=[{"name": "read_file", "result": "..."}],
+                    metadata={"tool_name": "filesystem.read_file"},
+                ),
+            ],
+        )
+
+        result = DirectiveResult()
+        engine._directive_prune_messages(ctx, {"keep_recent": 1}, result)
+
+        # Oldest 2 tool results pruned, newest 1 kept
+        assert ctx.messages[1].content.startswith("[Previous:")
+        assert ctx.messages[3].content.startswith("[Previous:")
+        assert ctx.messages[4].content == "z" * 200  # Kept
+
+
+class TestContextWarningInjection:
+    """Context warning injected when usage exceeds threshold."""
+
+    def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
+        """Create engine with compaction for warning tests."""
+        from entropi.config.schema import CompactionConfig
+        from entropi.core.compaction import CompactionManager, TokenCounter
+
+        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+            engine = AgentEngine.__new__(AgentEngine)
+
+        config = CompactionConfig(warning_threshold_percent=threshold)
+        counter = TokenCounter(max_tokens=max_tokens)
+        engine._compaction_manager = CompactionManager(config, counter)
+        return engine
+
+    def test_warning_injected_above_threshold(self) -> None:
+        """Warning message injected when context usage exceeds threshold."""
+        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+
+        # Create context that uses ~70% (well above 50% threshold)
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="x" * 100),
+                Message(role="user", content="y" * 100),
+                Message(role="assistant", content="z" * 100),
+            ],
+        )
+        ctx.metrics.iterations = 1
+        initial_count = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+
+        assert len(ctx.messages) == initial_count + 1
+        assert "[CONTEXT WARNING]" in ctx.messages[-1].content
+        assert ctx.metadata["last_warning_iteration"] == 1
+
+    def test_warning_not_repeated_same_iteration(self) -> None:
+        """Warning not injected twice in same iteration."""
+        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="x" * 100),
+                Message(role="user", content="y" * 100),
+            ],
+        )
+        ctx.metrics.iterations = 1
+
+        engine._inject_context_warning(ctx)
+        count_after_first = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+        assert len(ctx.messages) == count_after_first  # No new message
+
+    def test_no_warning_below_threshold(self) -> None:
+        """No warning when context usage is below threshold."""
+        engine = self._make_engine_with_compaction(max_tokens=10000, threshold=0.6)
+
+        ctx = LoopContext(
+            messages=[
+                Message(role="system", content="short"),
+                Message(role="user", content="hello"),
+            ],
+        )
+        ctx.metrics.iterations = 1
+        initial_count = len(ctx.messages)
+
+        engine._inject_context_warning(ctx)
+
+        assert len(ctx.messages) == initial_count

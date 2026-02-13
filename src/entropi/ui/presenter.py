@@ -111,6 +111,28 @@ class Presenter(ABC):
         """
         _ = (on_enter, on_exit)
 
+    # === Tier Display ===
+
+    def set_tier(self, tier: str) -> None:
+        """Set the active model tier for display.
+
+        Optional - implementations may no-op if tier display not supported.
+
+        Args:
+            tier: Tier name (e.g., 'code', 'thinking', 'normal', 'simple')
+        """
+        _ = tier
+
+    def show_routing_info(self, info_text: str) -> None:
+        """Display routing decision info.
+
+        Optional - implementations may no-op or log only.
+
+        Args:
+            info_text: Formatted routing info string
+        """
+        _ = info_text
+
     # === Generation Lifecycle ===
 
     @abstractmethod

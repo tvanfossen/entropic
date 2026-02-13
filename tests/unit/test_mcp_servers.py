@@ -106,6 +106,60 @@ class TestFilesystemServer:
         assert (tmp_path / "insert.txt").read_text() == "line1\ninserted\nline2\n"
 
 
+class TestFilesystemSizeGate:
+    """File size gate blocks oversized reads."""
+
+    @pytest.fixture
+    def server(self, tmp_path: Path) -> FilesystemServer:
+        """Create server with a small max_read_bytes for testing."""
+        from entropi.config.schema import FilesystemConfig
+
+        config = FilesystemConfig(max_read_bytes=1000)
+        return FilesystemServer(tmp_path, config=config)
+
+    @pytest.mark.asyncio
+    async def test_blocks_oversized_file(self, server: FilesystemServer, tmp_path: Path) -> None:
+        """File larger than max_read_bytes is blocked."""
+        import json
+
+        (tmp_path / "big.txt").write_text("x" * 2000)
+        result = await server._read_file("big.txt")
+        data = json.loads(result)
+        assert data["blocked"] is True
+        assert "2,000" in data["reason"]
+        assert "entropi.todo_write" in data["suggestion"]
+
+    @pytest.mark.asyncio
+    async def test_allows_small_file(self, server: FilesystemServer, tmp_path: Path) -> None:
+        """File within max_read_bytes is read normally."""
+        import json
+
+        (tmp_path / "small.txt").write_text("hello")
+        result = await server._read_file("small.txt")
+        data = json.loads(result)
+        assert "blocked" not in data
+        assert data["path"] == "small.txt"
+        assert "bytes" in data
+
+
+class TestSkipDuplicateCheck:
+    """skip_duplicate_check hook for side-effect tools."""
+
+    def test_filesystem_read_skips_duplicate(self) -> None:
+        """read_file should always execute (side effect: FileAccessTracker)."""
+        assert FilesystemServer.skip_duplicate_check("read_file") is True
+
+    def test_filesystem_write_does_not_skip(self) -> None:
+        """write_file should use duplicate detection."""
+        assert FilesystemServer.skip_duplicate_check("write_file") is False
+
+    def test_base_server_default(self) -> None:
+        """BaseMCPServer default is False (no skip)."""
+        from entropi.mcp.servers.base import BaseMCPServer
+
+        assert BaseMCPServer.skip_duplicate_check("any_tool") is False
+
+
 class TestBashServer:
     """Tests for bash server."""
 

@@ -4,7 +4,7 @@ SmolLM3 adapter.
 SmolLM3 uses ChatML format with the same tool call conventions as Qwen3:
 - <tool_call>{"name": "...", "arguments": {...}}</tool_call> for tool calls
 
-SmolLM3 is a smaller model optimized for quick responses. It uses system.handoff
+SmolLM3 is a smaller model optimized for quick responses. It uses entropi.handoff
 to transfer complex tasks to other tiers - no special detection needed here.
 """
 

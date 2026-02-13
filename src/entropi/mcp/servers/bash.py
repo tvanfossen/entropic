@@ -11,7 +11,7 @@ from typing import Any
 
 from mcp.types import Tool
 
-from entropi.mcp.servers.base import BaseMCPServer, create_tool, load_tool_description
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 
 
 class BashServer(BaseMCPServer):
@@ -56,22 +56,22 @@ class BashServer(BaseMCPServer):
     def get_tools(self) -> list[Tool]:
         """Get available bash tools."""
         return [
-            create_tool(
-                name="execute",
-                description=load_tool_description("execute", "bash"),
-                properties={
-                    "command": {
-                        "type": "string",
-                        "description": "Command to execute",
-                    },
-                    "working_dir": {
-                        "type": "string",
-                        "description": "Working directory (optional)",
-                    },
-                },
-                required=["command"],
-            ),
+            load_tool_definition("execute", "bash"),
         ]
+
+    @staticmethod
+    def get_permission_pattern(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """Generate base-command-level permission pattern.
+
+        Extracts the base command so "Always Allow" on `ls -la /foo`
+        saves `bash.execute:ls *` — allowing all `ls` but not `rm`.
+        """
+        command = arguments.get("command", "")
+        base_cmd = command.split()[0] if command.strip() else "*"
+        return f"{tool_name}:{base_cmd} *"
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
         """Execute a bash tool."""

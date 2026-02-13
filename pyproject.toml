@@ -74,7 +74,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "ui/*.tcss"]
+entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json", "ui/*.tcss"]
 
 [tool.black]
 line-length = 100

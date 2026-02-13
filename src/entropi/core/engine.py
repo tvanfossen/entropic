@@ -21,16 +21,17 @@ from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message, ToolCall
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
-from entropi.core.logging import get_logger
+from entropi.core.directives import DirectiveProcessor, DirectiveResult, extract_directives
+from entropi.core.logging import get_logger, get_model_logger
 from entropi.core.queue import MessageSource
-from entropi.core.todos import TODO_SYSTEM_PROMPT, TODO_TOOL_DEFINITION, TodoList
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
 
 if TYPE_CHECKING:
     pass
 
 logger = get_logger("core.engine")
+model_logger = get_model_logger()
 
 
 class AgentState(Enum):
@@ -114,6 +115,11 @@ class LoopContext:
     # External task tracking (for MCP integration)
     task_id: str | None = None  # Associated task ID if from external source
     source: str = MessageSource.HUMAN  # Message source (human, claude-code)
+    # Stored for system prompt rebuild on tier change
+    all_tools: list[dict[str, Any]] = field(default_factory=list)
+    base_system: str = ""
+    # General-purpose metadata for runtime state (e.g., warning tracking)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -135,10 +141,12 @@ class EngineCallbacks:
     on_stream_chunk: Callable[[str], None] | None = None
     on_tool_start: Callable[[ToolCall], None] | None = None
     on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-    on_todo_update: Callable[[TodoList], None] | None = None
+    on_todo_update: Callable[[dict[str, Any]], None] | None = None
     on_compaction: Callable[[CompactionResult], None] | None = None
     on_pause_prompt: Callable[[str], Any] | None = None
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
+    on_tier_selected: Callable[[str], None] | None = None
+    on_routing_complete: Callable[[RoutingResult], None] | None = None
 
 
 class AgentEngine:
@@ -185,8 +193,12 @@ class AgentEngine:
         # Callback for pause/inject prompting
         self._on_pause_prompt: Callable[[str], Any] | None = None
 
-        # Todo list for agentic task tracking
-        self._todo_list = TodoList()
+        # Cached todo state (updated via todo_state_changed directive)
+        self._cached_todo_state: str = ""
+
+        # Directive processor for tool-to-engine communication
+        self._directive_processor = DirectiveProcessor()
+        self._register_directive_handlers()
 
         # Compaction manager for context management
         max_tokens = self._get_max_context_tokens()
@@ -203,10 +215,140 @@ class AgentEngine:
         self._on_stream_chunk: Callable[[str], None] | None = None
         self._on_tool_start: Callable[[ToolCall], None] | None = None
         self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-        self._on_todo_update: Callable[[TodoList], None] | None = None
+        self._on_todo_update: Callable[[dict[str, Any]], None] | None = None
         self._on_compaction: Callable[[CompactionResult], None] | None = None
         # Task tracking callback for external MCP integration
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
+        self._on_tier_selected: Callable[[str], None] | None = None
+        self._on_routing_complete: Callable[[RoutingResult], None] | None = None
+
+    def _register_directive_handlers(self) -> None:
+        """Register handlers for all known directive types."""
+        from entropi.core.directives import (
+            CLEAR_SELF_TODOS,
+            INJECT_CONTEXT,
+            PRUNE_MESSAGES,
+            STOP_PROCESSING,
+            TIER_CHANGE,
+            TODO_STATE_CHANGED,
+        )
+
+        self._directive_processor.register(STOP_PROCESSING, self._directive_stop_processing)
+        self._directive_processor.register(TIER_CHANGE, self._directive_tier_change)
+        self._directive_processor.register(CLEAR_SELF_TODOS, self._directive_clear_self_todos)
+        self._directive_processor.register(INJECT_CONTEXT, self._directive_inject_context)
+        self._directive_processor.register(PRUNE_MESSAGES, self._directive_prune_messages)
+        self._directive_processor.register(TODO_STATE_CHANGED, self._directive_todo_state_changed)
+
+    def _directive_stop_processing(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle stop_processing directive."""
+        logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
+        result.stop_processing = True
+
+    def _directive_tier_change(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle tier_change directive — validate and execute tier switch."""
+        from entropi.inference.orchestrator import ModelTier
+
+        target_tier_str = params.get("tier", "")
+        reason = params.get("reason", "")
+
+        try:
+            target_tier = ModelTier(target_tier_str)
+        except ValueError:
+            logger.error(f"[DIRECTIVE] Invalid tier in tier_change: {target_tier_str}")
+            return
+
+        if not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
+            current_name = ctx.locked_tier.value if ctx.locked_tier else "none"
+            logger.warning(
+                f"[DIRECTIVE] Handoff not permitted: {current_name} -> {target_tier_str}"
+            )
+            return
+
+        current_tier = ctx.locked_tier
+        ctx.locked_tier = target_tier
+        result.tier_changed = True
+
+        # Rebuild system prompt for new tier
+        ctx.messages[0] = Message(
+            role="system",
+            content=self._build_formatted_system_prompt(target_tier, ctx),
+        )
+
+        current_name = current_tier.value if current_tier else "none"
+        model_logger.info(
+            f"\n{'#' * 70}\n"
+            f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
+            f"{'#' * 70}"
+        )
+        self._log_assembled_prompt(ctx, "handoff")
+        self._notify_tier_selected(target_tier_str)
+
+        # Inject cached todo state for new tier's awareness
+        self._inject_todo_state(ctx)
+
+        logger.info(f"[DIRECTIVE] tier_change: {current_name} -> {target_tier_str}")
+
+    def _directive_clear_self_todos(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle clear_self_todos directive — not applicable in directive arch.
+
+        In the directive architecture, the EntropiServer owns the TodoList
+        and clears self-todos internally during handoff. This directive is
+        a no-op on the engine side (the server already did the work).
+        """
+        logger.debug("[DIRECTIVE] clear_self_todos acknowledged")
+
+    def _directive_inject_context(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle inject_context directive — add message to context."""
+        content = params.get("content", "")
+        if content:
+            result.injected_messages.append(Message(role="user", content=content))
+            logger.info(f"[DIRECTIVE] inject_context: {content[:80]}")
+
+    def _directive_prune_messages(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle prune_messages directive — prune old tool results."""
+        keep_recent = params.get("keep_recent", 2)
+        pruned_count, freed_chars = self._prune_tool_results(ctx, keep_recent)
+        logger.info(
+            f"[DIRECTIVE] prune_messages: pruned {pruned_count} results "
+            f"(~{freed_chars // 4} tokens freed)"
+        )
+
+    def _directive_todo_state_changed(
+        self,
+        ctx: LoopContext,
+        params: dict[str, Any],
+        result: DirectiveResult,
+    ) -> None:
+        """Handle todo_state_changed directive — cache state, notify TUI."""
+        self._cached_todo_state = params.get("state", "")
+        if self._on_todo_update:
+            self._on_todo_update(params)
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -262,11 +404,8 @@ class AgentEngine:
         self._on_compaction = callbacks.on_compaction
         self._on_pause_prompt = callbacks.on_pause_prompt
         self._on_tool_record = callbacks.on_tool_record
-
-    @property
-    def todo_list(self) -> TodoList:
-        """Get the current todo list."""
-        return self._todo_list
+        self._on_tier_selected = callbacks.on_tier_selected
+        self._on_routing_complete = callbacks.on_routing_complete
 
     async def run(
         self,
@@ -301,24 +440,27 @@ class AgentEngine:
 
         # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
-        # Add internal todo tool
-        tools.append(TODO_TOOL_DEFINITION)
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
-        # Build system prompt with todo guidance appended
-        base_with_todos = (system_prompt or "") + TODO_SYSTEM_PROMPT
-        system = self._context_builder.build_system_prompt(base_with_todos)
+        # Build base system prompt (before adapter formatting)
+        system = self._context_builder.build_system_prompt(system_prompt or "")
 
-        # Format system prompt with tools through adapter
-        formatted_system = self.orchestrator.get_adapter().format_system_prompt(system, tools)
+        # Store on ctx for system prompt rebuild on tier change
+        ctx.all_tools = tools
+        ctx.base_system = system
 
-        ctx.messages = [Message(role="system", content=formatted_system)]
-        logger.info(f"System prompt size: ~{len(formatted_system) // 4} tokens")
+        # Placeholder system message — rebuilt with tier-filtered tools in _lock_tier_if_needed
+        ctx.messages = [Message(role="system", content=system)]
 
         if history:
             ctx.messages.extend(history)
 
-        ctx.messages.append(Message(role="user", content=user_message))
+        user_msg = Message(role="user", content=user_message)
+        user_msg.metadata["source"] = "user"
+        ctx.messages.append(user_msg)
+
+        # Inject todo state from previous runs (survives across run() calls)
+        self._inject_todo_state(ctx)
 
         # Log user prompt for debugging
         logger.info(f"\n{'=' * 60}\n[USER PROMPT]\n{'=' * 60}\n{user_message}\n{'=' * 60}")
@@ -326,7 +468,7 @@ class AgentEngine:
         self._set_state(ctx, AgentState.PLANNING)
 
         try:
-            async for message in self._loop(ctx, tools):
+            async for message in self._loop(ctx):
                 yield message
         finally:
             ctx.metrics.end_time = time.time()
@@ -339,7 +481,6 @@ class AgentEngine:
     async def _loop(
         self,
         ctx: LoopContext,
-        tools: list[dict[str, Any]],
     ) -> AsyncIterator[Message]:
         """Main loop implementation."""
         while not self._should_stop(ctx):
@@ -372,6 +513,9 @@ class AgentEngine:
         try:
             # Refresh context limit in case model changed
             self._refresh_context_limit()
+
+            # Prune old tool results before compaction check
+            self._prune_old_tool_results(ctx)
 
             # Check for compaction before generating
             await self._check_compaction(ctx)
@@ -413,75 +557,166 @@ class AgentEngine:
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
-    async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
-        """Generate model response, streaming or not."""
-        logger.debug(f"Generating response (stream={self.loop_config.stream_output})")
-
-        if self.loop_config.stream_output:
-            # Streaming mode - tools will be parsed from content after streaming
-            content = ""
-
-            # Use locked tier if set, otherwise let orchestrator auto-route
-            async for chunk in self.orchestrator.generate_stream(
-                ctx.messages, tier=ctx.locked_tier
-            ):
-                # Check for pause request during streaming
-                if self._pause_event.is_set():
-                    logger.info("Generation paused by user")
-                    content = await self._handle_pause(ctx, content)
-                    # After handling pause, check if we should continue or abort
-                    if self._interrupt_event.is_set():
-                        break
-
-                content += chunk
-
-                # Pass ALL content to callback (including think blocks)
-                # UI layer handles styling of think blocks
-                if self._on_stream_chunk:
-                    self._on_stream_chunk(chunk)
-
-            logger.debug("\n=== Stream complete ===")
-            logger.debug(f"Total content length: {len(content)}")
-
-            # Log COMPLETE raw model output including thinking blocks
-            logger.info(
-                f"\n{'=' * 70}\n"
-                f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
-                f"{'=' * 70}\n"
-                f"{content}\n"
-                f"{'=' * 70}"
-            )
-
-            # Lock tier after first generation to prevent mid-task model switching
-            if ctx.locked_tier is None:
-                ctx.locked_tier = self.orchestrator.last_used_tier
-                logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
-
-            cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
-            logger.debug(f"After parsing: {len(tool_calls)} tool calls found")
-            return cleaned_content, tool_calls
-
-        # Non-streaming mode - use locked tier if set
-        result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
-
-        # Log COMPLETE raw model output including thinking blocks
-        logger.info(
+    def _log_model_output(
+        self,
+        ctx: LoopContext,
+        raw_content: str,
+        cleaned_content: str,
+        tool_calls: list[ToolCall],
+        finish_reason: str,
+    ) -> None:
+        """Log raw and parsed model output to dedicated model log."""
+        # Detailed raw + parsed output to dedicated model log
+        model_logger.info(
             f"\n{'=' * 70}\n"
-            f"[MODEL OUTPUT - Turn {ctx.metrics.iterations}]\n"
+            f"[TURN {ctx.metrics.iterations}] finish_reason={finish_reason}\n"
             f"{'=' * 70}\n"
-            f"{result.content}\n"
+            f"--- RAW OUTPUT ---\n"
+            f"{raw_content}\n"
+            f"--- PARSED ---\n"
+            f"cleaned_content_len={len(cleaned_content)}\n"
+            f"tool_calls={len(tool_calls)}: {[tc.name for tc in tool_calls]}\n"
             f"{'=' * 70}"
         )
+        # Summary only in session.log
+        logger.info(
+            f"[MODEL OUTPUT] Turn {ctx.metrics.iterations} | "
+            f"finish_reason={finish_reason} | "
+            f"raw_len={len(raw_content)} | "
+            f"cleaned_len={len(cleaned_content)} | "
+            f"tool_calls={len(tool_calls)}"
+        )
 
-        # Lock tier after first generation to prevent mid-task model switching
-        if ctx.locked_tier is None:
-            ctx.locked_tier = self.orchestrator.last_used_tier
-            logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+    def _log_assembled_prompt(self, ctx: LoopContext, event: str) -> None:
+        """Log complete assembled prompt. Called at routing and handoff only."""
+        tier_value = ctx.locked_tier.value if ctx.locked_tier else "none"
+        model_logger.info(
+            f"\n{'~' * 70}\n"
+            f"[PROMPT] event={event} tier={tier_value} "
+            f"messages={len(ctx.messages)}\n"
+            f"{'~' * 70}"
+        )
+        for i, msg in enumerate(ctx.messages):
+            model_logger.info(f"  [{i}] {msg.role} ({len(msg.content)} chars):\n{msg.content}")
+        model_logger.info(f"{'~' * 70}")
+
+    def _filter_tools_for_tier(
+        self, tools: list[dict[str, Any]], tier: Any
+    ) -> list[dict[str, Any]]:
+        """Filter tool list based on tier's allowed_tools config.
+
+        Args:
+            tools: Full tool list
+            tier: ModelTier to filter for
+
+        Returns:
+            Filtered tool list (unchanged if tier allows all tools)
+        """
+        allowed = self.orchestrator.get_allowed_tools(tier)
+        if allowed is None:
+            return tools
+        return [t for t in tools if t["name"] in allowed]
+
+    def _build_formatted_system_prompt(self, tier: Any, ctx: LoopContext) -> str:
+        """Build system prompt formatted for a specific tier's adapter.
+
+        Args:
+            tier: ModelTier to build prompt for
+            ctx: Loop context with base_system and all_tools
+
+        Returns:
+            Formatted system prompt string
+        """
+        filtered = self._filter_tools_for_tier(ctx.all_tools, tier)
+        adapter = self.orchestrator.get_adapter(tier)
+        return adapter.format_system_prompt(ctx.base_system, filtered)
+
+    async def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
+        """Route and lock tier before first generation, emitting callbacks."""
+        if ctx.locked_tier is not None:
+            return
+        # Route to determine tier before generation starts
+        tier = await self.orchestrator.route(ctx.messages)
+        ctx.locked_tier = tier
+        logger.debug(f"Locked tier for loop: {ctx.locked_tier}")
+
+        # Rebuild system prompt for the routed tier's adapter and tool filter
+        formatted = self._build_formatted_system_prompt(tier, ctx)
+        ctx.messages[0] = Message(role="system", content=formatted)
+        logger.info(f"System prompt size: ~{len(formatted) // 4} tokens")
+
+        # Log routing decision and full assembled prompt to model log
+        model_logger.info(f"\n{'#' * 70}\n" f"[ROUTED] tier={tier.value}\n" f"{'#' * 70}")
+        self._log_assembled_prompt(ctx, "routed")
+
+        if self._on_tier_selected:
+            self._on_tier_selected(tier.value)
+        routing_result = self.orchestrator.last_routing_result
+        if routing_result and self._on_routing_complete:
+            self._on_routing_complete(routing_result)
+
+    def _notify_tier_selected(self, tier_value: str) -> None:
+        """Notify callback of tier selection (for handoff)."""
+        if self._on_tier_selected:
+            self._on_tier_selected(tier_value)
+
+    async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
+        """Generate model response, streaming or not.
+
+        Routes first (if no tier locked), emits routing callback,
+        then generates with the resolved tier.
+        """
+        logger.debug(f"Generating response (stream={self.loop_config.stream_output})")
+
+        # Route and lock tier before generation starts
+        await self._lock_tier_if_needed(ctx)
+
+        if self.loop_config.stream_output:
+            return await self._generate_streaming(ctx)
+
+        return await self._generate_non_streaming(ctx)
+
+    async def _generate_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
+        """Generate response via streaming."""
+        content = ""
+
+        async for chunk in self.orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
+            if self._pause_event.is_set():
+                logger.info("Generation paused by user")
+                content = await self._handle_pause(ctx, content)
+                if self._interrupt_event.is_set():
+                    break
+
+            content += chunk
+
+            if self._on_stream_chunk:
+                self._on_stream_chunk(chunk)
+
+        logger.debug(f"Stream complete: {len(content)} chars")
+
+        cleaned_content, tool_calls = self.orchestrator.get_adapter().parse_tool_calls(content)
+        self._log_model_output(
+            ctx,
+            raw_content=content,
+            cleaned_content=cleaned_content,
+            tool_calls=tool_calls,
+            finish_reason=self.orchestrator.last_finish_reason,
+        )
+        return cleaned_content, tool_calls
+
+    async def _generate_non_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
+        """Generate response without streaming."""
+        result = await self.orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
+
+        self._log_model_output(
+            ctx,
+            raw_content=result.content,
+            cleaned_content=result.content,
+            tool_calls=result.tool_calls,
+            finish_reason=result.finish_reason,
+        )
 
         ctx.metrics.tokens_used += result.token_count
-        logger.debug(
-            f"Non-stream response: {len(result.content)} chars, {len(result.tool_calls)} tool calls"
-        )
         return result.content, result.tool_calls
 
     async def _handle_pause(self, ctx: LoopContext, partial_content: str) -> str:
@@ -639,11 +874,27 @@ class AgentEngine:
 
             logger.debug(f"Executing tool {i + 1}/{len(limited_calls)}: {tool_call.name}")
             msg = await self._execute_tool(ctx, tool_call)
+            # Tag tool results with iteration for auto-pruning
+            if msg.tool_results:
+                msg.metadata["added_at_iteration"] = ctx.metrics.iterations
+                msg.metadata["tool_name"] = tool_call.name
             ctx.messages.append(msg)
             yield msg
 
             # Track this tool call for duplicate detection
             self._record_tool_call(ctx, tool_call, msg)
+
+            # Check compaction after each tool result to catch large results
+            await self._check_compaction(ctx)
+
+            # Warn if context usage is high after this tool result
+            self._inject_context_warning(ctx)
+
+            # Process directives from tool result (tier changes, pruning, etc.)
+            directive_result = self._process_directives(ctx, msg)
+            if directive_result.stop_processing:
+                logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
+                return
 
         ctx.consecutive_errors = 0
 
@@ -654,10 +905,8 @@ class AgentEngine:
 
     def _check_duplicate_tool_call(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
         """Check if this tool call is a duplicate. Returns previous result if duplicate."""
-        # Never skip read_file - it has side effects (updates FileAccessTracker)
-        # Without this exemption, re-reads after TTL expiry get blocked as "duplicate"
-        # but the tracker doesn't update, so subsequent edits still fail with read_required
-        if tool_call.name == "filesystem.read_file":
+        # Delegate to server's skip_duplicate_check for tools with side effects
+        if self.server_manager.skip_duplicate_check(tool_call):
             return None
 
         key = self._get_tool_call_key(tool_call)
@@ -685,27 +934,45 @@ Do NOT call this tool again. Use the previous result above."""
         return Message(role="user", content=content)
 
     async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Execute a single tool call."""
+        """Execute a single tool call.
+
+        All tools go through the same path: approval → start callback →
+        execute via ServerManager → complete callback. No tool-specific
+        handlers in the engine.
+        """
         logger.info(f"[TOOL CALL] {tool_call.name}")
         logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
-
-        # Handle internal tools first (no approval needed)
-        internal_handlers = {
-            "entropi.todo_write": lambda: self._handle_todo_tool(tool_call),
-            "system.handoff": lambda: self._handle_handoff(ctx, tool_call),
-        }
-        if handler := internal_handlers.get(tool_call.name):
-            result = handler()
-            return await result if asyncio.iscoroutine(result) else result
 
         # Check approval (returns denial message if not approved)
         if denial_msg := await self._check_tool_approval(tool_call):
             return denial_msg
 
-        # Execute the tool
+        # Execute the tool (all tools, including entropi.*, go through ServerManager)
         if self._on_tool_start:
             self._on_tool_start(tool_call)
         return await self._do_execute_tool(ctx, tool_call)
+
+    def _process_directives(self, ctx: LoopContext, msg: Message) -> DirectiveResult:
+        """Extract and process directives from a tool result message.
+
+        Args:
+            ctx: Current loop context
+            msg: Tool result message (may contain JSON with _directives)
+
+        Returns:
+            Aggregate directive result
+        """
+        directives = extract_directives(msg.content)
+        if not directives:
+            return DirectiveResult()
+
+        result = self._directive_processor.process(ctx, directives)
+
+        # Append any injected messages to context
+        for injected in result.injected_messages:
+            ctx.messages.append(injected)
+
+        return result
 
     async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
         """Check tool approval. Returns denial message if not approved, None if approved."""
@@ -848,24 +1115,15 @@ Do NOT call this tool again. Use the previous result above."""
         return allowed
 
     def _get_permission_pattern(self, tool_call: ToolCall) -> str:
-        """Generate a permission pattern for a tool call.
+        """Generate permission pattern via server class inheritance.
 
-        For bash commands, uses the command as the pattern.
-        For file operations, uses the path.
+        Delegates to ServerManager which routes to the server
+        class's get_permission_pattern() for proper granularity.
         """
-        tool_name = tool_call.name
-        args = tool_call.arguments
-
-        # For bash.execute, use the command
-        if tool_name == "bash.execute" and "command" in args:
-            return f"{tool_name}:{args['command']}"
-
-        # For filesystem operations, use the path
-        if tool_name.startswith("filesystem.") and "path" in args:
-            return f"{tool_name}:{args['path']}"
-
-        # Default: just the tool name with wildcard
-        return f"{tool_name}:*"
+        return self.server_manager.get_permission_pattern(
+            tool_call.name,
+            tool_call.arguments,
+        )
 
     def _create_denied_message(self, tool_call: ToolCall, reason: str) -> Message:
         """Create a permission denied message.
@@ -894,69 +1152,106 @@ RECOVERY:
 
         return Message(role="user", content=content)
 
-    def _handle_todo_tool(self, tool_call: ToolCall) -> Message:
-        """Handle the internal entropi.todo_write tool call."""
-        logger.debug(f"Handling internal todo tool: {tool_call.arguments}")
+    def _prune_tool_results(self, ctx: LoopContext, keep_recent: int) -> tuple[int, int]:
+        """Replace old tool results with stubs. Returns (pruned_count, freed_chars)."""
+        # Find all tool result messages (newest first for keep_recent logic)
+        tool_result_indices = [i for i, msg in enumerate(ctx.messages) if msg.tool_results]
 
-        todos = tool_call.arguments.get("todos", [])
-        result = self._todo_list.update_from_tool_call(todos)
+        # Keep the most recent N
+        to_prune = tool_result_indices[:-keep_recent] if keep_recent > 0 else tool_result_indices
 
-        # Notify UI of todo update
-        if self._on_todo_update:
-            self._on_todo_update(self._todo_list)
+        pruned_count = 0
+        freed_chars = 0
+        for idx in to_prune:
+            msg = ctx.messages[idx]
+            # Skip already-pruned messages
+            if msg.content.startswith("[Previous:"):
+                continue
 
-        return Message(
-            role="tool",
-            content=result,
-            tool_results=[
-                {
-                    "call_id": tool_call.id,
-                    "name": tool_call.name,
-                    "result": result,
-                }
-            ],
-        )
+            tool_name = msg.metadata.get("tool_name", "unknown")
+            char_count = len(msg.content)
+            freed_chars += char_count
 
-    async def _handle_handoff(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Handle the system.handoff tool call for tier switching."""
-        from entropi.inference.orchestrator import ModelTier
-
-        target_tier_str = tool_call.arguments.get("target_tier", "")
-        reason = tool_call.arguments.get("reason", "")
-
-        logger.info(f"[HANDOFF] Request: {ctx.locked_tier} -> {target_tier_str} ({reason})")
-
-        # Validate target tier
-        try:
-            target_tier = ModelTier(target_tier_str)
-        except ValueError:
-            error_msg = f"Invalid target tier: {target_tier_str}"
-            logger.warning(f"[HANDOFF] {error_msg}")
-            return self._create_error_message(tool_call, error_msg)
-
-        # Get current tier (may be None if not locked yet)
-        current_tier = ctx.locked_tier
-
-        # Validate routing rules
-        if not self.orchestrator.can_handoff(current_tier, target_tier):
-            current_name = current_tier.value if current_tier else "none"
-            error_msg = (
-                f"Handoff not permitted: {current_name} cannot hand off to {target_tier_str}"
+            stub = f"[Previous: {tool_name} result — {char_count} chars, pruned to save context]"
+            ctx.messages[idx] = Message(
+                role=msg.role,
+                content=stub,
+                metadata=msg.metadata,
             )
-            logger.warning(f"[HANDOFF] {error_msg}")
-            return self._create_error_message(tool_call, error_msg)
+            pruned_count += 1
 
-        # Update the locked tier - next generation will use the new tier
-        ctx.locked_tier = target_tier
-        logger.info(f"[HANDOFF] Success: Now using {target_tier_str} tier")
+        if pruned_count > 0:
+            self._compaction_manager.counter.clear_cache()
 
-        # Uses role="user" because llama-cpp doesn't render role="tool" properly
-        content = f"Handoff successful. Now operating as {target_tier_str} tier. Reason: {reason}"
+        return pruned_count, freed_chars
 
-        return Message(role="user", content=content)
+    def _prune_old_tool_results(self, ctx: LoopContext) -> None:
+        """Auto-prune tool results older than TTL iterations."""
+        ttl = self._compaction_manager.config.tool_result_ttl
+        current_iteration = ctx.metrics.iterations
+
+        pruned = 0
+        for i, msg in enumerate(ctx.messages):
+            if not msg.tool_results:
+                continue
+            if msg.content.startswith("[Previous:"):
+                continue
+
+            added_at = msg.metadata.get("added_at_iteration")
+            if added_at is None:
+                continue
+
+            if current_iteration - added_at >= ttl:
+                tool_name = msg.metadata.get("tool_name", "unknown")
+                char_count = len(msg.content)
+                stub = (
+                    f"[Previous: {tool_name} result — {char_count} chars, pruned to save context]"
+                )
+                ctx.messages[i] = Message(
+                    role=msg.role,
+                    content=stub,
+                    metadata=msg.metadata,
+                )
+                pruned += 1
+
+        if pruned > 0:
+            self._compaction_manager.counter.clear_cache()
+            logger.info(f"[AUTO-PRUNE] Pruned {pruned} tool results (TTL={ttl} iterations)")
+
+    def _inject_context_warning(self, ctx: LoopContext) -> None:
+        """Inject context usage warning if over threshold."""
+        threshold = self._compaction_manager.config.warning_threshold_percent
+        usage = self._compaction_manager.counter.usage_percent(ctx.messages)
+
+        if usage < threshold:
+            return
+
+        # Don't repeat warning in same iteration
+        last_warned = ctx.metadata.get("last_warning_iteration")
+        if last_warned == ctx.metrics.iterations:
+            return
+
+        max_tokens = self._compaction_manager.counter.max_tokens
+        current_tokens = self._compaction_manager.counter.count_messages(ctx.messages)
+        pct = int(usage * 100)
+
+        warning = (
+            f"[CONTEXT WARNING] Context at {pct}% capacity ({current_tokens}/{max_tokens} tokens). "
+            f"Capture findings with entropi.todo_write if needed, "
+            f"then call entropi.prune_context."
+        )
+        ctx.messages.append(Message(role="user", content=warning))
+        ctx.metadata["last_warning_iteration"] = ctx.metrics.iterations
+        logger.info(f"[WARNING] Context at {pct}% — warning injected")
 
     async def _handle_error(self, ctx: LoopContext, error: Exception) -> AsyncIterator[Message]:
         """Handle loop iteration error."""
+        # Context overflow: recover via forced compaction instead of counting as error
+        if isinstance(error, ValueError) and "exceed context window" in str(error):
+            logger.warning(f"[RECOVERY] Context overflow detected, forcing compaction: {error}")
+            await self._check_compaction(ctx, force=True)
+            return
+
         logger.error(f"Loop error: {error}")
         ctx.consecutive_errors += 1
         ctx.metrics.errors += 1
@@ -991,11 +1286,12 @@ RECOVERY:
         if self._on_state_change:
             self._on_state_change(state)
 
-    async def _check_compaction(self, ctx: LoopContext) -> None:
+    async def _check_compaction(self, ctx: LoopContext, *, force: bool = False) -> None:
         """Check if compaction is needed and perform if so."""
         ctx.messages, result = await self._compaction_manager.check_and_compact(
             conversation_id=None,  # TODO: pass actual conversation ID
             messages=ctx.messages,
+            force=force,
         )
 
         if result.compacted:
@@ -1005,6 +1301,15 @@ RECOVERY:
             # Notify via callback
             if self._on_compaction:
                 self._on_compaction(result)
+            # Inject current todo state so model retains awareness
+            self._inject_todo_state(ctx)
+
+    def _inject_todo_state(self, ctx: LoopContext) -> None:
+        """Inject cached todo state into context (after compaction or handoff)."""
+        if not self._cached_todo_state:
+            return
+        ctx.messages.append(Message(role="user", content=self._cached_todo_state))
+        logger.info("Injected cached todo state into context")
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""

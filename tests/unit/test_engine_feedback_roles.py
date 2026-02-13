@@ -107,6 +107,8 @@ class TestCircuitBreaker:
         config.models.default = "normal"
         config.models.normal = MagicMock(context_length=16384)
 
+        server_manager.skip_duplicate_check = MagicMock(return_value=False)
+
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
@@ -150,9 +152,11 @@ class TestCircuitBreaker:
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
-        # Mock approval
+        # Mock approval, compaction, and context warning
         engine._on_tool_approval = None
         engine.loop_config.auto_approve_tools = True
+        engine._check_compaction = AsyncMock()
+        engine._inject_context_warning = MagicMock()
 
         ctx = LoopContext()
         ctx.consecutive_duplicate_attempts = 2  # Simulate previous duplicates
@@ -173,6 +177,7 @@ class TestCircuitBreaker:
         """Verify circuit breaker sends STOP message at 3 consecutive duplicates."""
         orchestrator = MagicMock()
         server_manager = MagicMock()
+        server_manager.skip_duplicate_check = MagicMock(return_value=False)
         config = MagicMock()
         config.compaction = MagicMock()
         config.models = MagicMock()

@@ -41,10 +41,10 @@ tests/
 
 ### MCP Servers (`src/entropi/mcp/servers/`)
 - Filesystem, bash, diagnostics servers
-- Permission system defaults to allow unless explicitly denied
-- Engine handles user prompting for non-allowed tools
+- All tools require approval unless explicitly in allow list
+- Engine handles user prompting; "Always Allow/Deny" persists to config
 
 ### Configuration
-- Global: `~/.config/entropi/config.yaml`
-- Project: `.entropi/config.yaml`
+- Global defaults: `~/.entropi/config.yaml`
+- Project (source of truth): `.entropi/config.local.yaml`
 - Project context: `.entropi/ENTROPI.md`

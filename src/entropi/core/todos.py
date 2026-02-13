@@ -27,6 +27,7 @@ class TodoItem:
     content: str  # Task description (imperative: "Fix bug")
     active_form: str  # Present continuous ("Fixing bug")
     status: TodoStatus = TodoStatus.PENDING
+    target_tier: str | None = None  # Which tier should execute (None = self)
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     created_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: datetime | None = None
@@ -42,7 +43,7 @@ class TodoItem:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result = {
             "id": self.id,
             "content": self.content,
             "active_form": self.active_form,
@@ -50,6 +51,9 @@ class TodoItem:
             "created_at": self.created_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+        if self.target_tier is not None:
+            result["target_tier"] = self.target_tier
+        return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "TodoItem":
@@ -58,6 +62,7 @@ class TodoItem:
             content=data["content"],
             active_form=data["active_form"],
             status=TodoStatus(data["status"]),
+            target_tier=data.get("target_tier"),
             id=data.get("id", str(uuid.uuid4())[:8]),
             created_at=(
                 datetime.fromisoformat(data["created_at"])
@@ -98,6 +103,10 @@ class TodoList:
         """Get all completed items."""
         return [i for i in self.items if i.status == TodoStatus.COMPLETED]
 
+    def get_todos_for_tier(self, tier: str) -> list[TodoItem]:
+        """Get todos targeting a specific tier."""
+        return [i for i in self.items if i.target_tier == tier]
+
     @property
     def progress(self) -> tuple[int, int]:
         """Return (completed, total) counts."""
@@ -113,55 +122,199 @@ class TodoList:
         """Clear all items."""
         self.items = []
 
-    def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
+    def clear_self_todos(self) -> int:
+        """Remove all self-directed todos (target_tier is None).
+
+        Returns:
+            Number of items removed
         """
-        Update the todo list from a tool call.
+        before = len(self.items)
+        self.items = [i for i in self.items if i.target_tier is not None]
+        return before - len(self.items)
+
+    def format_for_context(self) -> str:
+        """Format todo list for injection into conversation context."""
+        if self.is_empty:
+            return ""
+        status_icons = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
+        lines = ["[CURRENT TODO STATE]"]
+
+        # Check if items have mixed target tiers
+        tiers = {item.target_tier for item in self.items}
+        has_mixed_tiers = len(tiers) > 1 or (len(tiers) == 1 and None not in tiers)
+
+        if has_mixed_tiers:
+            self._format_grouped(lines, status_icons)
+        else:
+            self._format_flat(lines, status_icons)
+
+        completed, total = self.progress
+        lines.append(f"Progress: {completed}/{total} completed")
+        lines.append("[END TODO STATE]")
+        return "\n".join(lines)
+
+    def _format_flat(self, lines: list[str], icons: dict[str, str]) -> None:
+        """Format items as a flat list with indices."""
+        for i, item in enumerate(self.items):
+            icon = icons.get(item.status.value, "[ ]")
+            lines.append(f"  [{i}] {icon} {item.content}")
+
+    def _format_grouped(self, lines: list[str], icons: dict[str, str]) -> None:
+        """Format items grouped by target tier with global indices."""
+        # Build index -> item mapping first to preserve global indices
+        groups: dict[str, list[tuple[int, TodoItem]]] = {}
+        for i, item in enumerate(self.items):
+            key = item.target_tier or "self"
+            groups.setdefault(key, []).append((i, item))
+
+        # Named tiers first, then self
+        for tier_name in sorted(groups, key=lambda t: (t == "self", t)):
+            label = "self" if tier_name == "self" else f"{tier_name} tier"
+            lines.append(f"  For {label}:")
+            for idx, item in groups[tier_name]:
+                icon = icons.get(item.status.value, "[ ]")
+                lines.append(f"    [{idx}] {icon} {item.content}")
+
+    def handle_tool_call(self, arguments: dict[str, Any]) -> str:
+        """
+        Handle a todo_write tool call with action-based dispatch.
 
         Args:
-            todos: List of todo dicts with content, active_form, status
+            arguments: Tool call arguments with 'action' and action-specific fields
 
         Returns:
             Status message
         """
-        # Validate: only one in_progress
-        in_progress = [t for t in todos if t.get("status") == "in_progress"]
-        if len(in_progress) > 1:
-            return "Error: Only one task can be in_progress at a time"
+        action = arguments.get("action", "replace")
+        handlers = {
+            "add": self._handle_add,
+            "update": self._handle_update,
+            "remove": self._handle_remove,
+            "replace": self._handle_replace,
+        }
+        handler = handlers.get(action)
+        if not handler:
+            return f"Error: Unknown action '{action}'. Use: add, update, remove, replace"
+        return handler(arguments)
 
-        # Parse todos with defensive handling for missing fields
-        parsed_items = []
+    def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
+        """Legacy wrapper — delegates to handle_tool_call with replace action."""
+        return self.handle_tool_call({"action": "replace", "todos": todos})
+
+    def _handle_add(self, args: dict[str, Any]) -> str:
+        """Append new items to the todo list."""
+        todos = args.get("todos", [])
+        if not todos:
+            return "Error: 'add' action requires 'todos' array"
+
+        errors = self._validate_items(todos)
+        if errors:
+            return "Error: Invalid todo format.\n" + "\n".join(errors)
+
         for t in todos:
-            # Get content with fallback
-            content = t.get("content")
-            if not content:
-                # Try alternative field names the model might use
-                content = t.get("task") or t.get("description") or t.get("text") or "Unknown task"
-
-            # Get active_form with fallback (generate from content if missing)
-            active_form = t.get("active_form") or t.get("activeForm")
-            if not active_form:
-                # Generate active form from content (add "ing" heuristic)
-                active_form = f"Working on: {content}"
-
-            # Get status with fallback
-            status_str = t.get("status", "pending")
-            try:
-                status = TodoStatus(status_str)
-            except ValueError:
-                status = TodoStatus.PENDING
-
-            parsed_items.append(
+            self.items.append(
                 TodoItem(
-                    content=content,
-                    active_form=active_form,
-                    status=status,
+                    content=t["content"],
+                    active_form=t["active_form"],
+                    status=TodoStatus(t["status"]),
+                    target_tier=t.get("target_tier"),
                 )
             )
 
-        self.items = parsed_items
+        return f"Added {len(todos)} item(s). Total: {len(self.items)}"
+
+    def _resolve_index(self, args: dict[str, Any], action: str) -> tuple[int, str | None]:
+        """Validate and return index from args. Returns (index, error_or_None)."""
+        if "index" not in args:
+            return -1, f"Error: '{action}' action requires 'index'"
+        index = args["index"]
+        if not 0 <= index < len(self.items):
+            return -1, f"Error: Index {index} out of range (0-{len(self.items) - 1})"
+        return index, None
+
+    def _apply_status(self, item: TodoItem, status_str: str) -> str | None:
+        """Apply status change to item. Returns error string or None on success."""
+        if status_str not in ("pending", "in_progress", "completed"):
+            return f"Error: Invalid status '{status_str}'"
+        new_status = TodoStatus(status_str)
+        if new_status == TodoStatus.IN_PROGRESS:
+            current = self.get_current()
+            if current and current is not item:
+                return "Error: Only one task can be in_progress at a time"
+        item.status = new_status
+        if new_status == TodoStatus.COMPLETED:
+            item.completed_at = datetime.utcnow()
+        return None
+
+    def _handle_update(self, args: dict[str, Any]) -> str:
+        """Update a single item by index."""
+        index, error = self._resolve_index(args, "update")
+        if error:
+            return error
+
+        item = self.items[index]
+
+        if "status" in args:
+            status_error = self._apply_status(item, args["status"])
+            if status_error:
+                return status_error
+
+        for attr in ("content", "active_form", "target_tier"):
+            if attr in args:
+                setattr(item, attr, args[attr])
+
+        return f"Updated item {index}: {item.content[:50]}"
+
+    def _handle_remove(self, args: dict[str, Any]) -> str:
+        """Remove an item by index."""
+        index, error = self._resolve_index(args, "remove")
+        if error:
+            return error
+
+        removed = self.items.pop(index)
+        return f"Removed item {index}: {removed.content[:50]}"
+
+    def _handle_replace(self, args: dict[str, Any]) -> str:
+        """Replace the entire todo list (legacy behavior)."""
+        todos = args.get("todos", [])
+        errors = self._validate_items(todos)
+        if errors:
+            return "Error: Invalid todo format.\n" + "\n".join(errors)
+
+        # Validate: only one in_progress
+        in_progress = [t for t in todos if t["status"] == "in_progress"]
+        if len(in_progress) > 1:
+            return "Error: Only one task can be in_progress at a time"
+
+        self.items = [
+            TodoItem(
+                content=t["content"],
+                active_form=t["active_form"],
+                status=TodoStatus(t["status"]),
+                target_tier=t.get("target_tier"),
+            )
+            for t in todos
+        ]
 
         completed, total = self.progress
-        return f"Todo list updated: {completed}/{total} completed"
+        return f"Todo list replaced: {completed}/{total} completed"
+
+    def _validate_items(self, todos: list[dict[str, Any]]) -> list[str]:
+        """Validate todo item dicts. Returns list of error strings (empty = valid)."""
+        errors = []
+        for i, t in enumerate(todos):
+            if "content" not in t:
+                errors.append(f"Item {i}: missing required field 'content'")
+            if "active_form" not in t:
+                errors.append(f"Item {i}: missing required field 'active_form'")
+            if "status" not in t:
+                errors.append(f"Item {i}: missing required field 'status'")
+            elif t["status"] not in ("pending", "in_progress", "completed"):
+                errors.append(
+                    f"Item {i}: invalid status '{t['status']}' "
+                    f"(must be: pending, in_progress, completed)"
+                )
+        return errors
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for storage."""
@@ -176,95 +329,3 @@ class TodoList:
         todo_list = cls(conversation_id=data.get("conversation_id"))
         todo_list.items = [TodoItem.from_dict(item) for item in data.get("items", [])]
         return todo_list
-
-
-# Tool definition for system prompt injection
-TODO_TOOL_DEFINITION = {
-    "name": "entropi.todo_write",
-    "description": """Manage your task list for tracking progress on complex tasks.
-
-Use this tool when:
-- Starting a multi-step task (3+ steps)
-- User provides multiple things to do
-- You need to track progress on a complex operation
-- After completing a task to mark it done
-
-Task states:
-- pending: Not started yet
-- in_progress: Currently working on (only ONE at a time)
-- completed: Finished successfully
-
-IMPORTANT:
-- Mark tasks complete IMMEDIATELY after finishing
-- Only have ONE task in_progress at a time
-- Use imperative form for content ("Fix bug") and active form for display ("Fixing bug")
-""",
-    "inputSchema": {
-        "type": "object",
-        "properties": {
-            "todos": {
-                "type": "array",
-                "description": "The complete updated todo list",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "content": {
-                            "type": "string",
-                            "description": "Task description in imperative form",
-                        },
-                        "active_form": {
-                            "type": "string",
-                            "description": "Task description in present continuous",
-                        },
-                        "status": {
-                            "type": "string",
-                            "enum": ["pending", "in_progress", "completed"],
-                        },
-                    },
-                    "required": ["content", "status", "active_form"],
-                },
-            },
-        },
-        "required": ["todos"],
-    },
-}
-
-
-# System prompt addition for todo usage guidance
-TODO_SYSTEM_PROMPT = """
-# Task Management
-
-You have access to a todo list tool (`entropi.todo_write`) to track progress on complex tasks.
-
-## When to Use Todos
-
-USE the todo list when:
-- Task requires 3+ distinct steps
-- User provides multiple tasks (numbered or comma-separated)
-- Working on non-trivial features or refactoring
-- You need to track what's done vs remaining
-
-DO NOT use todos for:
-- Single, straightforward tasks
-- Simple questions or explanations
-- Tasks completable in 1-2 trivial steps
-
-## Todo Guidelines
-
-1. **Mark in_progress BEFORE starting work** - Shows user what you're doing
-2. **Mark completed IMMEDIATELY after finishing** - Don't batch completions
-3. **Only ONE task in_progress at a time** - Focused execution
-4. **Break complex tasks into concrete steps** - "Implement auth" → specific files/functions
-5. **Update list as you learn more** - Add discovered subtasks
-
-## Examples
-
-User: "Add dark mode to the settings page"
-→ Create todos: research current theme system, add theme state, create toggle component, update styles, test
-
-User: "Fix the typo in README"
-→ Don't use todos (single trivial task)
-
-User: "1. Add login page 2. Add logout button 3. Add password reset"
-→ Create todos for each numbered item
-"""

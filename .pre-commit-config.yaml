@@ -45,8 +45,17 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      - id: model-test-cache
+        name: model test cache check
+        entry: bash scripts/model-test-cache-check.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+        verbose: true
+
       - id: pytest-model
-        name: pytest model tests (cached)
+        name: pytest model tests
         entry: bash scripts/run-model-tests.sh
         language: system
         pass_filenames: false

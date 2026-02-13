@@ -5,6 +5,8 @@ Provides common functionality for implementing MCP servers
 using the official Python SDK.
 """
 
+import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -13,34 +15,47 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-# Tool descriptions directory
-_TOOLS_DIR = Path(__file__).parent.parent.parent / "data" / "prompts" / "tools"
+from entropi.core.tool_validation import ToolValidationError, validate_tool_definition
+
+logger = logging.getLogger(__name__)
+
+# Tool definitions directory
+_TOOLS_DIR = Path(__file__).parent.parent.parent / "data" / "tools"
 
 
-def load_tool_description(tool_name: str, server_prefix: str = "") -> str:
-    """
-    Load tool description from markdown file.
+def load_tool_definition(tool_name: str, server_prefix: str = "") -> Tool:
+    """Load and validate a tool definition from JSON.
 
     Args:
-        tool_name: Tool name (e.g., "read_file", "status")
-        server_prefix: Optional server prefix (e.g., "git", "bash")
+        tool_name: Tool name (e.g., "read_file", "execute")
+        server_prefix: Server directory name (e.g., "filesystem", "git")
 
     Returns:
-        Tool description text, or fallback if file not found
+        Validated MCP Tool object.
+
+    Raises:
+        FileNotFoundError: If JSON file doesn't exist.
+        ToolValidationError: If tool definition is invalid.
     """
-    # Try with prefix first (e.g., git_status.md), then without (e.g., status.md)
     if server_prefix:
-        prefixed_path = _TOOLS_DIR / f"{server_prefix}_{tool_name}.md"
-        if prefixed_path.exists():
-            return prefixed_path.read_text().strip()
+        json_path = _TOOLS_DIR / server_prefix / f"{tool_name}.json"
+    else:
+        json_path = _TOOLS_DIR / f"{tool_name}.json"
 
-    # Try direct name
-    direct_path = _TOOLS_DIR / f"{tool_name}.md"
-    if direct_path.exists():
-        return direct_path.read_text().strip()
+    if not json_path.exists():
+        raise FileNotFoundError(f"Tool definition not found: {json_path}")
 
-    # Fallback
-    return f"Tool: {tool_name}"
+    tool_data = json.loads(json_path.read_text())
+
+    errors = validate_tool_definition(tool_data)
+    if errors:
+        raise ToolValidationError(tool_name, errors)
+
+    return Tool(
+        name=tool_data["name"],
+        description=tool_data.get("description", ""),
+        inputSchema=tool_data["inputSchema"],
+    )
 
 
 class BaseMCPServer(ABC):
@@ -92,6 +107,40 @@ class BaseMCPServer(ABC):
         """
         pass
 
+    @staticmethod
+    def get_permission_pattern(
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> str:
+        """Generate permission pattern for 'Always Allow/Deny'.
+
+        Default: tool-level (e.g., "filesystem.read_file").
+        Override in subclasses for finer granularity.
+
+        Args:
+            tool_name: Fully-qualified tool name
+            arguments: Tool call arguments
+
+        Returns:
+            Permission pattern string
+        """
+        return tool_name
+
+    @staticmethod
+    def skip_duplicate_check(tool_name: str) -> bool:
+        """Check if a tool should skip duplicate detection.
+
+        Override in subclasses for tools with side effects that must
+        always execute (e.g., read_file updates FileAccessTracker).
+
+        Args:
+            tool_name: Local tool name (without server prefix)
+
+        Returns:
+            True if duplicate check should be skipped
+        """
+        return False
+
     async def run(self) -> None:
         """Run the server."""
         async with stdio_server() as (read_stream, write_stream):
@@ -100,32 +149,3 @@ class BaseMCPServer(ABC):
                 write_stream,
                 self.server.create_initialization_options(),
             )
-
-
-def create_tool(
-    name: str,
-    description: str,
-    properties: dict[str, dict[str, Any]],
-    required: list[str] | None = None,
-) -> Tool:
-    """
-    Helper to create a Tool definition.
-
-    Args:
-        name: Tool name
-        description: Tool description
-        properties: Parameter properties
-        required: Required parameters
-
-    Returns:
-        Tool definition
-    """
-    return Tool(
-        name=name,
-        description=description,
-        inputSchema={
-            "type": "object",
-            "properties": properties,
-            "required": required or [],
-        },
-    )

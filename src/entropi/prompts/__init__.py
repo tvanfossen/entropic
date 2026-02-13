@@ -19,7 +19,7 @@ def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
     2. Bundled defaults in package data
 
     Args:
-        name: Prompt name (e.g., "tool_usage" loads "tool_usage.md")
+        name: Prompt name (e.g., "constitution" loads "constitution.md")
         prompts_dir: Optional user prompts directory
 
     Returns:
@@ -89,46 +89,90 @@ def get_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
     return f"{constitution}\n\n{tier_identity}"
 
 
-def get_tool_usage_prompt(prompts_dir: Path | None = None) -> str:
+def _extract_focus_points(identity_content: str, tier_name: str = "") -> str:
+    """Extract Focus bullet points from an identity file.
+
+    Parses the markdown to find the ``## Focus`` section and returns
+    its bullet points joined as a comma-separated string.
+
+    Raises ValueError if ## Focus section is missing — this section
+    is required for router classification to work correctly.
     """
-    Get the tool usage prompt.
+    lines = identity_content.strip().split("\n")
+    in_focus = False
+    points: list[str] = []
+    for line in lines:
+        if line.strip() == "## Focus":
+            in_focus = True
+            continue
+        if in_focus:
+            if line.startswith("##"):
+                break
+            stripped = line.strip().lstrip("- ").strip()
+            if stripped:
+                points.append(stripped.lower())
+    if not points:
+        label = f"identity_{tier_name}.md" if tier_name else "identity file"
+        raise ValueError(
+            f"Missing '## Focus' section in {label}. "
+            f"This section is required for router classification."
+        )
+    return ", ".join(points)
 
-    Args:
-        prompts_dir: Optional user prompts directory
 
-    Returns:
-        Tool usage prompt content
+def get_classification_prompt(
+    message: str,
+    prompts_dir: Path | None = None,
+    history: list[str] | None = None,
+) -> str:
     """
-    try:
-        return load_prompt("tool_usage", prompts_dir)
-    except FileNotFoundError:
-        logger.warning("tool_usage.md not found, using minimal default")
-        return """You have access to tools. To call a tool, output JSON:
-{"name": "tool_name", "arguments": {...}}
+    Get the classification prompt with identity descriptions and history.
 
-IMPORTANT: Use tools to get real data. Do not guess or hallucinate file contents."""
-
-
-def get_classification_prompt(message: str, prompts_dir: Path | None = None) -> str:
-    """
-    Get the classification prompt with the user message inserted.
+    Loads each tier's identity file to give the router model a description
+    of what each tier handles, then includes recent conversation history
+    for context-aware classification.
 
     Args:
         message: User message to classify
         prompts_dir: Optional user prompts directory
+        history: Recent user messages (up to 5) for context
 
     Returns:
-        Classification prompt with message inserted
+        Classification prompt with identities, history, and message
     """
+    # Build tier descriptions from identity file Focus sections
+    tier_map = {1: "simple", 2: "code", 3: "normal", 4: "thinking"}
+    identity_lines = []
+    for num, tier_name in tier_map.items():
+        try:
+            identity = get_tier_identity_prompt(tier_name, prompts_dir)
+            focus = _extract_focus_points(identity, tier_name)
+            identity_lines.append(f"{num} = {tier_name.upper()}: {focus}")
+        except FileNotFoundError:
+            identity_lines.append(f"{num} = {tier_name.upper()}")
+    identities_text = "\n".join(identity_lines)
+
+    # Build history context (compact format for small router model)
+    if history:
+        history_text = "Recent messages: " + " | ".join(history[-5:])
+    else:
+        history_text = ""
+
     try:
         template = load_prompt("classification", prompts_dir)
-        return template.format(message=message)
+        prompt = template.format(
+            identities=identities_text,
+            history=history_text,
+            message=message,
+        )
+        # Ensure prompt ends with "-> " (no trailing newline) so the
+        # model immediately outputs the classification digit
+        return prompt.rstrip() + " "
     except FileNotFoundError:
         logger.warning("classification.md not found, using minimal default")
-        return f"""Classify: SIMPLE, CODE, or REASONING
+        return f"""Classify into tier. Output ONLY the number 1, 2, 3, or 4.
 
-SIMPLE = greetings, thanks (hello, hi, thanks, ok)
-CODE = code tasks (fix, add, edit, debug)
-REASONING = questions (what, how, why, explain)
+{identities_text}
 
-"{message}" ="""
+Message: "{message}"
+Classification:"""

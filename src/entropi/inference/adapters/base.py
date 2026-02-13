@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from entropi.core.base import Message, ToolCall
-from entropi.prompts import get_identity_prompt, get_tool_usage_prompt
+from entropi.prompts import get_identity_prompt
 
 
 class ChatAdapter(ABC):
@@ -39,7 +39,6 @@ class ChatAdapter(ABC):
         self._tier = tier
         self._prompts_dir = prompts_dir
         self._identity_prompt: str | None = None
-        self._tool_usage_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
 
     def _get_identity_prompt(self) -> str:
@@ -47,12 +46,6 @@ class ChatAdapter(ABC):
         if self._identity_prompt is None:
             self._identity_prompt = get_identity_prompt(self._tier, self._prompts_dir)
         return self._identity_prompt
-
-    def _get_tool_usage_prompt(self) -> str:
-        """Get the tool usage prompt, loading and caching it."""
-        if self._tool_usage_prompt is None:
-            self._tool_usage_prompt = get_tool_usage_prompt(self._prompts_dir)
-        return self._tool_usage_prompt
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
         """
@@ -92,23 +85,66 @@ class ChatAdapter(ABC):
         """Get llama-cpp chat format name."""
         pass
 
-    @abstractmethod
     def format_system_prompt(
         self,
         base_prompt: str,
         tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        """
-        Format system prompt with optional tool definitions.
+        """Format system prompt with identity and tool definitions.
 
-        Args:
-            base_prompt: Base system prompt
-            tools: Tool definitions
+        Assembles the prompt in order:
+        1. Identity (constitution + tier identity)
+        2. Base prompt (todo state, project context)
+        3. Tool definitions (description + JSON inputSchema, filtered per tier)
 
-        Returns:
-            Formatted system prompt
+        Tool guidance is embedded in each tool's JSON description field —
+        no separate per-tool guidance step needed.
+
+        Subclasses should NOT override this — tool isolation depends on
+        this assembly order. Override _format_tools() if tool formatting
+        needs to differ.
         """
-        pass
+        identity = self._get_identity_prompt()
+        prompt_parts = [identity]
+
+        if base_prompt:
+            prompt_parts.append(base_prompt)
+
+        if not tools:
+            return "\n\n".join(prompt_parts)
+
+        self._extract_tool_prefixes(tools)
+        prompt_parts.append(self._format_tools(tools))
+
+        return "\n\n".join(prompt_parts)
+
+    def _format_tools(self, tools: list[dict[str, Any]]) -> str:
+        """Format tool definitions for the prompt.
+
+        Renders each tool as: heading, full description, raw JSON inputSchema.
+        The model sees both behavioral guidance (description) and exact
+        parameter schema (JSON) — no information loss.
+
+        Override in subclasses if the model needs a different tool format.
+        """
+        lines = [
+            "## Tools\n",
+            'Call tools with: `<tool_call>{"name": "tool.name", "arguments": {...}}</tool_call>`\n',
+        ]
+        for tool in tools:
+            name = tool.get("name", "unknown")
+            description = tool.get("description", "No description")
+            schema = tool.get("inputSchema", {})
+
+            lines.append(f"### {name}")
+            lines.append(description)
+            lines.append("\nSchema:")
+            lines.append("```json")
+            lines.append(json.dumps(schema, indent=2))
+            lines.append("```")
+            lines.append("")
+
+        return "\n".join(lines)
 
     @abstractmethod
     def parse_tool_calls(self, content: str) -> tuple[str, list[ToolCall]]:
@@ -171,59 +207,6 @@ class GenericAdapter(ChatAdapter):
     def chat_format(self) -> str:
         """Get llama-cpp chat format name."""
         return "chatml"  # Most common format
-
-    def format_system_prompt(
-        self,
-        base_prompt: str,
-        tools: list[dict[str, Any]] | None = None,
-    ) -> str:
-        """Format system prompt with identity and tool definitions."""
-        # Start with identity (who the assistant is and core behaviors)
-        identity = self._get_identity_prompt()
-        prompt_parts = [identity]
-
-        # Add user-provided base prompt if any
-        if base_prompt:
-            prompt_parts.append(base_prompt)
-
-        if not tools:
-            return "\n\n".join(prompt_parts)
-
-        # Extract tool prefixes for use in parse_tool_calls
-        self._extract_tool_prefixes(tools)
-
-        tools_text = self._format_tools(tools)
-        tool_usage = self._get_tool_usage_prompt()
-
-        prompt_parts.append(tool_usage)
-        # Tool call format is defined in tool_usage.md - single source of truth
-        prompt_parts.append(tools_text)
-
-        return "\n\n".join(prompt_parts)
-
-    def _format_tools(self, tools: list[dict[str, Any]]) -> str:
-        """Format tool definitions for the prompt."""
-        lines = ["## Available Tools\n"]
-        for tool in tools:
-            name = tool.get("name", "unknown")
-            description = tool.get("description", "No description")
-            schema = tool.get("inputSchema", {})
-
-            lines.append(f"### {name}")
-            lines.append(f"{description}")
-
-            if schema.get("properties"):
-                lines.append("Parameters:")
-                for param, details in schema["properties"].items():
-                    param_type = details.get("type", "any")
-                    param_desc = details.get("description", "")
-                    required = param in schema.get("required", [])
-                    req_marker = " (required)" if required else ""
-                    lines.append(f"  - {param} ({param_type}){req_marker}: {param_desc}")
-
-            lines.append("")
-
-        return "\n".join(lines)
 
     def parse_tool_calls(self, content: str) -> tuple[str, list[ToolCall]]:
         """Parse tool calls from model output."""

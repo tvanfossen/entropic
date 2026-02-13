@@ -1,0 +1,14 @@
+{
+  "name": "check_errors",
+  "description": "Check if a file has any errors (not warnings).\n\nReturns true if file has errors, false if clean.\n\nLighter weight than full diagnostics when you only need error status.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "file_path": {
+        "type": "string",
+        "description": "Path to the file to check"
+      }
+    },
+    "required": ["file_path"]
+  }
+}

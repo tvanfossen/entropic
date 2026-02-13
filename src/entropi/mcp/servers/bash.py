@@ -115,7 +115,7 @@ class BashServer(BaseMCPServer):
         command: str,
         working_dir: str | None,
     ) -> str:
-        """Execute a shell command."""
+        """Execute a shell command and format output."""
         cwd = Path(working_dir) if working_dir else self.working_dir
 
         try:
@@ -134,24 +134,41 @@ class BashServer(BaseMCPServer):
                 )
             except TimeoutError:
                 process.kill()
-                return f"Command timed out after {self.timeout}s"
+                return f"Command timed out after {self.timeout}s: {command}"
 
-            output_parts = []
+            stdout_text = stdout.decode("utf-8", errors="replace") if stdout else ""
+            stderr_text = stderr.decode("utf-8", errors="replace") if stderr else ""
 
-            if stdout:
-                output_parts.append(stdout.decode("utf-8", errors="replace"))
-
-            if stderr:
-                stderr_text = stderr.decode("utf-8", errors="replace")
-                output_parts.append(f"[stderr]\n{stderr_text}")
-
-            if process.returncode != 0:
-                output_parts.append(f"\n[exit code: {process.returncode}]")
-
-            return "\n".join(output_parts) if output_parts else "(no output)"
+            exit_code = process.returncode or 0
+            return (
+                self._format_success(stdout_text, stderr_text)
+                if exit_code == 0
+                else self._format_error(command, stdout_text, stderr_text, exit_code)
+            )
 
         except Exception as e:
             return f"Execution failed: {e}"
+
+    @staticmethod
+    def _format_success(stdout: str, stderr: str) -> str:
+        """Format output for successful commands (exit code 0)."""
+        parts = []
+        if stdout:
+            parts.append(stdout)
+        if stderr:
+            parts.append(f"[stderr]\n{stderr}")
+        return "\n".join(parts) if parts else "(no output)"
+
+    @staticmethod
+    def _format_error(command: str, stdout: str, stderr: str, exit_code: int) -> str:
+        """Format structured diagnostic for failed commands."""
+        parts = [f"[command] {command}"]
+        if stdout:
+            parts.append(f"[stdout]\n{stdout}")
+        if stderr:
+            parts.append(f"[stderr]\n{stderr}")
+        parts.append(f"[exit code: {exit_code}]")
+        return "\n".join(parts)
 
 
 # Entry point for running as MCP server

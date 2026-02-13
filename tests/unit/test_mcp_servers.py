@@ -212,9 +212,28 @@ class TestBashServer:
 
     @pytest.mark.asyncio
     async def test_execute_returns_exit_code(self) -> None:
-        """Test that non-zero exit code is reported."""
+        """Test that non-zero exit code is reported with command echo."""
         server = BashServer()
         result = await server._execute_command("exit 1", None)
+        assert "[exit code: 1]" in result
+        assert "[command] exit 1" in result
+
+    @pytest.mark.asyncio
+    async def test_success_has_no_command_echo(self) -> None:
+        """Test that successful commands don't echo the command."""
+        server = BashServer()
+        result = await server._execute_command("echo hello", None)
+        assert "hello" in result
+        assert "[command]" not in result
+
+    @pytest.mark.asyncio
+    async def test_error_has_labeled_sections(self) -> None:
+        """Test that errors have labeled [stdout]/[stderr] sections."""
+        server = BashServer()
+        result = await server._execute_command("echo out && echo err >&2 && exit 1", None)
+        assert "[command]" in result
+        assert "[stdout]" in result
+        assert "[stderr]" in result
         assert "[exit code: 1]" in result
 
     def test_tool_list(self) -> None:

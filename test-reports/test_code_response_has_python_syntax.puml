@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_code_response_has_python_syntax\n<size:11>[PASSED] 16.3s</size>
+title test_code_response_has_python_syntax\n<size:11>[PASSED] 16.5s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -38,7 +38,7 @@ note right of Mdl
   any specific functionality (like handling non-numeric elements)?
 end note
 note over T #palegreen
-  **PASSED** (16.3s)
+  **PASSED** (16.5s)
 end note
 
 @enduml

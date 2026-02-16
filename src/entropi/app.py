@@ -89,7 +89,7 @@ class Application:
 
             # Initialize MCP server manager
             status.update("[bold blue]Starting tool servers...")
-            self._mcp_manager = ServerManager(self.config)
+            self._mcp_manager = ServerManager(self.config, project_dir=self.project_dir)
             await self._mcp_manager.initialize()
 
             # Initialize storage

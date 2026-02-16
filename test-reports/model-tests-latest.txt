@@ -1,27 +1,27 @@
 === Model Test Report ===
-Date: 2026-02-16 09:57:41
+Date: 2026-02-16 10:19:01
 
 Results: 22 passed, 0 failed (127.5s)
 
-  [PASS] test_code_request_produces_code [code] (3 tools) (51.2s)
+  [PASS] test_code_request_produces_code [code] (3 tools) (50.0s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (16.3s)
+  [PASS] test_code_response_has_python_syntax [code] (16.5s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (11.8s)
+  [PASS] test_response_ends_cleanly [normal] (11.7s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [simple] (3.8s)
+  [PASS] test_no_special_tokens_in_response [simple] (3.6s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (2.8s)
+  [PASS] test_generation_starts_and_ends [simple] (3.3s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (15.3s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (15.8s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (16.8s)
+  [PASS] test_explanation_is_substantive [normal] (17.1s)
          Prompt: What is recursion in programming?
   [PASS] test_hello_produces_response [simple] (3.3s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (3.7s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (3.5s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
   [PASS] test_hi_routes_to_simple (0.1s)
@@ -38,6 +38,12 @@ Results: 22 passed, 0 failed (127.5s)
 Per-test diagrams: test-reports/<test_name>.puml
 Generate PNGs: plantuml test-reports/*.puml
 
-======================== 22 passed in 150.28s (0:02:30) ========================
+=============================== warnings summary ===============================
+tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
+  /home/tvanfossen/Projects/entropi/src/entropi/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    read_at=datetime.utcnow(),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 22 passed, 1 warning in 145.45s (0:02:25) ===================
 
 Result: PASSED

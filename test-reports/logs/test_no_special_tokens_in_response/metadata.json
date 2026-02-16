@@ -2,9 +2,9 @@
   "test_name": "test_no_special_tokens_in_response",
   "passed": true,
   "tier": "simple",
-  "duration_s": 3.81,
+  "duration_s": 3.57,
   "prompt": "Hello, how are you?",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-16T09:56:43"
+  "timestamp": "2026-02-16T10:18:05"
 }

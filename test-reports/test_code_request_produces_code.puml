@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_code_request_produces_code\n<size:11>[PASSED] 51.2s</size>
+title test_code_request_produces_code\n<size:11>[PASSED] 50.0s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -41,7 +41,7 @@ if __name__ == "__main__":
     for number in test_numbers:
         print(f"{number} is even: {is_even(
 end note
-MCP --> Eng: result (1272ms)
+MCP --> Eng: result (1267ms)
 note right of MCP
   **Tool Result:**
   {"success": true, "bytes_written": 210, "path": "is_even.py"}
@@ -51,7 +51,7 @@ Eng -> MCP: bash.execute
 note right of MCP
   command: python is_even.py
 end note
-MCP --> Eng: result (9ms)
+MCP --> Eng: result (4ms)
 note right of MCP
   **Tool Result:**
   [command] python is_even.py
@@ -65,7 +65,7 @@ Eng -> MCP: bash.execute
 note right of MCP
   command: python3 is_even.py
 end note
-MCP --> Eng: result (34ms)
+MCP --> Eng: result (28ms)
 note right of MCP
   **Tool Result:**
   4 is even: True
@@ -111,7 +111,7 @@ note right of Mdl
   like to modify or extend this implementation?
 end note
 note over T #palegreen
-  **PASSED** (51.2s, 3 tool calls)
+  **PASSED** (50.0s, 3 tool calls)
 end note
 
 @enduml

@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_response_ends_cleanly\n<size:11>[PASSED] 11.8s</size>
+title test_response_ends_cleanly\n<size:11>[PASSED] 11.7s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -41,7 +41,7 @@ note right of Mdl
      - Valued for its portability and robustness in mission-critical applications.
 end note
 note over T #palegreen
-  **PASSED** (11.8s)
+  **PASSED** (11.7s)
 end note
 
 @enduml

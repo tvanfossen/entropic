@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_explanation_is_substantive\n<size:11>[PASSED] 16.8s</size>
+title test_explanation_is_substantive\n<size:11>[PASSED] 17.1s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -58,7 +58,7 @@ note right of Mdl
   and mathematical computations (e.g., Fibonacci sequence).
 end note
 note over T #palegreen
-  **PASSED** (16.8s)
+  **PASSED** (17.1s)
 end note
 
 @enduml

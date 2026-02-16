@@ -28,7 +28,14 @@ from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import PermissionDeniedError, ServerManager
 
 if TYPE_CHECKING:
-    pass
+    from entropi.core.directives import (
+        ClearSelfTodos,
+        InjectContext,
+        PruneMessages,
+        StopProcessing,
+        TierChange,
+        TodoStateChanged,
+    )
 
 logger = get_logger("core.engine")
 model_logger = get_model_logger()
@@ -225,25 +232,25 @@ class AgentEngine:
     def _register_directive_handlers(self) -> None:
         """Register handlers for all known directive types."""
         from entropi.core.directives import (
-            CLEAR_SELF_TODOS,
-            INJECT_CONTEXT,
-            PRUNE_MESSAGES,
-            STOP_PROCESSING,
-            TIER_CHANGE,
-            TODO_STATE_CHANGED,
+            ClearSelfTodos,
+            InjectContext,
+            PruneMessages,
+            StopProcessing,
+            TierChange,
+            TodoStateChanged,
         )
 
-        self._directive_processor.register(STOP_PROCESSING, self._directive_stop_processing)
-        self._directive_processor.register(TIER_CHANGE, self._directive_tier_change)
-        self._directive_processor.register(CLEAR_SELF_TODOS, self._directive_clear_self_todos)
-        self._directive_processor.register(INJECT_CONTEXT, self._directive_inject_context)
-        self._directive_processor.register(PRUNE_MESSAGES, self._directive_prune_messages)
-        self._directive_processor.register(TODO_STATE_CHANGED, self._directive_todo_state_changed)
+        self._directive_processor.register(StopProcessing, self._directive_stop_processing)
+        self._directive_processor.register(TierChange, self._directive_tier_change)
+        self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
+        self._directive_processor.register(InjectContext, self._directive_inject_context)
+        self._directive_processor.register(PruneMessages, self._directive_prune_messages)
+        self._directive_processor.register(TodoStateChanged, self._directive_todo_state_changed)
 
     def _directive_stop_processing(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: StopProcessing,
         result: DirectiveResult,
     ) -> None:
         """Handle stop_processing directive."""
@@ -253,14 +260,14 @@ class AgentEngine:
     def _directive_tier_change(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: TierChange,
         result: DirectiveResult,
     ) -> None:
         """Handle tier_change directive — validate and execute tier switch."""
         from entropi.inference.orchestrator import ModelTier
 
-        target_tier_str = params.get("tier", "")
-        reason = params.get("reason", "")
+        target_tier_str = directive.tier
+        reason = directive.reason
 
         try:
             target_tier = ModelTier(target_tier_str)
@@ -302,7 +309,7 @@ class AgentEngine:
     def _directive_clear_self_todos(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: ClearSelfTodos,
         result: DirectiveResult,
     ) -> None:
         """Handle clear_self_todos directive — not applicable in directive arch.
@@ -316,24 +323,22 @@ class AgentEngine:
     def _directive_inject_context(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: InjectContext,
         result: DirectiveResult,
     ) -> None:
         """Handle inject_context directive — add message to context."""
-        content = params.get("content", "")
-        if content:
-            result.injected_messages.append(Message(role="user", content=content))
-            logger.info(f"[DIRECTIVE] inject_context: {content[:80]}")
+        if directive.content:
+            result.injected_messages.append(Message(role="user", content=directive.content))
+            logger.info(f"[DIRECTIVE] inject_context: {directive.content[:80]}")
 
     def _directive_prune_messages(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: PruneMessages,
         result: DirectiveResult,
     ) -> None:
         """Handle prune_messages directive — prune old tool results."""
-        keep_recent = params.get("keep_recent", 2)
-        pruned_count, freed_chars = self._prune_tool_results(ctx, keep_recent)
+        pruned_count, freed_chars = self._prune_tool_results(ctx, directive.keep_recent)
         logger.info(
             f"[DIRECTIVE] prune_messages: pruned {pruned_count} results "
             f"(~{freed_chars // 4} tokens freed)"
@@ -342,14 +347,16 @@ class AgentEngine:
     def _directive_todo_state_changed(
         self,
         ctx: LoopContext,
-        params: dict[str, Any],
+        directive: TodoStateChanged,
         result: DirectiveResult,
     ) -> None:
         """Handle todo_state_changed directive — cache state, update anchor, notify TUI."""
-        self._cached_todo_state = params.get("state", "")
+        import dataclasses
+
+        self._cached_todo_state = directive.state
         self._update_todo_anchor(ctx)
         if self._on_todo_update:
-            self._on_todo_update(params)
+            self._on_todo_update(dataclasses.asdict(directive))
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""

@@ -9,15 +9,12 @@ component: architecture
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-16
-updated: 2026-02-16
+updated: 2026-02-17
 tags: [architecture, directives, refactor, type-safety]
-completed_date: null
+completed_date: 2026-02-17
 scoped_files:
   - src/entropi/core/directives.py
   - src/entropi/core/engine.py
-  - src/entropi/mcp/servers/entropi.py
-  - src/entropi/mcp/servers/base.py
-  - src/entropi/mcp/client.py
   - tests/unit/test_engine.py
   - tests/unit/test_directives.py
 depends_on: []
@@ -172,9 +169,37 @@ Each step is independently testable. No behavioral change — pure refactor.
 
 ## Success Criteria
 
-- [ ] All 6 directive types have dataclass definitions
-- [ ] DirectiveProcessor dispatches on type, not string
-- [ ] Engine handlers receive typed directive objects
-- [ ] MCP boundary deserialization works (JSON → dataclass)
-- [ ] All existing tests pass with no behavioral change
-- [ ] No string-based directive dispatch remains in engine
+- [x] All 6 directive types have dataclass definitions
+- [x] DirectiveProcessor dispatches on type, not string
+- [x] Engine handlers receive typed directive objects
+- [x] MCP boundary deserialization works (JSON → dataclass)
+- [x] All existing tests pass with no behavioral change
+- [x] No string-based directive dispatch remains in engine
+
+## Implementation Notes
+
+### Wire Format Constants Retained
+
+String constants (`STOP_PROCESSING`, etc.) are kept in `directives.py` because MCP
+servers (`entropi.py`) still run as subprocesses and emit JSON dicts with string type
+names. The constants are the single source of truth for the wire format. They're
+documented as P1-018 cleanup targets.
+
+### DirectiveHandler Contravariance
+
+`DirectiveHandler` uses `Any` for the directive parameter because `Callable` is
+contravariant in parameters — a handler accepting `StopProcessing` isn't assignable
+to `Callable[[..., Directive, ...], None]`. The dispatch is correct by construction
+(registry maps type → handler). This is a well-known Python typing limitation with
+callback registries.
+
+### Callback Compatibility
+
+`_on_todo_update(params)` in `app.py` expects a dict. The engine handler passes
+`dataclasses.asdict(directive)` — zero change to callback consumers.
+
+### Test Coverage
+
+- 30 directive tests (was 17): +11 deserialization tests, +2 registry tests
+- 4 engine directive tests updated to pass typed objects instead of raw dicts
+- 11 server tests unchanged (validate JSON wire format)

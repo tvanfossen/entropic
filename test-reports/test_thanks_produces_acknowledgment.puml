@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_thanks_produces_acknowledgment\n<size:11>[PASSED] 2.5s</size>
+title test_thanks_produces_acknowledgment\n<size:11>[PASSED] 3.8s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -25,7 +25,7 @@ note right of Mdl
   You're welcome! Let me know if you need any help. 😊
 end note
 note over T #palegreen
-  **PASSED** (2.5s)
+  **PASSED** (3.8s)
 end note
 
 @enduml

@@ -2,9 +2,9 @@
   "test_name": "test_code_response_has_python_syntax",
   "passed": true,
   "tier": "code",
-  "duration_s": 26.47,
+  "duration_s": 16.95,
   "prompt": "Write a function that returns the sum of a list",
-  "tool_count": 2,
+  "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-13T12:05:02"
+  "timestamp": "2026-02-16T09:31:04"
 }

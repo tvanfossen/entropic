@@ -1,43 +1,43 @@
-2026-02-13 12:05:03 [INFO] entropi: Session started - logging to /tmp/tmpipt5y8wf/.entropi/session.log
-2026-02-13 12:05:03 [INFO] entropi: Log level: INFO
-2026-02-13 12:05:03 [INFO] entropi.app: Initializing Entropi...
-2026-02-13 12:05:03 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-13 12:05:03 [INFO] entropi.mcp.client: Connecting to MCP server: filesystem
-2026-02-13 12:05:03 [INFO] entropi.mcp.client: Connecting to MCP server: bash
-2026-02-13 12:05:03 [INFO] entropi.mcp.client: Connecting to MCP server: git
-2026-02-13 12:05:03 [INFO] entropi.mcp.client: Connecting to MCP server: diagnostics
-2026-02-13 12:05:03 [INFO] entropi.mcp.client: Connecting to MCP server: entropi
-2026-02-13 12:05:04 [INFO] entropi.mcp.client: Connected to git, 8 tools available
-2026-02-13 12:05:04 [INFO] entropi.mcp.client: Connected to entropi, 3 tools available
-2026-02-13 12:05:04 [INFO] entropi.mcp.client: Connected to bash, 1 tools available
-2026-02-13 12:05:04 [INFO] entropi.mcp.client: Connected to diagnostics, 2 tools available
-2026-02-13 12:05:04 [INFO] entropi.mcp.client: Connected to filesystem, 3 tools available
-2026-02-13 12:05:04 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-13 12:05:04 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-13 12:05:04 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-13 12:05:04 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-13 12:05:04 [INFO] entropi.app: Entropi initialized
-2026-02-13 12:05:04 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
-2026-02-13 12:05:04 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
-2026-02-13 12:05:04 [INFO] entropi.core.engine:
+2026-02-16 09:31:05 [INFO] entropi: Session started - logging to /tmp/tmpi_p76yyu/.entropi/session.log
+2026-02-16 09:31:05 [INFO] entropi: Log level: INFO
+2026-02-16 09:31:05 [INFO] entropi.app: Initializing Entropi...
+2026-02-16 09:31:05 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-16 09:31:05 [INFO] entropi.mcp.client: Connecting to MCP server: filesystem
+2026-02-16 09:31:05 [INFO] entropi.mcp.client: Connecting to MCP server: bash
+2026-02-16 09:31:05 [INFO] entropi.mcp.client: Connecting to MCP server: git
+2026-02-16 09:31:05 [INFO] entropi.mcp.client: Connecting to MCP server: diagnostics
+2026-02-16 09:31:05 [INFO] entropi.mcp.client: Connecting to MCP server: entropi
+2026-02-16 09:31:06 [INFO] entropi.mcp.client: Connected to git, 8 tools available
+2026-02-16 09:31:06 [INFO] entropi.mcp.client: Connected to bash, 1 tools available
+2026-02-16 09:31:06 [INFO] entropi.mcp.client: Connected to entropi, 3 tools available
+2026-02-16 09:31:06 [INFO] entropi.mcp.client: Connected to diagnostics, 2 tools available
+2026-02-16 09:31:06 [INFO] entropi.mcp.client: Connected to filesystem, 3 tools available
+2026-02-16 09:31:06 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-16 09:31:06 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-16 09:31:06 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-16 09:31:06 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-16 09:31:06 [INFO] entropi.app: Entropi initialized
+2026-02-16 09:31:06 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-16 09:31:06 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
+2026-02-16 09:31:06 [INFO] entropi.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 List three programming languages and their main use cases
 ============================================================
-2026-02-13 12:05:04 [INFO] entropi.core.engine: State: PLANNING
-2026-02-13 12:05:04 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-13 12:05:04 [INFO] entropi.core.engine: State: EXECUTING
-2026-02-13 12:05:04 [INFO] entropi.inference.orchestrator: [ROUTER] normal | none | 80ms
-2026-02-13 12:05:04 [INFO] entropi.core.engine: System prompt size: ~4248 tokens
-2026-02-13 12:05:04 [INFO] entropi.ui.headless: Routing: — → NORMAL | none | 80ms
-2026-02-13 12:05:12 [INFO] entropi.adapter.qwen3: [THINKING] (802 chars):
+2026-02-16 09:31:06 [INFO] entropi.core.engine: State: PLANNING
+2026-02-16 09:31:06 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-16 09:31:06 [INFO] entropi.core.engine: State: EXECUTING
+2026-02-16 09:31:06 [INFO] entropi.inference.orchestrator: [ROUTER] normal | none | 88ms
+2026-02-16 09:31:06 [INFO] entropi.core.engine: System prompt size: ~4248 tokens
+2026-02-16 09:31:06 [INFO] entropi.ui.headless: Routing: — → NORMAL | none | 88ms
+2026-02-16 09:31:18 [INFO] entropi.adapter.qwen3: [THINKING] (802 chars):
 Okay, the user asked for three programming languages and their main use cases. Let me think.
 
-First, I need to pick three popular languages. Python is a good choice because it's widely used in data science, machine learning, and scripting. Then JavaScript is essential for web development, both front-end and back-end with Node.js. For a third language, maybe Java since it's commonly used in enterprise applications and Android development.
+First, I need to pick three popular languages. Python is a good choice because it's widely used in data science, machine learning, and scripting. Then JavaScript is essential for web development, both front-end and back-end with Node.js. For a third language, maybe Java since it's commonly used in enterprise applications and Android development. 
 
 Wait, should I consider other languages like C++ or Python? Oh, Python is already covered. Let me confirm the use cases. Python's simplicity makes it great for rapid development. JavaScript runs in browsers, so it's crucial for web apps. Java's portability and strong typing suit large systems. That should cover different domains. I'll present them clearly.
-2026-02-13 12:05:12 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=1569 | cleaned_len=748 | tool_calls=0
-2026-02-13 12:05:12 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-13 12:05:12 [INFO] entropi.core.engine: State: COMPLETE
-2026-02-13 12:05:12 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 8437ms
+2026-02-16 09:31:18 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=1569 | cleaned_len=748 | tool_calls=0
+2026-02-16 09:31:18 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-16 09:31:18 [INFO] entropi.core.engine: State: COMPLETE
+2026-02-16 09:31:18 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 12256ms

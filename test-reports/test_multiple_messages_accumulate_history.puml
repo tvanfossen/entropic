@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_multiple_messages_accumulate_history\n<size:11>[PASSED] 10.5s</size>
+title test_multiple_messages_accumulate_history\n<size:11>[PASSED] 15.0s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -32,14 +32,14 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You asked: "Hello" and then followed with "What did I just say?"
-
+  You asked: "Hello" and then followed with "What did I just say?" 
+  
   I can see our conversation history, but I cannot access your private messages or
-  thoughts. However, I can confirm that your last message before this one was
+  thoughts. However, I can confirm that your last message before this one was 
   "Hello". Would you like me to help with something else?
 end note
 note over T #palegreen
-  **PASSED** (10.5s)
+  **PASSED** (15.0s)
 end note
 
 @enduml

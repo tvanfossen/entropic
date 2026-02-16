@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_multiple_classifications_consistent\n<size:11>[PASSED] 0.2s</size>
+title test_multiple_classifications_consistent\n<size:11>[PASSED] 0.3s</size>
 
 participant "Test" as T
 participant "Orchestrator" as Orch
@@ -12,6 +12,6 @@ T -> Orch: classify prompt
 Orch -> Rtr: route
 Rtr --> Orch: tier result
 Orch --> T: result
-note right #palegreen: 0.2s
+note right #palegreen: 0.3s
 
 @enduml

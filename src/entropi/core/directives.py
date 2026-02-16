@@ -3,7 +3,7 @@ Directive processing for tool-to-engine communication.
 
 Tools return JSON results with an optional ``_directives`` key.
 The engine extracts directives and delegates to DirectiveProcessor,
-which dispatches each directive to a registered handler without
+which dispatches each typed directive to a registered handler without
 inspecting tool names.
 
 This keeps the engine tool-agnostic: it processes generic directives
@@ -24,13 +24,117 @@ if TYPE_CHECKING:
 
 logger = get_logger("core.directives")
 
-# Standard directive type constants
+
+# ---------------------------------------------------------------------------
+# Directive dataclass hierarchy
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Directive:
+    """Base class for all typed directives."""
+
+    pass
+
+
+@dataclass
+class StopProcessing(Directive):
+    """Stop processing remaining tool calls."""
+
+    pass
+
+
+@dataclass
+class TierChange(Directive):
+    """Request a tier handoff."""
+
+    tier: str
+    reason: str = ""
+
+
+@dataclass
+class ClearSelfTodos(Directive):
+    """Clear self-directed todos (handled server-side, engine no-op)."""
+
+    pass
+
+
+@dataclass
+class InjectContext(Directive):
+    """Inject a message into the conversation context."""
+
+    content: str
+    role: str = "user"
+
+
+@dataclass
+class PruneMessages(Directive):
+    """Prune old tool results from context."""
+
+    keep_recent: int = 2
+
+
+@dataclass
+class TodoStateChanged(Directive):
+    """Notify engine of updated todo state."""
+
+    state: str
+    count: int = 0
+    items: list[dict] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Wire format type names (used by MCP servers for JSON serialization)
+# These go away when P1-018 (in-process tools) eliminates the subprocess
+# boundary and servers return list[Directive] directly.
+# ---------------------------------------------------------------------------
+
 STOP_PROCESSING = "stop_processing"
 TIER_CHANGE = "tier_change"
 CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
 TODO_STATE_CHANGED = "todo_state_changed"
+
+
+# ---------------------------------------------------------------------------
+# Deserialization: JSON dict → typed Directive
+# ---------------------------------------------------------------------------
+
+_DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
+    "stop_processing": StopProcessing,
+    "tier_change": TierChange,
+    "clear_self_todos": ClearSelfTodos,
+    "inject_context": InjectContext,
+    "prune_messages": PruneMessages,
+    "todo_state_changed": TodoStateChanged,
+}
+
+
+def deserialize_directive(raw: dict[str, Any]) -> Directive:
+    """Convert a raw directive dict to a typed Directive.
+
+    Args:
+        raw: Dict with "type" key and optional "params" dict.
+
+    Returns:
+        Typed Directive instance.
+
+    Raises:
+        KeyError: If the directive type is not in the registry.
+        TypeError: If params don't match the dataclass fields.
+    """
+    d_type = raw.get("type", "")
+    cls = _DIRECTIVE_REGISTRY.get(d_type)
+    if cls is None:
+        raise KeyError(f"Unknown directive type: {d_type!r}")
+    params = raw.get("params", {})
+    return cls(**params)
+
+
+# ---------------------------------------------------------------------------
+# Aggregate result
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -42,8 +146,14 @@ class DirectiveResult:
     injected_messages: list[Any] = field(default_factory=list)
 
 
-# Type alias for directive handler functions
-DirectiveHandler = Callable[["LoopContext", dict[str, Any], DirectiveResult], None]
+# ---------------------------------------------------------------------------
+# Processor
+# ---------------------------------------------------------------------------
+
+# Type alias for directive handler functions.
+# Uses Any for the directive param because Callable is contravariant:
+# handlers accept specific subclasses but the registry stores them generically.
+DirectiveHandler = Callable[["LoopContext", Any, DirectiveResult], None]
 
 
 class DirectiveProcessor:
@@ -55,70 +165,83 @@ class DirectiveProcessor:
     """
 
     def __init__(self) -> None:
-        self._handlers: dict[str, DirectiveHandler] = {}
+        self._handlers: dict[type[Directive], DirectiveHandler] = {}
 
-    def register(self, directive_type: str, handler: DirectiveHandler) -> None:
+    def register(
+        self,
+        directive_type: type[Directive],
+        handler: DirectiveHandler,
+    ) -> None:
         """Register a handler for a directive type.
 
         Args:
-            directive_type: The directive type string (e.g., "stop_processing")
-            handler: Callable(ctx, params, result) that processes the directive
+            directive_type: The directive dataclass type
+            handler: Callable(ctx, directive, result) that processes it
         """
         self._handlers[directive_type] = handler
 
     def process(
         self,
         ctx: LoopContext,
-        directives: list[dict[str, Any]],
+        directives: list[Directive],
     ) -> DirectiveResult:
         """Process a list of directives, returning aggregate result.
 
         Args:
             ctx: Current loop context
-            directives: List of directive dicts with "type" and optional "params"
+            directives: List of typed Directive instances
 
         Returns:
             Aggregate result indicating engine-level side effects
         """
         result = DirectiveResult()
         for directive in directives:
-            d_type = directive.get("type", "")
-            params = directive.get("params", {})
-            handler = self._handlers.get(d_type)
+            handler = self._handlers.get(type(directive))
             if handler:
-                logger.debug(f"Processing directive: {d_type}")
-                handler(ctx, params, result)
+                logger.debug(f"Processing directive: {type(directive).__name__}")
+                handler(ctx, directive, result)
             else:
-                logger.warning(f"Unknown directive type: {d_type}")
+                logger.warning(f"No handler for directive: {type(directive).__name__}")
         return result
 
     @property
-    def registered_types(self) -> list[str]:
+    def registered_types(self) -> list[type[Directive]]:
         """List registered directive types."""
         return list(self._handlers.keys())
 
 
-def extract_directives(tool_result_content: str) -> list[dict[str, Any]]:
-    """Extract directives from a tool result JSON string.
+# ---------------------------------------------------------------------------
+# Extraction from JSON tool results
+# ---------------------------------------------------------------------------
+
+
+def extract_directives(tool_result_content: str) -> list[Directive]:
+    """Extract and deserialize directives from a tool result JSON string.
 
     Tools embed directives in their JSON response under the
     ``_directives`` key. This function parses the JSON and
-    extracts the directive list.
+    deserializes each directive dict into a typed Directive.
 
     Args:
         tool_result_content: Raw tool result string (may or may not be JSON)
 
     Returns:
-        List of directive dicts, or empty list if none found
+        List of typed Directive instances, or empty list if none found
     """
     if not tool_result_content:
         return []
     try:
         data = json.loads(tool_result_content)
         if isinstance(data, dict):
-            directives = data.get("_directives", [])
-            if isinstance(directives, list):
-                return directives
+            raw_directives = data.get("_directives", [])
+            if isinstance(raw_directives, list):
+                result: list[Directive] = []
+                for raw in raw_directives:
+                    try:
+                        result.append(deserialize_directive(raw))
+                    except (KeyError, TypeError) as exc:
+                        logger.warning(f"Skipping invalid directive: {exc}")
+                return result
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     return []

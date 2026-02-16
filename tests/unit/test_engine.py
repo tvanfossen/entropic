@@ -427,7 +427,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:
         """tier_change directive updates ctx.locked_tier."""
-        from entropi.core.directives import DirectiveResult
+        from entropi.core.directives import DirectiveResult, TierChange
         from entropi.inference.orchestrator import ModelTier
 
         engine = self._make_handoff_engine()
@@ -440,7 +440,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "code", "reason": "plan ready"},
+            TierChange(tier="code", reason="plan ready"),
             result,
         )
 
@@ -450,7 +450,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_invalid_tier(self) -> None:
         """tier_change with invalid tier is a no-op."""
-        from entropi.core.directives import DirectiveResult
+        from entropi.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
 
@@ -461,7 +461,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "nonexistent", "reason": "test"},
+            TierChange(tier="nonexistent", reason="test"),
             result,
         )
 
@@ -469,7 +469,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_disallowed_route(self) -> None:
         """tier_change blocked when orchestrator rejects the route."""
-        from entropi.core.directives import DirectiveResult
+        from entropi.core.directives import DirectiveResult, TierChange
         from entropi.inference.orchestrator import ModelTier
 
         engine = self._make_handoff_engine()
@@ -483,7 +483,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "thinking", "reason": "test"},
+            TierChange(tier="thinking", reason="test"),
             result,
         )
 
@@ -610,8 +610,10 @@ class TestPruneDirective:
             ],
         )
 
+        from entropi.core.directives import PruneMessages
+
         result = DirectiveResult()
-        engine._directive_prune_messages(ctx, {"keep_recent": 1}, result)
+        engine._directive_prune_messages(ctx, PruneMessages(keep_recent=1), result)
 
         # Oldest 2 tool results pruned, newest 1 kept
         assert ctx.messages[1].content.startswith("[Previous:")

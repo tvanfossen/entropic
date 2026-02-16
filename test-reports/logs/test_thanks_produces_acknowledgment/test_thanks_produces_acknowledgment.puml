@@ -1,0 +1,31 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_thanks_produces_acknowledgment\n<size:11>[PASSED] < 38s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  Thanks!
+end note
+App -> Orch: route
+note right: **SIMPLE** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  You're welcome! Let me know if you need any help. 😊
+end note
+note over T #palegreen
+  **PASSED** (< 38s)
+end note
+
+@enduml

@@ -3,8 +3,9 @@
   "passed": true,
   "tier": "",
   "duration_s": 0.0,
+  "target_s": 1.0,
   "prompt": "",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-16T10:18:06"
+  "timestamp": "2026-02-16T15:22:50"
 }

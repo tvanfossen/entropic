@@ -1,44 +1,44 @@
-2026-02-16 10:18:00 [INFO] entropi: Session started - logging to /tmp/tmpnp5m3ha8/.entropi/session.log
-2026-02-16 10:18:00 [INFO] entropi: Log level: INFO
-2026-02-16 10:18:00 [INFO] entropi.app: Initializing Entropi...
-2026-02-16 10:18:00 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-16 10:18:00 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-16 10:18:01 [INFO] entropi.lsp.base: python LSP started
-2026-02-16 10:18:01 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-16 10:18:01 [INFO] entropi.lsp.base: c LSP started
-2026-02-16 10:18:01 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-16 10:18:01 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-16 10:18:01 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-16 10:18:01 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-16 10:18:01 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-16 10:18:01 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-16 10:18:01 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-16 10:18:01 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-16 10:18:01 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-16 10:18:01 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-16 10:18:01 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-16 10:18:01 [INFO] entropi.app: Entropi initialized
-2026-02-16 10:18:01 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
-2026-02-16 10:18:01 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
-2026-02-16 10:18:01 [INFO] entropi.core.engine: 
+2026-02-16 15:22:43 [INFO] entropi: Session started - logging to /tmp/tmp2ueiayg3/.entropi/session.log
+2026-02-16 15:22:43 [INFO] entropi: Log level: INFO
+2026-02-16 15:22:43 [INFO] entropi.app: Initializing Entropi...
+2026-02-16 15:22:43 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-16 15:22:43 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-16 15:22:44 [INFO] entropi.lsp.base: python LSP started
+2026-02-16 15:22:44 [INFO] entropi.lsp.base: Starting c LSP: clangd
+2026-02-16 15:22:44 [INFO] entropi.lsp.base: c LSP started
+2026-02-16 15:22:44 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
+2026-02-16 15:22:44 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
+2026-02-16 15:22:44 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-16 15:22:44 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
+2026-02-16 15:22:44 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
+2026-02-16 15:22:44 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-16 15:22:44 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
+2026-02-16 15:22:44 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-16 15:22:44 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-16 15:22:44 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-16 15:22:44 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-16 15:22:44 [INFO] entropi.app: Entropi initialized
+2026-02-16 15:22:44 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-16 15:22:44 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
+2026-02-16 15:22:44 [INFO] entropi.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 Hello, how are you?
 ============================================================
-2026-02-16 10:18:01 [INFO] entropi.core.engine: State: PLANNING
-2026-02-16 10:18:01 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-16 10:18:01 [INFO] entropi.core.engine: State: EXECUTING
-2026-02-16 10:18:01 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-16 10:18:01 [INFO] entropi.inference.orchestrator: [ROUTER] simple | reused | 82ms
-2026-02-16 10:18:01 [INFO] entropi.core.engine: System prompt size: ~762 tokens
-2026-02-16 10:18:01 [INFO] entropi.ui.headless: Routing: NORMAL → SIMPLE | reused | 82ms
-2026-02-16 10:18:01 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-16 10:18:05 [INFO] entropi.adapter.qwen3: [THINKING] (417 chars):
+2026-02-16 15:22:44 [INFO] entropi.core.engine: State: PLANNING
+2026-02-16 15:22:44 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-16 15:22:44 [INFO] entropi.core.engine: State: EXECUTING
+2026-02-16 15:22:44 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-16 15:22:44 [INFO] entropi.inference.orchestrator: [ROUTER] simple | reused | 99ms
+2026-02-16 15:22:44 [INFO] entropi.core.engine: System prompt size: ~762 tokens
+2026-02-16 15:22:44 [INFO] entropi.ui.headless: Routing: NORMAL → SIMPLE | reused | 99ms
+2026-02-16 15:22:44 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-16 15:22:48 [INFO] entropi.adapter.qwen3: [THINKING] (417 chars):
 Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since this is a simple greeting, I should keep it concise and friendly. Let me make sure to acknowledge their greeting and offer assistance.
 
 I should check if there's any need to hand off to another tier, but since this is a basic interaction, the Simple Tier can handle it. No tools are needed here. Just a straightforward reply.
-2026-02-16 10:18:05 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=559 | cleaned_len=123 | tool_calls=0
-2026-02-16 10:18:05 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-16 10:18:05 [INFO] entropi.core.engine: State: COMPLETE
-2026-02-16 10:18:05 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 3571ms
+2026-02-16 15:22:48 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=559 | cleaned_len=123 | tool_calls=0
+2026-02-16 15:22:48 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-16 15:22:48 [INFO] entropi.core.engine: State: COMPLETE
+2026-02-16 15:22:48 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 4007ms

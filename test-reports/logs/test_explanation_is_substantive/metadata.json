@@ -2,9 +2,10 @@
   "test_name": "test_explanation_is_substantive",
   "passed": true,
   "tier": "normal",
-  "duration_s": 17.13,
+  "duration_s": 16.82,
+  "target_s": 75.0,
   "prompt": "What is recursion in programming?",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-16T10:18:47"
+  "timestamp": "2026-02-16T15:23:31"
 }

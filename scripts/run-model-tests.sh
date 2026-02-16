@@ -55,6 +55,7 @@ if .venv/bin/pytest tests/model/ -v --tb=short 2>&1 | tee -a "$REPORT_FILE"; the
     echo "Result: PASSED" >> "$REPORT_FILE"
     echo ""
     echo "Model tests: PASSED (hash cached for next run)"
+    echo "Test reports updated — re-run 'git commit' to include them."
     exit 0
 else
     echo "" >> "$REPORT_FILE"

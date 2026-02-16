@@ -1,0 +1,47 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_response_ends_cleanly\n<size:11>[PASSED] < 75s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  List three programming languages and their main use cases
+end note
+App -> Orch: route
+note right: **NORMAL** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Here are three programming languages and their primary use cases:
+  
+  1. **Python**  
+     - **Use Cases**: Data analysis, machine learning, automation scripting, 
+  scientific computing, and web development (with frameworks like Django/Flask).  
+     - Known for readability and versatility.
+  
+  2. **JavaScript**  
+     - **Use Cases**: Front-end web development (browser-based interactive 
+  features), back-end development (Node.js), and building mobile apps (React 
+  Native).  
+     - Essential for dynamic web pages and real-time applications.
+  
+  3. **Java**  
+     - **Use Cases**: Enterprise software, Android app development, large-scale 
+  systems, and big data technologies (Hadoop).  
+     - Valued for its portability and robustness in mission-critical applications.
+end note
+note over T #palegreen
+  **PASSED** (< 75s)
+end note
+
+@enduml

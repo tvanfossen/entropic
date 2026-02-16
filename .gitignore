@@ -78,6 +78,9 @@ hf.env
 # Cache/flag files are ephemeral (not committed)
 test-reports/model-tests.hash
 test-reports/model-tests.flag
+# Top-level puml/png are obsolete (now generated in logs/ subdirs)
+test-reports/*.puml
+test-reports/*.png
 # Override *.log and logs/ rules for committed test logs
 !test-reports/logs/
 !test-reports/logs/**/*.log

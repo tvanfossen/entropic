@@ -1,0 +1,64 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_explanation_is_substantive\n<size:11>[PASSED] < 75s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  What is recursion in programming?
+end note
+App -> Orch: route
+note right: **NORMAL** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem by breaking it down into smaller, simpler subproblems. It typically 
+  involves two key components:
+  
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops).
+  2. **Recursive Case**: The function calling itself with modified parameters.
+  
+  ### Example: Factorial Calculation
+  ```python
+  def factorial(n):
+      if n == 0:  # Base case
+          return 1
+      else:       # Recursive case
+          return n * factorial(n-1)
+  ```
+  
+  ### Key Characteristics:
+  - **Divides problems into smaller instances** (e.g., `factorial(5)` becomes `5 *
+  factorial(4)`)
+  - **Requires a clear base case** to terminate the recursion
+  - **Uses the call stack** to manage intermediate states
+  
+  ### Comparison with Iteration:
+  | Feature          | Recursion               | Iteration              |
+  |------------------|-------------------------|------------------------|
+  | Readability      | Often clearer for divide-and-conquer problems | More 
+  efficient for simple loops |
+  | Performance      | Higher overhead (stack frames) | Lower overhead (no stack 
+  management) |
+  | Stack Usage      | Risk of stack overflow | No stack overflow risk |
+  
+  Common use cases include tree traversal, sorting algorithms (e.g., quicksort), 
+  and mathematical computations (e.g., Fibonacci sequence).
+end note
+note over T #palegreen
+  **PASSED** (< 75s)
+end note
+
+@enduml

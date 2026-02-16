@@ -205,6 +205,8 @@ Test fixtures are the right place for test-specific wiring.
 - [x] `test-reports/` committed (not gitignored), latest run only
 - [x] File leak (#82) documented as deferred to P1-015
 
+@architect: VERIFIED
+
 ## Implementation Notes
 
 ### Pre-commit Hook Exclusion

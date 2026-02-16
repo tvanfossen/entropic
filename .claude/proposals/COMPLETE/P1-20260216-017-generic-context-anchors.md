@@ -9,9 +9,9 @@ component: architecture
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-16
-updated: 2026-02-16
+updated: 2026-02-17
 tags: [architecture, directives, context, refactor]
-completed_date: null
+completed_date: 2026-02-17
 scoped_files:
   - src/entropi/core/directives.py
   - src/entropi/core/engine.py
@@ -165,10 +165,12 @@ leaky. Decision point for implementation.
 
 ## Success Criteria
 
-- [ ] Engine has zero todo-specific code
-- [ ] `_context_anchors` dict manages all anchored state generically
-- [ ] EntropiServer emits `ContextAnchor` directive for todo state
-- [ ] Anchors survive compaction and tier changes
-- [ ] Empty todo list shows usage instructions (server-controlled content)
-- [ ] `_on_todo_update` callback still fires for UI updates
-- [ ] All existing tests pass
+- [x] Engine has zero todo-specific code
+- [x] `_context_anchors` dict manages all anchored state generically
+- [x] EntropiServer emits `ContextAnchor` directive for todo state
+- [x] Anchors survive compaction and tier changes
+- [x] Empty todo list shows usage instructions (server-controlled content)
+- [x] `NotifyPresenter` directive fires for UI updates (replaced `_on_todo_update` callback)
+- [x] All existing tests pass
+
+@architect: VERIFIED

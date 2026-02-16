@@ -258,10 +258,12 @@ class TestTodoCompactionPersistence:
         assert "Progress: 1/3 completed" in result
         assert "[END TODO STATE]" in result
 
-    def test_format_for_context_empty_returns_empty_string(self) -> None:
-        """Empty todo list returns empty string (no injection)."""
+    def test_format_for_context_empty_returns_usage_reminder(self) -> None:
+        """Empty todo list returns usage reminder."""
         todo_list = TodoList()
-        assert todo_list.format_for_context() == ""
+        result = todo_list.format_for_context()
+        assert "No active todos" in result
+        assert "todo_write" in result
 
     def test_context_anchor_created(self) -> None:
         """Context anchor is appended with correct metadata."""

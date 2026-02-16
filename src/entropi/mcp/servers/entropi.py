@@ -8,7 +8,6 @@ directives for engine-level side effects.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from typing import Any
 
@@ -156,13 +155,3 @@ class EntropiServer(BaseMCPServer):
             result="Prune requested.",
             directives=[PruneMessages(keep_recent=keep_recent)],
         )
-
-
-async def main() -> None:
-    """Run the entropi server."""
-    server = EntropiServer()
-    await server.run()
-
-
-if __name__ == "__main__":
-    asyncio.run(main())

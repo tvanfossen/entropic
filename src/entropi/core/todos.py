@@ -135,7 +135,11 @@ class TodoList:
     def format_for_context(self) -> str:
         """Format todo list for injection into conversation context."""
         if self.is_empty:
-            return ""
+            return (
+                "[CURRENT TODO STATE]\n"
+                "No active todos. Use entropi.todo_write to track your work.\n"
+                "[END TODO STATE]"
+            )
         status_icons = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
         lines = ["[CURRENT TODO STATE]"]
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from entropi.config.schema import EntropyConfig
-from entropi.core.base import ToolCall, ToolResult
+from entropi.core.base import ToolCall, ToolProvider, ToolResult
 from entropi.core.logging import get_logger
 from entropi.mcp.client import MCPClient
 from entropi.mcp.provider import InProcessProvider
@@ -52,7 +52,7 @@ class ServerManager:
         """
         self.config = config
         self._project_dir = project_dir or Path.cwd()
-        self._clients: dict[str, MCPClient | InProcessProvider] = {}
+        self._clients: dict[str, ToolProvider] = {}
         self._server_classes: dict[str, type[BaseMCPServer]] = {}
         self._permissions = config.permissions
         self._lsp_manager: LSPManager | None = None
@@ -179,7 +179,7 @@ class ServerManager:
             return server_cls.skip_duplicate_check(local_name)
         return False
 
-    async def _safe_connect(self, client: MCPClient | InProcessProvider) -> None:
+    async def _safe_connect(self, client: ToolProvider) -> None:
         """Connect to a client/provider, logging errors but not failing."""
         try:
             await client.connect()

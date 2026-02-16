@@ -9,9 +9,9 @@ component: architecture
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-16
-updated: 2026-02-16
+updated: 2026-02-17
 tags: [architecture, mcp, tools, refactor, performance]
-completed_date: null
+completed_date: 2026-02-17
 scoped_files:
   - src/entropi/mcp/manager.py
   - src/entropi/mcp/client.py
@@ -174,13 +174,15 @@ is in-process with MCP as an optional gateway. Out of scope for this proposal.
 
 ## Success Criteria
 
-- [ ] `ToolProvider` protocol defined with `list_tools` + `call_tool`
-- [ ] `InProcessToolProvider` wraps built-in servers for direct execution
-- [ ] `MCPToolProvider` wraps `MCPClient` for external MCP connections
-- [ ] All 5 built-in servers run in-process (no subprocess)
-- [ ] File leak (#82) resolved — tools use `project_dir` from Application
-- [ ] Directives returned as native `list[Directive]` (no JSON serde for in-process)
-- [ ] External MCP servers still work via MCPToolProvider
-- [ ] Permission model unchanged
-- [ ] All existing tests pass
-- [ ] Model test reports show no behavioral regression
+- [x] `ToolProvider` Protocol defined in `core/base.py` (structural typing via `typing.Protocol`)
+- [x] `InProcessProvider` wraps built-in servers for direct execution
+- [x] `MCPClient` handles external MCP connections (no separate wrapper needed)
+- [x] All 5 built-in servers run in-process (no subprocess)
+- [x] File leak (#82) resolved — tools use `project_dir` from Application
+- [x] Directives returned as native `list[Directive]` via `ServerResponse` (no JSON serde for in-process)
+- [x] External MCP servers still work via `MCPClient`
+- [x] Permission model unchanged
+- [x] All existing tests pass
+- [x] Model test reports show no behavioral regression
+
+@architect: VERIFIED

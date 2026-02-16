@@ -129,12 +129,3 @@ class GitServer(BaseMCPServer):
             return await self._git_command(["checkout", "-b", arguments["name"]])
         else:
             return await self._git_command(["branch", "-a"])
-
-
-# Entry point for running as MCP server
-if __name__ == "__main__":
-    import sys
-
-    repo_dir = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-    server = GitServer(repo_dir)
-    asyncio.run(server.run())

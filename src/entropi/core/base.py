@@ -8,7 +8,7 @@ consistent interfaces and enable dependency injection.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from entropi.config.schema import ModelConfig
@@ -120,38 +120,31 @@ class ModelBackend(ABC):
         return self._adapter
 
 
-class ToolProvider(ABC):
-    """Abstract base class for tool providers (MCP servers)."""
+@runtime_checkable
+class ToolProvider(Protocol):
+    """Structural interface for tool providers.
+
+    Both MCPClient (subprocess JSON-RPC) and InProcessProvider
+    (direct in-process execution) implement this protocol,
+    letting ServerManager treat them uniformly.
+    """
+
+    name: str
 
     @property
-    @abstractmethod
-    def name(self) -> str:
-        """Get provider name."""
-        pass
+    def is_connected(self) -> bool: ...
 
-    @abstractmethod
-    async def initialize(self) -> None:
-        """Initialize the provider."""
-        pass
+    async def connect(self) -> None: ...
 
-    @abstractmethod
-    async def shutdown(self) -> None:
-        """Shutdown the provider."""
-        pass
+    async def disconnect(self) -> None: ...
 
-    @abstractmethod
-    async def list_tools(self) -> list[dict[str, Any]]:
-        """List available tools."""
-        pass
+    async def list_tools(self) -> list[dict[str, Any]]: ...
 
-    @abstractmethod
-    async def execute_tool(
+    async def execute(
         self,
-        name: str,
+        tool_name: str,
         arguments: dict[str, Any],
-    ) -> ToolResult:
-        """Execute a tool."""
-        pass
+    ) -> ToolResult: ...
 
 
 class StorageBackend(ABC):

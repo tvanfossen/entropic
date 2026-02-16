@@ -71,8 +71,8 @@ class TestEntropiServerTodoWrite:
         assert isinstance(result.directives[1], NotifyPresenter)
 
     @pytest.mark.asyncio
-    async def test_empty_list_returns_empty_anchor(self, server: EntropiServer) -> None:
-        """Empty todo list returns context_anchor with empty content."""
+    async def test_empty_list_returns_usage_reminder(self, server: EntropiServer) -> None:
+        """Empty todo list returns context_anchor with usage reminder."""
         result = await server.execute_tool(
             "todo_write",
             {
@@ -83,7 +83,8 @@ class TestEntropiServerTodoWrite:
         assert isinstance(result, ServerResponse)
         anchor = result.directives[0]
         assert isinstance(anchor, ContextAnchor)
-        assert anchor.content == ""
+        assert "No active todos" in anchor.content
+        assert "todo_write" in anchor.content
 
         notify = result.directives[1]
         assert isinstance(notify, NotifyPresenter)

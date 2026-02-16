@@ -4,7 +4,6 @@ Diagnostics MCP server.
 Provides code diagnostics from LSP language servers.
 """
 
-import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -144,35 +143,3 @@ class DiagnosticsServer(BaseMCPServer):
         if not self.lsp_manager.is_enabled:
             return "LSP is not enabled."
         return None
-
-
-# Entry point for running as MCP server
-if __name__ == "__main__":
-    import os
-    import sys
-
-    from entropi.config.schema import LSPConfig
-    from entropi.lsp.manager import LSPManager as _LSPManager
-
-    root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.cwd()
-
-    # Create LSP manager with default config
-    config = LSPConfig()
-    manager = _LSPManager(config, root)
-    manager.start()
-
-    try:
-        server = DiagnosticsServer(manager, root)
-        asyncio.run(server.run())
-    finally:
-        # Suppress stderr during shutdown to avoid "server quit" errors
-        # from pylspclient threads when file handles are closing
-        try:
-            sys.stderr = open(os.devnull, "w")
-            sys.stdout = open(os.devnull, "w")
-        except Exception:
-            pass
-        try:
-            manager.stop()
-        except Exception:
-            pass

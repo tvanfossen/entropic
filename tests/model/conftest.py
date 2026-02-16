@@ -8,7 +8,9 @@ Architecture:
 """
 
 import asyncio
+import json
 import re
+import shutil
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
@@ -18,6 +20,7 @@ import pytest
 from entropi.app import Application
 from entropi.config.schema import EntropyConfig
 from entropi.core.base import Message
+from entropi.core.logging import setup_logging, setup_model_logger
 from entropi.inference.orchestrator import ModelOrchestrator
 from entropi.ui.headless import HeadlessPresenter
 
@@ -25,7 +28,7 @@ from entropi.ui.headless import HeadlessPresenter
 AVG_SECONDS_PER_TURN = 15
 TURN_TIME_BUFFER = 2.5  # buffer for tool-call path (model writes full files)
 
-REPORT_DIR = Path(".test-reports")
+REPORT_DIR = Path("test-reports")
 
 
 async def with_timeout(coro, expected_turns: int = 1, name: str = "operation"):
@@ -114,7 +117,11 @@ async def headless_app(
 
     - Orchestrator (model) is shared across tests in the module
     - Session state (messages, conversation) is fresh per test
+    - Logging wired to tmp_project_dir for per-test log capture
     """
+    setup_logging(config, project_dir=tmp_project_dir)
+    setup_model_logger(project_dir=tmp_project_dir)
+
     app = Application(
         config=config,
         project_dir=tmp_project_dir,
@@ -178,6 +185,53 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
         entry.is_routing_test = True
 
     _report_entries.append(entry)
+
+    # Stash logs from tmp_project_dir before fixture teardown cleans it
+    _stash_test_logs(item, entry)
+
+
+def _stash_test_logs(item: pytest.Item, entry: TestInteraction) -> None:
+    """Copy session logs from tmp_project_dir to test-reports/logs/<test_name>/.
+
+    Must run during call phase (before fixture teardown cleans tmp_project_dir).
+    Writes metadata.json alongside logs for training data labeling.
+    """
+    tmp_dir = item.funcargs.get("tmp_project_dir")
+    if not tmp_dir:
+        return
+
+    log_src = Path(tmp_dir) / ".entropi"
+    if not log_src.exists():
+        return
+
+    log_dest = REPORT_DIR / "logs" / entry.test_name
+    log_dest.mkdir(parents=True, exist_ok=True)
+
+    # Copy log files
+    for log_file in ("session.log", "session_model.log"):
+        src = log_src / log_file
+        if src.exists() and src.stat().st_size > 0:
+            shutil.copy2(src, log_dest / log_file)
+
+    # Write metadata
+    metadata = {
+        "test_name": entry.test_name,
+        "passed": entry.passed,
+        "tier": entry.tier,
+        "duration_s": round(entry.duration_s, 2),
+        "prompt": entry.prompt,
+        "tool_count": len(entry.tool_calls),
+        "is_routing_test": entry.is_routing_test,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    (log_dest / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+
+
+def pytest_sessionstart(session):  # noqa: ARG001
+    """Clean test-reports/logs/ at the start of each run (latest-only)."""
+    logs_dir = REPORT_DIR / "logs"
+    if logs_dir.exists():
+        shutil.rmtree(logs_dir)
 
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
@@ -452,7 +506,7 @@ def _write_text_summary() -> None:
             lines.append(f"         Prompt: {entry.prompt[:100]}")
 
     lines.append("")
-    lines.append("Per-test diagrams: .test-reports/<test_name>.puml")
-    lines.append("Generate PNGs: plantuml .test-reports/*.puml")
+    lines.append("Per-test diagrams: test-reports/<test_name>.puml")
+    lines.append("Generate PNGs: plantuml test-reports/*.puml")
 
     (REPORT_DIR / "model-tests-latest.txt").write_text("\n".join(lines))

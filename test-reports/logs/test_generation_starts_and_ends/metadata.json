@@ -1,0 +1,10 @@
+{
+  "test_name": "test_generation_starts_and_ends",
+  "passed": true,
+  "tier": "simple",
+  "duration_s": 2.27,
+  "prompt": "Hello",
+  "tool_count": 0,
+  "is_routing_test": false,
+  "timestamp": "2026-02-13T12:05:22"
+}

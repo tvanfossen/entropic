@@ -4,13 +4,13 @@
 # Expects model-test-cache-check.sh to have run first and written
 # a flag file indicating whether tests should run.
 #
-# Flag file:  .test-reports/model-tests.flag
-# Cache file: .test-reports/model-tests.hash
-# Report file: .test-reports/model-tests-latest.txt
+# Flag file:  test-reports/model-tests.flag
+# Cache file: test-reports/model-tests.hash
+# Report file: test-reports/model-tests-latest.txt
 
 set -euo pipefail
 
-CACHE_DIR=".test-reports"
+CACHE_DIR="test-reports"
 FLAG_FILE="$CACHE_DIR/model-tests.flag"
 HASH_FILE="$CACHE_DIR/model-tests.hash"
 REPORT_FILE="$CACHE_DIR/model-tests-latest.txt"

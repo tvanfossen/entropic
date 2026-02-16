@@ -74,4 +74,10 @@ examples/pychess/
 .env
 .env.local
 hf.env
-.test-reports/
+# Test reports — committed, latest run only
+# Cache/flag files are ephemeral (not committed)
+test-reports/model-tests.hash
+test-reports/model-tests.flag
+# Override *.log and logs/ rules for committed test logs
+!test-reports/logs/
+!test-reports/logs/**/*.log

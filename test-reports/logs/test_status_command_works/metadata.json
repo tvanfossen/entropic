@@ -1,0 +1,10 @@
+{
+  "test_name": "test_status_command_works",
+  "passed": true,
+  "tier": "",
+  "duration_s": 0.0,
+  "prompt": "",
+  "tool_count": 0,
+  "is_routing_test": false,
+  "timestamp": "2026-02-13T12:05:17"
+}

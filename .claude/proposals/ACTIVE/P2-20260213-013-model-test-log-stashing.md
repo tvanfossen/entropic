@@ -3,7 +3,7 @@ version: 1.0.0
 type: proposal
 schema_version: 1
 id: P2-20260213-013
-title: "Model Test Log Stashing as Training Data"
+title: "Model Test Reports — Committed Log Stashing"
 priority: P2
 component: testing
 author: tvanfossen
@@ -17,18 +17,22 @@ scoped_files:
   - tests/conftest.py
   - src/entropi/core/logging.py
   - scripts/run-model-tests.sh
-  - .test-reports/
+  - scripts/model-test-cache-check.sh
+  - test-reports/
+  - .gitignore
 depends_on: []
 blocks:
   - P1-20260213-012  # Fine-tuning pipeline needs training data
+related:
+  - P1-20260213-015  # In-process tools resolves file leak (#82)
 ---
 
-# Model Test Log Stashing as Training Data
+# Model Test Reports — Committed Log Stashing
 
 ## Problem Statement
 
 Model tests run headless through `Application` with real model inference, producing the
-richest source of prompt→thinking→action data in the project. But this data is lost:
+richest source of prompt->thinking->action data in the project. But this data is lost:
 
 1. **Model logger not initialized during tests** — `setup_model_logger()` is called in
    `cli.py`, not `Application`. During tests, `get_model_logger()` returns a handler-less
@@ -39,6 +43,14 @@ richest source of prompt→thinking→action data in the project. But this data 
 
 The existing `.test-reports/` infrastructure captures high-level data (PlantUML diagrams,
 text summaries, tool calls), but not the raw model I/O needed for fine-tuning training data.
+
+### File Leak (#82)
+
+Model tests also leak files (e.g. `is_even.py`, `sum_list.py`) into the repo root. Root
+cause: MCP servers launch as subprocesses defaulting to `Path.cwd()` (repo root) instead
+of the test's `tmp_project_dir`. The `MCPManager` doesn't pass `project_dir` to subprocess
+args. This is resolved architecturally by P1-20260213-015 (in-process tools), which
+eliminates subprocesses for internal tools entirely.
 
 ## Connection to Fine-Tuning (P1-20260213-012)
 
@@ -51,7 +63,7 @@ Model tests are the ideal data generator:
 - **Reproducible** — same tests produce consistent data across model versions
 
 Stashed logs from model tests become the seed dataset for fine-tuning without manual
-annotation effort.
+annotation effort. Training data extraction is deferred to P1-20260213-012.
 
 ## Current Architecture
 
@@ -74,10 +86,38 @@ annotation effort.
 | `setup_logging()` not called in test fixtures | No `session.log` generated |
 | No per-test log file copying | Logs (if they existed) would be overwritten per test |
 | No persistent storage of raw model I/O | Training data lost after each run |
+| Reports gitignored | Cannot track model behavior changes across commits |
 
 ## Proposed Approach
 
-### 1. Wire Up Logging in Test Fixtures
+### 1. Migrate `.test-reports/` → `test-reports/` (Committed)
+
+Rename the directory (no dot prefix) and remove from `.gitignore`. Only the latest run
+is maintained — each test run overwrites the previous reports. This makes model behavior
+visible in the repo and trackable across commits.
+
+```
+test-reports/
+├── logs/
+│   ├── test_hello_produces_response/
+│   │   ├── session.log
+│   │   ├── session_model.log
+│   │   └── metadata.json
+│   ├── test_thanks_produces_acknowledgment/
+│   │   └── ...
+│   └── ...
+├── test_hello_produces_response.puml
+├── model-tests-latest.txt
+└── model-tests.hash
+```
+
+Update references in:
+- `tests/model/conftest.py` (`REPORT_DIR`)
+- `scripts/run-model-tests.sh`
+- `scripts/model-test-cache-check.sh`
+- `.gitignore` (remove `.test-reports/` entry)
+
+### 2. Wire Up Logging in Test Fixtures
 
 In `tests/model/conftest.py`, add logging setup to `headless_app` fixture:
 
@@ -91,29 +131,15 @@ async def headless_app(config, shared_orchestrator, headless_presenter, tmp_proj
 
 Both loggers use `mode='w'` — each test starts fresh (function-scoped fixture).
 
-### 2. Stash Logs Per-Test in Report Hook
+### 3. Stash Logs Per-Test in Report Hook
 
 Extend `pytest_runtest_makereport` to copy log files after each test:
 
-```
-.test-reports/
-├── logs/
-│   ├── test_hello_produces_response/
-│   │   ├── session.log
-│   │   └── session_model.log
-│   ├── test_thanks_produces_acknowledgment/
-│   │   └── ...
-│   └── ...
-├── test_hello_produces_response.puml
-├── model-tests-latest.txt
-└── model-tests.hash
-```
-
-Copy from `tmp_project_dir/.entropi/session*.log` → `.test-reports/logs/<test_name>/`.
+Copy from `tmp_project_dir/.entropi/session*.log` → `test-reports/logs/<test_name>/`.
 Must happen in the `call` phase of `pytest_runtest_makereport` (before fixture teardown
 cleans up tmp_project_dir).
 
-### 3. Add Pass/Fail Metadata
+### 4. Add Pass/Fail Metadata
 
 Include a `metadata.json` alongside each test's logs:
 
@@ -131,25 +157,27 @@ Include a `metadata.json` alongside each test's logs:
 This metadata enables automated filtering: passed tests = positive training examples,
 failed tests = negative examples for DPO preference pairs.
 
-### 4. Training Data Export Script
+### 5. Clean Report Directory on Each Run
 
-`scripts/extract_training_data.py` (from P1-20260213-012) reads `.test-reports/logs/`
-to produce structured training examples. The stashed logs are the raw material; the
-script transforms them into the format fine-tuning expects.
+`pytest_sessionstart` (or `run-model-tests.sh`) clears `test-reports/logs/` before each
+run. Only the latest results are committed. This keeps the directory a snapshot, not an
+accumulator.
 
 ## Design Decisions
+
+### Why committed (not gitignored)?
+
+- Model behavior is a first-class artifact — changes to model output should be visible
+  in diffs, reviewable in PRs, and trackable across commits.
+- Training data provenance: committed logs have a git history linking them to the code
+  and config that produced them.
+- Latest-only keeps repo size bounded (~1-2MB per run, ~22 tests).
 
 ### Why per-test directories (not one big log)?
 
 - Each test = one interaction = one training example. Clean 1:1 mapping.
 - Failed tests are easily excluded or used as negative examples.
 - No need to parse test boundaries out of a combined log.
-
-### Why `.test-reports/logs/` (not a separate directory)?
-
-- Already gitignored, already created by existing infrastructure.
-- Keeps all test artifacts in one place.
-- `run-model-tests.sh` already manages this directory.
 
 ### Why not capture logs at the Application level?
 
@@ -161,15 +189,17 @@ Test fixtures are the right place for test-specific wiring.
 
 | Risk | Mitigation |
 |------|------------|
-| Log files add disk usage | Model tests run ~6 tests; ~1-2MB total per run |
+| Log files add repo size | ~1-2MB total per run; latest-only; text compresses well in git |
 | Logger state leaks between tests | `setup_model_logger` clears handlers; function-scoped fixture |
 | `session.log` RichHandler pollutes test output | `setup_logging` console handler is WARNING-only; test output unaffected |
 | tmp_project_dir cleaned before hook runs | `call` phase report runs before fixture teardown — verified |
+| Noisy diffs when model output changes | Expected — that's the point. Review like any other test output. |
 
 ## Success Criteria
 
 - [ ] `session_model.log` generated during every model test
-- [ ] Logs persisted in `.test-reports/logs/<test_name>/` after test run
+- [ ] Logs persisted in `test-reports/logs/<test_name>/` after test run
 - [ ] `metadata.json` includes pass/fail, tier, prompt, timing
-- [ ] Existing PlantUML reports unaffected
-- [ ] `scripts/extract_training_data.py` can parse stashed logs (P1-20260213-012)
+- [ ] Existing PlantUML reports migrated to `test-reports/` and unaffected
+- [ ] `test-reports/` committed (not gitignored), latest run only
+- [ ] File leak (#82) documented as deferred to P1-015

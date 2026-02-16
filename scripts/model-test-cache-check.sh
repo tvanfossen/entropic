@@ -5,12 +5,12 @@
 # If nothing changed since the last successful run, writes SKIP flag.
 # Otherwise, writes RUN flag so the actual test hook knows to execute.
 #
-# Cache file: .test-reports/model-tests.hash
-# Flag file:  .test-reports/model-tests.flag
+# Cache file: test-reports/model-tests.hash
+# Flag file:  test-reports/model-tests.flag
 
 set -euo pipefail
 
-CACHE_DIR=".test-reports"
+CACHE_DIR="test-reports"
 HASH_FILE="$CACHE_DIR/model-tests.hash"
 FLAG_FILE="$CACHE_DIR/model-tests.flag"
 

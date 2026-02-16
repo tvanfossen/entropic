@@ -1,0 +1,43 @@
+=== Model Test Report ===
+Date: 2026-02-13 12:05:58
+
+Results: 22 passed, 0 failed (144.8s)
+
+  [PASS] test_code_request_produces_code [code] (4 tools) (76.5s)
+         Prompt: Write a Python function to check if a number is even
+  [PASS] test_code_response_has_python_syntax [code] (2 tools) (26.5s)
+         Prompt: Write a function that returns the sum of a list
+  [PASS] test_response_ends_cleanly [normal] (8.4s)
+         Prompt: List three programming languages and their main use cases
+  [PASS] test_no_special_tokens_in_response [simple] (2.4s)
+         Prompt: Hello, how are you?
+  [PASS] test_status_command_works (0.0s)
+  [PASS] test_generation_error_captured (0.0s)
+  [PASS] test_generation_starts_and_ends [simple] (2.3s)
+         Prompt: Hello
+  [PASS] test_multiple_messages_accumulate_history [normal] (10.5s)
+         Prompt: Hello
+  [PASS] test_explanation_is_substantive [normal] (11.5s)
+         Prompt: What is recursion in programming?
+  [PASS] test_hello_produces_response [simple] (2.2s)
+         Prompt: Hello
+  [PASS] test_thanks_produces_acknowledgment [simple] (2.5s)
+         Prompt: Thanks!
+  [PASS] test_hello_routes_to_simple (0.1s)
+  [PASS] test_hi_routes_to_simple (0.1s)
+  [PASS] test_thanks_routes_to_simple (0.1s)
+  [PASS] test_write_code_routes_to_code (0.1s)
+  [PASS] test_fix_bug_routes_to_code (0.1s)
+  [PASS] test_add_feature_routes_to_code (0.1s)
+  [PASS] test_explain_routes_to_reasoning (0.1s)
+  [PASS] test_question_routes_to_reasoning (0.1s)
+  [PASS] test_complex_analysis_routes_to_thinking (1.3s)
+  [PASS] test_classification_under_500ms (0.1s)
+  [PASS] test_multiple_classifications_consistent (0.2s)
+
+Per-test diagrams: test-reports/<test_name>.puml
+Generate PNGs: plantuml test-reports/*.puml
+
+======================== 22 passed in 164.07s (0:02:44) ========================
+
+Result: PASSED

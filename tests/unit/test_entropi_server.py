@@ -4,14 +4,15 @@ import json
 
 import pytest
 from entropi.core.directives import (
-    CLEAR_SELF_TODOS,
-    CONTEXT_ANCHOR,
-    INJECT_CONTEXT,
-    NOTIFY_PRESENTER,
-    PRUNE_MESSAGES,
-    STOP_PROCESSING,
-    TIER_CHANGE,
+    ClearSelfTodos,
+    ContextAnchor,
+    InjectContext,
+    NotifyPresenter,
+    PruneMessages,
+    StopProcessing,
+    TierChange,
 )
+from entropi.mcp.servers.base import ServerResponse
 from entropi.mcp.servers.entropi import EntropiServer
 
 
@@ -32,20 +33,19 @@ class TestEntropiServerTodoWrite:
                 "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
             },
         )
-        data = json.loads(result)
-        assert "Added 1" in data["result"]
-        directives = data["_directives"]
-        assert len(directives) == 2
+        assert isinstance(result, ServerResponse)
+        assert "Added 1" in result.result
+        assert len(result.directives) == 2
 
-        anchor = directives[0]
-        assert anchor["type"] == CONTEXT_ANCHOR
-        assert anchor["params"]["key"] == "todo_state"
-        assert "[CURRENT TODO STATE]" in anchor["params"]["content"]
+        anchor = result.directives[0]
+        assert isinstance(anchor, ContextAnchor)
+        assert anchor.key == "todo_state"
+        assert "[CURRENT TODO STATE]" in anchor.content
 
-        notify = directives[1]
-        assert notify["type"] == NOTIFY_PRESENTER
-        assert notify["params"]["key"] == "todo_update"
-        assert notify["params"]["data"]["count"] == 1
+        notify = result.directives[1]
+        assert isinstance(notify, NotifyPresenter)
+        assert notify.key == "todo_update"
+        assert notify.data["count"] == 1
 
     @pytest.mark.asyncio
     async def test_update_returns_directives(self, server: EntropiServer) -> None:
@@ -65,10 +65,10 @@ class TestEntropiServerTodoWrite:
                 "status": "in_progress",
             },
         )
-        data = json.loads(result)
-        assert "Updated" in data["result"]
-        assert data["_directives"][0]["type"] == CONTEXT_ANCHOR
-        assert data["_directives"][1]["type"] == NOTIFY_PRESENTER
+        assert isinstance(result, ServerResponse)
+        assert "Updated" in result.result
+        assert isinstance(result.directives[0], ContextAnchor)
+        assert isinstance(result.directives[1], NotifyPresenter)
 
     @pytest.mark.asyncio
     async def test_empty_list_returns_empty_anchor(self, server: EntropiServer) -> None:
@@ -80,14 +80,14 @@ class TestEntropiServerTodoWrite:
                 "todos": [],
             },
         )
-        data = json.loads(result)
-        anchor = data["_directives"][0]
-        assert anchor["type"] == CONTEXT_ANCHOR
-        assert anchor["params"]["content"] == ""
+        assert isinstance(result, ServerResponse)
+        anchor = result.directives[0]
+        assert isinstance(anchor, ContextAnchor)
+        assert anchor.content == ""
 
-        notify = data["_directives"][1]
-        assert notify["type"] == NOTIFY_PRESENTER
-        assert notify["params"]["data"]["count"] == 0
+        notify = result.directives[1]
+        assert isinstance(notify, NotifyPresenter)
+        assert notify.data["count"] == 0
 
 
 class TestEntropiServerHandoff:
@@ -122,17 +122,16 @@ class TestEntropiServerHandoff:
                 "task_state": "plan_ready",
             },
         )
-        data = json.loads(result)
-        assert "Handoff requested" in data["result"]
+        assert isinstance(result, ServerResponse)
+        assert "Handoff requested" in result.result
 
-        directives = data["_directives"]
-        types = [d["type"] for d in directives]
-        assert CLEAR_SELF_TODOS in types
-        assert TIER_CHANGE in types
-        assert STOP_PROCESSING in types
+        directive_types = [type(d) for d in result.directives]
+        assert ClearSelfTodos in directive_types
+        assert TierChange in directive_types
+        assert StopProcessing in directive_types
 
-        tier_d = next(d for d in directives if d["type"] == TIER_CHANGE)
-        assert tier_d["params"]["tier"] == "code"
+        tier_d = next(d for d in result.directives if isinstance(d, TierChange))
+        assert tier_d.tier == "code"
 
     @pytest.mark.asyncio
     async def test_handoff_empty_list_succeeds(self, server: EntropiServer) -> None:
@@ -145,9 +144,9 @@ class TestEntropiServerHandoff:
                 "task_state": "in_progress",
             },
         )
-        data = json.loads(result)
-        assert "Handoff requested" in data["result"]
-        assert "_directives" in data
+        assert isinstance(result, ServerResponse)
+        assert "Handoff requested" in result.result
+        assert len(result.directives) > 0
 
     @pytest.mark.asyncio
     async def test_handoff_blocked_without_execution_todos(self, server: EntropiServer) -> None:
@@ -167,6 +166,8 @@ class TestEntropiServerHandoff:
                 "task_state": "in_progress",
             },
         )
+        # Error case returns plain string
+        assert isinstance(result, str)
         data = json.loads(result)
         assert "error" in data
         assert "No execution todos" in data["error"]
@@ -197,11 +198,10 @@ class TestEntropiServerHandoff:
                 "task_state": "in_progress",
             },
         )
-        data = json.loads(result)
-        directives = data["_directives"]
-        inject = next((d for d in directives if d["type"] == INJECT_CONTEXT), None)
+        assert isinstance(result, ServerResponse)
+        inject = next((d for d in result.directives if isinstance(d, InjectContext)), None)
         assert inject is not None
-        assert "1 self-directed" in inject["params"]["content"]
+        assert "1 self-directed" in inject.content
 
     @pytest.mark.asyncio
     async def test_handoff_no_warning_when_self_todos_complete(self, server: EntropiServer) -> None:
@@ -229,9 +229,8 @@ class TestEntropiServerHandoff:
                 "task_state": "in_progress",
             },
         )
-        data = json.loads(result)
-        directives = data["_directives"]
-        inject = [d for d in directives if d["type"] == INJECT_CONTEXT]
+        assert isinstance(result, ServerResponse)
+        inject = [d for d in result.directives if isinstance(d, InjectContext)]
         assert len(inject) == 0
 
 
@@ -242,19 +241,22 @@ class TestEntropiServerPrune:
     async def test_prune_returns_directive(self) -> None:
         server = EntropiServer()
         result = await server.execute_tool("prune_context", {"keep_recent": 5})
-        data = json.loads(result)
-        assert data["result"] == "Prune requested."
-        directives = data["_directives"]
-        assert len(directives) == 1
-        assert directives[0]["type"] == PRUNE_MESSAGES
-        assert directives[0]["params"]["keep_recent"] == 5
+        assert isinstance(result, ServerResponse)
+        assert result.result == "Prune requested."
+        assert len(result.directives) == 1
+
+        prune = result.directives[0]
+        assert isinstance(prune, PruneMessages)
+        assert prune.keep_recent == 5
 
     @pytest.mark.asyncio
     async def test_prune_default_keep_recent(self) -> None:
         server = EntropiServer()
         result = await server.execute_tool("prune_context", {})
-        data = json.loads(result)
-        assert data["_directives"][0]["params"]["keep_recent"] == 2
+        assert isinstance(result, ServerResponse)
+        prune = result.directives[0]
+        assert isinstance(prune, PruneMessages)
+        assert prune.keep_recent == 2
 
 
 class TestEntropiServerUnknownTool:
@@ -264,6 +266,7 @@ class TestEntropiServerUnknownTool:
     async def test_unknown_tool(self) -> None:
         server = EntropiServer()
         result = await server.execute_tool("nonexistent", {})
+        assert isinstance(result, str)
         data = json.loads(result)
         assert "error" in data
         assert "Unknown tool" in data["error"]

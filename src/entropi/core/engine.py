@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING, Any
 
 from entropi.config.loader import save_permission
 from entropi.config.schema import EntropyConfig
-from entropi.core.base import Message, ToolCall
+from entropi.core.base import Message, ToolCall, ToolResult
 from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropi.core.context import ContextBuilder
-from entropi.core.directives import DirectiveProcessor, DirectiveResult, extract_directives
+from entropi.core.directives import DirectiveProcessor, DirectiveResult
 from entropi.core.logging import get_logger, get_model_logger
 from entropi.core.queue import MessageSource
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
@@ -916,9 +916,9 @@ class AgentEngine:
             ctx.consecutive_duplicate_attempts = 0
 
             logger.debug(f"Executing tool {i + 1}/{len(limited_calls)}: {tool_call.name}")
-            msg = await self._execute_tool(ctx, tool_call)
+            msg, tool_result = await self._execute_tool(ctx, tool_call)
             # Tag tool results with iteration for auto-pruning
-            if msg.tool_results:
+            if tool_result:
                 msg.metadata["added_at_iteration"] = ctx.metrics.iterations
                 msg.metadata["tool_name"] = tool_call.name
             ctx.messages.append(msg)
@@ -934,10 +934,11 @@ class AgentEngine:
             self._inject_context_warning(ctx)
 
             # Process directives from tool result (tier changes, pruning, etc.)
-            directive_result = self._process_directives(ctx, msg)
-            if directive_result.stop_processing:
-                logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
-                return
+            if tool_result and tool_result.directives:
+                directive_result = self._process_directives(ctx, tool_result.directives)
+                if directive_result.stop_processing:
+                    logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
+                    return
 
         ctx.consecutive_errors = 0
 
@@ -976,39 +977,40 @@ Do NOT call this tool again. Use the previous result above."""
 
         return Message(role="user", content=content)
 
-    async def _execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
+    async def _execute_tool(
+        self, ctx: LoopContext, tool_call: ToolCall
+    ) -> tuple[Message, ToolResult | None]:
         """Execute a single tool call.
 
         All tools go through the same path: approval → start callback →
         execute via ServerManager → complete callback. No tool-specific
         handlers in the engine.
+
+        Returns:
+            Tuple of (message for context, ToolResult with directives or None if denied)
         """
         logger.info(f"[TOOL CALL] {tool_call.name}")
         logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
 
         # Check approval (returns denial message if not approved)
         if denial_msg := await self._check_tool_approval(tool_call):
-            return denial_msg
+            return denial_msg, None
 
         # Execute the tool (all tools, including entropi.*, go through ServerManager)
         if self._on_tool_start:
             self._on_tool_start(tool_call)
         return await self._do_execute_tool(ctx, tool_call)
 
-    def _process_directives(self, ctx: LoopContext, msg: Message) -> DirectiveResult:
-        """Extract and process directives from a tool result message.
+    def _process_directives(self, ctx: LoopContext, directives: list[Any]) -> DirectiveResult:
+        """Process directives from a tool result.
 
         Args:
             ctx: Current loop context
-            msg: Tool result message (may contain JSON with _directives)
+            directives: Native Directive objects from ToolResult
 
         Returns:
             Aggregate directive result
         """
-        directives = extract_directives(msg.content)
-        if not directives:
-            return DirectiveResult()
-
         result = self._directive_processor.process(ctx, directives)
 
         # Append any injected messages to context
@@ -1033,8 +1035,14 @@ Do NOT call this tool again. Use the previous result above."""
         logger.info(f"[FEEDBACK] Denied message sent: {denied_msg.content[:100]}...")
         return denied_msg
 
-    async def _do_execute_tool(self, ctx: LoopContext, tool_call: ToolCall) -> Message:
-        """Execute tool and handle success/error. Always returns a Message."""
+    async def _do_execute_tool(
+        self, ctx: LoopContext, tool_call: ToolCall
+    ) -> tuple[Message, ToolResult]:
+        """Execute tool and return both the formatted message and raw result.
+
+        The Message goes into ctx.messages for model context.
+        The ToolResult carries directives for engine-level side effects.
+        """
         start_time = time.time()
         try:
             logger.debug(f"Executing tool via server manager: {tool_call.name}")
@@ -1042,13 +1050,26 @@ Do NOT call this tool again. Use the previous result above."""
             ctx.metrics.tool_calls += 1
             duration_ms = (time.time() - start_time) * 1000
             self._log_tool_success(ctx, tool_call, result.result, duration_ms)
-            return self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
+            msg = self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
+            return msg, result
         except PermissionDeniedError as e:
             duration_ms = (time.time() - start_time) * 1000
-            return self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=True)
+            msg = self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=True)
+            return msg, ToolResult(
+                call_id=tool_call.id,
+                name=tool_call.name,
+                result=str(e),
+                is_error=True,
+            )
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
-            return self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=False)
+            msg = self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=False)
+            return msg, ToolResult(
+                call_id=tool_call.id,
+                name=tool_call.name,
+                result=str(e),
+                is_error=True,
+            )
 
     def _log_tool_success(
         self, ctx: LoopContext, tool_call: ToolCall, result: str, duration_ms: float

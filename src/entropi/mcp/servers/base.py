@@ -5,11 +5,14 @@ Provides common functionality for implementing MCP servers
 using the official Python SDK.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
@@ -17,10 +20,26 @@ from mcp.types import TextContent, Tool
 
 from entropi.core.tool_validation import ToolValidationError, validate_tool_definition
 
+if TYPE_CHECKING:
+    from entropi.core.directives import Directive
+
 logger = logging.getLogger(__name__)
 
 # Tool definitions directory
 _TOOLS_DIR = Path(__file__).parent.parent.parent / "data" / "tools"
+
+
+@dataclass
+class ServerResponse:
+    """Structured result from server tool execution.
+
+    Servers that emit directives return this instead of a plain string.
+    ``result`` is the text shown to the model; ``directives`` are typed
+    objects processed by the engine.
+    """
+
+    result: str
+    directives: list[Directive] = field(default_factory=list)
 
 
 def load_tool_definition(tool_name: str, server_prefix: str = "") -> Tool:
@@ -85,8 +104,9 @@ class BaseMCPServer(ABC):
 
         @self.server.call_tool()
         async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-            result = await self.execute_tool(name, arguments)
-            return [TextContent(type="text", text=result)]
+            response = await self.execute_tool(name, arguments)
+            text = response.result if isinstance(response, ServerResponse) else response
+            return [TextContent(type="text", text=text)]
 
     @abstractmethod
     def get_tools(self) -> list[Tool]:
@@ -94,16 +114,15 @@ class BaseMCPServer(ABC):
         pass
 
     @abstractmethod
-    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """
-        Execute a tool.
+    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
+        """Execute a tool.
 
         Args:
             name: Tool name
             arguments: Tool arguments
 
         Returns:
-            Result string
+            Plain string or ServerResponse with directives
         """
         pass
 

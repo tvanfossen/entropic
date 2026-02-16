@@ -2,9 +2,11 @@
 Entropi MCP server.
 
 Provides entropi-internal tools: todo management, tier handoff,
-and context pruning. All tools return JSON results with optional
-``_directives`` for engine-level side effects.
+and context pruning. Returns ``ServerResponse`` with native typed
+directives for engine-level side effects.
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -13,24 +15,24 @@ from typing import Any
 from mcp.types import Tool
 
 from entropi.core.directives import (
-    CLEAR_SELF_TODOS,
-    CONTEXT_ANCHOR,
-    INJECT_CONTEXT,
-    NOTIFY_PRESENTER,
-    PRUNE_MESSAGES,
-    STOP_PROCESSING,
-    TIER_CHANGE,
+    ClearSelfTodos,
+    ContextAnchor,
+    InjectContext,
+    NotifyPresenter,
+    PruneMessages,
+    StopProcessing,
+    TierChange,
 )
 from entropi.core.todos import TodoList, TodoStatus
-from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
+from entropi.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
 
 
 class EntropiServer(BaseMCPServer):
     """Entropi internal tools MCP server.
 
     Owns the TodoList instance and provides handoff, prune_context,
-    and todo_write tools. Returns ``_directives`` in tool results
-    for engine-level side effects (tier changes, context pruning, etc.).
+    and todo_write tools. Returns ``ServerResponse`` with native typed
+    directives for engine-level side effects (tier changes, context pruning, etc.).
     """
 
     def __init__(self) -> None:
@@ -46,7 +48,7 @@ class EntropiServer(BaseMCPServer):
             load_tool_definition("prune_context", "entropi"),
         ]
 
-    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
+    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute an entropi tool.
 
         Args:
@@ -54,7 +56,7 @@ class EntropiServer(BaseMCPServer):
             arguments: Tool arguments
 
         Returns:
-            JSON result string, possibly containing ``_directives``
+            ServerResponse with native directives, or error string
         """
         handlers = {
             "todo_write": self._handle_todo_write,
@@ -64,38 +66,30 @@ class EntropiServer(BaseMCPServer):
         handler = handlers.get(name)
         return handler(arguments) if handler else json.dumps({"error": f"Unknown tool: {name}"})
 
-    def _handle_todo_write(self, arguments: dict[str, Any]) -> str:
+    def _handle_todo_write(self, arguments: dict[str, Any]) -> ServerResponse:
         """Handle todo_write tool call.
 
         Updates the internal todo list and returns two directives:
-        - ``context_anchor``: text state for model context
-        - ``notify_presenter``: structured data for TUI rendering
+        - ``ContextAnchor``: text state for model context
+        - ``NotifyPresenter``: structured data for TUI rendering
         """
         result = self._todo_list.handle_tool_call(arguments)
         state = self._todo_list.format_for_context()
-        return json.dumps(
-            {
-                "result": result,
-                "_directives": [
-                    {
-                        "type": CONTEXT_ANCHOR,
-                        "params": {"key": "todo_state", "content": state},
+        return ServerResponse(
+            result=result,
+            directives=[
+                ContextAnchor(key="todo_state", content=state),
+                NotifyPresenter(
+                    key="todo_update",
+                    data={
+                        "items": self._todo_list.to_dict(),
+                        "count": len(self._todo_list.items),
                     },
-                    {
-                        "type": NOTIFY_PRESENTER,
-                        "params": {
-                            "key": "todo_update",
-                            "data": {
-                                "items": self._todo_list.to_dict(),
-                                "count": len(self._todo_list.items),
-                            },
-                        },
-                    },
-                ],
-            }
+                ),
+            ],
         )
 
-    def _handle_handoff(self, arguments: dict[str, Any]) -> str:
+    def _handle_handoff(self, arguments: dict[str, Any]) -> str | ServerResponse:
         """Handle handoff tool call.
 
         Validates todo requirements (execution todos must exist if list
@@ -108,7 +102,7 @@ class EntropiServer(BaseMCPServer):
         target_tier = arguments.get("target_tier", "")
         reason = arguments.get("reason", "")
 
-        directives: list[dict[str, Any]] = []
+        directives = []
 
         # Check execution todos exist (if list is non-empty)
         execution_todos = [t for t in self._todo_list.items if t.target_tier is not None]
@@ -130,52 +124,37 @@ class EntropiServer(BaseMCPServer):
         ]
         if incomplete_self:
             directives.append(
-                {
-                    "type": INJECT_CONTEXT,
-                    "params": {
-                        "content": (
-                            f"[SYSTEM] Warning: {len(incomplete_self)} self-directed "
-                            f"todo(s) not yet completed. Proceeding with handoff."
-                        ),
-                    },
-                }
+                InjectContext(
+                    content=(
+                        f"[SYSTEM] Warning: {len(incomplete_self)} self-directed "
+                        f"todo(s) not yet completed. Proceeding with handoff."
+                    ),
+                )
             )
 
         directives.extend(
             [
-                {"type": CLEAR_SELF_TODOS},
-                {
-                    "type": TIER_CHANGE,
-                    "params": {"tier": target_tier, "reason": reason},
-                },
-                {"type": STOP_PROCESSING},
+                ClearSelfTodos(),
+                TierChange(tier=target_tier, reason=reason),
+                StopProcessing(),
             ]
         )
 
-        return json.dumps(
-            {
-                "result": f"Handoff requested to {target_tier}. Reason: {reason}",
-                "_directives": directives,
-            }
+        return ServerResponse(
+            result=f"Handoff requested to {target_tier}. Reason: {reason}",
+            directives=directives,
         )
 
-    def _handle_prune_context(self, arguments: dict[str, Any]) -> str:
+    def _handle_prune_context(self, arguments: dict[str, Any]) -> ServerResponse:
         """Handle prune_context tool call.
 
-        Returns a ``prune_messages`` directive — the engine owns ``ctx.messages``
+        Returns a ``PruneMessages`` directive — the engine owns ``ctx.messages``
         and performs the actual pruning.
         """
         keep_recent = arguments.get("keep_recent", 2)
-        return json.dumps(
-            {
-                "result": "Prune requested.",
-                "_directives": [
-                    {
-                        "type": PRUNE_MESSAGES,
-                        "params": {"keep_recent": keep_recent},
-                    }
-                ],
-            }
+        return ServerResponse(
+            result="Prune requested.",
+            directives=[PruneMessages(keep_recent=keep_recent)],
         )
 
 

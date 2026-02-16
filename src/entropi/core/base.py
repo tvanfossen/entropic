@@ -44,6 +44,7 @@ class ToolResult:
     result: str
     is_error: bool = False
     duration_ms: int = 0
+    directives: list[Any] = field(default_factory=list)
 
 
 @dataclass

@@ -5,7 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from entropi.core.directives import ContextAnchor, NotifyPresenter
 from entropi.mcp.provider import InProcessProvider
+from entropi.mcp.servers.base import ServerResponse
 
 
 def _make_mock_server(tools: list[dict] | None = None) -> MagicMock:
@@ -141,3 +143,40 @@ class TestInProcessProviderExecute:
 
         await provider.execute("read_file", {"path": "/foo"})
         server.execute_tool.assert_called_once_with("read_file", {"path": "/foo"})
+
+
+class TestInProcessProviderDirectives:
+    """Directive extraction from ServerResponse vs plain string."""
+
+    @pytest.mark.asyncio
+    async def test_server_response_extracts_native_directives(self) -> None:
+        """ServerResponse directives are propagated natively to ToolResult."""
+        server = _make_mock_server()
+        directives = [
+            ContextAnchor(key="test", content="state"),
+            NotifyPresenter(key="update", data={"count": 1}),
+        ]
+        server.execute_tool = AsyncMock(
+            return_value=ServerResponse(result="ok", directives=directives)
+        )
+        provider = InProcessProvider("entropi", server)
+        await provider.connect()
+
+        result = await provider.execute("entropi.todo_write", {"action": "add"})
+        assert result.result == "ok"
+        assert len(result.directives) == 2
+        assert isinstance(result.directives[0], ContextAnchor)
+        assert isinstance(result.directives[1], NotifyPresenter)
+
+    @pytest.mark.asyncio
+    async def test_plain_string_falls_back_to_extract(self) -> None:
+        """Plain string return uses extract_directives fallback."""
+        server = _make_mock_server()
+        server.execute_tool = AsyncMock(return_value='{"result": "ok"}')
+        provider = InProcessProvider("filesystem", server)
+        await provider.connect()
+
+        result = await provider.execute("filesystem.read_file", {"path": "/foo"})
+        assert result.result == '{"result": "ok"}'
+        # No directives embedded in plain JSON without _directives key
+        assert result.directives == []

@@ -12,6 +12,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from entropi.core.base import ToolResult
+from entropi.core.directives import extract_directives
 from entropi.core.logging import get_logger
 
 logger = get_logger("mcp.client")
@@ -168,6 +169,7 @@ class MCPClient:
                 result=content,
                 is_error=is_error,
                 duration_ms=duration,
+                directives=extract_directives(content),
             )
 
         except Exception as e:

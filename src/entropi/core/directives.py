@@ -101,9 +101,8 @@ class NotifyPresenter(Directive):
 
 
 # ---------------------------------------------------------------------------
-# Wire format type names (used by MCP servers for JSON serialization)
-# These go away when P1-018 (in-process tools) eliminates the subprocess
-# boundary and servers return list[Directive] directly.
+# Wire format type names (used by MCPClient for external JSON-RPC servers
+# and as fallback for in-process servers returning plain strings).
 # ---------------------------------------------------------------------------
 
 STOP_PROCESSING = "stop_processing"

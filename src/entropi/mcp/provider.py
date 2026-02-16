@@ -12,8 +12,9 @@ import time
 from typing import Any
 
 from entropi.core.base import ToolResult
+from entropi.core.directives import extract_directives
 from entropi.core.logging import get_logger
-from entropi.mcp.servers.base import BaseMCPServer
+from entropi.mcp.servers.base import BaseMCPServer, ServerResponse
 
 logger = get_logger("mcp.provider")
 
@@ -88,13 +89,23 @@ class InProcessProvider:
 
         start = time.time()
         try:
-            result_str = await self._server.execute_tool(local_name, arguments)
+            response = await self._server.execute_tool(local_name, arguments)
             duration = int((time.time() - start) * 1000)
+
+            # ServerResponse carries native directives; plain str uses fallback
+            if isinstance(response, ServerResponse):
+                result_str = response.result
+                directives = response.directives
+            else:
+                result_str = response
+                directives = extract_directives(result_str)
+
             return ToolResult(
                 call_id=tool_name,
                 name=tool_name,
                 result=result_str,
                 duration_ms=duration,
+                directives=directives,
             )
         except Exception as e:
             duration = int((time.time() - start) * 1000)

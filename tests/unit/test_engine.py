@@ -4,7 +4,7 @@ import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
-from entropi.core.base import Message, ToolCall
+from entropi.core.base import Message, ToolCall, ToolResult
 from entropi.core.context import ContextBuilder, TokenBudget
 from entropi.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
 from entropi.core.parser import ToolCallParser
@@ -246,7 +246,9 @@ class TestCompactionAfterToolResults(_EngineTestBase):
         compaction_calls = []
 
         async def mock_execute(ctx, tool_call):
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             compaction_calls.append(force)
@@ -328,8 +330,6 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
     @pytest.mark.asyncio
     async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
         """Tool calls after a stop_processing directive are dropped."""
-        import json
-
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -342,21 +342,21 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
         ]
 
+        from entropi.core.directives import StopProcessing
+
         executed = []
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            if tool_call.name == "entropi.handoff":
-                return Message(
-                    role="user",
-                    content=json.dumps(
-                        {
-                            "result": "Handoff requested to code.",
-                            "_directives": [{"type": "stop_processing"}],
-                        }
-                    ),
-                )
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            directives = [StopProcessing()] if tool_call.name == "entropi.handoff" else []
+            result = ToolResult(
+                call_id=tool_call.id,
+                name=tool_call.name,
+                result=msg.content,
+                directives=directives,
+            )
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             pass
@@ -392,7 +392,9 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             pass

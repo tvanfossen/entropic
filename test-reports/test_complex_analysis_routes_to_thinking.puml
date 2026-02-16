@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_complex_analysis_routes_to_thinking\n<size:11>[PASSED] 3.6s</size>
+title test_complex_analysis_routes_to_thinking\n<size:11>[PASSED] 1.3s</size>
 
 participant "Test" as T
 participant "Orchestrator" as Orch
@@ -12,6 +12,6 @@ T -> Orch: classify prompt
 Orch -> Rtr: route
 Rtr --> Orch: tier result
 Orch --> T: result
-note right #palegreen: 3.6s
+note right #palegreen: 1.3s
 
 @enduml

@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_no_special_tokens_in_response\n<size:11>[PASSED] 3.2s</size>
+title test_no_special_tokens_in_response\n<size:11>[PASSED] 3.8s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -26,7 +26,7 @@ note right of Mdl
   your projects. How can I assist you today?
 end note
 note over T #palegreen
-  **PASSED** (3.2s)
+  **PASSED** (3.8s)
 end note
 
 @enduml

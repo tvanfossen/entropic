@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_multiple_messages_accumulate_history\n<size:11>[PASSED] 15.0s</size>
+title test_multiple_messages_accumulate_history\n<size:11>[PASSED] 15.3s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -39,7 +39,7 @@ note right of Mdl
   "Hello". Would you like me to help with something else?
 end note
 note over T #palegreen
-  **PASSED** (15.0s)
+  **PASSED** (15.3s)
 end note
 
 @enduml

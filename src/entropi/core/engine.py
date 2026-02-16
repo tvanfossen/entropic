@@ -30,11 +30,12 @@ from entropi.mcp.manager import PermissionDeniedError, ServerManager
 if TYPE_CHECKING:
     from entropi.core.directives import (
         ClearSelfTodos,
+        ContextAnchor,
         InjectContext,
+        NotifyPresenter,
         PruneMessages,
         StopProcessing,
         TierChange,
-        TodoStateChanged,
     )
 
 logger = get_logger("core.engine")
@@ -148,7 +149,7 @@ class EngineCallbacks:
     on_stream_chunk: Callable[[str], None] | None = None
     on_tool_start: Callable[[ToolCall], None] | None = None
     on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-    on_todo_update: Callable[[dict[str, Any]], None] | None = None
+    on_presenter_notify: Callable[[str, dict[str, Any]], None] | None = None
     on_compaction: Callable[[CompactionResult], None] | None = None
     on_pause_prompt: Callable[[str], Any] | None = None
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
@@ -200,8 +201,8 @@ class AgentEngine:
         # Callback for pause/inject prompting
         self._on_pause_prompt: Callable[[str], Any] | None = None
 
-        # Cached todo state (updated via todo_state_changed directive)
-        self._cached_todo_state: str = ""
+        # Generic context anchors — keyed persistent messages in ctx.messages
+        self._context_anchors: dict[str, str] = {}
 
         # Directive processor for tool-to-engine communication
         self._directive_processor = DirectiveProcessor()
@@ -222,7 +223,7 @@ class AgentEngine:
         self._on_stream_chunk: Callable[[str], None] | None = None
         self._on_tool_start: Callable[[ToolCall], None] | None = None
         self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-        self._on_todo_update: Callable[[dict[str, Any]], None] | None = None
+        self._on_presenter_notify: Callable[[str, dict[str, Any]], None] | None = None
         self._on_compaction: Callable[[CompactionResult], None] | None = None
         # Task tracking callback for external MCP integration
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
@@ -233,11 +234,12 @@ class AgentEngine:
         """Register handlers for all known directive types."""
         from entropi.core.directives import (
             ClearSelfTodos,
+            ContextAnchor,
             InjectContext,
+            NotifyPresenter,
             PruneMessages,
             StopProcessing,
             TierChange,
-            TodoStateChanged,
         )
 
         self._directive_processor.register(StopProcessing, self._directive_stop_processing)
@@ -245,7 +247,8 @@ class AgentEngine:
         self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
-        self._directive_processor.register(TodoStateChanged, self._directive_todo_state_changed)
+        self._directive_processor.register(ContextAnchor, self._directive_context_anchor)
+        self._directive_processor.register(NotifyPresenter, self._directive_notify_presenter)
 
     def _directive_stop_processing(
         self,
@@ -301,8 +304,8 @@ class AgentEngine:
         self._log_assembled_prompt(ctx, "handoff")
         self._notify_tier_selected(target_tier_str)
 
-        # Inject cached todo state for new tier's awareness
-        self._update_todo_anchor(ctx)
+        # Reinject context anchors for new tier's awareness
+        self._reinject_context_anchors(ctx)
 
         logger.info(f"[DIRECTIVE] tier_change: {current_name} -> {target_tier_str}")
 
@@ -344,19 +347,42 @@ class AgentEngine:
             f"(~{freed_chars // 4} tokens freed)"
         )
 
-    def _directive_todo_state_changed(
+    def _directive_context_anchor(
         self,
         ctx: LoopContext,
-        directive: TodoStateChanged,
+        directive: ContextAnchor,
         result: DirectiveResult,
     ) -> None:
-        """Handle todo_state_changed directive — cache state, update anchor, notify TUI."""
-        import dataclasses
+        """Handle context_anchor directive — update keyed persistent message."""
+        if not directive.content:
+            self._context_anchors.pop(directive.key, None)
+            ctx.messages = [
+                m for m in ctx.messages if m.metadata.get("anchor_key") != directive.key
+            ]
+            logger.info(f"Removed context anchor: {directive.key}")
+            return
 
-        self._cached_todo_state = directive.state
-        self._update_todo_anchor(ctx)
-        if self._on_todo_update:
-            self._on_todo_update(dataclasses.asdict(directive))
+        self._context_anchors[directive.key] = directive.content
+        # Remove existing anchor with this key
+        ctx.messages = [m for m in ctx.messages if m.metadata.get("anchor_key") != directive.key]
+        # Append at end (recency bias)
+        anchor = Message(
+            role="user",
+            content=directive.content,
+            metadata={"is_context_anchor": True, "anchor_key": directive.key},
+        )
+        ctx.messages.append(anchor)
+        logger.info(f"Updated context anchor: {directive.key}")
+
+    def _directive_notify_presenter(
+        self,
+        ctx: LoopContext,
+        directive: NotifyPresenter,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle notify_presenter directive — pass through to UI callback."""
+        if self._on_presenter_notify:
+            self._on_presenter_notify(directive.key, directive.data)
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -408,7 +434,7 @@ class AgentEngine:
         self._on_stream_chunk = callbacks.on_stream_chunk
         self._on_tool_start = callbacks.on_tool_start
         self._on_tool_complete = callbacks.on_tool_complete
-        self._on_todo_update = callbacks.on_todo_update
+        self._on_presenter_notify = callbacks.on_presenter_notify
         self._on_compaction = callbacks.on_compaction
         self._on_pause_prompt = callbacks.on_pause_prompt
         self._on_tool_record = callbacks.on_tool_record
@@ -467,8 +493,8 @@ class AgentEngine:
         user_msg.metadata["source"] = "user"
         ctx.messages.append(user_msg)
 
-        # Inject todo state from previous runs (survives across run() calls)
-        self._update_todo_anchor(ctx)
+        # Reinject context anchors from previous runs (survives across run() calls)
+        self._reinject_context_anchors(ctx)
 
         # Log user prompt for debugging
         logger.info(f"\n{'=' * 60}\n[USER PROMPT]\n{'=' * 60}\n{user_message}\n{'=' * 60}")
@@ -1318,25 +1344,22 @@ RECOVERY:
             # Notify via callback
             if self._on_compaction:
                 self._on_compaction(result)
-            # Inject current todo state so model retains awareness
-            self._update_todo_anchor(ctx)
+            # Reinject context anchors so model retains awareness
+            self._reinject_context_anchors(ctx)
 
-    def _update_todo_anchor(self, ctx: LoopContext) -> None:
-        """Update or create the persistent todo state anchor.
+    def _reinject_context_anchors(self, ctx: LoopContext) -> None:
+        """Reinject all cached context anchors into ctx.messages.
 
-        Maintains a single message in ctx.messages with is_todo_anchor
-        metadata. Removes old anchor and appends at end (recency bias).
-        Zero context growth — one message, always current.
+        Called after compaction, tier change, or at run() start to ensure
+        anchored state survives context mutations. Each anchor is a single
+        keyed message — zero context growth per anchor.
         """
-        if not self._cached_todo_state:
-            return
-        # Remove existing anchor
-        ctx.messages = [m for m in ctx.messages if not m.metadata.get("is_todo_anchor")]
-        # Append at end (recency)
-        anchor = Message(role="user", content=self._cached_todo_state)
-        anchor.metadata["is_todo_anchor"] = True
-        ctx.messages.append(anchor)
-        logger.info("Updated todo state anchor")
+        from entropi.core.directives import ContextAnchor
+
+        for key, content in self._context_anchors.items():
+            self._directive_context_anchor(
+                ctx, ContextAnchor(key=key, content=content), DirectiveResult()
+            )
 
     def interrupt(self) -> None:
         """Interrupt the running loop (hard cancel)."""

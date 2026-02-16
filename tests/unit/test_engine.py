@@ -218,11 +218,11 @@ class _EngineTestBase:
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
         engine._on_state_change = None
-        engine._cached_todo_state = ""
+        engine._context_anchors = {}
         engine._directive_processor = DirectiveProcessor()
         engine._register_directive_handlers()
         engine._inject_context_warning = MagicMock()
-        engine._on_todo_update = None
+        engine._on_presenter_notify = None
         return engine
 
 
@@ -422,7 +422,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
         engine._log_assembled_prompt = MagicMock()
         engine._notify_tier_selected = MagicMock()
-        engine._update_todo_anchor = MagicMock()
+        engine._reinject_context_anchors = MagicMock()
         return engine
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:

@@ -528,13 +528,14 @@ class Application:
             presenter.print_tool_complete(tool_call.name, result, duration_ms)
             self._emit_context_update()
 
-        def on_todo_update(params: Any) -> None:
-            """Handle todo list update from directive."""
-            from entropi.core.todos import TodoList
+        def on_presenter_notify(key: str, data: dict[str, Any]) -> None:
+            """Handle generic presenter notification from directive."""
+            if key == "todo_update":
+                from entropi.core.todos import TodoList
 
-            items_data = params.get("items", {})
-            todo_list = TodoList.from_dict(items_data) if items_data else TodoList()
-            presenter.print_todo_panel(todo_list)
+                items_data = data.get("items", {})
+                todo_list = TodoList.from_dict(items_data) if items_data else TodoList()
+                presenter.print_todo_panel(todo_list)
 
         def on_compaction(result: Any) -> None:
             """Handle context compaction."""
@@ -547,7 +548,7 @@ class Application:
                 on_stream_chunk=on_chunk,
                 on_tool_start=on_tool_start,
                 on_tool_complete=on_tool_complete,
-                on_todo_update=on_todo_update,
+                on_presenter_notify=on_presenter_notify,
                 on_compaction=on_compaction,
                 on_pause_prompt=self._handle_pause_prompt,
                 on_tier_selected=lambda t: presenter.set_tier(t),

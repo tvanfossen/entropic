@@ -5,25 +5,26 @@ import json
 import pytest
 from entropi.core.directives import (
     CLEAR_SELF_TODOS,
+    CONTEXT_ANCHOR,
     INJECT_CONTEXT,
+    NOTIFY_PRESENTER,
     PRUNE_MESSAGES,
     STOP_PROCESSING,
     TIER_CHANGE,
-    TODO_STATE_CHANGED,
 )
 from entropi.mcp.servers.entropi import EntropiServer
 
 
 class TestEntropiServerTodoWrite:
-    """todo_write returns result + todo_state_changed directive."""
+    """todo_write returns context_anchor + notify_presenter directives."""
 
     @pytest.fixture
     def server(self) -> EntropiServer:
         return EntropiServer()
 
     @pytest.mark.asyncio
-    async def test_add_returns_directive(self, server: EntropiServer) -> None:
-        """Adding a todo returns todo_state_changed directive."""
+    async def test_add_returns_directives(self, server: EntropiServer) -> None:
+        """Adding a todo returns context_anchor and notify_presenter directives."""
         result = await server.execute_tool(
             "todo_write",
             {
@@ -34,14 +35,21 @@ class TestEntropiServerTodoWrite:
         data = json.loads(result)
         assert "Added 1" in data["result"]
         directives = data["_directives"]
-        assert len(directives) == 1
-        assert directives[0]["type"] == TODO_STATE_CHANGED
-        assert directives[0]["params"]["count"] == 1
-        assert "[CURRENT TODO STATE]" in directives[0]["params"]["state"]
+        assert len(directives) == 2
+
+        anchor = directives[0]
+        assert anchor["type"] == CONTEXT_ANCHOR
+        assert anchor["params"]["key"] == "todo_state"
+        assert "[CURRENT TODO STATE]" in anchor["params"]["content"]
+
+        notify = directives[1]
+        assert notify["type"] == NOTIFY_PRESENTER
+        assert notify["params"]["key"] == "todo_update"
+        assert notify["params"]["data"]["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_update_returns_directive(self, server: EntropiServer) -> None:
-        """Updating a todo returns todo_state_changed directive."""
+    async def test_update_returns_directives(self, server: EntropiServer) -> None:
+        """Updating a todo returns context_anchor and notify_presenter directives."""
         await server.execute_tool(
             "todo_write",
             {
@@ -59,11 +67,12 @@ class TestEntropiServerTodoWrite:
         )
         data = json.loads(result)
         assert "Updated" in data["result"]
-        assert data["_directives"][0]["type"] == TODO_STATE_CHANGED
+        assert data["_directives"][0]["type"] == CONTEXT_ANCHOR
+        assert data["_directives"][1]["type"] == NOTIFY_PRESENTER
 
     @pytest.mark.asyncio
-    async def test_empty_list_returns_empty_state(self, server: EntropiServer) -> None:
-        """Empty todo list returns empty state string."""
+    async def test_empty_list_returns_empty_anchor(self, server: EntropiServer) -> None:
+        """Empty todo list returns context_anchor with empty content."""
         result = await server.execute_tool(
             "todo_write",
             {
@@ -72,8 +81,13 @@ class TestEntropiServerTodoWrite:
             },
         )
         data = json.loads(result)
-        assert data["_directives"][0]["params"]["count"] == 0
-        assert data["_directives"][0]["params"]["state"] == ""
+        anchor = data["_directives"][0]
+        assert anchor["type"] == CONTEXT_ANCHOR
+        assert anchor["params"]["content"] == ""
+
+        notify = data["_directives"][1]
+        assert notify["type"] == NOTIFY_PRESENTER
+        assert notify["params"]["data"]["count"] == 0
 
 
 class TestEntropiServerHandoff:

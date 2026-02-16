@@ -1,20 +1,20 @@
-2026-02-16 09:31:25 [INFO] entropi: Session started - logging to /tmp/tmpcoskxxav/.entropi/session.log
-2026-02-16 09:31:25 [INFO] entropi: Log level: INFO
-2026-02-16 09:31:25 [INFO] entropi.app: Initializing Entropi...
-2026-02-16 09:31:25 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connecting to MCP server: filesystem
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connecting to MCP server: bash
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connecting to MCP server: git
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connecting to MCP server: diagnostics
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connecting to MCP server: entropi
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connected to bash, 1 tools available
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connected to git, 8 tools available
-2026-02-16 09:31:25 [INFO] entropi.mcp.client: Connected to entropi, 3 tools available
-2026-02-16 09:31:26 [INFO] entropi.mcp.client: Connected to diagnostics, 2 tools available
-2026-02-16 09:31:26 [INFO] entropi.mcp.client: Connected to filesystem, 3 tools available
-2026-02-16 09:31:26 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-16 09:31:26 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-16 09:31:26 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-16 09:31:26 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-16 09:31:26 [INFO] entropi.app: Entropi initialized
-2026-02-16 09:31:26 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-16 09:56:44 [INFO] entropi: Session started - logging to /tmp/tmp9p5oj4mz/.entropi/session.log
+2026-02-16 09:56:44 [INFO] entropi: Log level: INFO
+2026-02-16 09:56:44 [INFO] entropi.app: Initializing Entropi...
+2026-02-16 09:56:44 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-16 09:56:44 [INFO] entropi.mcp.client: Connecting to MCP server: filesystem
+2026-02-16 09:56:44 [INFO] entropi.mcp.client: Connecting to MCP server: bash
+2026-02-16 09:56:44 [INFO] entropi.mcp.client: Connecting to MCP server: git
+2026-02-16 09:56:44 [INFO] entropi.mcp.client: Connecting to MCP server: diagnostics
+2026-02-16 09:56:44 [INFO] entropi.mcp.client: Connecting to MCP server: entropi
+2026-02-16 09:56:45 [INFO] entropi.mcp.client: Connected to git, 8 tools available
+2026-02-16 09:56:45 [INFO] entropi.mcp.client: Connected to bash, 1 tools available
+2026-02-16 09:56:45 [INFO] entropi.mcp.client: Connected to entropi, 3 tools available
+2026-02-16 09:56:45 [INFO] entropi.mcp.client: Connected to filesystem, 3 tools available
+2026-02-16 09:56:45 [INFO] entropi.mcp.client: Connected to diagnostics, 2 tools available
+2026-02-16 09:56:45 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-16 09:56:45 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-16 09:56:45 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-16 09:56:45 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-16 09:56:45 [INFO] entropi.app: Entropi initialized
+2026-02-16 09:56:45 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock

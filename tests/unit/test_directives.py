@@ -10,14 +10,15 @@ from entropi.core.base import Message
 from entropi.core.directives import (
     _DIRECTIVE_REGISTRY,
     ClearSelfTodos,
+    ContextAnchor,
     Directive,
     DirectiveProcessor,
     DirectiveResult,
     InjectContext,
+    NotifyPresenter,
     PruneMessages,
     StopProcessing,
     TierChange,
-    TodoStateChanged,
     deserialize_directive,
     extract_directives,
 )
@@ -134,17 +135,42 @@ class TestDeserializeDirective:
         assert isinstance(d, PruneMessages)
         assert d.keep_recent == 2
 
-    def test_todo_state_changed(self) -> None:
+    def test_context_anchor(self) -> None:
         d = deserialize_directive(
             {
-                "type": "todo_state_changed",
-                "params": {"state": "todo list", "count": 3},
+                "type": "context_anchor",
+                "params": {"key": "todo_state", "content": "todo text"},
             }
         )
-        assert isinstance(d, TodoStateChanged)
-        assert d.state == "todo list"
-        assert d.count == 3
-        assert d.items is None
+        assert isinstance(d, ContextAnchor)
+        assert d.key == "todo_state"
+        assert d.content == "todo text"
+
+    def test_context_anchor_empty_content(self) -> None:
+        d = deserialize_directive(
+            {
+                "type": "context_anchor",
+                "params": {"key": "todo_state", "content": ""},
+            }
+        )
+        assert isinstance(d, ContextAnchor)
+        assert d.content == ""
+
+    def test_notify_presenter(self) -> None:
+        d = deserialize_directive(
+            {
+                "type": "notify_presenter",
+                "params": {"key": "todo_update", "data": {"count": 3}},
+            }
+        )
+        assert isinstance(d, NotifyPresenter)
+        assert d.key == "todo_update"
+        assert d.data == {"count": 3}
+
+    def test_notify_presenter_default_data(self) -> None:
+        d = deserialize_directive({"type": "notify_presenter", "params": {"key": "some_event"}})
+        assert isinstance(d, NotifyPresenter)
+        assert d.data == {}
 
     def test_unknown_type_raises(self) -> None:
         with pytest.raises(KeyError, match="nonexistent"):
@@ -291,14 +317,15 @@ class TestDirectiveResult:
 class TestDirectiveRegistry:
     """Directive registry maps string type names to dataclass types."""
 
-    def test_all_six_types_registered(self) -> None:
+    def test_all_seven_types_registered(self) -> None:
         expected = {
             "stop_processing": StopProcessing,
             "tier_change": TierChange,
             "clear_self_todos": ClearSelfTodos,
             "inject_context": InjectContext,
             "prune_messages": PruneMessages,
-            "todo_state_changed": TodoStateChanged,
+            "context_anchor": ContextAnchor,
+            "notify_presenter": NotifyPresenter,
         }
         assert _DIRECTIVE_REGISTRY == expected
 

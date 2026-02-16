@@ -75,12 +75,29 @@ class PruneMessages(Directive):
 
 
 @dataclass
-class TodoStateChanged(Directive):
-    """Notify engine of updated todo state."""
+class ContextAnchor(Directive):
+    """Push state to a persistent context anchor.
 
-    state: str
-    count: int = 0
-    items: list[dict] | None = None
+    The engine maintains a keyed dict of anchors. Each anchor becomes a
+    single message in ctx.messages, updated in-place on change, and
+    re-injected after compaction or tier change. Empty content removes
+    the anchor.
+    """
+
+    key: str
+    content: str
+
+
+@dataclass
+class NotifyPresenter(Directive):
+    """Generic UI notification — engine passes through, doesn't inspect.
+
+    The engine fires a callback with (key, data). App.py dispatches
+    to the appropriate presenter method based on the key.
+    """
+
+    key: str
+    data: dict = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +111,8 @@ TIER_CHANGE = "tier_change"
 CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
-TODO_STATE_CHANGED = "todo_state_changed"
+CONTEXT_ANCHOR = "context_anchor"
+NOTIFY_PRESENTER = "notify_presenter"
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +125,8 @@ _DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
     "clear_self_todos": ClearSelfTodos,
     "inject_context": InjectContext,
     "prune_messages": PruneMessages,
-    "todo_state_changed": TodoStateChanged,
+    "context_anchor": ContextAnchor,
+    "notify_presenter": NotifyPresenter,
 }
 
 

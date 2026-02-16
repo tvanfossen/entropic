@@ -14,11 +14,12 @@ from mcp.types import Tool
 
 from entropi.core.directives import (
     CLEAR_SELF_TODOS,
+    CONTEXT_ANCHOR,
     INJECT_CONTEXT,
+    NOTIFY_PRESENTER,
     PRUNE_MESSAGES,
     STOP_PROCESSING,
     TIER_CHANGE,
-    TODO_STATE_CHANGED,
 )
 from entropi.core.todos import TodoList, TodoStatus
 from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
@@ -66,8 +67,9 @@ class EntropiServer(BaseMCPServer):
     def _handle_todo_write(self, arguments: dict[str, Any]) -> str:
         """Handle todo_write tool call.
 
-        Updates the internal todo list and returns a ``todo_state_changed``
-        directive so the engine can cache the state for context injection.
+        Updates the internal todo list and returns two directives:
+        - ``context_anchor``: text state for model context
+        - ``notify_presenter``: structured data for TUI rendering
         """
         result = self._todo_list.handle_tool_call(arguments)
         state = self._todo_list.format_for_context()
@@ -76,13 +78,19 @@ class EntropiServer(BaseMCPServer):
                 "result": result,
                 "_directives": [
                     {
-                        "type": TODO_STATE_CHANGED,
+                        "type": CONTEXT_ANCHOR,
+                        "params": {"key": "todo_state", "content": state},
+                    },
+                    {
+                        "type": NOTIFY_PRESENTER,
                         "params": {
-                            "state": state,
-                            "count": len(self._todo_list.items),
-                            "items": self._todo_list.to_dict(),
+                            "key": "todo_update",
+                            "data": {
+                                "items": self._todo_list.to_dict(),
+                                "count": len(self._todo_list.items),
+                            },
                         },
-                    }
+                    },
                 ],
             }
         )

@@ -263,19 +263,21 @@ class TestTodoCompactionPersistence:
         todo_list = TodoList()
         assert todo_list.format_for_context() == ""
 
-    def test_todo_anchor_created_after_compaction(self) -> None:
-        """After compaction, todo anchor is appended with metadata."""
+    def test_context_anchor_created(self) -> None:
+        """Context anchor is appended with correct metadata."""
+        from entropi.core.directives import ContextAnchor, DirectiveResult
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
+        engine._context_anchors = {}
 
-        # Build cached state from a TodoList (as the directive handler would)
+        # Build state from a TodoList (as the server would)
         todo_list = TodoList()
         todo_list.items = [
             TodoItem(content="Fix bug", active_form="Fixing bug", status=TodoStatus.IN_PROGRESS),
             TodoItem(content="Add test", active_form="Adding test", status=TodoStatus.PENDING),
         ]
-        engine._cached_todo_state = todo_list.format_for_context()
+        state = todo_list.format_for_context()
 
         ctx = LoopContext(
             messages=[
@@ -284,45 +286,53 @@ class TestTodoCompactionPersistence:
             ],
         )
 
-        engine._update_todo_anchor(ctx)
+        engine._directive_context_anchor(
+            ctx, ContextAnchor(key="todo_state", content=state), DirectiveResult()
+        )
 
         assert len(ctx.messages) == 3
-        todo_msg = ctx.messages[2]
-        assert todo_msg.role == "user"
-        assert todo_msg.metadata.get("is_todo_anchor") is True
-        assert "[CURRENT TODO STATE]" in todo_msg.content
-        assert "[>] Fix bug" in todo_msg.content
-        assert "[ ] Add test" in todo_msg.content
+        anchor_msg = ctx.messages[2]
+        assert anchor_msg.role == "user"
+        assert anchor_msg.metadata.get("is_context_anchor") is True
+        assert anchor_msg.metadata.get("anchor_key") == "todo_state"
+        assert "[CURRENT TODO STATE]" in anchor_msg.content
+        assert "[>] Fix bug" in anchor_msg.content
+        assert "[ ] Add test" in anchor_msg.content
 
-    def test_todo_anchor_replaces_existing(self) -> None:
+    def test_context_anchor_replaces_existing(self) -> None:
         """Updating anchor removes old one and appends new at end."""
+        from entropi.core.directives import ContextAnchor, DirectiveResult
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
-        engine._cached_todo_state = "state v1"
+        engine._context_anchors = {}
 
         ctx = LoopContext(messages=[Message(role="system", content="sys")])
-        engine._update_todo_anchor(ctx)
+        engine._directive_context_anchor(
+            ctx, ContextAnchor(key="todo_state", content="state v1"), DirectiveResult()
+        )
         assert len(ctx.messages) == 2  # system + anchor
 
         # Add an assistant message after
         ctx.messages.append(Message(role="assistant", content="reply"))
 
-        # Update state and re-anchor
-        engine._cached_todo_state = "state v2"
-        engine._update_todo_anchor(ctx)
+        # Update anchor
+        engine._directive_context_anchor(
+            ctx, ContextAnchor(key="todo_state", content="state v2"), DirectiveResult()
+        )
 
         # Still only 1 anchor, now at end
-        anchors = [m for m in ctx.messages if m.metadata.get("is_todo_anchor")]
+        anchors = [m for m in ctx.messages if m.metadata.get("is_context_anchor")]
         assert len(anchors) == 1
         assert ctx.messages[-1].content == "state v2"
 
-    def test_empty_todo_not_anchored(self) -> None:
-        """No anchor created when cached todo state is empty."""
+    def test_empty_anchor_removes_existing(self) -> None:
+        """Empty content removes the anchor from context."""
+        from entropi.core.directives import ContextAnchor, DirectiveResult
         from entropi.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
-        engine._cached_todo_state = ""
+        engine._context_anchors = {}
 
         ctx = LoopContext(
             messages=[
@@ -331,6 +341,14 @@ class TestTodoCompactionPersistence:
             ],
         )
 
-        engine._update_todo_anchor(ctx)
+        # Create anchor
+        engine._directive_context_anchor(
+            ctx, ContextAnchor(key="todo_state", content="state"), DirectiveResult()
+        )
+        assert len(ctx.messages) == 3
 
-        assert len(ctx.messages) == 2  # No anchor
+        # Remove with empty content
+        engine._directive_context_anchor(
+            ctx, ContextAnchor(key="todo_state", content=""), DirectiveResult()
+        )
+        assert len(ctx.messages) == 2  # Anchor removed

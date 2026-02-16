@@ -2,7 +2,7 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_hello_produces_response\n<size:11>[PASSED] 3.6s</size>
+title test_hello_produces_response\n<size:11>[PASSED] 3.3s</size>
 
 participant "Test" as T
 participant "Application" as App
@@ -25,7 +25,7 @@ note right of Mdl
   Hello! How can I assist you today?
 end note
 note over T #palegreen
-  **PASSED** (3.6s)
+  **PASSED** (3.3s)
 end note
 
 @enduml

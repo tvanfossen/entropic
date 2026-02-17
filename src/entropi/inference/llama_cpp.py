@@ -50,6 +50,7 @@ class LlamaCppBackend(ModelBackend):
         tier: str,
         adapter: ChatAdapter | None = None,
         prompts_dir: Path | None = None,
+        use_bundled_prompts: bool = True,
     ) -> None:
         """
         Initialize backend.
@@ -59,9 +60,12 @@ class LlamaCppBackend(ModelBackend):
             tier: Model tier (thinking, normal, code, simple, router)
             adapter: Chat adapter (resolved from config.adapter if None)
             prompts_dir: Optional directory for user prompt overrides
+            use_bundled_prompts: If False, skip bundled prompt fallback
         """
         self.config = config
-        self._adapter = adapter or get_adapter(config.adapter, tier, prompts_dir=prompts_dir)
+        self._adapter = adapter or get_adapter(
+            config.adapter, tier, prompts_dir=prompts_dir, use_bundled_prompts=use_bundled_prompts
+        )
         self._model: Llama | None = None
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"

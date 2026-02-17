@@ -85,6 +85,7 @@ class MockEntropyConfig:
         self.thinking.enabled = False
 
         self.prompts_dir = None
+        self.use_bundled_prompts = True
 
 
 class TestModelOrchestratorLoading:
@@ -317,3 +318,35 @@ class TestModelOrchestratorLoading:
         # Swap to thinking
         await orchestrator._get_model(thinking)
         assert orchestrator._loaded_main_tier == thinking
+
+
+class TestBackendFactory:
+    """Tests for custom backend factory injection."""
+
+    def setup_method(self):
+        self.config = MockEntropyConfig()
+
+    @pytest.mark.asyncio
+    async def test_custom_factory_called_for_each_tier(self) -> None:
+        """Custom backend_factory is used instead of LlamaCppBackend."""
+        created: list[tuple[str, str]] = []
+
+        def mock_factory(model_config, tier_name):
+            created.append((str(model_config.path), tier_name))
+            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+        await orchestrator.initialize()
+
+        # Factory should have been called for each tier + router
+        tier_names = [name for _, name in created]
+        assert "normal" in tier_names
+        assert "code" in tier_names
+        assert "thinking" in tier_names
+        assert "simple" in tier_names
+        assert "router" in tier_names
+
+    def test_default_factory_when_none_provided(self) -> None:
+        """Without backend_factory, _default_backend_factory is used."""
+        orchestrator = ModelOrchestrator(self.config)
+        assert orchestrator._backend_factory == orchestrator._default_backend_factory

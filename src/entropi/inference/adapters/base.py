@@ -31,23 +31,32 @@ TOOL_RESULT_SUFFIX = "Continue. Batch multiple tool calls in one response when p
 class ChatAdapter(ABC):
     """Abstract base class for chat format adapters."""
 
-    def __init__(self, tier: str, prompts_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        tier: str,
+        prompts_dir: Path | None = None,
+        use_bundled_prompts: bool = True,
+    ) -> None:
         """
         Initialize adapter.
 
         Args:
             tier: Model tier (thinking, normal, code, simple)
             prompts_dir: Optional directory for user prompt overrides
+            use_bundled_prompts: If False, skip bundled prompt fallback
         """
         self._tier = tier
         self._prompts_dir = prompts_dir
+        self._use_bundled_prompts = use_bundled_prompts
         self._identity_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
 
     def _get_identity_prompt(self) -> str:
         """Get the identity prompt (constitution + tier identity), loading and caching it."""
         if self._identity_prompt is None:
-            self._identity_prompt = get_identity_prompt(self._tier, self._prompts_dir)
+            self._identity_prompt = get_identity_prompt(
+                self._tier, self._prompts_dir, use_bundled=self._use_bundled_prompts
+            )
         return self._identity_prompt
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
@@ -251,7 +260,12 @@ def register_adapter(name: str, adapter_class: type[ChatAdapter]) -> None:
     _ADAPTERS[name.lower()] = adapter_class
 
 
-def get_adapter(name: str, tier: str, prompts_dir: Path | None = None) -> ChatAdapter:
+def get_adapter(
+    name: str,
+    tier: str,
+    prompts_dir: Path | None = None,
+    use_bundled_prompts: bool = True,
+) -> ChatAdapter:
     """
     Get an adapter instance by name.
 
@@ -261,6 +275,7 @@ def get_adapter(name: str, tier: str, prompts_dir: Path | None = None) -> ChatAd
         name: Adapter name
         tier: Model tier (thinking, normal, code, simple)
         prompts_dir: Optional directory for user prompt overrides
+        use_bundled_prompts: If False, skip bundled prompt fallback
 
     Returns:
         Adapter instance
@@ -269,12 +284,13 @@ def get_adapter(name: str, tier: str, prompts_dir: Path | None = None) -> ChatAd
 
     logger = get_logger("adapters.base")
     name_lower = name.lower()
+    kwargs = {"tier": tier, "prompts_dir": prompts_dir, "use_bundled_prompts": use_bundled_prompts}
 
     if name_lower not in _ADAPTERS:
         logger.warning(f"Unknown adapter '{name}', falling back to generic")
-        return _ADAPTERS["generic"](tier=tier, prompts_dir=prompts_dir)
+        return _ADAPTERS["generic"](**kwargs)
 
-    return _ADAPTERS[name_lower](tier=tier, prompts_dir=prompts_dir)
+    return _ADAPTERS[name_lower](**kwargs)
 
 
 def list_adapters() -> list[str]:

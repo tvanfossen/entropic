@@ -51,17 +51,22 @@ def load_tier_identity(path: Path) -> tuple[TierIdentity, str]:
     return identity, body.strip()
 
 
-def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
+def load_prompt(
+    name: str,
+    prompts_dir: Path | None = None,
+    use_bundled: bool = True,
+) -> str:
     """
     Load a prompt template by name.
 
     Checks in order:
     1. User's prompts_dir (if provided and file exists)
-    2. Bundled defaults in package data
+    2. Bundled defaults in package data (if use_bundled=True)
 
     Args:
         name: Prompt name (e.g., "constitution" loads "constitution.md")
         prompts_dir: Optional user prompts directory
+        use_bundled: If False, skip bundled fallback (raise if not in prompts_dir)
 
     Returns:
         Prompt content
@@ -79,48 +84,64 @@ def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
             return user_path.read_text()
 
     # Fall back to bundled defaults
-    default_path = _DATA_DIR / filename
-    if default_path.exists():
-        logger.debug(f"Loading prompt '{name}' from bundled defaults")
-        return default_path.read_text()
+    if use_bundled:
+        default_path = _DATA_DIR / filename
+        if default_path.exists():
+            logger.debug(f"Loading prompt '{name}' from bundled defaults")
+            return default_path.read_text()
 
-    raise FileNotFoundError(f"Prompt '{name}' not found in {prompts_dir} or {_DATA_DIR}")
+    raise FileNotFoundError(f"Prompt '{name}' not found in {prompts_dir or _DATA_DIR}")
 
 
-def get_constitution_prompt(prompts_dir: Path | None = None) -> str:
+def get_constitution_prompt(
+    prompts_dir: Path | None = None,
+    use_bundled: bool = True,
+) -> str:
     """Get the constitution prompt (shared principles across all tiers)."""
-    return load_prompt("constitution", prompts_dir)
+    return load_prompt("constitution", prompts_dir, use_bundled=use_bundled)
 
 
-def get_tier_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
+def get_tier_identity_prompt(
+    tier: str,
+    prompts_dir: Path | None = None,
+    use_bundled: bool = True,
+) -> str:
     """Get the identity prompt for a specific model tier.
 
     Returns the full file content (frontmatter + body). For just the body
     (markdown after frontmatter), use load_tier_identity() instead.
     """
-    return load_prompt(f"identity_{tier}", prompts_dir)
+    return load_prompt(f"identity_{tier}", prompts_dir, use_bundled=use_bundled)
 
 
-def get_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
+def get_identity_prompt(
+    tier: str,
+    prompts_dir: Path | None = None,
+    use_bundled: bool = True,
+) -> str:
     """Get the full identity prompt: constitution + tier-specific body.
 
     Loads the identity file, strips YAML frontmatter, and combines
     constitution + markdown body for use as the adapter's system prompt.
     """
-    constitution = get_constitution_prompt(prompts_dir)
+    constitution = get_constitution_prompt(prompts_dir, use_bundled=use_bundled)
 
     # Try to load with frontmatter parsing first
-    identity_path = _resolve_identity_path(tier, prompts_dir)
+    identity_path = _resolve_identity_path(tier, prompts_dir, use_bundled=use_bundled)
     if identity_path:
         _identity, body = load_tier_identity(identity_path)
         return f"{constitution}\n\n{body}"
 
     # Fallback: load raw (no frontmatter)
-    tier_identity = get_tier_identity_prompt(tier, prompts_dir)
+    tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
     return f"{constitution}\n\n{tier_identity}"
 
 
-def _resolve_identity_path(tier: str, prompts_dir: Path | None = None) -> Path | None:
+def _resolve_identity_path(
+    tier: str,
+    prompts_dir: Path | None = None,
+    use_bundled: bool = True,
+) -> Path | None:
     """Find the identity file path for a tier, checking user dir then bundled."""
     filename = f"identity_{tier}.md"
 
@@ -129,9 +150,10 @@ def _resolve_identity_path(tier: str, prompts_dir: Path | None = None) -> Path |
         if user_path.exists():
             return user_path
 
-    default_path = _DATA_DIR / filename
-    if default_path.exists():
-        return default_path
+    if use_bundled:
+        default_path = _DATA_DIR / filename
+        if default_path.exists():
+            return default_path
 
     return None
 

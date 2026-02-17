@@ -174,3 +174,60 @@ class TestToolIsolation:
 
         for name in leaked_names:
             assert name not in non_identity, f"Tool '{name}' leaked into {tier} tier"
+
+
+class TestUseBundledPrompts:
+    """Tests for use_bundled_prompts=False skipping bundled fallback."""
+
+    def test_load_prompt_raises_when_bundled_disabled(self) -> None:
+        """load_prompt with use_bundled=False raises if not in prompts_dir."""
+        from entropi.prompts import load_prompt
+
+        with pytest.raises(FileNotFoundError):
+            load_prompt("constitution", prompts_dir=None, use_bundled=False)
+
+    def test_load_prompt_uses_prompts_dir_when_bundled_disabled(self, tmp_path: Path) -> None:
+        """load_prompt finds user file even with use_bundled=False."""
+        from entropi.prompts import load_prompt
+
+        user_prompt = tmp_path / "constitution.md"
+        user_prompt.write_text("Custom constitution")
+
+        result = load_prompt("constitution", prompts_dir=tmp_path, use_bundled=False)
+        assert result == "Custom constitution"
+
+    def test_resolve_identity_path_none_when_bundled_disabled(self) -> None:
+        """_resolve_identity_path returns None for bundled tiers when disabled."""
+        result = _resolve_identity_path("thinking", prompts_dir=None, use_bundled=False)
+        assert result is None
+
+    def test_resolve_identity_path_finds_user_file(self, tmp_path: Path) -> None:
+        """_resolve_identity_path finds user file even with use_bundled=False."""
+        identity = tmp_path / "identity_custom.md"
+        identity.write_text("---\nname: custom\nfocus:\n  - testing\n---\nBody")
+
+        result = _resolve_identity_path("custom", prompts_dir=tmp_path, use_bundled=False)
+        assert result == identity
+
+
+class TestProgrammaticConfig:
+    """Tests that EntropyConfig works without ConfigLoader or files."""
+
+    def test_entropy_config_constructs_without_files(self) -> None:
+        """EntropyConfig(...) works with just keyword args, no disk I/O."""
+        from entropi.config.schema import EntropyConfig
+
+        config = EntropyConfig(
+            models={"tiers": {"custom": {"path": "/tmp/model.gguf"}}, "default": "custom"},
+            routing={"enabled": False},
+        )
+        assert config.models.default == "custom"
+        assert "custom" in config.models.tiers
+        assert config.routing.enabled is False
+
+    def test_entropy_config_with_use_bundled_false(self) -> None:
+        """use_bundled_prompts=False is accepted by EntropyConfig."""
+        from entropi.config.schema import EntropyConfig
+
+        config = EntropyConfig(use_bundled_prompts=False)
+        assert config.use_bundled_prompts is False

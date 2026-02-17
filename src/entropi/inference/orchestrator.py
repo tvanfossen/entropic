@@ -6,7 +6,7 @@ Manages loading, routing, and lifecycle of multiple models.
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,8 @@ from entropi.inference.llama_cpp import LlamaCppBackend
 from entropi.prompts import build_classification_prompt, load_tier_identity
 
 logger = get_logger("inference.orchestrator")
+
+BackendFactory = Callable[[ModelConfig, str], ModelBackend]
 
 
 @dataclass
@@ -44,6 +46,7 @@ class ModelOrchestrator:
         self,
         config: EntropyConfig,
         tiers: list[ModelTier] | None = None,
+        backend_factory: BackendFactory | None = None,
     ) -> None:
         """
         Initialize orchestrator.
@@ -52,6 +55,8 @@ class ModelOrchestrator:
             config: Application configuration
             tiers: Consumer-provided tier definitions. If None, tiers are
                    created from config + identity file frontmatter.
+            backend_factory: Custom factory for creating model backends.
+                If None, uses the default LlamaCppBackend factory.
         """
         self.config = config
         self._tiers: dict[ModelTier, ModelBackend] = {}
@@ -70,6 +75,9 @@ class ModelOrchestrator:
         self._tier_map = self._build_tier_map()
         self._classification_map = self._build_classification_map()
         self._handoff_rules = self._build_handoff_rules()
+
+        # Backend creation — consumer can inject custom factory
+        self._backend_factory: BackendFactory = backend_factory or self._default_backend_factory
 
     def _build_tiers_from_config(self) -> list[ModelTier]:
         """Build ModelTier instances from config + identity file frontmatter."""
@@ -103,9 +111,10 @@ class ModelOrchestrator:
             if user_path.exists():
                 return user_path
 
-        default_path = data_dir / filename
-        if default_path.exists():
-            return default_path
+        if self.config.use_bundled_prompts:
+            default_path = data_dir / filename
+            if default_path.exists():
+                return default_path
 
         return None
 
@@ -195,11 +204,16 @@ class ModelOrchestrator:
             logger.info("Pre-loaded ROUTER model")
 
     def _create_backend(self, model_config: ModelConfig, tier_name: str) -> ModelBackend:
-        """Create a backend for a model configuration."""
+        """Create a backend using the configured factory."""
+        return self._backend_factory(model_config, tier_name)
+
+    def _default_backend_factory(self, model_config: ModelConfig, tier_name: str) -> ModelBackend:
+        """Default factory — creates LlamaCppBackend instances."""
         return LlamaCppBackend(
             config=model_config,
             tier=tier_name,
             prompts_dir=self.config.prompts_dir,
+            use_bundled_prompts=self.config.use_bundled_prompts,
         )
 
     async def shutdown(self) -> None:
@@ -524,7 +538,9 @@ class ModelOrchestrator:
 
         from entropi.inference.adapters import get_adapter
 
-        return get_adapter("generic", tier.name)
+        return get_adapter(
+            "generic", tier.name, use_bundled_prompts=self.config.use_bundled_prompts
+        )
 
     @property
     def last_used_tier(self) -> ModelTier | None:

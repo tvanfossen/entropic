@@ -389,6 +389,9 @@ class EntropyConfig(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     log_file: Path | None = None
 
+    # Prompt handling
+    use_bundled_prompts: bool = True  # False = raise on missing prompt, no bundled fallback
+
     # Paths - use default_factory to ensure Path.home() is used
     config_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi")
     prompts_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "prompts")

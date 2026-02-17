@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from entropi.config.loader import ConfigLoader
 from entropi.config.schema import EntropyConfig
-from entropi.inference.orchestrator import ModelOrchestrator, ModelTier
+from entropi.inference.orchestrator import ModelOrchestrator
 
 # =============================================================================
 # Basic Fixtures
@@ -55,16 +55,11 @@ def models_available(config: EntropyConfig) -> dict[str, bool]:
     """Check which models are available on this system."""
     available = {}
 
+    for name, tier_config in config.models.tiers.items():
+        available[name] = _check_model_available(str(tier_config.path))
+
     if config.models.router:
         available["router"] = _check_model_available(str(config.models.router.path))
-    if config.models.simple:
-        available["simple"] = _check_model_available(str(config.models.simple.path))
-    if config.models.normal:
-        available["normal"] = _check_model_available(str(config.models.normal.path))
-    if config.models.code:
-        available["code"] = _check_model_available(str(config.models.code.path))
-    if config.models.thinking:
-        available["thinking"] = _check_model_available(str(config.models.thinking.path))
 
     return available
 
@@ -101,7 +96,10 @@ async def router_model(orchestrator: ModelOrchestrator, router_available: bool):
     if not router_available:
         pytest.skip("Router model not available")
 
-    return await orchestrator._get_model(ModelTier.ROUTER)
+    # Router is separate from tiers
+    if orchestrator._router and orchestrator._router.is_loaded:
+        return orchestrator._router
+    pytest.skip("Router model not loaded")
 
 
 # =============================================================================

@@ -34,8 +34,8 @@ from entropi.core.logging import setup_logging, setup_model_logger  # noqa: E402
 @click.option(
     "--model",
     "-m",
-    type=click.Choice(["thinking", "normal", "code", "micro"]),
-    help="Model to use",
+    type=str,
+    help="Model tier to use (e.g., thinking, normal, code)",
 )
 @click.option(
     "--log-level",
@@ -129,26 +129,14 @@ def status(ctx: click.Context) -> None:
     table.add_column("Component", style="cyan")
     table.add_column("Status", style="green")
 
-    # Models
-    if config.models.thinking:
-        table.add_row("Thinking Model (Qwen3-14B)", str(config.models.thinking.path))
-    else:
-        table.add_row("Thinking Model", "[dim]Not configured[/dim]")
+    # Models (from dict-based tiers)
+    for name, tier_config in config.models.tiers.items():
+        table.add_row(f"{name.capitalize()} Model", str(tier_config.path))
 
-    if config.models.normal:
-        table.add_row("Normal Model (Qwen3-8B)", str(config.models.normal.path))
+    if config.models.router:
+        table.add_row("Router Model", str(config.models.router.path))
     else:
-        table.add_row("Normal Model", "[dim]Not configured[/dim]")
-
-    if config.models.code:
-        table.add_row("Code Model (Qwen2.5-Coder-7B)", str(config.models.code.path))
-    else:
-        table.add_row("Code Model", "[dim]Not configured[/dim]")
-
-    if config.models.micro:
-        table.add_row("Micro Model (Router)", str(config.models.micro.path))
-    else:
-        table.add_row("Micro Model", "[dim]Not configured[/dim]")
+        table.add_row("Router Model", "[dim]Not configured[/dim]")
 
     # Thinking mode
     table.add_row("Thinking Mode Default", str(config.thinking.enabled))
@@ -250,7 +238,7 @@ This file provides context to Entropi. Edit it to describe your project.
 
 
 @main.command()
-@click.argument("model", type=click.Choice(["thinking", "normal", "code", "micro", "all"]))
+@click.argument("model", type=str)
 @click.option(
     "--output-dir",
     "-o",

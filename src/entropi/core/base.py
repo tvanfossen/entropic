@@ -6,13 +6,60 @@ consistent interfaces and enable dependency injection.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from entropi.config.schema import ModelConfig
     from entropi.inference.adapters.base import ChatAdapter
+
+
+class ModelTier:
+    """Base class for model tiers. Subclass to add domain-specific metadata.
+
+    The engine requires every tier to declare focus points for router
+    classification. This ensures the classification prompt and grammar
+    are always auto-generated correctly.
+    """
+
+    def __init__(self, name: str, *, focus: Sequence[str], examples: Sequence[str] = ()) -> None:
+        if not focus:
+            raise ValueError(f"ModelTier '{name}' requires at least one focus point")
+        self._name = name
+        self._focus = tuple(focus)
+        self._examples = tuple(examples)
+
+    @property
+    def name(self) -> str:
+        """Tier name (e.g. 'thinking', 'normal', 'code')."""
+        return self._name
+
+    @property
+    def focus(self) -> tuple[str, ...]:
+        """Capability descriptions used to build classification prompt."""
+        return self._focus
+
+    @property
+    def examples(self) -> tuple[str, ...]:
+        """Few-shot examples for classification (from identity frontmatter)."""
+        return self._examples
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, ModelTier):
+            return self._name == other._name
+        if isinstance(other, str):
+            return self._name == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self._name)
+
+    def __str__(self) -> str:
+        return self._name
+
+    def __repr__(self) -> str:
+        return f"ModelTier({self._name!r})"
 
 
 @dataclass
@@ -108,10 +155,31 @@ class ModelBackend(ABC):
         """Get the model's context length."""
         pass
 
+    @abstractmethod
+    async def complete(
+        self,
+        prompt: str,
+        max_tokens: int = 16,
+        grammar: str | None = None,
+        **kwargs: Any,
+    ) -> "GenerationResult":
+        """Raw text completion (no chat template).
+
+        Used for classification and other tasks where the model should
+        continue a prompt directly without chat scaffolding.
+        """
+        pass
+
     @property
     @abstractmethod
     def is_loaded(self) -> bool:
         """Check if model is loaded."""
+        pass
+
+    @property
+    @abstractmethod
+    def last_finish_reason(self) -> str:
+        """Get the finish_reason from the last generation."""
         pass
 
     @property

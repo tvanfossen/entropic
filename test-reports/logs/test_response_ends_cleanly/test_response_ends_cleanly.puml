@@ -22,23 +22,20 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three programming languages and their primary use cases:
+  Here are three programming languages and their main use cases:
   
   1. **Python**  
      - **Use Cases**: Data analysis, machine learning, automation scripting, 
-  scientific computing, and web development (with frameworks like Django/Flask).  
-     - Known for readability and versatility.
+  scientific computing, and web development (with frameworks like Django/Flask).
   
   2. **JavaScript**  
      - **Use Cases**: Front-end web development (browser-based interactive 
-  features), back-end development (Node.js), and building mobile apps (React 
-  Native).  
-     - Essential for dynamic web pages and real-time applications.
+  features), back-end development (Node.js), and building mobile apps with 
+  frameworks like React Native.
   
   3. **Java**  
-     - **Use Cases**: Enterprise software, Android app development, large-scale 
-  systems, and big data technologies (Hadoop).  
-     - Valued for its portability and robustness in mission-critical applications.
+     - **Use Cases**: Enterprise applications, Android app development, 
+  large-scale systems, and big data technologies (e.g., Hadoop).
 end note
 note over T #palegreen
   **PASSED** (< 75s)

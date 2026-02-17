@@ -2,10 +2,10 @@
   "test_name": "test_thanks_produces_acknowledgment",
   "passed": true,
   "tier": "simple",
-  "duration_s": 3.29,
+  "duration_s": 3.81,
   "target_s": 37.5,
   "prompt": "Thanks!",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-16T15:23:41"
+  "timestamp": "2026-02-17T11:08:55"
 }

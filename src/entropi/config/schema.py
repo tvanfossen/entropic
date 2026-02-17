@@ -10,7 +10,7 @@ Principles:
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -35,37 +35,50 @@ class ModelConfig(BaseModel):
         return Path(v).expanduser()
 
 
+class TierConfig(ModelConfig):
+    """Model configuration for a specific tier.
+
+    Extends ModelConfig with optional focus points. Focus can also come
+    from ModelTier instances or identity file frontmatter — config is
+    one of three resolution paths.
+    """
+
+    focus: list[str] = Field(default_factory=list)
+
+
 class ModelsConfig(BaseModel):
-    """Configuration for all models."""
+    """Configuration for all models.
 
-    # Task-specialized model slots
-    thinking: ModelConfig | None = None  # Deep reasoning (e.g., Qwen3-14B)
-    normal: ModelConfig | None = None  # General reasoning (e.g., Qwen3-8B)
-    code: ModelConfig | None = None  # Code generation (e.g., Qwen2.5-Coder-7B)
-    simple: ModelConfig | None = None  # Simple responses - can share model with normal
-    router: ModelConfig | None = None  # Classification only (small model, e.g., 0.5B)
+    Tiers are defined as a dict mapping tier name to TierConfig.
+    Router is separate (not a tier — it classifies, doesn't generate).
+    """
 
-    # Default model to use if routing disabled
-    default: Literal["thinking", "normal", "code", "simple"] = "normal"
+    tiers: dict[str, TierConfig] = Field(default_factory=dict)
+    router: ModelConfig | None = None
+    default: str = "normal"
+
+    @model_validator(mode="after")
+    def validate_default_tier(self) -> "ModelsConfig":
+        """Ensure default tier exists in tiers dict."""
+        if self.tiers and self.default not in self.tiers:
+            raise ValueError(f"Default tier '{self.default}' not in tiers: {list(self.tiers)}")
+        return self
 
 
 class RoutingConfig(BaseModel):
     """Configuration for model routing.
 
-    Task classification is handled by the ROUTER model with GBNF grammar
-    constraint - no keyword heuristics needed. This provides more accurate
-    and maintainable routing.
-
-    The ROUTER model is used ONLY for classification. Response generation
-    is handled by the dedicated tier for each task type:
-    - SIMPLE tasks -> simple model
-    - CODE tasks -> code model
-    - REASONING tasks -> normal model (or thinking if forced)
-    - COMPLEX tasks -> thinking model
+    Task classification is handled by the ROUTER model. The classification
+    prompt and grammar can be auto-generated from tier definitions or
+    explicitly configured.
     """
 
     enabled: bool = True
-    fallback_model: Literal["thinking", "normal", "code", "simple"] = "normal"
+    fallback_tier: str = "normal"
+    classification_prompt: str | None = None  # None = auto-generate from tier focus
+    tier_map: dict[str, str] = Field(default_factory=dict)  # Empty = auto-derive
+    handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all
+    use_grammar: bool = False  # Opt-in GBNF constraint
 
 
 class ThinkingConfig(BaseModel):

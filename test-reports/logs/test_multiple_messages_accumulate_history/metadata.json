@@ -2,10 +2,10 @@
   "test_name": "test_multiple_messages_accumulate_history",
   "passed": true,
   "tier": "normal",
-  "duration_s": 14.18,
+  "duration_s": 13.25,
   "target_s": 112.5,
   "prompt": "Hello",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-16T15:23:10"
+  "timestamp": "2026-02-17T11:08:21"
 }

@@ -8,9 +8,6 @@ file-based logging to keep the CLI clean.
 import logging
 from pathlib import Path
 
-from rich.console import Console
-from rich.logging import RichHandler
-
 from entropi.config.schema import EntropyConfig
 
 
@@ -37,6 +34,10 @@ def setup_logging(
 
     # Clear existing handlers
     logger.handlers.clear()
+
+    # Lazy import: rich is optional (only needed when setup_logging is called)
+    from rich.console import Console
+    from rich.logging import RichHandler
 
     # Console handler - only show WARNING and above to keep CLI clean
     console_handler = RichHandler(

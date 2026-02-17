@@ -197,7 +197,7 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
         if user_msgs:
             entry.prompt = user_msgs[0].content
         if app._orchestrator and app._orchestrator.last_used_tier:
-            entry.tier = app._orchestrator.last_used_tier.value
+            entry.tier = app._orchestrator.last_used_tier.name
 
     # Detect routing tests
     if "orchestrator" in item.funcargs and "headless_app" not in item.funcargs:

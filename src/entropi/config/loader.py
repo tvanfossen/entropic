@@ -42,15 +42,50 @@ def get_default_config_path() -> Path:
         return Path(__file__).parent.parent / "data" / "default_config.yaml"
 
 
-def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
-    """
-    Migrate old config format to new task-specialized format.
+_SLOT_RENAMES: dict[str, str] = {
+    "primary": "thinking",
+    "workhorse": "normal",
+    "fast": "code",
+}
 
-    Handles migration of model slot names:
-    - primary -> thinking
-    - workhorse -> normal
-    - fast -> code
-    - micro -> micro (unchanged)
+
+def _migrate_model_slots(models: dict[str, Any]) -> None:
+    """Rename legacy model slot names (primary→thinking, etc.)."""
+    for old_name, new_name in _SLOT_RENAMES.items():
+        if old_name in models and new_name not in models:
+            models[new_name] = models.pop(old_name)
+
+
+def _migrate_routing(data: dict[str, Any]) -> None:
+    """Migrate routing config: fallback_model→fallback_tier, default slot names."""
+    routing = data.get("routing", {})
+
+    # fallback_model → fallback_tier
+    fallback = routing.pop("fallback_model", None)
+    if fallback and "fallback_tier" not in routing:
+        routing["fallback_tier"] = _SLOT_RENAMES.get(fallback, fallback)
+
+    # Migrate default model name
+    models = data.get("models", {})
+    default = models.get("default")
+    if default and default in _SLOT_RENAMES:
+        models["default"] = _SLOT_RENAMES[default]
+
+
+def _migrate_named_slots_to_tiers(models: dict[str, Any]) -> None:
+    """Convert named-slot model config (thinking, normal, ...) to tiers dict."""
+    if "tiers" in models:
+        return
+    tiers: dict[str, Any] = {}
+    for name in ["thinking", "normal", "code", "simple"]:
+        if name in models:
+            tiers[name] = models.pop(name)
+    if tiers:
+        models["tiers"] = tiers
+
+
+def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Migrate old config format to current schema.
 
     Args:
         data: Configuration dictionary
@@ -61,39 +96,9 @@ def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
     if "models" not in data:
         return data
 
-    models = data["models"]
-    migrations = [
-        ("primary", "thinking"),
-        ("workhorse", "normal"),
-        ("fast", "code"),
-    ]
-
-    for old_name, new_name in migrations:
-        if old_name in models and new_name not in models:
-            models[new_name] = models.pop(old_name)
-
-    # Migrate routing fallback_model if needed
-    if "routing" in data:
-        routing = data["routing"]
-        fallback = routing.get("fallback_model")
-        fallback_migrations = {
-            "primary": "normal",
-            "workhorse": "normal",
-            "fast": "code",
-        }
-        if fallback in fallback_migrations:
-            routing["fallback_model"] = fallback_migrations[fallback]
-
-        # Migrate default model if specified
-        if "default" in data.get("models", {}):
-            default = data["models"]["default"]
-            default_migrations = {
-                "primary": "normal",
-                "workhorse": "normal",
-                "fast": "code",
-            }
-            if default in default_migrations:
-                data["models"]["default"] = default_migrations[default]
+    _migrate_model_slots(data["models"])
+    _migrate_routing(data)
+    _migrate_named_slots_to_tiers(data["models"])
 
     return data
 

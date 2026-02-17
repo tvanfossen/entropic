@@ -267,19 +267,16 @@ class AgentEngine:
         result: DirectiveResult,
     ) -> None:
         """Handle tier_change directive — validate and execute tier switch."""
-        from entropi.inference.orchestrator import ModelTier
-
         target_tier_str = directive.tier
         reason = directive.reason
 
-        try:
-            target_tier = ModelTier(target_tier_str)
-        except ValueError:
+        target_tier = self.orchestrator._find_tier(target_tier_str)
+        if target_tier is None:
             logger.error(f"[DIRECTIVE] Invalid tier in tier_change: {target_tier_str}")
             return
 
         if not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
-            current_name = ctx.locked_tier.value if ctx.locked_tier else "none"
+            current_name = str(ctx.locked_tier) if ctx.locked_tier else "none"
             logger.warning(
                 f"[DIRECTIVE] Handoff not permitted: {current_name} -> {target_tier_str}"
             )
@@ -295,7 +292,7 @@ class AgentEngine:
             content=self._build_formatted_system_prompt(target_tier, ctx),
         )
 
-        current_name = current_tier.value if current_tier else "none"
+        current_name = str(current_tier) if current_tier else "none"
         model_logger.info(
             f"\n{'#' * 70}\n"
             f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
@@ -386,12 +383,10 @@ class AgentEngine:
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
-        # Try to get from the default model config
-        default_model = self.config.models.default
-        model_config = getattr(self.config.models, default_model, None)
-        if model_config and hasattr(model_config, "context_length"):
-            return int(model_config.context_length)
-        # Fallback default
+        default_name = self.config.models.default
+        tier_config = self.config.models.tiers.get(default_name)
+        if tier_config:
+            return tier_config.context_length
         return 16384
 
     def _refresh_context_limit(self) -> None:
@@ -401,22 +396,13 @@ class AgentEngine:
         may change. This method updates the token counter to use the
         current model's context length.
         """
-        # Get context length from last used tier's model config
         last_tier = self.orchestrator.last_used_tier
         if last_tier is None:
             return
 
-        # Map tier to config attribute name
-        tier_to_config = {
-            "thinking": self.config.models.thinking,
-            "normal": self.config.models.normal,
-            "code": self.config.models.code,
-            "simple": self.config.models.simple,
-        }
-
-        model_config = tier_to_config.get(last_tier.value)
-        if model_config and hasattr(model_config, "context_length"):
-            new_max = model_config.context_length
+        tier_config = self.config.models.tiers.get(str(last_tier))
+        if tier_config:
+            new_max = tier_config.context_length
             if new_max != self._token_counter.max_tokens:
                 logger.debug(
                     f"Updating context limit: {self._token_counter.max_tokens} -> {new_max}"
@@ -623,7 +609,7 @@ class AgentEngine:
 
     def _log_assembled_prompt(self, ctx: LoopContext, event: str) -> None:
         """Log complete assembled prompt. Called at routing and handoff only."""
-        tier_value = ctx.locked_tier.value if ctx.locked_tier else "none"
+        tier_value = ctx.locked_tier.name if ctx.locked_tier else "none"
         model_logger.info(
             f"\n{'~' * 70}\n"
             f"[PROMPT] event={event} tier={tier_value} "
@@ -680,11 +666,11 @@ class AgentEngine:
         logger.info(f"System prompt size: ~{len(formatted) // 4} tokens")
 
         # Log routing decision and full assembled prompt to model log
-        model_logger.info(f"\n{'#' * 70}\n" f"[ROUTED] tier={tier.value}\n" f"{'#' * 70}")
+        model_logger.info(f"\n{'#' * 70}\n" f"[ROUTED] tier={tier.name}\n" f"{'#' * 70}")
         self._log_assembled_prompt(ctx, "routed")
 
         if self._on_tier_selected:
-            self._on_tier_selected(tier.value)
+            self._on_tier_selected(tier.name)
         routing_result = self.orchestrator.last_routing_result
         if routing_result and self._on_routing_complete:
             self._on_routing_complete(routing_result)

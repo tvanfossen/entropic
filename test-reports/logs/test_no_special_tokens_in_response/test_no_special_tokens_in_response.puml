@@ -17,13 +17,12 @@ note right of T
   Hello, how are you?
 end note
 App -> Orch: route
-note right: **SIMPLE** tier
+note right: **NORMAL** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm just a local AI coding assistant, but I'm here and ready to help with
-  your projects. How can I assist you today?
+  Hello! I'm Entropi, your local AI coding assistant. How can I assist you today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

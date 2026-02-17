@@ -1,13 +1,54 @@
 """Prompt templates for Entropi."""
 
+from __future__ import annotations
+
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+import yaml
+from pydantic import BaseModel, Field
 
 from entropi.core.logging import get_logger
+
+if TYPE_CHECKING:
+    from entropi.core.base import ModelTier
 
 logger = get_logger("prompts")
 
 # Package data directory
 _DATA_DIR = Path(__file__).parent.parent / "data" / "prompts"
+
+
+class TierIdentity(BaseModel):
+    """Schema for identity file YAML frontmatter."""
+
+    name: str
+    focus: list[str] = Field(min_length=1)
+    examples: list[str] = []
+
+
+def load_tier_identity(path: Path) -> tuple[TierIdentity, str]:
+    """Load identity file: validate frontmatter, return (metadata, body).
+
+    Returns:
+        (TierIdentity, markdown_body) — body is the content after frontmatter,
+        used as system prompt identity by the adapter.
+
+    Raises:
+        ValueError: Missing or invalid frontmatter.
+        ValidationError: Frontmatter fails schema (e.g. missing focus).
+    """
+    content = path.read_text()
+    if not content.startswith("---"):
+        raise ValueError(f"Identity file {path} missing YAML frontmatter")
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError(f"Identity file {path} has malformed frontmatter")
+    frontmatter_str = parts[1]
+    body = parts[2]
+    data = yaml.safe_load(frontmatter_str)
+    identity = TierIdentity(**data)
+    return identity, body.strip()
 
 
 def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
@@ -47,132 +88,140 @@ def load_prompt(name: str, prompts_dir: Path | None = None) -> str:
 
 
 def get_constitution_prompt(prompts_dir: Path | None = None) -> str:
-    """
-    Get the constitution prompt (shared principles across all tiers).
-
-    Args:
-        prompts_dir: Optional user prompts directory
-
-    Returns:
-        Constitution prompt content
-    """
+    """Get the constitution prompt (shared principles across all tiers)."""
     return load_prompt("constitution", prompts_dir)
 
 
 def get_tier_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
-    """
-    Get the identity prompt for a specific model tier.
+    """Get the identity prompt for a specific model tier.
 
-    Args:
-        tier: Model tier (thinking, normal, code, simple)
-        prompts_dir: Optional user prompts directory
-
-    Returns:
-        Tier-specific identity prompt
+    Returns the full file content (frontmatter + body). For just the body
+    (markdown after frontmatter), use load_tier_identity() instead.
     """
     return load_prompt(f"identity_{tier}", prompts_dir)
 
 
 def get_identity_prompt(tier: str, prompts_dir: Path | None = None) -> str:
-    """
-    Get the full identity prompt: constitution + tier-specific identity.
+    """Get the full identity prompt: constitution + tier-specific body.
 
-    Args:
-        tier: Model tier (thinking, normal, code, simple)
-        prompts_dir: Optional user prompts directory
-
-    Returns:
-        Combined identity prompt
+    Loads the identity file, strips YAML frontmatter, and combines
+    constitution + markdown body for use as the adapter's system prompt.
     """
     constitution = get_constitution_prompt(prompts_dir)
+
+    # Try to load with frontmatter parsing first
+    identity_path = _resolve_identity_path(tier, prompts_dir)
+    if identity_path:
+        _identity, body = load_tier_identity(identity_path)
+        return f"{constitution}\n\n{body}"
+
+    # Fallback: load raw (no frontmatter)
     tier_identity = get_tier_identity_prompt(tier, prompts_dir)
     return f"{constitution}\n\n{tier_identity}"
 
 
-def _extract_focus_points(identity_content: str, tier_name: str = "") -> str:
-    """Extract Focus bullet points from an identity file.
+def _resolve_identity_path(tier: str, prompts_dir: Path | None = None) -> Path | None:
+    """Find the identity file path for a tier, checking user dir then bundled."""
+    filename = f"identity_{tier}.md"
 
-    Parses the markdown to find the ``## Focus`` section and returns
-    its bullet points joined as a comma-separated string.
+    if prompts_dir:
+        user_path = prompts_dir / filename
+        if user_path.exists():
+            return user_path
 
-    Raises ValueError if ## Focus section is missing — this section
-    is required for router classification to work correctly.
+    default_path = _DATA_DIR / filename
+    if default_path.exists():
+        return default_path
+
+    return None
+
+
+def build_classification_prompt(
+    tiers: list[ModelTier],
+    message: str,
+    history: list[str] | None = None,
+) -> str:
+    """Auto-generate classification prompt from tier focus + examples.
+
+    Args:
+        tiers: Ordered list of tiers (index+1 = classification digit)
+        message: User message to classify
+        history: Recent user messages for context
+
+    Returns:
+        Classification prompt ending with trailing space for digit output
     """
-    lines = identity_content.strip().split("\n")
-    in_focus = False
-    points: list[str] = []
-    for line in lines:
-        if line.strip() == "## Focus":
-            in_focus = True
-            continue
-        if in_focus:
-            if line.startswith("##"):
-                break
-            stripped = line.strip().lstrip("- ").strip()
-            if stripped:
-                points.append(stripped.lower())
-    if not points:
-        label = f"identity_{tier_name}.md" if tier_name else "identity file"
-        raise ValueError(
-            f"Missing '## Focus' section in {label}. "
-            f"This section is required for router classification."
-        )
-    return ", ".join(points)
+    # Tier descriptions from focus
+    identity_lines = []
+    for i, tier in enumerate(tiers, 1):
+        focus_str = ", ".join(tier.focus)
+        identity_lines.append(f"{i} = {tier.name.upper()}: {focus_str}")
+    identities_text = "\n".join(identity_lines)
+
+    # Few-shot examples from tier.examples (frontmatter)
+    example_lines = []
+    for i, tier in enumerate(tiers, 1):
+        for ex in tier.examples:
+            example_lines.append(f'"{ex}" -> {i}')
+    examples_text = "\n".join(example_lines)
+
+    # History context (compact for small router model)
+    history_text = ""
+    if history:
+        history_text = "Recent messages: " + " | ".join(history[-5:])
+
+    # Assemble prompt
+    parts = ["Classify the message. Reply with the number only.", ""]
+    parts.append(identities_text)
+    parts.append("")
+    if history_text:
+        parts.append(history_text)
+        parts.append("")
+    if examples_text:
+        parts.append(examples_text)
+    parts.append(f'"{message}" -> ')
+
+    return "\n".join(parts)
 
 
+def build_classification_grammar(num_tiers: int) -> str:
+    """Generate GBNF grammar constraining output to valid tier digits.
+
+    Args:
+        num_tiers: Number of tiers (generates digits 1..N)
+
+    Returns:
+        GBNF grammar string
+    """
+    digits = " | ".join(f'"{i}"' for i in range(1, num_tiers + 1))
+    return f'root ::= ({digits}) "\\n"'
+
+
+# Legacy compatibility — get_classification_prompt with old signature
 def get_classification_prompt(
     message: str,
     prompts_dir: Path | None = None,
     history: list[str] | None = None,
 ) -> str:
+    """Build classification prompt from identity file frontmatter.
+
+    Loads each tier's identity file to extract focus points and examples
+    via YAML frontmatter, then auto-generates the classification prompt.
+
+    This is the backward-compatible entry point used by the orchestrator.
+    New code should use build_classification_prompt() directly.
     """
-    Get the classification prompt with identity descriptions and history.
+    from entropi.core.base import ModelTier
 
-    Loads each tier's identity file to give the router model a description
-    of what each tier handles, then includes recent conversation history
-    for context-aware classification.
+    tier_names = ["simple", "code", "normal", "thinking"]
+    tiers: list[ModelTier] = []
+    for name in tier_names:
+        identity_path = _resolve_identity_path(name, prompts_dir)
+        if identity_path:
+            identity, _body = load_tier_identity(identity_path)
+            tiers.append(ModelTier(name, focus=identity.focus, examples=identity.examples))
+        else:
+            # Minimal fallback
+            tiers.append(ModelTier(name, focus=[name]))
 
-    Args:
-        message: User message to classify
-        prompts_dir: Optional user prompts directory
-        history: Recent user messages (up to 5) for context
-
-    Returns:
-        Classification prompt with identities, history, and message
-    """
-    # Build tier descriptions from identity file Focus sections
-    tier_map = {1: "simple", 2: "code", 3: "normal", 4: "thinking"}
-    identity_lines = []
-    for num, tier_name in tier_map.items():
-        try:
-            identity = get_tier_identity_prompt(tier_name, prompts_dir)
-            focus = _extract_focus_points(identity, tier_name)
-            identity_lines.append(f"{num} = {tier_name.upper()}: {focus}")
-        except FileNotFoundError:
-            identity_lines.append(f"{num} = {tier_name.upper()}")
-    identities_text = "\n".join(identity_lines)
-
-    # Build history context (compact format for small router model)
-    if history:
-        history_text = "Recent messages: " + " | ".join(history[-5:])
-    else:
-        history_text = ""
-
-    try:
-        template = load_prompt("classification", prompts_dir)
-        prompt = template.format(
-            identities=identities_text,
-            history=history_text,
-            message=message,
-        )
-        # Ensure prompt ends with "-> " (no trailing newline) so the
-        # model immediately outputs the classification digit
-        return prompt.rstrip() + " "
-    except FileNotFoundError:
-        logger.warning("classification.md not found, using minimal default")
-        return f"""Classify into tier. Output ONLY the number 1, 2, 3, or 4.
-
-{identities_text}
-
-Message: "{message}"
-Classification:"""
+    return build_classification_prompt(tiers, message, history)

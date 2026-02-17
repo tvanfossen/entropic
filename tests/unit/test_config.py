@@ -107,7 +107,7 @@ class TestEntropyConfig:
         """Test default routing configuration."""
         config = EntropyConfig()
         assert config.routing.enabled is True
-        assert config.routing.fallback_model == "normal"
+        assert config.routing.fallback_tier == "normal"
 
     def test_default_quality_rules(self) -> None:
         """Test default quality rules."""

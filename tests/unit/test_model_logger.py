@@ -187,7 +187,7 @@ class TestAssembledPromptLogging:
         )
         # Mock locked_tier
         ctx.locked_tier = MagicMock()
-        ctx.locked_tier.value = "thinking"
+        ctx.locked_tier.name = "thinking"
 
         engine._log_assembled_prompt(ctx, "routed")
 
@@ -214,7 +214,7 @@ class TestAssembledPromptLogging:
             ],
         )
         ctx.locked_tier = MagicMock()
-        ctx.locked_tier.value = "normal"
+        ctx.locked_tier.name = "normal"
 
         engine._log_assembled_prompt(ctx, "routed")
 

@@ -631,8 +631,8 @@ class Application:
 
     def _format_routing_info(self, result: RoutingResult) -> str:
         """Format a RoutingResult into a compact display string."""
-        prev = result.previous_tier.value.upper() if result.previous_tier else "—"
-        tier = result.tier.value.upper()
+        prev = result.previous_tier.name.upper() if result.previous_tier else "—"
+        tier = result.tier.name.upper()
         swap = result.swap_action
         ms = f"{result.routing_ms:.0f}ms"
         return f"{prev} → {tier} | {swap} | {ms}"

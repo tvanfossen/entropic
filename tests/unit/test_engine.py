@@ -429,15 +429,19 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:
         """tier_change directive updates ctx.locked_tier."""
+        from entropi.core.base import ModelTier
         from entropi.core.directives import DirectiveResult, TierChange
-        from entropi.inference.orchestrator import ModelTier
 
         engine = self._make_handoff_engine()
+
+        thinking = ModelTier("thinking", focus=["complex analysis"])
+        code = ModelTier("code", focus=["writing code"])
+        engine.orchestrator._find_tier = MagicMock(return_value=code)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
-        ctx.locked_tier = ModelTier.THINKING
+        ctx.locked_tier = thinking
 
         result = DirectiveResult()
         engine._directive_tier_change(
@@ -446,7 +450,7 @@ class TestDirectiveTierChange(_EngineTestBase):
             result,
         )
 
-        assert ctx.locked_tier == ModelTier.CODE
+        assert ctx.locked_tier == "code"
         assert result.tier_changed is True
         engine._build_formatted_system_prompt.assert_called_once()
 
@@ -455,6 +459,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         from entropi.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
+        engine.orchestrator._find_tier = MagicMock(return_value=None)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
@@ -471,16 +476,20 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_disallowed_route(self) -> None:
         """tier_change blocked when orchestrator rejects the route."""
+        from entropi.core.base import ModelTier
         from entropi.core.directives import DirectiveResult, TierChange
-        from entropi.inference.orchestrator import ModelTier
+
+        code = ModelTier("code", focus=["writing code"])
+        thinking = ModelTier("thinking", focus=["complex analysis"])
 
         engine = self._make_handoff_engine()
         engine.orchestrator.can_handoff = MagicMock(return_value=False)
+        engine.orchestrator._find_tier = MagicMock(return_value=thinking)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
-        ctx.locked_tier = ModelTier.CODE
+        ctx.locked_tier = code
 
         result = DirectiveResult()
         engine._directive_tier_change(
@@ -490,7 +499,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         )
 
         assert result.tier_changed is False
-        assert ctx.locked_tier == ModelTier.CODE
+        assert ctx.locked_tier == "code"
 
 
 class TestAutoPruneToolResults:

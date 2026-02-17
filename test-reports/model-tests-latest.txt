@@ -1,27 +1,27 @@
 === Model Test Report ===
-Date: 2026-02-16 15:24:02
+Date: 2026-02-17 11:09:17
 
-Results: 22 passed, 0 failed (128.0s)
+Results: 22 passed, 0 failed (107.9s)
 
-  [PASS] test_code_request_produces_code [code] (3 tools) (50.2s)
+  [PASS] test_code_request_produces_code [code] (19.3s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (17.8s)
+  [PASS] test_code_response_has_python_syntax [code] (16.6s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (12.5s)
+  [PASS] test_response_ends_cleanly [normal] (11.2s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [simple] (4.0s)
+  [PASS] test_no_special_tokens_in_response [normal] (10.1s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (3.4s)
+  [PASS] test_generation_starts_and_ends [simple] (4.4s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (14.2s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (13.3s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (16.8s)
+  [PASS] test_explanation_is_substantive [normal] (19.3s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (3.3s)
+  [PASS] test_hello_produces_response [simple] (4.4s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (3.3s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (3.8s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
   [PASS] test_hi_routes_to_simple (0.1s)
@@ -31,18 +31,12 @@ Results: 22 passed, 0 failed (128.0s)
   [PASS] test_add_feature_routes_to_code (0.1s)
   [PASS] test_explain_routes_to_reasoning (0.1s)
   [PASS] test_question_routes_to_reasoning (0.1s)
-  [PASS] test_complex_analysis_routes_to_thinking (1.4s)
+  [PASS] test_complex_analysis_routes_to_thinking (4.1s)
   [PASS] test_classification_under_500ms (0.1s)
   [PASS] test_multiple_classifications_consistent (0.3s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-=============================== warnings summary ===============================
-tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
-  /home/tvanfossen/Projects/entropi/src/entropi/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-    read_at=datetime.utcnow(),
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-================== 22 passed, 1 warning in 167.35s (0:02:47) ===================
+======================== 22 passed in 140.69s (0:02:20) ========================
 
 Result: PASSED

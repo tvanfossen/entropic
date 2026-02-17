@@ -1,59 +1,78 @@
 """Tests for prompt loading and classification prompt building."""
 
+import tempfile
+from pathlib import Path
+
 import pytest
 from entropi.inference.adapters.base import GenericAdapter
 from entropi.prompts import (
-    _extract_focus_points,
+    _resolve_identity_path,
     get_tier_identity_prompt,
+    load_tier_identity,
 )
 
 TIERS = ["simple", "code", "normal", "thinking"]
 
 
-class TestExtractFocusPoints:
-    """Tests for _extract_focus_points."""
+class TestLoadTierIdentity:
+    """Tests for load_tier_identity with YAML frontmatter."""
 
-    def test_extracts_bullet_points(self) -> None:
-        content = "# Tier\n\n## Focus\n\n- Item one\n- Item two\n"
-        result = _extract_focus_points(content, "test")
-        assert result == "item one, item two"
+    def test_parses_frontmatter_and_body(self) -> None:
+        content = "---\nname: test\nfocus:\n  - item one\n  - item two\n---\n\n# Body\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            f.flush()
+            identity, body = load_tier_identity(Path(f.name))
+        assert identity.name == "test"
+        assert identity.focus == ["item one", "item two"]
+        assert "# Body" in body
 
-    def test_stops_at_next_section(self) -> None:
-        content = "# Tier\n\n## Focus\n\n- Only this\n\n## Other\n\n- Not this\n"
-        result = _extract_focus_points(content, "test")
-        assert result == "only this"
-        assert "not this" not in result
-
-    def test_raises_when_focus_missing(self) -> None:
-        content = "# Tier\n\n## Other Section\n\n- Stuff\n"
-        with pytest.raises(ValueError, match="Missing '## Focus'"):
-            _extract_focus_points(content, "broken")
+    def test_raises_when_frontmatter_missing(self) -> None:
+        content = "# No frontmatter\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            f.flush()
+            with pytest.raises(ValueError, match="missing YAML frontmatter"):
+                load_tier_identity(Path(f.name))
 
     def test_raises_when_focus_empty(self) -> None:
-        content = "# Tier\n\n## Focus\n\n## Next Section\n"
-        with pytest.raises(ValueError, match="Missing '## Focus'"):
-            _extract_focus_points(content, "empty")
+        from pydantic import ValidationError
 
-    def test_includes_tier_name_in_error(self) -> None:
-        content = "# No focus here\n"
-        with pytest.raises(ValueError, match="identity_mytier.md"):
-            _extract_focus_points(content, "mytier")
+        content = "---\nname: test\nfocus: []\n---\n\n# Body\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            f.flush()
+            with pytest.raises(ValidationError):
+                load_tier_identity(Path(f.name))
+
+    def test_examples_optional(self) -> None:
+        content = "---\nname: test\nfocus:\n  - item\n---\n\n# Body\n"
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+            f.write(content)
+            f.flush()
+            identity, _body = load_tier_identity(Path(f.name))
+        assert identity.examples == []
 
 
-class TestIdentityFilesHaveFocus:
-    """Validate all identity files have required ## Focus section."""
+class TestIdentityFilesHaveFrontmatter:
+    """Validate all bundled identity files have valid frontmatter."""
 
     @pytest.mark.parametrize("tier", TIERS)
-    def test_identity_has_focus_section(self, tier: str) -> None:
-        """Each tier identity file MUST have a ## Focus section.
+    def test_identity_has_valid_frontmatter(self, tier: str) -> None:
+        """Each tier identity file MUST have valid YAML frontmatter with focus."""
+        path = _resolve_identity_path(tier)
+        assert path is not None, f"identity_{tier}.md not found"
+        identity, body = load_tier_identity(path)
+        assert len(identity.focus) > 0, f"identity_{tier}.md has empty focus"
+        assert len(body) > 0, f"identity_{tier}.md has empty body"
 
-        This is required for router classification. Without it,
-        the router cannot distinguish between tiers.
-        """
-        identity = get_tier_identity_prompt(tier)
-        # Should not raise — if it does, the identity file is broken
-        focus = _extract_focus_points(identity, tier)
-        assert len(focus) > 0, f"identity_{tier}.md has empty Focus section"
+    @pytest.mark.parametrize("tier", TIERS)
+    def test_identity_name_matches_tier(self, tier: str) -> None:
+        """Frontmatter name must match the tier filename."""
+        path = _resolve_identity_path(tier)
+        assert path is not None
+        identity, _body = load_tier_identity(path)
+        assert identity.name == tier
 
 
 def _make_tool_def(name: str) -> dict[str, object]:

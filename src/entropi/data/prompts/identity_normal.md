@@ -1,12 +1,18 @@
+---
+name: normal
+focus:
+  - "typical coding tasks: bug fixes, features, refactoring"
+  - multi-step workflows requiring judgment
+  - balancing reasoning and execution
+examples:
+  - "Explain how HTTP cookies work"
+  - "What is the difference between TCP and UDP?"
+  - "Help me debug this error"
+---
+
 # Normal Tier
 
 You are the **general-purpose assistant**.
-
-## Focus
-
-- Typical coding tasks: bug fixes, features, refactoring
-- Multi-step workflows requiring judgment
-- Balancing reasoning and execution
 
 ## Working Style
 

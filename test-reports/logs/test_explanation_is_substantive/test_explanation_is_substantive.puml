@@ -22,40 +22,45 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller, simpler subproblems. It typically 
-  involves two key components:
+  Recursion in programming is a technique where a function calls itself to solve a
+  problem by breaking it down into smaller, similar subproblems. Here's a 
+  structured breakdown:
   
-  1. **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops).
-  2. **Recursive Case**: The function calling itself with modified parameters.
+  ### Key Components
+  1. **Base Case**: 
+     - The condition that stops the recursion (prevents infinite loops).
+     - Example: `if n &lt;= 1 return 1` in factorial calculations.
+  
+  2. **Recursive Step**:
+     - The function calls itself with modified parameters to reduce the problem 
+  size.
+     - Example: `return n * factorial(n-1)` for factorial.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
-      if n == 0:  # Base case
+      if n &lt;= 1:  # Base case
           return 1
-      else:       # Recursive case
+      else:       # Recursive step
           return n * factorial(n-1)
   ```
   
-  ### Key Characteristics:
-  - **Divides problems into smaller instances** (e.g., `factorial(5)` becomes `5 *
-  factorial(4)`)
-  - **Requires a clear base case** to terminate the recursion
-  - **Uses the call stack** to manage intermediate states
+  ### Key Considerations
+  - **Call Stack**: Each recursive call adds a stack frame, which can lead to 
+  stack overflow for deep recursions.
+  - **Efficiency**: Recursive solutions may have higher memory overhead compared 
+  to iterative approaches.
+  - **Tail Recursion**: Some languages optimize tail-recursive calls (where the 
+  recursive call is the final operation), but Python does not support this 
+  natively.
   
-  ### Comparison with Iteration:
-  | Feature          | Recursion               | Iteration              |
-  |------------------|-------------------------|------------------------|
-  | Readability      | Often clearer for divide-and-conquer problems | More 
-  efficient for simple loops |
-  | Performance      | Higher overhead (stack frames) | Lower overhead (no stack 
-  management) |
-  | Stack Usage      | Risk of stack overflow | No stack overflow risk |
+  ### When to Use Recursion
+  - Problems with natural recursive structures (e.g., tree traversals, 
+  divide-and-conquer algorithms).
+  - When the recursive approach simplifies code readability and maintainability.
   
-  Common use cases include tree traversal, sorting algorithms (e.g., quicksort), 
-  and mathematical computations (e.g., Fibonacci sequence).
+  Would you like a comparison with iterative solutions or examples in another 
+  language?
 end note
 note over T #palegreen
   **PASSED** (< 75s)

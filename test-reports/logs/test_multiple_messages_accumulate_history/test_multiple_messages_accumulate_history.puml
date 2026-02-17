@@ -32,11 +32,8 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You asked: "Hello" and then followed with "What did I just say?" 
-  
-  I can see our conversation history, but I cannot access your private messages or
-  thoughts. However, I can confirm that your last message before this one was 
-  "Hello". Would you like me to help with something else?
+  I don't have access to your message history or any external data - I only 
+  respond to your current input. Would you like me to help with something else?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

@@ -2,10 +2,10 @@
   "test_name": "test_generation_starts_and_ends",
   "passed": true,
   "tier": "simple",
-  "duration_s": 4.82,
+  "duration_s": 3.72,
   "target_s": 37.5,
   "prompt": "Hello",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-17T11:22:58"
+  "timestamp": "2026-02-17T11:30:47"
 }

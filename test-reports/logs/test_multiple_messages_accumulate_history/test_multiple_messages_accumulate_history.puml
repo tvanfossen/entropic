@@ -32,8 +32,9 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  I don't have access to your message history or any external data - I only 
-  respond to your current input. Would you like me to help with something else?
+  You said: "Hello"  
+  I responded by asking how I could assist you. Is there something specific you'd 
+  like help with?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

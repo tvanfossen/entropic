@@ -57,6 +57,21 @@ class ServerManager:
         self._permissions = config.permissions
         self._lsp_manager: LSPManager | None = None
 
+    def register_server(self, server: BaseMCPServer) -> None:
+        """Register a custom in-process MCP server.
+
+        Must be called before initialize(). The server will be wrapped
+        in an InProcessProvider and connected during initialize().
+
+        Args:
+            server: BaseMCPServer instance to register
+        """
+        name = server.name
+        if name in self._clients:
+            logger.warning(f"Server '{name}' already registered, replacing")
+        self._server_classes[name] = type(server)
+        self._clients[name] = InProcessProvider(name, server)
+
     async def initialize(self) -> None:
         """Initialize and connect to all configured servers."""
         logger.info("Initializing MCP server manager")

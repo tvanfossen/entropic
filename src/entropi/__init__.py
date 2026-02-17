@@ -25,9 +25,10 @@ from entropi.core.base import (
     ToolProvider,
     ToolResult,
 )
-from entropi.core.engine import AgentEngine, AgentState, EngineCallbacks
+from entropi.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
 from entropi.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
+from entropi.mcp.provider import InProcessProvider
 from entropi.mcp.servers.base import BaseMCPServer
 
 __version__ = "0.1.0"
@@ -46,6 +47,7 @@ __all__ = [
     "AgentEngine",
     "AgentState",
     "EngineCallbacks",
+    "LoopConfig",
     # Config
     "CompactionConfig",
     "EntropyConfig",
@@ -60,5 +62,6 @@ __all__ = [
     "RoutingResult",
     # MCP
     "BaseMCPServer",
+    "InProcessProvider",
     "ServerManager",
 ]

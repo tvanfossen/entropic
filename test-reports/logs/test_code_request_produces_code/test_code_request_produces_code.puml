@@ -22,10 +22,10 @@ note right: **CODE** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a Python function to check if a number is even:
+  Here's a simple Python function to check if a number is even:
   
   ```python
-  def is_even(num):
+  def is_even(num: int) -&gt; bool:
       """Check if an integer is even."""
       return num % 2 == 0
   ```
@@ -33,17 +33,16 @@ note right of Mdl
   **Usage example:**
   ```python
   print(is_even(4))   # Output: True
-  print(is_even(7))   # Output: False
-  print(is_even(0))   # Output: True (0 is even)
+  print(is_even(5))   # Output: False
+  print(is_even(-2))  # Output: True
   ```
   
   The function works for:
   - Positive numbers
   - Negative numbers
-  - Zero
-  - Integers (floats would need special handling)
+  - Zero (0 % 2 == 0)
   
-  Would you like me to add any additional features or handle specific edge cases?
+  Would you like me to add any additional features or handle different data types?
 end note
 note over T #palegreen
   **PASSED** (< 262s)

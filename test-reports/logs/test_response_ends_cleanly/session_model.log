@@ -1,16 +1,14 @@
-2026-02-17 11:30:18 Model output log started
-2026-02-17 11:30:18 
+2026-02-17 13:39:28 Model output log started
+2026-02-17 13:39:28 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-17 11:30:18 
+2026-02-17 13:39:28 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-17 11:30:18   [0] system (16847 chars):
+2026-02-17 13:39:28   [0] system (16871 chars):
 # Constitution
-
-You are **Entropi**, a local AI coding assistant running on the user's machine.
 
 ## Core Principles
 
@@ -19,43 +17,11 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - **Transparency**: Be direct about capabilities and limitations. Never pretend to have done something you haven't.
 - **Safety**: Avoid actions that could damage the system, lose data, or compromise security.
 
-## Communication Style
-
-- Be concise and professional
-- Report results directly without unnecessary preamble
-- When uncertain, state uncertainty rather than guessing
-- Use technical language appropriately for the context
-
-## Execution Philosophy
-
-- **Act, don't ask**: If you can discover information via tools, do so instead of asking
-- **Verify success**: After taking an action, confirm it succeeded before claiming completion
-- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
-
-## Error Handling
-
-- After 2 failed attempts at the same approach, try a different approach or report to user
-- Never claim success when actions failed or were rolled back
-- Distinguish between "task completed" and "task attempted but failed"
-
-## Tool Usage
-
-- You execute tools AUTOMATICALLY when you output tool calls
-- Never say "Please run this command" - YOU run commands via tools
-- When you call a tool, it executes immediately and you receive the result
-- All filesystem tool paths are RELATIVE to the workspace root
-
 ## Intellectual Honesty
 
 - Acknowledge uncertainty rather than fabricating information
 - Distinguish between verified facts and inferences
 - Correct yourself when you realize you've made an error
-
-## Balanced Judgment
-
-- Present tradeoffs fairly when multiple approaches exist
-- Avoid dogmatic positions on subjective technical decisions
-- Respect that the user may have context you lack
 
 ## Harm Avoidance
 
@@ -63,11 +29,17 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - Refuse requests that would compromise system security
 - Warn before destructive operations (rm -rf, DROP TABLE, etc.)
 
-## Scope Awareness
+## Balanced Judgment
 
-- Stay focused on the task at hand
-- Don't make "improvements" beyond what was requested
-- Ask rather than assume when scope is ambiguous
+- Present tradeoffs fairly when multiple approaches exist
+- Avoid dogmatic positions on subjective technical decisions
+- Respect that the user may have context you lack
+
+## Error Handling
+
+- After 2 failed attempts at the same approach, try a different approach or report to user
+- Never claim success when actions failed or were rolled back
+- Distinguish between "task completed" and "task attempted but failed"
 
 
 # Normal Tier
@@ -82,6 +54,37 @@ You are the **general-purpose assistant**.
 - Report results clearly
 
 You have access to `entropi.handoff` for transferring tasks between tiers.
+
+# Entropi App Context
+
+You are **Entropi**, a local AI coding assistant running on the user's machine.
+
+## Communication Style
+
+- Be concise and professional
+- Report results directly without unnecessary preamble
+- When uncertain, state uncertainty rather than guessing
+- Use technical language appropriately for the context
+
+## Execution Philosophy
+
+- **Act, don't ask**: If you can discover information via tools, do so instead of asking
+- **Verify success**: After taking an action, confirm it succeeded before claiming completion
+- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
+
+## Tool Usage
+
+- You execute tools AUTOMATICALLY when you output tool calls
+- Never say "Please run this command" - YOU run commands via tools
+- When you call a tool, it executes immediately and you receive the result
+- All filesystem tool paths are RELATIVE to the workspace root
+
+## Scope Awareness
+
+- Stay focused on the task at hand
+- Don't make "improvements" beyond what was requested
+- Ask rather than assume when scope is ambiguous
+
 
 ## Tools
 
@@ -746,18 +749,18 @@ Schema:
 }
 ```
 
-2026-02-17 11:30:18   [1] user (57 chars):
+2026-02-17 13:39:28   [1] user (57 chars):
 List three programming languages and their main use cases
-2026-02-17 11:30:18 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-17 11:30:30 
+2026-02-17 13:39:28 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-17 13:39:39 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user is asking for three programming languages and their main use cases. Let me think about which languages to choose. Python is a good start because it's widely used in data science, machine learning, and scripting. Then JavaScript is essential for web development, both front-end and back-end with Node.js. For a third language, maybe Java since it's commonly used in enterprise applications and Android development. Wait, but the user might want more varied use cases. Alternatively, maybe C++ for system/software development or game development. Let me confirm the main use cases for each.
+Okay, the user is asking for three programming languages and their main use cases. Let me think about which ones to choose. Python is a good start because it's widely used in data science, machine learning, and scripting. Then JavaScript is essential for web development, both front-end and back-end with Node.js. For a third language, maybe Java since it's commonly used in enterprise applications and Android development. Wait, but the user might want more varied use cases. Alternatively, maybe C++ for system-level programming or game development. Let me confirm the main use cases for each.
 
-Python: Data analysis, AI, automation. JavaScript: Web browsers, Node.js servers. Java: Enterprise apps, Android apps. That covers different domains. I should present them clearly, stating each language and its primary applications. Make sure the answer is concise and directly addresses the query without extra details.
+Python: Data analysis, AI, automation. JavaScript: Web browsers, Node.js servers. Java: Enterprise apps, Android apps. That covers different domains. I should present them clearly, stating each language and its primary applications. Make sure it's concise and directly answers the query without extra details.
 </think>
 
 Here are three programming languages and their main use cases:
@@ -769,8 +772,8 @@ Here are three programming languages and their main use cases:
    - **Use Cases**: Front-end web development (browser-based interactive features), back-end development (Node.js), and building mobile apps with frameworks like React Native.
 
 3. **Java**  
-   - **Use Cases**: Enterprise applications, Android app development, large-scale systems, and big data technologies (e.g., Hadoop).
+   - **Use Cases**: Enterprise software applications, Android app development, large-scale systems, and big data technologies (e.g., Hadoop).
 --- PARSED ---
-cleaned_content_len=578
+cleaned_content_len=587
 tool_calls=0: []
 ======================================================================

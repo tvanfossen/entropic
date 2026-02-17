@@ -1,16 +1,14 @@
-2026-02-17 11:31:03 Model output log started
-2026-02-17 11:31:04 
+2026-02-17 13:40:10 Model output log started
+2026-02-17 13:40:10 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-17 11:31:04 
+2026-02-17 13:40:10 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-17 11:31:04   [0] system (16847 chars):
+2026-02-17 13:40:10   [0] system (16871 chars):
 # Constitution
-
-You are **Entropi**, a local AI coding assistant running on the user's machine.
 
 ## Core Principles
 
@@ -19,43 +17,11 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - **Transparency**: Be direct about capabilities and limitations. Never pretend to have done something you haven't.
 - **Safety**: Avoid actions that could damage the system, lose data, or compromise security.
 
-## Communication Style
-
-- Be concise and professional
-- Report results directly without unnecessary preamble
-- When uncertain, state uncertainty rather than guessing
-- Use technical language appropriately for the context
-
-## Execution Philosophy
-
-- **Act, don't ask**: If you can discover information via tools, do so instead of asking
-- **Verify success**: After taking an action, confirm it succeeded before claiming completion
-- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
-
-## Error Handling
-
-- After 2 failed attempts at the same approach, try a different approach or report to user
-- Never claim success when actions failed or were rolled back
-- Distinguish between "task completed" and "task attempted but failed"
-
-## Tool Usage
-
-- You execute tools AUTOMATICALLY when you output tool calls
-- Never say "Please run this command" - YOU run commands via tools
-- When you call a tool, it executes immediately and you receive the result
-- All filesystem tool paths are RELATIVE to the workspace root
-
 ## Intellectual Honesty
 
 - Acknowledge uncertainty rather than fabricating information
 - Distinguish between verified facts and inferences
 - Correct yourself when you realize you've made an error
-
-## Balanced Judgment
-
-- Present tradeoffs fairly when multiple approaches exist
-- Avoid dogmatic positions on subjective technical decisions
-- Respect that the user may have context you lack
 
 ## Harm Avoidance
 
@@ -63,11 +29,17 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - Refuse requests that would compromise system security
 - Warn before destructive operations (rm -rf, DROP TABLE, etc.)
 
-## Scope Awareness
+## Balanced Judgment
 
-- Stay focused on the task at hand
-- Don't make "improvements" beyond what was requested
-- Ask rather than assume when scope is ambiguous
+- Present tradeoffs fairly when multiple approaches exist
+- Avoid dogmatic positions on subjective technical decisions
+- Respect that the user may have context you lack
+
+## Error Handling
+
+- After 2 failed attempts at the same approach, try a different approach or report to user
+- Never claim success when actions failed or were rolled back
+- Distinguish between "task completed" and "task attempted but failed"
 
 
 # Normal Tier
@@ -82,6 +54,37 @@ You are the **general-purpose assistant**.
 - Report results clearly
 
 You have access to `entropi.handoff` for transferring tasks between tiers.
+
+# Entropi App Context
+
+You are **Entropi**, a local AI coding assistant running on the user's machine.
+
+## Communication Style
+
+- Be concise and professional
+- Report results directly without unnecessary preamble
+- When uncertain, state uncertainty rather than guessing
+- Use technical language appropriately for the context
+
+## Execution Philosophy
+
+- **Act, don't ask**: If you can discover information via tools, do so instead of asking
+- **Verify success**: After taking an action, confirm it succeeded before claiming completion
+- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
+
+## Tool Usage
+
+- You execute tools AUTOMATICALLY when you output tool calls
+- Never say "Please run this command" - YOU run commands via tools
+- When you call a tool, it executes immediately and you receive the result
+- All filesystem tool paths are RELATIVE to the workspace root
+
+## Scope Awareness
+
+- Stay focused on the task at hand
+- Don't make "improvements" beyond what was requested
+- Ask rather than assume when scope is ambiguous
+
 
 ## Tools
 
@@ -746,10 +749,10 @@ Schema:
 }
 ```
 
-2026-02-17 11:31:04   [1] user (33 chars):
+2026-02-17 13:40:10   [1] user (33 chars):
 What is recursion in programming?
-2026-02-17 11:31:04 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-17 11:31:23 
+2026-02-17 13:40:10 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-17 13:40:30 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
@@ -761,42 +764,35 @@ I need to mention the base case and the recursive case. The base case stops the 
 
 Wait, should I provide code examples? The user might benefit from seeing how it's implemented. Let me think of a simple example, like a factorial function. Also, mention the call stack and potential issues like stack overflow if not handled properly.
 
-I should check if there's any confusion between recursion and iteration. Maybe note that while recursive solutions can be elegant, they might not always be efficient. Also, tail recursion optimization in some languages could be a point to touch on, but maybe keep it basic unless the user asks for more details.
+I should check if there's any confusion between recursion and iteration. Maybe note that while recursive solutions can be elegant, they might not always be efficient. Also, tail recursion optimization in some languages could be a point to touch on, but maybe keep it brief since the user asked for a general explanation.
 
-Make sure the explanation is concise but covers the essentials: definition, base case, recursive step, example, and potential pitfalls. Avoid jargon where possible, but some terms are necessary. Alright, that should cover it without being too overwhelming.
+Make sure the answer is concise but covers the essentials: definition, base case, recursive case, example, and potential pitfalls. Avoid jargon where possible, but some terms are necessary. Alright, that should cover it without being too technical.
 </think>
 
-Recursion in programming is a technique where a function calls itself to solve a problem by breaking it down into smaller, similar subproblems. Here's a structured breakdown:
+Recursion in programming is a technique where a function calls itself to solve a problem by breaking it down into smaller, similar subproblems. It relies on two key components:
 
-### Key Components
-1. **Base Case**: 
-   - The condition that stops the recursion (prevents infinite loops).
-   - Example: `if n <= 1 return 1` in factorial calculations.
+1. **Base Case**: A condition that stops the recursion (prevents infinite loops).  
+   Example: `if n == 0: return 1` in factorial calculations.
 
-2. **Recursive Step**:
-   - The function calls itself with modified parameters to reduce the problem size.
-   - Example: `return n * factorial(n-1)` for factorial.
+2. **Recursive Case**: The function calls itself with a modified parameter to reduce the problem size.  
+   Example: `return n * factorial(n-1)`.
 
 ### Example: Factorial Calculation
 ```python
 def factorial(n):
-    if n <= 1:  # Base case
+    if n == 0:  # Base case
         return 1
-    else:       # Recursive step
+    else:       # Recursive case
         return n * factorial(n-1)
 ```
 
-### Key Considerations
-- **Call Stack**: Each recursive call adds a stack frame, which can lead to stack overflow for deep recursions.
-- **Efficiency**: Recursive solutions may have higher memory overhead compared to iterative approaches.
-- **Tail Recursion**: Some languages optimize tail-recursive calls (where the recursive call is the final operation), but Python does not support this natively.
+### Key Concepts:
+- **Call Stack**: Each recursive call adds a frame to the stack until the base case is reached.
+- **Stack Overflow Risk**: Deep recursion can exhaust stack memory (e.g., `factorial(10000)` would crash).
+- **Tail Recursion**: Some languages optimize recursive calls to reuse stack frames (not universally supported in Python).
 
-### When to Use Recursion
-- Problems with natural recursive structures (e.g., tree traversals, divide-and-conquer algorithms).
-- When the recursive approach simplifies code readability and maintainability.
-
-Would you like a comparison with iterative solutions or examples in another language?
+Recursion is elegant for problems with hierarchical structures (e.g., tree traversals) but may be less efficient than iterative solutions for simple tasks. Use it when the problem naturally decomposes into subproblems.
 --- PARSED ---
-cleaned_content_len=1386
+cleaned_content_len=1214
 tool_calls=0: []
 ======================================================================

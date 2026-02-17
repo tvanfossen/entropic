@@ -95,10 +95,15 @@ def load_prompt(
 
 def get_constitution_prompt(
     prompts_dir: Path | None = None,
-    use_bundled: bool = True,
+    use_bundled: bool = True,  # noqa: ARG001
 ) -> str:
-    """Get the constitution prompt (shared principles across all tiers)."""
-    return load_prompt("constitution", prompts_dir, use_bundled=use_bundled)
+    """Get the constitution prompt (universal safety guardrails).
+
+    Always loads the bundled constitution regardless of use_bundled.
+    The constitution is a non-replaceable safety layer that all consumers
+    inherit. The use_bundled flag only controls identity file fallback.
+    """
+    return load_prompt("constitution", prompts_dir, use_bundled=True)
 
 
 def get_tier_identity_prompt(
@@ -123,6 +128,9 @@ def get_identity_prompt(
 
     Loads the identity file, strips YAML frontmatter, and combines
     constitution + markdown body for use as the adapter's system prompt.
+
+    If no identity file exists (e.g. consumer with use_bundled=False and
+    no identity file for the tier), returns constitution alone.
     """
     constitution = get_constitution_prompt(prompts_dir, use_bundled=use_bundled)
 
@@ -133,8 +141,12 @@ def get_identity_prompt(
         return f"{constitution}\n\n{body}"
 
     # Fallback: load raw (no frontmatter)
-    tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
-    return f"{constitution}\n\n{tier_identity}"
+    try:
+        tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
+        return f"{constitution}\n\n{tier_identity}"
+    except FileNotFoundError:
+        logger.info(f"No identity file for tier '{tier}', using constitution only")
+        return constitution
 
 
 def _resolve_identity_path(

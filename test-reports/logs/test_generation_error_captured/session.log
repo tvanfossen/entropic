@@ -1,21 +1,21 @@
-2026-02-17 11:30:41 [INFO] entropi: Session started - logging to /tmp/tmpkzzazgko/.entropi/session.log
-2026-02-17 11:30:41 [INFO] entropi: Log level: INFO
-2026-02-17 11:30:41 [INFO] entropi.app: Initializing Entropi...
-2026-02-17 11:30:41 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-17 11:30:41 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-17 11:30:42 [INFO] entropi.lsp.base: python LSP started
-2026-02-17 11:30:42 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-17 11:30:42 [INFO] entropi.lsp.base: c LSP started
-2026-02-17 11:30:42 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-17 11:30:42 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-17 11:30:42 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-17 11:30:42 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-17 11:30:42 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-17 11:30:42 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-17 11:30:42 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-17 11:30:42 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-17 11:30:42 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-17 11:30:42 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-17 11:30:42 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-17 11:30:42 [INFO] entropi.app: Entropi initialized
-2026-02-17 11:30:42 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-17 13:39:47 [INFO] entropi: Session started - logging to /tmp/tmpoly9eqb_/.entropi/session.log
+2026-02-17 13:39:47 [INFO] entropi: Log level: INFO
+2026-02-17 13:39:47 [INFO] entropi.app: Initializing Entropi...
+2026-02-17 13:39:47 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-17 13:39:47 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-17 13:39:47 [INFO] entropi.lsp.base: python LSP started
+2026-02-17 13:39:47 [INFO] entropi.lsp.base: Starting c LSP: clangd
+2026-02-17 13:39:47 [INFO] entropi.lsp.base: c LSP started
+2026-02-17 13:39:47 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
+2026-02-17 13:39:47 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
+2026-02-17 13:39:47 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-17 13:39:47 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
+2026-02-17 13:39:47 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
+2026-02-17 13:39:47 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-17 13:39:47 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
+2026-02-17 13:39:47 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-17 13:39:47 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-17 13:39:47 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-17 13:39:47 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-17 13:39:47 [INFO] entropi.app: Entropi initialized
+2026-02-17 13:39:47 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock

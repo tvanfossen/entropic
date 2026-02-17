@@ -24,6 +24,7 @@ from entropi.core.tasks import TaskManager
 from entropi.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.servers.external import ExternalMCPServer
+from entropi.prompts import load_prompt
 from entropi.storage.backend import SQLiteStorage
 from entropi.ui.presenter import Presenter, StatusInfo
 
@@ -69,6 +70,9 @@ class Application:
         self._external_mcp: ExternalMCPServer | None = None
         self._external_mcp_task: asyncio.Task[None] | None = None
 
+        # App context prompt (loaded during initialize)
+        self._app_context: str = ""
+
         # Session state
         self._conversation_id: str | None = None
         self._messages: list[Message] = []
@@ -110,6 +114,12 @@ class Application:
                 self.config.config_dir / "commands",
             )
             await self._command_registry.discover()
+
+            # Load app context prompt (entropi-specific personality)
+            try:
+                self._app_context = load_prompt("app_context")
+            except FileNotFoundError:
+                self.logger.warning("app_context.md not found, proceeding without")
 
             # Initialize agent engine
             status.update("[bold blue]Initializing agent...")
@@ -239,6 +249,7 @@ class Application:
             async for msg in self._engine.run(
                 queued_msg.content,
                 history=self._messages,
+                system_prompt=self._app_context or None,
                 task_id=queued_msg.task_id,
                 source=queued_msg.source,
             ):
@@ -510,10 +521,13 @@ class Application:
         # Capture presenter in local variable for closures
         presenter = self._presenter
 
-        # Build system prompt with project context
-        system_prompt = None
+        # Build system prompt: app context + project context
+        parts = []
+        if self._app_context:
+            parts.append(self._app_context)
         if self._project_context and self._project_context.has_context:
-            system_prompt = self._project_context.get_system_prompt_addition()
+            parts.append(self._project_context.get_system_prompt_addition())
+        system_prompt = "\n\n".join(parts) if parts else None
 
         def on_chunk(chunk: str) -> None:
             """Handle streaming chunk - pass directly to presenter."""
@@ -957,7 +971,10 @@ class Application:
             )
 
             # Run agent loop (tool results are shown via on_tool_complete callback)
-            async for _ in self._engine.run(message):
+            async for _ in self._engine.run(
+                message,
+                system_prompt=self._app_context or None,
+            ):
                 pass
 
             self.console.print()  # Newline after response

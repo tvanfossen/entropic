@@ -20,7 +20,7 @@ class TestQwen3Adapter:
         result = self.adapter.format_system_prompt("You are helpful.")
         # Qwen3Adapter prepends identity prompt (constitution + tier identity)
         assert "You are helpful." in result
-        assert "Entropi" in result  # Identity prompt should be included
+        assert "Constitution" in result  # Constitution should be included
 
     def test_format_system_prompt_with_tools(self) -> None:
         """Test formatting system prompt with tools."""

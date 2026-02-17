@@ -22,7 +22,8 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm Entropi, your local AI coding assistant. How can I assist you today?
+  Hello! I'm your local AI coding assistant, Entropi. How can I help you with your
+  development tasks today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

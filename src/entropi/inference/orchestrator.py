@@ -182,6 +182,11 @@ class ModelOrchestrator:
         if models_config.router:
             self._router = self._create_backend(models_config.router, "router")
 
+        # Validate: every tier in _tier_list must have a config entry
+        for tier in self._tier_list:
+            if tier not in self._tiers:
+                raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
+
         if not self._tiers and not self._router:
             logger.warning("No models configured")
             return

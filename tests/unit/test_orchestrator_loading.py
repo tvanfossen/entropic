@@ -350,3 +350,64 @@ class TestBackendFactory:
         """Without backend_factory, _default_backend_factory is used."""
         orchestrator = ModelOrchestrator(self.config)
         assert orchestrator._backend_factory == orchestrator._default_backend_factory
+
+
+class TestIdentityFileValidation:
+    """Tests for identity file validation at initialize()."""
+
+    def setup_method(self):
+        self.config = MockEntropyConfig()
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_missing_identity_raises(self, tmp_path: Path) -> None:
+        """initialize() raises when prompts_dir set + bundled disabled but files missing."""
+        self.config.prompts_dir = tmp_path
+        self.config.use_bundled_prompts = False
+
+        def mock_factory(model_config, tier_name):
+            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+
+        with pytest.raises(FileNotFoundError, match="Missing identity files"):
+            await orchestrator.initialize()
+
+    @pytest.mark.asyncio
+    async def test_strict_mode_with_all_files_passes(self, tmp_path: Path) -> None:
+        """initialize() succeeds when prompts_dir has all identity files."""
+        self.config.prompts_dir = tmp_path
+        self.config.use_bundled_prompts = False
+
+        for name in self.config.models.tiers:
+            (tmp_path / f"identity_{name}.md").write_text(
+                f"---\nname: {name}\nfocus:\n  - testing\n---\n# {name}\n"
+            )
+
+        def mock_factory(model_config, tier_name):
+            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+        await orchestrator.initialize()  # Should not raise
+
+    @pytest.mark.asyncio
+    async def test_prompts_dir_with_bundled_skips_strict_validation(self) -> None:
+        """prompts_dir set but use_bundled=True skips strict validation."""
+        self.config.prompts_dir = Path("/nonexistent/prompts")
+        self.config.use_bundled_prompts = True
+
+        def mock_factory(model_config, tier_name):
+            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+        await orchestrator.initialize()  # Should not raise — falls back to bundled
+
+    @pytest.mark.asyncio
+    async def test_no_prompts_dir_skips_validation(self) -> None:
+        """initialize() skips identity validation when prompts_dir is None."""
+        self.config.prompts_dir = None
+
+        def mock_factory(model_config, tier_name):
+            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+        await orchestrator.initialize()  # Should not raise

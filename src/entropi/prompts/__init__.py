@@ -82,6 +82,11 @@ def load_prompt(
         if user_path.exists():
             logger.debug(f"Loading prompt '{name}' from {user_path}")
             return user_path.read_text()
+        # prompts_dir set + bundled disabled = strict mode (consumer owns all prompts)
+        if not use_bundled:
+            raise FileNotFoundError(
+                f"Prompt '{name}' not found in {prompts_dir}. " f"Expected: {user_path}"
+            )
 
     # Fall back to bundled defaults
     if use_bundled:
@@ -90,7 +95,7 @@ def load_prompt(
             logger.debug(f"Loading prompt '{name}' from bundled defaults")
             return default_path.read_text()
 
-    raise FileNotFoundError(f"Prompt '{name}' not found in {prompts_dir or _DATA_DIR}")
+    raise FileNotFoundError(f"Prompt '{name}' not found in {_DATA_DIR}")
 
 
 def get_constitution_prompt(
@@ -132,8 +137,13 @@ def get_identity_prompt(
     Loads the identity file, strips YAML frontmatter, and combines
     constitution + markdown body for use as the adapter's system prompt.
 
-    If no identity file exists (e.g. consumer with use_bundled=False and
-    no identity file for the tier), returns constitution alone.
+    When ``prompts_dir`` is set, the identity file MUST exist there —
+    no silent fallback to bundled defaults. This surfaces typos and
+    missing files immediately instead of silently substituting.
+
+    Raises:
+        FileNotFoundError: If prompts_dir is set but identity file missing,
+            or if use_bundled=False and no identity file found.
     """
     constitution = get_constitution_prompt(prompts_dir, use_bundled=use_bundled)
 
@@ -143,16 +153,18 @@ def get_identity_prompt(
         _identity, body = load_tier_identity(identity_path)
         return f"{constitution}\n\n{body}"
 
-    # Fallback: load raw (no frontmatter)
+    # Strict mode: prompts_dir set + bundled disabled = error on missing
+    if prompts_dir and not use_bundled:
+        raise FileNotFoundError(
+            f"No identity file for tier '{tier}' in {prompts_dir}. "
+            f"Expected: {prompts_dir / f'identity_{tier}.md'}"
+        )
+
+    # Try bundled raw file (no frontmatter), or fall back to constitution only
     try:
         tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
         return f"{constitution}\n\n{tier_identity}"
     except FileNotFoundError:
-        if not use_bundled:
-            raise FileNotFoundError(
-                f"No identity file for tier '{tier}' in {prompts_dir}. "
-                f"Expected: identity_{tier}.md"
-            ) from None
         logger.info("No identity file for tier '%s', using constitution only", tier)
         return constitution
 
@@ -162,20 +174,25 @@ def _resolve_identity_path(
     prompts_dir: Path | None = None,
     use_bundled: bool = True,
 ) -> Path | None:
-    """Find the identity file path for a tier, checking user dir then bundled."""
+    """Find the identity file path for a tier, checking user dir then bundled.
+
+    When ``prompts_dir`` is set AND ``use_bundled`` is False, only looks
+    in prompts_dir — no bundled fallback. Otherwise, checks prompts_dir
+    first, then falls back to bundled.
+    """
     filename = f"identity_{tier}.md"
 
+    # Check user prompts dir first
     if prompts_dir:
         user_path = prompts_dir / filename
         if user_path.exists():
             return user_path
+        if not use_bundled:
+            return None  # Strict mode — no fallback
 
-    if use_bundled:
-        default_path = _DATA_DIR / filename
-        if default_path.exists():
-            return default_path
-
-    return None
+    # Bundled fallback
+    default_path = _DATA_DIR / filename
+    return default_path if (use_bundled and default_path.exists()) else None
 
 
 def build_classification_prompt(

@@ -201,6 +201,47 @@ class TestUseBundledPrompts:
         result = _resolve_identity_path("thinking", prompts_dir=None, use_bundled=False)
         assert result is None
 
+
+class TestPromptsDir:
+    """Tests for prompts_dir enforcement — no silent fallback to bundled."""
+
+    def test_strict_load_prompt_raises_when_missing(self, tmp_path: Path) -> None:
+        """prompts_dir + use_bundled=False, file missing → error."""
+        from entropi.prompts import load_prompt
+
+        with pytest.raises(FileNotFoundError, match="not found in"):
+            load_prompt("constitution", prompts_dir=tmp_path, use_bundled=False)
+
+    def test_strict_resolve_identity_no_fallback(self, tmp_path: Path) -> None:
+        """_resolve_identity_path returns None in strict mode (no fallback)."""
+        result = _resolve_identity_path("thinking", prompts_dir=tmp_path, use_bundled=False)
+        assert result is None
+
+    def test_prompts_dir_with_bundled_falls_back(self, tmp_path: Path) -> None:
+        """prompts_dir set but use_bundled=True → falls back to bundled."""
+        from entropi.prompts import load_prompt
+
+        # tmp_path has no constitution.md, but bundled exists
+        result = load_prompt("constitution", prompts_dir=tmp_path, use_bundled=True)
+        assert len(result) > 0  # Got bundled constitution
+
+    def test_load_prompt_finds_file_in_prompts_dir(self, tmp_path: Path) -> None:
+        """prompts_dir set and file exists → loads from prompts_dir."""
+        from entropi.prompts import load_prompt
+
+        (tmp_path / "constitution.md").write_text("Custom content")
+        result = load_prompt("constitution", prompts_dir=tmp_path)
+        assert result == "Custom content"
+
+    def test_strict_get_identity_prompt_raises(self, tmp_path: Path) -> None:
+        """get_identity_prompt in strict mode raises when identity file missing."""
+        from entropi.prompts import get_identity_prompt
+
+        (tmp_path / "constitution.md").write_text("Constitution")
+
+        with pytest.raises(FileNotFoundError, match="identity_custom"):
+            get_identity_prompt("custom", prompts_dir=tmp_path, use_bundled=False)
+
     def test_resolve_identity_path_finds_user_file(self, tmp_path: Path) -> None:
         """_resolve_identity_path finds user file even with use_bundled=False."""
         identity = tmp_path / "identity_custom.md"

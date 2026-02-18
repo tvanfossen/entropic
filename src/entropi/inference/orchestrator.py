@@ -102,21 +102,25 @@ class ModelOrchestrator:
         return tiers
 
     def _find_identity_file(self, tier_name: str) -> Path | None:
-        """Find identity file for a tier in prompts_dir or bundled data."""
+        """Find identity file for a tier in prompts_dir or bundled data.
+
+        Checks prompts_dir first, then bundled. In strict mode
+        (prompts_dir set + use_bundled_prompts=False), only checks
+        prompts_dir — no bundled fallback.
+        """
         filename = f"identity_{tier_name}.md"
-        data_dir = Path(__file__).parent.parent / "data" / "prompts"
+        result = self._check_prompts_dir(filename)
+        if result is not None or not self.config.use_bundled_prompts:
+            return result
+        default_path = Path(__file__).parent.parent / "data" / "prompts" / filename
+        return default_path if default_path.exists() else None
 
-        if self.config.prompts_dir:
-            user_path = self.config.prompts_dir / filename
-            if user_path.exists():
-                return user_path
-
-        if self.config.use_bundled_prompts:
-            default_path = data_dir / filename
-            if default_path.exists():
-                return default_path
-
-        return None
+    def _check_prompts_dir(self, filename: str) -> Path | None:
+        """Check prompts_dir for a file, return path if found."""
+        if not self.config.prompts_dir:
+            return None
+        user_path = self.config.prompts_dir / filename
+        return user_path if user_path.exists() else None
 
     def _build_tier_map(self) -> dict[str, ModelTier]:
         """Build digit-to-tier mapping from config or auto-number."""
@@ -168,6 +172,25 @@ class ModelOrchestrator:
             raise ValueError(f"Default tier '{self.config.models.default}' not found")
         return tier
 
+    def _validate_tiers(self) -> None:
+        """Validate tier config entries and identity files.
+
+        Identity file validation only triggers when prompts_dir is set
+        AND use_bundled_prompts is False — the consumer is fully managing
+        their own prompts with no bundled fallback.
+        """
+        for tier in self._tier_list:
+            if tier not in self._tiers:
+                raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
+
+        if self.config.prompts_dir and not self.config.use_bundled_prompts:
+            missing = [t.name for t in self._tier_list if self._find_identity_file(t.name) is None]
+            if missing:
+                raise FileNotFoundError(
+                    f"Missing identity files in {self.config.prompts_dir}: "
+                    + ", ".join(f"identity_{n}.md" for n in missing)
+                )
+
     async def initialize(self) -> None:
         """Initialize and load configured models."""
         logger.info("Initializing model orchestrator")
@@ -186,10 +209,7 @@ class ModelOrchestrator:
         if models_config.router:
             self._router = self._create_backend(models_config.router, "router")
 
-        # Validate: every tier in _tier_list must have a config entry
-        for tier in self._tier_list:
-            if tier not in self._tiers:
-                raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
+        self._validate_tiers()
 
         if not self._tiers and not self._router:
             logger.warning("No models configured")

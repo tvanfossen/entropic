@@ -1,40 +1,40 @@
-2026-02-18 13:19:52 [INFO] entropi: Session started - logging to /tmp/tmphccm0gy3/.entropi/session.log
-2026-02-18 13:19:52 [INFO] entropi: Log level: INFO
-2026-02-18 13:19:52 [INFO] entropi.app: Initializing Entropi...
-2026-02-18 13:19:52 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-18 13:19:52 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-18 13:19:52 [INFO] entropi.lsp.base: python LSP started
-2026-02-18 13:19:52 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-18 13:19:53 [INFO] entropi.lsp.base: c LSP started
-2026-02-18 13:19:53 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-18 13:19:53 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-18 13:19:53 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-18 13:19:53 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-18 13:19:53 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-18 13:19:53 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-18 13:19:53 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-18 13:19:53 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-18 13:19:53 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-18 13:19:53 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-18 13:19:53 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-18 13:19:53 [INFO] entropi.app: Entropi initialized
-2026-02-18 13:19:53 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
-2026-02-18 13:19:53 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
-2026-02-18 13:19:53 [INFO] entropi.core.engine: 
+2026-02-18 13:59:24 [INFO] entropi: Session started - logging to /tmp/tmpxi5kgbco/.entropi/session.log
+2026-02-18 13:59:24 [INFO] entropi: Log level: INFO
+2026-02-18 13:59:24 [INFO] entropi.app: Initializing Entropi...
+2026-02-18 13:59:24 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-18 13:59:24 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-18 13:59:24 [INFO] entropi.lsp.base: python LSP started
+2026-02-18 13:59:24 [INFO] entropi.lsp.base: Starting c LSP: clangd
+2026-02-18 13:59:24 [INFO] entropi.lsp.base: c LSP started
+2026-02-18 13:59:24 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
+2026-02-18 13:59:24 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
+2026-02-18 13:59:24 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-18 13:59:24 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
+2026-02-18 13:59:24 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
+2026-02-18 13:59:24 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-18 13:59:24 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
+2026-02-18 13:59:24 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-18 13:59:24 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-18 13:59:24 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-18 13:59:24 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-18 13:59:24 [INFO] entropi.app: Entropi initialized
+2026-02-18 13:59:24 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-18 13:59:24 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
+2026-02-18 13:59:24 [INFO] entropi.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 Write a function that returns the sum of a list
 ============================================================
-2026-02-18 13:19:53 [INFO] entropi.core.engine: State: PLANNING
-2026-02-18 13:19:53 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-18 13:19:53 [INFO] entropi.core.engine: State: EXECUTING
-2026-02-18 13:19:53 [INFO] entropi.inference.orchestrator: Reusing normal model for code (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-18 13:19:53 [INFO] entropi.inference.orchestrator: [ROUTER] code | reused | 74ms
-2026-02-18 13:19:53 [INFO] entropi.core.engine: System prompt size: ~4290 tokens
-2026-02-18 13:19:53 [INFO] entropi.ui.headless: Routing: CODE → CODE | reused | 74ms
-2026-02-18 13:19:53 [INFO] entropi.inference.orchestrator: Reusing normal model for code (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-18 13:20:11 [INFO] entropi.adapter.qwen3: [THINKING] (1992 chars):
+2026-02-18 13:59:24 [INFO] entropi.core.engine: State: PLANNING
+2026-02-18 13:59:24 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-18 13:59:24 [INFO] entropi.core.engine: State: EXECUTING
+2026-02-18 13:59:25 [INFO] entropi.inference.orchestrator: Reusing normal model for code (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-18 13:59:25 [INFO] entropi.inference.orchestrator: [ROUTER] code | reused | 72ms
+2026-02-18 13:59:25 [INFO] entropi.core.engine: System prompt size: ~4290 tokens
+2026-02-18 13:59:25 [INFO] entropi.ui.headless: Routing: CODE → CODE | reused | 72ms
+2026-02-18 13:59:25 [INFO] entropi.inference.orchestrator: Reusing normal model for code (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-18 13:59:42 [INFO] entropi.adapter.qwen3: [THINKING] (1992 chars):
 Okay, the user wants a function that returns the sum of a list. Let me think about how to approach this.
 
 First, I need to make sure I understand the requirement. The function should take a list of numbers and return their sum. But wait, what if the list is empty? Should the function handle that case? Maybe return 0 in that scenario.
@@ -65,7 +65,7 @@ Wait, but maybe the user wants to handle empty lists. The sum of an empty list i
 I should also mention that the function works for any iterable, not just lists. But again, the user's request is specific to a list.
 
 So the final function would be as simple as using sum(). I'll present that and maybe offer to implement it manually if needed.
-2026-02-18 13:20:11 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2468 | cleaned_len=457 | tool_calls=0
-2026-02-18 13:20:11 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-18 13:20:11 [INFO] entropi.core.engine: State: COMPLETE
-2026-02-18 13:20:11 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 18335ms
+2026-02-18 13:59:42 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2468 | cleaned_len=457 | tool_calls=0
+2026-02-18 13:59:42 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-18 13:59:42 [INFO] entropi.core.engine: State: COMPLETE
+2026-02-18 13:59:42 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 18026ms

@@ -15,7 +15,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class ModelConfig(BaseModel):
-    """Configuration for a single model."""
+    """Configuration for a single model.
+
+    Attributes:
+        allowed_tools: Tool visibility filter using fully-qualified names
+            in ``{server_name}.{tool_name}`` format. ``None`` (default)
+            means all registered tools are visible to this model/tier.
+    """
 
     path: Path
     adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, generic
@@ -26,7 +32,21 @@ class ModelConfig(BaseModel):
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
     top_k: int = Field(default=40, ge=0)
     repeat_penalty: float = Field(default=1.1, ge=1.0, le=2.0)
-    allowed_tools: list[str] | None = None  # None = all tools allowed
+    allowed_tools: list[str] | None = None
+
+    @field_validator("allowed_tools")
+    @classmethod
+    def validate_allowed_tools(cls, v: list[str] | None) -> list[str] | None:
+        """Validate allowed_tools entries are fully-qualified '{server}.{tool}' names."""
+        if v is None:
+            return v
+        for entry in v:
+            if "." not in entry:
+                raise ValueError(
+                    f"allowed_tools entry '{entry}' must use "
+                    f"'{{server_name}}.{{tool_name}}' format"
+                )
+        return v
 
     @field_validator("path")
     @classmethod

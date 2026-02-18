@@ -103,6 +103,21 @@ class TestEntropyConfig:
         with pytest.raises(ValueError):
             ModelConfig(path=Path("/test"), temperature=3.0)  # Above maximum of 2.0
 
+    def test_allowed_tools_valid_format(self) -> None:
+        """Test allowed_tools accepts fully-qualified names."""
+        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropi.handoff"])
+        assert config.allowed_tools == ["server.tool", "entropi.handoff"]
+
+    def test_allowed_tools_none_default(self) -> None:
+        """Test allowed_tools defaults to None (all tools visible)."""
+        config = ModelConfig(path=Path("/test"))
+        assert config.allowed_tools is None
+
+    def test_allowed_tools_rejects_unqualified(self) -> None:
+        """Test allowed_tools rejects entries without server.tool format."""
+        with pytest.raises(ValueError, match="allowed_tools entry 'badname'"):
+            ModelConfig(path=Path("/test"), allowed_tools=["badname"])
+
     def test_default_routing_config(self) -> None:
         """Test default routing configuration."""
         config = EntropyConfig()

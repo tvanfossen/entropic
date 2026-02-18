@@ -125,10 +125,14 @@ class ModelOrchestrator:
         if routing.tier_map:
             # Explicit tier_map in config
             tier_by_name = {t.name: t for t in self._tier_list}
-            return {digit: tier_by_name[name] for digit, name in routing.tier_map.items()}
+            result = {digit: tier_by_name[name] for digit, name in routing.tier_map.items()}
+            logger.info("Using explicit tier_map: %s", {k: v.name for k, v in result.items()})
+            return result
 
         # Auto-number tiers 1..N
-        return {str(i): tier for i, tier in enumerate(self._tier_list, 1)}
+        result = {str(i): tier for i, tier in enumerate(self._tier_list, 1)}
+        logger.info("Auto-derived tier_map: %s", {k: v.name for k, v in result.items()})
+        return result
 
     def _build_classification_map(self) -> dict[str, ModelTier]:
         """Build string digit → ModelTier map for classification parsing."""

@@ -18,14 +18,14 @@ Three tiers collaborate on each move:
 ## Communication
 
 - Use `entropi.handoff` to transfer control between tiers
-- Conversation context carries between tiers — state your reasoning clearly
-- Be concise — brief reasoning, no lengthy analysis
+- **Keep thinking VERY short** — your output window is small, prioritize tool calls over reasoning
+- If you run out of tokens before calling a tool, the turn is wasted
 
 ## Tool Usage
 
 - Tools execute AUTOMATICALLY when you output tool calls
 - Only use tools shown in the **Tools** section of your prompt
-- Each tier sees only the tools it needs — trust the tool list you're given
+- Emit tool calls EARLY — don't write long analysis first
 
 ## Board Notation
 
@@ -45,23 +45,8 @@ The board is shown from White's perspective (rank 8 at top, rank 1 at bottom).
 
 Moves use UCI notation: `<from><to>` (e.g., `e7e5` = pawn from e7 to e5).
 
-## Chess Strategy
+## Chess Priorities
 
-### Opening Principles
-- Control the center (e5, d5, c5)
-- Develop knights before bishops
-- Castle early for king safety
-- Don't move the same piece twice without reason
-- Don't bring the queen out early
-
-### Tactical Awareness
-- Check for hanging pieces (yours and opponent's)
-- Look for forks, pins, skewers, discovered attacks
-- Count attackers vs defenders on contested squares
-- Check forcing moves first: checks, captures, threats
-
-### Positional Thinking
-- Piece activity: are your pieces on good squares?
-- Pawn structure: avoid doubled/isolated pawns
-- King safety: is your king exposed?
-- Space: who controls more of the board?
+1. Checks, captures, threats first
+2. Develop pieces toward center, castle early
+3. Don't move same piece twice, don't hang material

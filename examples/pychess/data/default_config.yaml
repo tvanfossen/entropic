@@ -9,7 +9,7 @@ models:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
       context_length: 8192
-      max_output_tokens: 1024
+      max_output_tokens: 384
       allowed_tools:
         - chess.get_board
         - entropi.handoff
@@ -19,7 +19,7 @@ models:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
       context_length: 8192
-      max_output_tokens: 1024
+      max_output_tokens: 256
       allowed_tools:
         - chess.get_board
         - entropi.handoff
@@ -29,7 +29,7 @@ models:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
       context_length: 8192
-      max_output_tokens: 512
+      max_output_tokens: 192
       allowed_tools:
         - chess.get_board
         - chess.make_move

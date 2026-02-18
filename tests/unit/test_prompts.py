@@ -219,7 +219,7 @@ class TestProgrammaticConfig:
 
         config = EntropyConfig(
             models={"tiers": {"custom": {"path": "/tmp/model.gguf"}}, "default": "custom"},
-            routing={"enabled": False},
+            routing={"enabled": False, "fallback_tier": "custom"},
         )
         assert config.models.default == "custom"
         assert "custom" in config.models.tiers

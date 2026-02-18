@@ -240,6 +240,17 @@ class CompactionConfig(BaseModel):
     tool_result_ttl: int = Field(default=10, ge=1, le=20)
     warning_threshold_percent: float = Field(default=0.6, ge=0.3, le=0.9)
 
+    @model_validator(mode="after")
+    def validate_threshold_ordering(self) -> "CompactionConfig":
+        """Warning threshold must be below compaction threshold."""
+        if self.warning_threshold_percent >= self.threshold_percent:
+            raise ValueError(
+                f"compaction.warning_threshold_percent "
+                f"({self.warning_threshold_percent}) must be less than "
+                f"threshold_percent ({self.threshold_percent})"
+            )
+        return self
+
 
 class GenerationConfig(BaseModel):
     """Generation parameters configuration."""
@@ -362,6 +373,40 @@ class VoiceConfig(BaseModel):
     server: VoiceServerConfig = Field(default_factory=VoiceServerConfig)
 
 
+def _validate_fallback_tier(fallback: str, tier_names: set[str]) -> None:
+    """Raise if fallback_tier is not a defined tier."""
+    if fallback not in tier_names:
+        raise ValueError(
+            f"routing.fallback_tier '{fallback}' " f"not in models.tiers: {sorted(tier_names)}"
+        )
+
+
+def _validate_tier_map(tier_map: dict[str, str], tier_names: set[str]) -> None:
+    """Raise if any tier_map value references an undefined tier."""
+    for key, tier in tier_map.items():
+        if tier not in tier_names:
+            raise ValueError(
+                f"routing.tier_map['{key}'] = '{tier}' "
+                f"not in models.tiers: {sorted(tier_names)}"
+            )
+
+
+def _validate_handoff_rules(rules: dict[str, list[str]], tier_names: set[str]) -> None:
+    """Raise if any handoff_rules key or value references an undefined tier."""
+    for source, targets in rules.items():
+        if source not in tier_names:
+            raise ValueError(
+                f"routing.handoff_rules key '{source}' "
+                f"not in models.tiers: {sorted(tier_names)}"
+            )
+        for target in targets:
+            if target not in tier_names:
+                raise ValueError(
+                    f"routing.handoff_rules['{source}'] contains '{target}' "
+                    f"not in models.tiers: {sorted(tier_names)}"
+                )
+
+
 class EntropyConfig(BaseSettings):
     """Root configuration for Entropi."""
 
@@ -402,3 +447,15 @@ class EntropyConfig(BaseSettings):
     def validate_paths(cls, v: Path) -> Path:
         """Expand user paths if ~ is used."""
         return Path(v).expanduser()
+
+    @model_validator(mode="after")
+    def validate_routing_references(self) -> "EntropyConfig":
+        """Cross-validate routing tier references against defined tiers."""
+        tier_names = set(self.models.tiers)
+        if not tier_names:
+            return self
+
+        _validate_fallback_tier(self.routing.fallback_tier, tier_names)
+        _validate_tier_map(self.routing.tier_map, tier_names)
+        _validate_handoff_rules(self.routing.handoff_rules, tier_names)
+        return self

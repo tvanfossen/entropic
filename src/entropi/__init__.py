@@ -28,6 +28,7 @@ from entropi.core.base import (
 )
 from entropi.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
 from entropi.core.logging import setup_logging, setup_model_logger
+from entropi.inference.adapters import ChatAdapter, get_adapter, register_adapter
 from entropi.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.provider import InProcessProvider
@@ -68,6 +69,10 @@ __all__ = [
     "BackendFactory",
     "ModelOrchestrator",
     "RoutingResult",
+    # Adapters
+    "ChatAdapter",
+    "get_adapter",
+    "register_adapter",
     # MCP
     "BaseMCPServer",
     "BaseTool",

@@ -278,7 +278,9 @@ class TestValueDensityCompaction:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.config = CompactionConfig(enabled=True, threshold_percent=0.5)
+        self.config = CompactionConfig(
+            enabled=True, threshold_percent=0.5, warning_threshold_percent=0.3
+        )
         self.counter = TokenCounter(max_tokens=1000)
         self.manager = CompactionManager(self.config, self.counter)
 

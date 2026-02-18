@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 from entropi.config.loader import ConfigLoader, deep_merge, load_yaml_config
-from entropi.config.schema import EntropyConfig, ModelConfig
+from entropi.config.schema import CompactionConfig, EntropyConfig, ModelConfig, TierConfig
 
 
 class TestDeepMerge:
@@ -115,6 +115,113 @@ class TestEntropyConfig:
         assert config.quality.rules.max_cognitive_complexity == 15
         assert config.quality.rules.require_type_hints is True
         assert config.quality.rules.docstring_style == "google"
+
+
+def _tier(path: str = "/test.gguf") -> TierConfig:
+    """Create a minimal TierConfig for testing."""
+    return TierConfig(path=Path(path))
+
+
+class TestRoutingCrossValidation:
+    """Tests for cross-validation between routing and models config."""
+
+    def test_valid_fallback_tier(self) -> None:
+        """Config with fallback_tier matching a defined tier passes."""
+        config = EntropyConfig(
+            models={"tiers": {"normal": _tier()}, "default": "normal"},
+            routing={"fallback_tier": "normal"},
+        )
+        assert config.routing.fallback_tier == "normal"
+
+    def test_invalid_fallback_tier(self) -> None:
+        """Config with fallback_tier not in tiers raises."""
+        with pytest.raises(ValueError, match="routing.fallback_tier 'missing'"):
+            EntropyConfig(
+                models={"tiers": {"normal": _tier()}, "default": "normal"},
+                routing={"fallback_tier": "missing"},
+            )
+
+    def test_no_tiers_skips_validation(self) -> None:
+        """Config with no tiers defined skips routing validation."""
+        config = EntropyConfig(routing={"fallback_tier": "anything"})
+        assert config.routing.fallback_tier == "anything"
+
+    def test_valid_tier_map(self) -> None:
+        """Config with tier_map values matching defined tiers passes."""
+        config = EntropyConfig(
+            models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
+            routing={"fallback_tier": "a", "tier_map": {"1": "a", "2": "b"}},
+        )
+        assert config.routing.tier_map == {"1": "a", "2": "b"}
+
+    def test_invalid_tier_map_value(self) -> None:
+        """Config with tier_map value not in tiers raises."""
+        with pytest.raises(ValueError, match="routing.tier_map"):
+            EntropyConfig(
+                models={"tiers": {"a": _tier()}, "default": "a"},
+                routing={"fallback_tier": "a", "tier_map": {"1": "bogus"}},
+            )
+
+    def test_valid_handoff_rules(self) -> None:
+        """Config with handoff_rules referencing defined tiers passes."""
+        config = EntropyConfig(
+            models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
+            routing={
+                "fallback_tier": "a",
+                "handoff_rules": {"a": ["b"], "b": ["a"]},
+            },
+        )
+        assert config.routing.handoff_rules == {"a": ["b"], "b": ["a"]}
+
+    def test_invalid_handoff_rules_key(self) -> None:
+        """Config with handoff_rules key not in tiers raises."""
+        with pytest.raises(ValueError, match="routing.handoff_rules key 'bogus'"):
+            EntropyConfig(
+                models={"tiers": {"a": _tier()}, "default": "a"},
+                routing={
+                    "fallback_tier": "a",
+                    "handoff_rules": {"bogus": ["a"]},
+                },
+            )
+
+    def test_invalid_handoff_rules_target(self) -> None:
+        """Config with handoff_rules target not in tiers raises."""
+        with pytest.raises(ValueError, match="contains 'bogus'"):
+            EntropyConfig(
+                models={"tiers": {"a": _tier()}, "default": "a"},
+                routing={
+                    "fallback_tier": "a",
+                    "handoff_rules": {"a": ["bogus"]},
+                },
+            )
+
+    def test_empty_tier_map_and_handoff_rules_valid(self) -> None:
+        """Empty tier_map and handoff_rules are valid (auto-derived)."""
+        config = EntropyConfig(
+            models={"tiers": {"normal": _tier()}, "default": "normal"},
+            routing={"fallback_tier": "normal"},
+        )
+        assert config.routing.tier_map == {}
+        assert config.routing.handoff_rules == {}
+
+
+class TestCompactionThresholdValidation:
+    """Tests for compaction threshold ordering validation."""
+
+    def test_valid_thresholds(self) -> None:
+        """Warning threshold below compaction threshold passes."""
+        config = CompactionConfig(warning_threshold_percent=0.6, threshold_percent=0.75)
+        assert config.warning_threshold_percent < config.threshold_percent
+
+    def test_warning_equals_threshold_raises(self) -> None:
+        """Warning threshold equal to compaction threshold raises."""
+        with pytest.raises(ValueError, match="warning_threshold_percent"):
+            CompactionConfig(warning_threshold_percent=0.75, threshold_percent=0.75)
+
+    def test_warning_above_threshold_raises(self) -> None:
+        """Warning threshold above compaction threshold raises."""
+        with pytest.raises(ValueError, match="warning_threshold_percent"):
+            CompactionConfig(warning_threshold_percent=0.8, threshold_percent=0.75)
 
 
 class TestConfigLoader:

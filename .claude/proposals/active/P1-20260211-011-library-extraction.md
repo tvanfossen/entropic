@@ -9,8 +9,8 @@ component: architecture
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-11
-updated: 2026-02-17
-completed_phases: [1, 2, 3]
+updated: 2026-02-18
+completed_phases: [1, 2, 3, 4, 5]
 tags: [architecture, packaging, library, refactor, api]
 completed_date: null
 scoped_files:
@@ -318,8 +318,51 @@ consumer application using real models, custom tools, and the full agentic loop.
 - [x] No `ConfigLoader`, no bundled prompts, no built-in tier instances
 - [x] Custom in-process tools registered and callable (`examples/pychess/`)
 - [x] `AgentEngine` works headlessly with consumer-defined tiers + tools
-- [ ] Playable chess game against LLM using entropi as backend (manual verification)
+- [x] Playable chess game against LLM using entropi as backend (manual verification)
 - [ ] Dead artifacts cleaned up (`classification.gbnf`, `classification.md`)
+
+## Phase 5: Hardening — BaseTool, Schema Validation, Documentation
+
+### 5a. BaseTool abstraction
+
+`BaseTool` ABC unifies tool definition (JSON) + behavior (execute method) into a single
+class. `ToolRegistry` replaces dict-dispatch boilerplate. `BaseMCPServer.register_tool()`
+gives consumers a clean way to define tools without overriding `get_tools()`/`execute_tool()`.
+
+### 5b. Schema cross-validation
+
+Pydantic validators on `EntropyConfig` catch consumer config errors at load time:
+- `routing.fallback_tier` must reference a defined tier
+- `routing.tier_map` values must reference defined tiers
+- `routing.handoff_rules` keys/values must reference defined tiers
+- `compaction.warning_threshold_percent` must be less than `threshold_percent`
+
+### 5c. Tier auto-build from identity frontmatter
+
+`tier.py` eliminated. Orchestrator auto-builds `ModelTier` objects from config tier names +
+identity file frontmatter. Consumers define tiers in config YAML and identity `.md` files
+only — no Python code needed.
+
+### 5d. Public API completions
+
+- `ChatAdapter`, `get_adapter`, `register_adapter` — adapter ecosystem
+- `TierIdentity`, `load_tier_identity` — identity file API
+- `BaseTool`, `load_tool_definition` — tool authoring API
+
+### 5e. Library consumer documentation
+
+`docs/library-consumer-guide.md` — end-to-end setup guide with 10-step process,
+API reference table, config requirements, and initialization order diagram.
+
+### Phase 5 acceptance criteria
+
+- [x] `BaseTool` ABC with `ToolRegistry` dispatch
+- [x] `BaseMCPServer.register_tool()` backward-compatible (override still works)
+- [x] Config cross-validation catches invalid tier references at load time
+- [x] Tiers auto-built from identity frontmatter (no `tier.py` needed)
+- [x] Full public API surface exported from `entropi`
+- [x] Consumer guide documented (`docs/library-consumer-guide.md`)
+- [x] All unit + model tests pass
 
 ## Files Modified (by phase)
 
@@ -435,3 +478,50 @@ consumer application using real models, custom tools, and the full agentic loop.
 2. **`_compute_model_context_bytes` uses getattr** — Returns `None` for dict-based tiers
    (doesn't find tier on `ModelsConfig`). No impact when filesystem server is disabled.
    Future: fix to use `config.models.tiers.get()`.
+
+### 2026-02-18 — Phase 5: Library hardening (feature/library-extraction-phase1)
+
+**Commits:**
+- `a5ec097` — BaseTool abstraction, logging parameterization, engine enforcement
+- `6c006cc` — PyChess example app (three-tier chess consumer)
+- `a43eeb5` — Constrain generation windows for rapid-fire chess play
+- `3c2fdea` — Eliminate tier.py, auto-build tiers from identity frontmatter
+- `TBD` — Schema cross-validation, ChatAdapter export, consumer guide
+
+**BaseTool + ToolRegistry (a5ec097):**
+- `src/entropi/mcp/tools.py`: `BaseTool` ABC (definition + execute), `ToolRegistry` (dispatch)
+- `BaseMCPServer.register_tool()` — non-abstract defaults delegate to registry
+- Backward-compatible — servers overriding `get_tools()`/`execute_tool()` still work
+- 18 unit tests for BaseTool, ToolRegistry, and server integration
+
+**PyChess example (6c006cc):**
+- Three-tier chess: suggest → validate → execute handoff chain
+- Custom `BaseMCPServer` + `BaseTool` implementations
+- `allowed_tools` per tier for tool visibility control
+- Validated against real model run (Qwen3-8B): routing, handoffs, tool filtering all working
+
+**Tier auto-build (3c2fdea):**
+- `tier.py` eliminated — orchestrator reads config tier names + identity file frontmatter
+- `orchestrator.tier_names` property for consumer access
+- `TierIdentity`, `load_tier_identity` exported from public API
+
+**Schema cross-validation (this session):**
+- `EntropyConfig.validate_routing_references()` — fallback_tier, tier_map, handoff_rules
+  all cross-validated against `models.tiers`
+- `CompactionConfig.validate_threshold_ordering()` — warning < compaction threshold
+- 14 new unit tests covering valid configs, invalid references, and edge cases
+
+**Public API completions (this session):**
+- `ChatAdapter`, `get_adapter`, `register_adapter` exported
+- `TierIdentity`, `load_tier_identity` exported
+- `BaseTool`, `load_tool_definition` exported
+
+**Documentation (this session):**
+- `docs/library-consumer-guide.md` — 10-step setup process, API reference, config schema,
+  initialization order diagram
+
+**Design doc resolution:**
+All 9 barriers from `library-api-design.md` resolved:
+1. ModelTier extensible ✓  2. Dict-based config ✓  3. Auto-generated classification ✓
+4. Config-driven routing ✓  5. In-process tools ✓  6. Backend factory injection ✓
+7. Prompt fallback control ✓  8. Parameterized config loading ✓  9. Public API surface ✓

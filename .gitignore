@@ -61,8 +61,9 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Examples (WIP - will become integration test workflows)
-examples/pychess/
+# Example runtime artifacts
+examples/pychess/.venv/
+examples/pychess/.pychess/
 
 # Build artifacts
 *.whl

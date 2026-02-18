@@ -1,0 +1,14 @@
+{
+  "name": "make_move",
+  "description": "Play a move on the board using UCI notation (e.g. 'e7e5', 'g8f6').",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "move": {
+        "type": "string",
+        "description": "Move in UCI notation (e.g. 'e7e5', 'g8f6')."
+      }
+    },
+    "required": ["move"]
+  }
+}

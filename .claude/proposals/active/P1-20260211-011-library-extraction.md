@@ -316,9 +316,9 @@ consumer application using real models, custom tools, and the full agentic loop.
 - [x] Integration test passes using only public API imports
 - [x] Custom `ModelTier` subclass with domain focus points
 - [x] No `ConfigLoader`, no bundled prompts, no built-in tier instances
-- [ ] Custom in-process tools registered and callable (`examples/pychess/`)
-- [ ] `AgentEngine` works headlessly with consumer-defined tiers + tools
-- [ ] Playable chess game against LLM using entropi as backend
+- [x] Custom in-process tools registered and callable (`examples/pychess/`)
+- [x] `AgentEngine` works headlessly with consumer-defined tiers + tools
+- [ ] Playable chess game against LLM using entropi as backend (manual verification)
 - [ ] Dead artifacts cleaned up (`classification.gbnf`, `classification.md`)
 
 ## Files Modified (by phase)
@@ -395,3 +395,43 @@ consumer application using real models, custom tools, and the full agentic loop.
 - YAML frontmatter parsing: colons in focus strings parsed as dicts (quoted to fix)
 - `.value` → `.name` migration caught 3 stragglers in test files (model conftest, model logger)
 - `MockEntropyConfig` needed `use_bundled_prompts` attribute added
+
+### 2026-02-17 — Library API gaps + PyChess example (feature/library-extraction-phase1)
+
+**Commits:**
+- `37bb21a` — Library API gaps for consumer support (P1-011 Phase 4)
+- `TBD` — PyChess example: multi-tier chess consumer app
+
+**API gaps fixed (37bb21a):**
+1. `ServerManager.register_server()` — was missing, consumers couldn't add custom servers
+2. `LoopConfig` / `InProcessProvider` — not exported from top-level `entropi` package
+3. Identity prompt fallback — crashed when consumer had no identity file for a tier
+4. Constitution split — `get_identity_prompt()` coupled constitution + identity loading
+5. Config tier validation — `ModelsConfig.validate_default_tier` rejected empty tiers dict
+6. `ConfigLoader` export — added to top-level `entropi` package
+
+**ConfigLoader parameterization (this commit):**
+- `app_dir_name` param replaces hardcoded `.entropi/` — consumers use their own dir name
+- `default_config_path` param — consumers seed from their own defaults, not entropi's
+- `global_config_dir=None` — disables global `~/.entropi/` config layer for consumer apps
+- ENTROPI.md only created for `.entropi` dirs (not consumer app dirs)
+- `_seed_project_config` priority: custom default → global config → package default
+- Full backward compatibility — TUI behavior unchanged (all new params have defaults)
+
+**PyChess example (examples/pychess/):**
+- Independent venv with `entropi` as a pip dependency
+- `.pychess/` runtime directory (not `.entropi/`) via parameterized `ConfigLoader`
+- Three tiers: suggest → validate → execute with handoff chain
+- Routing enabled — router classifies incoming messages
+- Custom `BaseMCPServer` subclass with `get_board` / `make_move` tools
+- `allowed_tools` per tier restricts tool visibility (suggest/validate: chess.get_board +
+  entropi.handoff, execute: chess.get_board + chess.make_move)
+- Config seeded from `data/default_config.yaml` on first run (Qwen3-8B defaults)
+
+**Findings (follow-up items):**
+1. **EntropiServer always registered** — `_register_builtin_servers()` unconditionally adds
+   `EntropiServer` (todo/handoff tools). Mitigated via `allowed_tools` tier filtering.
+   Future: add `enable_entropi` flag to `MCPConfig`.
+2. **`_compute_model_context_bytes` uses getattr** — Returns `None` for dict-based tiers
+   (doesn't find tier on `ModelsConfig`). No impact when filesystem server is disabled.
+   Future: fix to use `config.models.tiers.get()`.

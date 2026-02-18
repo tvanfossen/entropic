@@ -1,0 +1,13 @@
+# Core dependencies
+entropi
+python-chess
+pyyaml
+
+# GPU acceleration (NVIDIA CUDA):
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+#
+# CPU only (default pip install):
+#   pip install -r requirements.txt
+#
+# The default pip wheel for llama-cpp-python is CPU-only.
+# For GPU inference, reinstall with the CUDA build flag above.

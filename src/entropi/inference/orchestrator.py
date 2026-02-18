@@ -435,6 +435,11 @@ class ModelOrchestrator:
             await current.unload()
 
     @property
+    def tier_names(self) -> list[str]:
+        """Get ordered list of tier names."""
+        return [t.name for t in self._tier_list]
+
+    @property
     def last_routing_result(self) -> RoutingResult | None:
         """Get the last routing result for display."""
         return self._last_routing_result

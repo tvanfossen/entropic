@@ -2,7 +2,7 @@
 
 Demonstrates the full library setup flow:
     1. Load config (EntropyConfig from YAML)
-    2. Create orchestrator with custom tiers and backend factory
+    2. Create orchestrator (tiers auto-built from identity file frontmatter)
     3. Create and register a custom MCP server (ChessServer)
     4. Wire the agent engine with LoopConfig
 """
@@ -24,7 +24,6 @@ from entropi import (
     setup_logging,
     setup_model_logger,
 )
-from tier import ALL_TIERS
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +55,14 @@ async def create_engine() -> ChessEngine:
     setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".pychess")
 
     # Orchestrator: manages model loading, routing, tier swapping.
-    # ALL_TIERS provides the suggest/validate/execute tier definitions.
-    # backend_factory=None uses the default LlamaCppBackend.
-    orchestrator = ModelOrchestrator(config, tiers=ALL_TIERS)
+    # Tiers auto-built from config tier names + identity file frontmatter.
+    orchestrator = ModelOrchestrator(config)
     await orchestrator.initialize()
 
     # MCP server: ChessServer exposes get_board and make_move tools.
     # register_server() must be called BEFORE server_manager.initialize().
     chess_server = ChessServer()
-    tier_names = [t.name for t in ALL_TIERS]
-    server_manager = ServerManager(config, tier_names=tier_names)
+    server_manager = ServerManager(config, tier_names=orchestrator.tier_names)
     server_manager.register_server(chess_server)
     await server_manager.initialize()
 

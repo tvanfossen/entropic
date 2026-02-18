@@ -33,6 +33,7 @@ from entropi.mcp.manager import ServerManager
 from entropi.mcp.provider import InProcessProvider
 from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
 from entropi.mcp.tools import BaseTool
+from entropi.prompts import TierIdentity, load_tier_identity
 
 __version__ = "0.1.0"
 __author__ = "Tristan VanFossen"
@@ -73,4 +74,7 @@ __all__ = [
     "InProcessProvider",
     "ServerManager",
     "load_tool_definition",
+    # Prompts
+    "TierIdentity",
+    "load_tier_identity",
 ]

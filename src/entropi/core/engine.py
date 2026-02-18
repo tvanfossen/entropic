@@ -155,6 +155,7 @@ class EngineCallbacks:
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
     on_tier_selected: Callable[[str], None] | None = None
     on_routing_complete: Callable[[RoutingResult], None] | None = None
+    error_sanitizer: Callable[[str], str] | None = None
 
 
 class AgentEngine:
@@ -229,6 +230,7 @@ class AgentEngine:
         self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
         self._on_tier_selected: Callable[[str], None] | None = None
         self._on_routing_complete: Callable[[RoutingResult], None] | None = None
+        self._error_sanitizer: Callable[[str], str] | None = None
 
     def _register_directive_handlers(self) -> None:
         """Register handlers for all known directive types."""
@@ -426,6 +428,7 @@ class AgentEngine:
         self._on_tool_record = callbacks.on_tool_record
         self._on_tier_selected = callbacks.on_tier_selected
         self._on_routing_complete = callbacks.on_routing_complete
+        self._error_sanitizer = callbacks.error_sanitizer
 
     async def run(
         self,
@@ -1108,23 +1111,28 @@ Do NOT call this tool again. Use the previous result above."""
         is_permission: bool,
     ) -> Message:
         """Handle tool execution error and return appropriate message."""
-        error_str = str(error)
+        raw_error = str(error)
+
+        # Log raw error (always unfiltered for diagnostics)
         if is_permission:
-            logger.warning(f"Tool permission denied: {tool_call.name} - {error_str}")
-            display_msg = f"Permission denied: {error_str}"
+            logger.warning(f"Tool permission denied: {tool_call.name} - {raw_error}")
+            display_msg = f"Permission denied: {raw_error}"
         else:
-            logger.error(f"Tool execution error: {tool_call.name} - {error_str}")
-            display_msg = f"Error: {error_str}"
+            logger.error(f"Tool execution error: {tool_call.name} - {raw_error}")
+            display_msg = f"Error: {raw_error}"
 
         if self._on_tool_complete:
             self._on_tool_complete(tool_call, display_msg, duration_ms)
         if ctx.task_id and self._on_tool_record:
-            self._on_tool_record(ctx.task_id, tool_call, "error", error_str, duration_ms)
+            self._on_tool_record(ctx.task_id, tool_call, "error", raw_error, duration_ms)
+
+        # Sanitize before sending to model — consumer controls what leaks
+        model_error = self._error_sanitizer(raw_error) if self._error_sanitizer else raw_error
 
         msg = (
-            self._create_denied_message(tool_call, error_str)
+            self._create_denied_message(tool_call, model_error)
             if is_permission
-            else self._create_error_message(tool_call, error_str)
+            else self._create_error_message(tool_call, model_error)
         )
         logger.info(f"[FEEDBACK] {'Permission denied' if is_permission else 'Error'} message sent")
         return msg

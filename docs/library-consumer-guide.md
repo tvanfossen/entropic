@@ -304,6 +304,78 @@ tiers:
 
 `None` (default) means all tools are visible to the tier.
 
+## Security Considerations
+
+### Tool Approval
+
+`LoopConfig(auto_approve_tools=True)` bypasses ALL permission prompts. The model
+can execute any registered tool without user confirmation. Only use this when all
+registered tools are safe for unsupervised execution.
+
+### Built-in Servers
+
+By default, entropi enables built-in servers for bash, filesystem, and git. For
+library consumers, disable servers you don't need:
+
+```yaml
+mcp:
+  enable_bash: false
+  enable_filesystem: false
+  enable_git: false
+  enable_diagnostics: false
+```
+
+The bash server uses a blacklist (not allowlist) — it blocks known-dangerous
+commands but cannot anticipate all risks. The filesystem server restricts
+operations to the project root but can read any file within it.
+
+### Per-Tier Tool Restrictions
+
+Use `allowed_tools` to limit which tools each tier can see. This follows the
+principle of least privilege — a tier that only needs to read data shouldn't
+have access to write or execute tools:
+
+```yaml
+tiers:
+  reader:
+    allowed_tools:
+      - myserver.get_data
+      - entropi.handoff
+  writer:
+    allowed_tools:
+      - myserver.get_data
+      - myserver.write_data
+      - entropi.handoff
+```
+
+### Error Sanitization
+
+Tool errors (`str(exception)`) flow to the model unfiltered by default. If your
+tools interact with sensitive data (credentials, PII, internal paths), use the
+`error_sanitizer` callback to filter error text before the model sees it:
+
+```python
+def redact_secrets(error: str) -> str:
+    """Strip sensitive patterns from error messages."""
+    import re
+    error = re.sub(r"password=\S+", "password=***", error)
+    error = re.sub(r"/internal/\S+", "/***", error)
+    return error
+
+callbacks = EngineCallbacks(
+    error_sanitizer=redact_secrets,
+)
+```
+
+The raw error is always logged unfiltered for diagnostics — only the model-facing
+message is sanitized.
+
+### Config File Permissions
+
+`config.local.yaml` is NOT gitignored by default. Saved permission patterns
+(allow/deny lists from "Always Allow" prompts) persist to this file. Review
+before committing to version control.
+
 ## Error Handling
 
 **Config validation errors:** `ConfigLoader.load()` raises `pydantic.ValidationError`

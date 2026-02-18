@@ -1,27 +1,27 @@
 === Model Test Report ===
-Date: 2026-02-18 14:01:19
+Date: 2026-02-18 14:25:31
 
-Results: 22 passed, 0 failed (97.8s)
+Results: 22 passed, 0 failed (101.5s)
 
-  [PASS] test_code_request_produces_code [code] (14.2s)
+  [PASS] test_code_request_produces_code [code] (15.0s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (18.0s)
+  [PASS] test_code_response_has_python_syntax [code] (17.5s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (11.6s)
+  [PASS] test_response_ends_cleanly [normal] (11.3s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (5.5s)
+  [PASS] test_no_special_tokens_in_response [normal] (5.6s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (5.7s)
+  [PASS] test_generation_starts_and_ends [simple] (6.1s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (12.6s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (14.0s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (18.7s)
+  [PASS] test_explanation_is_substantive [normal] (19.7s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (6.1s)
+  [PASS] test_hello_produces_response [simple] (6.4s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (2.7s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (3.3s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
   [PASS] test_hi_routes_to_simple (0.1s)
@@ -37,6 +37,6 @@ Results: 22 passed, 0 failed (97.8s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 22 passed in 133.21s (0:02:13) ========================
+======================== 22 passed in 135.22s (0:02:15) ========================
 
 Result: PASSED

@@ -155,7 +155,7 @@ class TestProgrammaticConfig:
                 },
                 "default": "math",
             },
-            routing={"enabled": False},
+            routing={"enabled": False, "fallback_tier": "math"},
             use_bundled_prompts=False,
         )
         assert "math" in config.models.tiers
@@ -171,6 +171,7 @@ class TestProgrammaticConfig:
                 "router": {"path": "/tmp/router.gguf"},
                 "default": "fast",
             },
+            routing={"fallback_tier": "fast"},
         )
         assert config.models.router is not None
         assert config.models.router.path == Path("/tmp/router.gguf")
@@ -188,7 +189,7 @@ class TestOrchestratorWithCustomFactory:
                 },
                 "default": "math",
             },
-            routing={"enabled": False},
+            routing={"enabled": False, "fallback_tier": "math"},
             use_bundled_prompts=False,
         )
 

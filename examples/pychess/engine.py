@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import IO
 
 import chess
 from chess_server import ChessServer
@@ -36,6 +37,7 @@ class ChessEngine:
     server_manager: ServerManager
     agent_engine: AgentEngine
     chess_server: ChessServer
+    _stream_file: IO[str] | None = None
 
 
 async def create_engine() -> ChessEngine:
@@ -74,7 +76,7 @@ async def create_engine() -> ChessEngine:
     # Wire callbacks: stream to dedicated file, tier changes to session log
     stream_path = EXAMPLE_ROOT / ".pychess" / "session_stream.log"
     stream_path.parent.mkdir(parents=True, exist_ok=True)
-    stream_file = open(stream_path, "w")  # noqa: SIM115
+    stream_file = stream_path.open("w")
 
     col = 0
     wrap_at = 100
@@ -104,6 +106,7 @@ async def create_engine() -> ChessEngine:
         server_manager=server_manager,
         agent_engine=agent_engine,
         chess_server=chess_server,
+        _stream_file=stream_file,
     )
 
 
@@ -160,5 +163,7 @@ async def get_ai_move(engine: ChessEngine) -> str | None:
 
 async def shutdown(engine: ChessEngine) -> None:
     """Clean shutdown of entropi components."""
+    if engine._stream_file:
+        engine._stream_file.close()
     await engine.server_manager.shutdown()
     await engine.orchestrator.shutdown()

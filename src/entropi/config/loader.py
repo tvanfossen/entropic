@@ -20,6 +20,7 @@ Per-project architecture:
 """
 
 import importlib.resources
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -28,6 +29,8 @@ from typing import Any
 import yaml
 
 from entropi.config.schema import EntropyConfig
+
+logger = logging.getLogger(__name__)
 
 
 def get_default_config_path() -> Path:
@@ -298,9 +301,14 @@ class ConfigLoader:
         Priority: custom default_config_path > global config > package default.
         """
         # 1. Consumer-provided default config
-        if self.default_config_path and self.default_config_path.exists():
-            shutil.copy(self.default_config_path, target)
-            return
+        if self.default_config_path:
+            if self.default_config_path.exists():
+                shutil.copy(self.default_config_path, target)
+                return
+            logger.warning(
+                "default_config_path %s does not exist, falling back",
+                self.default_config_path,
+            )
 
         # 2. Global config (if enabled)
         if self.global_config_dir is not None:

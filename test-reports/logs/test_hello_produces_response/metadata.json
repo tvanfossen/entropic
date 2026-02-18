@@ -2,10 +2,10 @@
   "test_name": "test_hello_produces_response",
   "passed": true,
   "tier": "simple",
-  "duration_s": 6.52,
+  "duration_s": 5.87,
   "target_s": 37.5,
   "prompt": "Hello",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-18T11:55:45"
+  "timestamp": "2026-02-18T12:30:07"
 }

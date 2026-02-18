@@ -28,12 +28,13 @@ from entropi.core.base import (
 )
 from entropi.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
 from entropi.core.logging import setup_logging, setup_model_logger
+from entropi.core.tool_validation import ToolValidationError
 from entropi.inference.adapters import ChatAdapter, get_adapter, register_adapter
 from entropi.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.provider import InProcessProvider
-from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
-from entropi.mcp.tools import BaseTool
+from entropi.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
+from entropi.mcp.tools import BaseTool, ToolRegistry
 from entropi.prompts import TierIdentity, load_tier_identity
 
 __version__ = "0.1.0"
@@ -78,6 +79,9 @@ __all__ = [
     "BaseTool",
     "InProcessProvider",
     "ServerManager",
+    "ServerResponse",
+    "ToolRegistry",
+    "ToolValidationError",
     "load_tool_definition",
     # Prompts
     "TierIdentity",

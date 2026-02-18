@@ -129,7 +129,7 @@ class TestRoutingCrossValidation:
         """Config with fallback_tier matching a defined tier passes."""
         config = EntropyConfig(
             models={"tiers": {"normal": _tier()}, "default": "normal"},
-            routing={"fallback_tier": "normal"},
+            routing={"enabled": False, "fallback_tier": "normal"},
         )
         assert config.routing.fallback_tier == "normal"
 
@@ -138,7 +138,7 @@ class TestRoutingCrossValidation:
         with pytest.raises(ValueError, match="routing.fallback_tier 'missing'"):
             EntropyConfig(
                 models={"tiers": {"normal": _tier()}, "default": "normal"},
-                routing={"fallback_tier": "missing"},
+                routing={"enabled": False, "fallback_tier": "missing"},
             )
 
     def test_no_tiers_skips_validation(self) -> None:
@@ -150,7 +150,7 @@ class TestRoutingCrossValidation:
         """Config with tier_map values matching defined tiers passes."""
         config = EntropyConfig(
             models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
-            routing={"fallback_tier": "a", "tier_map": {"1": "a", "2": "b"}},
+            routing={"enabled": False, "fallback_tier": "a", "tier_map": {"1": "a", "2": "b"}},
         )
         assert config.routing.tier_map == {"1": "a", "2": "b"}
 
@@ -159,7 +159,7 @@ class TestRoutingCrossValidation:
         with pytest.raises(ValueError, match="routing.tier_map"):
             EntropyConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
-                routing={"fallback_tier": "a", "tier_map": {"1": "bogus"}},
+                routing={"enabled": False, "fallback_tier": "a", "tier_map": {"1": "bogus"}},
             )
 
     def test_valid_handoff_rules(self) -> None:
@@ -167,6 +167,7 @@ class TestRoutingCrossValidation:
         config = EntropyConfig(
             models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
             routing={
+                "enabled": False,
                 "fallback_tier": "a",
                 "handoff_rules": {"a": ["b"], "b": ["a"]},
             },
@@ -179,6 +180,7 @@ class TestRoutingCrossValidation:
             EntropyConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
                 routing={
+                    "enabled": False,
                     "fallback_tier": "a",
                     "handoff_rules": {"bogus": ["a"]},
                 },
@@ -190,6 +192,7 @@ class TestRoutingCrossValidation:
             EntropyConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
                 routing={
+                    "enabled": False,
                     "fallback_tier": "a",
                     "handoff_rules": {"a": ["bogus"]},
                 },
@@ -199,10 +202,31 @@ class TestRoutingCrossValidation:
         """Empty tier_map and handoff_rules are valid (auto-derived)."""
         config = EntropyConfig(
             models={"tiers": {"normal": _tier()}, "default": "normal"},
-            routing={"fallback_tier": "normal"},
+            routing={"enabled": False, "fallback_tier": "normal"},
         )
         assert config.routing.tier_map == {}
         assert config.routing.handoff_rules == {}
+
+    def test_routing_enabled_without_router_raises(self) -> None:
+        """Routing enabled but no router configured raises."""
+        with pytest.raises(ValueError, match="models.router is not configured"):
+            EntropyConfig(
+                models={"tiers": {"normal": _tier()}, "default": "normal"},
+                routing={"enabled": True, "fallback_tier": "normal"},
+            )
+
+    def test_routing_enabled_with_router_passes(self) -> None:
+        """Routing enabled with router configured passes."""
+        config = EntropyConfig(
+            models={
+                "tiers": {"normal": _tier()},
+                "default": "normal",
+                "router": {"path": "/router.gguf"},
+            },
+            routing={"enabled": True, "fallback_tier": "normal"},
+        )
+        assert config.routing.enabled is True
+        assert config.models.router is not None
 
 
 class TestCompactionThresholdValidation:

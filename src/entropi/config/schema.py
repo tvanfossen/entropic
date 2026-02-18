@@ -455,6 +455,9 @@ class EntropyConfig(BaseSettings):
         if not tier_names:
             return self
 
+        if self.routing.enabled and self.models.router is None:
+            raise ValueError("routing.enabled is true but models.router is not configured")
+
         _validate_fallback_tier(self.routing.fallback_tier, tier_names)
         _validate_tier_map(self.routing.tier_map, tier_names)
         _validate_handoff_rules(self.routing.handoff_rules, tier_names)

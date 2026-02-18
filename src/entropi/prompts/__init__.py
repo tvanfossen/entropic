@@ -148,7 +148,12 @@ def get_identity_prompt(
         tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
         return f"{constitution}\n\n{tier_identity}"
     except FileNotFoundError:
-        logger.info(f"No identity file for tier '{tier}', using constitution only")
+        if not use_bundled:
+            raise FileNotFoundError(
+                f"No identity file for tier '{tier}' in {prompts_dir}. "
+                f"Expected: identity_{tier}.md"
+            ) from None
+        logger.info("No identity file for tier '%s', using constitution only", tier)
         return constitution
 
 
@@ -232,33 +237,3 @@ def build_classification_grammar(num_tiers: int) -> str:
     """
     digits = " | ".join(f'"{i}"' for i in range(1, num_tiers + 1))
     return f'root ::= ({digits}) "\\n"'
-
-
-# Legacy compatibility — get_classification_prompt with old signature
-def get_classification_prompt(
-    message: str,
-    prompts_dir: Path | None = None,
-    history: list[str] | None = None,
-) -> str:
-    """Build classification prompt from identity file frontmatter.
-
-    Loads each tier's identity file to extract focus points and examples
-    via YAML frontmatter, then auto-generates the classification prompt.
-
-    This is the backward-compatible entry point used by the orchestrator.
-    New code should use build_classification_prompt() directly.
-    """
-    from entropi.core.base import ModelTier
-
-    tier_names = ["simple", "code", "normal", "thinking"]
-    tiers: list[ModelTier] = []
-    for name in tier_names:
-        identity_path = _resolve_identity_path(name, prompts_dir)
-        if identity_path:
-            identity, _body = load_tier_identity(identity_path)
-            tiers.append(ModelTier(name, focus=identity.focus, examples=identity.examples))
-        else:
-            # Minimal fallback
-            tiers.append(ModelTier(name, focus=[name]))
-
-    return build_classification_prompt(tiers, message, history)

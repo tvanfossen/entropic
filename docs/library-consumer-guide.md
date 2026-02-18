@@ -243,6 +243,93 @@ server_manager.shutdown()
 orchestrator.shutdown()
 ```
 
+## engine.run() Semantics
+
+```python
+async for msg in engine.run(prompt, system_prompt=context):
+    # msg is a Message(role, content)
+    # Roles: "system", "user", "assistant", "tool"
+    pass
+```
+
+**Return type:** `AsyncIterator[Message]`. Yields complete messages (not partial
+chunks — use `on_stream_chunk` callback for streaming).
+
+**Termination:** The iterator stops (`StopAsyncIteration`) when:
+- The model emits a stop token (`finish_reason="stop"`)
+- `LoopConfig.max_iterations` is reached
+- `LoopConfig.max_consecutive_errors` consecutive tool errors occur
+
+**Re-entrant calls:** `engine.run()` can be called multiple times on the same
+engine instance. Conversation history carries forward between runs.
+
+**Callback exceptions:** If a callback raises an exception, it propagates up
+through the engine and terminates the current run. Wrap callback logic in
+try/except if you want fault-tolerant callbacks.
+
+**Tool errors during execution:** If a tool's `execute()` raises, the engine
+catches the exception, records it as a tool error result, and continues the loop
+(up to `max_consecutive_errors`). The exception is logged but not re-raised.
+
+## Tool JSON Path Convention
+
+Tool definition JSON files must be located at:
+
+```
+{tools_dir}/{server_prefix}/{tool_name}.json
+```
+
+For example, a server with `server_prefix="chess"` and tool `"get_board"`:
+
+```
+data/tools/chess/get_board.json
+```
+
+`BaseTool.__init__()` calls `load_tool_definition(tool_name, server_prefix, tools_dir)`
+which constructs this path and raises `FileNotFoundError` if the file doesn't exist,
+or `ToolValidationError` if the JSON is malformed.
+
+## allowed_tools Format
+
+The `allowed_tools` field in tier config uses fully-qualified tool names:
+`{server_name}.{tool_name}`.
+
+```yaml
+tiers:
+  suggest:
+    allowed_tools:
+      - chess.get_board       # server_name.tool_name
+      - entropi.handoff       # built-in handoff tool
+```
+
+`None` (default) means all tools are visible to the tier.
+
+## Error Handling
+
+**Config validation errors:** `ConfigLoader.load()` raises `pydantic.ValidationError`
+with specific field paths and messages when config is invalid.
+
+**Missing identity files:** When `use_bundled_prompts=False`, a missing
+`identity_{tier}.md` file raises `FileNotFoundError` at generation time (not at
+init). Ensure all configured tiers have identity files.
+
+**Resource cleanup on partial failure:**
+
+```python
+orchestrator = ModelOrchestrator(config)
+try:
+    await orchestrator.initialize()
+    server_manager = ServerManager(config, tier_names=orchestrator.tier_names)
+    server_manager.register_server(my_server)
+    await server_manager.initialize()
+except Exception:
+    await orchestrator.shutdown()  # Free GPU memory
+    raise
+```
+
+If `orchestrator.initialize()` succeeds but later steps fail, you must still call
+`orchestrator.shutdown()` to release GPU memory.
+
 ## Public API Surface
 
 Exported from `entropi`:
@@ -275,6 +362,9 @@ Exported from `entropi`:
 | `BaseTool` | MCP | Tool base class |
 | `InProcessProvider` | MCP | In-process tool provider |
 | `ServerManager` | MCP | Server lifecycle manager |
+| `ServerResponse` | MCP | Structured tool response |
+| `ToolRegistry` | MCP | Tool collection + dispatch |
+| `ToolValidationError` | MCP | Invalid tool definition |
 | `load_tool_definition` | MCP | Load tool JSON |
 | `ChatAdapter` | Adapters | Chat format adapter ABC |
 | `get_adapter` | Adapters | Look up adapter by name |

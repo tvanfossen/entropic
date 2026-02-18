@@ -32,9 +32,7 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said: "Hello"  
-  I responded by asking how I could assist you. Is there something specific you'd 
-  like help with?
+  Your last message was: "Hello." How can I assist you today?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

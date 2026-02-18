@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from mcp.types import Tool
 
+from entropi.core.tool_validation import ToolValidationError, validate_tool_definition
 from entropi.mcp.servers.base import ServerResponse, load_tool_definition
 
 if TYPE_CHECKING:
@@ -26,30 +27,55 @@ logger = logging.getLogger(__name__)
 class BaseTool(ABC):
     """Individual MCP tool — owns its definition and execution logic.
 
-    Subclass this to create tools. The JSON definition is loaded on
-    construction; implement ``execute()`` with the tool's behavior.
+    Subclass this to create tools. Implement ``execute()`` with the
+    tool's behavior.
+
+    Two ways to provide the tool definition:
+
+    **From JSON file (default):**
+    Pass ``tool_name``, ``server_prefix``, ``tools_dir``.  The JSON
+    file is loaded and validated on construction.
+
+    **Inline definition:**
+    Pass ``definition`` as a ``Tool`` object or a dict matching MCP
+    tool format.  Dicts are validated the same as JSON files.
 
     Dependencies (board state, file tracker, etc.) are injected via
     the subclass constructor.
-
-    Args:
-        tool_name: Tool name matching the JSON filename (e.g., "read_file").
-        server_prefix: Server directory under tools_dir (e.g., "filesystem").
-        tools_dir: Base directory for tool JSON files.  Defaults to
-            entropi's bundled ``data/tools/``.
     """
 
     def __init__(
         self,
-        tool_name: str,
+        tool_name: str = "",
         server_prefix: str = "",
         tools_dir: Path | None = None,
+        definition: Tool | dict[str, Any] | None = None,
     ) -> None:
-        self._definition = load_tool_definition(tool_name, server_prefix, tools_dir)
+        if definition is not None:
+            self._definition = self._resolve_definition(definition)
+        elif tool_name:
+            self._definition = load_tool_definition(tool_name, server_prefix, tools_dir)
+        else:
+            raise ValueError("BaseTool requires either tool_name or definition")
+
+    @staticmethod
+    def _resolve_definition(definition: Tool | dict[str, Any]) -> Tool:
+        """Convert definition to a validated Tool object."""
+        if isinstance(definition, Tool):
+            return definition
+        errors = validate_tool_definition(definition)
+        if errors:
+            name = definition.get("name", "<unknown>")
+            raise ToolValidationError(str(name), errors)
+        return Tool(
+            name=definition["name"],
+            description=definition.get("description", ""),
+            inputSchema=definition["inputSchema"],
+        )
 
     @property
     def name(self) -> str:
-        """Tool name from the JSON definition."""
+        """Tool name from the definition."""
         return self._definition.name
 
     @property
@@ -86,6 +112,10 @@ class ToolRegistry:
         if tool.name in self._tools:
             logger.warning("Tool '%s' already registered — replacing", tool.name)
         self._tools[tool.name] = tool
+
+    def has_tool(self, name: str) -> bool:
+        """Check if a tool is registered by name."""
+        return name in self._tools
 
     def get_tools(self) -> list[Tool]:
         """Return MCP Tool definitions for all registered tools."""

@@ -2,10 +2,10 @@
   "test_name": "test_response_ends_cleanly",
   "passed": true,
   "tier": "normal",
-  "duration_s": 11.31,
+  "duration_s": 14.86,
   "target_s": 75.0,
   "prompt": "List three programming languages and their main use cases",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-18T14:24:07"
+  "timestamp": "2026-02-18T15:02:29"
 }

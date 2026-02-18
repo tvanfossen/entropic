@@ -81,6 +81,42 @@ class DirectiveTool(BaseTool):
         return ServerResponse(result="done", directives=[])
 
 
+class InlineDictTool(BaseTool):
+    """Test tool using an inline dict definition (no JSON file)."""
+
+    def __init__(self):
+        super().__init__(
+            definition={
+                "name": "ping",
+                "description": "Returns pong.",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        )
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return "pong"
+
+
+class InlineToolObjectTool(BaseTool):
+    """Test tool using a pre-built Tool object."""
+
+    def __init__(self):
+        super().__init__(
+            definition=Tool(
+                name="echo",
+                description="Echoes input.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"text": {"type": "string", "description": "Text to echo"}},
+                    "required": ["text"],
+                },
+            )
+        )
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return arguments.get("text", "")
+
+
 # -- BaseTool tests ----------------------------------------------------------
 
 
@@ -131,6 +167,84 @@ class TestBaseTool:
         result = await tool.execute({"name": "test"})
         assert isinstance(result, ServerResponse)
         assert result.result == "done"
+
+
+class TestBaseToolInlineDefinition:
+    """Tests for BaseTool with inline definitions (no JSON file)."""
+
+    def test_inline_dict_creates_tool(self):
+        """Inline dict definition creates a valid tool."""
+        tool = InlineDictTool()
+        assert tool.name == "ping"
+        assert isinstance(tool.definition, Tool)
+
+    def test_inline_tool_object(self):
+        """Pre-built Tool object is used directly."""
+        tool = InlineToolObjectTool()
+        assert tool.name == "echo"
+        assert "text" in tool.definition.inputSchema["properties"]
+
+    @pytest.mark.anyio()
+    async def test_inline_dict_executes(self):
+        """Inline-defined tool executes normally."""
+        tool = InlineDictTool()
+        result = await tool.execute({})
+        assert result == "pong"
+
+    @pytest.mark.anyio()
+    async def test_inline_tool_object_executes(self):
+        """Tool-object-defined tool executes normally."""
+        tool = InlineToolObjectTool()
+        result = await tool.execute({"text": "hello"})
+        assert result == "hello"
+
+    def test_inline_invalid_dict_raises(self):
+        """Invalid inline dict raises ToolValidationError."""
+
+        class BadTool(BaseTool):
+            def __init__(self):
+                super().__init__(definition={"name": "", "inputSchema": "not-a-dict"})
+
+            async def execute(self, arguments: dict[str, Any]) -> str:
+                return ""
+
+        with pytest.raises(ToolValidationError):
+            BadTool()
+
+    def test_no_definition_and_no_name_raises(self):
+        """Neither definition nor tool_name raises ValueError."""
+
+        class EmptyTool(BaseTool):
+            def __init__(self):
+                super().__init__()
+
+            async def execute(self, arguments: dict[str, Any]) -> str:
+                return ""
+
+        with pytest.raises(ValueError, match="requires either tool_name or definition"):
+            EmptyTool()
+
+    def test_definition_takes_precedence_over_tool_name(self, tools_dir):
+        """When both definition and tool_name given, definition wins."""
+
+        class DualTool(BaseTool):
+            def __init__(self, td):
+                super().__init__(
+                    tool_name="greet",
+                    server_prefix="test_server",
+                    tools_dir=td,
+                    definition={
+                        "name": "overridden",
+                        "description": "Inline wins.",
+                        "inputSchema": {"type": "object", "properties": {}, "required": []},
+                    },
+                )
+
+            async def execute(self, arguments: dict[str, Any]) -> str:
+                return ""
+
+        tool = DualTool(tools_dir)
+        assert tool.name == "overridden"
 
 
 # -- ToolRegistry tests ------------------------------------------------------

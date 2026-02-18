@@ -9,9 +9,23 @@ import os
 from pathlib import Path
 from typing import Any
 
-from mcp.types import Tool
+from entropi.mcp.servers.base import BaseMCPServer
+from entropi.mcp.tools import BaseTool
 
-from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
+
+class ExecuteTool(BaseTool):
+    """Shell command execution tool with safety checks."""
+
+    def __init__(self, server: "BashServer") -> None:
+        super().__init__("execute", "bash")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        """Execute a shell command after safety check."""
+        command = arguments["command"]
+        if not self._server._is_safe_command(command):
+            return f"Command blocked for security: {command}"
+        return await self._server._execute_command(command, arguments.get("working_dir"))
 
 
 class BashServer(BaseMCPServer):
@@ -52,12 +66,7 @@ class BashServer(BaseMCPServer):
         super().__init__("bash")
         self.working_dir = working_dir or Path.cwd()
         self.timeout = timeout
-
-    def get_tools(self) -> list[Tool]:
-        """Get available bash tools."""
-        return [
-            load_tool_definition("execute", "bash"),
-        ]
+        self.register_tool(ExecuteTool(self))
 
     @staticmethod
     def get_permission_pattern(
@@ -72,20 +81,6 @@ class BashServer(BaseMCPServer):
         command = arguments.get("command", "")
         base_cmd = command.split()[0] if command.strip() else "*"
         return f"{tool_name}:{base_cmd} *"
-
-    async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Execute a bash tool."""
-        if name != "execute":
-            return f"Unknown tool: {name}"
-
-        command = arguments["command"]
-        working_dir = arguments.get("working_dir")
-
-        # Security check
-        if not self._is_safe_command(command):
-            return f"Command blocked for security: {command}"
-
-        return await self._execute_command(command, working_dir)
 
     def _is_safe_command(self, command: str) -> bool:
         """Check if command is safe to execute."""

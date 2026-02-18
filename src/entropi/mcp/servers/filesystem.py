@@ -14,14 +14,52 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mcp.types import Tool
-
-from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
+from entropi.mcp.servers.base import BaseMCPServer
 from entropi.mcp.servers.file_tracker import FileAccessTracker
+from entropi.mcp.tools import BaseTool
 
 if TYPE_CHECKING:
     from entropi.config.schema import FilesystemConfig
     from entropi.lsp.manager import LSPManager
+
+
+class ReadFileTool(BaseTool):
+    """Read file contents as structured JSON with line numbers."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("read_file", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(
+            self._server._handle_read_file, arguments
+        )
+
+
+class WriteFileTool(BaseTool):
+    """Write file contents with read-before-write enforcement."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("write_file", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(
+            self._server._handle_write_file, arguments
+        )
+
+
+class EditFileTool(BaseTool):
+    """Edit files via str_replace or line insertion."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("edit_file", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(
+            self._server._handle_edit_file, arguments
+        )
 
 
 class FilesystemServer(BaseMCPServer):
@@ -49,6 +87,9 @@ class FilesystemServer(BaseMCPServer):
         self._lsp_manager = lsp_manager
         self._config = config
         self._max_read_bytes = self._compute_max_read_bytes(config, model_context_bytes)
+        self.register_tool(ReadFileTool(self))
+        self.register_tool(WriteFileTool(self))
+        self.register_tool(EditFileTool(self))
 
     @staticmethod
     def _compute_max_read_bytes(
@@ -65,30 +106,16 @@ class FilesystemServer(BaseMCPServer):
         context_bytes = model_context_bytes or 50_000
         return max(1_000, int(context_bytes * pct))
 
-    def get_tools(self) -> list[Tool]:
-        """Get available filesystem tools - unified read/edit/write pattern."""
-        return [
-            load_tool_definition("read_file", "filesystem"),
-            load_tool_definition("edit_file", "filesystem"),
-            load_tool_definition("write_file", "filesystem"),
-        ]
-
     @staticmethod
     def skip_duplicate_check(tool_name: str) -> bool:
         """read_file must always execute — updates FileAccessTracker."""
         return tool_name == "read_file"
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Execute a filesystem tool with JSON schema validation."""
-        handlers = {
-            "read_file": self._handle_read_file,
-            "write_file": self._handle_write_file,
-            "edit_file": self._handle_edit_file,
-        }
-        handler = handlers.get(name)
-        if not handler:
+        """Execute a filesystem tool with JSON error format for unknown tools."""
+        if not self._tool_registry.has_tool(name):
             return self._error_response("unknown_tool", f"Unknown tool: {name}")
-        return await self._execute_with_error_handling(handler, arguments)
+        return await self._tool_registry.dispatch(name, arguments)
 
     async def _execute_with_error_handling(self, handler: Any, arguments: dict[str, Any]) -> str:
         """Execute handler with unified error handling."""

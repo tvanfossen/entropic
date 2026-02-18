@@ -7,12 +7,33 @@ Provides code diagnostics from LSP language servers.
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from mcp.types import Tool
-
-from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
+from entropi.mcp.servers.base import BaseMCPServer
+from entropi.mcp.tools import BaseTool
 
 if TYPE_CHECKING:
     from entropi.lsp.manager import LSPManager
+
+
+class DiagnosticsTool(BaseTool):
+    """Get diagnostics for a file or all files."""
+
+    def __init__(self, server: "DiagnosticsServer") -> None:
+        super().__init__("diagnostics", "diagnostics")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._handle_diagnostics(arguments)
+
+
+class CheckErrorsTool(BaseTool):
+    """Check if a file has errors."""
+
+    def __init__(self, server: "DiagnosticsServer") -> None:
+        super().__init__("check_errors", "diagnostics")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._handle_check_errors(arguments)
 
 
 class DiagnosticsServer(BaseMCPServer):
@@ -33,25 +54,13 @@ class DiagnosticsServer(BaseMCPServer):
         super().__init__("diagnostics")
         self.lsp_manager = lsp_manager
         self.root_dir = root_dir or Path.cwd()
-
-    def get_tools(self) -> list[Tool]:
-        """Get available diagnostics tools."""
-        return [
-            load_tool_definition("diagnostics", "diagnostics"),
-            load_tool_definition("check_errors", "diagnostics"),
-        ]
+        self.register_tool(DiagnosticsTool(self))
+        self.register_tool(CheckErrorsTool(self))
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        """Execute a diagnostics tool."""
-        handlers = {
-            "diagnostics": self._handle_diagnostics,
-            "check_errors": self._handle_check_errors,
-        }
-        handler = handlers.get(name)
-        if not handler:
-            return f"Unknown tool: {name}"
+        """Execute a diagnostics tool with error handling."""
         try:
-            return await handler(arguments)
+            return await self._tool_registry.dispatch(name, arguments)
         except Exception as e:
             return f"Error: {e}"
 

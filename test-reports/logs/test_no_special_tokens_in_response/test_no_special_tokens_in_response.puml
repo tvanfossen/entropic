@@ -23,7 +23,7 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Hello! I'm your local AI coding assistant, Entropi. How can I help you with your
-  development tasks today?
+  projects today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

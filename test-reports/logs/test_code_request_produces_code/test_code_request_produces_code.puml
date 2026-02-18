@@ -34,15 +34,11 @@ note right of Mdl
   ```python
   print(is_even(4))   # Output: True
   print(is_even(5))   # Output: False
-  print(is_even(-2))  # Output: True
+  print(is_even(0))   # Output: True
   ```
   
-  The function works for:
-  - Positive numbers
-  - Negative numbers
-  - Zero (0 % 2 == 0)
-  
-  Would you like me to add any additional features or handle different data types?
+  The function works for all integers, including negative numbers. The modulo 
+  operator `%` returns `0` for even numbers and non-zero for odd numbers.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

@@ -84,52 +84,58 @@ class TestGracefulIdentityFallback:
     """get_identity_prompt() returns constitution alone when no identity file."""
 
     def test_returns_constitution_when_no_identity(self) -> None:
-        """With use_bundled=False and no prompts_dir, returns constitution only."""
-        result = get_identity_prompt("nonexistent_tier", use_bundled=False)
+        """With use_bundled=True and no identity file, returns bundled constitution."""
+        result = get_identity_prompt("nonexistent_tier", use_bundled=True)
         constitution = get_constitution_prompt()
 
         assert result == constitution
         assert len(result) > 0
 
     def test_returns_constitution_plus_identity_when_available(self, tmp_path: Path) -> None:
-        """With a valid identity file, returns constitution + body."""
+        """With a valid identity file and custom constitution, returns both."""
+        constitution = tmp_path / "constitution.md"
+        constitution.write_text("# Custom Safety\n\nBe a good chess engine.")
+
         identity = tmp_path / "identity_custom.md"
         identity.write_text("---\nname: custom\nfocus:\n  - testing\n---\n\nCustom body here")
 
         result = get_identity_prompt("custom", prompts_dir=tmp_path, use_bundled=False)
 
         assert "Custom body here" in result
-        # Constitution should also be present
-        assert "Core Principles" in result
+        assert "Custom Safety" in result
 
 
-# ── Gap 5: Constitution always bundled ───────────────────────────
+# ── Gap 5: Constitution replacement ──────────────────────────────
 
 
-class TestConstitutionAlwaysBundled:
-    """Constitution loads regardless of use_bundled flag."""
+class TestConstitutionReplacement:
+    """Constitution can be replaced by consumers via prompts_dir."""
 
-    def test_constitution_loads_with_use_bundled_false(self) -> None:
-        """get_constitution_prompt() works even with use_bundled=False."""
-        result = get_constitution_prompt(use_bundled=False)
-        assert "Core Principles" in result
-        assert len(result) > 0
-
-    def test_constitution_loads_with_use_bundled_true(self) -> None:
-        """get_constitution_prompt() works with use_bundled=True (default)."""
+    def test_bundled_constitution_loads_by_default(self) -> None:
+        """get_constitution_prompt() loads bundled constitution with defaults."""
         result = get_constitution_prompt(use_bundled=True)
         assert "Core Principles" in result
 
-    def test_constitution_is_universal_safety(self) -> None:
-        """Constitution should contain safety guardrails, not app-specific content."""
+    def test_use_bundled_false_without_prompts_dir_raises(self) -> None:
+        """use_bundled=False with no prompts_dir raises FileNotFoundError."""
+        with pytest.raises(FileNotFoundError):
+            get_constitution_prompt(use_bundled=False)
+
+    def test_custom_constitution_overrides_bundled(self, tmp_path: Path) -> None:
+        """Consumer constitution.md in prompts_dir takes precedence."""
+        custom = tmp_path / "constitution.md"
+        custom.write_text("# Chess Engine Rules\n\nPlay fair.")
+
+        result = get_constitution_prompt(prompts_dir=tmp_path)
+        assert "Chess Engine Rules" in result
+        assert "Core Principles" not in result
+
+    def test_bundled_constitution_is_universal_safety(self) -> None:
+        """Bundled constitution contains safety guardrails, not app-specific content."""
         result = get_constitution_prompt()
-        # Should have universal safety content
         assert "Harm Avoidance" in result
         assert "Intellectual Honesty" in result
-        # Should NOT have app-specific content
         assert "You are **Entropi**" not in result
-        assert "Execution Philosophy" not in result
-        assert "Tool Usage" not in result
 
 
 # ── Gap 6: Config-tier validation ────────────────────────────────

@@ -163,30 +163,70 @@ def find_project_root() -> Path | None:
 
 
 class ConfigLoader:
-    """Configuration loader with hierarchy support."""
+    """Configuration loader with hierarchy support.
+
+    Defaults are tuned for the entropi TUI. Consumer applications override
+    ``app_dir_name`` and ``default_config_path`` to get their own config
+    directory with their own defaults — no subclassing needed::
+
+        loader = ConfigLoader(
+            project_root=Path("."),
+            app_dir_name=".myapp",
+            default_config_path=Path("data/default_config.yaml"),
+            global_config_dir=None,   # skip global ~/.entropi layer
+        )
+        config = loader.load()
+    """
+
+    _SENTINEL = object()
 
     def __init__(
         self,
-        global_config_dir: Path | None = None,
+        global_config_dir: Path | None | object = _SENTINEL,
         project_root: Path | None = None,
+        *,
+        app_dir_name: str = ".entropi",
+        default_config_path: Path | None = None,
     ) -> None:
         """
         Initialize configuration loader.
 
         Args:
-            global_config_dir: Global config directory (default: ~/.entropi)
-            project_root: Project root (auto-detected if None, or use cwd)
+            global_config_dir: Global config directory. Defaults to
+                ``~/.entropi`` for TUI use. Pass ``None`` to disable
+                global config entirely (recommended for consumer apps).
+            project_root: Project root (auto-detected if None, or use cwd).
+            app_dir_name: Name of the app's config directory created inside
+                project_root (default: ``.entropi``). Consumer apps should
+                use their own name (e.g. ``.pychess``).
+            default_config_path: Path to a default config YAML to seed from
+                when no config exists. ``None`` uses the entropi package
+                default.
         """
-        self.global_config_dir = global_config_dir or Path.home() / ".entropi"
+        if global_config_dir is self._SENTINEL:
+            self.global_config_dir: Path | None = Path.home() / ".entropi"
+        else:
+            self.global_config_dir = global_config_dir  # type: ignore[assignment]
         # Use detected project root, or fall back to current directory
         self.project_root = project_root or find_project_root() or Path.cwd()
+        self.app_dir_name = app_dir_name
+        self.default_config_path = default_config_path
+
+    @property
+    def _app_dir(self) -> Path:
+        """Project-level app config directory."""
+        return self.project_root / self.app_dir_name
 
     def _ensure_global_config(self) -> None:
         """
-        Ensure global ~/.entropi/ directory and config exist.
+        Ensure global config directory and config exist.
 
+        Skipped when ``global_config_dir`` is ``None`` (consumer apps).
         Copies from package default if not present.
         """
+        if self.global_config_dir is None:
+            return
+
         global_config_path = self.global_config_dir / "config.yaml"
 
         # Create global directory if it doesn't exist
@@ -201,67 +241,78 @@ class ConfigLoader:
 
     def _ensure_project_config(self) -> None:
         """
-        Ensure project .entropi/ directory and config exist.
+        Ensure project app directory and config exist.
 
-        Seeding: global config.yaml → .entropi/config.local.yaml
-        Migration: existing config.yaml → config.local.yaml
+        Creates the app directory (e.g. ``.entropi/`` or ``.pychess/``),
+        seeds ``config.local.yaml`` from defaults on first run.
         """
-        project_entropi_dir = self.project_root / ".entropi"
-        local_config_path = project_entropi_dir / "config.local.yaml"
-        legacy_config_path = project_entropi_dir / "config.yaml"
-        global_config_path = self.global_config_dir / "config.yaml"
+        app_dir = self._app_dir
+        local_config_path = app_dir / "config.local.yaml"
+        legacy_config_path = app_dir / "config.yaml"
 
-        # Create .entropi directory if it doesn't exist
-        if not project_entropi_dir.exists():
-            project_entropi_dir.mkdir(parents=True, exist_ok=True)
+        is_new_dir = not app_dir.exists()
+
+        # Create app directory if it doesn't exist
+        if is_new_dir:
+            app_dir.mkdir(parents=True, exist_ok=True)
 
             # Create .gitignore for transient files only
-            gitignore_path = project_entropi_dir / ".gitignore"
+            gitignore_path = app_dir / ".gitignore"
             gitignore_path.write_text("*.db\n*.log\n")
 
-            # Create default ENTROPI.md
-            entropi_md_path = project_entropi_dir / "ENTROPI.md"
-            entropi_md_path.write_text(
-                "# Project Context\n\n"
-                "This file provides context to Entropi."
-                " Edit it to describe your project.\n\n"
-                "## Overview\n\n"
-                "<!-- Brief description of what this project does -->\n\n"
-                "## Tech Stack\n\n"
-                "<!-- Languages, frameworks, key dependencies -->\n\n"
-                "## Structure\n\n"
-                "<!-- Key directories and their purpose -->\n\n"
-                "## Conventions\n\n"
-                "<!-- Coding standards, naming conventions,"
-                " patterns to follow -->\n"
-            )
+            # Create ENTROPI.md only for the entropi TUI
+            if self.app_dir_name == ".entropi":
+                self._create_project_context_md(app_dir)
 
         # Migration: if legacy config.yaml exists but
         # config.local.yaml doesn't, adopt the legacy file
         if legacy_config_path.exists() and not local_config_path.exists():
             shutil.copy(legacy_config_path, local_config_path)
 
-        # Seed from global config if config.local.yaml doesn't exist
+        # Seed config.local.yaml if it doesn't exist
         if not local_config_path.exists():
-            self._seed_project_config(
-                local_config_path,
-                global_config_path,
-            )
+            self._seed_project_config(local_config_path)
 
-    def _seed_project_config(
-        self,
-        target: Path,
-        global_config: Path,
-    ) -> None:
-        """Seed project config.local.yaml from global config."""
-        try:
-            if global_config.exists():
-                shutil.copy(global_config, target)
-                return
-        except PermissionError:
-            pass
+    @staticmethod
+    def _create_project_context_md(app_dir: Path) -> None:
+        """Create default ENTROPI.md for TUI projects."""
+        entropi_md_path = app_dir / "ENTROPI.md"
+        entropi_md_path.write_text(
+            "# Project Context\n\n"
+            "This file provides context to Entropi."
+            " Edit it to describe your project.\n\n"
+            "## Overview\n\n"
+            "<!-- Brief description of what this project does -->\n\n"
+            "## Tech Stack\n\n"
+            "<!-- Languages, frameworks, key dependencies -->\n\n"
+            "## Structure\n\n"
+            "<!-- Key directories and their purpose -->\n\n"
+            "## Conventions\n\n"
+            "<!-- Coding standards, naming conventions,"
+            " patterns to follow -->\n"
+        )
 
-        # Fallback to package default
+    def _seed_project_config(self, target: Path) -> None:
+        """Seed project config.local.yaml.
+
+        Priority: custom default_config_path > global config > package default.
+        """
+        # 1. Consumer-provided default config
+        if self.default_config_path and self.default_config_path.exists():
+            shutil.copy(self.default_config_path, target)
+            return
+
+        # 2. Global config (if enabled)
+        if self.global_config_dir is not None:
+            global_config = self.global_config_dir / "config.yaml"
+            try:
+                if global_config.exists():
+                    shutil.copy(global_config, target)
+                    return
+            except PermissionError:
+                pass
+
+        # 3. Package default
         default_config = get_default_config_path()
         if default_config.exists():
             shutil.copy(default_config, target)
@@ -276,31 +327,32 @@ class ConfigLoader:
         Returns:
             Merged configuration
         """
-        # Ensure global ~/.entropi/ exists with default config
+        # Ensure global config exists (skipped when global_config_dir=None)
         try:
             self._ensure_global_config()
         except PermissionError:
             # Can't write to home directory (e.g., container)
             pass
 
-        # Ensure project .entropi/ exists with config from global
+        # Ensure project app dir exists with seeded config
         self._ensure_project_config()
 
         # Start with empty dict (defaults come from Pydantic)
         config: dict[str, Any] = {}
 
-        # Layer 1: Global config (user defaults for all projects)
-        try:
-            global_path = self.global_config_dir / "config.yaml"
-            global_config = _migrate_config(
-                load_yaml_config(global_path),
-            )
-            config = deep_merge(config, global_config)
-        except PermissionError:
-            pass
+        # Layer 1: Global config (skipped for consumer apps)
+        if self.global_config_dir is not None:
+            try:
+                global_path = self.global_config_dir / "config.yaml"
+                global_config = _migrate_config(
+                    load_yaml_config(global_path),
+                )
+                config = deep_merge(config, global_config)
+            except PermissionError:
+                pass
 
         # Layer 2: Project config (source of truth)
-        local_path = self.project_root / ".entropi" / "config.local.yaml"
+        local_path = self._app_dir / "config.local.yaml"
         local_config = _migrate_config(
             load_yaml_config(local_path),
         )
@@ -310,8 +362,8 @@ class ConfigLoader:
         if cli_overrides:
             config = deep_merge(config, cli_overrides)
 
-        # Override config_dir to use project-level .entropi
-        config["config_dir"] = str(self.project_root / ".entropi")
+        # Set config_dir to the project-level app directory
+        config["config_dir"] = str(self._app_dir)
 
         # Layer 4: Environment variable overrides (for debugging)
         env_overrides = {

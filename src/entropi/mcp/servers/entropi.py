@@ -34,18 +34,48 @@ class EntropiServer(BaseMCPServer):
     directives for engine-level side effects (tier changes, context pruning, etc.).
     """
 
-    def __init__(self) -> None:
-        """Initialize entropi server with internal todo list."""
+    def __init__(self, tier_names: list[str] | None = None) -> None:
+        """Initialize entropi server with internal todo list.
+
+        Args:
+            tier_names: Custom tier names for the handoff tool schema.
+                When ``None``, uses the default tiers from ``handoff.json``.
+                Consumer apps pass their own (e.g. ``["suggest", "validate", "execute"]``).
+        """
         super().__init__("entropi")
         self._todo_list = TodoList()
+        self._tier_names = tier_names
 
     def get_tools(self) -> list[Tool]:
         """Get available entropi tools."""
         return [
             load_tool_definition("todo_write", "entropi"),
-            load_tool_definition("handoff", "entropi"),
+            self._build_handoff_tool(),
             load_tool_definition("prune_context", "entropi"),
         ]
+
+    def _build_handoff_tool(self) -> Tool:
+        """Build handoff tool, patching tier names if custom tiers configured."""
+        tool = load_tool_definition("handoff", "entropi")
+        if not self._tier_names:
+            return tool
+
+        schema = dict(tool.inputSchema)
+        props = dict(schema["properties"])
+        target_prop = dict(props["target_tier"])
+        target_prop["enum"] = list(self._tier_names)
+        props["target_tier"] = target_prop
+        schema["properties"] = props
+
+        tier_list = ", ".join(f"`{t}`" for t in self._tier_names)
+        description = (
+            "Transfer the current task to a different model tier.\n\n"
+            f"Available tiers: {tier_list}\n\n"
+            "Use this tool when the task would be better handled "
+            "by a different tier's capabilities."
+        )
+
+        return Tool(name=tool.name, description=description, inputSchema=schema)
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute an entropi tool.
@@ -100,6 +130,15 @@ class EntropiServer(BaseMCPServer):
         """
         target_tier = arguments.get("target_tier", "")
         reason = arguments.get("reason", "")
+
+        if self._tier_names and target_tier not in self._tier_names:
+            return json.dumps(
+                {
+                    "error": (
+                        f"Unknown tier: '{target_tier}'. " f"Available tiers: {self._tier_names}"
+                    ),
+                }
+            )
 
         directives = []
 

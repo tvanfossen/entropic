@@ -7,6 +7,7 @@ Public API for library consumers. Install extras for additional features:
   pip install entropi[voice]   # Voice interface
 """
 
+from entropi.config.loader import ConfigLoader
 from entropi.config.schema import (
     CompactionConfig,
     EntropyConfig,
@@ -26,10 +27,12 @@ from entropi.core.base import (
     ToolResult,
 )
 from entropi.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
+from entropi.core.logging import setup_logging, setup_model_logger
 from entropi.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
 from entropi.mcp.manager import ServerManager
 from entropi.mcp.provider import InProcessProvider
-from entropi.mcp.servers.base import BaseMCPServer
+from entropi.mcp.servers.base import BaseMCPServer, load_tool_definition
+from entropi.mcp.tools import BaseTool
 
 __version__ = "0.1.0"
 __author__ = "Tristan VanFossen"
@@ -48,7 +51,11 @@ __all__ = [
     "AgentState",
     "EngineCallbacks",
     "LoopConfig",
+    # Logging
+    "setup_logging",
+    "setup_model_logger",
     # Config
+    "ConfigLoader",
     "CompactionConfig",
     "EntropyConfig",
     "GenerationConfig",
@@ -62,6 +69,8 @@ __all__ = [
     "RoutingResult",
     # MCP
     "BaseMCPServer",
+    "BaseTool",
     "InProcessProvider",
     "ServerManager",
+    "load_tool_definition",
 ]

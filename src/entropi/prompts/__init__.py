@@ -95,15 +95,18 @@ def load_prompt(
 
 def get_constitution_prompt(
     prompts_dir: Path | None = None,
-    use_bundled: bool = True,  # noqa: ARG001
+    use_bundled: bool = True,
 ) -> str:
-    """Get the constitution prompt (universal safety guardrails).
+    """Get the constitution prompt (safety guardrails).
 
-    Always loads the bundled constitution regardless of use_bundled.
-    The constitution is a non-replaceable safety layer that all consumers
-    inherit. The use_bundled flag only controls identity file fallback.
+    Consumers can replace the default constitution by placing a
+    ``constitution.md`` in their ``prompts_dir``. If none is found
+    and ``use_bundled=True``, falls back to the bundled default.
+
+    A constitution should always exist — set ``use_bundled=False``
+    only when providing your own via ``prompts_dir``.
     """
-    return load_prompt("constitution", prompts_dir, use_bundled=True)
+    return load_prompt("constitution", prompts_dir, use_bundled=use_bundled)
 
 
 def get_tier_identity_prompt(

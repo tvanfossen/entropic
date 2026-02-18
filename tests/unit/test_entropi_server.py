@@ -260,6 +260,70 @@ class TestEntropiServerPrune:
         assert prune.keep_recent == 2
 
 
+class TestEntropiServerDynamicTiers:
+    """Custom tier_names patch handoff tool schema and validate at runtime."""
+
+    @pytest.fixture
+    def server(self) -> EntropiServer:
+        return EntropiServer(tier_names=["suggest", "validate", "execute"])
+
+    def test_handoff_enum_patched(self, server: EntropiServer) -> None:
+        """Handoff tool's target_tier enum reflects custom tier names."""
+        tools = server.get_tools()
+        handoff = next(t for t in tools if t.name == "handoff")
+        enum = handoff.inputSchema["properties"]["target_tier"]["enum"]
+        assert enum == ["suggest", "validate", "execute"]
+
+    def test_handoff_description_updated(self, server: EntropiServer) -> None:
+        """Handoff description mentions custom tier names, not defaults."""
+        tools = server.get_tools()
+        handoff = next(t for t in tools if t.name == "handoff")
+        assert "`suggest`" in handoff.description
+        assert "`validate`" in handoff.description
+        assert "`execute`" in handoff.description
+        assert "simple" not in handoff.description
+
+    def test_default_server_uses_static_tiers(self) -> None:
+        """Server without tier_names uses the static handoff.json enum."""
+        server = EntropiServer()
+        tools = server.get_tools()
+        handoff = next(t for t in tools if t.name == "handoff")
+        enum = handoff.inputSchema["properties"]["target_tier"]["enum"]
+        assert enum == ["simple", "normal", "code", "thinking"]
+
+    @pytest.mark.asyncio
+    async def test_handoff_rejects_invalid_tier(self, server: EntropiServer) -> None:
+        """Handoff rejects a tier name not in the custom set."""
+        result = await server.execute_tool(
+            "handoff",
+            {
+                "target_tier": "thinking",
+                "reason": "deep analysis",
+                "task_state": "in_progress",
+            },
+        )
+        assert isinstance(result, str)
+        data = json.loads(result)
+        assert "error" in data
+        assert "Unknown tier" in data["error"]
+
+    @pytest.mark.asyncio
+    async def test_handoff_accepts_valid_custom_tier(self, server: EntropiServer) -> None:
+        """Handoff succeeds with a valid custom tier name."""
+        result = await server.execute_tool(
+            "handoff",
+            {
+                "target_tier": "validate",
+                "reason": "check the move",
+                "task_state": "in_progress",
+            },
+        )
+        assert isinstance(result, ServerResponse)
+        assert "Handoff requested" in result.result
+        tier_d = next(d for d in result.directives if isinstance(d, TierChange))
+        assert tier_d.tier == "validate"
+
+
 class TestEntropiServerUnknownTool:
     """Unknown tool name returns error."""
 

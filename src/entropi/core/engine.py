@@ -982,6 +982,10 @@ Do NOT call this tool again. Use the previous result above."""
         if denial_msg := await self._check_tool_approval(tool_call):
             return denial_msg, None
 
+        # Enforce tier-level allowed_tools (defense against hallucinated calls)
+        if rejection := self._check_tier_allowed(ctx, tool_call):
+            return rejection, None
+
         # Execute the tool (all tools, including entropi.*, go through ServerManager)
         if self._on_tool_start:
             self._on_tool_start(tool_call)
@@ -1004,6 +1008,26 @@ Do NOT call this tool again. Use the previous result above."""
             ctx.messages.append(injected)
 
         return result
+
+    def _check_tier_allowed(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
+        """Reject tool calls not in the current tier's allowed_tools.
+
+        Returns a feedback message if rejected, None if allowed.
+        """
+        if ctx.locked_tier is None:
+            return None
+        allowed = self.orchestrator.get_allowed_tools(ctx.locked_tier)
+        if allowed is None or tool_call.name in allowed:
+            return None
+        tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
+        logger.warning(
+            "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
+        )
+        reason = (
+            f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
+            f"Available tools: {sorted(allowed)}"
+        )
+        return self._create_denied_message(tool_call, reason)
 
     async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
         """Check tool approval. Returns denial message if not approved, None if approved."""

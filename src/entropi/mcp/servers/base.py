@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -22,6 +21,7 @@ from entropi.core.tool_validation import ToolValidationError, validate_tool_defi
 
 if TYPE_CHECKING:
     from entropi.core.directives import Directive
+    from entropi.mcp.tools import BaseTool, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -42,12 +42,19 @@ class ServerResponse:
     directives: list[Directive] = field(default_factory=list)
 
 
-def load_tool_definition(tool_name: str, server_prefix: str = "") -> Tool:
+def load_tool_definition(
+    tool_name: str,
+    server_prefix: str = "",
+    tools_dir: Path | None = None,
+) -> Tool:
     """Load and validate a tool definition from JSON.
 
     Args:
         tool_name: Tool name (e.g., "read_file", "execute")
         server_prefix: Server directory name (e.g., "filesystem", "git")
+        tools_dir: Base directory for tool JSON files. Defaults to
+            entropi's bundled ``data/tools/``. Consumer apps pass their
+            own directory (e.g. ``Path("data/tools")``).
 
     Returns:
         Validated MCP Tool object.
@@ -56,10 +63,12 @@ def load_tool_definition(tool_name: str, server_prefix: str = "") -> Tool:
         FileNotFoundError: If JSON file doesn't exist.
         ToolValidationError: If tool definition is invalid.
     """
+    base = tools_dir or _TOOLS_DIR
+
     if server_prefix:
-        json_path = _TOOLS_DIR / server_prefix / f"{tool_name}.json"
+        json_path = base / server_prefix / f"{tool_name}.json"
     else:
-        json_path = _TOOLS_DIR / f"{tool_name}.json"
+        json_path = base / f"{tool_name}.json"
 
     if not json_path.exists():
         raise FileNotFoundError(f"Tool definition not found: {json_path}")
@@ -77,8 +86,20 @@ def load_tool_definition(tool_name: str, server_prefix: str = "") -> Tool:
     )
 
 
-class BaseMCPServer(ABC):
-    """Base class for MCP servers."""
+class BaseMCPServer:
+    """Base class for MCP servers.
+
+    Two usage patterns:
+
+    **Tool registration (preferred for new servers):**
+    Subclass, create ``BaseTool`` instances, call ``register_tool()``
+    in ``__init__``.  ``get_tools()`` and ``execute_tool()`` work
+    automatically via the internal ``ToolRegistry``.
+
+    **Override (legacy / complex servers):**
+    Override ``get_tools()`` and ``execute_tool()`` directly.
+    The registry is bypassed when these methods are overridden.
+    """
 
     def __init__(self, name: str, version: str = "1.0.0") -> None:
         """
@@ -92,8 +113,23 @@ class BaseMCPServer(ABC):
         self.version = version
         self.server = Server(name)
 
+        from entropi.mcp.tools import ToolRegistry as _ToolRegistry
+
+        self._tool_registry: ToolRegistry = _ToolRegistry()
+
         # Register handlers
         self._register_handlers()
+
+    def register_tool(self, tool: BaseTool) -> None:
+        """Register a BaseTool instance with this server.
+
+        Registered tools are automatically included in ``get_tools()``
+        and dispatched by ``execute_tool()``.
+
+        Args:
+            tool: Tool instance to register.
+        """
+        self._tool_registry.register(tool)
 
     def _register_handlers(self) -> None:
         """Register MCP handlers."""
@@ -108,14 +144,19 @@ class BaseMCPServer(ABC):
             text = response.result if isinstance(response, ServerResponse) else response
             return [TextContent(type="text", text=text)]
 
-    @abstractmethod
     def get_tools(self) -> list[Tool]:
-        """Get list of available tools."""
-        pass
+        """Get list of available tools.
 
-    @abstractmethod
+        Default: returns definitions from all registered tools.
+        Override for custom behavior in legacy servers.
+        """
+        return self._tool_registry.get_tools()
+
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute a tool.
+
+        Default: dispatches to the registered tool's ``execute()`` method.
+        Override for custom behavior in legacy servers.
 
         Args:
             name: Tool name
@@ -124,7 +165,7 @@ class BaseMCPServer(ABC):
         Returns:
             Plain string or ServerResponse with directives
         """
-        pass
+        return await self._tool_registry.dispatch(name, arguments)
 
     @staticmethod
     def get_permission_pattern(

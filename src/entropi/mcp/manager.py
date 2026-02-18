@@ -43,15 +43,23 @@ class ServerManager:
     with permission checking.
     """
 
-    def __init__(self, config: EntropyConfig, project_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        config: EntropyConfig,
+        project_dir: Path | None = None,
+        tier_names: list[str] | None = None,
+    ) -> None:
         """Initialize server manager.
 
         Args:
             config: Application configuration
             project_dir: Project root directory for server working dirs
+            tier_names: Custom tier names for the handoff tool schema.
+                When ``None``, uses default tiers from ``handoff.json``.
         """
         self.config = config
         self._project_dir = project_dir or Path.cwd()
+        self._tier_names = tier_names
         self._clients: dict[str, ToolProvider] = {}
         self._server_classes: dict[str, type[BaseMCPServer]] = {}
         self._permissions = config.permissions
@@ -140,7 +148,9 @@ class ServerManager:
                 logger.warning("Diagnostics enabled but LSP not available")
 
         self._server_classes["entropi"] = EntropiServer
-        self._clients["entropi"] = InProcessProvider("entropi", EntropiServer())
+        self._clients["entropi"] = InProcessProvider(
+            "entropi", EntropiServer(tier_names=self._tier_names)
+        )
 
     def _create_lsp_manager(self, mcp_config: Any) -> LSPManager | None:
         """Create and start LSP manager if needed by any server."""

@@ -14,16 +14,20 @@ from entropi.config.schema import EntropyConfig
 def setup_logging(
     config: EntropyConfig,
     project_dir: Path | None = None,
+    *,
+    app_dir_name: str = ".entropi",
 ) -> logging.Logger:
     """
     Set up logging infrastructure.
 
-    Logs are written to .entropi/session.log in the project directory.
+    Logs are written to ``<project_dir>/<app_dir_name>/session.log``.
     Only warnings and errors are shown on console to keep CLI clean.
 
     Args:
         config: Application configuration
         project_dir: Project directory for log file location
+        app_dir_name: Application directory name (default ``.entropi``).
+            Consumer apps pass their own (e.g. ``.pychess``).
 
     Returns:
         Root logger
@@ -35,24 +39,26 @@ def setup_logging(
     # Clear existing handlers
     logger.handlers.clear()
 
-    # Lazy import: rich is optional (only needed when setup_logging is called)
-    from rich.console import Console
-    from rich.logging import RichHandler
-
     # Console handler - only show WARNING and above to keep CLI clean
-    console_handler = RichHandler(
-        console=Console(stderr=True),
-        show_time=True,
-        show_path=False,
-        rich_tracebacks=True,
-    )
+    try:
+        from rich.console import Console
+        from rich.logging import RichHandler
+
+        console_handler: logging.Handler = RichHandler(
+            console=Console(stderr=True),
+            show_time=True,
+            show_path=False,
+            rich_tracebacks=True,
+        )
+        console_handler.setFormatter(logging.Formatter("%(message)s"))
+    except ImportError:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     console_handler.setLevel(logging.WARNING)
-    console_format = logging.Formatter("%(message)s")
-    console_handler.setFormatter(console_format)
     logger.addHandler(console_handler)
 
-    # File handler - always create in project's .entropi/ directory
-    log_dir = (project_dir or Path.cwd()) / ".entropi"
+    # File handler - create in project's app directory
+    log_dir = (project_dir or Path.cwd()) / app_dir_name
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "session.log"
 
@@ -73,15 +79,21 @@ def setup_logging(
     return logger
 
 
-def setup_model_logger(project_dir: Path | None = None) -> logging.Logger:
+def setup_model_logger(
+    project_dir: Path | None = None,
+    *,
+    app_dir_name: str = ".entropi",
+) -> logging.Logger:
     """
     Set up dedicated model output logger.
 
-    Writes raw model output to .entropi/session_model.log,
+    Writes raw model output to ``<project_dir>/<app_dir_name>/session_model.log``,
     separate from operational logs in session.log.
 
     Args:
         project_dir: Project directory for log file location
+        app_dir_name: Application directory name (default ``.entropi``).
+            Consumer apps pass their own (e.g. ``.pychess``).
 
     Returns:
         Model output logger
@@ -92,7 +104,7 @@ def setup_model_logger(project_dir: Path | None = None) -> logging.Logger:
     # Don't propagate to parent (entropi) logger — keeps session.log clean
     model_logger.propagate = False
 
-    log_dir = (project_dir or Path.cwd()) / ".entropi"
+    log_dir = (project_dir or Path.cwd()) / app_dir_name
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "session_model.log"
 

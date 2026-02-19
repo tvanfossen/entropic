@@ -1,7 +1,7 @@
 """Tests for UI components."""
 
-from entropi.ui.components import StatusBar, ToolCallDisplay
-from entropi.ui.themes import DARK_THEME, LIGHT_THEME, get_theme
+from entropic.ui.components import StatusBar, ToolCallDisplay
+from entropic.ui.themes import DARK_THEME, LIGHT_THEME, get_theme
 
 
 class TestThemes:

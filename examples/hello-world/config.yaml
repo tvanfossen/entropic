@@ -1,6 +1,6 @@
-# Hello World — two-tier entropi config with routing.
+# Hello World — two-tier entropic config with routing.
 #
-# Demonstrates the core entropi value: automatic model routing
+# Demonstrates the core entropic value: automatic model routing
 # and tier handoff between a fast model and a thinking model.
 #
 # Edit `path` values to point to your GGUF model files.

@@ -5,9 +5,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from entropi.core.directives import ContextAnchor, NotifyPresenter
-from entropi.mcp.provider import InProcessProvider
-from entropi.mcp.servers.base import ServerResponse
+from entropic.core.directives import ContextAnchor, NotifyPresenter
+from entropic.mcp.provider import InProcessProvider
+from entropic.mcp.servers.base import ServerResponse
 
 
 def _make_mock_server(tools: list[dict] | None = None) -> MagicMock:
@@ -159,10 +159,10 @@ class TestInProcessProviderDirectives:
         server.execute_tool = AsyncMock(
             return_value=ServerResponse(result="ok", directives=directives)
         )
-        provider = InProcessProvider("entropi", server)
+        provider = InProcessProvider("entropic", server)
         await provider.connect()
 
-        result = await provider.execute("entropi.todo_write", {"action": "add"})
+        result = await provider.execute("entropic.todo_write", {"action": "add"})
         assert result.result == "ok"
         assert len(result.directives) == 2
         assert isinstance(result.directives[0], ContextAnchor)

@@ -12,7 +12,7 @@ models:
       max_output_tokens: 384
       allowed_tools:
         - chess.get_board
-        - entropi.handoff
+        - entropic.handoff
 
     # Validate tier: reviews the suggestion for soundness
     validate:
@@ -22,7 +22,7 @@ models:
       max_output_tokens: 256
       allowed_tools:
         - chess.get_board
-        - entropi.handoff
+        - entropic.handoff
 
     # Execute tier: plays the validated move
     execute:

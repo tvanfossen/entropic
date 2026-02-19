@@ -1,4 +1,4 @@
-"""Engine wiring — connects entropi orchestrator, server manager, and agent engine.
+"""Engine wiring — connects entropic orchestrator, server manager, and agent engine.
 
 Demonstrates the full library setup flow:
     1. Load config (EntropyConfig from YAML)
@@ -16,7 +16,7 @@ from typing import IO
 import chess
 from chess_server import ChessServer
 from config import EXAMPLE_ROOT, load_config
-from entropi import (
+from entropic import (
     AgentEngine,
     EngineCallbacks,
     LoopConfig,
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ChessEngine:
-    """Wired entropi components for chess play."""
+    """Wired entropic components for chess play."""
 
     orchestrator: ModelOrchestrator
     server_manager: ServerManager
@@ -41,7 +41,7 @@ class ChessEngine:
 
 
 async def create_engine() -> ChessEngine:
-    """Wire up entropi from config + tiers + server.
+    """Wire up entropic from config + tiers + server.
 
     Loads config from config.yaml, initializes the orchestrator with
     three chess tiers (suggest/validate/execute), registers the chess
@@ -162,7 +162,7 @@ async def get_ai_move(engine: ChessEngine) -> str | None:
 
 
 async def shutdown(engine: ChessEngine) -> None:
-    """Clean shutdown of entropi components."""
+    """Clean shutdown of entropic components."""
     if engine._stream_file:
         engine._stream_file.close()
     await engine.server_manager.shutdown()

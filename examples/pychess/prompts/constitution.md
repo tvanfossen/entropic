@@ -17,7 +17,7 @@ Three tiers collaborate on each move:
 
 ## Communication
 
-- Use `entropi.handoff` to transfer control between tiers
+- Use `entropic.handoff` to transfer control between tiers
 - **Keep thinking VERY short** — your output window is small, prioritize tool calls over reasoning
 - If you run out of tokens before calling a tool, the turn is wasted
 

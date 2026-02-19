@@ -1,6 +1,6 @@
-"""Hello World — two-tier entropi integration.
+"""Hello World — two-tier entropic integration.
 
-Demonstrates entropi's core features:
+Demonstrates entropic's core features:
     - Automatic routing: a tiny router model classifies prompts
     - Tier handoff: simple questions go to the 8B model,
       complex analysis goes to the 14B thinking model
@@ -20,7 +20,7 @@ import asyncio
 import sys
 from pathlib import Path
 
-from entropi import (
+from entropic import (
     AgentEngine,
     ConfigLoader,
     EngineCallbacks,
@@ -50,7 +50,7 @@ async def main() -> None:
     orchestrator = ModelOrchestrator(config)
     await orchestrator.initialize()
 
-    # 4. Create engine — default ServerManager provides entropi internal tools
+    # 4. Create engine — default ServerManager provides entropic internal tools
     loop_config = LoopConfig(max_iterations=5, auto_approve_tools=True)
     engine = AgentEngine(orchestrator, config=config, loop_config=loop_config)
 
@@ -63,7 +63,7 @@ async def main() -> None:
     )
 
     # 6. Interactive loop
-    print("entropi hello-world — two tiers: normal (8B) + thinking (14B)")
+    print("entropic hello-world — two tiers: normal (8B) + thinking (14B)")
     print("The router automatically picks the right tier per prompt.")
     print("Type 'quit' to exit.\n")
 

@@ -4,7 +4,7 @@
 
 ## Overview
 
-Entropi uses the Model Context Protocol (MCP) for all tool integration. Tools are provided by MCP servers that run alongside the main application.
+Entropic uses the Model Context Protocol (MCP) for all tool integration. Tools are provided by MCP servers that run alongside the main application.
 
 ## Built-in Tools
 
@@ -53,24 +53,24 @@ All tool calls use the `<tool_call>` tag format:
 ```
 User: What's in the README?
 
-Entropi: I'll read the README file.
+Entropic: I'll read the README file.
 <tool_call>
 {"name": "filesystem.read_file", "arguments": {"path": "README.md"}}
 </tool_call>
 
 [Tool returns file contents]
 
-Entropi: The README contains...
+Entropic: The README contains...
 ```
 
 ### Listing a Directory
 
 ```
-User: What files are in src/entropi?
+User: What files are in src/entropic?
 
-Entropi: Let me list that directory.
+Entropic: Let me list that directory.
 <tool_call>
-{"name": "filesystem.list_directory", "arguments": {"path": "src/entropi"}}
+{"name": "filesystem.list_directory", "arguments": {"path": "src/entropic"}}
 </tool_call>
 ```
 
@@ -79,7 +79,7 @@ Entropi: Let me list that directory.
 ```
 User: Change "Hello" to "Greetings" in message.txt
 
-Entropi: I'll edit that file.
+Entropic: I'll edit that file.
 <tool_call>
 {"name": "filesystem.edit_file", "arguments": {
   "path": "message.txt",
@@ -95,7 +95,7 @@ Entropi: I'll edit that file.
 ```
 User: Run the tests
 
-Entropi: I'll run pytest.
+Entropic: I'll run pytest.
 <tool_call>
 {"name": "bash.execute", "arguments": {"command": "pytest tests/ -v"}}
 </tool_call>
@@ -106,7 +106,7 @@ Entropi: I'll run pytest.
 ```
 User: What's the git status?
 
-Entropi: Let me check.
+Entropic: Let me check.
 <tool_call>
 {"name": "git.status", "arguments": {}}
 </tool_call>
@@ -114,7 +114,7 @@ Entropi: Let me check.
 
 ## Read-Before-Write Protection
 
-For existing files, Entropi must read a file before writing to it. This prevents accidental overwrites and ensures the model understands the current content.
+For existing files, Entropic must read a file before writing to it. This prevents accidental overwrites and ensures the model understands the current content.
 
 - **New files**: Can be created directly
 - **Existing files**: Must be read first, then edited
@@ -136,7 +136,7 @@ permissions:
 
 ## Adding External MCP Servers
 
-Entropi supports external MCP servers via configuration:
+Entropic supports external MCP servers via configuration:
 
 ```yaml
 mcp:

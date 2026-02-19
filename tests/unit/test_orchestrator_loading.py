@@ -5,8 +5,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from entropi.core.base import ModelTier
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropic.core.base import ModelTier
+from entropic.inference.orchestrator import ModelOrchestrator
 
 # Reusable tier instances for tests
 NORMAL = ModelTier("normal", focus=["general reasoning"])

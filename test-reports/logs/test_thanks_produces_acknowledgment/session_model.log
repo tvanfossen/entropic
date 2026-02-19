@@ -1,13 +1,13 @@
-2026-02-19 11:48:11 Model output log started
-2026-02-19 11:48:12 
+2026-02-19 14:18:47 Model output log started
+2026-02-19 14:18:47 
 ######################################################################
 [ROUTED] tier=simple
 ######################################################################
-2026-02-19 11:48:12 
+2026-02-19 14:18:47 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=simple messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:48:12   [0] system (2709 chars):
+2026-02-19 14:18:47   [0] system (16848 chars):
 # Constitution
 
 ## Core Principles
@@ -57,9 +57,9 @@ You are the **quick response** tier. You handle only trivial interactions.
 - Respond concisely and directly
 - If a task is beyond your scope, say so
 
-# Entropi App Context
+# Entropic App Context
 
-You are **Entropi**, a local AI coding assistant running on the user's machine.
+You are **Entropic**, a local AI coding assistant running on the user's machine.
 
 ## Communication Style
 
@@ -87,20 +87,684 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - Don't make "improvements" beyond what was requested
 - Ask rather than assume when scope is ambiguous
 
-2026-02-19 11:48:12   [1] user (7 chars):
+
+## Tools
+
+Call tools with: `<tool_call>{"name": "tool.name", "arguments": {...}}</tool_call>`
+Batch independent calls in one response with multiple `<tool_call>` blocks.
+
+### filesystem.read_file
+Read a file's contents. Returns JSON with line numbers as keys.
+
+You MUST read a file before editing or overwriting.
+
+**Response format:**
+```json
+{"path": "...", "total": N, "lines": {"1": "line content", "2": "...", ...}}
+```
+
+**Error format:**
+```json
+{"error": "not_found", "message": "File not found: path"}
+```
+
+Use line numbers with the edit tool's insert mode when string matching fails.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Path to the file"
+    }
+  },
+  "required": [
+    "path"
+  ]
+}
+```
+
+### filesystem.write_file
+Create a new file or fully overwrite an existing file.
+
+**Requirements:**
+- If file EXISTS: You must read it first
+- If file is NEW: Can create directly
+
+**When to use:**
+- Creating new files
+- Major rewrites (changing >50% of file content)
+- Splitting files: extract code to new file, rewrite original with remainder
+- When the edit tool fails with "no_match" on large strings
+
+**File Splitting Pattern:**
+1. Read the source file
+2. Write the new file with extracted content
+3. Rewrite the original with remaining content
+
+For partial modifications, use the edit tool instead.
+
+**Success response:**
+```json
+{"success": true, "bytes_written": 1234, "path": "file.py"}
+```
+
+**Error responses:**
+```json
+{"error": "read_required", "message": "Cannot write: file must be read first"}
+{"error": "file_changed", "message": "File modified since read. Read again first."}
+```
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Path to the file"
+    },
+    "content": {
+      "type": "string",
+      "description": "Full file content"
+    }
+  },
+  "required": [
+    "path",
+    "content"
+  ]
+}
+```
+
+### filesystem.edit_file
+Edit a file using one of two modes.
+
+**Requirements:** You must read the file first.
+
+**When NOT to use:**
+- Don't use with old_string containing entire file content - use the write tool instead
+- Don't use for major rewrites (>50% of file) - use the write tool instead
+- If "no_match" error on large old_string, switch to the write tool
+
+## STR_REPLACE Mode
+Provide `old_string` + `new_string` for exact string replacement.
+
+```json
+{"path": "file.py", "old_string": "def hello():", "new_string": "def greet():"}
+```
+
+- `old_string` must match EXACTLY including whitespace
+- If multiple matches, add more context or set `replace_all: true`
+
+## INSERT Mode
+Provide `insert_line` + `new_string` to insert at a line number.
+
+```json
+{"path": "file.py", "insert_line": 5, "new_string": "    # New comment"}
+```
+
+- `insert_line: 0` = insert at beginning of file
+- `insert_line: N` = insert AFTER line N
+
+## Response Format
+
+**STR_REPLACE success:**
+```json
+{
+  "success": true,
+  "path": "file.py",
+  "mode": "str_replace",
+  "changes": [{"line": 45, "before": "def hello():", "after": "def greet():"}]
+}
+```
+
+**INSERT success:**
+```json
+{
+  "success": true,
+  "path": "file.py",
+  "mode": "insert",
+  "changes": [{"line": 5, "inserted": "from pieces import Piece"}]
+}
+```
+
+**Error:**
+```json
+{"error": "no_match", "message": "String not found", "debug": "...", "tip": "..."}
+```
+
+## Common Errors
+| Error | Fix |
+|-------|-----|
+| `read_required` | Read the file first |
+| `file_changed` | File modified externally, re-read it |
+| `no_match` | Check debug info, try insert mode |
+| `multiple_matches` | Add more context to old_string |
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Path to the file to edit"
+    },
+    "old_string": {
+      "type": "string",
+      "description": "STR_REPLACE mode: exact string to find and replace"
+    },
+    "new_string": {
+      "type": "string",
+      "description": "Replacement string (or content to insert)"
+    },
+    "insert_line": {
+      "type": "integer",
+      "description": "INSERT mode: line number to insert AFTER (0 = beginning)"
+    },
+    "replace_all": {
+      "type": "boolean",
+      "description": "STR_REPLACE mode: replace all occurrences (default: false)"
+    }
+  },
+  "required": [
+    "path",
+    "new_string"
+  ]
+}
+```
+
+### bash.execute
+Execute a shell command. **Preferred for exploration and discovery.**
+
+**Common Uses:**
+- List files: `{"command": "ls -la"}` or `{"command": "ls *.py"}`
+- Find files: `{"command": "find . -name '*.py' -type f"}`
+- Check existence: `{"command": "test -f file.py && echo exists"}`
+- Run tests: `{"command": "pytest tests/"}`
+- Install packages: `{"command": "pip install requests"}`
+
+**Path Notes:**
+- Commands run from workspace root
+- Use relative paths: `ls src/` not `ls /home/user/project/src/`
+
+**Permissions:**
+Commands are checked against config.local.yaml allow/deny patterns.
+Denied commands will fail with permission error.
+
+**When to use bash vs filesystem tools:**
+- Bash: exploration, discovery, running commands, quick checks
+- Filesystem: reading/editing files (provides structured output + safety)
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Command to execute"
+    },
+    "working_dir": {
+      "type": "string",
+      "description": "Working directory (optional)"
+    }
+  },
+  "required": [
+    "command"
+  ]
+}
+```
+
+### git.status
+Get git repository status.
+
+Shows staged, unstaged, and untracked files.
+
+No parameters required.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {},
+  "required": []
+}
+```
+
+### git.diff
+Get git diff showing changes.
+
+**Examples:**
+- All unstaged changes: `{}`
+- Staged changes only: `{"staged": true}`
+- Specific file: `{"file": "src/main.py"}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "staged": {
+      "type": "boolean",
+      "description": "Show staged changes only"
+    },
+    "file": {
+      "type": "string",
+      "description": "Specific file to diff"
+    }
+  },
+  "required": []
+}
+```
+
+### git.log
+Get git commit history.
+
+**Examples:**
+- Recent 5 commits: `{"count": 5}`
+- Condensed view: `{"oneline": true}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "count": {
+      "type": "integer",
+      "description": "Number of commits"
+    },
+    "oneline": {
+      "type": "boolean",
+      "description": "One line per commit"
+    }
+  },
+  "required": []
+}
+```
+
+### git.commit
+Create a git commit.
+
+**Examples:**
+- Commit staged files: `{"message": "Fix bug in parser"}`
+- Stage and commit all: `{"message": "Update docs", "add_all": true}`
+
+**Note:** Files must be staged first unless using `add_all: true`.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "string",
+      "description": "Commit message"
+    },
+    "add_all": {
+      "type": "boolean",
+      "description": "Stage all changes first"
+    }
+  },
+  "required": [
+    "message"
+  ]
+}
+```
+
+### git.branch
+List or create git branches.
+
+**Examples:**
+- List branches: `{}`
+- Create branch: `{"name": "feature/new-feature"}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Branch name to create (omit to list)"
+    }
+  },
+  "required": []
+}
+```
+
+### git.checkout
+Checkout a branch or restore a file.
+
+**Examples:**
+- Switch branch: `{"target": "main"}`
+- Restore file: `{"target": "src/main.py"}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "target": {
+      "type": "string",
+      "description": "Branch name or file path"
+    }
+  },
+  "required": [
+    "target"
+  ]
+}
+```
+
+### git.add
+Stage files for commit.
+
+**Examples:**
+- Stage specific file: `{"files": "src/main.py"}`
+- Stage all changes: `{"files": "."}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "files": {
+      "type": "string",
+      "description": "Files to add (space-separated, or '.' for all)"
+    }
+  },
+  "required": [
+    "files"
+  ]
+}
+```
+
+### git.reset
+Unstage files from the staging area.
+
+**Examples:**
+- Unstage all: `{}`
+- Unstage specific file: `{"files": "src/main.py"}`
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "files": {
+      "type": "string",
+      "description": "Files to unstage (space-separated)"
+    }
+  },
+  "required": []
+}
+```
+
+### diagnostics.diagnostics
+Get code errors and warnings from the language server.
+
+Returns diagnostics including:
+- Syntax errors
+- Type errors
+- Linting warnings
+- Import issues
+
+Use after editing files to verify correctness.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "Path to the file to check, or 'all' for all files"
+    }
+  },
+  "required": [
+    "file_path"
+  ]
+}
+```
+
+### diagnostics.check_errors
+Check if a file has any errors (not warnings).
+
+Returns true if file has errors, false if clean.
+
+Lighter weight than full diagnostics when you only need error status.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "file_path": {
+      "type": "string",
+      "description": "Path to the file to check"
+    }
+  },
+  "required": [
+    "file_path"
+  ]
+}
+```
+
+### entropic.todo_write
+Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.
+
+Task states:
+- pending: Not started yet
+- in_progress: Currently working on (only ONE at a time)
+- completed: Finished successfully
+
+IMPORTANT:
+- Use 'add' to build the list incrementally
+- Use 'update' with an index to change status
+- Indices are shown in [CURRENT TODO STATE] context
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "add",
+        "update",
+        "remove",
+        "replace"
+      ],
+      "description": "Operation: 'add' appends items, 'update' changes an item by index, 'remove' deletes an item by index, 'replace' overwrites the full list"
+    },
+    "todos": {
+      "type": "array",
+      "description": "Items to add or replace (for 'add' and 'replace' actions)",
+      "items": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "Task description in imperative form"
+          },
+          "active_form": {
+            "type": "string",
+            "description": "Task description in present continuous"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "in_progress",
+              "completed"
+            ]
+          },
+          "target_tier": {
+            "type": "string",
+            "description": "Which tier should execute this todo. Omit for self-directed tasks.",
+            "enum": [
+              "thinking",
+              "normal",
+              "code",
+              "simple"
+            ]
+          }
+        },
+        "required": [
+          "content",
+          "status",
+          "active_form"
+        ]
+      }
+    },
+    "index": {
+      "type": "integer",
+      "description": "Item index for 'update' and 'remove' actions (shown in todo state as [0], [1], etc.)"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "in_progress",
+        "completed"
+      ],
+      "description": "New status (for 'update' action)"
+    },
+    "content": {
+      "type": "string",
+      "description": "New content (for 'update' action)"
+    },
+    "active_form": {
+      "type": "string",
+      "description": "New active form (for 'update' action)"
+    },
+    "target_tier": {
+      "type": "string",
+      "enum": [
+        "thinking",
+        "normal",
+        "code",
+        "simple"
+      ],
+      "description": "New target tier (for 'update' action)"
+    }
+  },
+  "required": [
+    "action"
+  ]
+}
+```
+
+### entropic.handoff
+Transfer the current task to a different model tier.
+
+## When to Use
+
+Use `entropic.handoff` when a task would be better handled by a different tier's capabilities. Assess honestly whether your current tier is the right fit.
+
+## Available Tiers
+
+| Tier | Best For |
+|------|----------|
+| `simple` | Quick responses, summaries, trivial tasks |
+| `normal` | General coding tasks, multi-step workflows |
+| `code` | Implementation, writing/editing code, high tool usage |
+| `thinking` | Deep analysis, architecture, complex planning |
+
+## Routing Rules
+
+Not all handoffs are permitted:
+
+- **simple** can hand to: normal, code, thinking
+- **normal** can hand to: simple, code, thinking
+- **code** can hand to: simple, normal
+- **thinking** can hand to: normal, code
+
+## Examples
+
+```json
+{"target_tier": "code", "reason": "Implementation plan ready", "task_state": "plan_ready"}
+```
+
+```json
+{"target_tier": "thinking", "reason": "Need architectural analysis", "task_state": "blocked"}
+```
+
+```json
+{"target_tier": "normal", "reason": "Task complete, summarize for user", "task_state": "in_progress"}
+```
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "target_tier": {
+      "type": "string",
+      "enum": [
+        "simple",
+        "normal",
+        "code",
+        "thinking"
+      ],
+      "description": "Target model tier to hand off to"
+    },
+    "reason": {
+      "type": "string",
+      "description": "Brief explanation of why handoff is needed"
+    },
+    "task_state": {
+      "type": "string",
+      "enum": [
+        "not_started",
+        "in_progress",
+        "blocked",
+        "plan_ready"
+      ],
+      "description": "Current state of the task"
+    }
+  },
+  "required": [
+    "target_tier",
+    "reason",
+    "task_state"
+  ]
+}
+```
+
+### entropic.prune_context
+Remove old tool results from context to free space. Use when context is filling up and you need room for more file reads or planning. Old tool results are replaced with brief stubs.
+
+Schema:
+```json
+{
+  "type": "object",
+  "properties": {
+    "keep_recent": {
+      "type": "integer",
+      "description": "Number of recent tool results to keep intact (default: 2)"
+    }
+  }
+}
+```
+
+2026-02-19 14:18:47   [1] user (7 chars):
 Thanks!
-2026-02-19 11:48:12 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:48:14 
+2026-02-19 14:18:47 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-19 14:18:52 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user said "Thanks!" so I need to respond appropriately. Since they're using the quick response tier, I should keep it concise and friendly. Let me make sure to acknowledge their thanks and offer further assistance. No need for any tool calls here because it's just a simple greeting. I'll keep it professional but approachable.
+Okay, the user said "Thanks!" so I need to respond appropriately. Since they're using the simple tier, my response should be concise and friendly. I'll acknowledge their thanks and offer further assistance. Let me make sure not to overcomplicate it. Just a straightforward reply.
 </think>
 
-You're welcome! Let me know how I can assist you with your coding tasks. 😊
+You're welcome! Let me know if you need help with anything. 😊
 --- PARSED ---
-cleaned_content_len=74
+cleaned_content_len=61
 tool_calls=0: []
 ======================================================================

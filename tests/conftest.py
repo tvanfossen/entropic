@@ -5,9 +5,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from entropi.config.loader import ConfigLoader
-from entropi.config.schema import EntropyConfig
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropic.config.loader import ConfigLoader
+from entropic.config.schema import EntropyConfig
+from entropic.inference.orchestrator import ModelOrchestrator
 
 # =============================================================================
 # Basic Fixtures
@@ -19,9 +19,9 @@ def tmp_project_dir() -> Path:
     """Create a temporary project directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
-        entropi_dir = project_dir / ".entropi"
-        entropi_dir.mkdir()
-        (entropi_dir / "commands").mkdir()
+        entropic_dir = project_dir / ".entropic"
+        entropic_dir.mkdir()
+        (entropic_dir / "commands").mkdir()
         yield project_dir
 
 
@@ -45,7 +45,7 @@ def _check_model_available(model_path: str) -> bool:
 
 @pytest.fixture(scope="session")
 def config() -> EntropyConfig:
-    """Load the entropi configuration from project config files."""
+    """Load the entropic configuration from project config files."""
     loader = ConfigLoader()
     return loader.load()
 

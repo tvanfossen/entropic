@@ -6,8 +6,8 @@ import json
 from dataclasses import dataclass
 
 import pytest
-from entropi.core.base import Message
-from entropi.core.directives import (
+from entropic.core.base import Message
+from entropic.core.directives import (
     _DIRECTIVE_REGISTRY,
     ClearSelfTodos,
     ContextAnchor,
@@ -26,7 +26,7 @@ from entropi.core.directives import (
 
 def _make_ctx() -> object:
     """Create a minimal LoopContext for testing."""
-    from entropi.core.engine import LoopContext
+    from entropic.core.engine import LoopContext
 
     return LoopContext()
 

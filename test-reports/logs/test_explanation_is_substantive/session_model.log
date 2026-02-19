@@ -1,13 +1,13 @@
-2026-02-19 11:47:47 Model output log started
-2026-02-19 11:47:48 
+2026-02-19 14:18:20 Model output log started
+2026-02-19 14:18:20 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-19 11:47:48 
+2026-02-19 14:18:20 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:47:48   [0] system (16795 chars):
+2026-02-19 14:18:20   [0] system (16801 chars):
 # Constitution
 
 ## Core Principles
@@ -53,9 +53,9 @@ You are the **general-purpose assistant**.
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
 
-# Entropi App Context
+# Entropic App Context
 
-You are **Entropi**, a local AI coding assistant running on the user's machine.
+You are **Entropic**, a local AI coding assistant running on the user's machine.
 
 ## Communication Style
 
@@ -548,7 +548,7 @@ Schema:
 }
 ```
 
-### entropi.todo_write
+### entropic.todo_write
 Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.
 
 Task states:
@@ -654,12 +654,12 @@ Schema:
 }
 ```
 
-### entropi.handoff
+### entropic.handoff
 Transfer the current task to a different model tier.
 
 ## When to Use
 
-Use `entropi.handoff` when a task would be better handled by a different tier's capabilities. Assess honestly whether your current tier is the right fit.
+Use `entropic.handoff` when a task would be better handled by a different tier's capabilities. Assess honestly whether your current tier is the right fit.
 
 ## Available Tiers
 
@@ -731,7 +731,7 @@ Schema:
 }
 ```
 
-### entropi.prune_context
+### entropic.prune_context
 Remove old tool results from context to free space. Use when context is filling up and you need room for more file reads or planning. Old tool results are replaced with brief stubs.
 
 Schema:
@@ -747,47 +747,45 @@ Schema:
 }
 ```
 
-2026-02-19 11:47:48   [1] user (33 chars):
+2026-02-19 14:18:20   [1] user (33 chars):
 What is recursion in programming?
-2026-02-19 11:47:48 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:48:04 
+2026-02-19 14:18:20 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-19 14:18:36 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user is asking about recursion in programming. Let me start by defining it clearly. Recursion is when a function calls itself. But I should make sure to explain it in a way that's easy to understand.
+Okay, the user is asking about recursion in programming. Let me start by defining it simply. Recursion is when a function calls itself. But I should make sure to explain why that's useful.
 
-I need to mention the base case and the recursive case. The base case stops the recursion to prevent infinite loops. Then, the recursive case breaks the problem into smaller subproblems. Maybe give an example, like calculating factorial or Fibonacci numbers.
+Hmm, maybe give an example. Like calculating factorial or Fibonacci numbers. Those are common examples. Wait, but I should also mention the base case to prevent infinite loops. Oh right, every recursive function needs a base case to stop the recursion.
 
-Wait, should I use a code example? The user might benefit from seeing how it's implemented. Let me think of a simple one, like the factorial function. But I have to be careful not to make it too complex. Also, mention the call stack and potential issues like stack overflow if the base case isn't properly handled.
+I should explain the components: base case, recursive step. Maybe mention how each call breaks the problem into smaller subproblems. Also, stack overflow is a risk if not handled properly. Oh, and tail recursion optimization, but maybe that's more advanced. The user might not need that unless they ask for details.
 
-Hmm, maybe compare recursion with iteration. Some problems are easier to solve recursively, while others are better with loops. Highlight that recursion is a powerful technique but requires careful implementation.
-
-I should check if there's anything else important. Oh, tail recursion optimization, but that depends on the programming language. Maybe mention it briefly. Also, ensure the explanation covers both the concept and practical examples.
+Wait, the user might be a beginner, so keep it clear and concise. Avoid jargon where possible. Make sure to highlight the key points without getting too technical. Let me structure the answer with a definition, example, and important considerations.
 </think>
 
-Recursion in programming occurs when a function calls itself to solve a problem by breaking it into smaller, similar subproblems. It requires two key components:
+Recursion is a programming technique where a function calls itself to solve a problem by breaking it down into smaller, simpler subproblems. It consists of two main components:
 
-1. **Base Case**: A condition to stop recursion (prevents infinite loops)
-2. **Recursive Case**: The function calls itself with modified parameters
+1. **Base Case**: The condition that stops the recursion (prevents infinite loops).
+2. **Recursive Step**: The function call that reduces the problem size and progresses toward the base case.
 
-Example: Calculating factorial of n
+### Example: Factorial Calculation
 ```python
 def factorial(n):
     if n == 0:  # Base case
         return 1
-    else:       # Recursive case
-        return n * factorial(n-1)
+    else:       # Recursive step
+        return n * factorial(n - 1)
 ```
 
-Key characteristics:
-- Uses call stack to manage intermediate states
-- Can lead to stack overflow if base case isn't properly handled
-- Often more elegant than iterative solutions for problems with natural recursive structure (e.g., tree traversals, divide-and-conquer algorithms)
+### Key Considerations:
+- **Stack Depth**: Each recursive call adds a stack frame, risking stack overflow for deep recursions.
+- **Performance**: Can be less efficient than iterative solutions due to function call overhead.
+- **Tail Recursion**: Some languages optimize tail-recursive calls (where the recursive call is the final operation), but Python does not support this natively.
 
-Compare with iteration: Some problems are easier to solve recursively, while others are better suited for loops. Modern compilers often optimize tail recursion.
+Recursion is ideal for problems with natural hierarchical structures (e.g., tree traversals, divide-and-conquer algorithms).
 --- PARSED ---
-cleaned_content_len=935
+cleaned_content_len=1063
 tool_calls=0: []
 ======================================================================

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import chess
-from entropi import BaseMCPServer, BaseTool
+from entropic import BaseMCPServer, BaseTool
 
 # Tool JSON definitions live alongside default_config.yaml
 _TOOLS_DIR = Path(__file__).parent / "data" / "tools"

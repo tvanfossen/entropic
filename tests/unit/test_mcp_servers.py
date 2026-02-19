@@ -3,8 +3,8 @@
 from pathlib import Path
 
 import pytest
-from entropi.mcp.servers.bash import BashServer
-from entropi.mcp.servers.filesystem import FilesystemServer
+from entropic.mcp.servers.bash import BashServer
+from entropic.mcp.servers.filesystem import FilesystemServer
 
 
 class TestFilesystemServer:
@@ -112,7 +112,7 @@ class TestFilesystemSizeGate:
     @pytest.fixture
     def server(self, tmp_path: Path) -> FilesystemServer:
         """Create server with explicit max_read_bytes for testing."""
-        from entropi.config.schema import FilesystemConfig
+        from entropic.config.schema import FilesystemConfig
 
         config = FilesystemConfig(max_read_bytes=1000)
         return FilesystemServer(tmp_path, config=config)
@@ -143,7 +143,7 @@ class TestFilesystemSizeGate:
 
     def test_dynamic_threshold_from_model_context(self, tmp_path: Path) -> None:
         """Dynamic gate derives threshold from model context window."""
-        from entropi.config.schema import FilesystemConfig
+        from entropic.config.schema import FilesystemConfig
 
         # 32K tokens * 4 bytes/token = 131072 bytes, 25% = 32768
         config = FilesystemConfig()  # max_read_bytes=None (dynamic)
@@ -152,7 +152,7 @@ class TestFilesystemSizeGate:
 
     def test_explicit_max_overrides_dynamic(self, tmp_path: Path) -> None:
         """Explicit max_read_bytes overrides dynamic calculation."""
-        from entropi.config.schema import FilesystemConfig
+        from entropic.config.schema import FilesystemConfig
 
         config = FilesystemConfig(max_read_bytes=5000)
         server = FilesystemServer(tmp_path, config=config, model_context_bytes=131_072)
@@ -177,7 +177,7 @@ class TestSkipDuplicateCheck:
 
     def test_base_server_default(self) -> None:
         """BaseMCPServer default is False (no skip)."""
-        from entropi.mcp.servers.base import BaseMCPServer
+        from entropic.mcp.servers.base import BaseMCPServer
 
         assert BaseMCPServer.skip_duplicate_check("any_tool") is False
 

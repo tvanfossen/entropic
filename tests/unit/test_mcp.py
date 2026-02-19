@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from entropi.config.schema import PermissionsConfig
-from entropi.mcp.manager import ServerManager
+from entropic.config.schema import PermissionsConfig
+from entropic.mcp.manager import ServerManager
 
 
 class TestPermissions:

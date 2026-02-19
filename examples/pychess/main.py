@@ -1,10 +1,10 @@
-"""PyChess — play chess against a local LLM via entropi.
+"""PyChess — play chess against a local LLM via entropic.
 
 Demonstrates a multi-tier agentic chess system:
     suggest → validate → execute
 
 The LLM analyzes the position, validates its choice, then plays.
-Routing and handoff are handled by the entropi engine automatically.
+Routing and handoff are handled by the entropic engine automatically.
 
 Usage:
     1. Edit config.yaml with your model paths (auto-seeded on first run)
@@ -78,7 +78,7 @@ async def _play_human_turn(board: chess.Board) -> bool:
 
 
 async def _play_ai_turn(chess_engine: object) -> None:
-    """Handle AI's turn via the entropi engine."""
+    """Handle AI's turn via the entropic engine."""
     import engine as eng
 
     print("AI is thinking (suggest → validate → execute)...")

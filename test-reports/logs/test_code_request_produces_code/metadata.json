@@ -2,10 +2,10 @@
   "test_name": "test_code_request_produces_code",
   "passed": true,
   "tier": "code",
-  "duration_s": 20.97,
+  "duration_s": 17.46,
   "target_s": 262.5,
   "prompt": "Write a Python function to check if a number is even",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-19T11:46:46"
+  "timestamp": "2026-02-19T14:17:16"
 }

@@ -1,0 +1,292 @@
+"""
+CLI entry point for Entropi.
+
+Handles command-line arguments and initializes the application.
+"""
+
+import asyncio
+import sys
+import warnings
+from pathlib import Path
+from typing import Any
+
+# Suppress common import warnings from dependencies
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pydantic")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="llama_cpp")
+warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*found in sys.modules.*")
+warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+
+import click  # noqa: E402
+
+from entropic import __version__  # noqa: E402
+from entropic.config.loader import reload_config  # noqa: E402
+from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E402
+
+
+@click.group(invoke_without_command=True)
+@click.version_option(version=__version__, prog_name="entropic")
+@click.option(
+    "--config",
+    "-c",
+    type=click.Path(exists=True, path_type=Path),
+    help="Path to configuration file",
+)
+@click.option(
+    "--model",
+    "-m",
+    type=str,
+    help="Model tier to use (e.g., thinking, normal, code)",
+)
+@click.option(
+    "--log-level",
+    "-l",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"]),
+    help="Logging level",
+)
+@click.option(
+    "--project",
+    "-p",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    help="Project directory",
+)
+@click.option(
+    "--headless",
+    is_flag=True,
+    help="Run without TUI (for testing/automation)",
+)
+@click.pass_context
+def main(
+    ctx: click.Context,
+    config: Path | None,
+    model: str | None,
+    log_level: str | None,
+    project: Path | None,
+    headless: bool,
+) -> None:
+    """
+    Entropi - Local AI Coding Assistant
+
+    Run without arguments to start interactive mode.
+    """
+    # Build CLI overrides
+    cli_overrides: dict[str, Any] = {}
+
+    if model:
+        cli_overrides["routing"] = {"default": model}
+
+    if log_level:
+        cli_overrides["log_level"] = log_level
+
+    # Load configuration
+    app_config = reload_config(cli_overrides)
+
+    # Determine project directory
+    project_dir = project or Path.cwd()
+
+    # Setup logging (writes to .entropic/session.log and session_model.log)
+    logger = setup_logging(app_config, project_dir=project_dir)
+    setup_model_logger(project_dir=project_dir)
+
+    # Store in context for subcommands
+    ctx.ensure_object(dict)
+    ctx.obj["config"] = app_config
+    ctx.obj["logger"] = logger
+    ctx.obj["project"] = project_dir
+
+    # Store headless flag for subcommands
+    ctx.obj["headless"] = headless
+
+    # If no subcommand, start interactive mode
+    if ctx.invoked_subcommand is None:
+        from entropic.app import Application
+
+        # Create presenter based on headless flag
+        presenter = None
+        if headless:
+            from entropic.ui.headless import HeadlessPresenter
+
+            presenter = HeadlessPresenter()
+
+        app = Application(
+            config=app_config,
+            project_dir=ctx.obj["project"],
+            presenter=presenter,
+        )
+        asyncio.run(app.run())
+
+
+@main.command()
+@click.pass_context
+def status(ctx: click.Context) -> None:
+    """Show system and model status."""
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    config = ctx.obj["config"]
+
+    table = Table(title="Entropi Status")
+    table.add_column("Component", style="cyan")
+    table.add_column("Status", style="green")
+
+    # Models (from dict-based tiers)
+    for name, tier_config in config.models.tiers.items():
+        table.add_row(f"{name.capitalize()} Model", str(tier_config.path))
+
+    if config.models.router:
+        table.add_row("Router Model", str(config.models.router.path))
+    else:
+        table.add_row("Router Model", "[dim]Not configured[/dim]")
+
+    # Thinking mode
+    table.add_row("Thinking Mode Default", str(config.thinking.enabled))
+
+    # Settings
+    table.add_row("Routing Enabled", str(config.routing.enabled))
+    table.add_row("Quality Enforcement", str(config.quality.enabled))
+    table.add_row("Log Level", config.log_level)
+
+    console.print(table)
+
+
+@main.command()
+@click.argument("message", required=False)
+@click.option("--no-stream", is_flag=True, help="Disable streaming output")
+@click.pass_context
+def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:
+    """
+    Send a single message and get a response.
+
+    If MESSAGE is not provided, reads from stdin.
+    """
+    if message is None:
+        if sys.stdin.isatty():
+            click.echo("Error: No message provided", err=True)
+            sys.exit(1)
+        message = sys.stdin.read().strip()
+
+    from entropic.app import Application
+
+    config = ctx.obj["config"]
+    app = Application(config=config, project_dir=ctx.obj["project"])
+
+    asyncio.run(app.single_turn(message, stream=not no_stream))
+
+
+@main.command()
+@click.pass_context
+def init(ctx: click.Context) -> None:
+    """Initialize Entropi in the current directory."""
+    project_dir = ctx.obj["project"]
+    entropic_dir = project_dir / ".entropic"
+
+    if entropic_dir.exists():
+        click.echo(f"Entropi already initialized in {project_dir}")
+        return
+
+    # Create directories
+    entropic_dir.mkdir(parents=True)
+    (entropic_dir / "commands").mkdir()
+
+    # Create default config
+    default_config = """# Entropi Project Configuration
+# See ~/.entropic/config.yaml for global settings
+
+quality:
+  enabled: true
+  rules:
+    max_cognitive_complexity: 15
+    require_type_hints: true
+
+permissions:
+  allow:
+    - "filesystem.*"
+    - "git.*"
+"""
+    (entropic_dir / "config.yaml").write_text(default_config)
+
+    # Create ENTROPIC.md in .entropic/
+    entropic_md = """# Project Context
+
+This file provides context to Entropi. Edit it to describe your project.
+
+## Overview
+
+<!-- Brief description of what this project does -->
+
+## Tech Stack
+
+<!-- Languages, frameworks, key dependencies -->
+
+## Structure
+
+<!-- Key directories and their purpose -->
+
+## Conventions
+
+<!-- Coding standards, naming conventions, patterns to follow -->
+"""
+    entropic_md_path = entropic_dir / "ENTROPIC.md"
+    if not entropic_md_path.exists():
+        entropic_md_path.write_text(entropic_md)
+
+    click.echo(f"Initialized Entropi in {project_dir}")
+    click.echo("Created:")
+    click.echo(f"  - {entropic_dir}/config.yaml")
+    click.echo(f"  - {entropic_dir}/commands/")
+    click.echo(f"  - {entropic_dir}/ENTROPIC.md")
+
+
+@main.command()
+@click.argument("model", type=str)
+@click.option(
+    "--output-dir",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=Path("~/models/gguf"),
+    help="Output directory for models",
+)
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
+def download(model: str, output_dir: Path, force: bool) -> None:
+    """Download Entropi models from HuggingFace."""
+    from entropic.cli_download import download_models
+
+    download_models(model, output_dir, force)
+
+
+@main.command("mcp-bridge")
+@click.option(
+    "--socket",
+    type=click.Path(path_type=Path),
+    help="Path to Unix socket (default: ~/.entropic/mcp.sock)",
+)
+@click.pass_context
+def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
+    """
+    Run as MCP bridge for Claude Code integration.
+
+    This bridges stdio (used by Claude Code) to Entropi's Unix socket.
+    Entropi must already be running for the bridge to connect.
+
+    Configure Claude Code's .mcp.json:
+
+    \b
+    {
+      "mcpServers": {
+        "entropic": {
+          "type": "stdio",
+          "command": "entropic",
+          "args": ["mcp-bridge"]
+        }
+      }
+    }
+    """
+    from entropic.mcp.bridge import main as bridge_main
+
+    socket_path = str(socket) if socket else None
+    exit_code = bridge_main(socket_path)
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()

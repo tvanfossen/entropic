@@ -3,9 +3,9 @@
 import json
 
 import pytest
-from entropi.config.schema import CompactionConfig
-from entropi.core.base import Message
-from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
+from entropic.config.schema import CompactionConfig
+from entropic.core.base import Message
+from entropic.core.compaction import CompactionManager, CompactionResult, TokenCounter
 
 
 class TestTokenCounter:

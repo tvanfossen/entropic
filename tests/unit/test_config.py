@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 import yaml
-from entropi.config.loader import ConfigLoader, deep_merge, load_yaml_config, validate_config
-from entropi.config.schema import (
+from entropic.config.loader import ConfigLoader, deep_merge, load_yaml_config, validate_config
+from entropic.config.schema import (
     CompactionConfig,
     EntropyConfig,
     LibraryConfig,
@@ -151,8 +151,8 @@ class TestEntropyConfig:
 
     def test_allowed_tools_valid_format(self) -> None:
         """Test allowed_tools accepts fully-qualified names."""
-        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropi.handoff"])
-        assert config.allowed_tools == ["server.tool", "entropi.handoff"]
+        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.handoff"])
+        assert config.allowed_tools == ["server.tool", "entropic.handoff"]
 
     def test_allowed_tools_none_default(self) -> None:
         """Test allowed_tools defaults to None (all tools visible)."""
@@ -335,9 +335,9 @@ class TestConfigLoader:
 
             # Create project config
             project_dir = tmpdir / "project"
-            entropi_dir = project_dir / ".entropi"
-            entropi_dir.mkdir(parents=True)
-            (entropi_dir / "config.yaml").write_text(yaml.dump({"routing": {"enabled": False}}))
+            entropic_dir = project_dir / ".entropic"
+            entropic_dir.mkdir(parents=True)
+            (entropic_dir / "config.yaml").write_text(yaml.dump({"routing": {"enabled": False}}))
 
             loader = ConfigLoader(
                 global_config_dir=global_dir,

@@ -1,9 +1,9 @@
 # Install from PyPI:
-#   pip install entropi pyyaml
+#   pip install entropic pyyaml
 #
 # Or from source (handles CUDA detection automatically):
-#   cd <entropi-root>
+#   cd <entropic-root>
 #   ./install.sh
 
-entropi
+entropic
 pyyaml

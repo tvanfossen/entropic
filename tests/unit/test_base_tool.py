@@ -4,9 +4,9 @@ import json
 from typing import Any
 
 import pytest
-from entropi.core.tool_validation import ToolValidationError
-from entropi.mcp.servers.base import BaseMCPServer, ServerResponse
-from entropi.mcp.tools import BaseTool, ToolRegistry
+from entropic.core.tool_validation import ToolValidationError
+from entropic.mcp.servers.base import BaseMCPServer, ServerResponse
+from entropic.mcp.tools import BaseTool, ToolRegistry
 from mcp.types import Tool
 
 # -- Fixtures ----------------------------------------------------------------

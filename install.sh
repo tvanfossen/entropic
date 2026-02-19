@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================================
-# Entropi Installation Script
+# Entropic Installation Script
 #
 # Usage:
 #   ./install.sh              # Core + inference (no TUI)
@@ -20,7 +20,7 @@ EXTRAS="${1:-app}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                    Installing Entropi                          ║"
+echo "║                    Installing Entropic                          ║"
 echo "╚════════════════════════════════════════════════════════════════╝"
 echo ""
 echo "Extras: $EXTRAS"
@@ -130,14 +130,14 @@ fi
 # --- Step 5: Install ---
 
 echo ""
-echo "=== Installing Entropi ==="
+echo "=== Installing Entropic ==="
 echo ""
 
-echo "Installing entropi[$EXTRAS]..."
+echo "Installing entropic[$EXTRAS]..."
 $PIP install -e "$SCRIPT_DIR[$EXTRAS]"
 
 echo ""
-echo -e "${GREEN}✓${NC} Entropi installed!"
+echo -e "${GREEN}✓${NC} Entropic installed!"
 
 # --- Step 6: Verify ---
 
@@ -145,11 +145,11 @@ echo ""
 echo "=== Verifying Installation ==="
 echo ""
 
-ENTROPI_BIN="$SCRIPT_DIR/.venv/bin/entropi"
-if [ -f "$ENTROPI_BIN" ]; then
-    echo -e "${GREEN}✓${NC} entropi command available: $ENTROPI_BIN"
+ENTROPIC_BIN="$SCRIPT_DIR/.venv/bin/entropic"
+if [ -f "$ENTROPIC_BIN" ]; then
+    echo -e "${GREEN}✓${NC} entropic command available: $ENTROPIC_BIN"
 else
-    echo -e "${YELLOW}⚠${NC} entropi command not found in venv"
+    echo -e "${YELLOW}⚠${NC} entropic command not found in venv"
 fi
 
 echo ""
@@ -160,11 +160,11 @@ echo ""
 echo "Next steps:"
 echo ""
 echo "  1. Ensure models are in ~/models/gguf/"
-echo "     (or configure model paths in .entropi/config.local.yaml)"
+echo "     (or configure model paths in .entropic/config.local.yaml)"
 echo ""
 echo "  2. Navigate to any project and run:"
 echo "     cd /path/to/your/project"
-echo "     $ENTROPI_BIN"
+echo "     $ENTROPIC_BIN"
 echo ""
-echo "  3. First run will auto-create .entropi/ config in your project"
+echo "  3. First run will auto-create .entropic/ config in your project"
 echo ""

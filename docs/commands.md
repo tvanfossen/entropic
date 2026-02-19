@@ -20,7 +20,7 @@
 | Command | Description |
 |---------|-------------|
 | `/clear` | Clear conversation history |
-| `/exit` | Exit Entropi |
+| `/exit` | Exit Entropic |
 | `/help` | Show available commands |
 
 ### Model Control
@@ -36,7 +36,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `/init` | Initialize Entropi in current directory |
+| `/init` | Initialize Entropic in current directory |
 
 ## Keyboard Shortcuts
 
@@ -50,57 +50,57 @@
 
 ## CLI Commands
 
-### entropi
+### entropic
 
 Start interactive mode:
 
 ```bash
-entropi
+entropic
 ```
 
-### entropi ask
+### entropic ask
 
 Send a single message:
 
 ```bash
-entropi ask "What is a linked list?"
+entropic ask "What is a linked list?"
 
 # Pipe from stdin
-cat question.txt | entropi ask
+cat question.txt | entropic ask
 
 # Disable streaming
-entropi ask --no-stream "Quick question"
+entropic ask --no-stream "Quick question"
 ```
 
-### entropi status
+### entropic status
 
 Show system status:
 
 ```bash
-entropi status
+entropic status
 ```
 
-### entropi init
+### entropic init
 
-Initialize Entropi in a project:
+Initialize Entropic in a project:
 
 ```bash
 cd /path/to/project
-entropi init
+entropic init
 ```
 
 Creates:
-- `.entropi/config.yaml` - Project configuration
-- `.entropi/commands/` - Custom commands directory
-- `ENTROPI.md` - Project context file
+- `.entropic/config.yaml` - Project configuration
+- `.entropic/commands/` - Custom commands directory
+- `ENTROPIC.md` - Project context file
 
-### entropi download
+### entropic download
 
 Download models:
 
 ```bash
-entropi download --all
-entropi download --model normal
+entropic download --all
+entropic download --model normal
 ```
 
 ### CLI Options

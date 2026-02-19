@@ -4,9 +4,9 @@ import logging
 from unittest.mock import patch
 
 import pytest
-from entropi.inference import llama_cpp
+from entropic.inference import llama_cpp
 
-LOGGER_NAME = "entropi.inference.llama_cpp"
+LOGGER_NAME = "entropic.inference.llama_cpp"
 
 
 class TestCheckGpuOffload:

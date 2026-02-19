@@ -1,9 +1,9 @@
 """Tests for inference engine."""
 
-from entropi.core.base import Message, ToolCall
-from entropi.inference.adapters.falcon import FalconAdapter
-from entropi.inference.adapters.qwen2 import Qwen2Adapter
-from entropi.inference.adapters.qwen3 import Qwen3Adapter
+from entropic.core.base import Message, ToolCall
+from entropic.inference.adapters.falcon import FalconAdapter
+from entropic.inference.adapters.qwen2 import Qwen2Adapter
+from entropic.inference.adapters.qwen3 import Qwen3Adapter
 
 
 class TestQwen3Adapter:

@@ -1,15 +1,15 @@
 # Hello World
 
-Two-tier entropi integration with automatic routing.
+Two-tier entropic integration with automatic routing.
 
-Demonstrates the core entropi value proposition: a tiny router model
+Demonstrates the core entropic value proposition: a tiny router model
 classifies each prompt and routes it to the right tier automatically.
 Simple prompts go to the fast 8B model, complex analysis goes to the
 14B thinking model. Only one main model is loaded in VRAM at a time.
 
 ## Setup
 
-1. Install entropi: `pip install entropi`
+1. Install entropic: `pip install entropic`
 2. Run once to seed config: `python main.py`
 3. Edit `.hello-world/config.local.yaml` — set model paths to your GGUFs
 4. Run again: `python main.py`
@@ -19,7 +19,7 @@ Simple prompts go to the fast 8B model, complex analysis goes to the
 - `ConfigLoader` with consumer overrides (own app dir, no global config)
 - `ModelOrchestrator` with two tiers + router model
 - Automatic prompt classification and tier routing
-- `AgentEngine` with default `ServerManager` (entropi internal tools only)
+- `AgentEngine` with default `ServerManager` (entropic internal tools only)
 - VRAM-managed model swapping (one main model at a time)
 - Streaming output via `EngineCallbacks`
 

@@ -1,13 +1,13 @@
-2026-02-19 11:47:16 Model output log started
-2026-02-19 11:47:16 
+2026-02-19 14:17:44 Model output log started
+2026-02-19 14:17:44 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-19 11:47:16 
+2026-02-19 14:17:44 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:47:16   [0] system (16795 chars):
+2026-02-19 14:17:44   [0] system (16801 chars):
 # Constitution
 
 ## Core Principles
@@ -53,9 +53,9 @@ You are the **general-purpose assistant**.
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
 
-# Entropi App Context
+# Entropic App Context
 
-You are **Entropi**, a local AI coding assistant running on the user's machine.
+You are **Entropic**, a local AI coding assistant running on the user's machine.
 
 ## Communication Style
 
@@ -548,7 +548,7 @@ Schema:
 }
 ```
 
-### entropi.todo_write
+### entropic.todo_write
 Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.
 
 Task states:
@@ -654,12 +654,12 @@ Schema:
 }
 ```
 
-### entropi.handoff
+### entropic.handoff
 Transfer the current task to a different model tier.
 
 ## When to Use
 
-Use `entropi.handoff` when a task would be better handled by a different tier's capabilities. Assess honestly whether your current tier is the right fit.
+Use `entropic.handoff` when a task would be better handled by a different tier's capabilities. Assess honestly whether your current tier is the right fit.
 
 ## Available Tiers
 
@@ -731,7 +731,7 @@ Schema:
 }
 ```
 
-### entropi.prune_context
+### entropic.prune_context
 Remove old tool results from context to free space. Use when context is filling up and you need room for more file reads or planning. Old tool results are replaced with brief stubs.
 
 Schema:
@@ -747,20 +747,20 @@ Schema:
 }
 ```
 
-2026-02-19 11:47:16   [1] user (19 chars):
+2026-02-19 14:17:44   [1] user (19 chars):
 Hello, how are you?
-2026-02-19 11:47:16 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 11:47:21 
+2026-02-19 14:17:44 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-19 14:17:49 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropi, the local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role as a coding helper. No need for any tool calls here since it's just a general inquiry. Just a straightforward reply.
+Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropic, a local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role. Maybe something like, "Hello! I'm your local AI coding assistant. How can I help you today?" That sounds good. It's brief, direct, and sets the right tone for a coding-related conversation.
 </think>
 
-Hello! I'm your local AI coding assistant, Entropi. How can I help you with your development tasks today?
+Hello! I'm your local AI coding assistant. How can I help you today?
 --- PARSED ---
-cleaned_content_len=105
+cleaned_content_len=68
 tool_calls=0: []
 ======================================================================

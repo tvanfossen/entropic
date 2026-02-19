@@ -4,10 +4,10 @@ import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from entropi.core.base import Message, ToolCall, ToolResult
-from entropi.core.context import ContextBuilder, TokenBudget
-from entropi.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
-from entropi.core.parser import ToolCallParser
+from entropic.core.base import Message, ToolCall, ToolResult
+from entropic.core.context import ContextBuilder, TokenBudget
+from entropic.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
+from entropic.core.parser import ToolCallParser
 
 
 class TestLoopConfig:
@@ -84,7 +84,7 @@ class TestDefaultServerManager:
 
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager)
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         assert isinstance(engine.config, EntropyConfig)
 
@@ -103,7 +103,7 @@ class TestDefaultServerManager:
 
         mock_manager = MagicMock()
         mock_manager.initialize = AsyncMock()
-        with patch("entropi.core.engine.ServerManager", return_value=mock_manager) as mock_cls:
+        with patch("entropic.core.engine.ServerManager", return_value=mock_manager) as mock_cls:
             manager = await engine._create_default_server_manager()
 
         mock_cls.assert_called_once_with(config, tier_names=["normal"])
@@ -238,7 +238,7 @@ class TestContextBuilder:
 
     def test_build_system_prompt_returns_base(self) -> None:
         """Test build_system_prompt returns the base prompt."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -248,7 +248,7 @@ class TestContextBuilder:
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -259,7 +259,7 @@ class TestContextBuilder:
 
     def test_build_system_prompt_with_project_context(self) -> None:
         """Test building system prompt appends project context."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -276,9 +276,9 @@ class _EngineTestBase:
 
     def _make_engine(self):
         """Create an Engine with mocked dependencies."""
-        from entropi.core.directives import DirectiveProcessor
+        from entropic.core.directives import DirectiveProcessor
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
         engine._on_state_change = None
@@ -402,18 +402,18 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
-            ToolCall(id="2", name="entropi.handoff", arguments={"target_tier": "code"}),
-            ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
+            ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="3", name="entropic.todo_write", arguments={"todos": []}),
         ]
 
-        from entropi.core.directives import StopProcessing
+        from entropic.core.directives import StopProcessing
 
         executed = []
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
             msg = Message(role="user", content=f"Result of {tool_call.name}")
-            directives = [StopProcessing()] if tool_call.name == "entropi.handoff" else []
+            directives = [StopProcessing()] if tool_call.name == "entropic.handoff" else []
             result = ToolResult(
                 call_id=tool_call.id,
                 name=tool_call.name,
@@ -435,7 +435,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["bash.execute", "entropi.handoff"]
+        assert executed == ["bash.execute", "entropic.handoff"]
         assert len(messages) == 2
 
     @pytest.mark.asyncio
@@ -448,7 +448,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         )
 
         calls = [
-            ToolCall(id="1", name="entropi.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="1", name="entropic.handoff", arguments={"target_tier": "invalid"}),
             ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
         ]
 
@@ -473,7 +473,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["entropi.handoff", "bash.execute"]
+        assert executed == ["entropic.handoff", "bash.execute"]
         assert len(messages) == 2
 
 
@@ -493,8 +493,8 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:
         """tier_change directive updates ctx.locked_tier."""
-        from entropi.core.base import ModelTier
-        from entropi.core.directives import DirectiveResult, TierChange
+        from entropic.core.base import ModelTier
+        from entropic.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
 
@@ -520,7 +520,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_invalid_tier(self) -> None:
         """tier_change with invalid tier is a no-op."""
-        from entropi.core.directives import DirectiveResult, TierChange
+        from entropic.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
         engine.orchestrator._find_tier = MagicMock(return_value=None)
@@ -540,8 +540,8 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_disallowed_route(self) -> None:
         """tier_change blocked when orchestrator rejects the route."""
-        from entropi.core.base import ModelTier
-        from entropi.core.directives import DirectiveResult, TierChange
+        from entropic.core.base import ModelTier
+        from entropic.core.directives import DirectiveResult, TierChange
 
         code = ModelTier("code", focus=["writing code"])
         thinking = ModelTier("thinking", focus=["complex analysis"])
@@ -571,10 +571,10 @@ class TestAutoPruneToolResults:
 
     def _make_engine_with_compaction(self):
         """Create engine with real compaction config for pruning tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig(tool_result_ttl=2)
@@ -643,10 +643,10 @@ class TestPruneDirective:
 
     def _make_engine_with_compaction(self):
         """Create engine with compaction manager for prune tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig()
@@ -656,7 +656,7 @@ class TestPruneDirective:
 
     def test_prune_directive_replaces_old_results(self) -> None:
         """prune_messages directive replaces old tool results with stubs."""
-        from entropi.core.directives import DirectiveResult
+        from entropic.core.directives import DirectiveResult
 
         engine = self._make_engine_with_compaction()
 
@@ -685,7 +685,7 @@ class TestPruneDirective:
             ],
         )
 
-        from entropi.core.directives import PruneMessages
+        from entropic.core.directives import PruneMessages
 
         result = DirectiveResult()
         engine._directive_prune_messages(ctx, PruneMessages(keep_recent=1), result)
@@ -701,10 +701,10 @@ class TestContextWarningInjection:
 
     def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
         """Create engine with compaction for warning tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig(warning_threshold_percent=threshold)

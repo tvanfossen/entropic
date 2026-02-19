@@ -2,7 +2,7 @@
 
 import json
 
-from entropi.core.base import ToolCall
+from entropic.core.base import ToolCall
 
 
 def test_empty_content_tool_call_format():

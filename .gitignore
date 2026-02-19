@@ -43,8 +43,8 @@ htmlcov/
 .mypy_cache/
 
 # Local config (don't commit)
-.entropi/config.local.yaml
-.entropi/*.local.*
+.entropic/config.local.yaml
+.entropic/*.local.*
 
 # Models (too large)
 *.gguf

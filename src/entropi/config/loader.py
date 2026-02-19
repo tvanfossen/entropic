@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from entropi.config.schema import EntropyConfig
 
@@ -421,6 +422,30 @@ def reload_config(cli_overrides: dict[str, Any] | None = None) -> EntropyConfig:
     _config = loader.load(cli_overrides)
     loader.ensure_directories(_config)
     return _config
+
+
+def validate_config(data: dict[str, Any] | Path) -> list[str]:
+    """Validate a config dict or YAML file without side effects.
+
+    Runs Pydantic validation and cross-validators (e.g. routing references)
+    but does NOT create directories, load global config, or modify any state.
+
+    Args:
+        data: Configuration dictionary or path to a YAML file.
+
+    Returns:
+        List of error messages. Empty list means valid.
+    """
+    if isinstance(data, Path):
+        data = load_yaml_config(data)
+
+    data = _migrate_config(data)
+
+    try:
+        EntropyConfig(**data)
+    except ValidationError as e:
+        return [err["msg"] for err in e.errors()]
+    return []
 
 
 def save_permission(pattern: str, allow: bool) -> None:

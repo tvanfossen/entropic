@@ -1,7 +1,7 @@
 """Tests for agent engine."""
 
 import threading
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from entropi.core.base import Message, ToolCall, ToolResult
@@ -59,6 +59,70 @@ class TestLoopContext:
         """Test empty message list by default."""
         ctx = LoopContext()
         assert ctx.messages == []
+
+
+class TestDefaultServerManager:
+    """Tests for optional server_manager in AgentEngine."""
+
+    def test_engine_accepts_none_server_manager(self) -> None:
+        """AgentEngine can be constructed without a server_manager."""
+        orchestrator = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.normal = MagicMock(context_length=16384)
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator)
+        assert engine.server_manager is None
+
+    def test_engine_accepts_none_config(self) -> None:
+        """AgentEngine defaults config to EntropyConfig() when None."""
+        orchestrator = MagicMock()
+        server_manager = MagicMock()
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, server_manager)
+        from entropi.config.schema import EntropyConfig
+
+        assert isinstance(engine.config, EntropyConfig)
+
+    @pytest.mark.asyncio
+    async def test_lazy_init_creates_server_manager(self) -> None:
+        """run() creates and initializes ServerManager when none provided."""
+        orchestrator = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.tiers = {"normal": MagicMock(context_length=16384)}
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, config=config)
+
+        mock_manager = MagicMock()
+        mock_manager.initialize = AsyncMock()
+        with patch("entropi.core.engine.ServerManager", return_value=mock_manager) as mock_cls:
+            manager = await engine._create_default_server_manager()
+
+        mock_cls.assert_called_once_with(config, tier_names=["normal"])
+        mock_manager.initialize.assert_awaited_once()
+        assert manager is mock_manager
+
+    def test_explicit_server_manager_preserved(self) -> None:
+        """Explicit server_manager is not replaced."""
+        orchestrator = MagicMock()
+        server_manager = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.normal = MagicMock(context_length=16384)
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, server_manager, config)
+        assert engine.server_manager is server_manager
 
 
 class TestToolCallParser:

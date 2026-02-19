@@ -22,11 +22,10 @@ note right: **CODE** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a simple Python function to check if a number is even:
+  Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(num: int) -&gt; bool:
-      """Check if an integer is even."""
+  def is_even(num):
       return num % 2 == 0
   ```
   
@@ -34,11 +33,12 @@ note right of Mdl
   ```python
   print(is_even(4))   # Output: True
   print(is_even(5))   # Output: False
-  print(is_even(0))   # Output: True
+  print(is_even(-2))  # Output: True
   ```
   
-  The function works for all integers, including negative numbers. The modulo 
-  operator `%` returns `0` for even numbers and non-zero for odd numbers.
+  The function works for integers and floats. For integer inputs, it correctly 
+  identifies even numbers (including negatives). For float inputs, it checks if 
+  the number is evenly divisible by 2.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

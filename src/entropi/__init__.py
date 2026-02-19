@@ -7,11 +7,12 @@ Public API for library consumers. Install extras for additional features:
   pip install entropi[voice]   # Voice interface
 """
 
-from entropi.config.loader import ConfigLoader
+from entropi.config.loader import ConfigLoader, save_permission, validate_config
 from entropi.config.schema import (
     CompactionConfig,
     EntropyConfig,
     GenerationConfig,
+    LibraryConfig,
     ModelConfig,
     ModelsConfig,
     RoutingConfig,
@@ -59,9 +60,12 @@ __all__ = [
     "setup_model_logger",
     # Config
     "ConfigLoader",
+    "save_permission",
+    "validate_config",
     "CompactionConfig",
     "EntropyConfig",
     "GenerationConfig",
+    "LibraryConfig",
     "ModelConfig",
     "ModelsConfig",
     "RoutingConfig",

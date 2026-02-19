@@ -324,6 +324,24 @@ class TestEntropiServerDynamicTiers:
         assert tier_d.tier == "validate"
 
 
+class TestSingleTierSkipsHandoff:
+    """Single-tier server omits handoff tool (handoff to yourself is meaningless)."""
+
+    def test_single_tier_no_handoff(self) -> None:
+        """Server with one tier does not register handoff."""
+        server = EntropiServer(tier_names=["normal"])
+        tool_names = [t.name for t in server.get_tools()]
+        assert "handoff" not in tool_names
+        assert "todo_write" in tool_names
+        assert "prune_context" in tool_names
+
+    def test_multi_tier_has_handoff(self) -> None:
+        """Server with multiple tiers registers handoff."""
+        server = EntropiServer(tier_names=["normal", "thinking"])
+        tool_names = [t.name for t in server.get_tools()]
+        assert "handoff" in tool_names
+
+
 class TestEntropiServerUnknownTool:
     """Unknown tool name returns error."""
 

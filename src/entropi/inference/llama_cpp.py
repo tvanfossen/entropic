@@ -40,6 +40,44 @@ from entropi.inference.backend import GenerationConfig
 
 logger = get_logger("inference.llama_cpp")
 
+_gpu_check_done = False
+
+
+def _check_gpu_offload() -> None:
+    """Warn once if llama-cpp-python was built without GPU support.
+
+    Checks llama_supports_gpu_offload() unconditionally — if the installed
+    build is CPU-only, logs a warning with install commands for GPU backends.
+    """
+    global _gpu_check_done  # noqa: PLW0603
+    if _gpu_check_done:
+        return
+    _gpu_check_done = True
+
+    try:
+        from llama_cpp import llama_supports_gpu_offload
+
+        if llama_supports_gpu_offload():
+            return
+    except ImportError:
+        pass
+
+    logger.warning(
+        "llama-cpp-python is installed WITHOUT GPU acceleration. "
+        "Models will run on CPU only, which is significantly slower.\n"
+        "\n"
+        "To install with CUDA (pre-built wheel):\n"
+        "  pip install llama-cpp-python --extra-index-url "
+        "https://abetlen.github.io/llama-cpp-python/whl/cu124\n"
+        "\n"
+        "To compile with CUDA from source:\n"
+        '  CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python '
+        "--force-reinstall --no-cache-dir\n"
+        "\n"
+        "For other backends (Metal, Vulkan, SYCL, etc.), see:\n"
+        "  https://github.com/abetlen/llama-cpp-python#installation"
+    )
+
 
 class LlamaCppBackend(ModelBackend):
     """llama-cpp-python model backend."""
@@ -74,6 +112,8 @@ class LlamaCppBackend(ModelBackend):
         """Load the model into memory."""
         if self._model is not None:
             return
+
+        _check_gpu_offload()
 
         async with self._lock:
             if self._model is not None:

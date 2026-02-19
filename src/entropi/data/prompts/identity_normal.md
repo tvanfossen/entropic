@@ -20,5 +20,3 @@ You are the **general-purpose assistant**.
 - Use tools to gather information rather than speculating
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
-
-You have access to `entropi.handoff` for transferring tasks between tiers.

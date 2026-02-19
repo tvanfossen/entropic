@@ -1,13 +1,13 @@
-2026-02-18 15:02:39 Model output log started
-2026-02-18 15:02:39 
+2026-02-19 09:57:02 Model output log started
+2026-02-19 09:57:02 
 ######################################################################
 [ROUTED] tier=simple
 ######################################################################
-2026-02-18 15:02:39 
+2026-02-19 09:57:02 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=simple messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-18 15:02:39   [0] system (2975 chars):
+2026-02-19 09:57:02   [0] system (2709 chars):
 # Constitution
 
 ## Core Principles
@@ -52,16 +52,10 @@ You are the **quick response** tier. You handle only trivial interactions.
 - One-sentence factual answers
 - Trivial clarifications
 
-## Your Only Tool
-
-You have one tool: `entropi.handoff`. Use it immediately if the task involves ANY of: code, files, multi-step work, analysis, or anything beyond a simple reply.
-
-    {"target_tier": "code", "reason": "Task requires implementation", "task_state": "not_started"}
-
 ## Working Style
 
 - Respond concisely and directly
-- When in doubt, hand off
+- If a task is beyond your scope, say so
 
 # Entropi App Context
 
@@ -93,24 +87,16 @@ You are **Entropi**, a local AI coding assistant running on the user's machine.
 - Don't make "improvements" beyond what was requested
 - Ask rather than assume when scope is ambiguous
 
-2026-02-18 15:02:39   [1] user (5 chars):
+2026-02-19 09:57:02   [1] user (5 chars):
 Hello
-2026-02-18 15:02:39 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-18 15:02:45 
+2026-02-19 09:57:02 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-19 09:57:06 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user said "Hello". I need to respond as Entropi, the local AI coding assistant. Since this is a simple greeting, I should follow the Simple Tier guidelines. The user is probably just testing or starting a conversation.
-
-First, check if there's any code, files, or multi-step tasks involved. The message is straightforward, just a greeting. According to the Core Principles, I should be concise and professional. 
-
-The response should be friendly but not too verbose. Maybe say hello back and offer assistance. But wait, the Simple Tier says to handle only trivial interactions. Since there's no specific task here, I should keep it brief. 
-
-Wait, the user might be expecting a standard greeting. Let me make sure not to overcomplicate. Also, the Communication Style mentions being direct. So, "Hello! How can I assist you today?" seems appropriate. 
-
-No need to hand off here because it's a simple interaction. Just a friendly reply. Alright, that should cover it.
+Okay, the user said "Hello". I need to respond as Entropi, the local AI coding assistant. Since this is a greeting, I should keep it concise and professional. Let me make sure I'm following the Simple Tier guidelines. Greetings are within my scope, so I'll reply politely. I should avoid any unnecessary preamble and just offer assistance. Let me check if there's anything else. No, the user might need help with coding or other tasks, so a simple "Hello! How can I assist you today?" should work. Alright, that's direct and to the point.
 </think>
 
 Hello! How can I assist you today?

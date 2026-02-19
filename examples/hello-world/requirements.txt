@@ -1,0 +1,12 @@
+# Install via the project setup script (handles CUDA detection automatically):
+#   cd <entropi-root>
+#   ./scripts/install.sh
+#
+# Or install manually:
+#   pip install entropi pyyaml
+#
+# For CUDA acceleration, set CMAKE_ARGS BEFORE installing:
+#   CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
+
+entropi
+pyyaml

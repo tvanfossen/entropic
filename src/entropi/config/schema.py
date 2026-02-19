@@ -427,8 +427,13 @@ def _validate_handoff_rules(rules: dict[str, list[str]], tier_names: set[str]) -
                 )
 
 
-class EntropyConfig(BaseSettings):
-    """Root configuration for Entropi."""
+class LibraryConfig(BaseSettings):
+    """Minimal configuration for embedding entropi as a library.
+
+    Contains only the fields needed for inference: models, routing,
+    generation, MCP, compaction, and prompts. TUI-specific fields
+    (quality, UI, storage, LSP, voice) live on ``EntropyConfig``.
+    """
 
     model_config = SettingsConfigDict(
         env_prefix="ENTROPI_",
@@ -436,40 +441,33 @@ class EntropyConfig(BaseSettings):
         extra="ignore",
     )
 
-    # Sub-configurations
+    # Core inference configuration
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
     thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
-    quality: QualityConfig = Field(default_factory=QualityConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
-    ui: UIConfig = Field(default_factory=UIConfig)
-    storage: StorageConfig = Field(default_factory=StorageConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
-    lsp: LSPConfig = Field(default_factory=LSPConfig)
-    voice: VoiceConfig = Field(default_factory=VoiceConfig)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    log_file: Path | None = None
 
     # Prompt handling
     use_bundled_prompts: bool = True  # False = raise on missing prompt, no bundled fallback
 
-    # Paths - use default_factory to ensure Path.home() is used
+    # Paths
     config_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi")
     prompts_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "prompts")
-    commands_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "commands")
 
-    @field_validator("config_dir", "prompts_dir", "commands_dir")
+    @field_validator("config_dir", "prompts_dir")
     @classmethod
-    def validate_paths(cls, v: Path) -> Path:
+    def validate_library_paths(cls, v: Path) -> Path:
         """Expand user paths if ~ is used."""
         return Path(v).expanduser()
 
     @model_validator(mode="after")
-    def validate_routing_references(self) -> "EntropyConfig":
+    def validate_routing_references(self) -> "LibraryConfig":
         """Cross-validate routing tier references against defined tiers."""
         tier_names = set(self.models.tiers)
         if not tier_names:
@@ -482,3 +480,32 @@ class EntropyConfig(BaseSettings):
         _validate_tier_map(self.routing.tier_map, tier_names)
         _validate_handoff_rules(self.routing.handoff_rules, tier_names)
         return self
+
+
+class EntropyConfig(LibraryConfig):
+    """Full configuration for Entropi TUI application.
+
+    Extends ``LibraryConfig`` with TUI-specific fields: quality
+    enforcement, UI theming, conversation storage, LSP integration,
+    and voice interface.
+
+    Library consumers should use ``LibraryConfig`` for a cleaner type
+    that excludes TUI concerns.
+    """
+
+    # TUI-specific sub-configurations
+    quality: QualityConfig = Field(default_factory=QualityConfig)
+    ui: UIConfig = Field(default_factory=UIConfig)
+    storage: StorageConfig = Field(default_factory=StorageConfig)
+    lsp: LSPConfig = Field(default_factory=LSPConfig)
+    voice: VoiceConfig = Field(default_factory=VoiceConfig)
+
+    # TUI-specific fields
+    log_file: Path | None = None
+    commands_dir: Path = Field(default_factory=lambda: Path.home() / ".entropi" / "commands")
+
+    @field_validator("commands_dir")
+    @classmethod
+    def validate_tui_paths(cls, v: Path) -> Path:
+        """Expand user paths if ~ is used."""
+        return Path(v).expanduser()

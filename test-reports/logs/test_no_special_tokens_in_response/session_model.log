@@ -1,13 +1,13 @@
-2026-02-18 15:02:29 Model output log started
-2026-02-18 15:02:29 
+2026-02-19 09:56:52 Model output log started
+2026-02-19 09:56:52 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-18 15:02:29 
+2026-02-19 09:56:52 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-18 15:02:29   [0] system (16871 chars):
+2026-02-19 09:56:52   [0] system (16795 chars):
 # Constitution
 
 ## Core Principles
@@ -52,8 +52,6 @@ You are the **general-purpose assistant**.
 - Use tools to gather information rather than speculating
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
-
-You have access to `entropi.handoff` for transferring tasks between tiers.
 
 # Entropi App Context
 
@@ -749,20 +747,20 @@ Schema:
 }
 ```
 
-2026-02-18 15:02:29   [1] user (19 chars):
+2026-02-19 09:56:52   [1] user (19 chars):
 Hello, how are you?
-2026-02-18 15:02:29 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-18 15:02:35 
+2026-02-19 09:56:52 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-19 09:56:58 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropi, the local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my capabilities. No need for any tool calls here since it's a general inquiry. Just a straightforward reply.
+Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropi, the local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role as a coding helper. No need for any tool calls here since it's just a general inquiry. Just a straightforward reply.
 </think>
 
-Hello! I'm your local AI coding assistant, Entropi. How can I help you with your projects today?
+Hello! I'm your local AI coding assistant, Entropi. How can I help you with your development tasks today?
 --- PARSED ---
-cleaned_content_len=96
+cleaned_content_len=105
 tool_calls=0: []
 ======================================================================

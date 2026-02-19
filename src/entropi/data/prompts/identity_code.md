@@ -26,5 +26,3 @@ You are the **implementation specialist**. You have full tool access.
 ## Error Recovery
 
 - If edit_file fails twice with same error, try write_file instead
-
-You have access to `entropi.handoff` for transferring tasks between tiers.

@@ -172,8 +172,8 @@ class AgentEngine:
     def __init__(
         self,
         orchestrator: ModelOrchestrator,
-        server_manager: ServerManager,
-        config: EntropyConfig,
+        server_manager: ServerManager | None = None,
+        config: EntropyConfig | None = None,
         loop_config: LoopConfig | None = None,
     ) -> None:
         """
@@ -181,16 +181,17 @@ class AgentEngine:
 
         Args:
             orchestrator: Model orchestrator
-            server_manager: MCP server manager
-            config: Application configuration
+            server_manager: MCP server manager. If ``None``, a default
+                manager with built-in servers is created on first ``run()``.
+            config: Application configuration. Defaults to ``EntropyConfig()``.
             loop_config: Loop-specific configuration
         """
         self.orchestrator = orchestrator
-        self.server_manager = server_manager
-        self.config = config
+        self.server_manager: ServerManager | None = server_manager
+        self.config = config or EntropyConfig()
         self.loop_config = loop_config or LoopConfig()
 
-        self._context_builder = ContextBuilder(config)
+        self._context_builder = ContextBuilder(self.config)
         # Use threading.Event for thread-safe cross-loop signaling
         # (Textual runs on a different event loop than the generation worker)
         self._interrupt_event = threading.Event()
@@ -213,7 +214,7 @@ class AgentEngine:
         max_tokens = self._get_max_context_tokens()
         self._token_counter = TokenCounter(max_tokens)
         self._compaction_manager = CompactionManager(
-            config=config.compaction,
+            config=self.config.compaction,
             token_counter=self._token_counter,
             orchestrator=orchestrator,
         )
@@ -430,6 +431,14 @@ class AgentEngine:
         self._on_routing_complete = callbacks.on_routing_complete
         self._error_sanitizer = callbacks.error_sanitizer
 
+    async def _create_default_server_manager(self) -> ServerManager:
+        """Create and initialize a default ServerManager from config."""
+        tier_names = list(self.config.models.tiers.keys()) or None
+        manager = ServerManager(self.config, tier_names=tier_names)
+        await manager.initialize()
+        logger.info("Created default ServerManager from config")
+        return manager
+
     async def run(
         self,
         user_message: str,
@@ -451,6 +460,10 @@ class AgentEngine:
         Yields:
             Messages generated during the loop
         """
+        # Lazy-init default ServerManager if none was provided
+        if self.server_manager is None:
+            self.server_manager = await self._create_default_server_manager()
+
         # Initialize context
         ctx = LoopContext()
         ctx.metrics.start_time = time.time()

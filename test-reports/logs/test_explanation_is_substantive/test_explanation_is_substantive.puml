@@ -22,39 +22,31 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion in programming is a technique where a function calls itself to solve a
-  problem by breaking it down into smaller, similar subproblems. It relies on two 
-  key components:
+  Recursion in programming occurs when a function calls itself to solve a problem 
+  by breaking it into smaller, similar subproblems. It requires two key 
+  components:
   
-  1. **Base Case**: A condition that stops the recursion (prevents infinite 
-  loops).
-  2. **Recursive Step**: The function calls itself with modified parameters to 
-  tackle a smaller instance of the problem.
+  1. **Base Case**: A condition to stop recursion (prevents infinite loops)
+  2. **Recursive Case**: The function calls itself with modified parameters
   
-  ### Example: Factorial Calculation
+  Example: Calculating factorial of n
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
-          return n * factorial(n - 1)
+      else:       # Recursive case
+          return n * factorial(n-1)
   ```
   
-  ### Key Concepts:
-  - **Call Stack**: Each recursive call adds a frame to the stack until the base 
-  case is reached.
-  - **Stack Overflow Risk**: Deep recursion can exhaust memory (e.g., 
-  `factorial(10000)` would crash).
-  - **Tail Recursion**: Some languages optimize recursive calls that occur as the 
-  final operation (not universally supported).
+  Key characteristics:
+  - Uses call stack to manage intermediate states
+  - Can lead to stack overflow if base case isn't properly handled
+  - Often more elegant than iterative solutions for problems with natural 
+  recursive structure (e.g., tree traversals, divide-and-conquer algorithms)
   
-  ### When to Use It:
-  - Problems with natural recursive structures (e.g., tree traversals, 
-  divide-and-conquer algorithms).
-  - Avoid for large inputs unless optimized.
-  
-  Let me know if you'd like to explore specific examples or compare recursion vs. 
-  iteration!
+  Compare with iteration: Some problems are easier to solve recursively, while 
+  others are better suited for loops. Modern compilers often optimize tail 
+  recursion.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

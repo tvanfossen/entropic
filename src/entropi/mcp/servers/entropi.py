@@ -177,13 +177,16 @@ class EntropiServer(BaseMCPServer):
         Args:
             tier_names: Custom tier names for the handoff tool schema.
                 When ``None``, uses the default tiers from ``handoff.json``.
-                Consumer apps pass their own (e.g. ``["suggest", "validate", "execute"]``).
+                Single-tier lists skip handoff registration (handoff to
+                yourself is meaningless). Consumer apps pass their own
+                (e.g. ``["suggest", "validate", "execute"]``).
         """
         super().__init__("entropi")
         self._todo_list = TodoList()
         self._tier_names = tier_names
         self.register_tool(TodoWriteTool(self._todo_list))
-        self.register_tool(HandoffTool(self._todo_list, tier_names))
+        if not tier_names or len(tier_names) > 1:
+            self.register_tool(HandoffTool(self._todo_list, tier_names))
         self.register_tool(PruneContextTool())
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:

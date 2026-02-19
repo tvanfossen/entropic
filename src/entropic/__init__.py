@@ -2,9 +2,9 @@
 Entropi - Local AI inference engine with multi-tier model orchestration.
 
 Public API for library consumers. Install extras for additional features:
-  pip install entropic          # Core inference engine
-  pip install entropic[tui]     # Terminal UI application
-  pip install entropic[voice]   # Voice interface
+  pip install entropic-engine          # Core inference engine
+  pip install entropic-engine[tui]     # Terminal UI application
+  pip install entropic-engine[voice]   # Voice interface
 """
 
 from entropic.config.loader import ConfigLoader, save_permission, validate_config
@@ -38,7 +38,7 @@ from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_d
 from entropic.mcp.tools import BaseTool, ToolRegistry
 from entropic.prompts import TierIdentity, load_tier_identity
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 __author__ = "Tristan VanFossen"
 
 __all__ = [

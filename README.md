@@ -28,10 +28,10 @@ any UI. The bundled TUI is one consumer; headless automation, CI/CD agents, and
 custom applications are equally supported.
 
 ```
-pip install entropic          # Core library (inference, engine, tools)
-pip install entropic[app]     # TUI application (includes tui + storage deps)
-pip install entropic[voice]   # Voice interface (PersonaPlex)
-pip install entropic[all]     # Everything
+pip install entropic-engine          # Core library (inference, engine, tools)
+pip install entropic-engine[app]     # TUI application (includes tui + storage deps)
+pip install entropic-engine[voice]   # Voice interface (PersonaPlex)
+pip install entropic-engine[all]     # Everything
 ```
 
 ```

@@ -1,6 +1,6 @@
 [project]
-name = "entropic"
-version = "0.1.0"
+name = "entropic-engine"
+version = "1.0.0"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -35,11 +35,11 @@ tui = [
     "pylspclient>=0.0.7",
 ]
 app = [
-    "entropic[tui]",
+    "entropic-engine[tui]",
     "aiosqlite>=0.19.0",
     "httpx>=0.25.0",
 ]
-all = ["entropic[app,voice]"]
+all = ["entropic-engine[app,voice]"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",

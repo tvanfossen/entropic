@@ -335,7 +335,7 @@ class PersonaPlexController:
             await self._load_personaplex_impl()
         except ImportError as e:
             raise ImportError(
-                f"Missing dependency for voice mode: {e}. Install with: pip install entropic[voice]"
+                f"Missing dependency for voice mode: {e}. Install with: pip install entropic-engine[voice]"
             ) from e
 
     async def _load_personaplex_impl(self) -> None:

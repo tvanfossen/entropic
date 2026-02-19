@@ -6,8 +6,8 @@ Reference implementation: `examples/pychess/`.
 ## Install
 
 ```bash
-pip install entropic          # Core inference engine
-pip install entropic[tui]     # Terminal UI (not needed for library use)
+pip install entropic-engine          # Core inference engine
+pip install entropic-engine[tui]     # Terminal UI (not needed for library use)
 ```
 
 ## Project Structure

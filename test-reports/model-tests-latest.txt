@@ -1,27 +1,27 @@
 === Model Test Report ===
-Date: 2026-02-19 14:19:20
+Date: 2026-02-19 14:45:27
 
-Results: 22 passed, 0 failed (108.8s)
+Results: 22 passed, 0 failed (103.4s)
 
   [PASS] test_code_request_produces_code [code] (17.5s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (15.9s)
+  [PASS] test_code_response_has_python_syntax [code] (16.2s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (9.8s)
+  [PASS] test_response_ends_cleanly [normal] (10.4s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (5.4s)
+  [PASS] test_no_special_tokens_in_response [normal] (6.3s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (7.2s)
+  [PASS] test_generation_starts_and_ends [simple] (6.6s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (15.5s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (16.0s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (15.9s)
+  [PASS] test_explanation_is_substantive [normal] (16.5s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (7.6s)
+  [PASS] test_hello_produces_response [simple] (6.9s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (4.5s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (4.6s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
   [PASS] test_hi_routes_to_simple (0.1s)
@@ -31,12 +31,12 @@ Results: 22 passed, 0 failed (108.8s)
   [PASS] test_add_feature_routes_to_code (0.1s)
   [PASS] test_explain_routes_to_reasoning (0.1s)
   [PASS] test_question_routes_to_reasoning (0.1s)
-  [PASS] test_complex_analysis_routes_to_thinking (8.3s)
+  [PASS] test_complex_analysis_routes_to_thinking (1.4s)
   [PASS] test_classification_under_500ms (0.1s)
   [PASS] test_multiple_classifications_consistent (0.3s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 22 passed in 146.23s (0:02:26) ========================
+======================== 22 passed in 138.03s (0:02:18) ========================
 
 Result: PASSED

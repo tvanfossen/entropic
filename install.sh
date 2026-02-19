@@ -133,7 +133,7 @@ echo ""
 echo "=== Installing Entropic ==="
 echo ""
 
-echo "Installing entropic[$EXTRAS]..."
+echo "Installing entropic-engine[$EXTRAS]..."
 $PIP install -e "$SCRIPT_DIR[$EXTRAS]"
 
 echo ""

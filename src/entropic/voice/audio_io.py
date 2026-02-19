@@ -171,7 +171,7 @@ class AudioIO:
             except ImportError as e:
                 raise ImportError(
                     "sounddevice is required for voice mode. "
-                    "Install with: pip install entropic[voice]"
+                    "Install with: pip install entropic-engine[voice]"
                 ) from e
         return self._sd
 

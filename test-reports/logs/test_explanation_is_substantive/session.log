@@ -1,36 +1,36 @@
-2026-02-19 14:18:20 [INFO] entropic: Session started - logging to /tmp/tmpfe63z1rk/.entropic/session.log
-2026-02-19 14:18:20 [INFO] entropic: Log level: INFO
-2026-02-19 14:18:20 [INFO] entropic.app: Initializing Entropi...
-2026-02-19 14:18:20 [INFO] entropic.mcp.manager: Initializing MCP server manager
-2026-02-19 14:18:20 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-19 14:18:20 [INFO] entropic.lsp.base: python LSP started
-2026-02-19 14:18:20 [INFO] entropic.lsp.base: Starting c LSP: clangd
-2026-02-19 14:18:20 [INFO] entropic.lsp.base: c LSP started
-2026-02-19 14:18:20 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
-2026-02-19 14:18:20 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
-2026-02-19 14:18:20 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-19 14:18:20 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
-2026-02-19 14:18:20 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
-2026-02-19 14:18:20 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-19 14:18:20 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
-2026-02-19 14:18:20 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
-2026-02-19 14:18:20 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
-2026-02-19 14:18:20 [INFO] entropic.core.commands: Discovered 16 commands
-2026-02-19 14:18:20 [INFO] entropic.app: Entropi initialized
-2026-02-19 14:18:20 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
-2026-02-19 14:18:20 [INFO] entropic.core.engine: 
+2026-02-19 14:44:35 [INFO] entropic: Session started - logging to /tmp/tmpp5srev5l/.entropic/session.log
+2026-02-19 14:44:35 [INFO] entropic: Log level: INFO
+2026-02-19 14:44:35 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:44:35 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-19 14:44:35 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 14:44:36 [INFO] entropic.lsp.base: python LSP started
+2026-02-19 14:44:36 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-19 14:44:36 [INFO] entropic.lsp.base: c LSP started
+2026-02-19 14:44:36 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 14:44:36 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-19 14:44:36 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 14:44:36 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 14:44:36 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 14:44:36 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 14:44:36 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-19 14:44:36 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-19 14:44:36 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-19 14:44:36 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-19 14:44:36 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:44:36 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
+2026-02-19 14:44:36 [INFO] entropic.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 What is recursion in programming?
 ============================================================
-2026-02-19 14:18:20 [INFO] entropic.core.engine: State: PLANNING
-2026-02-19 14:18:20 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-19 14:18:20 [INFO] entropic.core.engine: State: EXECUTING
-2026-02-19 14:18:20 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 77ms
-2026-02-19 14:18:20 [INFO] entropic.core.engine: System prompt size: ~4200 tokens
-2026-02-19 14:18:20 [INFO] entropic.ui.headless: Routing: — → NORMAL | none | 77ms
-2026-02-19 14:18:36 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (1010 chars):
+2026-02-19 14:44:36 [INFO] entropic.core.engine: State: PLANNING
+2026-02-19 14:44:36 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-19 14:44:36 [INFO] entropic.core.engine: State: EXECUTING
+2026-02-19 14:44:36 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 76ms
+2026-02-19 14:44:36 [INFO] entropic.core.engine: System prompt size: ~4200 tokens
+2026-02-19 14:44:36 [INFO] entropic.ui.headless: Routing: — → NORMAL | none | 76ms
+2026-02-19 14:44:52 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (1010 chars):
 Okay, the user is asking about recursion in programming. Let me start by defining it simply. Recursion is when a function calls itself. But I should make sure to explain why that's useful.
 
 Hmm, maybe give an example. Like calculating factorial or Fibonacci numbers. Those are common examples. Wait, but I should also mention the base case to prevent infinite loops. Oh right, every recursive function needs a base case to stop the recursion.
@@ -38,7 +38,7 @@ Hmm, maybe give an example. Like calculating factorial or Fibonacci numbers. Tho
 I should explain the components: base case, recursive step. Maybe mention how each call breaks the problem into smaller subproblems. Also, stack overflow is a risk if not handled properly. Oh, and tail recursion optimization, but maybe that's more advanced. The user might not need that unless they ask for details.
 
 Wait, the user might be a beginner, so keep it clear and concise. Avoid jargon where possible. Make sure to highlight the key points without getting too technical. Let me structure the answer with a definition, example, and important considerations.
-2026-02-19 14:18:36 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2092 | cleaned_len=1063 | tool_calls=0
-2026-02-19 14:18:36 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-19 14:18:36 [INFO] entropic.core.engine: State: COMPLETE
-2026-02-19 14:18:36 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 15941ms
+2026-02-19 14:44:52 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2092 | cleaned_len=1063 | tool_calls=0
+2026-02-19 14:44:52 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-19 14:44:52 [INFO] entropic.core.engine: State: COMPLETE
+2026-02-19 14:44:52 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 16457ms

@@ -9,7 +9,7 @@ Simple prompts go to the fast 8B model, complex analysis goes to the
 
 ## Setup
 
-1. Install entropic: `pip install entropic`
+1. Install entropic: `pip install entropic-engine`
 2. Run once to seed config: `python main.py`
 3. Edit `.hello-world/config.local.yaml` — set model paths to your GGUFs
 4. Run again: `python main.py`

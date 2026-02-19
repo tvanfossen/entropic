@@ -2,10 +2,10 @@
   "test_name": "test_no_special_tokens_in_response",
   "passed": true,
   "tier": "normal",
-  "duration_s": 5.44,
+  "duration_s": 6.32,
   "target_s": 37.5,
   "prompt": "Hello, how are you?",
   "tool_count": 0,
   "is_routing_test": false,
-  "timestamp": "2026-02-19T14:17:49"
+  "timestamp": "2026-02-19T14:44:06"
 }

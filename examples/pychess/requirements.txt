@@ -1,5 +1,7 @@
 # Core dependencies
-entropic
+# Install from source: pip install -e ../../
+# Or from PyPI: pip install entropic-engine
+entropic-engine
 python-chess
 pyyaml
 

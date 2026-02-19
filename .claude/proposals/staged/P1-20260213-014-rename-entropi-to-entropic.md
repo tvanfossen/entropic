@@ -9,9 +9,9 @@ component: project-wide
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-13
-updated: 2026-02-13
+updated: 2026-02-19
 tags: [rename, refactor, branding]
-completed_date: null
+completed_date: 2026-02-19
 scoped_files:
   - src/entropi/
   - tests/

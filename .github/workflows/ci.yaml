@@ -21,7 +21,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install llama-cpp-python
-          .venv/bin/pip install -e ".[dev]"
+          .venv/bin/pip install -e ".[app,dev]"
 
       - name: Run pre-commit (skip model tests)
         uses: pre-commit/action@v3.0.1

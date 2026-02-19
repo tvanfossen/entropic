@@ -4,9 +4,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from entropi.core.base import Message
-from entropi.storage.backend import SQLiteStorage
-from entropi.storage.models import ConversationRecord, MessageRecord
+from entropic.core.base import Message
+from entropic.storage.backend import SQLiteStorage
+from entropic.storage.models import ConversationRecord, MessageRecord
 
 
 class TestConversationRecord:

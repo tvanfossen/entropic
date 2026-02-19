@@ -4,7 +4,7 @@
 
 ## Architecture Overview
 
-Entropi uses a multi-model architecture with task-specialized routing:
+Entropic uses a multi-model architecture with task-specialized routing:
 
 ```
 User Input

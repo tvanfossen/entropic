@@ -1,8 +1,8 @@
 """Test error handling through headless Application."""
 
 import pytest
-from entropi.app import Application
-from entropi.ui.headless import HeadlessPresenter
+from entropic.app import Application
+from entropic.ui.headless import HeadlessPresenter
 
 
 @pytest.mark.model

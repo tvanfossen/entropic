@@ -5,8 +5,14 @@ from pathlib import Path
 
 import pytest
 import yaml
-from entropi.config.loader import ConfigLoader, deep_merge, load_yaml_config
-from entropi.config.schema import CompactionConfig, EntropyConfig, ModelConfig, TierConfig
+from entropic.config.loader import ConfigLoader, deep_merge, load_yaml_config, validate_config
+from entropic.config.schema import (
+    CompactionConfig,
+    EntropyConfig,
+    LibraryConfig,
+    ModelConfig,
+    TierConfig,
+)
 
 
 class TestDeepMerge:
@@ -73,6 +79,46 @@ class TestLoadYamlConfig:
             assert result == {}
 
 
+class TestLibraryConfig:
+    """Tests for LibraryConfig (library-only subset)."""
+
+    def test_default_construction(self) -> None:
+        """LibraryConfig constructs with sensible defaults."""
+        config = LibraryConfig()
+        assert config.log_level == "INFO"
+        assert config.routing.enabled is True
+        assert config.use_bundled_prompts is True
+        assert config.models.default == "normal"
+
+    def test_excludes_tui_fields(self) -> None:
+        """LibraryConfig does not expose TUI-specific fields."""
+        config = LibraryConfig()
+        assert not hasattr(config, "quality")
+        assert not hasattr(config, "ui")
+        assert not hasattr(config, "storage")
+        assert not hasattr(config, "lsp")
+        assert not hasattr(config, "voice")
+        assert not hasattr(config, "commands_dir")
+
+    def test_entropy_config_inherits(self) -> None:
+        """EntropyConfig is a subclass of LibraryConfig."""
+        assert issubclass(EntropyConfig, LibraryConfig)
+        config = EntropyConfig()
+        assert isinstance(config, LibraryConfig)
+        # Has library fields
+        assert config.log_level == "INFO"
+        # Also has TUI fields
+        assert config.quality.enabled is True
+
+    def test_routing_validator_runs(self) -> None:
+        """Cross-validation runs on LibraryConfig, not just EntropyConfig."""
+        with pytest.raises(ValueError, match="fallback_tier"):
+            LibraryConfig(
+                models={"tiers": {"fast": {"path": "/m"}}, "default": "fast"},
+                routing={"enabled": False, "fallback_tier": "nonexistent"},
+            )
+
+
 class TestEntropyConfig:
     """Tests for EntropyConfig schema."""
 
@@ -102,6 +148,21 @@ class TestEntropyConfig:
         """Test temperature validation."""
         with pytest.raises(ValueError):
             ModelConfig(path=Path("/test"), temperature=3.0)  # Above maximum of 2.0
+
+    def test_allowed_tools_valid_format(self) -> None:
+        """Test allowed_tools accepts fully-qualified names."""
+        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.handoff"])
+        assert config.allowed_tools == ["server.tool", "entropic.handoff"]
+
+    def test_allowed_tools_none_default(self) -> None:
+        """Test allowed_tools defaults to None (all tools visible)."""
+        config = ModelConfig(path=Path("/test"))
+        assert config.allowed_tools is None
+
+    def test_allowed_tools_rejects_unqualified(self) -> None:
+        """Test allowed_tools rejects entries without server.tool format."""
+        with pytest.raises(ValueError, match="allowed_tools entry 'badname'"):
+            ModelConfig(path=Path("/test"), allowed_tools=["badname"])
 
     def test_default_routing_config(self) -> None:
         """Test default routing configuration."""
@@ -274,9 +335,9 @@ class TestConfigLoader:
 
             # Create project config
             project_dir = tmpdir / "project"
-            entropi_dir = project_dir / ".entropi"
-            entropi_dir.mkdir(parents=True)
-            (entropi_dir / "config.yaml").write_text(yaml.dump({"routing": {"enabled": False}}))
+            entropic_dir = project_dir / ".entropic"
+            entropic_dir.mkdir(parents=True)
+            (entropic_dir / "config.yaml").write_text(yaml.dump({"routing": {"enabled": False}}))
 
             loader = ConfigLoader(
                 global_config_dir=global_dir,
@@ -312,3 +373,60 @@ class TestConfigLoader:
 
             # Only config_dir is created by ensure_directories
             assert (tmpdir / "config").exists()
+
+
+class TestValidateConfig:
+    """Tests for standalone validate_config() function."""
+
+    def test_valid_config_returns_empty(self) -> None:
+        """Valid config dict returns no errors."""
+        data = {
+            "models": {"tiers": {"normal": _tier()}, "default": "normal"},
+            "routing": {"enabled": False, "fallback_tier": "normal"},
+        }
+        assert validate_config(data) == []
+
+    def test_invalid_config_returns_errors(self) -> None:
+        """Invalid config returns list of error messages."""
+        data = {"log_level": "BOGUS"}
+        errors = validate_config(data)
+        assert len(errors) > 0
+        assert any("DEBUG" in e or "INFO" in e for e in errors)
+
+    def test_cross_validator_caught(self) -> None:
+        """Cross-validators (e.g. routing references) produce errors."""
+        data = {
+            "models": {"tiers": {"normal": _tier()}, "default": "bogus_tier"},
+            "routing": {"enabled": False, "fallback_tier": "normal"},
+        }
+        errors = validate_config(data)
+        assert len(errors) > 0
+
+    def test_yaml_file_path(self, tmp_path: Path) -> None:
+        """Accepts a Path to a YAML file."""
+        config_file = tmp_path / "test.yaml"
+        config_file.write_text(
+            yaml.dump(
+                {
+                    "models": {
+                        "tiers": {"normal": {"path": "/m.gguf"}},
+                        "default": "normal",
+                    },
+                    "routing": {"enabled": False, "fallback_tier": "normal"},
+                }
+            )
+        )
+        assert validate_config(config_file) == []
+
+    def test_missing_yaml_file(self, tmp_path: Path) -> None:
+        """Non-existent YAML file returns empty errors (empty dict is valid defaults)."""
+        missing = tmp_path / "nope.yaml"
+        assert validate_config(missing) == []
+
+    def test_legacy_format_migrated(self) -> None:
+        """Legacy config format is migrated before validation."""
+        data = {
+            "models": {"primary": _tier(), "default": "primary"},
+            "routing": {"enabled": False, "fallback_model": "primary"},
+        }
+        assert validate_config(data) == []

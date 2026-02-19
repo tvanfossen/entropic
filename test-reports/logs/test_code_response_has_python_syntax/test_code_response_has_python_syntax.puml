@@ -22,7 +22,7 @@ note right: **CODE** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a Python function that returns the sum of a list:
+  Here's a simple Python function to return the sum of a list:
   
   ```python
   def sum_list(numbers):
@@ -30,13 +30,15 @@ note right of Mdl
   ```
   
   This implementation:
-  - Takes a list of numbers as input
-  - Uses Python's built-in `sum()` function for efficiency
-  - Handles empty lists by returning 0 (since sum of empty iterable is 0)
-  - Works with both integers and floating-point numbers
+  - Handles empty lists by returning 0 (since `sum([])` returns 0)
+  - Works with both integers and floats
+  - Has O(n) time complexity for the summation
   
-  Would you like me to implement this manually without using the built-in `sum()` 
-  function instead?
+  Example usage:
+  ```python
+  print(sum_list([1, 2, 3]))  # Output: 6
+  print(sum_list([]))        # Output: 0
+  ```
 end note
 note over T #palegreen
   **PASSED** (< 262s)

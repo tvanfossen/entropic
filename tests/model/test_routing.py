@@ -9,8 +9,8 @@ Skip with: pytest -m "not model"
 """
 
 import pytest
-from entropi.core.base import Message
-from entropi.inference.orchestrator import ModelOrchestrator
+from entropic.core.base import Message
+from entropic.inference.orchestrator import ModelOrchestrator
 
 
 @pytest.mark.model

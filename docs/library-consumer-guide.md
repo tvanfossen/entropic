@@ -1,13 +1,13 @@
 # Library Consumer Guide
 
-How to embed entropi as an inference engine in your own application.
+How to embed entropic as an inference engine in your own application.
 Reference implementation: `examples/pychess/`.
 
 ## Install
 
 ```bash
-pip install entropi          # Core inference engine
-pip install entropi[tui]     # Terminal UI (not needed for library use)
+pip install entropic          # Core inference engine
+pip install entropic[tui]     # Terminal UI (not needed for library use)
 ```
 
 ## Project Structure
@@ -38,7 +38,7 @@ ConfigLoader seeds this to `.myapp/config.local.yaml` on first run.
 
 ```python
 from pathlib import Path
-from entropi import ConfigLoader
+from entropic import ConfigLoader
 
 PROMPTS_DIR = Path(__file__).parent / "prompts"
 
@@ -46,11 +46,11 @@ loader = ConfigLoader(
     project_root=Path("."),
     app_dir_name=".myapp",                          # Your app's config dir
     default_config_path=Path("data/default_config.yaml"),
-    global_config_dir=None,                          # Skip ~/.entropi/
+    global_config_dir=None,                          # Skip ~/.entropic/
 )
 config = loader.load(cli_overrides={
     "prompts_dir": str(PROMPTS_DIR),
-    "use_bundled_prompts": False,                    # Don't fall back to entropi defaults
+    "use_bundled_prompts": False,                    # Don't fall back to entropic defaults
 })
 ```
 
@@ -76,7 +76,7 @@ config = loader.load(cli_overrides={
 ### 2. Logging
 
 ```python
-from entropi import setup_logging, setup_model_logger
+from entropic import setup_logging, setup_model_logger
 
 setup_logging(config, project_dir=PROJECT_ROOT, app_dir_name=".myapp")
 setup_model_logger(project_dir=PROJECT_ROOT, app_dir_name=".myapp")
@@ -134,7 +134,7 @@ Create JSON files at `data/tools/{server_name}/{tool_name}.json`:
 Subclass `BaseTool` for each tool, `BaseMCPServer` for the server:
 
 ```python
-from entropi import BaseMCPServer, BaseTool
+from entropic import BaseMCPServer, BaseTool
 
 class GetBoardTool(BaseTool):
     def __init__(self, board):
@@ -161,7 +161,7 @@ automatically. No dict-dispatch boilerplate needed.
 ### 6. Orchestrator
 
 ```python
-from entropi import ModelOrchestrator
+from entropic import ModelOrchestrator
 
 orchestrator = ModelOrchestrator(config)
 await orchestrator.initialize()
@@ -176,7 +176,7 @@ The orchestrator:
 ### 7. Server Manager
 
 ```python
-from entropi import ServerManager
+from entropic import ServerManager
 
 my_server = MyServer(board)
 server_manager = ServerManager(config, tier_names=orchestrator.tier_names)
@@ -184,12 +184,12 @@ server_manager.register_server(my_server)   # BEFORE initialize()
 await server_manager.initialize()
 ```
 
-`tier_names` is passed so the `entropi.handoff` tool knows which tiers exist.
+`tier_names` is passed so the `entropic.handoff` tool knows which tiers exist.
 
 ### 8. Agent Engine
 
 ```python
-from entropi import AgentEngine, EngineCallbacks, LoopConfig
+from entropic import AgentEngine, EngineCallbacks, LoopConfig
 
 loop_config = LoopConfig(auto_approve_tools=True)
 engine = AgentEngine(orchestrator, server_manager, config, loop_config)
@@ -299,10 +299,82 @@ tiers:
   suggest:
     allowed_tools:
       - chess.get_board       # server_name.tool_name
-      - entropi.handoff       # built-in handoff tool
+      - entropic.handoff       # built-in handoff tool
 ```
 
 `None` (default) means all tools are visible to the tier.
+
+## Security Considerations
+
+### Tool Approval
+
+`LoopConfig(auto_approve_tools=True)` bypasses ALL permission prompts. The model
+can execute any registered tool without user confirmation. Only use this when all
+registered tools are safe for unsupervised execution.
+
+### Built-in Servers
+
+By default, entropic enables built-in servers for bash, filesystem, and git. For
+library consumers, disable servers you don't need:
+
+```yaml
+mcp:
+  enable_bash: false
+  enable_filesystem: false
+  enable_git: false
+  enable_diagnostics: false
+```
+
+The bash server uses a blacklist (not allowlist) — it blocks known-dangerous
+commands but cannot anticipate all risks. The filesystem server restricts
+operations to the project root but can read any file within it.
+
+### Per-Tier Tool Restrictions
+
+Use `allowed_tools` to limit which tools each tier can see. This follows the
+principle of least privilege — a tier that only needs to read data shouldn't
+have access to write or execute tools:
+
+```yaml
+tiers:
+  reader:
+    allowed_tools:
+      - myserver.get_data
+      - entropic.handoff
+  writer:
+    allowed_tools:
+      - myserver.get_data
+      - myserver.write_data
+      - entropic.handoff
+```
+
+### Error Sanitization
+
+Tool errors (`str(exception)`) flow to the model unfiltered by default. If your
+tools interact with sensitive data (credentials, PII, internal paths), use the
+`error_sanitizer` callback to filter error text before the model sees it:
+
+```python
+def redact_secrets(error: str) -> str:
+    """Strip sensitive patterns from error messages."""
+    import re
+    error = re.sub(r"password=\S+", "password=***", error)
+    error = re.sub(r"/internal/\S+", "/***", error)
+    return error
+
+callbacks = EngineCallbacks(
+    error_sanitizer=redact_secrets,
+)
+```
+
+The raw error is always logged unfiltered for diagnostics — only the model-facing
+message is sanitized.
+
+### Config File Permissions
+
+`config.local.yaml` is NOT gitignored by default. Saved permission patterns
+(allow/deny lists from "Always Allow" prompts) persist to this file. Review
+before committing to version control.
 
 ## Error Handling
 
@@ -332,7 +404,7 @@ If `orchestrator.initialize()` succeeds but later steps fail, you must still cal
 
 ## Public API Surface
 
-Exported from `entropi`:
+Exported from `entropic`:
 
 | Symbol | Category | Purpose |
 |--------|----------|---------|

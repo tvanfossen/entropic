@@ -1,8 +1,8 @@
 """Test code generation responses through headless Application."""
 
 import pytest
-from entropi.app import Application
-from entropi.ui.headless import HeadlessPresenter
+from entropic.app import Application
+from entropic.ui.headless import HeadlessPresenter
 
 from .conftest import with_timeout
 

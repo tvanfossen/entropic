@@ -1,7 +1,7 @@
 [project]
-name = "entropi"
+name = "entropic"
 version = "0.1.0"
-description = "Local AI coding assistant powered by Qwen models"
+description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
@@ -24,8 +24,6 @@ dependencies = [
     "mcp>=1.0.0",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
-    "aiosqlite>=0.19.0",
-    "httpx>=0.25.0",
     "pyyaml>=6.0.0",
 ]
 
@@ -36,8 +34,12 @@ tui = [
     "click>=8.0.0",
     "pylspclient>=0.0.7",
 ]
-app = ["entropi[tui]"]
-all = ["entropi[app,voice]"]
+app = [
+    "entropic[tui]",
+    "aiosqlite>=0.19.0",
+    "httpx>=0.25.0",
+]
+all = ["entropic[app,voice]"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -67,8 +69,8 @@ voice = [
 ]
 
 [project.scripts]
-entropi = "entropi.cli:main"
-entropi-voice-server = "entropi.voice.server:main"
+entropic = "entropic.cli:main"
+entropic-voice-server = "entropic.voice.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -78,7 +80,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-entropi = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json", "ui/*.tcss"]
+entropic = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json", "ui/*.tcss"]
 
 [tool.black]
 line-length = 100
@@ -105,15 +107,15 @@ disallow_untyped_calls = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["entropi.cli", "entropi.cli_download"]
+module = ["entropic.cli", "entropic.cli_download"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = "entropi.mcp.servers.base"
+module = "entropic.mcp.servers.base"
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = "entropi.ui.tui"
+module = "entropic.ui.tui"
 disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]

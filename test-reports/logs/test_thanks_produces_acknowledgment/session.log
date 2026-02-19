@@ -1,42 +1,40 @@
-2026-02-18 12:30:07 [INFO] entropi: Session started - logging to /tmp/tmp_hrxb0kn/.entropi/session.log
-2026-02-18 12:30:07 [INFO] entropi: Log level: INFO
-2026-02-18 12:30:07 [INFO] entropi.app: Initializing Entropi...
-2026-02-18 12:30:07 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-18 12:30:07 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-18 12:30:08 [INFO] entropi.lsp.base: python LSP started
-2026-02-18 12:30:08 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-18 12:30:08 [INFO] entropi.lsp.base: c LSP started
-2026-02-18 12:30:08 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-18 12:30:08 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-18 12:30:08 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-18 12:30:08 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-18 12:30:08 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-18 12:30:08 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-18 12:30:08 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-18 12:30:08 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-18 12:30:08 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-18 12:30:08 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-18 12:30:08 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-18 12:30:08 [INFO] entropi.app: Entropi initialized
-2026-02-18 12:30:08 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
-2026-02-18 12:30:08 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.edit_file', 'filesystem.write_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
-2026-02-18 12:30:08 [INFO] entropi.core.engine: 
+2026-02-19 14:18:47 [INFO] entropic: Session started - logging to /tmp/tmp9iteocty/.entropic/session.log
+2026-02-19 14:18:47 [INFO] entropic: Log level: INFO
+2026-02-19 14:18:47 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:18:47 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-19 14:18:47 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 14:18:47 [INFO] entropic.lsp.base: python LSP started
+2026-02-19 14:18:47 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-19 14:18:47 [INFO] entropic.lsp.base: c LSP started
+2026-02-19 14:18:47 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 14:18:47 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-19 14:18:47 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 14:18:47 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 14:18:47 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 14:18:47 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 14:18:47 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-19 14:18:47 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-19 14:18:47 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-19 14:18:47 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-19 14:18:47 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:18:47 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
+2026-02-19 14:18:47 [INFO] entropic.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 Thanks!
 ============================================================
-2026-02-18 12:30:08 [INFO] entropi.core.engine: State: PLANNING
-2026-02-18 12:30:08 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-18 12:30:08 [INFO] entropi.core.engine: State: EXECUTING
-2026-02-18 12:30:08 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-18 12:30:08 [INFO] entropi.inference.orchestrator: [ROUTER] simple | reused | 86ms
-2026-02-18 12:30:08 [INFO] entropi.core.engine: System prompt size: ~743 tokens
-2026-02-18 12:30:08 [INFO] entropi.ui.headless: Routing: SIMPLE → SIMPLE | reused | 86ms
-2026-02-18 12:30:08 [INFO] entropi.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
-2026-02-18 12:30:11 [INFO] entropi.adapter.qwen3: [THINKING] (441 chars):
-Okay, the user said "Thanks!" so I need to respond appropriately. Since they're using the quick response tier, I should keep it simple and friendly. Let me make sure there's no hidden request here. They might just be acknowledging my previous help. The best approach is to acknowledge their thanks and offer further assistance if needed. No need to hand off since it's a straightforward thank you. Keep the response concise and professional.
-2026-02-18 12:30:11 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=516 | cleaned_len=56 | tool_calls=0
-2026-02-18 12:30:11 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-18 12:30:11 [INFO] entropi.core.engine: State: COMPLETE
-2026-02-18 12:30:11 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 2709ms
+2026-02-19 14:18:47 [INFO] entropic.core.engine: State: PLANNING
+2026-02-19 14:18:47 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-19 14:18:47 [INFO] entropic.core.engine: State: EXECUTING
+2026-02-19 14:18:47 [INFO] entropic.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-19 14:18:47 [INFO] entropic.inference.orchestrator: [ROUTER] simple | reused | 66ms
+2026-02-19 14:18:47 [INFO] entropic.core.engine: System prompt size: ~4212 tokens
+2026-02-19 14:18:47 [INFO] entropic.ui.headless: Routing: SIMPLE → SIMPLE | reused | 66ms
+2026-02-19 14:18:47 [INFO] entropic.inference.orchestrator: Reusing normal model for simple (same file: Qwen3-8B-Q4_K_M.gguf)
+2026-02-19 14:18:52 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (279 chars):
+Okay, the user said "Thanks!" so I need to respond appropriately. Since they're using the simple tier, my response should be concise and friendly. I'll acknowledge their thanks and offer further assistance. Let me make sure not to overcomplicate it. Just a straightforward reply.
+2026-02-19 14:18:52 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=359 | cleaned_len=61 | tool_calls=0
+2026-02-19 14:18:52 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-19 14:18:52 [INFO] entropic.core.engine: State: COMPLETE
+2026-02-19 14:18:52 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 4546ms

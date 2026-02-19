@@ -4,32 +4,32 @@ import logging
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from entropi.core.base import Message, ToolCall
-from entropi.core.engine import LoopContext, LoopMetrics
-from entropi.core.logging import get_model_logger, setup_model_logger
-from entropi.core.todos import TodoItem, TodoList, TodoStatus
+from entropic.core.base import Message, ToolCall
+from entropic.core.engine import LoopContext, LoopMetrics
+from entropic.core.logging import get_model_logger, setup_model_logger
+from entropic.core.todos import TodoItem, TodoList, TodoStatus
 
 
 class TestSetupModelLogger:
     """Tests for setup_model_logger."""
 
     def test_creates_logger_with_correct_name(self, tmp_path: Path) -> None:
-        """Model logger uses entropi.model_output namespace."""
+        """Model logger uses entropic.model_output namespace."""
         logger = setup_model_logger(project_dir=tmp_path)
-        assert logger.name == "entropi.model_output"
+        assert logger.name == "entropic.model_output"
 
     def test_writes_to_session_model_log(self, tmp_path: Path) -> None:
-        """Model logger writes to .entropi/session_model.log."""
+        """Model logger writes to .entropic/session_model.log."""
         logger = setup_model_logger(project_dir=tmp_path)
         logger.info("test message")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         assert log_path.exists()
         content = log_path.read_text()
         assert "test message" in content
 
     def test_does_not_propagate_to_parent(self, tmp_path: Path) -> None:
-        """Model logger does not propagate to entropi parent logger."""
+        """Model logger does not propagate to entropic parent logger."""
         logger = setup_model_logger(project_dir=tmp_path)
         assert logger.propagate is False
 
@@ -42,7 +42,7 @@ class TestSetupModelLogger:
         logger = setup_model_logger(project_dir=tmp_path)
         logger.info("second session")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "first session" not in content
         assert "second session" in content
@@ -52,7 +52,7 @@ class TestSetupModelLogger:
         logger = setup_model_logger(project_dir=tmp_path)
         logger.info("raw output here")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         # Should NOT contain log level markers
         assert "[INFO]" not in content
@@ -62,15 +62,15 @@ class TestSetupModelLogger:
         """get_model_logger returns the same logger instance."""
         setup_model_logger(project_dir=tmp_path)
         logger = get_model_logger()
-        assert logger.name == "entropi.model_output"
+        assert logger.name == "entropic.model_output"
 
-    def test_creates_entropi_directory(self, tmp_path: Path) -> None:
-        """Creates .entropi/ directory if it doesn't exist."""
+    def test_creates_entropic_directory(self, tmp_path: Path) -> None:
+        """Creates .entropic/ directory if it doesn't exist."""
         project = tmp_path / "newproject"
         project.mkdir()
         setup_model_logger(project_dir=project)
 
-        assert (project / ".entropi").is_dir()
+        assert (project / ".entropic").is_dir()
 
 
 class TestEngineModelLogging:
@@ -78,7 +78,7 @@ class TestEngineModelLogging:
 
     def test_log_model_output_writes_to_model_logger(self, tmp_path: Path) -> None:
         """_log_model_output writes raw and parsed output to model logger."""
-        from entropi.core.engine import AgentEngine
+        from entropic.core.engine import AgentEngine
 
         setup_model_logger(project_dir=tmp_path)
 
@@ -98,7 +98,7 @@ class TestEngineModelLogging:
             finish_reason="stop",
         )
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "[TURN 3]" in content
         assert "finish_reason=stop" in content
@@ -109,7 +109,7 @@ class TestEngineModelLogging:
 
     def test_log_model_output_includes_tool_call_names(self, tmp_path: Path) -> None:
         """_log_model_output lists tool call names in parsed section."""
-        from entropi.core.engine import AgentEngine
+        from entropic.core.engine import AgentEngine
 
         setup_model_logger(project_dir=tmp_path)
 
@@ -129,7 +129,7 @@ class TestEngineModelLogging:
             finish_reason="stop",
         )
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "tool_calls=2" in content
         assert "filesystem.read_file" in content
@@ -139,7 +139,7 @@ class TestEngineModelLogging:
         self, tmp_path: Path, caplog: MagicMock
     ) -> None:
         """Session logger gets summary, not full raw output."""
-        from entropi.core.engine import AgentEngine
+        from entropic.core.engine import AgentEngine
 
         setup_model_logger(project_dir=tmp_path)
 
@@ -148,7 +148,7 @@ class TestEngineModelLogging:
 
         raw = "A very long raw output " * 100
 
-        with caplog.at_level(logging.INFO, logger="entropi.core.engine"):
+        with caplog.at_level(logging.INFO, logger="entropic.core.engine"):
             engine._log_model_output(
                 ctx,
                 raw_content=raw,
@@ -172,7 +172,7 @@ class TestAssembledPromptLogging:
 
     def test_logs_all_messages_untruncated(self, tmp_path: Path) -> None:
         """Full message content appears in model log, no truncation."""
-        from entropi.core.engine import AgentEngine
+        from entropic.core.engine import AgentEngine
 
         setup_model_logger(project_dir=tmp_path)
 
@@ -191,7 +191,7 @@ class TestAssembledPromptLogging:
 
         engine._log_assembled_prompt(ctx, "routed")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "[PROMPT] event=routed tier=thinking messages=2" in content
         # Full system prompt must be present — no truncation
@@ -200,7 +200,7 @@ class TestAssembledPromptLogging:
 
     def test_includes_roles_and_lengths(self, tmp_path: Path) -> None:
         """Role and char count header appears per message."""
-        from entropi.core.engine import AgentEngine
+        from entropic.core.engine import AgentEngine
 
         setup_model_logger(project_dir=tmp_path)
 
@@ -218,7 +218,7 @@ class TestAssembledPromptLogging:
 
         engine._log_assembled_prompt(ctx, "routed")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "[0] system (10 chars):" in content
         assert "[1] user (8 chars):" in content
@@ -229,9 +229,9 @@ class TestAssembledPromptLogging:
         setup_model_logger(project_dir=tmp_path)
 
         ml = get_model_logger()
-        ml.info(f"\n{'#' * 70}\n" f"[ROUTED] tier=simple\n" f"{'#' * 70}")
+        ml.info(f"\n{'#' * 70}\n[ROUTED] tier=simple\n{'#' * 70}")
 
-        log_path = tmp_path / ".entropi" / "session_model.log"
+        log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
         assert "[ROUTED] tier=simple" in content
 
@@ -267,8 +267,8 @@ class TestTodoCompactionPersistence:
 
     def test_context_anchor_created(self) -> None:
         """Context anchor is appended with correct metadata."""
-        from entropi.core.directives import ContextAnchor, DirectiveResult
-        from entropi.core.engine import AgentEngine
+        from entropic.core.directives import ContextAnchor, DirectiveResult
+        from entropic.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
         engine._context_anchors = {}
@@ -303,8 +303,8 @@ class TestTodoCompactionPersistence:
 
     def test_context_anchor_replaces_existing(self) -> None:
         """Updating anchor removes old one and appends new at end."""
-        from entropi.core.directives import ContextAnchor, DirectiveResult
-        from entropi.core.engine import AgentEngine
+        from entropic.core.directives import ContextAnchor, DirectiveResult
+        from entropic.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
         engine._context_anchors = {}
@@ -330,8 +330,8 @@ class TestTodoCompactionPersistence:
 
     def test_empty_anchor_removes_existing(self) -> None:
         """Empty content removes the anchor from context."""
-        from entropi.core.directives import ContextAnchor, DirectiveResult
-        from entropi.core.engine import AgentEngine
+        from entropic.core.directives import ContextAnchor, DirectiveResult
+        from entropic.core.engine import AgentEngine
 
         engine = AgentEngine.__new__(AgentEngine)
         engine._context_anchors = {}

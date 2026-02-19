@@ -1,6 +1,6 @@
-# Entropi Test Plan
+# Entropic Test Plan
 
-> Manual testing checklist for Entropi features
+> Manual testing checklist for Entropic features
 
 **Last Updated:** 2026-01-08
 
@@ -11,8 +11,8 @@
 Before running these tests, complete the following:
 
 1. [ ] **Build and install** - Run `./install.sh` or `pip install -e .`
-2. [ ] **Configure models** - Ensure `~/.entropi/config.yaml` has valid model paths
-3. [ ] **Test basic startup** - Run `entropi status` to verify configuration
+2. [ ] **Configure models** - Ensure `~/.entropic/config.yaml` has valid model paths
+3. [ ] **Test basic startup** - Run `entropic status` to verify configuration
 4. [ ] **Run all tests below** - Mark each as Pass/Fail
 5. [ ] **Document issues** - Note any failures in the Issues Found section
 
@@ -30,12 +30,12 @@ The following features are still in planning/development:
 ## Prerequisites
 
 ```bash
-cd /home/tvanfossen/Projects/entropi
+cd /home/tvanfossen/Projects/entropic
 source .venv/bin/activate
 
-# Verify entropi works
-entropi --version
-entropi status
+# Verify entropic works
+entropic --version
+entropic status
 ```
 
 ---
@@ -59,7 +59,7 @@ entropi status
 ### Test: Version Command
 
 ```bash
-entropi --version
+entropic --version
 ```
 
 **Expected:** Shows version number
@@ -71,7 +71,7 @@ entropi --version
 ### Test: Status Command
 
 ```bash
-entropi status
+entropic status
 ```
 
 **Expected:** Shows model configuration and status
@@ -83,7 +83,7 @@ entropi status
 ### Test: Single Query
 
 ```bash
-entropi ask "What is 2+2?"
+entropic ask "What is 2+2?"
 ```
 
 **Expected:** Returns answer (should be "4")
@@ -97,7 +97,7 @@ entropi ask "What is 2+2?"
 ### Test: List Directory
 
 ```bash
-entropi ask "List all files in the src/entropi directory"
+entropic ask "List all files in the src/entropic directory"
 ```
 
 **Expected:** Uses `filesystem.list_directory` tool, returns file listing
@@ -109,10 +109,10 @@ entropi ask "List all files in the src/entropi directory"
 ### Test: Read File
 
 ```bash
-entropi ask "Read the pyproject.toml file and tell me the project name"
+entropic ask "Read the pyproject.toml file and tell me the project name"
 ```
 
-**Expected:** Uses `filesystem.read_file` tool, reports project name as "entropi"
+**Expected:** Uses `filesystem.read_file` tool, reports project name as "entropic"
 
 **Result:** [ ] Pass  [ ] Fail
 
@@ -121,7 +121,7 @@ entropi ask "Read the pyproject.toml file and tell me the project name"
 ### Test: Search Files
 
 ```bash
-entropi ask "Find all Python files in src/ that contain the word 'async'"
+entropic ask "Find all Python files in src/ that contain the word 'async'"
 ```
 
 **Expected:** Uses `filesystem.search_files` tool, returns matching files
@@ -135,7 +135,7 @@ entropi ask "Find all Python files in src/ that contain the word 'async'"
 ### Test: List Sessions
 
 ```bash
-entropi
+entropic
 ```
 
 **In interactive mode:**
@@ -234,8 +234,8 @@ What's my secret code?
 
 ### Test: Session Persistence
 
-1. Exit entropi (Ctrl+C or /exit)
-2. Restart: `entropi`
+1. Exit entropic (Ctrl+C or /exit)
+2. Restart: `entropic`
 3. Run `/sessions`
 
 **Expected:** Previously created sessions still exist
@@ -248,9 +248,9 @@ What's my secret code?
 
 ### Test: Long Conversation Compaction
 
-1. Start entropi: `entropi`
+1. Start entropic: `entropic`
 2. Ask 5-6 substantial questions that generate long responses
-3. Observe logs in `.entropi/session.log`
+3. Observe logs in `.entropic/session.log`
 
 **Expected:**
 - After ~4000 tokens, compaction triggers
@@ -278,9 +278,9 @@ What's my secret code?
 ### Test: Write New File
 
 ```bash
-rm -f /tmp/entropi_new_file.txt
-entropi ask "Create a new file at /tmp/entropi_new_file.txt with the content 'Hello from Entropi'"
-cat /tmp/entropi_new_file.txt
+rm -f /tmp/entropic_new_file.txt
+entropic ask "Create a new file at /tmp/entropic_new_file.txt with the content 'Hello from Entropic'"
+cat /tmp/entropic_new_file.txt
 ```
 
 **Expected:** File created successfully (new files don't require prior read)
@@ -292,14 +292,14 @@ cat /tmp/entropi_new_file.txt
 ### Test: Edit Existing File
 
 ```bash
-entropi ask "Change 'Hello' to 'Greetings' in /tmp/entropi_new_file.txt"
-cat /tmp/entropi_new_file.txt
+entropic ask "Change 'Hello' to 'Greetings' in /tmp/entropic_new_file.txt"
+cat /tmp/entropic_new_file.txt
 ```
 
 **Expected:**
 - Model reads file first
 - Then edits with string replacement
-- File contains "Greetings from Entropi"
+- File contains "Greetings from Entropic"
 
 **Result:** [ ] Pass  [ ] Fail
 
@@ -309,7 +309,7 @@ cat /tmp/entropi_new_file.txt
 
 ```bash
 echo "foo bar foo baz foo" > /tmp/multi_match.txt
-entropi ask "Replace all occurrences of 'foo' with 'qux' in /tmp/multi_match.txt"
+entropic ask "Replace all occurrences of 'foo' with 'qux' in /tmp/multi_match.txt"
 cat /tmp/multi_match.txt
 ```
 
@@ -323,7 +323,7 @@ cat /tmp/multi_match.txt
 
 ```bash
 echo "Original content" > /tmp/protected_file.txt
-entropi ask "Overwrite /tmp/protected_file.txt with 'New content' without reading it first"
+entropic ask "Overwrite /tmp/protected_file.txt with 'New content' without reading it first"
 cat /tmp/protected_file.txt
 ```
 
@@ -342,7 +342,7 @@ cat /tmp/protected_file.txt
 In interactive mode:
 
 ```
-List all Python files in src/entropi/mcp/, then read the first one and summarize what it does
+List all Python files in src/entropic/mcp/, then read the first one and summarize what it does
 ```
 
 **Expected:**
@@ -372,7 +372,7 @@ I want to understand how the config system works. Find the config files, read th
 ## Cleanup
 
 ```bash
-rm -f /tmp/entropi_new_file.txt /tmp/multi_match.txt /tmp/protected_file.txt
+rm -f /tmp/entropic_new_file.txt /tmp/multi_match.txt /tmp/protected_file.txt
 ```
 
 ---

@@ -15,8 +15,8 @@ You are the **move validator**. Be extremely brief.
 
 1. Read the suggested move from conversation context
 2. Quick check: is it legal? Does it hang a piece? Any obvious blunder?
-3. If sound → `entropi.handoff` to `execute` with the confirmed UCI move
-4. If flawed → `entropi.handoff` to `suggest` with a one-line correction
+3. If sound → `entropic.handoff` to `execute` with the confirmed UCI move
+4. If flawed → `entropic.handoff` to `suggest` with a one-line correction
 
 ## Rules
 

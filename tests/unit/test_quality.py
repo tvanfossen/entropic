@@ -1,12 +1,12 @@
 """Tests for quality enforcement."""
 
 import pytest
-from entropi.config.schema import QualityConfig, QualityRulesConfig
-from entropi.quality.analyzers.complexity import CognitiveComplexityAnalyzer
-from entropi.quality.analyzers.docstrings import DocstringAnalyzer
-from entropi.quality.analyzers.structure import StructureAnalyzer
-from entropi.quality.analyzers.typing import TypeHintAnalyzer
-from entropi.quality.enforcer import QualityEnforcer, QualityReport
+from entropic.config.schema import QualityConfig, QualityRulesConfig
+from entropic.quality.analyzers.complexity import CognitiveComplexityAnalyzer
+from entropic.quality.analyzers.docstrings import DocstringAnalyzer
+from entropic.quality.analyzers.structure import StructureAnalyzer
+from entropic.quality.analyzers.typing import TypeHintAnalyzer
+from entropic.quality.enforcer import QualityEnforcer, QualityReport
 
 
 class TestCognitiveComplexity:
@@ -444,7 +444,7 @@ class TestQualityReport:
 
     def test_add_result(self) -> None:
         """Test adding analysis results."""
-        from entropi.quality.analyzers.base import AnalysisResult
+        from entropic.quality.analyzers.base import AnalysisResult
 
         report = QualityReport(passed=True)
         result = AnalysisResult()

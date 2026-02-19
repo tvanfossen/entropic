@@ -1,6 +1,6 @@
-"""Integration test validating entropi's public library API.
+"""Integration test validating entropic's public library API.
 
-This test imports ONLY from the `entropi` top-level package — never from
+This test imports ONLY from the `entropic` top-level package — never from
 internal modules. It proves the library surface works for consumers who
 define custom tiers, construct config programmatically, and inject custom
 backends via BackendFactory.
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 # === Public API imports only ===
-from entropi import (
+from entropic import (
     BackendFactory,
     EntropyConfig,
     GenerationResult,
@@ -86,7 +86,7 @@ def mock_backend_factory(config, tier_name: str):
 
 
 class TestPublicAPIImports:
-    """Verify all expected types are importable from entropi."""
+    """Verify all expected types are importable from entropic."""
 
     def test_core_types_available(self) -> None:
         """Core types are importable from top-level package."""

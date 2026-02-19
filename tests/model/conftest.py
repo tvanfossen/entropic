@@ -19,12 +19,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from entropi.app import Application
-from entropi.config.schema import EntropyConfig
-from entropi.core.base import Message
-from entropi.core.logging import setup_logging, setup_model_logger
-from entropi.inference.orchestrator import ModelOrchestrator
-from entropi.ui.headless import HeadlessPresenter
+from entropic.app import Application
+from entropic.config.schema import EntropyConfig
+from entropic.core.base import Message
+from entropic.core.logging import setup_logging, setup_model_logger
+from entropic.inference.orchestrator import ModelOrchestrator
+from entropic.ui.headless import HeadlessPresenter
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +219,7 @@ def _stash_test_logs(item: pytest.Item, entry: TestInteraction) -> None:
     if not tmp_dir:
         return
 
-    log_src = Path(tmp_dir) / ".entropi"
+    log_src = Path(tmp_dir) / ".entropic"
     if not log_src.exists():
         return
 

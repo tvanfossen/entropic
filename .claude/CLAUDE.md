@@ -1,4 +1,4 @@
-# Entropi Project Guidelines
+# Entropic Project Guidelines
 
 Project-specific guidelines. See global `~/.claude/CLAUDE.md` for universal standards.
 
@@ -34,17 +34,17 @@ tests/
 
 ## Project Architecture
 
-### Model Orchestrator (`src/entropi/inference/orchestrator.py`)
+### Model Orchestrator (`src/entropic/inference/orchestrator.py`)
 - Manages multiple LLM tiers (thinking, normal, code, simple, router)
 - Only ONE main tier model loaded at a time (VRAM constraint)
 - Dynamic model swapping with lock to prevent TOCTOU races
 
-### MCP Servers (`src/entropi/mcp/servers/`)
+### MCP Servers (`src/entropic/mcp/servers/`)
 - Filesystem, bash, diagnostics servers
 - All tools require approval unless explicitly in allow list
 - Engine handles user prompting; "Always Allow/Deny" persists to config
 
 ### Configuration
-- Global defaults: `~/.entropi/config.yaml`
-- Project (source of truth): `.entropi/config.local.yaml`
-- Project context: `.entropi/ENTROPI.md`
+- Global defaults: `~/.entropic/config.yaml`
+- Project (source of truth): `.entropic/config.local.yaml`
+- Project context: `.entropic/ENTROPIC.md`

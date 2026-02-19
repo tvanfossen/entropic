@@ -1,9 +1,9 @@
 """Configuration for PyChess.
 
-Uses entropi's ConfigLoader with consumer overrides:
-    - app_dir_name=".pychess" — own config directory, independent of .entropi/
-    - default_config_path — seeds from chess-specific defaults, not entropi's
-    - global_config_dir=None — no global ~/.entropi/ layer
+Uses entropic's ConfigLoader with consumer overrides:
+    - app_dir_name=".pychess" — own config directory, independent of .entropic/
+    - default_config_path — seeds from chess-specific defaults, not entropic's
+    - global_config_dir=None — no global ~/.entropic/ layer
 
 On first run, creates .pychess/config.local.yaml seeded from
 data/default_config.yaml. Edit model paths there, then re-run.
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from entropi import ConfigLoader, EntropyConfig
+from entropic import ConfigLoader, EntropyConfig
 
 EXAMPLE_ROOT = Path(__file__).parent
 PROMPTS_DIR = EXAMPLE_ROOT / "prompts"

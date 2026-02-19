@@ -1,0 +1,108 @@
+# Entropic Configuration
+# This file is copied to ~/.entropic/config.yaml during installation
+# and to .entropic/config.yaml on first run in each project
+
+models:
+  # Deep reasoning tier - Falcon for complex analysis and planning
+  thinking:
+    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+    adapter: falcon
+    context_length: 16384  # Constrained to prevent runaway thinking
+    gpu_layers: -1
+    temperature: 0.5
+    repeat_penalty: 1.2
+  # General assistant tier - Qwen3 for balanced reasoning/execution
+  normal:
+    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+    adapter: qwen3
+    context_length: 32768
+    gpu_layers: -1
+    temperature: 0.4
+    repeat_penalty: 1.1
+  # Code implementation tier - Qwen3 for precise code work
+  code:
+    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+    adapter: qwen3
+    context_length: 32768
+    gpu_layers: -1
+    temperature: 0.3  # More deterministic for code
+    repeat_penalty: 1.1
+  # Quick response tier - shares Qwen3-8B with normal/code for efficient model reuse
+  simple:
+    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+    adapter: qwen3
+    context_length: 32768
+    gpu_layers: -1
+    temperature: 0.4
+    repeat_penalty: 1.1
+  # Classification router - small model always loaded
+  router:
+    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
+    adapter: qwen3
+    context_length: 4096
+    gpu_layers: -1
+    temperature: 0.0  # Deterministic classification
+    repeat_penalty: 1.0
+  default: normal
+
+thinking:
+  enabled: false
+
+routing:
+  enabled: true
+  fallback_model: normal
+
+log_level: INFO
+
+# MCP configuration
+mcp:
+  enable_filesystem: true
+  enable_bash: true
+  enable_git: true
+  enable_diagnostics: true
+  enable_system: true  # System operations (handoff, etc.)
+
+  # External MCP server for Claude Code integration
+  external:
+    enabled: false  # Set to true to enable Claude Code delegation
+    # Socket in project dir for portability
+    socket_path: .entropic/mcp.sock
+    rate_limit: 10  # requests per minute
+
+# Voice interface configuration (NVIDIA PersonaPlex)
+voice:
+  enabled: false
+
+  model:
+    hf_repo: "nvidia/personaplex-7b-v1"
+
+  runtime:
+    device: "cuda"
+    quantization: "int8"
+    context_window: 500  # LM context in tokens
+
+  sampling:
+    text_temperature: 0.8
+    audio_temperature: 0.8
+    top_k: 250
+
+  voice_prompt:
+    prompt_dir: "~/.entropic/voices"
+    # Available voices: NATF0-3, NATM0-3 (natural), VARF0-4, VARM0-4 (variety)
+    voice_name: "NATF2"
+    thinking_audio: "thinking_moment.wav"
+
+  conversation:
+    window_duration: 15.0
+    initial_prompt: "You are a helpful coding assistant."
+
+  secondary_model:
+    model_path: "~/models/gguf/Qwen3-0.6B-Q8_0.gguf"
+    max_tokens: 300
+    temperature: 0.3
+
+  server:
+    host: "127.0.0.1"
+    port: 8765
+    auto_start: true
+    startup_timeout_seconds: 600  # 10 minutes for model loading

@@ -26,23 +26,26 @@ note right of Mdl
   
   ```python
   def is_even(num: int) -&gt; bool:
-      """Check if an integer is even."""
+      """
+      Check if an integer is even
+      
+      Args:
+          num (int): The number to check
+          
+      Returns:
+          bool: True if the number is even, False otherwise
+      """
       return num % 2 == 0
   ```
   
-  **Usage example:**
-  ```python
-  print(is_even(4))   # Output: True
-  print(is_even(5))   # Output: False
-  print(is_even(-2))  # Output: True
-  ```
+  This function:
+  1. Takes an integer argument `num`
+  2. Uses modulo operator `%` to check divisibility by 2
+  3. Returns `True` if the remainder is 0 (even), else `False`
+  4. Includes type hints and documentation for clarity
   
-  The function works for:
-  - Positive numbers
-  - Negative numbers
-  - Zero (0 % 2 == 0)
-  
-  Would you like me to add any additional features or handle different data types?
+  The implementation handles both positive and negative integers correctly, as 
+  Python's modulo operation works with negative numbers.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

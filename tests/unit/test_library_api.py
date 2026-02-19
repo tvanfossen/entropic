@@ -8,11 +8,11 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from entropi.config.schema import PermissionsConfig
-from entropi.core.base import ModelTier
-from entropi.mcp.manager import ServerManager
-from entropi.mcp.provider import InProcessProvider
-from entropi.prompts import get_constitution_prompt, get_identity_prompt
+from entropic.config.schema import PermissionsConfig
+from entropic.core.base import ModelTier
+from entropic.mcp.manager import ServerManager
+from entropic.mcp.provider import InProcessProvider
+from entropic.prompts import get_constitution_prompt, get_identity_prompt
 
 # ── Gap 1: register_server() ─────────────────────────────────────
 
@@ -202,7 +202,7 @@ class TestConfigTierValidation:
     @pytest.mark.asyncio
     async def test_raises_when_tier_missing_config(self) -> None:
         """A ModelTier with no config entry raises ValueError."""
-        from entropi.inference.orchestrator import ModelOrchestrator
+        from entropic.inference.orchestrator import ModelOrchestrator
 
         config = MockEntropyConfig(["normal"])
 
@@ -225,7 +225,7 @@ class TestConfigTierValidation:
     @pytest.mark.asyncio
     async def test_succeeds_when_all_tiers_have_config(self) -> None:
         """All tiers with config entries initializes successfully."""
-        from entropi.inference.orchestrator import ModelOrchestrator
+        from entropic.inference.orchestrator import ModelOrchestrator
 
         config = MockEntropyConfig(["normal", "code"])
         normal_tier = ModelTier("normal", focus=["general"])

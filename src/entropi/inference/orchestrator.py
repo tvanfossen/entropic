@@ -135,7 +135,13 @@ class ModelOrchestrator:
 
         # Auto-number tiers 1..N
         result = {str(i): tier for i, tier in enumerate(self._tier_list, 1)}
-        logger.info("Auto-derived tier_map: %s", {k: v.name for k, v in result.items()})
+        mapping = {k: v.name for k, v in result.items()}
+        logger.warning(
+            "tier_map auto-derived from tier order: %s. "
+            "Reordering tiers in config will change routing. "
+            "Set routing.tier_map explicitly for stable routing.",
+            mapping,
+        )
         return result
 
     def _build_classification_map(self) -> dict[str, ModelTier]:

@@ -165,7 +165,12 @@ def get_identity_prompt(
         tier_identity = get_tier_identity_prompt(tier, prompts_dir, use_bundled=use_bundled)
         return f"{constitution}\n\n{tier_identity}"
     except FileNotFoundError:
-        logger.info("No identity file for tier '%s', using constitution only", tier)
+        logger.warning(
+            "No identity file for tier '%s' — using constitution only. "
+            "Create identity_%s.md or set use_bundled_prompts=False to enforce.",
+            tier,
+            tier,
+        )
         return constitution
 
 

@@ -400,6 +400,36 @@ class ConfigLoader:
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)
 
+    def save_permission(self, pattern: str, allow: bool) -> None:
+        """Save a permission pattern to the project config.
+
+        Respects ``app_dir_name`` so consumer apps write to their own
+        config file (e.g. ``.pychess/config.local.yaml``), not hardcoded
+        to ``.entropi/``.
+
+        Args:
+            pattern: Permission pattern (e.g., "bash.execute:pytest *")
+            allow: True to add to allow list, False to deny list
+        """
+        config_path = self._app_dir / "config.local.yaml"
+
+        config = load_yaml_config(config_path)
+
+        if "permissions" not in config:
+            config["permissions"] = {}
+
+        permissions = config["permissions"]
+        list_key = "allow" if allow else "deny"
+
+        if list_key not in permissions:
+            permissions[list_key] = []
+
+        if pattern not in permissions[list_key]:
+            permissions[list_key].append(pattern)
+
+            with open(config_path, "w") as f:
+                yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
 
 # Global config instance (lazy loaded)
 _config: EntropyConfig | None = None
@@ -449,39 +479,19 @@ def validate_config(data: dict[str, Any] | Path) -> list[str]:
 
 
 def save_permission(pattern: str, allow: bool) -> None:
-    """
-    Save a permission pattern to the project config.
+    """Save a permission pattern to the project config.
+
+    Convenience wrapper around ``ConfigLoader.save_permission()`` that
+    auto-detects the project root and reloads the global config.
 
     Args:
         pattern: Permission pattern (e.g., "bash.execute:pytest *")
         allow: True to add to allow list, False to deny list
     """
-    project_root = find_project_root() or Path.cwd()
-    config_path = project_root / ".entropi" / "config.local.yaml"
-
-    # Load existing config
-    config = load_yaml_config(config_path)
-
-    # Ensure permissions section exists
-    if "permissions" not in config:
-        config["permissions"] = {}
-
-    permissions = config["permissions"]
-    list_key = "allow" if allow else "deny"
-
-    if list_key not in permissions:
-        permissions[list_key] = []
-
-    # Add pattern if not already present
-    if pattern not in permissions[list_key]:
-        permissions[list_key].append(pattern)
-
-        # Write back to file
-        with open(config_path, "w") as f:
-            yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    loader = ConfigLoader()
+    loader.save_permission(pattern, allow=allow)
 
     # Reload global config to pick up changes
     global _config
     if _config is not None:
-        loader = ConfigLoader()
         _config = loader.load()

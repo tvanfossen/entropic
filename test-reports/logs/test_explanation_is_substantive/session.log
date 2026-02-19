@@ -1,38 +1,40 @@
-2026-02-19 11:43:23 [INFO] entropi: Session started - logging to /tmp/tmpt92y7byd/.entropi/session.log
-2026-02-19 11:43:23 [INFO] entropi: Log level: INFO
-2026-02-19 11:43:23 [INFO] entropi.app: Initializing Entropi...
-2026-02-19 11:43:23 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-19 11:43:23 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-19 11:43:23 [INFO] entropi.lsp.base: python LSP started
-2026-02-19 11:43:23 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-19 11:43:23 [INFO] entropi.lsp.base: c LSP started
-2026-02-19 11:43:23 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-19 11:43:23 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-19 11:43:23 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-19 11:43:23 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-19 11:43:23 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-19 11:43:23 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-19 11:43:23 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-19 11:43:23 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-19 11:43:23 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-19 11:43:23 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-19 11:43:23 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-19 11:43:23 [INFO] entropi.app: Entropi initialized
-2026-02-19 11:43:23 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
-2026-02-19 11:43:23 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
-2026-02-19 11:43:23 [INFO] entropi.core.engine: 
+2026-02-19 11:47:47 [INFO] entropi: Session started - logging to /tmp/tmpct2_gcw0/.entropi/session.log
+2026-02-19 11:47:47 [INFO] entropi: Log level: INFO
+2026-02-19 11:47:47 [INFO] entropi.app: Initializing Entropi...
+2026-02-19 11:47:47 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-19 11:47:47 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 11:47:47 [INFO] entropi.lsp.base: python LSP started
+2026-02-19 11:47:47 [INFO] entropi.lsp.base: Starting c LSP: clangd
+2026-02-19 11:47:47 [INFO] entropi.lsp.base: c LSP started
+2026-02-19 11:47:47 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 11:47:47 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
+2026-02-19 11:47:47 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 11:47:47 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 11:47:47 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 11:47:47 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 11:47:47 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
+2026-02-19 11:47:47 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-19 11:47:47 [WARNING] entropi.mcp.manager: Tier 'thinking' allowed_tools references unknown tools: ['system.handoff', 'system.prune_context']. Check for typos — these tools will never be available.
+2026-02-19 11:47:47 [WARNING] entropi.mcp.manager: Tier 'simple' allowed_tools references unknown tools: ['system.handoff']. Check for typos — these tools will never be available.
+2026-02-19 11:47:47 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-19 11:47:47 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-19 11:47:47 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-19 11:47:47 [INFO] entropi.app: Entropi initialized
+2026-02-19 11:47:47 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-19 11:47:47 [INFO] entropi.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropi.todo_write', 'entropi.handoff', 'entropi.prune_context']
+2026-02-19 11:47:47 [INFO] entropi.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 What is recursion in programming?
 ============================================================
-2026-02-19 11:43:23 [INFO] entropi.core.engine: State: PLANNING
-2026-02-19 11:43:23 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-19 11:43:23 [INFO] entropi.core.engine: State: EXECUTING
-2026-02-19 11:43:23 [INFO] entropi.inference.orchestrator: [ROUTER] normal | none | 90ms
-2026-02-19 11:43:23 [INFO] entropi.core.engine: System prompt size: ~4198 tokens
-2026-02-19 11:43:23 [INFO] entropi.ui.headless: Routing: — → NORMAL | none | 90ms
-2026-02-19 11:43:40 [INFO] entropi.adapter.Qwen3Adapter: [THINKING] (1234 chars):
+2026-02-19 11:47:47 [INFO] entropi.core.engine: State: PLANNING
+2026-02-19 11:47:47 [INFO] entropi.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-19 11:47:47 [INFO] entropi.core.engine: State: EXECUTING
+2026-02-19 11:47:48 [INFO] entropi.inference.orchestrator: [ROUTER] normal | none | 104ms
+2026-02-19 11:47:48 [INFO] entropi.core.engine: System prompt size: ~4198 tokens
+2026-02-19 11:47:48 [INFO] entropi.ui.headless: Routing: — → NORMAL | none | 104ms
+2026-02-19 11:48:04 [INFO] entropi.adapter.Qwen3Adapter: [THINKING] (1234 chars):
 Okay, the user is asking about recursion in programming. Let me start by defining it clearly. Recursion is when a function calls itself. But I should make sure to explain it in a way that's easy to understand.
 
 I need to mention the base case and the recursive case. The base case stops the recursion to prevent infinite loops. Then, the recursive case breaks the problem into smaller subproblems. Maybe give an example, like calculating factorial or Fibonacci numbers.
@@ -42,7 +44,7 @@ Wait, should I use a code example? The user might benefit from seeing how it's i
 Hmm, maybe compare recursion with iteration. Some problems are easier to solve recursively, while others are better with loops. Highlight that recursion is a powerful technique but requires careful implementation.
 
 I should check if there's anything else important. Oh, tail recursion optimization, but that depends on the programming language. Maybe mention it briefly. Also, ensure the explanation covers both the concept and practical examples.
-2026-02-19 11:43:40 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2188 | cleaned_len=935 | tool_calls=0
-2026-02-19 11:43:40 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-19 11:43:40 [INFO] entropi.core.engine: State: COMPLETE
-2026-02-19 11:43:40 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 16615ms
+2026-02-19 11:48:04 [INFO] entropi.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=2188 | cleaned_len=935 | tool_calls=0
+2026-02-19 11:48:04 [INFO] entropi.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-19 11:48:04 [INFO] entropi.core.engine: State: COMPLETE
+2026-02-19 11:48:04 [INFO] entropi.core.engine: Loop complete: 1 iterations, 0 tool calls, 16746ms

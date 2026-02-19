@@ -108,6 +108,25 @@ class ServerManager:
         connected = self.get_connected_servers()
         logger.info(f"Connected to {len(connected)} servers: {connected}")
 
+        await self._validate_allowed_tools()
+
+    async def _validate_allowed_tools(self) -> None:
+        """Warn about allowed_tools entries that don't match any registered tool."""
+        all_tools = await self.list_tools()
+        known_names = {t.get("name", "") for t in all_tools}
+
+        for tier_name, model_cfg in self.config.models.tiers.items():
+            if model_cfg.allowed_tools is None:
+                continue
+            unknown = set(model_cfg.allowed_tools) - known_names
+            if unknown:
+                logger.warning(
+                    "Tier '%s' allowed_tools references unknown tools: %s. "
+                    "Check for typos — these tools will never be available.",
+                    tier_name,
+                    sorted(unknown),
+                )
+
     def _register_builtin_servers(self, mcp_config: Any) -> None:
         """Register built-in MCP servers as in-process providers."""
         from entropi.mcp.servers.bash import BashServer
@@ -170,8 +189,8 @@ class ServerManager:
     def _compute_model_context_bytes(self) -> int | None:
         """Compute model context window in bytes for filesystem size gate."""
         default_tier = self.config.models.default
-        model_cfg = getattr(self.config.models, default_tier, None)
-        if model_cfg and hasattr(model_cfg, "context_length"):
+        model_cfg = self.config.models.tiers.get(default_tier)
+        if model_cfg and model_cfg.context_length:
             return int(model_cfg.context_length) * 4
         return None
 

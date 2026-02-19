@@ -1,21 +1,23 @@
-2026-02-19 11:42:59 [INFO] entropi: Session started - logging to /tmp/tmpoh4d93oq/.entropi/session.log
-2026-02-19 11:42:59 [INFO] entropi: Log level: INFO
-2026-02-19 11:42:59 [INFO] entropi.app: Initializing Entropi...
-2026-02-19 11:42:59 [INFO] entropi.mcp.manager: Initializing MCP server manager
-2026-02-19 11:42:59 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-19 11:42:59 [INFO] entropi.lsp.base: python LSP started
-2026-02-19 11:42:59 [INFO] entropi.lsp.base: Starting c LSP: clangd
-2026-02-19 11:42:59 [INFO] entropi.lsp.base: c LSP started
-2026-02-19 11:42:59 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
-2026-02-19 11:42:59 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
-2026-02-19 11:42:59 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-19 11:42:59 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
-2026-02-19 11:42:59 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
-2026-02-19 11:42:59 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-19 11:42:59 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
-2026-02-19 11:42:59 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
-2026-02-19 11:42:59 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
-2026-02-19 11:42:59 [INFO] entropi.core.commands: Discovered 16 commands
-2026-02-19 11:42:59 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
-2026-02-19 11:42:59 [INFO] entropi.app: Entropi initialized
-2026-02-19 11:42:59 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock
+2026-02-19 11:47:23 [INFO] entropi: Session started - logging to /tmp/tmpmaqxd3_g/.entropi/session.log
+2026-02-19 11:47:23 [INFO] entropi: Log level: INFO
+2026-02-19 11:47:23 [INFO] entropi.app: Initializing Entropi...
+2026-02-19 11:47:23 [INFO] entropi.mcp.manager: Initializing MCP server manager
+2026-02-19 11:47:23 [INFO] entropi.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 11:47:23 [INFO] entropi.lsp.base: python LSP started
+2026-02-19 11:47:23 [INFO] entropi.lsp.base: Starting c LSP: clangd
+2026-02-19 11:47:23 [INFO] entropi.lsp.base: c LSP started
+2026-02-19 11:47:23 [INFO] entropi.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 11:47:23 [INFO] entropi.mcp.manager: LSP manager started for in-process tools
+2026-02-19 11:47:23 [INFO] entropi.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 11:47:23 [INFO] entropi.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 11:47:23 [INFO] entropi.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 11:47:23 [INFO] entropi.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 11:47:23 [INFO] entropi.mcp.provider: In-process provider entropi: 3 tools available
+2026-02-19 11:47:23 [INFO] entropi.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropi']
+2026-02-19 11:47:23 [WARNING] entropi.mcp.manager: Tier 'thinking' allowed_tools references unknown tools: ['system.handoff', 'system.prune_context']. Check for typos — these tools will never be available.
+2026-02-19 11:47:23 [WARNING] entropi.mcp.manager: Tier 'simple' allowed_tools references unknown tools: ['system.handoff']. Check for typos — these tools will never be available.
+2026-02-19 11:47:23 [INFO] entropi.storage.database: Database initialized: /home/tvanfossen/Projects/entropi/.entropi/entropi.db
+2026-02-19 11:47:23 [INFO] entropi.core.commands: Discovered 16 commands
+2026-02-19 11:47:23 [INFO] entropi.app: External MCP server starting on .entropi/mcp.sock
+2026-02-19 11:47:23 [INFO] entropi.app: Entropi initialized
+2026-02-19 11:47:23 [INFO] entropi.mcp.external: External MCP server listening on /home/tvanfossen/Projects/entropi/.entropi/mcp.sock

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
-    "entropi": {
+    "entropic": {
       "type": "stdio",
-      "command": "entropi",
+      "command": "entropic",
       "args": ["mcp-bridge"]
     }
   }

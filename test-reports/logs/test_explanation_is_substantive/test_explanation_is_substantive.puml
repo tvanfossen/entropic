@@ -1,0 +1,59 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_explanation_is_substantive\n<size:11>[PASSED] < 75s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  What is recursion in programming?
+end note
+App -> Orch: route
+note right: **NORMAL** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem by breaking it down into smaller, simpler subproblems. It consists of 
+  two main components:
+  
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops).
+  2. **Recursive Step**: The function call that reduces the problem size and 
+  progresses toward the base case.
+  
+  ### Example: Factorial Calculation
+  ```python
+  def factorial(n):
+      if n == 0:  # Base case
+          return 1
+      else:       # Recursive step
+          return n * factorial(n - 1)
+  ```
+  
+  ### Key Considerations:
+  - **Stack Depth**: Each recursive call adds a stack frame, risking stack 
+  overflow for deep recursions.
+  - **Performance**: Can be less efficient than iterative solutions due to 
+  function call overhead.
+  - **Tail Recursion**: Some languages optimize tail-recursive calls (where the 
+  recursive call is the final operation), but Python does not support this 
+  natively.
+  
+  Recursion is ideal for problems with natural hierarchical structures (e.g., tree
+  traversals, divide-and-conquer algorithms).
+end note
+note over T #palegreen
+  **PASSED** (< 75s)
+end note
+
+@enduml

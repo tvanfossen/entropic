@@ -6,7 +6,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                              ENTROPI                                        │
+│                              ENTROPIC                                        │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
 │  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐  │
@@ -39,7 +39,7 @@
 
 ## Components
 
-### Terminal UI (`src/entropi/ui/`)
+### Terminal UI (`src/entropic/ui/`)
 
 Rich terminal interface with:
 - Streaming output display
@@ -47,7 +47,7 @@ Rich terminal interface with:
 - Status bar showing model and VRAM usage
 - Prompt history and completion
 
-### Agentic Loop (`src/entropi/core/engine.py`)
+### Agentic Loop (`src/entropic/core/engine.py`)
 
 The Plan-Act-Observe cycle:
 
@@ -62,21 +62,21 @@ The Plan-Act-Observe cycle:
 8. Repeat until complete
 ```
 
-### Model Orchestrator (`src/entropi/inference/orchestrator.py`)
+### Model Orchestrator (`src/entropic/inference/orchestrator.py`)
 
 Manages multiple models:
 - Loads/unloads models based on VRAM budget
 - Routes tasks to appropriate model tier
 - Handles model swapping transparently
 
-### MCP Client (`src/entropi/mcp/`)
+### MCP Client (`src/entropic/mcp/`)
 
 Model Context Protocol integration:
 - Discovers tools from MCP servers
 - Executes tool calls
 - Manages server lifecycle
 
-### Storage (`src/entropi/storage/`)
+### Storage (`src/entropic/storage/`)
 
 SQLite-based persistence:
 - Conversation history
@@ -133,22 +133,22 @@ User Message
 
 | File | Purpose |
 |------|---------|
-| `src/entropi/app.py` | Application orchestrator |
-| `src/entropi/cli.py` | CLI entry points |
-| `src/entropi/core/engine.py` | Agentic loop |
-| `src/entropi/inference/orchestrator.py` | Model management |
-| `src/entropi/inference/llama_cpp.py` | llama-cpp-python wrapper |
-| `src/entropi/inference/adapters/*.py` | Model-specific formatting |
-| `src/entropi/mcp/client.py` | MCP client |
-| `src/entropi/mcp/servers/*.py` | Built-in MCP servers |
-| `src/entropi/storage/__init__.py` | SQLite storage |
-| `src/entropi/ui/terminal.py` | Terminal interface |
+| `src/entropic/app.py` | Application orchestrator |
+| `src/entropic/cli.py` | CLI entry points |
+| `src/entropic/core/engine.py` | Agentic loop |
+| `src/entropic/inference/orchestrator.py` | Model management |
+| `src/entropic/inference/llama_cpp.py` | llama-cpp-python wrapper |
+| `src/entropic/inference/adapters/*.py` | Model-specific formatting |
+| `src/entropic/mcp/client.py` | MCP client |
+| `src/entropic/mcp/servers/*.py` | Built-in MCP servers |
+| `src/entropic/storage/__init__.py` | SQLite storage |
+| `src/entropic/ui/terminal.py` | Terminal interface |
 
 ## Project Structure
 
 ```
-entropi/
-├── src/entropi/
+entropic/
+├── src/entropic/
 │   ├── __init__.py
 │   ├── __main__.py
 │   ├── app.py              # Application orchestrator
@@ -219,10 +219,10 @@ Configuration is loaded hierarchically:
 
 ```
 1. Defaults (code)           ◄── Built-in defaults
-2. ~/.entropi/config.yaml    ◄── Global user config
-3. .entropi/config.yaml      ◄── Project config
-4. .entropi/config.local.yaml◄── Local overrides (gitignored)
-5. ENTROPI_* env vars        ◄── Environment overrides
+2. ~/.entropic/config.yaml    ◄── Global user config
+3. .entropic/config.yaml      ◄── Project config
+4. .entropic/config.local.yaml◄── Local overrides (gitignored)
+5. ENTROPIC_* env vars        ◄── Environment overrides
 6. CLI arguments             ◄── Runtime overrides
 ```
 

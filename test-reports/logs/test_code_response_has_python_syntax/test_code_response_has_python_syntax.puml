@@ -1,0 +1,47 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_code_response_has_python_syntax\n<size:11>[PASSED] < 262s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  Write a function that returns the sum of a list
+end note
+App -> Orch: route
+note right: **CODE** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Here's a simple Python function to return the sum of a list:
+  
+  ```python
+  def sum_list(numbers):
+      return sum(numbers)
+  ```
+  
+  This implementation:
+  - Handles empty lists by returning 0 (since `sum([])` returns 0)
+  - Works with both integers and floats
+  - Has O(n) time complexity for the summation
+  
+  Example usage:
+  ```python
+  print(sum_list([1, 2, 3]))  # Output: 6
+  print(sum_list([]))        # Output: 0
+  ```
+end note
+note over T #palegreen
+  **PASSED** (< 262s)
+end note
+
+@enduml

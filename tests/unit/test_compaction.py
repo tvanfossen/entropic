@@ -3,9 +3,9 @@
 import json
 
 import pytest
-from entropi.config.schema import CompactionConfig
-from entropi.core.base import Message
-from entropi.core.compaction import CompactionManager, CompactionResult, TokenCounter
+from entropic.config.schema import CompactionConfig
+from entropic.core.base import Message
+from entropic.core.compaction import CompactionManager, CompactionResult, TokenCounter
 
 
 class TestTokenCounter:
@@ -278,7 +278,9 @@ class TestValueDensityCompaction:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.config = CompactionConfig(enabled=True, threshold_percent=0.5)
+        self.config = CompactionConfig(
+            enabled=True, threshold_percent=0.5, warning_threshold_percent=0.3
+        )
         self.counter = TokenCounter(max_tokens=1000)
         self.manager = CompactionManager(self.config, self.counter)
 

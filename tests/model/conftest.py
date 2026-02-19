@@ -8,24 +8,36 @@ Architecture:
 """
 
 import asyncio
+import json
+import logging
 import re
+import shutil
+import subprocess
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
-from entropi.app import Application
-from entropi.config.schema import EntropyConfig
-from entropi.core.base import Message
-from entropi.inference.orchestrator import ModelOrchestrator
-from entropi.ui.headless import HeadlessPresenter
+from entropic.app import Application
+from entropic.config.schema import EntropyConfig
+from entropic.core.base import Message
+from entropic.core.logging import setup_logging, setup_model_logger
+from entropic.inference.orchestrator import ModelOrchestrator
+from entropic.ui.headless import HeadlessPresenter
+
+logger = logging.getLogger(__name__)
 
 # Timing constants derived from observed performance
 AVG_SECONDS_PER_TURN = 15
 TURN_TIME_BUFFER = 2.5  # buffer for tool-call path (model writes full files)
+ROUTING_TARGET_S = 1.0  # routing tests are sub-second; 1s is a safe ceiling
 
-REPORT_DIR = Path(".test-reports")
+REPORT_DIR = Path("test-reports")
+
+# Accumulated timeout target for the currently-running test.
+# with_timeout() adds to this; the pytest hook reads and resets it.
+_accumulated_target: float = 0.0
 
 
 async def with_timeout(coro, expected_turns: int = 1, name: str = "operation"):
@@ -39,7 +51,9 @@ async def with_timeout(coro, expected_turns: int = 1, name: str = "operation"):
     Returns:
         Tuple of (result, elapsed_seconds)
     """
+    global _accumulated_target
     timeout = expected_turns * AVG_SECONDS_PER_TURN * TURN_TIME_BUFFER
+    _accumulated_target += timeout
     start = time.perf_counter()
     try:
         async with asyncio.timeout(timeout):
@@ -66,6 +80,7 @@ class TestInteraction:
 
     test_name: str
     duration_s: float = 0.0
+    target_s: float = 0.0
     passed: bool = False
     prompt: str = ""
     full_response: str = ""
@@ -114,7 +129,11 @@ async def headless_app(
 
     - Orchestrator (model) is shared across tests in the module
     - Session state (messages, conversation) is fresh per test
+    - Logging wired to tmp_project_dir for per-test log capture
     """
+    setup_logging(config, project_dir=tmp_project_dir)
+    setup_model_logger(project_dir=tmp_project_dir)
+
     app = Application(
         config=config,
         project_dir=tmp_project_dir,
@@ -144,15 +163,22 @@ def _puml_escape(text: str) -> str:
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):  # noqa: ARG001
     """Capture test interaction data after each model test."""
+    global _accumulated_target
     outcome = yield
     report = outcome.get_result()
 
     if report.when != "call":
         return
 
+    # Read and reset the accumulated target from with_timeout() calls.
+    # Falls back to ROUTING_TARGET_S for tests that don't use with_timeout.
+    target = _accumulated_target if _accumulated_target > 0 else ROUTING_TARGET_S
+    _accumulated_target = 0.0
+
     entry = TestInteraction(
         test_name=item.name,
         duration_s=report.duration,
+        target_s=target,
         passed=report.passed,
     )
 
@@ -171,7 +197,7 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
         if user_msgs:
             entry.prompt = user_msgs[0].content
         if app._orchestrator and app._orchestrator.last_used_tier:
-            entry.tier = app._orchestrator.last_used_tier.value
+            entry.tier = app._orchestrator.last_used_tier.name
 
     # Detect routing tests
     if "orchestrator" in item.funcargs and "headless_app" not in item.funcargs:
@@ -179,49 +205,106 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
 
     _report_entries.append(entry)
 
+    # Stash logs from tmp_project_dir before fixture teardown cleans it
+    _stash_test_logs(item, entry)
+
+
+def _stash_test_logs(item: pytest.Item, entry: TestInteraction) -> None:
+    """Copy session logs from tmp_project_dir to test-reports/logs/<test_name>/.
+
+    Must run during call phase (before fixture teardown cleans tmp_project_dir).
+    Writes metadata.json alongside logs for training data labeling.
+    """
+    tmp_dir = item.funcargs.get("tmp_project_dir")
+    if not tmp_dir:
+        return
+
+    log_src = Path(tmp_dir) / ".entropic"
+    if not log_src.exists():
+        return
+
+    log_dest = REPORT_DIR / "logs" / entry.test_name
+    log_dest.mkdir(parents=True, exist_ok=True)
+
+    # Copy log files
+    for log_file in ("session.log", "session_model.log"):
+        src = log_src / log_file
+        if src.exists() and src.stat().st_size > 0:
+            shutil.copy2(src, log_dest / log_file)
+
+    # Write metadata (actual timing preserved here for analysis)
+    metadata = {
+        "test_name": entry.test_name,
+        "passed": entry.passed,
+        "tier": entry.tier,
+        "duration_s": round(entry.duration_s, 2),
+        "target_s": round(entry.target_s, 1),
+        "prompt": entry.prompt,
+        "tool_count": len(entry.tool_calls),
+        "is_routing_test": entry.is_routing_test,
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+    (log_dest / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
+
+
+def pytest_sessionstart(session):  # noqa: ARG001
+    """Clean test-reports/logs/ at the start of each run (latest-only)."""
+    logs_dir = REPORT_DIR / "logs"
+    if logs_dir.exists():
+        shutil.rmtree(logs_dir)
+
 
 def pytest_sessionfinish(session, exitstatus):  # noqa: ARG001
-    """Generate per-test PlantUML diagrams and text summary."""
+    """Generate per-test PlantUML diagrams, PNGs, and text summary."""
     if not _report_entries:
         return
 
     REPORT_DIR.mkdir(exist_ok=True)
 
+    puml_paths = []
     for entry in _report_entries:
-        _write_test_puml(entry)
+        path = _write_test_puml(entry)
+        puml_paths.append(path)
 
+    _generate_pngs(puml_paths)
     _write_text_summary()
 
 
-def _write_test_puml(entry: TestInteraction) -> None:
-    """Write a single .puml file for one test."""
+def _write_test_puml(entry: TestInteraction) -> Path:
+    """Write a single .puml file into the test's log directory."""
     status_text = "PASSED" if entry.passed else "FAILED"
     color = "palegreen" if entry.passed else "salmon"
+    target_label = f"< {entry.target_s:.0f}s"
 
     lines = [
         "@startuml",
         "skinparam backgroundColor #FEFEFE",
         "skinparam noteBorderColor #999999",
         "skinparam noteBackgroundColor #FFFFEE",
-        f"title {entry.test_name}\\n<size:11>[{status_text}] {entry.duration_s:.1f}s</size>",
+        f"title {entry.test_name}\\n<size:11>[{status_text}] {target_label}</size>",
         "",
     ]
 
     if entry.is_routing_test:
-        _build_routing_puml(lines, entry, color)
+        _build_routing_puml(lines, entry, color, target_label)
     elif entry.prompt:
-        _build_headless_puml(lines, entry, color)
+        _build_headless_puml(lines, entry, color, target_label)
     else:
         _build_minimal_puml(lines, entry, color)
 
     lines.append("")
     lines.append("@enduml")
 
-    path = REPORT_DIR / f"{entry.test_name}.puml"
+    out_dir = REPORT_DIR / "logs" / entry.test_name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / f"{entry.test_name}.puml"
     path.write_text("\n".join(lines))
+    return path
 
 
-def _build_routing_puml(lines: list[str], entry: TestInteraction, color: str) -> None:
+def _build_routing_puml(
+    lines: list[str], entry: TestInteraction, color: str, target_label: str
+) -> None:
     """Build PlantUML for a routing classification test."""
     lines.extend(
         [
@@ -233,7 +316,7 @@ def _build_routing_puml(lines: list[str], entry: TestInteraction, color: str) ->
             "Orch -> Rtr: route",
             "Rtr --> Orch: tier result",
             "Orch --> T: result",
-            f"note right #{color}: {entry.duration_s:.1f}s",
+            f"note right #{color}: {target_label}",
         ]
     )
 
@@ -248,12 +331,14 @@ def _build_minimal_puml(lines: list[str], entry: TestInteraction, color: str) ->
             "",
             "T -> App: (internal test)",
             f"App --> T: {status_text}",
-            f"note right #{color}: {entry.duration_s:.1f}s",
+            f"note right #{color}",
         ]
     )
 
 
-def _build_headless_puml(lines: list[str], entry: TestInteraction, color: str) -> None:
+def _build_headless_puml(
+    lines: list[str], entry: TestInteraction, color: str, target_label: str
+) -> None:
     """Build PlantUML for a headless Application test with full output."""
     lines.extend(
         [
@@ -291,7 +376,7 @@ def _build_headless_puml(lines: list[str], entry: TestInteraction, color: str) -
     tool_count = len(entry.tool_calls)
     tool_note = f", {tool_count} tool calls" if tool_count else ""
     lines.append(f"note over T #{color}")
-    lines.append(f"  **{status_text}** ({entry.duration_s:.1f}s{tool_note})")
+    lines.append(f"  **{status_text}** ({target_label}{tool_note})")
     lines.append("end note")
 
 
@@ -354,7 +439,6 @@ def _add_turn_tools(lines: list[str], tool_calls: list[dict], start_idx: int) ->
         if tc.get("status") != "complete":
             break
         name = tc.get("name", "unknown")
-        duration_ms = tc.get("duration_ms", 0)
         lines.append(f"Mdl --> Eng: tool_call({_puml_escape(name)})")
         lines.append(f"Eng -> MCP: {_puml_escape(name)}")
 
@@ -366,7 +450,7 @@ def _add_turn_tools(lines: list[str], tool_calls: list[dict], start_idx: int) ->
                 lines.append(f"  {_puml_escape(k)}: {_puml_escape(str(v)[:200])}")
             lines.append("end note")
 
-        lines.append(f"MCP --> Eng: result ({duration_ms:.0f}ms)")
+        lines.append("MCP --> Eng: result")
 
         # Show tool result if present
         result = tc.get("result", "")
@@ -427,8 +511,25 @@ def _wrap_text(text: str, width: int = 80) -> str:
     return "\n".join(result_lines)
 
 
+def _generate_pngs(puml_paths: list[Path]) -> None:
+    """Generate PNG images from PlantUML files if plantuml is available."""
+    if not shutil.which("plantuml"):
+        return
+
+    for path in puml_paths:
+        try:
+            subprocess.run(
+                ["plantuml", "-tpng", str(path)],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            logger.warning("Failed to generate PNG for %s", path.name)
+
+
 def _write_text_summary() -> None:
-    """Generate human-readable text summary alongside per-test .puml files."""
+    """Generate human-readable text summary with actual timing data."""
     lines = [
         "=== Model Test Report ===",
         "Date: {}".format(time.strftime("%Y-%m-%d %H:%M:%S")),
@@ -452,7 +553,6 @@ def _write_text_summary() -> None:
             lines.append(f"         Prompt: {entry.prompt[:100]}")
 
     lines.append("")
-    lines.append("Per-test diagrams: .test-reports/<test_name>.puml")
-    lines.append("Generate PNGs: plantuml .test-reports/*.puml")
+    lines.append("Per-test artifacts: test-reports/logs/<test_name>/")
 
     (REPORT_DIR / "model-tests-latest.txt").write_text("\n".join(lines))

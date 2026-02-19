@@ -43,8 +43,8 @@ htmlcov/
 .mypy_cache/
 
 # Local config (don't commit)
-.entropi/config.local.yaml
-.entropi/*.local.*
+.entropic/config.local.yaml
+.entropic/*.local.*
 
 # Models (too large)
 *.gguf
@@ -61,8 +61,9 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Examples (WIP - will become integration test workflows)
-examples/pychess/
+# Example runtime artifacts
+examples/pychess/.venv/
+examples/pychess/.pychess/
 
 # Build artifacts
 *.whl
@@ -74,4 +75,13 @@ examples/pychess/
 .env
 .env.local
 hf.env
-.test-reports/
+# Test reports — committed, latest run only
+# Cache/flag files are ephemeral (not committed)
+test-reports/model-tests.hash
+test-reports/model-tests.flag
+# Top-level puml/png are obsolete (now generated in logs/ subdirs)
+test-reports/*.puml
+test-reports/*.png
+# Override *.log and logs/ rules for committed test logs
+!test-reports/logs/
+!test-reports/logs/**/*.log

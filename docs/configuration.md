@@ -1,16 +1,16 @@
 # Configuration
 
-> How to configure Entropi
+> How to configure Entropic
 
 ## Configuration Hierarchy
 
 Configuration is loaded from multiple sources, with later sources overriding earlier ones:
 
 1. **Defaults** - Built into the application
-2. **Global config** - `~/.entropi/config.yaml`
-3. **Project config** - `.entropi/config.yaml`
-4. **Local config** - `.entropi/config.local.yaml` (gitignored)
-5. **Environment variables** - `ENTROPI_*`
+2. **Global config** - `~/.entropic/config.yaml`
+3. **Project config** - `.entropic/config.yaml`
+4. **Local config** - `.entropic/config.local.yaml` (gitignored)
+5. **Environment variables** - `ENTROPIC_*`
 6. **CLI arguments**
 
 ## Configuration File
@@ -18,7 +18,7 @@ Configuration is loaded from multiple sources, with later sources overriding ear
 ### Full Example
 
 ```yaml
-# ~/.entropi/config.yaml
+# ~/.entropic/config.yaml
 
 models:
   thinking:
@@ -104,21 +104,21 @@ log_level: INFO
 
 ## Environment Variables
 
-All configuration options can be set via environment variables with the `ENTROPI_` prefix:
+All configuration options can be set via environment variables with the `ENTROPIC_` prefix:
 
 ```bash
-export ENTROPI_LOG_LEVEL=DEBUG
-export ENTROPI_MODELS__NORMAL__CONTEXT_LENGTH=16384
+export ENTROPIC_LOG_LEVEL=DEBUG
+export ENTROPIC_MODELS__NORMAL__CONTEXT_LENGTH=16384
 ```
 
 Use double underscores (`__`) for nested options.
 
 ## Project-Specific Configuration
 
-Create `.entropi/config.yaml` in your project root for project-specific settings:
+Create `.entropic/config.yaml` in your project root for project-specific settings:
 
 ```yaml
-# .entropi/config.yaml
+# .entropic/config.yaml
 
 # Override context length for this project
 models:
@@ -136,10 +136,10 @@ permissions:
 
 ## Local Overrides
 
-For settings you don't want to commit (like local paths), use `.entropi/config.local.yaml`:
+For settings you don't want to commit (like local paths), use `.entropic/config.local.yaml`:
 
 ```yaml
-# .entropi/config.local.yaml (gitignored)
+# .entropic/config.local.yaml (gitignored)
 
 models:
   normal:

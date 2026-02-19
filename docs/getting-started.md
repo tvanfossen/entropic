@@ -1,6 +1,6 @@
 # Getting Started
 
-> Quick start guide for Entropi
+> Quick start guide for Entropic
 
 ## Prerequisites
 
@@ -14,8 +14,8 @@
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/user/entropi.git
-cd entropi
+git clone https://github.com/user/entropic.git
+cd entropic
 
 # Create virtual environment
 python3 -m venv .venv
@@ -28,7 +28,7 @@ CMAKE_ARGS="-DGGML_CUDA=on" pip install -e ".[dev]"
 
 ### 2. Download Models
 
-Entropi uses a multi-model architecture. Download the required models:
+Entropic uses a multi-model architecture. Download the required models:
 
 ```bash
 mkdir -p ~/models/gguf
@@ -55,8 +55,8 @@ huggingface-cli download bartowski/Qwen3-0.6B-GGUF \
 Create your global configuration:
 
 ```bash
-mkdir -p ~/.entropi
-cat > ~/.entropi/config.yaml << 'EOF'
+mkdir -p ~/.entropic
+cat > ~/.entropic/config.yaml << 'EOF'
 models:
   thinking:
     path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
@@ -93,25 +93,25 @@ EOF
 ### Interactive Mode
 
 ```bash
-entropi
+entropic
 ```
 
-This starts the interactive terminal UI. Type your questions and Entropi will respond.
+This starts the interactive terminal UI. Type your questions and Entropic will respond.
 
 ### Single Query
 
 ```bash
-entropi ask "Explain what a binary search tree is"
+entropic ask "Explain what a binary search tree is"
 ```
 
 ### Initialize a Project
 
 ```bash
 cd /path/to/your/project
-entropi init
+entropic init
 ```
 
-This creates a `.entropi/` directory with project-specific configuration.
+This creates a `.entropic/` directory with project-specific configuration.
 
 ## Basic Commands
 
@@ -122,9 +122,9 @@ This creates a `.entropi/` directory with project-specific configuration.
 | `/status` | Show model and VRAM status |
 | `/think on` | Enable deep reasoning mode (uses 14B model) |
 | `/think off` | Disable deep reasoning mode |
-| `/exit` | Exit Entropi |
+| `/exit` | Exit Entropic |
 
-## What Entropi Can Do
+## What Entropic Can Do
 
 - **Read and understand code** - Navigate your codebase, explain functions
 - **Write and edit code** - Generate new code, refactor existing code
@@ -134,6 +134,6 @@ This creates a `.entropi/` directory with project-specific configuration.
 
 ## Next Steps
 
-- [Configuration](configuration.md) - Customize Entropi for your workflow
+- [Configuration](configuration.md) - Customize Entropic for your workflow
 - [Commands](commands.md) - Full command reference
 - [Models](models.md) - Understand the model tiers

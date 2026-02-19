@@ -5,7 +5,9 @@ repos:
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^test-reports/
       - id: end-of-file-fixer
+        exclude: ^test-reports/
       - id: check-yaml
       - id: check-json
       - id: check-toml
@@ -32,7 +34,7 @@ repos:
           - '--max-cognitive-complexity=15'
           - '--max-returns-amount=3'
           - '--max-line-length=100'
-          - '--ignore=E501,W503,E203'
+          - '--ignore=E501,W503,E203,E704'
 
   # Local hooks for pytest - runs full test suite including model tests
   - repo: local

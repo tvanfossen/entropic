@@ -1,0 +1,64 @@
+# PyChess Configuration
+# This file seeds .pychess/config.local.yaml on first run.
+# Edit the model paths below if needed, then re-run main.py.
+
+models:
+  tiers:
+    # Suggest tier: analyzes the position, proposes a candidate move
+    suggest:
+      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+      adapter: qwen3
+      context_length: 8192
+      max_output_tokens: 384
+      allowed_tools:
+        - chess.get_board
+        - entropic.handoff
+
+    # Validate tier: reviews the suggestion for soundness
+    validate:
+      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+      adapter: qwen3
+      context_length: 8192
+      max_output_tokens: 256
+      allowed_tools:
+        - chess.get_board
+        - entropic.handoff
+
+    # Execute tier: plays the validated move
+    execute:
+      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+      adapter: qwen3
+      context_length: 8192
+      max_output_tokens: 192
+      allowed_tools:
+        - chess.get_board
+        - chess.make_move
+
+  # Router model: classifies incoming messages to pick the right tier.
+  # A small model (e.g. Qwen3-0.6B) is sufficient.
+  router:
+    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
+    adapter: qwen3
+    context_length: 2048
+    temperature: 0.0
+
+  default: suggest
+
+# Routing: enabled so the router classifies each incoming message.
+routing:
+  enabled: true
+  fallback_tier: suggest
+
+# MCP: disable all built-in servers.
+# Only the ChessServer is registered programmatically.
+mcp:
+  enable_filesystem: false
+  enable_bash: false
+  enable_git: false
+  enable_diagnostics: false
+
+# LSP: no code editing, no diagnostics needed.
+lsp:
+  enabled: false
+
+log_level: INFO

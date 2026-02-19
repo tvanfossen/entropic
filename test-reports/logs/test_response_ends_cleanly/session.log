@@ -1,0 +1,38 @@
+2026-02-19 14:17:34 [INFO] entropic: Session started - logging to /tmp/tmpwi0rysrs/.entropic/session.log
+2026-02-19 14:17:34 [INFO] entropic: Log level: INFO
+2026-02-19 14:17:34 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:17:34 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-19 14:17:34 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 14:17:34 [INFO] entropic.lsp.base: python LSP started
+2026-02-19 14:17:34 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-19 14:17:34 [INFO] entropic.lsp.base: c LSP started
+2026-02-19 14:17:34 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 14:17:34 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-19 14:17:34 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 14:17:34 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 14:17:34 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 14:17:34 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 14:17:34 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-19 14:17:34 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-19 14:17:34 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-19 14:17:34 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-19 14:17:34 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:17:34 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
+2026-02-19 14:17:34 [INFO] entropic.core.engine: 
+============================================================
+[USER PROMPT]
+============================================================
+List three programming languages and their main use cases
+============================================================
+2026-02-19 14:17:34 [INFO] entropic.core.engine: State: PLANNING
+2026-02-19 14:17:34 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-19 14:17:34 [INFO] entropic.core.engine: State: EXECUTING
+2026-02-19 14:17:34 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 82ms
+2026-02-19 14:17:34 [INFO] entropic.core.engine: System prompt size: ~4200 tokens
+2026-02-19 14:17:34 [INFO] entropic.ui.headless: Routing: — → NORMAL | none | 82ms
+2026-02-19 14:17:44 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (778 chars):
+Okay, the user is asking for three programming languages and their main use cases. Let me think about which ones to choose. Python is a good start because it's widely used in data science, machine learning, and scripting. Then JavaScript makes sense since it's essential for web development, both front-end and back-end with Node.js. For the third, maybe Java? It's commonly used in enterprise applications and Android development. Wait, or perhaps C++ for system-level programming? Hmm. Let me verify the primary use cases to ensure accuracy. Python is definitely data analysis and AI. JavaScript is web browsers and server-side. Java is enterprise apps and Android. Yeah, that covers different domains. I should present them clearly, stating each language and their key areas.
+2026-02-19 14:17:44 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=1386 | cleaned_len=589 | tool_calls=0
+2026-02-19 14:17:44 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-19 14:17:44 [INFO] entropic.core.engine: State: COMPLETE
+2026-02-19 14:17:44 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 9787ms

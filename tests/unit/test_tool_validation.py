@@ -1,6 +1,6 @@
 """Tests for MCP tool definition validation."""
 
-from entropi.core.tool_validation import ToolValidationError, validate_tool_definition
+from entropic.core.tool_validation import ToolValidationError, validate_tool_definition
 
 
 class TestValidateToolDefinition:

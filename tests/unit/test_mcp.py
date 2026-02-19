@@ -1,7 +1,9 @@
 """Tests for MCP components."""
 
-from entropi.config.schema import PermissionsConfig
-from entropi.mcp.manager import ServerManager
+from pathlib import Path
+
+from entropic.config.schema import PermissionsConfig
+from entropic.mcp.manager import ServerManager
 
 
 class TestPermissions:
@@ -19,6 +21,8 @@ class TestPermissions:
         manager = ServerManager.__new__(ServerManager)
         manager._permissions = permissions
         manager._clients = {}
+        manager._project_dir = Path(".")
+        manager._lsp_manager = None
 
         return manager
 

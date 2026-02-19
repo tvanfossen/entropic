@@ -1,7 +1,7 @@
 """Tests for tool definition loading from JSON files."""
 
 import pytest
-from entropi.mcp.servers.base import load_tool_definition
+from entropic.mcp.servers.base import load_tool_definition
 from mcp.types import Tool
 
 # All JSON tool definition files that should exist
@@ -18,11 +18,11 @@ ALL_TOOLS = [
     ("checkout", "git"),
     ("add", "git"),
     ("reset", "git"),
-    ("handoff", "entropi"),
-    ("prune_context", "entropi"),
+    ("handoff", "entropic"),
+    ("prune_context", "entropic"),
     ("diagnostics", "diagnostics"),
     ("check_errors", "diagnostics"),
-    ("todo_write", "entropi"),
+    ("todo_write", "entropic"),
 ]
 
 
@@ -53,7 +53,7 @@ class TestLoadToolDefinition:
 
     def test_todo_write_has_nested_schema(self) -> None:
         """todo_write JSON includes nested items schema with status enum."""
-        tool = load_tool_definition("todo_write", "entropi")
+        tool = load_tool_definition("todo_write", "entropic")
         items = tool.inputSchema["properties"]["todos"]["items"]
         assert "status" in items["properties"]
         assert "enum" in items["properties"]["status"]

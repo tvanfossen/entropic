@@ -1,12 +1,13 @@
 """Tests for agent engine."""
 
-from unittest.mock import MagicMock, patch
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from entropi.core.base import Message, ToolCall
-from entropi.core.context import ContextBuilder, TokenBudget
-from entropi.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
-from entropi.core.parser import ToolCallParser
+from entropic.core.base import Message, ToolCall, ToolResult
+from entropic.core.context import ContextBuilder, TokenBudget
+from entropic.core.engine import AgentEngine, AgentState, LoopConfig, LoopContext, LoopMetrics
+from entropic.core.parser import ToolCallParser
 
 
 class TestLoopConfig:
@@ -58,6 +59,70 @@ class TestLoopContext:
         """Test empty message list by default."""
         ctx = LoopContext()
         assert ctx.messages == []
+
+
+class TestDefaultServerManager:
+    """Tests for optional server_manager in AgentEngine."""
+
+    def test_engine_accepts_none_server_manager(self) -> None:
+        """AgentEngine can be constructed without a server_manager."""
+        orchestrator = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.normal = MagicMock(context_length=16384)
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator)
+        assert engine.server_manager is None
+
+    def test_engine_accepts_none_config(self) -> None:
+        """AgentEngine defaults config to EntropyConfig() when None."""
+        orchestrator = MagicMock()
+        server_manager = MagicMock()
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, server_manager)
+        from entropic.config.schema import EntropyConfig
+
+        assert isinstance(engine.config, EntropyConfig)
+
+    @pytest.mark.asyncio
+    async def test_lazy_init_creates_server_manager(self) -> None:
+        """run() creates and initializes ServerManager when none provided."""
+        orchestrator = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.tiers = {"normal": MagicMock(context_length=16384)}
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, config=config)
+
+        mock_manager = MagicMock()
+        mock_manager.initialize = AsyncMock()
+        with patch("entropic.core.engine.ServerManager", return_value=mock_manager) as mock_cls:
+            manager = await engine._create_default_server_manager()
+
+        mock_cls.assert_called_once_with(config, tier_names=["normal"])
+        mock_manager.initialize.assert_awaited_once()
+        assert manager is mock_manager
+
+    def test_explicit_server_manager_preserved(self) -> None:
+        """Explicit server_manager is not replaced."""
+        orchestrator = MagicMock()
+        server_manager = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.normal = MagicMock(context_length=16384)
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            engine = AgentEngine(orchestrator, server_manager, config)
+        assert engine.server_manager is server_manager
 
 
 class TestToolCallParser:
@@ -173,7 +238,7 @@ class TestContextBuilder:
 
     def test_build_system_prompt_returns_base(self) -> None:
         """Test build_system_prompt returns the base prompt."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -183,7 +248,7 @@ class TestContextBuilder:
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -194,7 +259,7 @@ class TestContextBuilder:
 
     def test_build_system_prompt_with_project_context(self) -> None:
         """Test building system prompt appends project context."""
-        from entropi.config.schema import EntropyConfig
+        from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
@@ -211,17 +276,17 @@ class _EngineTestBase:
 
     def _make_engine(self):
         """Create an Engine with mocked dependencies."""
-        from entropi.core.directives import DirectiveProcessor
+        from entropic.core.directives import DirectiveProcessor
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
         engine._on_state_change = None
-        engine._cached_todo_state = ""
+        engine._context_anchors = {}
         engine._directive_processor = DirectiveProcessor()
         engine._register_directive_handlers()
         engine._inject_context_warning = MagicMock()
-        engine._on_todo_update = None
+        engine._on_presenter_notify = None
         return engine
 
 
@@ -245,7 +310,9 @@ class TestCompactionAfterToolResults(_EngineTestBase):
         compaction_calls = []
 
         async def mock_execute(ctx, tool_call):
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             compaction_calls.append(force)
@@ -327,8 +394,6 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
     @pytest.mark.asyncio
     async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
         """Tool calls after a stop_processing directive are dropped."""
-        import json
-
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -337,25 +402,25 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
-            ToolCall(id="2", name="entropi.handoff", arguments={"target_tier": "code"}),
-            ToolCall(id="3", name="entropi.todo_write", arguments={"todos": []}),
+            ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="3", name="entropic.todo_write", arguments={"todos": []}),
         ]
+
+        from entropic.core.directives import StopProcessing
 
         executed = []
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            if tool_call.name == "entropi.handoff":
-                return Message(
-                    role="user",
-                    content=json.dumps(
-                        {
-                            "result": "Handoff requested to code.",
-                            "_directives": [{"type": "stop_processing"}],
-                        }
-                    ),
-                )
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            directives = [StopProcessing()] if tool_call.name == "entropic.handoff" else []
+            result = ToolResult(
+                call_id=tool_call.id,
+                name=tool_call.name,
+                result=msg.content,
+                directives=directives,
+            )
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             pass
@@ -370,7 +435,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["bash.execute", "entropi.handoff"]
+        assert executed == ["bash.execute", "entropic.handoff"]
         assert len(messages) == 2
 
     @pytest.mark.asyncio
@@ -383,7 +448,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         )
 
         calls = [
-            ToolCall(id="1", name="entropi.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="1", name="entropic.handoff", arguments={"target_tier": "invalid"}),
             ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
         ]
 
@@ -391,7 +456,9 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
-            return Message(role="user", content=f"Result of {tool_call.name}")
+            msg = Message(role="user", content=f"Result of {tool_call.name}")
+            result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
+            return msg, result
 
         async def mock_check_compaction(ctx, *, force=False):
             pass
@@ -406,7 +473,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["entropi.handoff", "bash.execute"]
+        assert executed == ["entropic.handoff", "bash.execute"]
         assert len(messages) == 2
 
 
@@ -421,37 +488,42 @@ class TestDirectiveTierChange(_EngineTestBase):
         engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
         engine._log_assembled_prompt = MagicMock()
         engine._notify_tier_selected = MagicMock()
-        engine._inject_todo_state = MagicMock()
+        engine._reinject_context_anchors = MagicMock()
         return engine
 
     def test_tier_change_directive_updates_locked_tier(self) -> None:
         """tier_change directive updates ctx.locked_tier."""
-        from entropi.core.directives import DirectiveResult
-        from entropi.inference.orchestrator import ModelTier
+        from entropic.core.base import ModelTier
+        from entropic.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
+
+        thinking = ModelTier("thinking", focus=["complex analysis"])
+        code = ModelTier("code", focus=["writing code"])
+        engine.orchestrator._find_tier = MagicMock(return_value=code)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
-        ctx.locked_tier = ModelTier.THINKING
+        ctx.locked_tier = thinking
 
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "code", "reason": "plan ready"},
+            TierChange(tier="code", reason="plan ready"),
             result,
         )
 
-        assert ctx.locked_tier == ModelTier.CODE
+        assert ctx.locked_tier == "code"
         assert result.tier_changed is True
         engine._build_formatted_system_prompt.assert_called_once()
 
     def test_tier_change_directive_rejects_invalid_tier(self) -> None:
         """tier_change with invalid tier is a no-op."""
-        from entropi.core.directives import DirectiveResult
+        from entropic.core.directives import DirectiveResult, TierChange
 
         engine = self._make_handoff_engine()
+        engine.orchestrator._find_tier = MagicMock(return_value=None)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
@@ -460,7 +532,7 @@ class TestDirectiveTierChange(_EngineTestBase):
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "nonexistent", "reason": "test"},
+            TierChange(tier="nonexistent", reason="test"),
             result,
         )
 
@@ -468,26 +540,30 @@ class TestDirectiveTierChange(_EngineTestBase):
 
     def test_tier_change_directive_rejects_disallowed_route(self) -> None:
         """tier_change blocked when orchestrator rejects the route."""
-        from entropi.core.directives import DirectiveResult
-        from entropi.inference.orchestrator import ModelTier
+        from entropic.core.base import ModelTier
+        from entropic.core.directives import DirectiveResult, TierChange
+
+        code = ModelTier("code", focus=["writing code"])
+        thinking = ModelTier("thinking", focus=["complex analysis"])
 
         engine = self._make_handoff_engine()
         engine.orchestrator.can_handoff = MagicMock(return_value=False)
+        engine.orchestrator._find_tier = MagicMock(return_value=thinking)
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
-        ctx.locked_tier = ModelTier.CODE
+        ctx.locked_tier = code
 
         result = DirectiveResult()
         engine._directive_tier_change(
             ctx,
-            {"tier": "thinking", "reason": "test"},
+            TierChange(tier="thinking", reason="test"),
             result,
         )
 
         assert result.tier_changed is False
-        assert ctx.locked_tier == ModelTier.CODE
+        assert ctx.locked_tier == "code"
 
 
 class TestAutoPruneToolResults:
@@ -495,10 +571,10 @@ class TestAutoPruneToolResults:
 
     def _make_engine_with_compaction(self):
         """Create engine with real compaction config for pruning tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig(tool_result_ttl=2)
@@ -567,10 +643,10 @@ class TestPruneDirective:
 
     def _make_engine_with_compaction(self):
         """Create engine with compaction manager for prune tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig()
@@ -580,7 +656,7 @@ class TestPruneDirective:
 
     def test_prune_directive_replaces_old_results(self) -> None:
         """prune_messages directive replaces old tool results with stubs."""
-        from entropi.core.directives import DirectiveResult
+        from entropic.core.directives import DirectiveResult
 
         engine = self._make_engine_with_compaction()
 
@@ -609,8 +685,10 @@ class TestPruneDirective:
             ],
         )
 
+        from entropic.core.directives import PruneMessages
+
         result = DirectiveResult()
-        engine._directive_prune_messages(ctx, {"keep_recent": 1}, result)
+        engine._directive_prune_messages(ctx, PruneMessages(keep_recent=1), result)
 
         # Oldest 2 tool results pruned, newest 1 kept
         assert ctx.messages[1].content.startswith("[Previous:")
@@ -623,10 +701,10 @@ class TestContextWarningInjection:
 
     def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
         """Create engine with compaction for warning tests."""
-        from entropi.config.schema import CompactionConfig
-        from entropi.core.compaction import CompactionManager, TokenCounter
+        from entropic.config.schema import CompactionConfig
+        from entropic.core.compaction import CompactionManager, TokenCounter
 
-        with patch("entropi.core.engine.AgentEngine.__init__", return_value=None):
+        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig(warning_threshold_percent=threshold)
@@ -689,3 +767,65 @@ class TestContextWarningInjection:
         engine._inject_context_warning(ctx)
 
         assert len(ctx.messages) == initial_count
+
+
+class TestStreamingInterrupt(_EngineTestBase):
+    """Interrupt event must stop streaming mid-generation."""
+
+    def _make_streaming_engine(self):
+        """Create engine wired for streaming interrupt tests."""
+        engine = self._make_engine()
+        engine._interrupt_event = threading.Event()
+        engine._pause_event = threading.Event()
+        engine._on_stream_chunk = None
+        engine._log_model_output = MagicMock()
+        engine.orchestrator = MagicMock()
+        engine.orchestrator.last_finish_reason = "stop"
+        return engine
+
+    @pytest.mark.asyncio
+    async def test_interrupt_stops_streaming(self) -> None:
+        """Setting _interrupt_event breaks out of stream loop."""
+        engine = self._make_streaming_engine()
+
+        chunks_yielded = 0
+
+        async def fake_stream(*args, **kwargs):
+            nonlocal chunks_yielded
+            for word in ["Hello ", "world ", "this ", "should ", "stop "]:
+                chunks_yielded += 1
+                if chunks_yielded == 2:
+                    engine._interrupt_event.set()
+                yield word
+
+        engine.orchestrator.generate_stream = fake_stream
+        engine.orchestrator.get_adapter = MagicMock()
+        engine.orchestrator.get_adapter().parse_tool_calls.return_value = ("Hello ", [])
+
+        ctx = LoopContext(messages=[Message(role="system", content="test")])
+        content, tool_calls = await engine._generate_streaming(ctx)
+
+        # Should have stopped after chunk 2 set the interrupt
+        assert chunks_yielded == 2
+        assert "interrupted" in str(engine._log_model_output.call_args)
+
+    @pytest.mark.asyncio
+    async def test_no_interrupt_streams_fully(self) -> None:
+        """Without interrupt, all chunks are consumed."""
+        engine = self._make_streaming_engine()
+
+        async def fake_stream(*args, **kwargs):
+            for word in ["Hello ", "world "]:
+                yield word
+
+        engine.orchestrator.generate_stream = fake_stream
+        engine.orchestrator.get_adapter = MagicMock()
+        engine.orchestrator.get_adapter().parse_tool_calls.return_value = (
+            "Hello world ",
+            [],
+        )
+
+        ctx = LoopContext(messages=[Message(role="system", content="test")])
+        content, _ = await engine._generate_streaming(ctx)
+
+        assert content == "Hello world "

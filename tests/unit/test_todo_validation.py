@@ -1,6 +1,6 @@
 """Tests for strict todo validation — no silent fallbacks."""
 
-from entropi.core.todos import TodoItem, TodoList, TodoStatus
+from entropic.core.todos import TodoItem, TodoList, TodoStatus
 
 
 class TestUpdateFromToolCallValidation:

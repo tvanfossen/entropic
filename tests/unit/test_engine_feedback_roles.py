@@ -7,8 +7,8 @@ feedback because role="tool" messages aren't rendered by llama-cpp.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from entropi.core.base import Message, ToolCall
-from entropi.core.engine import AgentEngine, LoopContext
+from entropic.core.base import Message, ToolCall
+from entropic.core.engine import AgentEngine, LoopContext
 
 
 class TestFeedbackMessageRoles:
@@ -124,9 +124,7 @@ class TestCircuitBreaker:
         async for msg in engine._process_tool_calls(ctx, [tool_call]):
             messages.append(msg)
 
-        assert (
-            ctx.consecutive_duplicate_attempts == 1
-        ), f"Expected counter=1, got {ctx.consecutive_duplicate_attempts}"
+        assert ctx.consecutive_duplicate_attempts == 1
         assert len(messages) == 1
         assert messages[0].role == "user"
 
@@ -168,9 +166,7 @@ class TestCircuitBreaker:
         async for msg in engine._process_tool_calls(ctx, [tool_call]):
             messages.append(msg)
 
-        assert (
-            ctx.consecutive_duplicate_attempts == 0
-        ), f"Expected counter reset to 0, got {ctx.consecutive_duplicate_attempts}"
+        assert ctx.consecutive_duplicate_attempts == 0
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_triggers_at_threshold(self):
@@ -203,3 +199,65 @@ class TestCircuitBreaker:
         assert len(messages) == 1
         assert "STOP" in messages[0].content
         assert "stuck" in messages[0].content.lower()
+
+
+class TestErrorSanitizer:
+    """Test error_sanitizer callback filters errors before model sees them."""
+
+    @pytest.fixture
+    def engine(self):
+        """Create engine with minimal mocking."""
+        orchestrator = MagicMock()
+        server_manager = MagicMock()
+        config = MagicMock()
+        config.compaction = MagicMock()
+        config.models = MagicMock()
+        config.models.default = "normal"
+        config.models.normal = MagicMock(context_length=16384)
+
+        with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
+            return AgentEngine(orchestrator, server_manager, config)
+
+    @pytest.fixture
+    def tool_call(self):
+        return ToolCall(id="test-456", name="bash.execute", arguments={"command": "cat .env"})
+
+    def test_sanitizer_filters_error_in_model_message(self, engine, tool_call):
+        """Sanitized error reaches model, raw error stays in logs."""
+        from entropic.core.engine import EngineCallbacks
+
+        def redact_secrets(error: str) -> str:
+            return error.replace("password=hunter2", "password=***")
+
+        engine.set_callbacks(EngineCallbacks(error_sanitizer=redact_secrets))
+
+        ctx = LoopContext()
+        error = Exception("Connection failed: password=hunter2")
+        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
+
+        # Model message should have sanitized error
+        assert "password=***" in msg.content
+        assert "password=hunter2" not in msg.content
+
+    def test_no_sanitizer_passes_raw_error(self, engine, tool_call):
+        """Without sanitizer, raw error reaches model unchanged."""
+        ctx = LoopContext()
+        error = Exception("password=hunter2")
+        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
+
+        assert "password=hunter2" in msg.content
+
+    def test_sanitizer_applies_to_permission_errors(self, engine, tool_call):
+        """Sanitizer also applies to permission denied messages."""
+        from entropic.core.engine import EngineCallbacks
+
+        engine.set_callbacks(
+            EngineCallbacks(error_sanitizer=lambda e: e.replace("/secret/path", "***"))
+        )
+
+        ctx = LoopContext()
+        error = Exception("Denied: /secret/path")
+        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=True)
+
+        assert "***" in msg.content
+        assert "/secret/path" not in msg.content

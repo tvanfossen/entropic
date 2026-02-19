@@ -1,0 +1,54 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_code_request_produces_code\n<size:11>[PASSED] < 262s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  Write a Python function to check if a number is even
+end note
+App -> Orch: route
+note right: **CODE** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Here's a simple Python function to check if a number is even:
+  
+  ```python
+  def is_even(num: int) -&gt; bool:
+      """
+      Check if an integer is even
+      
+      Args:
+          num (int): The number to check
+          
+      Returns:
+          bool: True if the number is even, False otherwise
+      """
+      return num % 2 == 0
+  ```
+  
+  This function:
+  1. Takes an integer argument `num`
+  2. Uses modulo operator `%` to check divisibility by 2
+  3. Returns `True` if the remainder is 0 (even), else `False`
+  4. Includes type hints and documentation for clarity
+  
+  The implementation handles both positive and negative integers correctly, as 
+  Python's modulo operation works with negative numbers.
+end note
+note over T #palegreen
+  **PASSED** (< 262s)
+end note
+
+@enduml

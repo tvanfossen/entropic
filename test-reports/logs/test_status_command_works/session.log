@@ -1,0 +1,19 @@
+2026-02-19 14:17:51 [INFO] entropic: Session started - logging to /tmp/tmproowv0rp/.entropic/session.log
+2026-02-19 14:17:51 [INFO] entropic: Log level: INFO
+2026-02-19 14:17:51 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:17:51 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-19 14:17:51 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 14:17:51 [INFO] entropic.lsp.base: python LSP started
+2026-02-19 14:17:51 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-19 14:17:51 [INFO] entropic.lsp.base: c LSP started
+2026-02-19 14:17:51 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 14:17:51 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-19 14:17:51 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 14:17:51 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 14:17:51 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 14:17:51 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 14:17:51 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-19 14:17:51 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-19 14:17:51 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-19 14:17:51 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-19 14:17:51 [INFO] entropic.app: Entropi initialized

@@ -1,15 +1,14 @@
 #!/bin/bash
 # ============================================================================
-# Entropi Installation Script
-# Supports both Docker and native installation modes
+# Entropic Installation Script
+#
+# Usage:
+#   ./install.sh              # Core + inference (no TUI)
+#   ./install.sh app          # Full TUI application (recommended)
+#   ./install.sh all          # Everything including voice
 # ============================================================================
 
 set -e
-
-echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                    Installing Entropi                          ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo ""
 
 # Colors for output
 RED='\033[0;31m'
@@ -17,56 +16,39 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Parse arguments
-INSTALL_MODE="docker"
-NO_CACHE=""
-for arg in "$@"; do
-    case $arg in
-        --native)
-            INSTALL_MODE="native"
-            shift
-            ;;
-        --no-cache)
-            NO_CACHE="--no-cache"
-            shift
-            ;;
-    esac
-done
+EXTRAS="${1:-app}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Function to install native dependencies
-install_native_deps() {
-    echo ""
-    echo "=== Installing Native Dependencies ==="
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║                    Installing Entropic                          ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
+echo "Extras: $EXTRAS"
+echo ""
+
+# --- Step 1: System dependencies (voice extras only) ---
+
+install_voice_deps() {
+    echo "=== Installing Voice Dependencies ==="
     echo ""
 
     if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        # Detect package manager
         if command -v apt-get &> /dev/null; then
             echo "Installing system packages (requires sudo)..."
             sudo apt-get update
             sudo apt-get install -y \
-                python3-dev \
-                build-essential \
-                libportaudio2 \
-                portaudio19-dev \
-                libasound2-dev
+                python3-dev build-essential \
+                libportaudio2 portaudio19-dev libasound2-dev
             echo -e "${GREEN}✓${NC} System packages installed"
         elif command -v dnf &> /dev/null; then
             echo "Installing system packages (requires sudo)..."
             sudo dnf install -y \
-                python3-devel \
-                gcc \
-                portaudio \
-                portaudio-devel \
-                alsa-lib-devel
+                python3-devel gcc \
+                portaudio portaudio-devel alsa-lib-devel
             echo -e "${GREEN}✓${NC} System packages installed"
         elif command -v pacman &> /dev/null; then
             echo "Installing system packages (requires sudo)..."
-            sudo pacman -S --needed \
-                python \
-                base-devel \
-                portaudio \
-                alsa-lib
+            sudo pacman -S --needed python base-devel portaudio alsa-lib
             echo -e "${GREEN}✓${NC} System packages installed"
         else
             echo -e "${YELLOW}⚠${NC} Unknown package manager. Please install manually:"
@@ -83,306 +65,91 @@ install_native_deps() {
             echo "  brew install portaudio"
         fi
     fi
+    echo ""
 }
 
-# Native installation mode
-if [ "$INSTALL_MODE" = "native" ]; then
-    echo "Installing in NATIVE mode (no Docker)"
-    echo ""
-
-    # Install system dependencies
-    install_native_deps
-
-    # Check for Python
-    if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}ERROR: Python 3 not found.${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}✓${NC} Python 3 found: $(python3 --version)"
-
-    # Get script directory
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-    # Install in editable mode
-    echo ""
-    echo "Installing Entropi package..."
-    pip install -e "$SCRIPT_DIR[voice]"
-
-    echo ""
-    echo -e "${GREEN}✓${NC} Entropi installed!"
-    echo ""
-    echo "Run 'entropi' to start."
-    exit 0
+# Install voice system deps if voice or all extras requested
+if [[ "$EXTRAS" == "voice" || "$EXTRAS" == "all" ]]; then
+    install_voice_deps
 fi
 
-# Docker installation mode (default)
-echo "Installing in DOCKER mode"
-echo "(use --native flag for native installation)"
+# --- Step 2: Python detection ---
+
+echo "=== Checking Python ==="
 echo ""
 
-# Check for Docker
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}ERROR: Docker not found.${NC}"
-    echo "Please install Docker first: https://docs.docker.com/engine/install/"
-    echo ""
-    echo "Or run with --native flag to install without Docker:"
-    echo "  ./install.sh --native"
+PYTHON=""
+for candidate in python3.12 python3.11 python3; do
+    if command -v "$candidate" &> /dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYTHON" ]; then
+    echo -e "${RED}ERROR: Python 3.11+ required but not found.${NC}"
     exit 1
 fi
-echo -e "${GREEN}✓${NC} Docker installed"
 
-# Check for NVIDIA container runtime
-if docker info 2>/dev/null | grep -q "nvidia\|Runtimes.*nvidia"; then
-    echo -e "${GREEN}✓${NC} NVIDIA container runtime detected"
+PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+echo -e "${GREEN}✓${NC} Python: $PYTHON ($PY_VERSION)"
+
+# --- Step 3: Virtual environment ---
+
+echo ""
+echo "=== Setting up Virtual Environment ==="
+echo ""
+
+if [ ! -d "$SCRIPT_DIR/.venv" ]; then
+    echo "Creating virtual environment..."
+    "$PYTHON" -m venv "$SCRIPT_DIR/.venv"
+    echo -e "${GREEN}✓${NC} Virtual environment created"
 else
-    echo -e "${YELLOW}⚠${NC} NVIDIA container runtime not detected"
-    echo "  GPU acceleration may not work."
-    echo "  Install: https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html"
-    echo ""
+    echo -e "${GREEN}✓${NC} Virtual environment exists"
 fi
 
-# Check for GPU
+PIP="$SCRIPT_DIR/.venv/bin/pip"
+
+# --- Step 4: GPU detection ---
+
+echo ""
+echo "=== Checking GPU ==="
+echo ""
+
 if command -v nvidia-smi &> /dev/null; then
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
     if [ -n "$GPU_NAME" ]; then
         echo -e "${GREEN}✓${NC} Found GPU: $GPU_NAME"
+        echo "  Building llama-cpp-python with CUDA support"
+        export CMAKE_ARGS="-DGGML_CUDA=on"
     fi
 else
-    echo -e "${YELLOW}⚠${NC} nvidia-smi not found. GPU detection skipped."
+    echo "No NVIDIA GPU detected — CPU-only mode"
 fi
 
-# Get the directory where this script is located
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# --- Step 5: Install ---
 
-# Check if we're in the entropi repo (has pyproject.toml)
-if [ -f "$SCRIPT_DIR/pyproject.toml" ]; then
-    echo ""
-    echo "Building from local source: $SCRIPT_DIR"
-    BUILD_FROM_SOURCE=true
+echo ""
+echo "=== Installing Entropic ==="
+echo ""
+
+echo "Installing entropic[$EXTRAS]..."
+$PIP install -e "$SCRIPT_DIR[$EXTRAS]"
+
+echo ""
+echo -e "${GREEN}✓${NC} Entropic installed!"
+
+# --- Step 6: Verify ---
+
+echo ""
+echo "=== Verifying Installation ==="
+echo ""
+
+ENTROPIC_BIN="$SCRIPT_DIR/.venv/bin/entropic"
+if [ -f "$ENTROPIC_BIN" ]; then
+    echo -e "${GREEN}✓${NC} entropic command available: $ENTROPIC_BIN"
 else
-    BUILD_FROM_SOURCE=false
-fi
-
-echo ""
-echo "=== Step 1: Building/Pulling Docker image ==="
-echo ""
-
-if [ "$BUILD_FROM_SOURCE" = true ]; then
-    # Build from local source (BuildKit enables cache mounts for faster rebuilds)
-    echo "Building Entropi image (this may take several minutes on first build)..."
-    if [ -n "$NO_CACHE" ]; then
-        echo "  (--no-cache specified, forcing full rebuild)"
-    fi
-    DOCKER_BUILDKIT=1 docker build $NO_CACHE -f "$SCRIPT_DIR/docker/Dockerfile" -t entropi:latest "$SCRIPT_DIR"
-
-    IMAGE_NAME="entropi:latest"
-else
-    # Try to pull from registry
-    echo "Pulling Entropi Docker image..."
-    if docker pull ghcr.io/entropi/entropi:latest 2>/dev/null; then
-        IMAGE_NAME="ghcr.io/entropi/entropi:latest"
-        echo -e "${GREEN}✓${NC} Image pulled"
-    else
-        echo -e "${RED}ERROR: Could not pull image and not in source directory.${NC}"
-        echo "Please run this script from the entropi repository."
-        exit 1
-    fi
-fi
-
-echo ""
-echo "=== Step 2: Downloading PersonaPlex models ==="
-echo ""
-
-# Check for HF_TOKEN
-HF_ENV_FILE="$SCRIPT_DIR/hf.env"
-if [ -z "$HF_TOKEN" ] && [ -f "$HF_ENV_FILE" ]; then
-    source "$HF_ENV_FILE"
-fi
-
-if [ -z "$HF_TOKEN" ]; then
-    echo "PersonaPlex models require a HuggingFace token."
-    echo "1. Accept the license at: https://huggingface.co/nvidia/personaplex-7b-v1"
-    echo "2. Get your token from: https://huggingface.co/settings/tokens"
-    echo ""
-    read -p "Enter your HuggingFace token (or press Enter to skip): " HF_TOKEN
-
-    if [ -n "$HF_TOKEN" ]; then
-        echo "HF_TOKEN=$HF_TOKEN" > "$HF_ENV_FILE"
-        chmod 600 "$HF_ENV_FILE"
-        echo -e "${GREEN}✓${NC} Token saved to hf.env"
-    fi
-fi
-
-if [ -n "$HF_TOKEN" ]; then
-    echo "Downloading PersonaPlex models (this may take a while on first run)..."
-
-    # Use the container to download models to the host HF cache
-    mkdir -p "$HOME/.cache/huggingface"
-
-    docker run --rm \
-        --entrypoint python \
-        -e HF_TOKEN="$HF_TOKEN" \
-        -e HF_HOME=/hf_cache \
-        -v "$HOME/.cache/huggingface:/hf_cache" \
-        "$IMAGE_NAME" -c "
-from huggingface_hub import hf_hub_download
-import tarfile
-from pathlib import Path
-
-repo = 'nvidia/personaplex-7b-v1'
-files = [
-    'tokenizer-e351c8d8-checkpoint125.safetensors',
-    'model.safetensors',
-    'tokenizer_spm_32k_3.model',
-    'voices.tgz'
-]
-
-print('Downloading PersonaPlex models...')
-for f in files:
-    print(f'  - {f}')
-    path = Path(hf_hub_download(repo_id=repo, filename=f))
-
-# Extract voices
-voices_tgz = Path(hf_hub_download(repo_id=repo, filename='voices.tgz'))
-voices_dir = voices_tgz.parent / 'voices'
-if not voices_dir.exists():
-    print('Extracting voice prompts...')
-    with tarfile.open(voices_tgz, 'r:gz') as tar:
-        tar.extractall(path=voices_tgz.parent)
-
-print('Done!')
-"
-
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✓${NC} PersonaPlex models downloaded to ~/.cache/huggingface"
-    else
-        echo -e "${YELLOW}⚠${NC} Model download failed. Voice mode may not work."
-        echo "  You can re-run install.sh later to retry."
-    fi
-else
-    echo -e "${YELLOW}⚠${NC} Skipping model download (no HF_TOKEN)"
-    echo "  Voice mode will not work until models are downloaded."
-    echo "  Re-run install.sh with HF_TOKEN to download models."
-fi
-
-echo ""
-echo "=== Step 3: Installing wrapper script ==="
-echo ""
-
-# Determine install location
-if [ -w /usr/local/bin ]; then
-    INSTALL_DIR="/usr/local/bin"
-else
-    INSTALL_DIR="$HOME/.local/bin"
-    mkdir -p "$INSTALL_DIR"
-fi
-
-# Create wrapper script
-WRAPPER_PATH="$INSTALL_DIR/entropi"
-
-cat > "$WRAPPER_PATH" << 'WRAPPER_EOF'
-#!/bin/bash
-# Entropi - Local AI Coding Assistant
-# This wrapper invokes the Docker container with appropriate mounts
-
-# Configuration
-ENTROPI_IMAGE="${ENTROPI_IMAGE:-entropi:latest}"
-ENTROPI_MODELS_DIR="${ENTROPI_MODELS_DIR:-$HOME/models/gguf}"
-
-# Ensure models directory exists
-if [ ! -d "$ENTROPI_MODELS_DIR" ]; then
-    echo "WARNING: Models directory not found: $ENTROPI_MODELS_DIR"
-    echo "Run: entropi download --help"
-    mkdir -p "$ENTROPI_MODELS_DIR"
-fi
-
-# Ensure global config directory exists
-mkdir -p "$HOME/.entropi"
-
-# Determine if we need interactive mode
-DOCKER_FLAGS="--rm"
-if [ -t 0 ] && [ -t 1 ]; then
-    # Both stdin and stdout are TTYs - use interactive mode
-    DOCKER_FLAGS="$DOCKER_FLAGS -it"
-elif [ "$1" = "mcp-bridge" ]; then
-    # MCP bridge needs stdin open even when not a TTY (piped from Claude Code)
-    DOCKER_FLAGS="$DOCKER_FLAGS -i"
-fi
-
-# Audio device access for voice mode
-AUDIO_FLAGS=""
-# ALSA devices
-if [ -d /dev/snd ]; then
-    AUDIO_FLAGS="$AUDIO_FLAGS --device /dev/snd"
-fi
-# PulseAudio socket (Linux)
-PULSE_SOCKET="/run/user/$(id -u)/pulse/native"
-if [ -S "$PULSE_SOCKET" ]; then
-    AUDIO_FLAGS="$AUDIO_FLAGS -v /run/user/$(id -u)/pulse:/run/user/$(id -u)/pulse"
-    AUDIO_FLAGS="$AUDIO_FLAGS -e PULSE_SERVER=unix:$PULSE_SOCKET"
-fi
-
-# Get audio group ID for ALSA access
-AUDIO_GID=$(getent group audio | cut -d: -f3 2>/dev/null || echo "")
-GROUP_ADD=""
-if [ -n "$AUDIO_GID" ]; then
-    GROUP_ADD="--group-add $AUDIO_GID"
-fi
-
-# Run entropi in Docker
-# Unset host Python env vars to ensure container uses /opt/venv
-# --tmpfs /workspace/.venv hides any local .venv directory
-# Mount HF cache so models don't need re-downloading
-exec docker run $DOCKER_FLAGS \
-    --gpus all \
-    $AUDIO_FLAGS \
-    $GROUP_ADD \
-    -e HOME=/home/user \
-    -e TERM="$TERM" \
-    -e VIRTUAL_ENV=/opt/venv \
-    -e PYTHONPATH= \
-    -e PYTHONHOME= \
-    -e HF_HOME=/home/user/.cache/huggingface \
-    -v "$ENTROPI_MODELS_DIR:/home/user/models/gguf:ro" \
-    -v "$HOME/.cache/huggingface:/home/user/.cache/huggingface:ro" \
-    -v "$HOME/.entropi:/home/user/.entropi" \
-    -v "$(pwd):/workspace" \
-    --tmpfs /workspace/.venv \
-    -w /workspace \
-    --user "$(id -u):$(id -g)" \
-    "$ENTROPI_IMAGE" \
-    "$@"
-WRAPPER_EOF
-
-chmod +x "$WRAPPER_PATH"
-echo -e "${GREEN}✓${NC} Installed wrapper to: $WRAPPER_PATH"
-
-# If local .venv exists, install wrapper there too (overrides pip-installed entropi)
-if [ -d "$SCRIPT_DIR/.venv/bin" ]; then
-    cp "$WRAPPER_PATH" "$SCRIPT_DIR/.venv/bin/entropi"
-    echo -e "${GREEN}✓${NC} Also installed to .venv/bin/entropi (overrides local)"
-fi
-
-# Check if install dir is in PATH
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo ""
-    echo -e "${YELLOW}NOTE:${NC} $INSTALL_DIR is not in your PATH"
-    echo "Add to your ~/.bashrc or ~/.zshrc:"
-    echo ""
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-    echo ""
-fi
-
-echo ""
-echo "=== Step 4: Verifying installation ==="
-echo ""
-
-# Test the wrapper
-if command -v entropi &> /dev/null; then
-    echo -e "${GREEN}✓${NC} entropi command available: $(which entropi)"
-else
-    echo -e "${YELLOW}!${NC} entropi not in PATH yet. Run:"
-    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo -e "${YELLOW}⚠${NC} entropic command not found in venv"
 fi
 
 echo ""
@@ -393,11 +160,11 @@ echo ""
 echo "Next steps:"
 echo ""
 echo "  1. Ensure models are in ~/models/gguf/"
-echo "     (or set ENTROPI_MODELS_DIR environment variable)"
+echo "     (or configure model paths in .entropic/config.local.yaml)"
 echo ""
 echo "  2. Navigate to any project and run:"
 echo "     cd /path/to/your/project"
-echo "     entropi"
+echo "     $ENTROPIC_BIN"
 echo ""
-echo "  3. First run will auto-create .entropi/ config in your project"
+echo "  3. First run will auto-create .entropic/ config in your project"
 echo ""

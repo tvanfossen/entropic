@@ -1,0 +1,42 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_multiple_messages_accumulate_history\n<size:11>[PASSED] < 112s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  Hello
+end note
+App -> Orch: route
+note right: **NORMAL** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Hello! How can I assist you today?
+end note
+note right of Eng
+  **Follow-up message:**
+  What did I just say?
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  You said "Hello" and then asked "What did I just say?" to confirm your message. 
+  How can I assist you further?
+end note
+note over T #palegreen
+  **PASSED** (< 112s)
+end note
+
+@enduml

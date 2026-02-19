@@ -1,0 +1,38 @@
+2026-02-19 14:17:44 [INFO] entropic: Session started - logging to /tmp/tmpaczhk2_l/.entropic/session.log
+2026-02-19 14:17:44 [INFO] entropic: Log level: INFO
+2026-02-19 14:17:44 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:17:44 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-19 14:17:44 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-19 14:17:44 [INFO] entropic.lsp.base: python LSP started
+2026-02-19 14:17:44 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-19 14:17:44 [INFO] entropic.lsp.base: c LSP started
+2026-02-19 14:17:44 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-19 14:17:44 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-19 14:17:44 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-19 14:17:44 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-19 14:17:44 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-19 14:17:44 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-19 14:17:44 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-19 14:17:44 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-19 14:17:44 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-19 14:17:44 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-19 14:17:44 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:17:44 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
+2026-02-19 14:17:44 [INFO] entropic.core.engine: 
+============================================================
+[USER PROMPT]
+============================================================
+Hello, how are you?
+============================================================
+2026-02-19 14:17:44 [INFO] entropic.core.engine: State: PLANNING
+2026-02-19 14:17:44 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-19 14:17:44 [INFO] entropic.core.engine: State: EXECUTING
+2026-02-19 14:17:44 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 74ms
+2026-02-19 14:17:44 [INFO] entropic.core.engine: System prompt size: ~4200 tokens
+2026-02-19 14:17:44 [INFO] entropic.ui.headless: Routing: NORMAL → NORMAL | none | 74ms
+2026-02-19 14:17:49 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (491 chars):
+Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropic, a local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role. Maybe something like, "Hello! I'm your local AI coding assistant. How can I help you today?" That sounds good. It's brief, direct, and sets the right tone for a coding-related conversation.
+2026-02-19 14:17:49 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=578 | cleaned_len=68 | tool_calls=0
+2026-02-19 14:17:49 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-19 14:17:49 [INFO] entropic.core.engine: State: COMPLETE
+2026-02-19 14:17:49 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 5439ms

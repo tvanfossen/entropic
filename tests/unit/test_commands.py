@@ -3,9 +3,9 @@
 from pathlib import Path
 
 import pytest
-from entropi.core.base import Message
-from entropi.core.commands import CommandContext, CommandRegistry
-from entropi.core.context import ContextCompactor, ProjectContext
+from entropic.core.base import Message
+from entropic.core.commands import CommandContext, CommandRegistry
+from entropic.core.context import ContextCompactor, ProjectContext
 
 
 class TestCommandRegistry:
@@ -162,7 +162,7 @@ class TestCommandRegistry:
     @pytest.mark.asyncio
     async def test_custom_command(self, tmp_path: Path) -> None:
         """Test custom command from file."""
-        commands_dir = tmp_path / ".entropi" / "commands"
+        commands_dir = tmp_path / ".entropic" / "commands"
         commands_dir.mkdir(parents=True)
 
         # Create custom command file
@@ -185,7 +185,7 @@ Review the following code for issues: $ARGUMENTS
     @pytest.mark.asyncio
     async def test_custom_command_execution(self, tmp_path: Path) -> None:
         """Test executing a custom command."""
-        commands_dir = tmp_path / ".entropi" / "commands"
+        commands_dir = tmp_path / ".entropic" / "commands"
         commands_dir.mkdir(parents=True)
 
         (commands_dir / "test.md").write_text(
@@ -326,12 +326,12 @@ class TestProjectContext:
     """Tests for project context loader."""
 
     @pytest.mark.asyncio
-    async def test_load_entropi_md(self, tmp_path: Path) -> None:
-        """Test loading ENTROPI.md from .entropi/ directory."""
-        entropi_dir = tmp_path / ".entropi"
-        entropi_dir.mkdir()
-        entropi_md = entropi_dir / "ENTROPI.md"
-        entropi_md.write_text("# My Project\n\nThis is a test project.")
+    async def test_load_entropic_md(self, tmp_path: Path) -> None:
+        """Test loading ENTROPIC.md from .entropic/ directory."""
+        entropic_dir = tmp_path / ".entropic"
+        entropic_dir.mkdir()
+        entropic_md = entropic_dir / "ENTROPIC.md"
+        entropic_md.write_text("# My Project\n\nThis is a test project.")
 
         context = ProjectContext(tmp_path)
         await context.load()
@@ -340,8 +340,8 @@ class TestProjectContext:
         assert "My Project" in context.get_system_prompt_addition()
 
     @pytest.mark.asyncio
-    async def test_no_entropi_md(self, tmp_path: Path) -> None:
-        """Test when ENTROPI.md doesn't exist."""
+    async def test_no_entropic_md(self, tmp_path: Path) -> None:
+        """Test when ENTROPIC.md doesn't exist."""
         context = ProjectContext(tmp_path)
         await context.load()
 
@@ -366,14 +366,14 @@ class TestProjectContext:
     @pytest.mark.asyncio
     async def test_system_prompt_addition_format(self, tmp_path: Path) -> None:
         """Test format of system prompt addition."""
-        entropi_dir = tmp_path / ".entropi"
-        entropi_dir.mkdir()
-        entropi_md = entropi_dir / "ENTROPI.md"
-        entropi_md.write_text("Project context here.")
+        entropic_dir = tmp_path / ".entropic"
+        entropic_dir.mkdir()
+        entropic_md = entropic_dir / "ENTROPIC.md"
+        entropic_md.write_text("Project context here.")
 
         context = ProjectContext(tmp_path)
         await context.load()
 
         addition = context.get_system_prompt_addition()
         assert "# Project Context" in addition
-        assert "ENTROPI.md" in addition
+        assert "ENTROPIC.md" in addition

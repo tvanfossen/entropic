@@ -9,10 +9,10 @@ component: architecture
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-11
-updated: 2026-02-18
+updated: 2026-02-19
 completed_phases: [1, 2, 3, 4, 5]
 tags: [architecture, packaging, library, refactor, api]
-completed_date: null
+completed_date: 2026-02-19
 scoped_files:
   - pyproject.toml
   - src/entropi/__init__.py
@@ -319,7 +319,7 @@ consumer application using real models, custom tools, and the full agentic loop.
 - [x] Custom in-process tools registered and callable (`examples/pychess/`)
 - [x] `AgentEngine` works headlessly with consumer-defined tiers + tools
 - [x] Playable chess game against LLM using entropi as backend (manual verification)
-- [ ] Dead artifacts cleaned up (`classification.gbnf`, `classification.md`)
+- [x] Dead artifacts cleaned up (`classification.gbnf`, `classification.md`)
 
 ## Phase 5: Hardening — BaseTool, Schema Validation, Documentation
 
@@ -525,3 +525,39 @@ All 9 barriers from `library-api-design.md` resolved:
 1. ModelTier extensible ✓  2. Dict-based config ✓  3. Auto-generated classification ✓
 4. Config-driven routing ✓  5. In-process tools ✓  6. Backend factory injection ✓
 7. Prompt fallback control ✓  8. Parameterized config loading ✓  9. Public API surface ✓
+
+### 2026-02-19 — Phase 5 continued: Consumer polish (feature/library-phase1-quick-wins)
+
+**Commit:**
+- `704d33a` — Phase 5 consumer polish: LibraryConfig, hello-world, GPU detection
+
+**LibraryConfig (#40):**
+- `LibraryConfig(BaseSettings)` — core inference fields only (no TUI fields)
+- `EntropyConfig(LibraryConfig)` — inherits core, adds TUI-specific fields
+- Consumer apps subclass `LibraryConfig` for lean config without UI deps
+
+**Default ServerManager (#43):**
+- `AgentEngine` accepts optional `server_manager`/`config` (both default to None)
+- Lazy init: `_create_default_server_manager()` called on first `run()`
+- `tier_names` derived from `config.models.tiers` — drives conditional tool registration
+
+**Conditional handoff (#45):**
+- `EntropiServer` skips `HandoffTool` when `len(tier_names) == 1`
+- Identity prompts cleaned — no tool-specific references (config drives visibility)
+- `todo_write` kept in thinking tier (always-on core infrastructure)
+
+**Hello-world example (#41, #46):**
+- Two-tier demo: normal (8B) + thinking (14B) with automatic routing
+- Interactive prompt loop with tier selection visibility
+- `ConfigLoader` with consumer-friendly overrides (own app dir, no global config)
+- `requirements.txt` with CUDA install instructions
+
+**GPU offload detection (#47):**
+- `_check_gpu_offload()` — warns once when llama-cpp-python is CPU-only
+- Not gated on nvidia-smi — checks `llama_supports_gpu_offload()` unconditionally
+- Copy-pasteable install commands for CUDA wheel and source compile
+- Links to llama-cpp-python repo for other backends (Metal, Vulkan, SYCL)
+
+**Public API additions (#32, #34):**
+- `save_permission()` exported to public API
+- `validate_config()` — standalone validation without side effects (no dirs, no global config)

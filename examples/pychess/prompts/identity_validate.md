@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: validate
 focus:
   - "evaluating chess moves for tactical and positional soundness"

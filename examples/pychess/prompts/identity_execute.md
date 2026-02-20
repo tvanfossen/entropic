@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: execute
 focus:
   - "executing validated chess moves on the board"

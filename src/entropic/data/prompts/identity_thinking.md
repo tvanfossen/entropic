@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: thinking
 focus:
   - complex problem decomposition

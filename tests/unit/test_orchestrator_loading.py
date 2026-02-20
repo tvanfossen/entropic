@@ -380,7 +380,7 @@ class TestIdentityFileValidation:
 
         for name in self.config.models.tiers:
             (tmp_path / f"identity_{name}.md").write_text(
-                f"---\nname: {name}\nfocus:\n  - testing\n---\n# {name}\n"
+                f"---\ntype: identity\nversion: 1\nname: {name}\nfocus:\n  - testing\n---\n# {name}\n"
             )
 
         def mock_factory(model_config, tier_name):

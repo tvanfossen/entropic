@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: normal
 focus:
   - "typical coding tasks: bug fixes, features, refactoring"

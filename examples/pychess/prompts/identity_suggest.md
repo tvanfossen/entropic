@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: suggest
 focus:
   - "analyzing chess positions and suggesting candidate moves"

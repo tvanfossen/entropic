@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -18,37 +18,104 @@ logger = get_logger("prompts")
 # Package data directory
 _DATA_DIR = Path(__file__).parent.parent / "data" / "prompts"
 
+# Valid prompt types for frontmatter validation
+PromptType = Literal["constitution", "app_context", "identity"]
 
-class TierIdentity(BaseModel):
-    """Schema for identity file YAML frontmatter."""
 
+class PromptFrontmatter(BaseModel):
+    """Base schema for all prompt file YAML frontmatter."""
+
+    type: PromptType
+    version: int = Field(ge=1)
+
+
+class ConstitutionFrontmatter(PromptFrontmatter):
+    """Frontmatter for constitution prompt files."""
+
+    type: Literal["constitution"] = "constitution"
+
+
+class AppContextFrontmatter(PromptFrontmatter):
+    """Frontmatter for app_context prompt files."""
+
+    type: Literal["app_context"] = "app_context"
+
+
+class IdentityFrontmatter(PromptFrontmatter):
+    """Frontmatter for tier identity prompt files."""
+
+    type: Literal["identity"] = "identity"
     name: str
     focus: list[str] = Field(min_length=1)
     examples: list[str] = []
+
+
+# Map type string to schema class
+_FRONTMATTER_SCHEMAS: dict[str, type[PromptFrontmatter]] = {
+    "constitution": ConstitutionFrontmatter,
+    "app_context": AppContextFrontmatter,
+    "identity": IdentityFrontmatter,
+}
+
+
+def parse_prompt_file(
+    path: Path,
+    expected_type: PromptType,
+) -> tuple[PromptFrontmatter, str]:
+    """Parse a prompt file: validate frontmatter, return (frontmatter, body).
+
+    Args:
+        path: Path to the .md prompt file.
+        expected_type: Expected frontmatter type field value.
+
+    Returns:
+        (frontmatter_model, markdown_body)
+
+    Raises:
+        ValueError: Missing, malformed, or type-mismatched frontmatter.
+        ValidationError: Frontmatter fails schema validation.
+    """
+    content = path.read_text()
+    if not content.startswith("---"):
+        raise ValueError(f"Prompt file {path} missing YAML frontmatter")
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        raise ValueError(f"Prompt file {path} has malformed frontmatter")
+
+    data = yaml.safe_load(parts[1])
+    if not isinstance(data, dict):
+        raise ValueError(f"Prompt file {path} frontmatter is not a YAML mapping")
+
+    actual_type = data.get("type")
+    if actual_type != expected_type:
+        raise ValueError(
+            f"Prompt file {path} has type '{actual_type}' " f"but was loaded as '{expected_type}'"
+        )
+
+    schema_cls = _FRONTMATTER_SCHEMAS[expected_type]
+    frontmatter = schema_cls(**data)
+    body = parts[2].strip()
+    return frontmatter, body
+
+
+# Backwards-compatible alias
+TierIdentity = IdentityFrontmatter
 
 
 def load_tier_identity(path: Path) -> tuple[TierIdentity, str]:
     """Load identity file: validate frontmatter, return (metadata, body).
 
     Returns:
-        (TierIdentity, markdown_body) — body is the content after frontmatter,
-        used as system prompt identity by the adapter.
+        (IdentityFrontmatter, markdown_body) — body is the content after
+        frontmatter, used as system prompt identity by the adapter.
 
     Raises:
         ValueError: Missing or invalid frontmatter.
         ValidationError: Frontmatter fails schema (e.g. missing focus).
     """
-    content = path.read_text()
-    if not content.startswith("---"):
-        raise ValueError(f"Identity file {path} missing YAML frontmatter")
-    parts = content.split("---", 2)
-    if len(parts) < 3:
-        raise ValueError(f"Identity file {path} has malformed frontmatter")
-    frontmatter_str = parts[1]
-    body = parts[2]
-    data = yaml.safe_load(frontmatter_str)
-    identity = TierIdentity(**data)
-    return identity, body.strip()
+    frontmatter, body = parse_prompt_file(path, "identity")
+    assert isinstance(frontmatter, IdentityFrontmatter)
+    return frontmatter, body
 
 
 def load_prompt(

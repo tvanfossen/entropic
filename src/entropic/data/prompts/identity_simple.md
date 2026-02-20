@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: simple
 focus:
   - greetings, thanks, small talk

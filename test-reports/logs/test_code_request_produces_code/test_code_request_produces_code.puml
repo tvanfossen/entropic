@@ -22,30 +22,24 @@ note right: **CODE** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a simple Python function to check if a number is even:
+  Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(num: int) -&gt; bool:
-      """
-      Check if an integer is even
-      
-      Args:
-          num (int): The number to check
-          
-      Returns:
-          bool: True if the number is even, False otherwise
-      """
+  def is_even(num):
       return num % 2 == 0
   ```
   
-  This function:
-  1. Takes an integer argument `num`
-  2. Uses modulo operator `%` to check divisibility by 2
-  3. Returns `True` if the remainder is 0 (even), else `False`
-  4. Includes type hints and documentation for clarity
+  **Usage examples:**
+  ```python
+  print(is_even(4))    # True
+  print(is_even(3))    # False
+  print(is_even(-2))   # True
+  print(is_even(0))    # True
+  print(is_even(5.0))  # False
+  ```
   
-  The implementation handles both positive and negative integers correctly, as 
-  Python's modulo operation works with negative numbers.
+  The function works for both integers and floats, returning `True` if the number 
+  is evenly divisible by 2.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

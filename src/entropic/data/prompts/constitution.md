@@ -1,3 +1,8 @@
+---
+type: constitution
+version: 1
+---
+
 # Constitution
 
 ## Core Principles

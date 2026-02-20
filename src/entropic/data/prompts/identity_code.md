@@ -1,4 +1,6 @@
 ---
+type: identity
+version: 1
 name: code
 focus:
   - writing, editing, and fixing code

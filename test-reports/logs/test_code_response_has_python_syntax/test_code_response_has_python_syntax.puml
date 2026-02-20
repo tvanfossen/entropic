@@ -30,15 +30,22 @@ note right of Mdl
   ```
   
   This implementation:
+  - Uses Python's built-in `sum()` function for efficiency
   - Handles empty lists by returning 0 (since `sum([])` returns 0)
   - Works with both integers and floats
-  - Has O(n) time complexity for the summation
   
-  Example usage:
+  For a manual implementation that demonstrates the logic:
   ```python
-  print(sum_list([1, 2, 3]))  # Output: 6
-  print(sum_list([]))        # Output: 0
+  def sum_list(numbers):
+      total = 0
+      for num in numbers:
+          total += num
+      return total
   ```
+  
+  Both versions will correctly calculate the sum of any list of numbers. The 
+  built-in version is preferred for its conciseness and performance, while the 
+  manual version shows the underlying algorithm.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

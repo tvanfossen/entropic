@@ -1,13 +1,18 @@
-2026-02-19 14:43:59 Model output log started
-2026-02-19 14:44:00 
+2026-02-20 11:34:11 Model output log started
+2026-02-20 11:34:11 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-19 14:44:00 
+2026-02-20 11:34:11 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 14:44:00   [0] system (16801 chars):
+2026-02-20 11:34:11   [0] system (16878 chars):
+---
+type: constitution
+version: 1
+---
+
 # Constitution
 
 ## Core Principles
@@ -52,6 +57,11 @@ You are the **general-purpose assistant**.
 - Use tools to gather information rather than speculating
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
+
+---
+type: app_context
+version: 1
+---
 
 # Entropic App Context
 
@@ -747,20 +757,20 @@ Schema:
 }
 ```
 
-2026-02-19 14:44:00   [1] user (19 chars):
+2026-02-20 11:34:11   [1] user (19 chars):
 Hello, how are you?
-2026-02-19 14:44:00 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-19 14:44:06 
+2026-02-20 11:34:11 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-20 11:34:18 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropic, a local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role. Maybe something like, "Hello! I'm your local AI coding assistant. How can I help you today?" That sounds good. It's brief, direct, and sets the right tone for a coding-related conversation.
+Okay, the user greeted me with "Hello, how are you?" I need to respond appropriately. Since I'm Entropic, a local AI coding assistant, my response should be concise and professional. I should acknowledge their greeting and offer assistance. Let me make sure to keep it friendly but focused on my role. Maybe something like, "Hello! I'm here to assist with coding tasks. How can I help you today?" That covers the greeting and sets the context for my purpose.
 </think>
 
-Hello! I'm your local AI coding assistant. How can I help you today?
+Hello! I'm here to assist with coding tasks. How can I help you today?
 --- PARSED ---
-cleaned_content_len=68
+cleaned_content_len=70
 tool_calls=0: []
 ======================================================================

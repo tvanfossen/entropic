@@ -32,8 +32,9 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" and then asked "What did I just say?" to confirm your message. 
-  How can I assist you further?
+  You said: "Hello"  
+  I responded: "Hello! How can I assist you today?"  
+  Now you're asking about your own message.
 end note
 note over T #palegreen
   **PASSED** (< 112s)

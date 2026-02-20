@@ -97,7 +97,9 @@ class TestGracefulIdentityFallback:
         constitution.write_text("# Custom Safety\n\nBe a good chess engine.")
 
         identity = tmp_path / "identity_custom.md"
-        identity.write_text("---\nname: custom\nfocus:\n  - testing\n---\n\nCustom body here")
+        identity.write_text(
+            "---\ntype: identity\nversion: 1\nname: custom\nfocus:\n  - testing\n---\n\nCustom body here"
+        )
 
         result = get_identity_prompt("custom", prompts_dir=tmp_path, use_bundled=False)
 

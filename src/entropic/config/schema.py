@@ -60,9 +60,23 @@ class TierConfig(ModelConfig):
     Extends ModelConfig with optional focus points. Focus can also come
     from ModelTier instances or identity file frontmatter — config is
     one of three resolution paths.
+
+    Identity prompt resolution:
+        absent/None  → bundled default (ships with entropic-engine)
+        False        → disabled entirely
+        path string  → custom file (must exist, validated at load)
     """
 
     focus: list[str] = Field(default_factory=list)
+    identity: Path | Literal[False] | None = None
+
+    @field_validator("identity", mode="before")
+    @classmethod
+    def validate_identity(cls, v: Any) -> Path | Literal[False] | None:
+        """Coerce identity: None = bundled, False = disabled, str = Path."""
+        if v is None or v is False:
+            return v
+        return Path(v).expanduser()
 
 
 class ModelsConfig(BaseModel):
@@ -450,17 +464,31 @@ class LibraryConfig(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    # Prompt handling
-    use_bundled_prompts: bool = True  # False = raise on missing prompt, no bundled fallback
+    # Prompt handling — new per-type fields (Phase 2)
+    # constitution: None = bundled, False = disabled, Path = custom
+    constitution: Path | Literal[False] | None = None
+    # app_context: None = disabled, False = disabled, Path = custom
+    app_context: Path | Literal[False] | None = None
+
+    # Legacy prompt fields (still supported, will be removed post-migration)
+    use_bundled_prompts: bool = True
+    prompts_dir: Path | None = None
 
     # Paths
     config_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic")
-    prompts_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "prompts")
 
-    @field_validator("config_dir", "prompts_dir")
+    @field_validator("config_dir")
     @classmethod
     def validate_library_paths(cls, v: Path) -> Path:
         """Expand user paths if ~ is used."""
+        return Path(v).expanduser()
+
+    @field_validator("constitution", "app_context", mode="before")
+    @classmethod
+    def validate_prompt_paths(cls, v: Any) -> Path | Literal[False] | None:
+        """Coerce prompt paths: None = default, False = disabled, str = Path."""
+        if v is None or v is False:
+            return v
         return Path(v).expanduser()
 
     @model_validator(mode="after")

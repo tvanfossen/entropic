@@ -46,6 +46,7 @@ from entropic.prompts import (
     load_tier_identity,
     parse_prompt_file,
 )
+from entropic.prompts.manager import PromptManager
 
 __version__ = "1.0.0"
 __author__ = "Tristan VanFossen"
@@ -105,4 +106,5 @@ __all__ = [
     "load_prompt",
     "load_tier_identity",
     "parse_prompt_file",
+    "PromptManager",
 ]

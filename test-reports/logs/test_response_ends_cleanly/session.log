@@ -1,40 +1,40 @@
-2026-02-20 11:34:00 [INFO] entropic: Session started - logging to /tmp/tmpe8wwwcja/.entropic/session.log
-2026-02-20 11:34:00 [INFO] entropic: Log level: INFO
-2026-02-20 11:34:00 [INFO] entropic.app: Initializing Entropic...
-2026-02-20 11:34:00 [INFO] entropic.mcp.manager: Initializing MCP server manager
-2026-02-20 11:34:00 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
-2026-02-20 11:34:00 [INFO] entropic.lsp.base: python LSP started
-2026-02-20 11:34:00 [INFO] entropic.lsp.base: Starting c LSP: clangd
-2026-02-20 11:34:00 [INFO] entropic.lsp.base: c LSP started
-2026-02-20 11:34:00 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
-2026-02-20 11:34:00 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
-2026-02-20 11:34:00 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
-2026-02-20 11:34:00 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
-2026-02-20 11:34:00 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
-2026-02-20 11:34:00 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
-2026-02-20 11:34:00 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
-2026-02-20 11:34:00 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
-2026-02-20 11:34:00 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
-2026-02-20 11:34:00 [INFO] entropic.core.commands: Discovered 16 commands
-2026-02-20 11:34:00 [INFO] entropic.app: Entropic initialized
-2026-02-20 11:34:00 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
-2026-02-20 11:34:00 [INFO] entropic.core.engine: 
+2026-02-20 11:46:52 [INFO] entropic: Session started - logging to /tmp/tmps0gb3m0y/.entropic/session.log
+2026-02-20 11:46:52 [INFO] entropic: Log level: INFO
+2026-02-20 11:46:52 [INFO] entropic.app: Initializing Entropic...
+2026-02-20 11:46:52 [INFO] entropic.mcp.manager: Initializing MCP server manager
+2026-02-20 11:46:52 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
+2026-02-20 11:46:53 [INFO] entropic.lsp.base: python LSP started
+2026-02-20 11:46:53 [INFO] entropic.lsp.base: Starting c LSP: clangd
+2026-02-20 11:46:53 [INFO] entropic.lsp.base: c LSP started
+2026-02-20 11:46:53 [INFO] entropic.lsp.manager: LSP started: ['python', 'c']
+2026-02-20 11:46:53 [INFO] entropic.mcp.manager: LSP manager started for in-process tools
+2026-02-20 11:46:53 [INFO] entropic.mcp.provider: In-process provider filesystem: 3 tools available
+2026-02-20 11:46:53 [INFO] entropic.mcp.provider: In-process provider bash: 1 tools available
+2026-02-20 11:46:53 [INFO] entropic.mcp.provider: In-process provider git: 8 tools available
+2026-02-20 11:46:53 [INFO] entropic.mcp.provider: In-process provider diagnostics: 2 tools available
+2026-02-20 11:46:53 [INFO] entropic.mcp.provider: In-process provider entropic: 3 tools available
+2026-02-20 11:46:53 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
+2026-02-20 11:46:53 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
+2026-02-20 11:46:53 [INFO] entropic.core.commands: Discovered 16 commands
+2026-02-20 11:46:53 [INFO] entropic.app: Entropic initialized
+2026-02-20 11:46:53 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
+2026-02-20 11:46:53 [INFO] entropic.core.engine: 
 ============================================================
 [USER PROMPT]
 ============================================================
 List three programming languages and their main use cases
 ============================================================
-2026-02-20 11:34:00 [INFO] entropic.core.engine: State: PLANNING
-2026-02-20 11:34:00 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
-2026-02-20 11:34:00 [INFO] entropic.core.engine: State: EXECUTING
-2026-02-20 11:34:00 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 88ms
-2026-02-20 11:34:00 [INFO] entropic.core.engine: System prompt size: ~4219 tokens
-2026-02-20 11:34:00 [INFO] entropic.ui.headless: Routing: — → NORMAL | none | 88ms
-2026-02-20 11:34:11 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (909 chars):
+2026-02-20 11:46:53 [INFO] entropic.core.engine: State: PLANNING
+2026-02-20 11:46:53 [INFO] entropic.core.engine: [LOOP START] Iteration 1/15 | state=PLANNING | messages=2 | errors=0
+2026-02-20 11:46:53 [INFO] entropic.core.engine: State: EXECUTING
+2026-02-20 11:46:53 [INFO] entropic.inference.orchestrator: [ROUTER] normal | none | 86ms
+2026-02-20 11:46:53 [INFO] entropic.core.engine: System prompt size: ~4219 tokens
+2026-02-20 11:46:53 [INFO] entropic.ui.headless: Routing: — → NORMAL | none | 86ms
+2026-02-20 11:47:04 [INFO] entropic.adapter.Qwen3Adapter: [THINKING] (909 chars):
 Okay, the user is asking for three programming languages and their main use cases. Let me think about which ones to choose. Python is a good start because it's widely used in data science, machine learning, and scripting. Then JavaScript is essential for web development, both front-end and back-end with Node.js. For a third language, maybe Java since it's commonly used in enterprise applications and Android development. Wait, but the user might want more varied use cases. Alternatively, maybe C++ for system/software development or game development. Let me confirm the main use cases for each.
 
 Python: Data analysis, AI, automation. JavaScript: Web browsers, Node.js servers. Java: Enterprise apps, Android apps. That covers different domains. I should present them clearly, stating each language and its primary applications. Make sure it's concise and directly answers the query without extra details.
-2026-02-20 11:34:11 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=1518 | cleaned_len=590 | tool_calls=0
-2026-02-20 11:34:11 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
-2026-02-20 11:34:11 [INFO] entropic.core.engine: State: COMPLETE
-2026-02-20 11:34:11 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 10698ms
+2026-02-20 11:47:04 [INFO] entropic.core.engine: [MODEL OUTPUT] Turn 1 | finish_reason=stop | raw_len=1518 | cleaned_len=590 | tool_calls=0
+2026-02-20 11:47:04 [INFO] entropic.core.engine: [LOOP DECISION] tool_calls=0, is_response_complete=True
+2026-02-20 11:47:04 [INFO] entropic.core.engine: State: COMPLETE
+2026-02-20 11:47:04 [INFO] entropic.core.engine: Loop complete: 1 iterations, 0 tool calls, 11070ms

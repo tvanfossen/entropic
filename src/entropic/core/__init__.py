@@ -1,4 +1,4 @@
-"""Core module for Entropi."""
+"""Core module for Entropic."""
 
 from typing import Any
 

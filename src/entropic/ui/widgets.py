@@ -1,5 +1,5 @@
 """
-Textual widgets for Entropi TUI.
+Textual widgets for Entropic TUI.
 
 Provides reusable message and UI components for the Textual-based interface.
 """

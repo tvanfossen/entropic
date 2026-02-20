@@ -283,7 +283,7 @@ class ConfigLoader:
         entropic_md_path = app_dir / "ENTROPIC.md"
         entropic_md_path.write_text(
             "# Project Context\n\n"
-            "This file provides context to Entropi."
+            "This file provides context to Entropic."
             " Edit it to describe your project.\n\n"
             "## Overview\n\n"
             "<!-- Brief description of what this project does -->\n\n"

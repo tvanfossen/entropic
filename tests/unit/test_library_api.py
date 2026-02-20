@@ -135,7 +135,7 @@ class TestConstitutionReplacement:
         result = get_constitution_prompt()
         assert "Harm Avoidance" in result
         assert "Intellectual Honesty" in result
-        assert "You are **Entropi**" not in result
+        assert "You are **Entropic**" not in result
 
 
 # ── Gap 6: Config-tier validation ────────────────────────────────

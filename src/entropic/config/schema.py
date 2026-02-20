@@ -480,7 +480,7 @@ class LibraryConfig(BaseSettings):
 
 
 class EntropyConfig(LibraryConfig):
-    """Full configuration for Entropi TUI application.
+    """Full configuration for Entropic TUI application.
 
     Extends ``LibraryConfig`` with TUI-specific fields: quality
     enforcement, UI theming, conversation storage, LSP integration,

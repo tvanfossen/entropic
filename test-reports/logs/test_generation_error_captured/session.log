@@ -1,6 +1,6 @@
 2026-02-19 14:44:08 [INFO] entropic: Session started - logging to /tmp/tmp9r4mf2n_/.entropic/session.log
 2026-02-19 14:44:08 [INFO] entropic: Log level: INFO
-2026-02-19 14:44:08 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:44:08 [INFO] entropic.app: Initializing Entropic...
 2026-02-19 14:44:08 [INFO] entropic.mcp.manager: Initializing MCP server manager
 2026-02-19 14:44:08 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
 2026-02-19 14:44:08 [INFO] entropic.lsp.base: python LSP started
@@ -16,4 +16,4 @@
 2026-02-19 14:44:08 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
 2026-02-19 14:44:08 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
 2026-02-19 14:44:08 [INFO] entropic.core.commands: Discovered 16 commands
-2026-02-19 14:44:08 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:44:08 [INFO] entropic.app: Entropic initialized

@@ -1,4 +1,4 @@
-"""Inference module for Entropi."""
+"""Inference module for Entropic."""
 
 from entropic.core.base import ModelTier
 from entropic.inference.backend import GenerationConfig, TokenUsage

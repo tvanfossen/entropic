@@ -55,7 +55,7 @@ def download_models(
     force: bool = False,
 ) -> None:
     """
-    Download Entropi models.
+    Download Entropic models.
 
     Args:
         model: Model key ('thinking', 'normal', 'code', 'micro', 'all')
@@ -129,7 +129,7 @@ def verify_file(file_path: Path, expected_hash: str | None) -> bool:
 )
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
 def download(model: str, output_dir: Path, force: bool) -> None:
-    """Download Entropi models."""
+    """Download Entropic models."""
     download_models(model, output_dir, force)
 
 

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 HOOK=".git/hooks/pre-commit"
-MARKER="# entropi: auto-stage test reports"
+MARKER="# entropic: auto-stage test reports"
 
 # Ensure pre-commit hook exists
 if [ ! -f "$HOOK" ]; then
@@ -28,7 +28,7 @@ existing=$(tail -n +2 "$HOOK")
 # Write wrapper: staging logic before pre-commit framework
 cat > "$HOOK" << 'HOOK_HEADER'
 #!/usr/bin/env bash
-# entropi: auto-stage test reports
+# c: auto-stage test reports
 # Stages test-reports/ before pre-commit stashes unstaged changes.
 # This prevents stash conflicts when model tests regenerate reports.
 # Regenerate with: bash scripts/setup-hooks.sh

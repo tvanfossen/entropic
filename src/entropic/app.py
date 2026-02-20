@@ -82,9 +82,9 @@ class Application:
         """Initialize all components with loading feedback."""
         from rich.status import Status
 
-        self.logger.info("Initializing Entropi...")
+        self.logger.info("Initializing Entropic...")
 
-        with Status("[bold blue]Starting Entropi...", console=self.console) as status:
+        with Status("[bold blue]Starting Entropic...", console=self.console) as status:
             # Initialize model orchestrator (skip if injected)
             if self._orchestrator is None:
                 status.update("[bold blue]Loading models...")
@@ -141,7 +141,7 @@ class Application:
                 status.update("[bold blue]Starting external MCP server...")
                 await self._initialize_external_mcp()
 
-        self.logger.info("Entropi initialized")
+        self.logger.info("Entropic initialized")
 
     async def _initialize_external_mcp(self) -> None:
         """Initialize external MCP server for Claude Code integration."""

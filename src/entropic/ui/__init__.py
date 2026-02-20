@@ -1,4 +1,4 @@
-"""Terminal UI module for Entropi."""
+"""Terminal UI module for Entropic."""
 
 from entropic.ui.components import (
     ConversationDisplay,

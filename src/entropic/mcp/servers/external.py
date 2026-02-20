@@ -1,7 +1,7 @@
 """
 External MCP server for Claude Code integration.
 
-Exposes tools that allow Claude Code to delegate tasks to Entropi's
+Exposes tools that allow Claude Code to delegate tasks to Entropic's
 local models. Listens on a Unix socket for connections.
 """
 
@@ -58,13 +58,13 @@ class ExternalMCPServer:
     MCP server for Claude Code integration.
 
     Provides tools for:
-    - chat: Submit tasks to Entropi
+    - chat: Submit tasks to Entropic
     - poll_task: Check task status
     - cancel: Cancel tasks
     - get_history: Get conversation history
     - get_capabilities: Query available models/tools
     - report_issue: Report quality issues
-    - status: Check Entropi status
+    - status: Check Entropic status
 
     And notifications for:
     - task_progress: Progress updates
@@ -176,7 +176,7 @@ class ExternalMCPServer:
         return Tool(
             name="chat",
             description=(
-                "Submit a task to Entropi, a local AI coding assistant. "
+                "Submit a task to Entropic, a local AI coding assistant. "
                 "Use for tasks that don't require frontier-level reasoning: "
                 "implementing functions, writing boilerplate, running tests, "
                 "file operations. Runs locally (free). Returns immediately "
@@ -186,7 +186,7 @@ class ExternalMCPServer:
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "message": {"type": "string", "description": "Your message to Entropi"},
+                    "message": {"type": "string", "description": "Your message to Entropic"},
                     "context": {
                         "type": "array",
                         "description": "Optional file contents to include as context",
@@ -242,7 +242,7 @@ class ExternalMCPServer:
         return Tool(
             name="get_history",
             description=(
-                "Get recent conversation history from Entropi, "
+                "Get recent conversation history from Entropic, "
                 "including messages from both you and the human user."
             ),
             inputSchema={
@@ -267,7 +267,7 @@ class ExternalMCPServer:
         return Tool(
             name="get_capabilities",
             description=(
-                "Query what models and tools Entropi has available. "
+                "Query what models and tools Entropic has available. "
                 "Use to understand what tasks can be delegated effectively."
             ),
             inputSchema={"type": "object", "properties": {}},
@@ -277,7 +277,7 @@ class ExternalMCPServer:
         """Define report_issue tool."""
         return Tool(
             name="report_issue",
-            description="Report a quality issue with Entropi's response.",
+            description="Report a quality issue with Entropic's response.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -307,7 +307,7 @@ class ExternalMCPServer:
         """Define status tool."""
         return Tool(
             name="status",
-            description="Check Entropi's current status including queue depth and active tasks.",
+            description="Check Entropic's current status including queue depth and active tasks.",
             inputSchema={"type": "object", "properties": {}},
         )
 
@@ -722,11 +722,11 @@ class ExternalMCPServer:
                 "serverInfo": {"name": "entropic-external", "version": "1.0.0"},
                 "capabilities": {"tools": {}},
                 "instructions": (
-                    "Entropi is a local AI coding assistant with its own tool access. "
+                    "Entropic is a local AI coding assistant with its own tool access. "
                     f"Available tools: {', '.join(tools_info) if tools_info else 'filesystem, bash, git'}. "
                     "When delegating tasks: describe WHAT to do, not HOW. "
-                    "Reference files by path - Entropi will read them itself. "
-                    "Do not pass file contents. Let Entropi make its own tool decisions."
+                    "Reference files by path - Entropic will read them itself. "
+                    "Do not pass file contents. Let Entropic make its own tool decisions."
                 ),
             },
         }

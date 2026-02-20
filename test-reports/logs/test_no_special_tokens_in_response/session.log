@@ -1,6 +1,6 @@
 2026-02-19 14:43:59 [INFO] entropic: Session started - logging to /tmp/tmpweypjx53/.entropic/session.log
 2026-02-19 14:43:59 [INFO] entropic: Log level: INFO
-2026-02-19 14:43:59 [INFO] entropic.app: Initializing Entropi...
+2026-02-19 14:43:59 [INFO] entropic.app: Initializing Entropic...
 2026-02-19 14:43:59 [INFO] entropic.mcp.manager: Initializing MCP server manager
 2026-02-19 14:43:59 [INFO] entropic.lsp.base: Starting python LSP: pyright-langserver --stdio
 2026-02-19 14:44:00 [INFO] entropic.lsp.base: python LSP started
@@ -16,7 +16,7 @@
 2026-02-19 14:44:00 [INFO] entropic.mcp.manager: Connected to 5 servers: ['filesystem', 'bash', 'git', 'diagnostics', 'entropic']
 2026-02-19 14:44:00 [INFO] entropic.storage.database: Database initialized: /home/tvanfossen/Projects/entropic/.entropic/entropic.db
 2026-02-19 14:44:00 [INFO] entropic.core.commands: Discovered 16 commands
-2026-02-19 14:44:00 [INFO] entropic.app: Entropi initialized
+2026-02-19 14:44:00 [INFO] entropic.app: Entropic initialized
 2026-02-19 14:44:00 [INFO] entropic.core.engine: Tools available (17): ['filesystem.read_file', 'filesystem.write_file', 'filesystem.edit_file', 'bash.execute', 'git.status', 'git.diff', 'git.log', 'git.commit', 'git.branch', 'git.checkout', 'git.add', 'git.reset', 'diagnostics.diagnostics', 'diagnostics.check_errors', 'entropic.todo_write', 'entropic.handoff', 'entropic.prune_context']
 2026-02-19 14:44:00 [INFO] entropic.core.engine: 
 ============================================================

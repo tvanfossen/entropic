@@ -1,1 +1,1 @@
-"""Integration tests for Entropi."""
+"""Integration tests for Entropic."""

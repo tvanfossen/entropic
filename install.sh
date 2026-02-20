@@ -87,7 +87,7 @@ for candidate in python3.12 python3.11 python3; do
 done
 
 if [ -z "$PYTHON" ]; then
-    echo -e "${RED}ERROR: Python 3.11+ required but not found.${NC}"
+    echo -e "${RED}ERROR: Python 3.10+ required but not found.${NC}"
     exit 1
 fi
 
@@ -109,6 +109,14 @@ else
 fi
 
 PIP="$SCRIPT_DIR/.venv/bin/pip"
+
+# Warn about old pip — common on Ubuntu 22 and can cause slow dependency resolution
+PIP_VERSION=$($PIP --version 2>/dev/null | awk '{print $2}' | cut -d. -f1)
+if [ -n "$PIP_VERSION" ] && [ "$PIP_VERSION" -lt 23 ] 2>/dev/null; then
+    echo -e "${YELLOW}⚠${NC} pip $($PIP --version | awk '{print $2}') is old and may resolve dependencies slowly"
+    echo "  Consider: $SCRIPT_DIR/.venv/bin/python -m pip install --upgrade pip"
+    echo ""
+fi
 
 # --- Step 4: GPU detection ---
 
@@ -159,12 +167,19 @@ echo "╚═══════════════════════�
 echo ""
 echo "Next steps:"
 echo ""
-echo "  1. Ensure models are in ~/models/gguf/"
+echo "  1. Add the entropic command to your PATH (pick one):"
+echo ""
+echo "     # Option A: Symlink into ~/.local/bin/"
+echo "     mkdir -p ~/.local/bin && ln -sf $ENTROPIC_BIN ~/.local/bin/entropic"
+echo ""
+echo "     # Option B: Add venv bin to PATH in your shell profile"
+echo "     echo 'export PATH=\"$SCRIPT_DIR/.venv/bin:\$PATH\"' >> ~/.bashrc"
+echo ""
+echo "     # Or just use the full path: $ENTROPIC_BIN"
+echo ""
+echo "  2. Ensure models are in ~/models/gguf/"
 echo "     (or configure model paths in .entropic/config.local.yaml)"
 echo ""
-echo "  2. Navigate to any project and run:"
-echo "     cd /path/to/your/project"
-echo "     $ENTROPIC_BIN"
-echo ""
-echo "  3. First run will auto-create .entropic/ config in your project"
+echo "  3. Navigate to any project and run: entropic"
+echo "     First run will auto-create .entropic/ config in your project"
 echo ""

@@ -1,5 +1,5 @@
 """
-Entropi - Local AI inference engine with multi-tier model orchestration.
+Entropic - Local AI inference engine with multi-tier model orchestration.
 
 Public API for library consumers. Install extras for additional features:
   pip install entropic-engine          # Core inference engine
@@ -36,7 +36,7 @@ from entropic.mcp.manager import ServerManager
 from entropic.mcp.provider import InProcessProvider
 from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
 from entropic.mcp.tools import BaseTool, ToolRegistry
-from entropic.prompts import TierIdentity, load_tier_identity
+from entropic.prompts import TierIdentity, load_prompt, load_tier_identity
 
 __version__ = "1.0.0"
 __author__ = "Tristan VanFossen"
@@ -89,5 +89,6 @@ __all__ = [
     "load_tool_definition",
     # Prompts
     "TierIdentity",
+    "load_prompt",
     "load_tier_identity",
 ]

@@ -1,1 +1,1 @@
-"""Unit tests for Entropi."""
+"""Unit tests for Entropic."""

@@ -1,4 +1,4 @@
-"""Built-in MCP servers for Entropi."""
+"""Built-in MCP servers for Entropic."""
 
 from entropic.mcp.servers.base import BaseMCPServer, load_tool_definition
 from entropic.mcp.servers.bash import BashServer

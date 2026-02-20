@@ -1,4 +1,4 @@
-"""Quality enforcement module for Entropi."""
+"""Quality enforcement module for Entropic."""
 
 from entropic.quality.enforcer import QualityEnforcer, QualityReport
 

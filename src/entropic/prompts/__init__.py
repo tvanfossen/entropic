@@ -1,4 +1,4 @@
-"""Prompt templates for Entropi."""
+"""Prompt templates for Entropic."""
 
 from __future__ import annotations
 

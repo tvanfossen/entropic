@@ -147,7 +147,7 @@ class SessionManager:
 
         Args:
             project_path: Project directory path
-            entropic_dir: Entropi config directory (default: ~/.entropic)
+            entropic_dir: Entropic config directory (default: ~/.entropic)
         """
         self.project_path = project_path.resolve()
         self.project_id = get_project_id(project_path)

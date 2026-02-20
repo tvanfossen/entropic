@@ -1,6 +1,6 @@
 # Project Context
 
-This file provides context to Entropi. Edit it to describe your project.
+This file provides context to Entropic. Edit it to describe your project.
 
 ## Overview
 

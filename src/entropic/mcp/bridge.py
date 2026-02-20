@@ -1,7 +1,7 @@
 """
 MCP bridge for stdio-socket communication.
 
-Bridges stdio (used by Claude Code) to Unix socket (used by Entropi).
+Bridges stdio (used by Claude Code) to Unix socket (used by Entropic).
 This is spawned by Claude Code as a subprocess.
 
 Usage:
@@ -61,11 +61,11 @@ async def _connect_to_socket(
     """Connect to socket. Returns (reader, writer) or None on error."""
     if not path.exists():
         logger.error(f"Socket not found: {path}")
-        logger.error("Make sure Entropi is running first.")
+        logger.error("Make sure Entropic is running first.")
         return None
     try:
         reader, writer = await asyncio.open_unix_connection(str(path))
-        logger.info(f"Connected to Entropi at {path}")
+        logger.info(f"Connected to Entropic at {path}")
         return reader, writer
     except Exception as e:
         logger.error(f"Failed to connect to socket: {e}")
@@ -169,7 +169,7 @@ def main(socket_path: str | None = None) -> int:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Entropi MCP Bridge")
+    parser = argparse.ArgumentParser(description="Entropic MCP Bridge")
     parser.add_argument(
         "--socket",
         type=str,

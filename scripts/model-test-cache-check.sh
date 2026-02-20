@@ -19,7 +19,7 @@ mkdir -p "$CACHE_DIR"
 # Compute content hash of all files that affect model test behavior.
 # Includes: source code, test code, config, test fixtures.
 compute_hash() {
-    find src/ tests/model/ tests/conftest.py .entropi/config.local.yaml \
+    find src/ tests/model/ tests/conftest.py .entropic/config.local.yaml \
         -type f \( -name '*.py' -o -name '*.yaml' \) 2>/dev/null \
         | sort \
         | xargs sha256sum 2>/dev/null \

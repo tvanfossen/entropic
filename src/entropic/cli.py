@@ -1,5 +1,5 @@
 """
-CLI entry point for Entropi.
+CLI entry point for Entropic.
 
 Handles command-line arguments and initializes the application.
 """
@@ -64,7 +64,7 @@ def main(
     headless: bool,
 ) -> None:
     """
-    Entropi - Local AI Coding Assistant
+    Entropic - Local AI Coding Assistant
 
     Run without arguments to start interactive mode.
     """
@@ -125,7 +125,7 @@ def status(ctx: click.Context) -> None:
     console = Console()
     config = ctx.obj["config"]
 
-    table = Table(title="Entropi Status")
+    table = Table(title="Entropic Status")
     table.add_column("Component", style="cyan")
     table.add_column("Status", style="green")
 
@@ -176,12 +176,12 @@ def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:
 @main.command()
 @click.pass_context
 def init(ctx: click.Context) -> None:
-    """Initialize Entropi in the current directory."""
+    """Initialize Entropic in the current directory."""
     project_dir = ctx.obj["project"]
     entropic_dir = project_dir / ".entropic"
 
     if entropic_dir.exists():
-        click.echo(f"Entropi already initialized in {project_dir}")
+        click.echo(f"Entropic already initialized in {project_dir}")
         return
 
     # Create directories
@@ -189,7 +189,7 @@ def init(ctx: click.Context) -> None:
     (entropic_dir / "commands").mkdir()
 
     # Create default config
-    default_config = """# Entropi Project Configuration
+    default_config = """# Entropic Project Configuration
 # See ~/.entropic/config.yaml for global settings
 
 quality:
@@ -208,7 +208,7 @@ permissions:
     # Create ENTROPIC.md in .entropic/
     entropic_md = """# Project Context
 
-This file provides context to Entropi. Edit it to describe your project.
+This file provides context to Entropic. Edit it to describe your project.
 
 ## Overview
 
@@ -230,7 +230,7 @@ This file provides context to Entropi. Edit it to describe your project.
     if not entropic_md_path.exists():
         entropic_md_path.write_text(entropic_md)
 
-    click.echo(f"Initialized Entropi in {project_dir}")
+    click.echo(f"Initialized Entropic in {project_dir}")
     click.echo("Created:")
     click.echo(f"  - {entropic_dir}/config.yaml")
     click.echo(f"  - {entropic_dir}/commands/")
@@ -248,7 +248,7 @@ This file provides context to Entropi. Edit it to describe your project.
 )
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
 def download(model: str, output_dir: Path, force: bool) -> None:
-    """Download Entropi models from HuggingFace."""
+    """Download Entropic models from HuggingFace."""
     from entropic.cli_download import download_models
 
     download_models(model, output_dir, force)
@@ -265,8 +265,8 @@ def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
     """
     Run as MCP bridge for Claude Code integration.
 
-    This bridges stdio (used by Claude Code) to Entropi's Unix socket.
-    Entropi must already be running for the bridge to connect.
+    This bridges stdio (used by Claude Code) to Entropic's Unix socket.
+    Entropic must already be running for the bridge to connect.
 
     Configure Claude Code's .mcp.json:
 

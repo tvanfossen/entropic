@@ -535,7 +535,7 @@ async def run_server(
 
 def main() -> None:
     """CLI entry point for voice server."""
-    parser = argparse.ArgumentParser(description="Entropi Voice Server")
+    parser = argparse.ArgumentParser(description="Entropic Voice Server")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Host to bind to")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port to bind to")
     parser.add_argument("--device", default="cuda", help="Device (cuda/cpu)")

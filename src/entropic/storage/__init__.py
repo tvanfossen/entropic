@@ -1,4 +1,4 @@
-"""Storage module for Entropi."""
+"""Storage module for Entropic."""
 
 from entropic.storage.backend import SQLiteStorage
 from entropic.storage.database import Database

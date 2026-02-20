@@ -1,5 +1,5 @@
 """
-Textual-based TUI for Entropi.
+Textual-based TUI for Entropic.
 
 Provides unified input handling that works during streaming,
 replacing the Rich + prompt_toolkit approach.
@@ -542,7 +542,7 @@ class PauseScreen(ModalScreen[str | None]):
 
 class EntropiApp(App[None]):
     """
-    Main Entropi TUI application.
+    Main Entropic TUI application.
 
     Handles the entire UI lifecycle with unified input handling
     that works during streaming.
@@ -566,7 +566,7 @@ class EntropiApp(App[None]):
         models: list[str] | None = None,
     ) -> None:
         """
-        Initialize Entropi app.
+        Initialize Entropic app.
 
         Args:
             config: Application configuration
@@ -641,7 +641,7 @@ class EntropiApp(App[None]):
         """Show welcome message."""
         models_str = ", ".join(self._models) if self._models else "None loaded"
         welcome = Panel(
-            f"[bold cyan]Entropi[/] v{self._version}\n"
+            f"[bold cyan]Entropic[/] v{self._version}\n"
             f"[dim]Local AI Coding Assistant[/]\n\n"
             f"Models: {models_str}\n"
             f"Type [bold]/help[/] for commands, [bold]/exit[/] to quit",

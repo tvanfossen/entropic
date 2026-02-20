@@ -1,5 +1,5 @@
 """
-Voice interface subsystem for Entropi.
+Voice interface subsystem for Entropic.
 
 Provides real-time speech-to-speech conversation using NVIDIA PersonaPlex,
 with context compaction between conversation windows.

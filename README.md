@@ -87,12 +87,14 @@ state management without the model needing to orchestrate these concerns.
 
 ## Requirements
 
-- Linux (tested on Ubuntu 24.04)
+- Linux (tested on Ubuntu 22.04, 24.04)
 - NVIDIA GPU with 16GB+ VRAM
 - CUDA 12.4+
-- Python 3.11+
+- Python 3.10+
 
 ## Quick Start
+
+### From source (development)
 
 ```bash
 git clone https://github.com/tvanfossen/entropic.git
@@ -111,6 +113,20 @@ with the `[app]` extras (TUI + storage dependencies).
 
 # Or headless
 .venv/bin/entropic --headless
+```
+
+### With pipx (isolated install)
+
+```bash
+pipx install entropic-engine[app]
+```
+
+If you have an NVIDIA GPU, rebuild `llama-cpp-python` with CUDA support:
+
+```bash
+PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="-DGGML_CUDA=on" \
+  pipx runpip entropic-engine install llama-cpp-python \
+  --force-reinstall --no-cache-dir
 ```
 
 ## CLI

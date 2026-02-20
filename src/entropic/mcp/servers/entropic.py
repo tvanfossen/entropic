@@ -1,5 +1,5 @@
 """
-Entropi MCP server.
+Entropic MCP server.
 
 Provides entropic-internal tools: todo management, tier handoff,
 and context pruning. Returns ``ServerResponse`` with native typed
@@ -164,7 +164,7 @@ class PruneContextTool(BaseTool):
 
 
 class EntropicServer(BaseMCPServer):
-    """Entropi internal tools MCP server.
+    """Entropic internal tools MCP server.
 
     Owns the TodoList instance and provides handoff, prune_context,
     and todo_write tools. Returns ``ServerResponse`` with native typed

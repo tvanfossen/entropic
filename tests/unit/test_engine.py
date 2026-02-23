@@ -237,14 +237,14 @@ class TestContextBuilder:
     """Tests for context builder."""
 
     def test_build_system_prompt_returns_base(self) -> None:
-        """Test build_system_prompt returns the base prompt."""
+        """Test build_system_prompt is a pass-through."""
         from entropic.config.schema import EntropyConfig
 
         config = EntropyConfig()
         builder = ContextBuilder(config)
 
         prompt = builder.build_system_prompt("Test base prompt")
-        assert "Test base prompt" in prompt
+        assert prompt == "Test base prompt"
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
@@ -256,19 +256,6 @@ class TestContextBuilder:
         # ~4 chars per token
         assert builder.estimate_tokens("hello world") == 2  # 11 // 4 = 2
         assert builder.estimate_tokens("a" * 100) == 25  # 100 // 4 = 25
-
-    def test_build_system_prompt_with_project_context(self) -> None:
-        """Test building system prompt appends project context."""
-        from entropic.config.schema import EntropyConfig
-
-        config = EntropyConfig()
-        builder = ContextBuilder(config)
-        builder._project_context = "Project-specific info here"
-
-        prompt = builder.build_system_prompt("Base prompt")
-        assert "Base prompt" in prompt
-        assert "Project Context" in prompt
-        assert "Project-specific info here" in prompt
 
 
 class _EngineTestBase:

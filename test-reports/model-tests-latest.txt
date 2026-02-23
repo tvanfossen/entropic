@@ -1,42 +1,840 @@
 === Model Test Report ===
-Date: 2026-02-23 10:27:35
+Commit: 3449ca3
+Branch: feature/tui-banner
+Date:   2026-02-23T11:16:41-05:00
+Hash:   2c6d10f6ade9c0ec70a98beee7d3817acdafabe14a6b14154d9ee54586a53f7c
+=========================
 
-Results: 22 passed, 0 failed (105.8s)
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.2, pluggy-1.6.0 -- /home/tvanfossen/Projects/entropic/.venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /home/tvanfossen/Projects/entropic
+configfile: pyproject.toml
+plugins: anyio-4.12.1, cov-7.0.0, asyncio-1.3.0, bdd-8.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 22 items
 
-  [PASS] test_code_request_produces_code [code] (18.7s)
-         Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (18.7s)
-         Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (11.9s)
-         Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (7.5s)
-         Prompt: Hello, how are you?
-  [PASS] test_status_command_works (0.0s)
-  [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (5.6s)
-         Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (12.7s)
-         Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (17.7s)
-         Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (5.6s)
-         Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (4.2s)
-         Prompt: Thanks!
-  [PASS] test_hello_routes_to_simple (0.1s)
-  [PASS] test_hi_routes_to_simple (0.1s)
-  [PASS] test_thanks_routes_to_simple (0.1s)
-  [PASS] test_write_code_routes_to_code (0.1s)
-  [PASS] test_fix_bug_routes_to_code (0.1s)
-  [PASS] test_add_feature_routes_to_code (0.1s)
-  [PASS] test_explain_routes_to_reasoning (0.1s)
-  [PASS] test_question_routes_to_reasoning (0.1s)
-  [PASS] test_complex_analysis_routes_to_thinking (2.0s)
-  [PASS] test_classification_under_500ms (0.1s)
-  [PASS] test_multiple_classifications_consistent (0.3s)
+tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code ERROR [  4%]
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax ERROR [  9%]
+tests/model/test_headless_completeness.py::TestResponseCompleteness::test_response_ends_cleanly ERROR [ 13%]
+tests/model/test_headless_completeness.py::TestNoSpecialTokens::test_no_special_tokens_in_response ERROR [ 18%]
+tests/model/test_headless_errors.py::TestErrorCapture::test_status_command_works ERROR [ 22%]
+tests/model/test_headless_errors.py::TestErrorCapture::test_generation_error_captured ERROR [ 27%]
+tests/model/test_headless_lifecycle.py::TestGenerationLifecycle::test_generation_starts_and_ends ERROR [ 31%]
+tests/model/test_headless_lifecycle.py::TestGenerationLifecycle::test_multiple_messages_accumulate_history ERROR [ 36%]
+tests/model/test_headless_reasoning.py::TestReasoningResponses::test_explanation_is_substantive ERROR [ 40%]
+tests/model/test_headless_simple.py::TestSimpleResponses::test_hello_produces_response ERROR [ 45%]
+tests/model/test_headless_simple.py::TestSimpleResponses::test_thanks_produces_acknowledgment ERROR [ 50%]
+tests/model/test_routing.py::TestRoutingClassification::test_hello_routes_to_simple ERROR [ 54%]
+tests/model/test_routing.py::TestRoutingClassification::test_hi_routes_to_simple ERROR [ 59%]
+tests/model/test_routing.py::TestRoutingClassification::test_thanks_routes_to_simple ERROR [ 63%]
+tests/model/test_routing.py::TestRoutingClassification::test_write_code_routes_to_code ERROR [ 68%]
+tests/model/test_routing.py::TestRoutingClassification::test_fix_bug_routes_to_code ERROR [ 72%]
+tests/model/test_routing.py::TestRoutingClassification::test_add_feature_routes_to_code ERROR [ 77%]
+tests/model/test_routing.py::TestRoutingClassification::test_explain_routes_to_reasoning ERROR [ 81%]
+tests/model/test_routing.py::TestRoutingClassification::test_question_routes_to_reasoning ERROR [ 86%]
+tests/model/test_routing.py::TestRoutingClassification::test_complex_analysis_routes_to_thinking ERROR [ 90%]
+tests/model/test_routing.py::TestClassificationSpeed::test_classification_under_500ms ERROR [ 95%]
+tests/model/test_routing.py::TestClassificationSpeed::test_multiple_classifications_consistent ERROR [100%]
 
-Per-test artifacts: test-reports/logs/<test_name>/
+==================================== ERRORS ====================================
+_____ ERROR at setup of TestCodeResponses.test_code_request_produces_code ______
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:395: in __init__
+    internals.LlamaContext(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:263: in __init__
+    raise ValueError("Failed to create llama_context")
+E   ValueError: Failed to create llama_context
+---------------------------- Captured stderr setup -----------------------------
+ggml_cuda_init: GGML_CUDA_FORCE_MMQ:    no
+ggml_cuda_init: GGML_CUDA_FORCE_CUBLAS: no
+ggml_cuda_init: found 1 CUDA devices:
+  Device 0: NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU, compute capability 12.0, VMM: yes
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+___ ERROR at setup of TestCodeResponses.test_code_response_has_python_syntax ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:395: in __init__
+    internals.LlamaContext(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:263: in __init__
+    raise ValueError("Failed to create llama_context")
+E   ValueError: Failed to create llama_context
+____ ERROR at setup of TestResponseCompleteness.test_response_ends_cleanly _____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+___ ERROR at setup of TestNoSpecialTokens.test_no_special_tokens_in_response ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_________ ERROR at setup of TestErrorCapture.test_status_command_works _________
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+______ ERROR at setup of TestErrorCapture.test_generation_error_captured _______
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+__ ERROR at setup of TestGenerationLifecycle.test_generation_starts_and_ends ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+_ ERROR at setup of TestGenerationLifecycle.test_multiple_messages_accumulate_history _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+___ ERROR at setup of TestReasoningResponses.test_explanation_is_substantive ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+______ ERROR at setup of TestSimpleResponses.test_hello_produces_response ______
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:395: in __init__
+    internals.LlamaContext(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:263: in __init__
+    raise ValueError("Failed to create llama_context")
+E   ValueError: Failed to create llama_context
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+__ ERROR at setup of TestSimpleResponses.test_thanks_produces_acknowledgment ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/model/conftest.py:108: in shared_orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:395: in __init__
+    internals.LlamaContext(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:263: in __init__
+    raise ValueError("Failed to create llama_context")
+E   ValueError: Failed to create llama_context
+___ ERROR at setup of TestRoutingClassification.test_hello_routes_to_simple ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:743: in pytest_fixture_setup
+    hook_result = yield
+                  ^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+------------------------------ Captured log setup ------------------------------
+WARNING  entropic.inference.orchestrator:orchestrator.py:119 tier_map auto-derived from tier order: {'1': 'thinking', '2': 'normal', '3': 'code', '4': 'simple'}. Reordering tiers in config will change routing. Set routing.tier_map explicitly for stable routing.
+_____ ERROR at setup of TestRoutingClassification.test_hi_routes_to_simple _____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+___ ERROR at setup of TestRoutingClassification.test_thanks_routes_to_simple ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+__ ERROR at setup of TestRoutingClassification.test_write_code_routes_to_code __
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+___ ERROR at setup of TestRoutingClassification.test_fix_bug_routes_to_code ____
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_ ERROR at setup of TestRoutingClassification.test_add_feature_routes_to_code __
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_ ERROR at setup of TestRoutingClassification.test_explain_routes_to_reasoning _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_ ERROR at setup of TestRoutingClassification.test_question_routes_to_reasoning _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_ ERROR at setup of TestRoutingClassification.test_complex_analysis_routes_to_thinking _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+__ ERROR at setup of TestClassificationSpeed.test_classification_under_500ms ___
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+_ ERROR at setup of TestClassificationSpeed.test_multiple_classifications_consistent _
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:458: in setup
+    return super().setup()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:313: in _asyncgen_fixture_wrapper
+    result = runner.run(setup(), context=context)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/runners.py:118: in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.12/asyncio/base_events.py:687: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/pytest_asyncio/plugin.py:309: in setup
+    res = await gen_obj.__anext__()
+          ^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/conftest.py:86: in orchestrator
+    await orch.initialize()
+src/entropic/inference/orchestrator.py:199: in initialize
+    await self._tiers[default_tier].load()
+src/entropic/inference/llama_cpp.py:123: in load
+    self._model = await loop.run_in_executor(
+/usr/lib/python3.12/concurrent/futures/thread.py:58: in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/entropic/inference/llama_cpp.py:138: in _load_model_sync
+    model = Llama(
+.venv/lib/python3.12/site-packages/llama_cpp/llama.py:374: in __init__
+    internals.LlamaModel(
+.venv/lib/python3.12/site-packages/llama_cpp/_internals.py:58: in __init__
+    raise ValueError(f"Failed to load model from file: {path_model}")
+E   ValueError: Failed to load model from file: /home/tvanfossen/models/gguf/Qwen3-8B-Q4_K_M.gguf
+=============================== warnings summary ===============================
+tests/model/test_headless_reasoning.py::TestReasoningResponses::test_explanation_is_substantive
+/home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function LlamaModel.__del__ at 0x7c0d067b5580>
 
-======================== 22 passed in 153.77s (0:02:33) ========================
+Traceback (most recent call last):
+  File "/home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/llama_cpp/_internals.py", line 86, in __del__
+    self.close()
+  File "/home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/llama_cpp/_internals.py", line 78, in close
+    if self.sampler is not None:
+       ^^^^^^^^^^^^
+AttributeError: 'LlamaModel' object has no attribute 'sampler'
 
-Result: PASSED
+Enable tracemalloc to get traceback where the object was allocated.
+See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+  warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+  /home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/_pytest/unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function LlamaModel.__del__ at 0x7c0d067b5580>
+  
+  Traceback (most recent call last):
+    File "/home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/llama_cpp/_internals.py", line 86, in __del__
+      self.close()
+    File "/home/tvanfossen/Projects/entropic/.venv/lib/python3.12/site-packages/llama_cpp/_internals.py", line 78, in close
+      if self.sampler is not None:
+         ^^^^^^^^^^^^
+  AttributeError: 'LlamaModel' object has no attribute 'sampler'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+ERROR tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
+ERROR tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+ERROR tests/model/test_headless_completeness.py::TestResponseCompleteness::test_response_ends_cleanly
+ERROR tests/model/test_headless_completeness.py::TestNoSpecialTokens::test_no_special_tokens_in_response
+ERROR tests/model/test_headless_errors.py::TestErrorCapture::test_status_command_works
+ERROR tests/model/test_headless_errors.py::TestErrorCapture::test_generation_error_captured
+ERROR tests/model/test_headless_lifecycle.py::TestGenerationLifecycle::test_generation_starts_and_ends
+ERROR tests/model/test_headless_lifecycle.py::TestGenerationLifecycle::test_multiple_messages_accumulate_history
+ERROR tests/model/test_headless_reasoning.py::TestReasoningResponses::test_explanation_is_substantive
+ERROR tests/model/test_headless_simple.py::TestSimpleResponses::test_hello_produces_response
+ERROR tests/model/test_headless_simple.py::TestSimpleResponses::test_thanks_produces_acknowledgment
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_hello_routes_to_simple
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_hi_routes_to_simple
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_thanks_routes_to_simple
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_write_code_routes_to_code
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_fix_bug_routes_to_code
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_add_feature_routes_to_code
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_explain_routes_to_reasoning
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_question_routes_to_reasoning
+ERROR tests/model/test_routing.py::TestRoutingClassification::test_complex_analysis_routes_to_thinking
+ERROR tests/model/test_routing.py::TestClassificationSpeed::test_classification_under_500ms
+ERROR tests/model/test_routing.py::TestClassificationSpeed::test_multiple_classifications_consistent
+======================== 1 warning, 22 errors in 5.18s =========================
+
+Result: FAILED

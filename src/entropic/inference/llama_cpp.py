@@ -27,7 +27,6 @@ import io
 import sys
 import time
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 
 from llama_cpp import Llama, LlamaGrammar
@@ -37,6 +36,7 @@ from entropic.core.base import GenerationResult, Message, ModelBackend
 from entropic.core.logging import get_logger
 from entropic.inference.adapters.base import ChatAdapter, get_adapter
 from entropic.inference.backend import GenerationConfig
+from entropic.prompts.manager import PromptManager
 
 logger = get_logger("inference.llama_cpp")
 
@@ -87,8 +87,7 @@ class LlamaCppBackend(ModelBackend):
         config: ModelConfig,
         tier: str,
         adapter: ChatAdapter | None = None,
-        prompts_dir: Path | None = None,
-        use_bundled_prompts: bool = True,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         """
         Initialize backend.
@@ -97,13 +96,10 @@ class LlamaCppBackend(ModelBackend):
             config: Model configuration
             tier: Model tier (thinking, normal, code, simple, router)
             adapter: Chat adapter (resolved from config.adapter if None)
-            prompts_dir: Optional directory for user prompt overrides
-            use_bundled_prompts: If False, skip bundled prompt fallback
+            prompt_manager: Central prompt loader
         """
         self.config = config
-        self._adapter = adapter or get_adapter(
-            config.adapter, tier, prompts_dir=prompts_dir, use_bundled_prompts=use_bundled_prompts
-        )
+        self._adapter = adapter or get_adapter(config.adapter, tier, prompt_manager=prompt_manager)
         self._model: Llama | None = None
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"

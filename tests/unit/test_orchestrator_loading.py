@@ -353,61 +353,41 @@ class TestBackendFactory:
 
 
 class TestIdentityFileValidation:
-    """Tests for identity file validation at initialize()."""
+    """Tests for identity file validation via PromptManager."""
 
     def setup_method(self):
         self.config = MockEntropyConfig()
 
-    @pytest.mark.asyncio
-    async def test_strict_mode_missing_identity_raises(self, tmp_path: Path) -> None:
-        """initialize() raises when prompts_dir set + bundled disabled but files missing."""
-        self.config.prompts_dir = tmp_path
-        self.config.use_bundled_prompts = False
+    def test_custom_identity_missing_raises(self, tmp_path: Path) -> None:
+        """PromptManager raises when custom identity path doesn't exist."""
+        # Set identity to a non-existent file on a tier
+        self.config.models.tiers["normal"].identity = tmp_path / "nonexistent.md"
 
-        def mock_factory(model_config, tier_name):
-            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
+        with pytest.raises(FileNotFoundError):
+            ModelOrchestrator(self.config)
 
-        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+    def test_custom_identity_exists_passes(self, tmp_path: Path) -> None:
+        """PromptManager loads when custom identity path exists."""
+        identity_path = tmp_path / "identity_normal.md"
+        identity_path.write_text(
+            "---\ntype: identity\nversion: 1\nname: normal\n" "focus:\n  - testing\n---\n# Normal\n"
+        )
+        self.config.models.tiers["normal"].identity = identity_path
 
-        with pytest.raises(FileNotFoundError, match="Missing identity files"):
-            await orchestrator.initialize()
+        # Should not raise — custom file exists and validates
+        orchestrator = ModelOrchestrator(self.config)
+        assert orchestrator._prompt_manager.get_identity("normal") is not None
 
-    @pytest.mark.asyncio
-    async def test_strict_mode_with_all_files_passes(self, tmp_path: Path) -> None:
-        """initialize() succeeds when prompts_dir has all identity files."""
-        self.config.prompts_dir = tmp_path
-        self.config.use_bundled_prompts = False
+    def test_bundled_default_loads(self) -> None:
+        """Bundled identity loads when tier identity is None (default)."""
+        # Default config: identity=None → bundled default
+        orchestrator = ModelOrchestrator(self.config)
+        # Bundled identity files exist for normal, code, thinking, simple
+        assert orchestrator._prompt_manager.get_identity("normal") is not None
 
-        for name in self.config.models.tiers:
-            (tmp_path / f"identity_{name}.md").write_text(
-                f"---\ntype: identity\nversion: 1\nname: {name}\nfocus:\n  - testing\n---\n# {name}\n"
-            )
+    def test_identity_disabled(self) -> None:
+        """Identity disabled when tier identity is False."""
+        self.config.models.tiers["normal"].identity = False
 
-        def mock_factory(model_config, tier_name):
-            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
-
-        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
-        await orchestrator.initialize()  # Should not raise
-
-    @pytest.mark.asyncio
-    async def test_prompts_dir_with_bundled_skips_strict_validation(self) -> None:
-        """prompts_dir set but use_bundled=True skips strict validation."""
-        self.config.prompts_dir = Path("/nonexistent/prompts")
-        self.config.use_bundled_prompts = True
-
-        def mock_factory(model_config, tier_name):
-            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
-
-        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
-        await orchestrator.initialize()  # Should not raise — falls back to bundled
-
-    @pytest.mark.asyncio
-    async def test_no_prompts_dir_skips_validation(self) -> None:
-        """initialize() skips identity validation when prompts_dir is None."""
-        self.config.prompts_dir = None
-
-        def mock_factory(model_config, tier_name):
-            return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
-
-        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
-        await orchestrator.initialize()  # Should not raise
+        orchestrator = ModelOrchestrator(self.config)
+        assert orchestrator._prompt_manager.get_identity("normal") is None

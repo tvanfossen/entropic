@@ -4,6 +4,7 @@ from entropic.core.base import Message, ToolCall
 from entropic.inference.adapters.falcon import FalconAdapter
 from entropic.inference.adapters.qwen2 import Qwen2Adapter
 from entropic.inference.adapters.qwen3 import Qwen3Adapter
+from entropic.prompts.manager import PromptManager
 
 
 class TestQwen3Adapter:
@@ -11,7 +12,8 @@ class TestQwen3Adapter:
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
-        self.adapter = Qwen3Adapter(tier="normal")
+        pm = PromptManager(tier_identities={"normal": None}, quiet=True)
+        self.adapter = Qwen3Adapter(tier="normal", prompt_manager=pm)
 
     def test_chat_format(self) -> None:
         """Test chat format is chatml."""

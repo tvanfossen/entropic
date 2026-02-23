@@ -6,6 +6,9 @@
 # Edit `path` values to point to your GGUF model files.
 # See docs/library-consumer-guide.md for full config reference.
 
+# App context: consumer-specific personality injected into every prompt
+app_context: prompts/app_context.md
+
 models:
   tiers:
     normal:

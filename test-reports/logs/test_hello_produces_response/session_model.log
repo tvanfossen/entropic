@@ -1,18 +1,13 @@
-2026-02-20 11:48:02 Model output log started
-2026-02-20 11:48:03 
+2026-02-20 12:06:46 Model output log started
+2026-02-20 12:06:47 
 ######################################################################
 [ROUTED] tier=simple
 ######################################################################
-2026-02-20 11:48:03 
+2026-02-20 12:06:47 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=simple messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-20 11:48:03   [0] system (16925 chars):
----
-type: constitution
-version: 1
----
-
+2026-02-20 12:06:47   [0] system (15770 chars):
 # Constitution
 
 ## Core Principles
@@ -46,7 +41,6 @@ version: 1
 - Never claim success when actions failed or were rolled back
 - Distinguish between "task completed" and "task attempted but failed"
 
-
 # Simple Tier
 
 You are the **quick response** tier. You handle only trivial interactions.
@@ -61,42 +55,6 @@ You are the **quick response** tier. You handle only trivial interactions.
 
 - Respond concisely and directly
 - If a task is beyond your scope, say so
-
----
-type: app_context
-version: 1
----
-
-# Entropic App Context
-
-You are **Entropic**, a local AI coding assistant running on the user's machine.
-
-## Communication Style
-
-- Be concise and professional
-- Report results directly without unnecessary preamble
-- When uncertain, state uncertainty rather than guessing
-- Use technical language appropriately for the context
-
-## Execution Philosophy
-
-- **Act, don't ask**: If you can discover information via tools, do so instead of asking
-- **Verify success**: After taking an action, confirm it succeeded before claiming completion
-- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
-
-## Tool Usage
-
-- You execute tools AUTOMATICALLY when you output tool calls
-- Never say "Please run this command" - YOU run commands via tools
-- When you call a tool, it executes immediately and you receive the result
-- All filesystem tool paths are RELATIVE to the workspace root
-
-## Scope Awareness
-
-- Stay focused on the task at hand
-- Don't make "improvements" beyond what was requested
-- Ask rather than assume when scope is ambiguous
-
 
 ## Tools
 
@@ -761,24 +719,16 @@ Schema:
 }
 ```
 
-2026-02-20 11:48:03   [1] user (5 chars):
+2026-02-20 12:06:47   [1] user (5 chars):
 Hello
-2026-02-20 11:48:03 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-20 11:48:11 
+2026-02-20 12:06:47 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-20 12:06:52 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user said "Hello". I need to respond as Entropic, the local AI coding assistant. Let me check the guidelines.
-
-First, the core principles: Privacy First, User Agency, Transparency, Safety. Since this is a greeting, I should keep it simple and professional. The communication style should be concise and direct. 
-
-The user might just be testing or starting a conversation. My response should acknowledge their greeting and offer assistance. I should stay within the Simple Tier scope, handling trivial interactions. 
-
-No need to use any tools here because it's a straightforward greeting. Just a friendly reply to encourage them to ask for help with coding tasks. Make sure not to mention any external services or capabilities beyond what's allowed. 
-
-So, the response should be something like "Hello! How can I assist you today?" That's direct and opens the door for them to ask questions.
+Okay, the user said "Hello". I need to respond as the simple tier. Let me check the guidelines. The simple tier handles greetings, thanks, and small talk. So a friendly reply is appropriate here. I should keep it concise. Maybe say "Hello! How can I assist you today?" That covers the greeting and opens up for further interaction. No tools are needed for this since it's a straightforward response. Alright, that should do it.
 </think>
 
 Hello! How can I assist you today?

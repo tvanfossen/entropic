@@ -18,12 +18,11 @@ import json
 import re
 import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
 from entropic.core.base import Message, ToolCall
 from entropic.core.logging import get_logger
-from entropic.prompts import get_identity_prompt
+from entropic.prompts.manager import PromptManager
 
 # Shared continuation text for tool results — used by all adapters
 TOOL_RESULT_SUFFIX = "Continue. Batch multiple tool calls in one response when possible."
@@ -47,30 +46,28 @@ class ChatAdapter(ABC):
     def __init__(
         self,
         tier: str,
-        prompts_dir: Path | None = None,
-        use_bundled_prompts: bool = True,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         """
         Initialize adapter.
 
         Args:
             tier: Model tier (thinking, normal, code, simple)
-            prompts_dir: Optional directory for user prompt overrides
-            use_bundled_prompts: If False, skip bundled prompt fallback
+            prompt_manager: Central prompt loader (constitution + identity + app_context)
         """
         self._tier = tier
-        self._prompts_dir = prompts_dir
-        self._use_bundled_prompts = use_bundled_prompts
+        self._prompt_manager = prompt_manager
         self._identity_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
         self._logger = get_logger(f"adapter.{type(self).__name__}")
 
     def _get_identity_prompt(self) -> str:
-        """Get the identity prompt (constitution + tier identity), loading and caching it."""
+        """Get the assembled prompt (constitution + identity + app_context), cached."""
         if self._identity_prompt is None:
-            self._identity_prompt = get_identity_prompt(
-                self._tier, self._prompts_dir, use_bundled=self._use_bundled_prompts
-            )
+            if self._prompt_manager:
+                self._identity_prompt = self._prompt_manager.get_assembled_prompt(self._tier)
+            else:
+                self._identity_prompt = ""
         return self._identity_prompt
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
@@ -503,8 +500,7 @@ def register_adapter(name: str, adapter_class: type[ChatAdapter]) -> None:
 def get_adapter(
     name: str,
     tier: str,
-    prompts_dir: Path | None = None,
-    use_bundled_prompts: bool = True,
+    prompt_manager: PromptManager | None = None,
 ) -> ChatAdapter:
     """
     Get an adapter instance by name.
@@ -514,8 +510,7 @@ def get_adapter(
     Args:
         name: Adapter name
         tier: Model tier (thinking, normal, code, simple)
-        prompts_dir: Optional directory for user prompt overrides
-        use_bundled_prompts: If False, skip bundled prompt fallback
+        prompt_manager: Central prompt loader
 
     Returns:
         Adapter instance
@@ -524,7 +519,7 @@ def get_adapter(
 
     logger = get_logger("adapters.base")
     name_lower = name.lower()
-    kwargs = {"tier": tier, "prompts_dir": prompts_dir, "use_bundled_prompts": use_bundled_prompts}
+    kwargs = {"tier": tier, "prompt_manager": prompt_manager}
 
     if name_lower not in _ADAPTERS:
         logger.warning(f"Unknown adapter '{name}', falling back to generic")

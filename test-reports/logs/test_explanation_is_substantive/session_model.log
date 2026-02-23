@@ -1,18 +1,13 @@
-2026-02-20 11:47:44 Model output log started
-2026-02-20 11:47:44 
+2026-02-20 12:06:29 Model output log started
+2026-02-20 12:06:29 
 ######################################################################
 [ROUTED] tier=normal
 ######################################################################
-2026-02-20 11:47:44 
+2026-02-20 12:06:29 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 [PROMPT] event=routed tier=normal messages=2
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-20 11:47:44   [0] system (16878 chars):
----
-type: constitution
-version: 1
----
-
+2026-02-20 12:06:29   [0] system (15723 chars):
 # Constitution
 
 ## Core Principles
@@ -46,7 +41,6 @@ version: 1
 - Never claim success when actions failed or were rolled back
 - Distinguish between "task completed" and "task attempted but failed"
 
-
 # Normal Tier
 
 You are the **general-purpose assistant**.
@@ -57,42 +51,6 @@ You are the **general-purpose assistant**.
 - Use tools to gather information rather than speculating
 - Make reasonable decisions without excessive deliberation
 - Report results clearly
-
----
-type: app_context
-version: 1
----
-
-# Entropic App Context
-
-You are **Entropic**, a local AI coding assistant running on the user's machine.
-
-## Communication Style
-
-- Be concise and professional
-- Report results directly without unnecessary preamble
-- When uncertain, state uncertainty rather than guessing
-- Use technical language appropriately for the context
-
-## Execution Philosophy
-
-- **Act, don't ask**: If you can discover information via tools, do so instead of asking
-- **Verify success**: After taking an action, confirm it succeeded before claiming completion
-- **Fail gracefully**: If an approach isn't working, try alternatives or report the issue clearly
-
-## Tool Usage
-
-- You execute tools AUTOMATICALLY when you output tool calls
-- Never say "Please run this command" - YOU run commands via tools
-- When you call a tool, it executes immediately and you receive the result
-- All filesystem tool paths are RELATIVE to the workspace root
-
-## Scope Awareness
-
-- Stay focused on the task at hand
-- Don't make "improvements" beyond what was requested
-- Ask rather than assume when scope is ambiguous
-
 
 ## Tools
 
@@ -757,46 +715,56 @@ Schema:
 }
 ```
 
-2026-02-20 11:47:44   [1] user (33 chars):
+2026-02-20 12:06:29   [1] user (33 chars):
 What is recursion in programming?
-2026-02-20 11:47:44 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-2026-02-20 11:47:58 
+2026-02-20 12:06:29 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2026-02-20 12:06:45 
 ======================================================================
 [TURN 1] finish_reason=stop
 ======================================================================
 --- RAW OUTPUT ---
 <think>
-Okay, the user is asking about recursion in programming. Let me start by defining it clearly. Recursion is when a function calls itself. But I should make sure to explain it in a way that's easy to understand.
+Okay, the user is asking about recursion in programming. Let me start by defining it simply. Recursion is when a function calls itself. But I should make sure to explain why that's useful.
 
-I need to mention the base case and the recursive case. The base case stops the recursion to prevent infinite loops. Then, the recursive case breaks the problem into smaller subproblems. Maybe use an example like calculating factorial or Fibonacci numbers.
+Hmm, maybe give an example. Like calculating factorial or Fibonacci numbers. Those are common examples. Wait, but I should also mention the base case to prevent infinite loops. Oh right, every recursive function needs a base case to stop the recursion.
 
-Wait, should I provide code examples? The user might benefit from seeing how it's implemented. Let me think about which example is better. Factorial is straightforward. Let me write a simple Python function for that.
+I should explain the components: the base case and the recursive step. Maybe use a simple example, like a function that counts down from a number. That's easy to understand.
 
-Also, I should note the importance of the base case. Without it, the recursion would never stop. Maybe mention stack overflow as a potential issue if the recursion depth is too high.
+Wait, what about stack overflow? If the recursion goes too deep, it can cause a stack overflow error. I should mention that as a potential issue. Also, compare recursion with iteration, maybe when it's more efficient to use one over the other.
 
-Is there anything else? Perhaps compare recursion with iteration. But the user didn't ask for a comparison, so maybe stick to the definition and example. Make sure the explanation is concise but covers the essentials.
+Let me structure this. Start with the definition, then components, example, and pros/cons. Keep it clear and concise. Avoid jargon where possible. Make sure the user understands how recursion works step by step.
 </think>
 
-Recursion is a programming technique where a function calls itself to solve a problem by breaking it into smaller, simpler subproblems. It requires two key components:
+Recursion in programming is a technique where a function calls itself to solve a problem by breaking it down into smaller, simpler subproblems. It typically involves two key components:
 
 1. **Base Case**: The condition that stops the recursion (prevents infinite loops).
-2. **Recursive Case**: The function call that reduces the problem size and progresses toward the base case.
+2. **Recursive Step**: The part where the function calls itself with modified parameters.
 
 ### Example: Factorial Calculation
 ```python
 def factorial(n):
     if n == 0:  # Base case
         return 1
-    else:       # Recursive case
+    else:       # Recursive step
         return n * factorial(n - 1)
 ```
 
 ### Key Characteristics:
-- **Stack Usage**: Each recursive call adds a stack frame, which can lead to stack overflow for deep recursions.
-- **Divide and Conquer**: Ideal for problems like tree traversals, sorting (e.g., quicksort), or mathematical computations (e.g., Fibonacci sequence).
+- **Divides problems into smaller instances** (e.g., `factorial(5)` becomes `5 * factorial(4)`).
+- **Requires a clear base case** to terminate the recursion.
+- **Can lead to stack overflow** if the recursion depth is too large.
 
-Would you like me to demonstrate another example or compare recursion with iteration?
+### Use Cases:
+- Tree traversals
+- Divide-and-conquer algorithms (e.g., quicksort)
+- Problems with natural recursive structures (e.g., Fibonacci sequence)
+
+### Comparison with Iteration:
+- **Pros**: More elegant for hierarchical problems; easier to write for certain tasks.
+- **Cons**: Higher memory usage (due to stack frames); risk of stack overflow.
+
+Would you like me to demonstrate a specific example or compare recursion with iteration?
 --- PARSED ---
-cleaned_content_len=919
+cleaned_content_len=1240
 tool_calls=0: []
 ======================================================================

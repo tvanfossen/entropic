@@ -8,7 +8,6 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 from entropic.config.schema import EntropyConfig, ModelConfig
@@ -16,7 +15,8 @@ from entropic.core.base import GenerationResult, Message, ModelBackend, ModelTie
 from entropic.core.logging import get_logger
 from entropic.inference.adapters import ChatAdapter
 from entropic.inference.llama_cpp import LlamaCppBackend
-from entropic.prompts import build_classification_prompt, load_tier_identity
+from entropic.prompts import build_classification_prompt
+from entropic.prompts.manager import PromptManager
 
 logger = get_logger("inference.orchestrator")
 
@@ -68,6 +68,9 @@ class ModelOrchestrator:
         self._last_routed_tier: ModelTier | None = None
         self._last_routing_result: RoutingResult | None = None
 
+        # Central prompt loading — must exist before _build_tiers_from_config
+        self._prompt_manager = PromptManager.from_config(config, quiet=True)
+
         # Build tier list from config if not provided programmatically
         self._tier_list: list[ModelTier] = tiers or self._build_tiers_from_config()
 
@@ -80,19 +83,17 @@ class ModelOrchestrator:
         self._backend_factory: BackendFactory = backend_factory or self._default_backend_factory
 
     def _build_tiers_from_config(self) -> list[ModelTier]:
-        """Build ModelTier instances from config + identity file frontmatter."""
+        """Build ModelTier instances from config + identity frontmatter."""
         tiers: list[ModelTier] = []
         for name, tier_config in self.config.models.tiers.items():
             focus = tier_config.focus
             examples: list[str] = []
 
             if not focus:
-                # Try identity file frontmatter
-                identity_path = self._find_identity_file(name)
-                if identity_path:
-                    identity, _body = load_tier_identity(identity_path)
-                    focus = identity.focus
-                    examples = identity.examples
+                fm = self._prompt_manager.get_identity_frontmatter(name)
+                if fm:
+                    focus = fm.focus
+                    examples = fm.examples
 
             if not focus:
                 logger.warning(f"Tier '{name}' has no focus (config or identity file)")
@@ -100,27 +101,6 @@ class ModelOrchestrator:
 
             tiers.append(ModelTier(name, focus=focus, examples=examples))
         return tiers
-
-    def _find_identity_file(self, tier_name: str) -> Path | None:
-        """Find identity file for a tier in prompts_dir or bundled data.
-
-        Checks prompts_dir first, then bundled. In strict mode
-        (prompts_dir set + use_bundled_prompts=False), only checks
-        prompts_dir — no bundled fallback.
-        """
-        filename = f"identity_{tier_name}.md"
-        result = self._check_prompts_dir(filename)
-        if result is not None or not self.config.use_bundled_prompts:
-            return result
-        default_path = Path(__file__).parent.parent / "data" / "prompts" / filename
-        return default_path if default_path.exists() else None
-
-    def _check_prompts_dir(self, filename: str) -> Path | None:
-        """Check prompts_dir for a file, return path if found."""
-        if not self.config.prompts_dir:
-            return None
-        user_path = self.config.prompts_dir / filename
-        return user_path if user_path.exists() else None
 
     def _build_tier_map(self) -> dict[str, ModelTier]:
         """Build digit-to-tier mapping from config or auto-number."""
@@ -179,23 +159,10 @@ class ModelOrchestrator:
         return tier
 
     def _validate_tiers(self) -> None:
-        """Validate tier config entries and identity files.
-
-        Identity file validation only triggers when prompts_dir is set
-        AND use_bundled_prompts is False — the consumer is fully managing
-        their own prompts with no bundled fallback.
-        """
+        """Validate tier config entries exist for all tier definitions."""
         for tier in self._tier_list:
             if tier not in self._tiers:
                 raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
-
-        if self.config.prompts_dir and not self.config.use_bundled_prompts:
-            missing = [t.name for t in self._tier_list if self._find_identity_file(t.name) is None]
-            if missing:
-                raise FileNotFoundError(
-                    f"Missing identity files in {self.config.prompts_dir}: "
-                    + ", ".join(f"identity_{n}.md" for n in missing)
-                )
 
     async def initialize(self) -> None:
         """Initialize and load configured models."""
@@ -247,8 +214,7 @@ class ModelOrchestrator:
         return LlamaCppBackend(
             config=model_config,
             tier=tier_name,
-            prompts_dir=self.config.prompts_dir,
-            use_bundled_prompts=self.config.use_bundled_prompts,
+            prompt_manager=self._prompt_manager,
         )
 
     async def shutdown(self) -> None:
@@ -578,9 +544,7 @@ class ModelOrchestrator:
 
         from entropic.inference.adapters import get_adapter
 
-        return get_adapter(
-            "generic", tier.name, use_bundled_prompts=self.config.use_bundled_prompts
-        )
+        return get_adapter("generic", tier.name, prompt_manager=self._prompt_manager)
 
     @property
     def last_used_tier(self) -> ModelTier | None:

@@ -32,9 +32,16 @@ def load_config() -> EntropyConfig:
         default_config_path=DEFAULT_CONFIG,
         global_config_dir=None,
     )
+
+    # Build per-tier identity overrides (absolute paths)
+    tier_overrides = {
+        name: {"identity": str(PROMPTS_DIR / f"identity_{name}.md")}
+        for name in ("suggest", "validate", "execute")
+    }
+
     return loader.load(
         cli_overrides={
-            "prompts_dir": str(PROMPTS_DIR),
-            "use_bundled_prompts": False,
+            "constitution": str(PROMPTS_DIR / "constitution.md"),
+            "models": {"tiers": tier_overrides},
         }
     )

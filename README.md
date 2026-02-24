@@ -175,6 +175,19 @@ async for message in engine.run("Hello"):
 
 See `examples/hello-world/` and `examples/pychess/` for complete integrations.
 
+## Privacy
+
+Entropic runs entirely on your local hardware. No data is sent to external
+servers. No telemetry is collected. Your prompts, conversations, and model
+outputs never leave your machine.
+
+## Disclaimer
+
+Entropic runs AI models locally on your hardware. AI-generated outputs may be
+inaccurate, biased, or inappropriate. Users are solely responsible for
+evaluating and using any generated content. This software does not provide
+professional, legal, medical, or financial advice.
+
 ## License
 
 Apache-2.0

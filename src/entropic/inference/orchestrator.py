@@ -8,6 +8,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from entropic.config.schema import EntropyConfig, ModelConfig
@@ -67,6 +68,9 @@ class ModelOrchestrator:
         self._loaded_main_tier: ModelTier | None = None
         self._last_routed_tier: ModelTier | None = None
         self._last_routing_result: RoutingResult | None = None
+
+        # Grammar file cache (path → contents)
+        self._grammar_cache: dict[Path, str] = {}
 
         # Central prompt loading — must exist before _build_tiers_from_config
         self._prompt_manager = PromptManager.from_config(config, quiet=True)
@@ -217,6 +221,24 @@ class ModelOrchestrator:
             prompt_manager=self._prompt_manager,
         )
 
+    def _resolve_grammar(self, model: ModelBackend) -> str | None:
+        """Load and cache grammar string from tier config path."""
+        grammar_path = getattr(model.config, "grammar", None)
+        if grammar_path is None:
+            return None
+        resolved = grammar_path.expanduser().resolve()
+        if resolved not in self._grammar_cache:
+            if not resolved.exists():
+                logger.warning("Grammar file not found: %s", resolved)
+                return None
+            self._grammar_cache[resolved] = resolved.read_text()
+            logger.info(
+                "Loaded grammar: %s (%d chars)",
+                resolved.name,
+                len(self._grammar_cache[resolved]),
+            )
+        return self._grammar_cache[resolved]
+
     async def shutdown(self) -> None:
         """Shutdown and unload all models."""
         logger.info("Shutting down model orchestrator")
@@ -327,6 +349,10 @@ class ModelOrchestrator:
 
         if "max_tokens" not in kwargs:
             kwargs["max_tokens"] = model.config.max_output_tokens
+        if "grammar" not in kwargs:
+            grammar_str = self._resolve_grammar(model)
+            if grammar_str:
+                kwargs["grammar"] = grammar_str
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Generating with {tier.name} model (adapter: {adapter_name})")
@@ -357,6 +383,10 @@ class ModelOrchestrator:
 
         if "max_tokens" not in kwargs:
             kwargs["max_tokens"] = model.config.max_output_tokens
+        if "grammar" not in kwargs:
+            grammar_str = self._resolve_grammar(model)
+            if grammar_str:
+                kwargs["grammar"] = grammar_str
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Streaming with {tier.name} model (adapter: {adapter_name})")

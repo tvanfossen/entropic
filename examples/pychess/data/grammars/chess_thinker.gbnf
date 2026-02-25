@@ -1,0 +1,8 @@
+root ::= threats candidates best
+threats ::= "Threats: " line "\n"
+candidates ::= "Candidates:\n" candidate candidate candidate
+candidate ::= "- " uci ": " line "\n"
+best ::= "Best move: " uci "\n"
+uci ::= [a-h] [1-8] [a-h] [1-8] promotion?
+promotion ::= [qrbn]
+line ::= [^\n]+

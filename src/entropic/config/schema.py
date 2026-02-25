@@ -69,6 +69,7 @@ class TierConfig(ModelConfig):
 
     focus: list[str] = Field(default_factory=list)
     identity: Path | Literal[False] | None = None
+    grammar: Path | None = None
     auto_chain: bool = False
     enable_thinking: bool = True
 
@@ -77,6 +78,14 @@ class TierConfig(ModelConfig):
     def validate_identity(cls, v: Any) -> Path | Literal[False] | None:
         """Coerce identity: None = bundled, False = disabled, str = Path."""
         if v is None or v is False:
+            return v
+        return Path(v).expanduser()
+
+    @field_validator("grammar", mode="before")
+    @classmethod
+    def validate_grammar(cls, v: Any) -> Path | None:
+        """Coerce grammar: None = unconstrained, str = Path to .gbnf file."""
+        if v is None:
             return v
         return Path(v).expanduser()
 
@@ -104,8 +113,7 @@ class RoutingConfig(BaseModel):
     """Configuration for model routing.
 
     Task classification is handled by the ROUTER model. The classification
-    prompt and grammar can be auto-generated from tier definitions or
-    explicitly configured.
+    prompt is auto-generated from tier definitions or explicitly configured.
     """
 
     enabled: bool = True
@@ -113,7 +121,6 @@ class RoutingConfig(BaseModel):
     classification_prompt: str | None = None  # None = auto-generate from tier focus
     tier_map: dict[str, str] = Field(default_factory=dict)  # Empty = auto-derive
     handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all
-    use_grammar: bool = False  # Opt-in GBNF constraint
 
 
 class ThinkingConfig(BaseModel):

@@ -231,6 +231,27 @@ class TestTierConfigFields:
         assert config.models.tiers["executor"].enable_thinking is False
 
 
+class TestTierConfigGrammar:
+    """Tests for TierConfig grammar field."""
+
+    def test_grammar_none_default(self) -> None:
+        """TierConfig without grammar defaults to None."""
+        tc = _tier()
+        assert tc.grammar is None
+
+    def test_grammar_path_coercion(self) -> None:
+        """String grammar path is coerced to Path."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="data/grammars/chess.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert tc.grammar == Path("data/grammars/chess.gbnf")
+
+    def test_grammar_expanduser(self) -> None:
+        """Grammar path with ~ is expanded."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="~/grammars/foo.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert "~" not in str(tc.grammar)
+
+
 class TestRoutingCrossValidation:
     """Tests for cross-validation between routing and models config."""
 
@@ -336,6 +357,24 @@ class TestRoutingCrossValidation:
         )
         assert config.routing.enabled is True
         assert config.models.router is not None
+
+
+class TestRoutingConfigNoGrammar:
+    """Tests confirming use_grammar was removed from RoutingConfig."""
+
+    def test_use_grammar_not_a_field(self) -> None:
+        """RoutingConfig no longer has use_grammar as a model field."""
+        from entropic.config.schema import RoutingConfig
+
+        config = RoutingConfig()
+        assert "use_grammar" not in config.model_fields
+
+    def test_use_grammar_not_in_schema(self) -> None:
+        """use_grammar does not appear in RoutingConfig JSON schema."""
+        from entropic.config.schema import RoutingConfig
+
+        schema = RoutingConfig.model_json_schema()
+        assert "use_grammar" not in schema.get("properties", {})
 
 
 class TestCompactionThresholdValidation:

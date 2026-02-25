@@ -349,6 +349,7 @@ class LlamaCppBackend(ModelBackend):
             repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
             stop=stop or [],
             stream=True,
+            grammar=kwargs.get("grammar"),
         )
 
         # Use a queue to bridge sync stream iteration with async yielding
@@ -399,6 +400,7 @@ class LlamaCppBackend(ModelBackend):
         """Run synchronous stream iteration in thread, pushing chunks to queue."""
         assert self._model is not None
         try:
+            grammar_obj = LlamaGrammar.from_string(config.grammar) if config.grammar else None
             stream = self._model.create_chat_completion(
                 messages=messages,
                 max_tokens=config.max_tokens,
@@ -408,6 +410,7 @@ class LlamaCppBackend(ModelBackend):
                 repeat_penalty=config.repeat_penalty,
                 stop=config.stop if config.stop else None,
                 stream=True,
+                grammar=grammar_obj,
             )
             self._process_stream_chunks(stream, queue, loop, cancel)
         except Exception as e:

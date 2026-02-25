@@ -99,6 +99,7 @@ class GenerationResult:
     """Result of a generation."""
 
     content: str
+    raw_content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str = "stop"
     token_count: int = 0

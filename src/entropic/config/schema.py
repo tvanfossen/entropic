@@ -69,6 +69,8 @@ class TierConfig(ModelConfig):
 
     focus: list[str] = Field(default_factory=list)
     identity: Path | Literal[False] | None = None
+    auto_chain: bool = False
+    enable_thinking: bool = True
 
     @field_validator("identity", mode="before")
     @classmethod

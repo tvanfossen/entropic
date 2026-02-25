@@ -183,6 +183,54 @@ def _tier(path: str = "/test.gguf") -> TierConfig:
     return TierConfig(path=Path(path))
 
 
+class TestTierConfigFields:
+    """Tests for TierConfig auto_chain and enable_thinking fields."""
+
+    def test_auto_chain_defaults_false(self) -> None:
+        """auto_chain defaults to False."""
+        tc = _tier()
+        assert tc.auto_chain is False
+
+    def test_auto_chain_true(self) -> None:
+        """auto_chain=True round-trips through config."""
+        tc = TierConfig(path=Path("/test.gguf"), auto_chain=True)
+        assert tc.auto_chain is True
+
+    def test_enable_thinking_defaults_true(self) -> None:
+        """enable_thinking defaults to True."""
+        tc = _tier()
+        assert tc.enable_thinking is True
+
+    def test_enable_thinking_false(self) -> None:
+        """enable_thinking=False round-trips through config."""
+        tc = TierConfig(path=Path("/test.gguf"), enable_thinking=False)
+        assert tc.enable_thinking is False
+
+    def test_full_config_with_auto_chain(self) -> None:
+        """EntropyConfig with auto_chain tier parses correctly."""
+        config = EntropyConfig(
+            models={
+                "tiers": {
+                    "thinker": {
+                        "path": "/test.gguf",
+                        "auto_chain": True,
+                        "enable_thinking": True,
+                    },
+                    "executor": {
+                        "path": "/test.gguf",
+                        "enable_thinking": False,
+                    },
+                },
+                "default": "thinker",
+            },
+            routing={"enabled": False, "fallback_tier": "thinker"},
+        )
+        assert config.models.tiers["thinker"].auto_chain is True
+        assert config.models.tiers["thinker"].enable_thinking is True
+        assert config.models.tiers["executor"].auto_chain is False
+        assert config.models.tiers["executor"].enable_thinking is False
+
+
 class TestRoutingCrossValidation:
     """Tests for cross-validation between routing and models config."""
 

@@ -1,20 +1,18 @@
 """Engine wiring — connects entropic orchestrator, server manager, and agent engine.
 
-Demonstrates the full library setup flow:
-    1. Load config (EntropyConfig from YAML)
-    2. Create orchestrator (tiers auto-built from identity file frontmatter)
-    3. Create and register a custom MCP server (ChessServer)
-    4. Wire the agent engine with LoopConfig
+Two-tier chess engine: thinker analyzes → auto-chain → executor plays.
+Same .gguf, zero VRAM swap.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import IO
 
 import chess
-from chess_server import ChessServer
+from chess_server import ChessServer, board_to_pieces
 from config import EXAMPLE_ROOT, load_config
 from entropic import (
     AgentEngine,
@@ -41,11 +39,7 @@ class ChessEngine:
 
 
 async def create_engine() -> ChessEngine:
-    """Wire up entropic from config + tiers + server.
-
-    Loads config from config.yaml, initializes the orchestrator with
-    three chess tiers (suggest/validate/execute), registers the chess
-    MCP server, and returns a ready-to-play ChessEngine.
+    """Wire up entropic from config + single player tier + chess server.
 
     Returns:
         Fully initialized ChessEngine.
@@ -56,24 +50,22 @@ async def create_engine() -> ChessEngine:
     setup_logging(config, project_dir=EXAMPLE_ROOT, app_dir_name=".pychess")
     setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".pychess")
 
-    # Orchestrator: manages model loading, routing, tier swapping.
-    # Tiers auto-built from config tier names + identity file frontmatter.
+    # Orchestrator: manages model loading for the player tier.
     orchestrator = ModelOrchestrator(config)
     await orchestrator.initialize()
 
-    # MCP server: ChessServer exposes get_board and make_move tools.
+    # MCP server: ChessServer exposes make_move tool.
     # register_server() must be called BEFORE server_manager.initialize().
     chess_server = ChessServer()
     server_manager = ServerManager(config, tier_names=orchestrator.tier_names)
     server_manager.register_server(chess_server)
     await server_manager.initialize()
 
-    # Agent engine: agentic loop that routes, generates, executes tools,
-    # and handles handoffs between tiers automatically.
-    loop_config = LoopConfig(auto_approve_tools=True)
+    # Agent engine: agentic loop that generates and executes tool calls.
+    loop_config = LoopConfig(auto_approve_tools=True, max_iterations=5)
     agent_engine = AgentEngine(orchestrator, server_manager, config, loop_config)
 
-    # Wire callbacks: stream to dedicated file, tier changes to session log
+    # Wire callbacks: stream to dedicated file
     stream_path = EXAMPLE_ROOT / ".pychess" / "session_stream.log"
     stream_path.parent.mkdir(parents=True, exist_ok=True)
     stream_file = stream_path.open("w")
@@ -110,37 +102,69 @@ async def create_engine() -> ChessEngine:
     )
 
 
+def _annotate_move_history(board: chess.Board) -> str:
+    """Replay moves from the start and annotate each with piece name and color.
+
+    Returns a string like::
+
+        1. White pawn e2e4, Black pawn d7d5
+        2. White pawn e4d5, Black queen d8d7
+    """
+    replay = chess.Board()
+    entries: list[str] = []
+    for move in board.move_stack:
+        piece = replay.piece_at(move.from_square)
+        color = "White" if replay.turn == chess.WHITE else "Black"
+        name = chess.piece_name(piece.piece_type) if piece else "?"
+        entries.append(f"{color} {name} {move.uci()}")
+        replay.push(move)
+
+    # Group into full-move pairs: "1. White ... , Black ..."
+    lines: list[str] = []
+    for i in range(0, len(entries), 2):
+        move_num = (i // 2) + 1
+        pair = entries[i : i + 2]
+        lines.append(f"{move_num}. {', '.join(pair)}")
+    return "\n".join(lines)
+
+
 def _build_board_context(board: chess.Board) -> str:
-    """Format current board state and move history for the system prompt."""
-    legal = [m.uci() for m in board.legal_moves]
-    moves = [m.uci() for m in board.move_stack]
+    """Format current board state for the system prompt.
+
+    Includes board format legend so identity prompts stay role-focused.
+    Uses per-piece representation grouped by ownership so the model
+    never has to infer piece type or color from notation.
+    """
+    pieces_json = json.dumps(board_to_pieces(board), separators=(",", ":"))
 
     lines = [
+        "## Board Format",
+        "",
+        "- `your_pieces` — your Black pieces with `square`, `piece` type, and",
+        "  `moves` (legal UCI moves from that square when present)",
+        "- `opponent_pieces` — White's pieces with `square` and `piece` type",
+        "",
+        "Pieces without a `moves` array cannot move this turn.",
+        "",
         "## Current Position",
         "",
-        f"```\n{board}\n```",
+        f"```json\n{pieces_json}\n```",
         "",
-        f"**FEN:** `{board.fen()}`",
         f"**Move:** {board.fullmove_number}",
         f"**Side to move:** {'Black (you)' if board.turn == chess.BLACK else 'White (opponent)'}",
-        f"**Legal moves:** {', '.join(legal)}",
     ]
 
-    if moves:
-        lines.append(f"**Move history:** {' '.join(moves)}")
+    if board.move_stack:
+        lines.append(f"**Move history:**\n{_annotate_move_history(board)}")
 
     return "\n".join(lines)
 
 
 async def get_ai_move(engine: ChessEngine) -> str | None:
-    """Run the agentic loop — LLM sees board, calls tools, plays a move.
+    """Run the agentic loop — LLM analyzes the position and plays a move.
 
-    The engine handles the full suggest → validate → execute handoff
-    chain internally. From the caller's perspective, this is a single
-    call that returns when the AI has made its move.
-
-    Args:
-        engine: Initialized ChessEngine.
+    Single generation: the player tier calls get_board, picks a move,
+    and calls make_move.
 
     Returns:
         UCI string of the move played, or None if the AI failed to move.
@@ -152,6 +176,8 @@ async def get_ai_move(engine: ChessEngine) -> str | None:
 
     async for msg in engine.agent_engine.run(prompt, system_prompt=board_context):
         logger.debug("Engine message: role=%s content=%s", msg.role, msg.content[:80])
+        if len(engine.chess_server.board.move_stack) > ply_before:
+            break
 
     # Check if a new move was actually made
     if len(engine.chess_server.board.move_stack) > ply_before:

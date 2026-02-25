@@ -2,24 +2,27 @@
 # This file seeds .pychess/config.local.yaml on first run.
 # Edit the model paths below if needed, then re-run main.py.
 
+constitution: prompts/constitution.md
+
 models:
   tiers:
-    # Thinker tier: deep analysis with large token budget (thinking ON)
+    # Thinker tier: fast analysis + strategic planning (thinking ON)
     thinker:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
+      identity: prompts/identity_thinker.md
       context_length: 8192
-      max_output_tokens: 2048
+      max_output_tokens: 1024
       temperature: 0.6
       auto_chain: true
       allowed_tools:
-        - chess.make_move
         - entropic.todo_write
 
     # Executor tier: action-only with small budget (/no-think)
     executor:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
+      identity: prompts/identity_executor.md
       context_length: 8192
       max_output_tokens: 256
       temperature: 0.1

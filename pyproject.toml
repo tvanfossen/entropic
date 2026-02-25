@@ -1,6 +1,6 @@
 [project]
 name = "entropic-engine"
-version = "1.0.0"
+version = "1.0.1"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}

@@ -11,9 +11,11 @@ models:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
       identity: prompts/identity_thinker.md
+      grammar: data/grammars/chess_thinker.gbnf
       context_length: 8192
-      max_output_tokens: 1024
+      max_output_tokens: 256
       temperature: 0.6
+      enable_thinking: false
       auto_chain: true
       allowed_tools:
         - entropic.todo_write
@@ -23,8 +25,9 @@ models:
       path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
       adapter: qwen3
       identity: prompts/identity_executor.md
+      grammar: data/grammars/chess_executor.gbnf
       context_length: 8192
-      max_output_tokens: 256
+      max_output_tokens: 128
       temperature: 0.1
       enable_thinking: false
       allowed_tools:

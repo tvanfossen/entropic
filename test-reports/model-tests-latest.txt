@@ -1,25 +1,25 @@
 === Model Test Report ===
-Date: 2026-02-25 09:54:43
+Date: 2026-02-25 13:29:31
 
-Results: 22 passed, 0 failed (111.6s)
+Results: 22 passed, 0 failed (109.9s)
 
-  [PASS] test_code_request_produces_code [code] (19.7s)
+  [PASS] test_code_request_produces_code [code] (19.6s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (20.0s)
+  [PASS] test_code_response_has_python_syntax [code] (19.1s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (13.0s)
+  [PASS] test_response_ends_cleanly [normal] (12.9s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (7.4s)
+  [PASS] test_no_special_tokens_in_response [normal] (7.1s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (5.6s)
+  [PASS] test_generation_starts_and_ends [simple] (5.4s)
          Prompt: Hello
   [PASS] test_multiple_messages_accumulate_history [normal] (14.4s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (18.5s)
+  [PASS] test_explanation_is_substantive [normal] (18.4s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (5.7s)
+  [PASS] test_hello_produces_response [simple] (5.8s)
          Prompt: Hello
   [PASS] test_thanks_produces_acknowledgment [simple] (4.7s)
          Prompt: Thanks!
@@ -31,12 +31,12 @@ Results: 22 passed, 0 failed (111.6s)
   [PASS] test_add_feature_routes_to_code (0.1s)
   [PASS] test_explain_routes_to_reasoning (0.1s)
   [PASS] test_question_routes_to_reasoning (0.1s)
-  [PASS] test_complex_analysis_routes_to_thinking (1.5s)
+  [PASS] test_complex_analysis_routes_to_thinking (1.4s)
   [PASS] test_classification_under_500ms (0.1s)
   [PASS] test_multiple_classifications_consistent (0.3s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 22 passed in 147.70s (0:02:27) ========================
+======================== 22 passed in 143.26s (0:02:23) ========================
 
 Result: PASSED

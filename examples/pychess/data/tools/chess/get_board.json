@@ -1,8 +1,0 @@
-{
-  "name": "get_board",
-  "description": "Get the current board state, FEN, side to move, and legal moves.",
-  "inputSchema": {
-    "type": "object",
-    "properties": {}
-  }
-}

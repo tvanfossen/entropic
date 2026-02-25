@@ -1,10 +1,6 @@
 """PyChess — play chess against a local LLM via entropic.
 
-Demonstrates a multi-tier agentic chess system:
-    suggest → validate → execute
-
-The LLM analyzes the position, validates its choice, then plays.
-Routing and handoff are handled by the entropic engine automatically.
+Two-tier chess engine: thinker analyzes, auto-chain hands off to executor.
 
 Usage:
     1. Edit config.yaml with your model paths (auto-seeded on first run)
@@ -17,12 +13,13 @@ import asyncio
 import sys
 
 import chess
+from chess_server import format_board_text
 
 
 def print_board(board: chess.Board) -> None:
     """Print the board with coordinates and move history."""
     print()
-    print(board)
+    print(format_board_text(board))
     if board.move_stack:
         moves = []
         for i, move in enumerate(board.move_stack):
@@ -35,10 +32,11 @@ def print_board(board: chess.Board) -> None:
     print()
 
 
-def get_human_move(board: chess.Board) -> chess.Move | None:
+def get_human_move(board: chess.Board, prompt: str | None = None) -> chess.Move | None:
     """Prompt the human for a move. Returns None to quit."""
+    prompt = prompt or "Your move (UCI, e.g. e2e4): "
     while True:
-        raw = input("Your move (UCI, e.g. e2e4): ").strip().lower()
+        raw = input(prompt).strip().lower()
         if raw in ("quit", "exit", "q"):
             return None
         try:
@@ -77,17 +75,19 @@ async def _play_human_turn(board: chess.Board) -> bool:
     return True
 
 
-async def _play_ai_turn(chess_engine: object) -> None:
-    """Handle AI's turn via the entropic engine."""
+async def _play_ai_turn(chess_engine: object) -> bool:
+    """Handle AI's turn. Returns False if AI failed."""
     import engine as eng
 
-    print("AI is thinking (suggest → validate → execute)...")
+    board = chess_engine.chess_server.board
+    print("AI is thinking...")
     ai_move = await eng.get_ai_move(chess_engine)
-    if ai_move is None:
-        print("AI failed to make a move. Try again or quit.")
-        return
-    print(f"AI plays: {ai_move}")
-    print_board(chess_engine.chess_server.board)
+    if ai_move is not None:
+        print(f"AI plays: {ai_move}")
+        print_board(board)
+        return True
+    print("AI failed to choose a move.")
+    return False
 
 
 async def game_loop() -> None:
@@ -99,7 +99,6 @@ async def game_loop() -> None:
     board = chess_engine.chess_server.board
 
     print("PyChess — You are White, AI is Black.")
-    print("AI uses three tiers: suggest → validate → execute")
     print("Enter moves in UCI notation (e.g. e2e4). Type 'quit' to exit.")
     print_board(board)
 
@@ -108,7 +107,13 @@ async def game_loop() -> None:
             if not await _play_human_turn(board):
                 break
         else:
-            await _play_ai_turn(chess_engine)
+            if not await _play_ai_turn(chess_engine):
+                print("\nAI could not find a move. Play for Black or type 'quit'.")
+                move = get_human_move(board, prompt="Move for Black (UCI): ")
+                if move is None:
+                    break
+                board.push(move)
+                print_board(board)
 
     if board.is_game_over():
         _print_game_result(board)

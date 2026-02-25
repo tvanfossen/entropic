@@ -25,6 +25,7 @@ fixes the chatml-function-calling template.
 import asyncio
 import io
 import sys
+import threading
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -119,7 +120,7 @@ class LlamaCppBackend(ModelBackend):
             start = time.time()
 
             # Run in thread pool to avoid blocking
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             self._model = await loop.run_in_executor(
                 None,
                 self._load_model_sync,
@@ -194,7 +195,7 @@ class LlamaCppBackend(ModelBackend):
 
         # Run generation in thread pool
         start = time.time()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             lambda: self._generate_sync(llama_messages, gen_config),
@@ -280,7 +281,7 @@ class LlamaCppBackend(ModelBackend):
         )
 
         start = time.time()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(
             None,
             lambda: self._complete_sync(prompt, gen_config),
@@ -352,16 +353,19 @@ class LlamaCppBackend(ModelBackend):
 
         # Use a queue to bridge sync stream iteration with async yielding
         queue: asyncio.Queue[str | None] = asyncio.Queue()
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        cancel = threading.Event()
 
         # Start stream iteration in background thread
         stream_task = loop.run_in_executor(
             None,
-            self._stream_to_queue,
-            llama_messages,
-            gen_config,
-            queue,
-            loop,
+            lambda: self._stream_to_queue(
+                llama_messages,
+                gen_config,
+                queue,
+                loop,
+                cancel,
+            ),
         )
 
         # Yield chunks from queue asynchronously (doesn't block event loop)
@@ -372,7 +376,12 @@ class LlamaCppBackend(ModelBackend):
                     break
                 yield chunk
         finally:
-            await stream_task
+            cancel.set()
+            logger.info("Stream consumer exited, cancel signal sent to background thread")
+            try:
+                await asyncio.wait_for(stream_task, timeout=30.0)
+            except Exception:
+                logger.warning("Stream thread did not exit cleanly within 30s after cancel")
 
     def _reset_model_if_needed(self) -> None:
         """Reset model state before generation to ensure clean KV cache."""
@@ -385,6 +394,7 @@ class LlamaCppBackend(ModelBackend):
         config: GenerationConfig,
         queue: asyncio.Queue[str | None],
         loop: asyncio.AbstractEventLoop,
+        cancel: threading.Event,
     ) -> None:
         """Run synchronous stream iteration in thread, pushing chunks to queue."""
         assert self._model is not None
@@ -399,24 +409,35 @@ class LlamaCppBackend(ModelBackend):
                 stop=config.stop if config.stop else None,
                 stream=True,
             )
-            self._process_stream_chunks(stream, queue, loop)
+            self._process_stream_chunks(stream, queue, loop, cancel)
         except Exception as e:
             logger.exception(f"Stream error: {e}")
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, None)
+            try:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+            except RuntimeError:
+                logger.warning("Event loop closed before stream sentinel could be sent")
 
     def _process_stream_chunks(
         self,
         stream: Any,
         queue: asyncio.Queue[str | None],
         loop: asyncio.AbstractEventLoop,
+        cancel: threading.Event,
     ) -> None:
         """Process stream chunks and push to queue."""
         for chunk in stream:
+            if cancel.is_set():
+                logger.info("Stream cancelled by consumer, stopping chunk iteration")
+                break
             choice = chunk["choices"][0]
             delta = choice.get("delta", {})
             if delta.get("content"):
-                loop.call_soon_threadsafe(queue.put_nowait, delta["content"])
+                try:
+                    loop.call_soon_threadsafe(queue.put_nowait, delta["content"])
+                except RuntimeError:
+                    logger.info("Event loop closed during stream, stopping chunk iteration")
+                    break
             if choice.get("finish_reason"):
                 self._last_finish_reason = choice["finish_reason"]
                 logger.debug(f"Stream finish_reason: {self._last_finish_reason}")

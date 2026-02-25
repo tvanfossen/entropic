@@ -333,6 +333,7 @@ class ModelOrchestrator:
         result = await model.generate(messages, **kwargs)
 
         if result.content:
+            result.raw_content = result.content
             cleaned_content, parsed_calls = model.adapter.parse_tool_calls(result.content)
             result.content = cleaned_content
             if parsed_calls:
@@ -579,6 +580,25 @@ class ModelOrchestrator:
         if from_tier not in self._handoff_rules:
             return False
         return to_tier in self._handoff_rules[from_tier]
+
+    def get_handoff_targets(self, tier: ModelTier) -> list[ModelTier]:
+        """Get allowed handoff targets for a tier."""
+        if tier not in self._handoff_rules:
+            return []
+        return list(self._handoff_rules[tier])
+
+    async def route_among(self, candidates: list[ModelTier]) -> ModelTier:
+        """Route among a subset of tiers. Single candidate returns directly."""
+        if len(candidates) == 1:
+            return candidates[0]
+        # Multiple candidates: use router to re-classify among them
+        # For now, return first candidate (router integration deferred to
+        # when multi-target auto-chain is actually needed)
+        logger.info(
+            f"[ROUTE_AMONG] Multiple candidates: {[t.name for t in candidates]}, "
+            f"selecting first: {candidates[0].name}"
+        )
+        return candidates[0]
 
     def count_tokens(self, text: str, tier: ModelTier | None = None) -> int:
         """Count tokens in text."""

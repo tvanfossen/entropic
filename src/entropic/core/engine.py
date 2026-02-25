@@ -577,7 +577,10 @@ class AgentEngine:
                 # Check if generation was cut off due to token limit
                 finish_reason = self.orchestrator.last_finish_reason
                 if finish_reason == "length":
-                    logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
+                    if await self._try_auto_chain(ctx):
+                        logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
+                    else:
+                        logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
                     # Don't mark complete, let loop continue
                 else:
                     # No tool calls - check if response is complete using adapter
@@ -653,6 +656,30 @@ class AgentEngine:
             return tools
         return [t for t in tools if t["name"] in allowed]
 
+    async def _try_auto_chain(self, ctx: LoopContext) -> bool:
+        """Attempt auto-chain handoff when token budget exhausted without tool calls.
+
+        Returns True if chain fired (tier changed), False otherwise.
+        """
+        tier_config = self.config.models.tiers.get(ctx.locked_tier.name if ctx.locked_tier else "")
+        if not tier_config or not tier_config.auto_chain:
+            return False
+
+        targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
+        if not targets:
+            logger.warning("[AUTO_CHAIN] auto_chain=True but no handoff targets configured")
+            return False
+
+        target = await self.orchestrator.route_among(targets)
+
+        # Reuse existing handoff via TierChange directive
+        from entropic.core.directives import TierChange
+
+        directive = TierChange(tier=target.name, reason="auto_chain")
+        result = DirectiveResult()
+        self._directive_tier_change(ctx, directive, result)
+        return result.tier_changed
+
     def _build_formatted_system_prompt(self, tier: Any, ctx: LoopContext) -> str:
         """Build system prompt formatted for a specific tier's adapter.
 
@@ -665,7 +692,11 @@ class AgentEngine:
         """
         filtered = self._filter_tools_for_tier(ctx.all_tools, tier)
         adapter = self.orchestrator.get_adapter(tier)
-        return adapter.format_system_prompt(ctx.base_system, filtered)
+        tier_config = self.config.models.tiers.get(tier.name) if hasattr(tier, "name") else None
+        enable_thinking = tier_config.enable_thinking if tier_config else True
+        return adapter.format_system_prompt(
+            ctx.base_system, filtered, enable_thinking=enable_thinking
+        )
 
     async def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
         """Route and lock tier before first generation, emitting callbacks."""
@@ -753,7 +784,7 @@ class AgentEngine:
 
         self._log_model_output(
             ctx,
-            raw_content=result.content,
+            raw_content=result.raw_content or result.content,
             cleaned_content=result.content,
             tool_calls=result.tool_calls,
             finish_reason=result.finish_reason,

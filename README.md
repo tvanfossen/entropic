@@ -67,7 +67,9 @@ orchestrator handles dynamic swapping with lock-protected state transitions.
 
 The engine runs an autonomous tool-calling loop: generate -> parse tool calls ->
 execute tools -> feed results back -> generate again. The loop continues until
-the model produces a complete response or hits the iteration limit.
+the model produces a complete response or hits the iteration limit. Tiers can
+auto-chain — when a tier exhausts its token budget without acting, the engine
+hands off to the next tier via configurable handoff rules.
 
 Tools communicate back to the engine via **directives** — structured signals
 embedded in tool results that can trigger tier handoffs, context anchoring, and
@@ -78,6 +80,8 @@ state management without the model needing to orchestrate these concerns.
 - **Fully Local** — All inference on your hardware via llama-cpp-python. No API keys.
 - **Library API** — Embed the engine in your own application with `LibraryConfig`
 - **Intelligent Routing** — Sub-second prompt classification routes to the right model tier
+- **Auto-Chain** — Automatic tier handoff on token exhaustion or grammar completion
+- **GBNF Grammar** — Per-tier output constraints via GBNF grammars (streaming and non-streaming)
 - **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
 - **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
 - **Auto-Compaction** — Context summarization for long conversations
@@ -154,26 +158,7 @@ describing the project that gets included in the system prompt.
 
 ## Library Usage
 
-```python
-from entropic import LibraryConfig, Orchestrator, Engine, ServerManager
-
-config = LibraryConfig(
-    config_dir=Path("~/.myapp").expanduser(),
-    tiers={"normal": {"path": "model.gguf", "adapter": "qwen3"}},
-)
-
-orchestrator = Orchestrator(config.to_app_config())
-await orchestrator.initialize()
-
-server_manager = ServerManager(config.to_app_config())
-await server_manager.initialize()
-
-engine = Engine(orchestrator=orchestrator, server_manager=server_manager)
-async for message in engine.run("Hello"):
-    print(message.content)
-```
-
-See `examples/hello-world/` and `examples/pychess/` for complete integrations.
+See `examples/` for complete integrations (`hello-world/`, `pychess/`).
 
 ## Privacy
 

@@ -183,6 +183,75 @@ def _tier(path: str = "/test.gguf") -> TierConfig:
     return TierConfig(path=Path(path))
 
 
+class TestTierConfigFields:
+    """Tests for TierConfig auto_chain and enable_thinking fields."""
+
+    def test_auto_chain_defaults_false(self) -> None:
+        """auto_chain defaults to False."""
+        tc = _tier()
+        assert tc.auto_chain is False
+
+    def test_auto_chain_true(self) -> None:
+        """auto_chain=True round-trips through config."""
+        tc = TierConfig(path=Path("/test.gguf"), auto_chain=True)
+        assert tc.auto_chain is True
+
+    def test_enable_thinking_defaults_true(self) -> None:
+        """enable_thinking defaults to True."""
+        tc = _tier()
+        assert tc.enable_thinking is True
+
+    def test_enable_thinking_false(self) -> None:
+        """enable_thinking=False round-trips through config."""
+        tc = TierConfig(path=Path("/test.gguf"), enable_thinking=False)
+        assert tc.enable_thinking is False
+
+    def test_full_config_with_auto_chain(self) -> None:
+        """EntropyConfig with auto_chain tier parses correctly."""
+        config = EntropyConfig(
+            models={
+                "tiers": {
+                    "thinker": {
+                        "path": "/test.gguf",
+                        "auto_chain": True,
+                        "enable_thinking": True,
+                    },
+                    "executor": {
+                        "path": "/test.gguf",
+                        "enable_thinking": False,
+                    },
+                },
+                "default": "thinker",
+            },
+            routing={"enabled": False, "fallback_tier": "thinker"},
+        )
+        assert config.models.tiers["thinker"].auto_chain is True
+        assert config.models.tiers["thinker"].enable_thinking is True
+        assert config.models.tiers["executor"].auto_chain is False
+        assert config.models.tiers["executor"].enable_thinking is False
+
+
+class TestTierConfigGrammar:
+    """Tests for TierConfig grammar field."""
+
+    def test_grammar_none_default(self) -> None:
+        """TierConfig without grammar defaults to None."""
+        tc = _tier()
+        assert tc.grammar is None
+
+    def test_grammar_path_coercion(self) -> None:
+        """String grammar path is coerced to Path."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="data/grammars/chess.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert tc.grammar == Path("data/grammars/chess.gbnf")
+
+    def test_grammar_expanduser(self) -> None:
+        """Grammar path with ~ is expanded."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="~/grammars/foo.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert "~" not in str(tc.grammar)
+
+
 class TestRoutingCrossValidation:
     """Tests for cross-validation between routing and models config."""
 
@@ -288,6 +357,24 @@ class TestRoutingCrossValidation:
         )
         assert config.routing.enabled is True
         assert config.models.router is not None
+
+
+class TestRoutingConfigNoGrammar:
+    """Tests confirming use_grammar was removed from RoutingConfig."""
+
+    def test_use_grammar_not_a_field(self) -> None:
+        """RoutingConfig no longer has use_grammar as a model field."""
+        from entropic.config.schema import RoutingConfig
+
+        config = RoutingConfig()
+        assert "use_grammar" not in config.model_fields
+
+    def test_use_grammar_not_in_schema(self) -> None:
+        """use_grammar does not appear in RoutingConfig JSON schema."""
+        from entropic.config.schema import RoutingConfig
+
+        schema = RoutingConfig.model_json_schema()
+        assert "use_grammar" not in schema.get("properties", {})
 
 
 class TestCompactionThresholdValidation:

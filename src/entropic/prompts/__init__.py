@@ -313,16 +313,3 @@ def build_classification_prompt(
     parts.append(f'"{message}" -> ')
 
     return "\n".join(parts)
-
-
-def build_classification_grammar(num_tiers: int) -> str:
-    """Generate GBNF grammar constraining output to valid tier digits.
-
-    Args:
-        num_tiers: Number of tiers (generates digits 1..N)
-
-    Returns:
-        GBNF grammar string
-    """
-    digits = " | ".join(f'"{i}"' for i in range(1, num_tiers + 1))
-    return f'root ::= ({digits}) "\\n"'

@@ -380,13 +380,19 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
     @pytest.mark.asyncio
     async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
-        """Tool calls after a stop_processing directive are dropped."""
+        """Tool calls after a stop_processing directive are dropped.
+
+        Engine sorts entropic.handoff last, so even though handoff appears
+        second in input, it executes after all other calls.  stop_processing
+        fires on handoff, dropping any calls that would follow.
+        """
         engine = self._make_engine()
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
 
+        # Handoff in the middle — engine sorts it last
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
             ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
@@ -422,12 +428,18 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["bash.execute", "entropic.handoff"]
-        assert len(messages) == 2
+        # Sorted order: bash.execute, todo_write, handoff (last)
+        # handoff fires stop_processing — but it's already last, so all 3 execute
+        assert executed == ["bash.execute", "entropic.todo_write", "entropic.handoff"]
+        assert len(messages) == 3
 
     @pytest.mark.asyncio
     async def test_no_directive_continues_processing(self) -> None:
-        """Tool calls continue when no stop directive is returned."""
+        """Tool calls continue when no stop directive is returned.
+
+        Handoff sorted last by engine, but since no stop_processing fires
+        (invalid tier → error string, no directives), both calls execute.
+        """
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -460,7 +472,8 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["entropic.handoff", "bash.execute"]
+        # Sorted: bash.execute first, then handoff last
+        assert executed == ["bash.execute", "entropic.handoff"]
         assert len(messages) == 2
 
 

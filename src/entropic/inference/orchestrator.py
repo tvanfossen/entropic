@@ -8,6 +8,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from entropic.config.schema import EntropyConfig, ModelConfig
@@ -67,6 +68,9 @@ class ModelOrchestrator:
         self._loaded_main_tier: ModelTier | None = None
         self._last_routed_tier: ModelTier | None = None
         self._last_routing_result: RoutingResult | None = None
+
+        # Grammar file cache (path → contents)
+        self._grammar_cache: dict[Path, str] = {}
 
         # Central prompt loading — must exist before _build_tiers_from_config
         self._prompt_manager = PromptManager.from_config(config, quiet=True)
@@ -217,6 +221,29 @@ class ModelOrchestrator:
             prompt_manager=self._prompt_manager,
         )
 
+    def _resolve_grammar(self, tier: ModelTier) -> str | None:
+        """Load and cache grammar string from tier config path.
+
+        Resolves from the tier's own backend config, NOT the runtime model.
+        This ensures the correct grammar is used even when a model is reused
+        across tiers (e.g. thinker and executor share the same .gguf file).
+        """
+        grammar_path = getattr(self._tiers[tier].config, "grammar", None)
+        if grammar_path is None:
+            return None
+        resolved = grammar_path.expanduser().resolve()
+        if resolved not in self._grammar_cache:
+            if not resolved.exists():
+                logger.warning("Grammar file not found: %s", resolved)
+                return None
+            self._grammar_cache[resolved] = resolved.read_text()
+            logger.info(
+                "Loaded grammar: %s (%d chars)",
+                resolved.name,
+                len(self._grammar_cache[resolved]),
+            )
+        return self._grammar_cache[resolved]
+
     async def shutdown(self) -> None:
         """Shutdown and unload all models."""
         logger.info("Shutting down model orchestrator")
@@ -326,13 +353,18 @@ class ModelOrchestrator:
         model = await self._get_model(tier)
 
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.max_output_tokens
+            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
+        if "grammar" not in kwargs:
+            grammar_str = self._resolve_grammar(tier)
+            if grammar_str:
+                kwargs["grammar"] = grammar_str
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Generating with {tier.name} model (adapter: {adapter_name})")
         result = await model.generate(messages, **kwargs)
 
         if result.content:
+            result.raw_content = result.content
             cleaned_content, parsed_calls = model.adapter.parse_tool_calls(result.content)
             result.content = cleaned_content
             if parsed_calls:
@@ -355,7 +387,11 @@ class ModelOrchestrator:
         model = await self._get_model(tier)
 
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.max_output_tokens
+            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
+        if "grammar" not in kwargs:
+            grammar_str = self._resolve_grammar(tier)
+            if grammar_str:
+                kwargs["grammar"] = grammar_str
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Streaming with {tier.name} model (adapter: {adapter_name})")
@@ -579,6 +615,25 @@ class ModelOrchestrator:
         if from_tier not in self._handoff_rules:
             return False
         return to_tier in self._handoff_rules[from_tier]
+
+    def get_handoff_targets(self, tier: ModelTier) -> list[ModelTier]:
+        """Get allowed handoff targets for a tier."""
+        if tier not in self._handoff_rules:
+            return []
+        return list(self._handoff_rules[tier])
+
+    async def route_among(self, candidates: list[ModelTier]) -> ModelTier:
+        """Route among a subset of tiers. Single candidate returns directly."""
+        if len(candidates) == 1:
+            return candidates[0]
+        # Multiple candidates: use router to re-classify among them
+        # For now, return first candidate (router integration deferred to
+        # when multi-target auto-chain is actually needed)
+        logger.info(
+            f"[ROUTE_AMONG] Multiple candidates: {[t.name for t in candidates]}, "
+            f"selecting first: {candidates[0].name}"
+        )
+        return candidates[0]
 
     def count_tokens(self, text: str, tier: ModelTier | None = None) -> int:
         """Count tokens in text."""

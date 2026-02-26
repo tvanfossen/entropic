@@ -10,6 +10,7 @@ Architecture:
 import asyncio
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -145,6 +146,68 @@ async def headless_app(
     yield app
 
     await app.shutdown()
+
+
+# =============================================================================
+# PyChess Fixtures (grammar + auto-chain pipeline)
+# =============================================================================
+
+_PYCHESS_ROOT = Path(__file__).resolve().parent.parent.parent / "examples" / "pychess"
+
+
+@pytest.fixture(scope="module")
+def pychess_config():
+    """Load pychess config. Skips if python-chess missing or model unavailable."""
+    pytest.importorskip("chess", reason="python-chess not installed")
+
+    import sys
+
+    if str(_PYCHESS_ROOT) not in sys.path:
+        sys.path.insert(0, str(_PYCHESS_ROOT))
+
+    from config import load_config as load_pychess_config
+
+    os.chdir(_PYCHESS_ROOT)  # Relative prompt/grammar paths resolve against CWD
+    config = load_pychess_config()
+
+    for name, tier in config.models.tiers.items():
+        if not tier.path.expanduser().exists():
+            pytest.skip(f"Model not available: {tier.path} (tier: {name})")
+
+    return config
+
+
+@pytest.fixture(scope="module")
+async def pychess_orchestrator(pychess_config, tmp_path_factory):
+    """Module-scoped orchestrator with pychess config. Model loaded once."""
+    tmp_dir = tmp_path_factory.mktemp("pychess_model")
+    setup_logging(pychess_config, project_dir=tmp_dir, app_dir_name=".pychess")
+    setup_model_logger(project_dir=tmp_dir, app_dir_name=".pychess")
+
+    orch = ModelOrchestrator(pychess_config)
+    await orch.initialize()
+    yield orch
+    await orch.shutdown()
+
+
+@pytest.fixture
+async def pychess_engine(pychess_config, pychess_orchestrator):
+    """Per-test engine with fresh chess board and server manager."""
+
+    from chess_server import ChessServer
+    from entropic import AgentEngine, LoopConfig, ServerManager
+
+    chess_server = ChessServer()
+    server_manager = ServerManager(pychess_config, tier_names=pychess_orchestrator.tier_names)
+    server_manager.register_server(chess_server)
+    await server_manager.initialize()
+
+    loop_config = LoopConfig(auto_approve_tools=True, max_iterations=8)
+    engine = AgentEngine(pychess_orchestrator, server_manager, pychess_config, loop_config)
+
+    yield engine, chess_server
+
+    await server_manager.shutdown()
 
 
 # =============================================================================

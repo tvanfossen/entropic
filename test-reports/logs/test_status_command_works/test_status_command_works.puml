@@ -1,0 +1,14 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_status_command_works\n<size:11>[PASSED] < 1s</size>
+
+participant "Test" as T
+participant "Application" as App
+
+T -> App: (internal test)
+App --> T: PASSED
+note right #palegreen
+
+@enduml

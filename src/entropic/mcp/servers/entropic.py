@@ -9,6 +9,7 @@ directives for engine-level side effects.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from mcp.types import Tool
@@ -25,6 +26,8 @@ from entropic.core.directives import (
 from entropic.core.todos import TodoList, TodoStatus
 from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
 from entropic.mcp.tools import BaseTool
+
+logger = logging.getLogger(__name__)
 
 
 class TodoWriteTool(BaseTool):
@@ -109,13 +112,10 @@ class HandoffTool(BaseTool):
 
         execution_todos = [t for t in self._todo_list.items if t.target_tier is not None]
         if not execution_todos and not self._todo_list.is_empty:
-            return json.dumps(
-                {
-                    "error": (
-                        "No execution todos (with target_tier) found. "
-                        "Create todos with a target_tier before handing off."
-                    ),
-                }
+            logger.warning(
+                "[HANDOFF] %d todo(s) exist but none have target_tier set. "
+                "Proceeding with handoff — todos are self-directed.",
+                len(self._todo_list.items),
             )
         return None
 
@@ -188,6 +188,11 @@ class EntropicServer(BaseMCPServer):
         if not tier_names or len(tier_names) > 1:
             self.register_tool(HandoffTool(self._todo_list, tier_names))
         self.register_tool(PruneContextTool())
+
+    @staticmethod
+    def skip_duplicate_check(tool_name: str) -> bool:
+        """Handoff must always execute — validation depends on runtime state."""
+        return tool_name == "handoff"
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute an entropic tool.

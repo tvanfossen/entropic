@@ -116,6 +116,9 @@ class LoopContext:
     recent_tool_calls: dict[str, str] = field(default_factory=dict)
     # Track consecutive duplicate attempts to detect stuck model
     consecutive_duplicate_attempts: int = 0
+    # Count of tool calls that actually executed this iteration
+    # (not blocked, not denied, not duplicate). Reset each iteration.
+    effective_tool_calls: int = 0
     # Flag indicating we have tool results that should be presented
     has_pending_tool_results: bool = False
     # Lock model tier for the entire loop to prevent mid-task switching
@@ -571,30 +574,41 @@ class AgentEngine:
             yield assistant_msg
 
             if tool_calls:
+                ctx.effective_tool_calls = 0
                 async for msg in self._process_tool_calls(ctx, tool_calls):
                     yield msg
+                # All tool calls blocked/denied — fall through to standard decision
+                if ctx.effective_tool_calls == 0:
+                    await self._evaluate_no_tool_decision(ctx, content)
             else:
-                # Check if generation was cut off due to token limit
-                finish_reason = self.orchestrator.last_finish_reason
-                if finish_reason == "length":
-                    if await self._try_auto_chain(ctx):
-                        logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
-                    else:
-                        logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
-                    # Don't mark complete, let loop continue
-                else:
-                    # No tool calls - check if response is complete using adapter
-                    adapter = self.orchestrator.get_adapter()
-                    is_complete = adapter.is_response_complete(content, tool_calls)
-                    logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
-                    if is_complete:
-                        self._set_state(ctx, AgentState.COMPLETE)
-                    # else: continue loop (model may still be thinking)
+                await self._evaluate_no_tool_decision(ctx, content)
 
         except Exception as e:
             logger.exception(f"Loop iteration error: {e}")
             async for msg in self._handle_error(ctx, e):
                 yield msg
+
+    async def _evaluate_no_tool_decision(self, ctx: LoopContext, content: str) -> None:
+        """Evaluate loop decision when no tool calls were effective.
+
+        Called when either:
+          - Model produced no tool calls
+          - Model produced tool calls but ALL were blocked/denied
+        """
+        finish_reason = self.orchestrator.last_finish_reason
+        if finish_reason == "length":
+            if await self._try_auto_chain(ctx, finish_reason):
+                logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
+            else:
+                logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
+        elif await self._try_auto_chain(ctx, finish_reason):
+            logger.info("[LOOP DECISION] auto_chain fired (grammar), continuing with new tier")
+        else:
+            adapter = self.orchestrator.get_adapter()
+            is_complete = adapter.is_response_complete(content, [])
+            logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
+            if is_complete:
+                self._set_state(ctx, AgentState.COMPLETE)
 
     def _log_model_output(
         self,
@@ -656,13 +670,27 @@ class AgentEngine:
             return tools
         return [t for t in tools if t["name"] in allowed]
 
-    async def _try_auto_chain(self, ctx: LoopContext) -> bool:
-        """Attempt auto-chain handoff when token budget exhausted without tool calls.
+    def _should_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
+        """Check whether auto-chain should trigger for the current tier.
 
-        Returns True if chain fired (tier changed), False otherwise.
+        Triggers when auto_chain=True AND either:
+          - finish_reason == "length" (token budget exhausted)
+          - finish_reason == "stop" AND tier has grammar configured
         """
         tier_config = self.config.models.tiers.get(ctx.locked_tier.name if ctx.locked_tier else "")
         if not tier_config or not tier_config.auto_chain:
+            return False
+        is_grammar_completion = finish_reason == "stop" and tier_config.grammar is not None
+        if is_grammar_completion:
+            logger.info("[AUTO_CHAIN] Grammar completion trigger (grammar + stop)")
+        return finish_reason == "length" or is_grammar_completion
+
+    async def _try_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
+        """Attempt auto-chain handoff on token exhaustion or grammar completion.
+
+        Returns True if chain fired (tier changed), False otherwise.
+        """
+        if not self._should_auto_chain(ctx, finish_reason):
             return False
 
         targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
@@ -672,7 +700,6 @@ class AgentEngine:
 
         target = await self.orchestrator.route_among(targets)
 
-        # Reuse existing handoff via TierChange directive
         from entropic.core.directives import TierChange
 
         directive = TierChange(tier=target.name, reason="auto_chain")
@@ -905,13 +932,25 @@ class AgentEngine:
             ],
         )
 
+    @staticmethod
+    def _sort_tool_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
+        """Sort tool calls so entropic.handoff is always last.
+
+        Handoff fires ``stop_processing`` which drops subsequent calls,
+        so it must be terminal in the batch.  Preserves relative order
+        of all other calls (stable sort).
+        """
+        return sorted(tool_calls, key=lambda tc: tc.name == "entropic.handoff")
+
     async def _process_tool_calls(
         self, ctx: LoopContext, tool_calls: list[ToolCall]
     ) -> AsyncIterator[Message]:
         """Process tool calls and yield result messages."""
         logger.info(f"Processing {len(tool_calls)} tool calls")
         self._set_state(ctx, AgentState.WAITING_TOOL)
-        limited_calls = tool_calls[: self.loop_config.max_tool_calls_per_turn]
+        limited_calls = self._sort_tool_calls(
+            tool_calls[: self.loop_config.max_tool_calls_per_turn]
+        )
 
         for i, tool_call in enumerate(limited_calls):
             # Check for duplicate tool calls
@@ -952,6 +991,7 @@ class AgentEngine:
             msg, tool_result = await self._execute_tool(ctx, tool_call)
             # Tag tool results with iteration for auto-pruning
             if tool_result:
+                ctx.effective_tool_calls += 1
                 msg.metadata["added_at_iteration"] = ctx.metrics.iterations
                 msg.metadata["tool_name"] = tool_call.name
             ctx.messages.append(msg)

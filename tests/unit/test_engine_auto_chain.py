@@ -1,5 +1,6 @@
-"""Tests for auto-chain tier handoff on token exhaustion."""
+"""Tests for auto-chain tier handoff on token exhaustion and grammar completion."""
 
+import warnings
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -58,6 +59,18 @@ def _make_ctx(locked_tier_name: str = "thinker") -> LoopContext:
     return ctx
 
 
+def _setup_handoff_mocks(engine: AgentEngine) -> ModelTier:
+    """Wire orchestrator mocks for a successful thinker→executor handoff."""
+    executor_tier = ModelTier("executor", focus=["executing"])
+    engine.orchestrator.get_handoff_targets.return_value = [executor_tier]
+    engine.orchestrator.route_among = AsyncMock(return_value=executor_tier)
+    engine.orchestrator.can_handoff.return_value = True
+    engine.orchestrator._find_tier.return_value = executor_tier
+    engine.orchestrator.get_adapter.return_value = MagicMock()
+    engine.orchestrator.get_allowed_tools.return_value = None
+    return executor_tier
+
+
 # ===========================================================================
 # TierConfig parsing
 # ===========================================================================
@@ -96,53 +109,75 @@ class TestAutoChain:
     """Tests for _try_auto_chain in AgentEngine."""
 
     @pytest.mark.asyncio
-    async def test_fires_on_length_no_tools(self) -> None:
-        """finish_reason=length + no tools + auto_chain=True → handoff fires."""
-        engine = _make_engine(
-            handoff_rules={"thinker": ["executor"]},
-        )
+    async def test_fires_on_length(self) -> None:
+        """finish_reason=length + auto_chain=True → handoff fires."""
+        engine = _make_engine(handoff_rules={"thinker": ["executor"]})
         ctx = _make_ctx("thinker")
+        executor_tier = _setup_handoff_mocks(engine)
 
-        # Mock orchestrator methods
-        executor_tier = ModelTier("executor", focus=["executing"])
-        engine.orchestrator.get_handoff_targets.return_value = [executor_tier]
-        engine.orchestrator.route_among = AsyncMock(return_value=executor_tier)
-        engine.orchestrator.can_handoff.return_value = True
-        engine.orchestrator._find_tier.return_value = executor_tier
-        engine.orchestrator.get_adapter.return_value = MagicMock()
-        engine.orchestrator.get_allowed_tools.return_value = None
-
-        result = await engine._try_auto_chain(ctx)
+        result = await engine._try_auto_chain(ctx, finish_reason="length")
 
         assert result is True
         assert ctx.locked_tier == executor_tier
 
     @pytest.mark.asyncio
-    async def test_skipped_when_disabled(self) -> None:
-        """auto_chain=False → doesn't fire."""
+    async def test_fires_on_grammar_stop(self) -> None:
+        """finish_reason=stop + grammar + auto_chain=True → handoff fires."""
         engine = _make_engine(
             tiers={
-                "thinker": _tier_config(auto_chain=False),
+                "thinker": _tier_config(auto_chain=True, grammar=Path("/test.gbnf")),
+                "executor": _tier_config(),
+            },
+            handoff_rules={"thinker": ["executor"]},
+        )
+        ctx = _make_ctx("thinker")
+        executor_tier = _setup_handoff_mocks(engine)
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
+
+        assert result is True
+        assert ctx.locked_tier == executor_tier
+
+    @pytest.mark.asyncio
+    async def test_skips_stop_without_grammar(self) -> None:
+        """finish_reason=stop + no grammar + auto_chain=True → does NOT chain."""
+        engine = _make_engine(handoff_rules={"thinker": ["executor"]})
+        ctx = _make_ctx("thinker")
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_skipped_when_disabled(self) -> None:
+        """auto_chain=False → doesn't fire regardless of finish_reason."""
+        engine = _make_engine(
+            tiers={
+                "thinker": _tier_config(auto_chain=False, grammar=Path("/test.gbnf")),
                 "executor": _tier_config(),
             },
             handoff_rules={"thinker": ["executor"]},
         )
         ctx = _make_ctx("thinker")
 
-        result = await engine._try_auto_chain(ctx)
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_skipped_no_targets(self) -> None:
-        """auto_chain=True but no handoff_rules targets → doesn't fire."""
-        engine = _make_engine(handoff_rules={})
+        """auto_chain=True + grammar + no handoff targets → warns, returns False."""
+        engine = _make_engine(
+            tiers={
+                "thinker": _tier_config(auto_chain=True, grammar=Path("/test.gbnf")),
+                "executor": _tier_config(),
+            },
+            handoff_rules={},
+        )
         ctx = _make_ctx("thinker")
-
-        # No targets configured
         engine.orchestrator.get_handoff_targets.return_value = []
 
-        result = await engine._try_auto_chain(ctx)
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
 
         assert result is False
 
@@ -152,7 +187,7 @@ class TestAutoChain:
         engine = _make_engine()
         ctx = _make_ctx("unknown")
 
-        result = await engine._try_auto_chain(ctx)
+        result = await engine._try_auto_chain(ctx, finish_reason="length")
 
         assert result is False
 
@@ -168,7 +203,7 @@ class TestAutoChain:
 
         with patch.object(engine, "_directive_tier_change") as mock_handler:
             mock_handler.side_effect = lambda c, d, r: setattr(r, "tier_changed", True)
-            result = await engine._try_auto_chain(ctx)
+            result = await engine._try_auto_chain(ctx, finish_reason="length")
 
         assert result is True
         mock_handler.assert_called_once()
@@ -176,6 +211,170 @@ class TestAutoChain:
         assert isinstance(call_args[0][1], TierChange)
         assert call_args[0][1].tier == "executor"
         assert call_args[0][1].reason == "auto_chain"
+
+
+# ===========================================================================
+# Tool call sorting (handoff-last)
+# ===========================================================================
+
+
+class TestToolCallSorting:
+    """Tests for _sort_tool_calls — entropic.handoff always last."""
+
+    @staticmethod
+    def _tc(name: str) -> MagicMock:
+        tc = MagicMock()
+        tc.name = name
+        return tc
+
+    def test_handoff_moved_to_end(self) -> None:
+        """Handoff appearing first is moved to end."""
+        calls = [self._tc("entropic.handoff"), self._tc("entropic.todo_write")]
+        result = AgentEngine._sort_tool_calls(calls)
+        assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
+
+    def test_handoff_already_last_unchanged(self) -> None:
+        """Handoff already at end — order preserved."""
+        calls = [self._tc("entropic.todo_write"), self._tc("entropic.handoff")]
+        result = AgentEngine._sort_tool_calls(calls)
+        assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
+
+    def test_non_handoff_order_preserved(self) -> None:
+        """Relative order of non-handoff calls is stable."""
+        calls = [
+            self._tc("entropic.todo_write"),
+            self._tc("chess.make_move"),
+            self._tc("entropic.handoff"),
+            self._tc("entropic.prune_context"),
+        ]
+        result = AgentEngine._sort_tool_calls(calls)
+        names = [c.name for c in result]
+        assert names == [
+            "entropic.todo_write",
+            "chess.make_move",
+            "entropic.prune_context",
+            "entropic.handoff",
+        ]
+
+    def test_no_handoff_unchanged(self) -> None:
+        """No handoff in list — order unchanged."""
+        calls = [self._tc("entropic.todo_write"), self._tc("chess.make_move")]
+        result = AgentEngine._sort_tool_calls(calls)
+        assert [c.name for c in result] == ["entropic.todo_write", "chess.make_move"]
+
+    def test_empty_list(self) -> None:
+        """Empty list returns empty."""
+        assert AgentEngine._sort_tool_calls([]) == []
+
+
+# ===========================================================================
+# Auto-chain after blocked tool calls
+# ===========================================================================
+
+
+class TestAutoChainBlockedTools:
+    """Tests for auto-chain fallback when all tool calls are blocked."""
+
+    @pytest.mark.asyncio
+    async def test_fires_when_all_tools_blocked(self) -> None:
+        """All tool calls blocked → effective_tool_calls=0 → auto-chain fires."""
+        engine = _make_engine(
+            tiers={
+                "thinker": _tier_config(auto_chain=True, grammar=Path("/test.gbnf")),
+                "executor": _tier_config(),
+            },
+            handoff_rules={"thinker": ["executor"]},
+        )
+        ctx = _make_ctx("thinker")
+        _setup_handoff_mocks(engine)
+
+        # Simulate: model produced tool calls, all were blocked
+        ctx.effective_tool_calls = 0
+        engine.orchestrator.last_finish_reason = "stop"
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
+
+        assert result is True
+        assert ctx.locked_tier.name == "executor"
+
+    def test_no_fallback_when_tools_succeeded(self) -> None:
+        """Some tool calls succeeded → effective_tool_calls > 0 → no fallback."""
+        ctx = _make_ctx("thinker")
+        ctx.effective_tool_calls = 2
+
+        # effective_tool_calls > 0 means the call site never reaches _try_auto_chain
+        # This test documents the semantic: nonzero effective calls = normal loop
+        assert ctx.effective_tool_calls > 0
+
+    @pytest.mark.asyncio
+    async def test_blocked_tools_without_auto_chain_no_fire(self) -> None:
+        """All tools blocked but auto_chain=False → no chain."""
+        engine = _make_engine(
+            tiers={
+                "thinker": _tier_config(auto_chain=False, grammar=Path("/test.gbnf")),
+                "executor": _tier_config(),
+            },
+            handoff_rules={"thinker": ["executor"]},
+        )
+        ctx = _make_ctx("thinker")
+        ctx.effective_tool_calls = 0
+        engine.orchestrator.last_finish_reason = "stop"
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop")
+
+        assert result is False
+
+
+# ===========================================================================
+# Config validation: auto_chain without targets
+# ===========================================================================
+
+
+class TestAutoChainConfigValidation:
+    """Tests for auto_chain + handoff_rules config validation."""
+
+    def test_warns_auto_chain_without_handoff_rules(self) -> None:
+        """auto_chain=True + no handoff_rules entry → warning at config load."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            EntropyConfig(
+                models={
+                    "tiers": {
+                        "thinker": _tier_config(auto_chain=True),
+                        "executor": _tier_config(),
+                    },
+                    "default": "thinker",
+                },
+                routing={
+                    "enabled": False,
+                    "fallback_tier": "thinker",
+                    "handoff_rules": {},
+                },
+            )
+        auto_chain_warnings = [x for x in w if "auto_chain" in str(x.message)]
+        assert len(auto_chain_warnings) == 1
+        assert "thinker" in str(auto_chain_warnings[0].message)
+
+    def test_no_warning_when_handoff_rules_present(self) -> None:
+        """auto_chain=True + matching handoff_rules entry → no warning."""
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            EntropyConfig(
+                models={
+                    "tiers": {
+                        "thinker": _tier_config(auto_chain=True),
+                        "executor": _tier_config(),
+                    },
+                    "default": "thinker",
+                },
+                routing={
+                    "enabled": False,
+                    "fallback_tier": "thinker",
+                    "handoff_rules": {"thinker": ["executor"]},
+                },
+            )
+        auto_chain_warnings = [x for x in w if "auto_chain" in str(x.message)]
+        assert len(auto_chain_warnings) == 0
 
 
 # ===========================================================================

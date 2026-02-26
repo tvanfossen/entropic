@@ -71,8 +71,8 @@ class TestGrammarInjection:
 
         backend.generate_stream = fake_stream
 
-        # Verify _resolve_grammar returns the grammar for this backend
-        grammar_str = orch._resolve_grammar(backend)
+        # Verify _resolve_grammar returns the grammar for this tier
+        grammar_str = orch._resolve_grammar(tier)
         assert grammar_str == 'root ::= "hello"'
 
     @pytest.mark.asyncio
@@ -97,12 +97,12 @@ class TestGrammarInjection:
         orch = _make_orchestrator(grammar_path=gbnf)
         await orch.initialize()
 
-        backend = orch._tiers[orch._tier_list[0]]
+        tier = orch._tier_list[0]
 
-        result1 = orch._resolve_grammar(backend)
+        result1 = orch._resolve_grammar(tier)
         # Mutate the file — cache should prevent re-read
         gbnf.write_text('root ::= "changed"')
-        result2 = orch._resolve_grammar(backend)
+        result2 = orch._resolve_grammar(tier)
 
         assert result1 == result2 == 'root ::= "hello"'
 
@@ -115,9 +115,9 @@ class TestGrammarInjection:
         orch = _make_orchestrator(grammar_path=missing)
         await orch.initialize()
 
-        backend = orch._tiers[orch._tier_list[0]]
+        tier = orch._tier_list[0]
         with caplog.at_level(logging.WARNING):
-            result = orch._resolve_grammar(backend)
+            result = orch._resolve_grammar(tier)
 
         assert result is None
         assert "Grammar file not found" in caplog.text

@@ -1,0 +1,17 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_add_feature_routes_to_code\n<size:11>[PASSED] < 1s</size>
+
+participant "Test" as T
+participant "Orchestrator" as Orch
+participant "Router Model" as Rtr
+
+T -> Orch: classify prompt
+Orch -> Rtr: route
+Rtr --> Orch: tier result
+Orch --> T: result
+note right #palegreen: < 1s
+
+@enduml

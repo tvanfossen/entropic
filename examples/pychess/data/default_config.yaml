@@ -13,12 +13,12 @@ models:
       identity: prompts/identity_thinker.md
       grammar: data/grammars/chess_thinker.gbnf
       context_length: 8192
-      max_output_tokens: 256
+      max_output_tokens: 1024
       temperature: 0.6
       enable_thinking: false
       auto_chain: true
       allowed_tools:
-        - entropic.todo_write
+        - entropic.handoff
 
     # Executor tier: action-only with small budget (/no-think)
     executor:

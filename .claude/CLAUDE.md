@@ -17,6 +17,20 @@ main          <- User handles merges from develop (stable releases)
 4. **Delete feature branch**: `git branch -d feature/name`
 5. **Never push**: User reviews and pushes
 
+### Versioning (`pyproject.toml`)
+
+Bump version in `pyproject.toml` once per merge to develop — not on feature branch commits.
+
+| Change type | Bump | Example |
+|-------------|------|---------|
+| Bug fix, refactor, docs | **Patch** | 1.0.0 → 1.0.1 |
+| New feature, new config field, new API | **Minor** | 1.0.1 → 1.1.0 |
+| Breaking change (user explicitly says so) | **Major** | 1.1.0 → 2.0.0 |
+
+Claude bumps patch or minor based on the change. Major is user-initiated only.
+Consumer venvs (e.g. `examples/pychess/.venv`) need reinstall after version bumps
+unless using editable installs (`pip install -e`).
+
 ## Test Structure
 
 ```

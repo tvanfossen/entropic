@@ -21,26 +21,32 @@ Configuration is loaded from multiple sources, with later sources overriding ear
 # ~/.entropic/config.yaml
 
 models:
-  thinking:
-    path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 16384
-    gpu_layers: -1
-  normal:
-    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-    adapter: falcon
-    context_length: 32768
-    gpu_layers: -1
-  code:
-    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-    adapter: falcon
-    context_length: 32768
-    gpu_layers: -1
-  micro:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: qwen3
-    context_length: 4096
-    gpu_layers: -1
+  tiers:
+    thinking:
+      path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
+      adapter: qwen3
+      context_length: 16384
+      gpu_layers: -1
+    normal:
+      path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
+      adapter: falcon
+      context_length: 32768
+      gpu_layers: -1
+    analyzer:
+      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
+      adapter: qwen3
+      identity: prompts/identity_analyzer.md    # Per-tier system prompt
+      grammar: data/grammars/analysis.gbnf      # GBNF output constraint
+      auto_chain: true                          # Chain to next tier on completion
+      enable_thinking: false                    # Suppress think blocks
+      max_output_tokens: 256
+      allowed_tools:
+        - entropic.todo_write
+    micro:
+      path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
+      adapter: qwen3
+      context_length: 4096
+      gpu_layers: -1
   default: normal
 
 thinking:
@@ -72,14 +78,20 @@ log_level: INFO
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `models.thinking.path` | Path | - | Path to thinking model (14B) |
-| `models.normal.path` | Path | - | Path to normal model (7B) |
-| `models.code.path` | Path | - | Path to code model (7B) |
-| `models.micro.path` | Path | - | Path to micro model (0.6B) |
-| `models.*.adapter` | String | - | Adapter type: `qwen3`, `falcon`, `generic` |
-| `models.*.context_length` | Integer | 16384 | Maximum context window |
-| `models.*.gpu_layers` | Integer | -1 | GPU layers (-1 = all) |
+| `models.tiers.*.path` | Path | - | Path to GGUF model file |
+| `models.tiers.*.adapter` | String | `qwen2` | Adapter type: `qwen3`, `qwen2`, `falcon`, `generic` |
+| `models.tiers.*.context_length` | Integer | 16384 | Maximum context window |
+| `models.tiers.*.max_output_tokens` | Integer | 4096 | Max tokens per generation |
+| `models.tiers.*.gpu_layers` | Integer | -1 | GPU layers (-1 = all) |
+| `models.tiers.*.identity` | Path/False/None | None | Per-tier system prompt file. None=bundled, False=disabled |
+| `models.tiers.*.grammar` | Path/None | None | Path to `.gbnf` grammar file for output constraints |
+| `models.tiers.*.auto_chain` | Boolean | false | Chain to next tier on completion |
+| `models.tiers.*.enable_thinking` | Boolean | true | Allow think blocks. False adds `/no-think` (Qwen3) |
+| `models.tiers.*.allowed_tools` | List/None | None | Tool visibility filter (`server.tool` format). None=all |
+| `models.tiers.*.temperature` | Float | 0.7 | Sampling temperature |
+| `models.tiers.*.top_p` | Float | 0.9 | Top-p sampling |
 | `models.default` | String | normal | Default model tier |
+| `models.router` | Object | None | Router model config (not a tier) |
 
 ### Routing
 

@@ -150,8 +150,8 @@ class TestEntropicServerHandoff:
         assert len(result.directives) > 0
 
     @pytest.mark.asyncio
-    async def test_handoff_blocked_without_execution_todos(self, server: EntropicServer) -> None:
-        """Handoff blocked when todos exist but none have target_tier."""
+    async def test_handoff_succeeds_without_execution_todos(self, server: EntropicServer) -> None:
+        """Handoff succeeds with warning when todos exist but none have target_tier."""
         await server.execute_tool(
             "todo_write",
             {
@@ -167,11 +167,9 @@ class TestEntropicServerHandoff:
                 "task_state": "in_progress",
             },
         )
-        # Error case returns plain string
-        assert isinstance(result, str)
-        data = json.loads(result)
-        assert "error" in data
-        assert "No execution todos" in data["error"]
+        # Now succeeds (warning logged, not rejected)
+        assert isinstance(result, ServerResponse)
+        assert any(isinstance(d, TierChange) and d.tier == "code" for d in result.directives)
 
     @pytest.mark.asyncio
     async def test_handoff_warns_incomplete_self_todos(self, server: EntropicServer) -> None:

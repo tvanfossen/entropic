@@ -1,0 +1,12 @@
+root       ::= threats candidates best handoff-call
+threats    ::= "Threats: " sentence (" " sentence)? (" " sentence)? (" " sentence)? "\n"
+candidates ::= "Candidates:\n" candidate candidate
+candidate  ::= "- " uci ": " line "\n"
+best       ::= "Best move: " uci "\n"
+line       ::= sentence (" " sentence)*
+sentence   ::= [A-Z] [^.\n]+ "."
+handoff-call   ::= ws "<tool_call>" handoff-obj "</tool_call>" ws
+handoff-obj    ::= "{\"name\": \"entropic.handoff\", \"arguments\": {\"target_tier\": \"executor\", \"reason\": \"" [^"]+ "\", \"task_state\": \"plan_ready\"}}"
+ws         ::= [ \t\n]*
+uci        ::= [a-h] [1-8] [a-h] [1-8] promotion?
+promotion  ::= [qrbn]

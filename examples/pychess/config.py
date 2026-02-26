@@ -16,7 +16,6 @@ from pathlib import Path
 from entropic import ConfigLoader, EntropyConfig
 
 EXAMPLE_ROOT = Path(__file__).parent
-PROMPTS_DIR = EXAMPLE_ROOT / "prompts"
 DEFAULT_CONFIG = EXAMPLE_ROOT / "data" / "default_config.yaml"
 
 
@@ -33,15 +32,4 @@ def load_config() -> EntropyConfig:
         global_config_dir=None,
     )
 
-    # Build per-tier identity overrides (absolute paths)
-    tier_overrides = {
-        name: {"identity": str(PROMPTS_DIR / f"identity_{name}.md")}
-        for name in ("suggest", "validate", "execute")
-    }
-
-    return loader.load(
-        cli_overrides={
-            "constitution": str(PROMPTS_DIR / "constitution.md"),
-            "models": {"tiers": tier_overrides},
-        }
-    )
+    return loader.load()

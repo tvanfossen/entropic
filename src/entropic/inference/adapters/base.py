@@ -112,6 +112,8 @@ class ChatAdapter(ABC):
         self,
         base_prompt: str,
         tools: list[dict[str, Any]] | None = None,
+        *,
+        enable_thinking: bool = True,
     ) -> str:
         """Format system prompt with identity and tool definitions.
 
@@ -126,6 +128,13 @@ class ChatAdapter(ABC):
         Subclasses should NOT override this — tool isolation depends on
         this assembly order. Override _format_tools() if tool formatting
         needs to differ.
+
+        Args:
+            base_prompt: Base system prompt (todo state, project context)
+            tools: Tool definitions to include
+            enable_thinking: Whether thinking mode is enabled for this tier.
+                Base class ignores this; model-specific adapters (e.g. Qwen3)
+                may append control tokens like /no-think.
         """
         identity = self._get_identity_prompt()
         prompt_parts = [identity]

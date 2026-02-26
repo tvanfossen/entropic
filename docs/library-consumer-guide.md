@@ -16,6 +16,8 @@ pip install entropic-engine[tui]     # Terminal UI (not needed for library use)
 my-app/
 ├── data/
 │   ├── default_config.yaml          # App defaults (seeded to .myapp/)
+│   ├── grammars/                    # GBNF grammar files
+│   │   └── {tier_name}.gbnf
 │   └── tools/
 │       └── {server_name}/
 │           └── {tool_name}.json     # MCP tool definitions
@@ -61,6 +63,11 @@ config = loader.load(cli_overrides={
 | `models.tiers` | Yes | Dict of tier_name -> model config |
 | `models.default` | Yes | Must reference a defined tier |
 | `models.router` | If routing enabled | Small model for classification |
+| `tiers.*.grammar` | No | Path to `.gbnf` file for output constraints |
+| `tiers.*.auto_chain` | No | Chain to next tier on completion (default: false) |
+| `tiers.*.enable_thinking` | No | Default true; false adds `/no-think` (Qwen3) |
+| `tiers.*.identity` | No | Per-tier system prompt (None=bundled, False=disabled) |
+| `tiers.*.allowed_tools` | No | Tool visibility filter (`server.tool` format) |
 | `routing.fallback_tier` | If tiers defined | Must reference a defined tier |
 | `routing.tier_map` | No | Auto-derived from tier order |
 | `routing.handoff_rules` | No | Default: all-to-all |
@@ -303,6 +310,71 @@ tiers:
 ```
 
 `None` (default) means all tools are visible to the tier.
+
+## Grammar + Auto-Chain Interaction
+
+Grammar (GBNF output constraints) and auto-chain (tier handoff) interact as follows:
+
+| Config Combination | Behavior |
+|---|---|
+| `grammar` only | Structured output, tier is terminal |
+| `auto_chain` only | Chains on token exhaustion (`finish_reason=length`) |
+| `grammar` + `auto_chain` | Chains on grammar completion (`stop`) — tier is never terminal |
+| `grammar` + `auto_chain` + handoff in grammar | Handoff tool call fires tier transition; auto_chain is fallback if blocked |
+| `grammar` + `auto_chain` + non-handoff tool calls | Tool calls processed; if all blocked, falls through to auto_chain |
+| `auto_chain` + no handoff targets | Warning at config load, no-op at runtime |
+
+**Why grammar changes auto_chain behavior:** Without grammar, `auto_chain` fires when
+the model exhausts its token budget (`finish_reason=length`). Grammar constrains output
+to a finite structure, so the model always completes within budget
+(`finish_reason=stop`). The grammar trigger restores the auto-chain functionality that
+grammar would otherwise silently break.
+
+### Pattern A: Engine-Managed Handoff (Recommended)
+
+Set `auto_chain: true` + `grammar` on the tier. The engine handles transitions
+automatically. Best for pipelines where tier names may change or routing is dynamic.
+
+```yaml
+tiers:
+  analyzer:
+    grammar: data/grammars/analysis.gbnf
+    auto_chain: true
+  executor:
+    # no grammar, no auto_chain — terminal tier
+routing:
+  handoff_rules:
+    analyzer: [executor]
+```
+
+### Pattern B: Grammar-Embedded Handoff
+
+The grammar itself produces an `entropic.handoff` tool call. The engine
+processes it through normal tool execution — handoff fires `stop_processing`,
+halting any remaining tool calls. Best for fixed pipelines where the consumer
+controls the full topology and wants deterministic, structural handoff.
+
+```yaml
+tiers:
+  analyzer:
+    grammar: data/grammars/analysis_with_handoff.gbnf
+    auto_chain: true            # Fallback if handoff tool call fails
+    allowed_tools:
+      - entropic.todo_write     # Side-effect tools
+      - entropic.handoff        # Must be in allowed_tools for grammar to use it
+routing:
+  handoff_rules:
+    analyzer: [executor]
+```
+
+The grammar enforces ordering: side-effect tools first, handoff last. The engine
+additionally sorts `entropic.handoff` to the end of any tool call batch as an
+invariant — even if the grammar or model gets the order wrong, handoff always
+executes after all other tools in the batch.
+
+Both patterns compose naturally: if grammar embeds a handoff tool call, tool
+processing handles the transition and auto_chain is skipped. If the handoff
+tool call is blocked or fails, auto_chain catches it as a fallback.
 
 ## Security Considerations
 

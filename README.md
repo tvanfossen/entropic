@@ -80,7 +80,8 @@ state management without the model needing to orchestrate these concerns.
 - **Fully Local** — All inference on your hardware via llama-cpp-python. No API keys.
 - **Library API** — Embed the engine in your own application with `LibraryConfig`
 - **Intelligent Routing** — Sub-second prompt classification routes to the right model tier
-- **Auto-Chain** — Automatic tier handoff when token budget exhausts without tool calls
+- **Auto-Chain** — Automatic tier handoff on token exhaustion or grammar completion
+- **GBNF Grammar** — Per-tier output constraints via GBNF grammars (streaming and non-streaming)
 - **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
 - **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
 - **Auto-Compaction** — Context summarization for long conversations

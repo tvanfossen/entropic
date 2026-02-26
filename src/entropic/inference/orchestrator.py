@@ -221,9 +221,14 @@ class ModelOrchestrator:
             prompt_manager=self._prompt_manager,
         )
 
-    def _resolve_grammar(self, model: ModelBackend) -> str | None:
-        """Load and cache grammar string from tier config path."""
-        grammar_path = getattr(model.config, "grammar", None)
+    def _resolve_grammar(self, tier: ModelTier) -> str | None:
+        """Load and cache grammar string from tier config path.
+
+        Resolves from the tier's own backend config, NOT the runtime model.
+        This ensures the correct grammar is used even when a model is reused
+        across tiers (e.g. thinker and executor share the same .gguf file).
+        """
+        grammar_path = getattr(self._tiers[tier].config, "grammar", None)
         if grammar_path is None:
             return None
         resolved = grammar_path.expanduser().resolve()
@@ -348,9 +353,9 @@ class ModelOrchestrator:
         model = await self._get_model(tier)
 
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.max_output_tokens
+            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
         if "grammar" not in kwargs:
-            grammar_str = self._resolve_grammar(model)
+            grammar_str = self._resolve_grammar(tier)
             if grammar_str:
                 kwargs["grammar"] = grammar_str
 
@@ -382,9 +387,9 @@ class ModelOrchestrator:
         model = await self._get_model(tier)
 
         if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = model.config.max_output_tokens
+            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
         if "grammar" not in kwargs:
-            grammar_str = self._resolve_grammar(model)
+            grammar_str = self._resolve_grammar(tier)
             if grammar_str:
                 kwargs["grammar"] = grammar_str
 

@@ -447,6 +447,21 @@ def _validate_handoff_rules(rules: dict[str, list[str]], tier_names: set[str]) -
                 )
 
 
+def _warn_auto_chain_without_targets(
+    tiers: dict[str, TierConfig], handoff_rules: dict[str, list[str]]
+) -> None:
+    """Warn if a tier has auto_chain=True but no handoff_rules entry."""
+    import warnings
+
+    for name, tier_cfg in tiers.items():
+        if tier_cfg.auto_chain and name not in handoff_rules:
+            warnings.warn(
+                f"Tier '{name}' has auto_chain=true but no handoff_rules entry. "
+                f"Auto-chain will have no targets at runtime.",
+                stacklevel=3,
+            )
+
+
 class LibraryConfig(BaseSettings):
     """Minimal configuration for embedding entropic as a library.
 
@@ -513,6 +528,7 @@ class LibraryConfig(BaseSettings):
         _validate_fallback_tier(self.routing.fallback_tier, tier_names)
         _validate_tier_map(self.routing.tier_map, tier_names)
         _validate_handoff_rules(self.routing.handoff_rules, tier_names)
+        _warn_auto_chain_without_targets(self.models.tiers, self.routing.handoff_rules)
         return self
 
 

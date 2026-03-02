@@ -23,41 +23,39 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion in programming is a technique where a function calls itself to solve a
-  problem by breaking it down into smaller, simpler subproblems. It typically 
-  involves two key components:
+  problem by breaking it down into smaller, simpler subproblems. It relies on two 
+  key components:
   
-  1. **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops).
-  2. **Recursive Step**: The part where the function calls itself with modified 
-  parameters.
+  1. **Base Case**:  
+     A condition that stops the recursion (prevents infinite loops). For example, 
+  `n == 0` in factorial calculations.
+  
+  2. **Recursive Case**:  
+     The function calls itself with a modified parameter to reduce the problem 
+  size. For example, `factorial(n) = n * factorial(n-1)`.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
-          return n * factorial(n - 1)
+      else:       # Recursive case
+          return n * factorial(n-1)
   ```
   
-  ### Key Characteristics:
-  - **Divides problems into smaller instances** (e.g., `factorial(5)` becomes `5 *
-  factorial(4)`).
-  - **Requires a clear base case** to terminate the recursion.
-  - **Can lead to stack overflow** if the recursion depth is too large.
+  ### Key Concepts:
+  - **Call Stack**: Each recursive call adds a frame to the stack. Deep recursion 
+  can exhaust stack memory (stack overflow).
+  - **Efficiency**: Recursion may be less efficient than iteration for large 
+  inputs unless optimized (e.g., tail recursion).
   
-  ### Use Cases:
-  - Tree traversals
+  ### Common Use Cases:
+  - Tree traversal
   - Divide-and-conquer algorithms (e.g., quicksort)
-  - Problems with natural recursive structures (e.g., Fibonacci sequence)
+  - Mathematical computations (e.g., Fibonacci sequence)
   
-  ### Comparison with Iteration:
-  - **Pros**: More elegant for hierarchical problems; easier to write for certain 
-  tasks.
-  - **Cons**: Higher memory usage (due to stack frames); risk of stack overflow.
-  
-  Would you like me to demonstrate a specific example or compare recursion with 
-  iteration?
+  Recursion simplifies code for problems with repetitive, nested structures but 
+  requires careful handling to avoid errors.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

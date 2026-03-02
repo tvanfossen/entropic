@@ -29,22 +29,19 @@ note right of Mdl
       return sum(numbers)
   ```
   
-  This implementation:
-  - Uses Python's built-in `sum()` function for efficiency
-  - Handles empty lists by returning 0 (since `sum([])` naturally returns 0)
-  - Has O(n) time complexity where n is the length of the list
+  This function:
+  1. Takes a list of numbers as input
+  2. Uses Python's built-in `sum()` function to calculate the total
+  3. Returns the result
   
-  For a manual implementation using a loop, you could also write:
-  
+  Example usage:
   ```python
-  def sum_list(numbers):
-      total = 0
-      for num in numbers:
-          total += num
-      return total
+  print(sum_list([1, 2, 3, 4]))  # Output: 10
+  print(sum_list([]))           # Output: 0 (handles empty lists)
   ```
   
-  Both versions will correctly calculate the sum of any list of numbers.
+  The function handles empty lists naturally by returning 0, which is the default 
+  behavior of Python's `sum()` function when given an empty iterable.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

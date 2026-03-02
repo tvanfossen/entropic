@@ -1,46 +1,46 @@
 === Model Test Report ===
-Date: 2026-02-26 13:45:22
+Date: 2026-03-02 15:07:51
 
-Results: 26 passed, 0 failed (109.9s)
+Results: 26 passed, 0 failed (126.3s)
 
-  [PASS] test_grammar_constrains_output (9.2s)
-  [PASS] test_grammar_auto_chain_fires (8.7s)
-  [PASS] test_multi_tier_pipeline_completes (9.2s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (5.5s)
-  [PASS] test_code_request_produces_code [code] (13.8s)
+  [PASS] test_grammar_constrains_output (12.8s)
+  [PASS] test_grammar_auto_chain_fires (10.3s)
+  [PASS] test_multi_tier_pipeline_completes (11.6s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (7.5s)
+  [PASS] test_code_request_produces_code [code] (14.5s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (13.2s)
+  [PASS] test_code_response_has_python_syntax [code] (12.6s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (8.9s)
+  [PASS] test_response_ends_cleanly [normal] (12.1s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (5.4s)
+  [PASS] test_no_special_tokens_in_response [normal] (5.7s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (4.1s)
+  [PASS] test_generation_starts_and_ends [simple] (3.7s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (10.5s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (9.7s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (11.8s)
+  [PASS] test_explanation_is_substantive [normal] (16.3s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (4.2s)
+  [PASS] test_hello_produces_response [simple] (4.0s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (3.7s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (3.4s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
-  [PASS] test_hi_routes_to_simple (0.1s)
-  [PASS] test_thanks_routes_to_simple (0.1s)
+  [PASS] test_hi_routes_to_simple (0.0s)
+  [PASS] test_thanks_routes_to_simple (0.0s)
   [PASS] test_write_code_routes_to_code (0.1s)
   [PASS] test_fix_bug_routes_to_code (0.1s)
   [PASS] test_add_feature_routes_to_code (0.1s)
   [PASS] test_explain_routes_to_reasoning (0.1s)
   [PASS] test_question_routes_to_reasoning (0.1s)
-  [PASS] test_complex_analysis_routes_to_thinking (1.0s)
-  [PASS] test_classification_under_500ms (0.1s)
+  [PASS] test_complex_analysis_routes_to_thinking (1.4s)
+  [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.2s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 26 passed in 136.28s (0:02:16) ========================
+======================== 26 passed in 161.25s (0:02:41) ========================
 
 Result: PASSED

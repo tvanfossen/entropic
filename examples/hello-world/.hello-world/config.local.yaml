@@ -3,19 +3,28 @@
 # Demonstrates the core entropic value: automatic model routing
 # and tier handoff between a fast model and a thinking model.
 #
+# Uses Qwen3.5-35B-A3B MoE (Q2_K) — full GPU offload at 16GB VRAM,
+# 30-41 tok/s. MoE architecture: 35B total params, ~3B active per token.
+#
 # Edit `path` values to point to your GGUF model files.
 # See docs/library-consumer-guide.md for full config reference.
+
+# App context: consumer-specific personality injected into every prompt
+app_context: prompts/app_context.md
 
 models:
   tiers:
     normal:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+      adapter: qwen35
       context_length: 16384
+      gpu_layers: 40
     thinking:
-      path: ~/models/gguf/Qwen3-14B-Q4_K_M.gguf
-      adapter: qwen3
+      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+      adapter: qwen35
       context_length: 16384
+      gpu_layers: 40
+      enable_thinking: true
   router:
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: router

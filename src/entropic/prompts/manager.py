@@ -217,8 +217,6 @@ class PromptManager:
 
         Reads constitution, app_context from top-level config fields.
         Reads identity from each tier's config entry.
-        Falls back to legacy prompts_dir/use_bundled_prompts if new
-        fields are absent (backward compatibility during migration).
         """
         constitution = getattr(config, "constitution", None)
         app_context_val = getattr(config, "app_context", None)

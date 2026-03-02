@@ -23,6 +23,7 @@ fixes the chatml-function-calling template.
 """
 
 import asyncio
+import inspect
 import io
 import sys
 import threading
@@ -67,13 +68,9 @@ def _check_gpu_offload() -> None:
         "llama-cpp-python is installed WITHOUT GPU acceleration. "
         "Models will run on CPU only, which is significantly slower.\n"
         "\n"
-        "To install with CUDA (pre-built wheel):\n"
-        "  pip install llama-cpp-python --extra-index-url "
-        "https://abetlen.github.io/llama-cpp-python/whl/cu124\n"
-        "\n"
-        "To compile with CUDA from source:\n"
-        '  CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python '
-        "--force-reinstall --no-cache-dir\n"
+        "Recommended:\n"
+        "  Source install:  ./install.sh  (auto-detects GPU, builds with CUDA)\n"
+        "  PyPI install:    entropic setup-cuda  (rebuilds with CUDA)\n"
         "\n"
         "For other backends (Metal, Vulkan, SYCL, etc.), see:\n"
         "  https://github.com/abetlen/llama-cpp-python#installation"
@@ -104,6 +101,7 @@ class LlamaCppBackend(ModelBackend):
         self._model: Llama | None = None
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"
+        self._has_chat_template_kwargs: bool = False
 
     async def load(self) -> None:
         """Load the model into memory."""
@@ -129,6 +127,17 @@ class LlamaCppBackend(ModelBackend):
             elapsed = time.time() - start
             logger.info(f"Model loaded in {elapsed:.2f}s")
 
+            # Detect chat_template_kwargs support (added in newer llama-cpp-python)
+            assert self._model is not None
+            sig = inspect.signature(self._model.create_chat_completion)
+            self._has_chat_template_kwargs = "chat_template_kwargs" in sig.parameters
+            if not self._has_chat_template_kwargs:
+                logger.info(
+                    "Installed llama-cpp-python does not support chat_template_kwargs. "
+                    "Template parameters (e.g. enable_thinking) will be skipped. "
+                    "Rebuild with ./install.sh or entropic setup-cuda for full support."
+                )
+
     def _load_model_sync(self) -> Llama:
         """Synchronous model loading."""
         # Suppress llama.cpp informational messages (n_ctx_per_seq < n_ctx_train etc)
@@ -141,6 +150,7 @@ class LlamaCppBackend(ModelBackend):
                 n_ctx=self.config.context_length,
                 n_gpu_layers=self.config.gpu_layers,
                 chat_format=self._adapter.chat_format,
+                use_mlock=True,
                 verbose=False,
             )
         finally:
@@ -154,6 +164,27 @@ class LlamaCppBackend(ModelBackend):
                 # Let garbage collector handle cleanup
                 self._model = None
                 logger.info("Model unloaded")
+
+    def _build_gen_config(
+        self,
+        max_tokens: int = 4096,
+        stop: list[str] | None = None,
+        grammar: str | None = None,
+        stream: bool = False,
+        **kwargs: Any,
+    ) -> GenerationConfig:
+        """Build GenerationConfig with kwargs overriding backend defaults."""
+        return GenerationConfig(
+            max_tokens=max_tokens,
+            temperature=kwargs.get("temperature", self.config.temperature),
+            top_p=kwargs.get("top_p", self.config.top_p),
+            top_k=kwargs.get("top_k", self.config.top_k),
+            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
+            stop=stop or [],
+            grammar=grammar,
+            stream=stream,
+            chat_template_kwargs=kwargs.get("chat_template_kwargs", {}),
+        )
 
     async def generate(
         self,
@@ -181,16 +212,8 @@ class LlamaCppBackend(ModelBackend):
 
         # Convert messages to llama-cpp format
         llama_messages = self._convert_messages(messages)
-
-        # Build generation config
-        gen_config = GenerationConfig(
-            max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", self.config.temperature),
-            top_p=kwargs.get("top_p", self.config.top_p),
-            top_k=kwargs.get("top_k", self.config.top_k),
-            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
-            stop=stop or [],
-            grammar=grammar,
+        gen_config = self._build_gen_config(
+            max_tokens=max_tokens, stop=stop, grammar=grammar, **kwargs
         )
 
         # Run generation in thread pool
@@ -205,7 +228,8 @@ class LlamaCppBackend(ModelBackend):
         # Extract content from response
         message = result["choices"][0]["message"]
         content = message.get("content") or ""
-        finish_reason = result["choices"][0].get("finish_reason", "unknown")
+        finish_reason = result["choices"][0].get("finish_reason", "stop")
+        self._last_finish_reason = finish_reason
         logger.debug(
             f"\nGeneration complete: finish_reason={finish_reason}, content_len={len(content)}"
         )
@@ -213,7 +237,7 @@ class LlamaCppBackend(ModelBackend):
         return GenerationResult(
             content=content,
             tool_calls=[],  # Tool calls parsed from content by adapter
-            finish_reason=result["choices"][0].get("finish_reason", "stop"),
+            finish_reason=finish_reason,
             token_count=result.get("usage", {}).get("completion_tokens", 0),
             generation_time_ms=elapsed,
         )
@@ -244,6 +268,10 @@ class LlamaCppBackend(ModelBackend):
             kwargs["grammar"] = LlamaGrammar.from_string(config.grammar)
             logger.debug(f"Using GBNF grammar: {config.grammar}")
 
+        # Pass template kwargs (e.g. enable_thinking for Qwen3.5)
+        if config.chat_template_kwargs and self._has_chat_template_kwargs:
+            kwargs["chat_template_kwargs"] = config.chat_template_kwargs
+
         result: dict[str, Any] = self._model.create_chat_completion(**kwargs)
         return result
 
@@ -271,14 +299,7 @@ class LlamaCppBackend(ModelBackend):
         if self._model is None:
             await self.load()
 
-        gen_config = GenerationConfig(
-            max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", self.config.temperature),
-            top_p=kwargs.get("top_p", self.config.top_p),
-            top_k=kwargs.get("top_k", self.config.top_k),
-            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
-            grammar=grammar,
-        )
+        gen_config = self._build_gen_config(max_tokens=max_tokens, grammar=grammar, **kwargs)
 
         start = time.time()
         loop = asyncio.get_running_loop()
@@ -341,15 +362,12 @@ class LlamaCppBackend(ModelBackend):
         llama_messages = self._convert_messages(messages)
         self._reset_model_if_needed()
 
-        gen_config = GenerationConfig(
+        gen_config = self._build_gen_config(
             max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", self.config.temperature),
-            top_p=kwargs.get("top_p", self.config.top_p),
-            top_k=kwargs.get("top_k", self.config.top_k),
-            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
-            stop=stop or [],
+            stop=stop,
+            grammar=kwargs.pop("grammar", None),
             stream=True,
-            grammar=kwargs.get("grammar"),
+            **kwargs,
         )
 
         # Use a queue to bridge sync stream iteration with async yielding
@@ -401,17 +419,20 @@ class LlamaCppBackend(ModelBackend):
         assert self._model is not None
         try:
             grammar_obj = LlamaGrammar.from_string(config.grammar) if config.grammar else None
-            stream = self._model.create_chat_completion(
-                messages=messages,
-                max_tokens=config.max_tokens,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                top_k=config.top_k,
-                repeat_penalty=config.repeat_penalty,
-                stop=config.stop if config.stop else None,
-                stream=True,
-                grammar=grammar_obj,
-            )
+            stream_kwargs: dict[str, Any] = {
+                "messages": messages,
+                "max_tokens": config.max_tokens,
+                "temperature": config.temperature,
+                "top_p": config.top_p,
+                "top_k": config.top_k,
+                "repeat_penalty": config.repeat_penalty,
+                "stop": config.stop if config.stop else None,
+                "stream": True,
+                "grammar": grammar_obj,
+            }
+            if config.chat_template_kwargs and self._has_chat_template_kwargs:
+                stream_kwargs["chat_template_kwargs"] = config.chat_template_kwargs
+            stream = self._model.create_chat_completion(**stream_kwargs)
             self._process_stream_chunks(stream, queue, loop, cancel)
         except Exception as e:
             logger.exception(f"Stream error: {e}")

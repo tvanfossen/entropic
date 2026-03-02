@@ -6,6 +6,7 @@ and provides common utilities for token counting, prompt formatting, etc.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 # Re-export from core.base for convenience
 from entropic.core.base import (
@@ -28,6 +29,7 @@ class GenerationConfig:
     stop: list[str] = field(default_factory=list)
     stream: bool = False
     grammar: str | None = None  # Optional GBNF grammar to constrain output
+    chat_template_kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

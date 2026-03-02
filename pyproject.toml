@@ -109,7 +109,7 @@ disallow_untyped_calls = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["entropic.cli", "entropic.cli_download"]
+module = ["entropic.cli", "entropic.cli_download", "entropic.cli_setup_cuda"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]

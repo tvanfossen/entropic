@@ -26,45 +26,36 @@ note right of Mdl
   problem by breaking it down into smaller, simpler subproblems. It relies on two 
   key components:
   
-  1. **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops).  
-     Example: `n == 0` in factorial calculations.
+  1. **Base Case**:  
+     A condition that stops the recursion (prevents infinite loops). For example, 
+  `n == 0` in factorial calculations.
   
-  2. **Recursive Step**: The part where the function calls itself with a modified 
-  argument, gradually approaching the base case.  
-     Example: `factorial(n) = n * factorial(n-1)`.
+  2. **Recursive Case**:  
+     The function calls itself with a modified parameter to reduce the problem 
+  size. For example, `factorial(n) = n * factorial(n-1)`.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
+      else:       # Recursive case
           return n * factorial(n-1)
   ```
   
   ### Key Concepts:
   - **Call Stack**: Each recursive call adds a frame to the stack. Deep recursion 
-  can lead to stack overflow.
-  - **Tail Recursion**: Some languages optimize recursive calls that occur as the 
-  final action of a function (not universally supported).
-  - **Use Cases**: Ideal for problems with hierarchical structures (e.g., tree 
-  traversals, divide-and-conquer algorithms) but may be less efficient than 
-  iteration for simple tasks.
+  can exhaust stack memory (stack overflow).
+  - **Efficiency**: Recursion may be less efficient than iteration for large 
+  inputs unless optimized (e.g., tail recursion).
   
-  ### When to Use Recursion:
-  - Problems naturally decompose into smaller subproblems (e.g., Fibonacci 
-  sequence, permutations).
-  - Readability is prioritized over performance (e.g., quicksort, binary search).
+  ### Common Use Cases:
+  - Tree traversal
+  - Divide-and-conquer algorithms (e.g., quicksort)
+  - Mathematical computations (e.g., Fibonacci sequence)
   
-  ### Alternatives:
-  - Iterative solutions often perform better for large inputs but may require more
-  complex logic.  
-  - Memoization or dynamic programming can optimize recursive algorithms by 
-  caching results.
-  
-  Recursion is a powerful tool but requires careful design to avoid stack overflow
-  and ensure efficiency.
+  Recursion simplifies code for problems with repetitive, nested structures but 
+  requires careful handling to avoid errors.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

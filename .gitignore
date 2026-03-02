@@ -68,6 +68,9 @@ examples/pychess/.pychess/
 # Build artifacts
 *.whl
 
+# Clone-at-install build directory (llama-cpp-python)
+.build/
+
 # Jupyter
 .ipynb_checkpoints/
 

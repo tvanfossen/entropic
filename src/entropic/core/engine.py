@@ -12,8 +12,6 @@ import json
 import threading
 import time
 from collections.abc import AsyncIterator, Callable
-from dataclasses import dataclass, field
-from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
 from entropic.config.loader import save_permission
@@ -21,6 +19,16 @@ from entropic.config.schema import EntropyConfig
 from entropic.core.base import Message, ToolCall, ToolResult
 from entropic.core.compaction import CompactionManager, CompactionResult, TokenCounter
 from entropic.core.directives import DirectiveProcessor, DirectiveResult
+from entropic.core.engine_types import (  # noqa: F401 — re-exported for consumers
+    AgentState,
+    EngineCallbacks,
+    InterruptContext,
+    InterruptMode,
+    LoopConfig,
+    LoopContext,
+    LoopMetrics,
+    ToolApproval,
+)
 from entropic.core.logging import get_logger, get_model_logger
 from entropic.core.queue import MessageSource
 from entropic.inference.orchestrator import ModelOrchestrator, RoutingResult
@@ -39,125 +47,6 @@ if TYPE_CHECKING:
 
 logger = get_logger("core.engine")
 model_logger = get_model_logger()
-
-
-class AgentState(Enum):
-    """Agent execution states."""
-
-    IDLE = auto()
-    PLANNING = auto()
-    EXECUTING = auto()
-    WAITING_TOOL = auto()
-    VERIFYING = auto()
-    COMPLETE = auto()
-    ERROR = auto()
-    INTERRUPTED = auto()
-    PAUSED = auto()  # Generation paused, awaiting user input
-
-
-class InterruptMode(Enum):
-    """How to handle generation interrupt."""
-
-    CANCEL = "cancel"  # Discard partial response, stop
-    PAUSE = "pause"  # Keep partial response, await input
-    INJECT = "inject"  # Keep partial, inject context, continue
-
-
-class ToolApproval(Enum):
-    """Tool approval responses from user."""
-
-    DENY = "deny"  # Deny this once
-    ALLOW = "allow"  # Allow this once
-    ALWAYS_DENY = "always_deny"  # Deny and save to config
-    ALWAYS_ALLOW = "always_allow"  # Allow and save to config
-
-
-@dataclass
-class LoopConfig:
-    """Configuration for the agentic loop."""
-
-    max_iterations: int = 15
-    max_consecutive_errors: int = 3
-    max_tool_calls_per_turn: int = 10
-    idle_timeout_seconds: int = 300
-    require_plan_for_complex: bool = True
-    stream_output: bool = True
-    auto_approve_tools: bool = False
-
-
-@dataclass
-class LoopMetrics:
-    """Metrics collected during loop execution."""
-
-    iterations: int = 0
-    tool_calls: int = 0
-    tokens_used: int = 0
-    errors: int = 0
-    start_time: float = 0.0
-    end_time: float = 0.0
-
-    @property
-    def duration_ms(self) -> int:
-        """Get duration in milliseconds."""
-        return int((self.end_time - self.start_time) * 1000)
-
-
-@dataclass
-class LoopContext:
-    """Context maintained during loop execution."""
-
-    messages: list[Message] = field(default_factory=list)
-    pending_tool_calls: list[ToolCall] = field(default_factory=list)
-    state: AgentState = AgentState.IDLE
-    metrics: LoopMetrics = field(default_factory=LoopMetrics)
-    consecutive_errors: int = 0
-    # Track recent tool calls to prevent duplicates (key: "name:args_hash")
-    recent_tool_calls: dict[str, str] = field(default_factory=dict)
-    # Track consecutive duplicate attempts to detect stuck model
-    consecutive_duplicate_attempts: int = 0
-    # Count of tool calls that actually executed this iteration
-    # (not blocked, not denied, not duplicate). Reset each iteration.
-    effective_tool_calls: int = 0
-    # Flag indicating we have tool results that should be presented
-    has_pending_tool_results: bool = False
-    # Lock model tier for the entire loop to prevent mid-task switching
-    locked_tier: Any = None  # ModelTier or None
-    # External task tracking (for MCP integration)
-    task_id: str | None = None  # Associated task ID if from external source
-    source: str = MessageSource.HUMAN  # Message source (human, claude-code)
-    # Stored for system prompt rebuild on tier change
-    all_tools: list[dict[str, Any]] = field(default_factory=list)
-    base_system: str = ""
-    # General-purpose metadata for runtime state (e.g., warning tracking)
-    metadata: dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class InterruptContext:
-    """Context for interrupted/paused generation."""
-
-    partial_content: str = ""
-    partial_tool_calls: list[ToolCall] = field(default_factory=list)
-    injection: str | None = None
-    mode: InterruptMode = InterruptMode.PAUSE
-
-
-@dataclass
-class EngineCallbacks:
-    """Callback configuration for engine events."""
-
-    on_state_change: Callable[[AgentState], None] | None = None
-    on_tool_call: Callable[[ToolCall], Any] | None = None
-    on_stream_chunk: Callable[[str], None] | None = None
-    on_tool_start: Callable[[ToolCall], None] | None = None
-    on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-    on_presenter_notify: Callable[[str, dict[str, Any]], None] | None = None
-    on_compaction: Callable[[CompactionResult], None] | None = None
-    on_pause_prompt: Callable[[str], Any] | None = None
-    on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
-    on_tier_selected: Callable[[str], None] | None = None
-    on_routing_complete: Callable[[RoutingResult], None] | None = None
-    error_sanitizer: Callable[[str], str] | None = None
 
 
 class AgentEngine:

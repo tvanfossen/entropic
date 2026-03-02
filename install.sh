@@ -124,18 +124,58 @@ echo ""
 echo "=== Checking GPU ==="
 echo ""
 
+CMAKE_ARGS=""
 if command -v nvidia-smi &> /dev/null; then
     GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
     if [ -n "$GPU_NAME" ]; then
         echo -e "${GREEN}✓${NC} Found GPU: $GPU_NAME"
         echo "  Building llama-cpp-python with CUDA support"
-        export CMAKE_ARGS="-DGGML_CUDA=on"
+        CMAKE_ARGS="-DGGML_CUDA=on"
     fi
 else
     echo "No NVIDIA GPU detected — CPU-only mode"
 fi
 
-# --- Step 5: Install ---
+# --- Step 5: Clone + build llama-cpp-python ---
+
+echo ""
+echo "=== Building llama-cpp-python ==="
+echo ""
+
+# Read pinned versions from build_config.py (single source of truth)
+BUILD_CONFIG="$SCRIPT_DIR/src/entropic/build_config.py"
+LLAMA_CPP_PYTHON_REPO=$(grep 'LLAMA_CPP_PYTHON_REPO' "$BUILD_CONFIG" | head -1 | sed 's/.*= *"//;s/".*//')
+LLAMA_CPP_PYTHON_TAG=$(grep 'LLAMA_CPP_PYTHON_TAG' "$BUILD_CONFIG" | head -1 | sed 's/.*= *"//;s/".*//')
+
+echo "llama-cpp-python: $LLAMA_CPP_PYTHON_TAG"
+echo "  repo: $LLAMA_CPP_PYTHON_REPO"
+
+BUILD_DIR="$SCRIPT_DIR/.build"
+CLONE_DIR="$BUILD_DIR/llama-cpp-python"
+
+if [ -d "$CLONE_DIR" ]; then
+    echo -e "${GREEN}✓${NC} Using cached clone: $CLONE_DIR"
+else
+    echo "Cloning llama-cpp-python $LLAMA_CPP_PYTHON_TAG..."
+    mkdir -p "$BUILD_DIR"
+    git clone --depth=1 \
+        --branch="$LLAMA_CPP_PYTHON_TAG" \
+        --recurse-submodules --shallow-submodules \
+        "$LLAMA_CPP_PYTHON_REPO" \
+        "$CLONE_DIR"
+    echo -e "${GREEN}✓${NC} Clone complete"
+fi
+
+echo "Building llama-cpp-python..."
+if [ -n "$CMAKE_ARGS" ]; then
+    echo "  CMAKE_ARGS: $CMAKE_ARGS"
+    PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="$CMAKE_ARGS" $PIP install "$CLONE_DIR"
+else
+    $PIP install "$CLONE_DIR"
+fi
+echo -e "${GREEN}✓${NC} llama-cpp-python built and installed"
+
+# --- Step 6: Install ---
 
 echo ""
 echo "=== Installing Entropic ==="
@@ -147,7 +187,7 @@ $PIP install -e "$SCRIPT_DIR[$EXTRAS]"
 echo ""
 echo -e "${GREEN}✓${NC} Entropic installed!"
 
-# --- Step 6: Verify ---
+# --- Step 7: Verify ---
 
 echo ""
 echo "=== Verifying Installation ==="

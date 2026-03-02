@@ -32,8 +32,7 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" in your first message. However, I cannot access or recall prior
-  conversations outside of the current session. Let me know how I can assist you!
+  Your last message was: "Hello." Is there anything specific you'd like help with?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

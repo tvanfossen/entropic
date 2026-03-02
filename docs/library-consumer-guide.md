@@ -268,7 +268,18 @@ chunks — use `on_stream_chunk` callback for streaming).
 - `LoopConfig.max_consecutive_errors` consecutive tool errors occur
 
 **Re-entrant calls:** `engine.run()` can be called multiple times on the same
-engine instance. Conversation history carries forward between runs.
+engine instance. History is **not** stored internally — the consumer must capture
+yielded messages and pass them back via the `history` parameter:
+
+```python
+history: list[Message] = []
+async for msg in engine.run("Hello", history=history):
+    history.append(msg)
+
+# Next turn — pass accumulated history
+async for msg in engine.run("Follow up", history=history):
+    history.append(msg)
+```
 
 **Callback exceptions:** If a callback raises an exception, it propagates up
 through the engine and terminates the current run. Wrap callback logic in

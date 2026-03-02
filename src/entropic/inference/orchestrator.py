@@ -80,7 +80,6 @@ class ModelOrchestrator:
 
         # Derive routing data from config
         self._tier_map = self._build_tier_map()
-        self._classification_map = self._build_classification_map()
         self._handoff_rules = self._build_handoff_rules()
 
         # Backend creation — consumer can inject custom factory
@@ -127,10 +126,6 @@ class ModelOrchestrator:
             mapping,
         )
         return result
-
-    def _build_classification_map(self) -> dict[str, ModelTier]:
-        """Build string digit → ModelTier map for classification parsing."""
-        return self._tier_map
 
     def _build_handoff_rules(self) -> dict[ModelTier, frozenset[ModelTier]]:
         """Build handoff rules from config or default to all-to-all."""
@@ -339,6 +334,35 @@ class ModelOrchestrator:
             self._thinking_mode = enabled
             return True
 
+    def _apply_tier_defaults(self, tier: ModelTier, kwargs: dict[str, Any]) -> None:
+        """Inject tier-specific defaults into generation kwargs.
+
+        Ensures the correct tier's sampling parameters are used even when
+        the backend instance is reused across tiers (shared .gguf file).
+        Only sets values not already present in kwargs, so explicit caller
+        overrides are preserved.
+        """
+        tier_config = self._tiers[tier].config
+        defaults = {
+            "max_tokens": tier_config.max_output_tokens,
+            "temperature": tier_config.temperature,
+            "top_p": tier_config.top_p,
+            "top_k": tier_config.top_k,
+            "repeat_penalty": tier_config.repeat_penalty,
+        }
+        for key, value in defaults.items():
+            if key not in kwargs:
+                kwargs[key] = value
+
+        if "grammar" not in kwargs:
+            grammar_str = self._resolve_grammar(tier)
+            if grammar_str:
+                kwargs["grammar"] = grammar_str
+
+        # Thread enable_thinking to chat template (Qwen3.5 uses this natively)
+        if "chat_template_kwargs" not in kwargs and hasattr(tier_config, "enable_thinking"):
+            kwargs["chat_template_kwargs"] = {"enable_thinking": tier_config.enable_thinking}
+
     async def generate(
         self,
         messages: list[Message],
@@ -351,13 +375,7 @@ class ModelOrchestrator:
 
         self._last_used_tier = tier
         model = await self._get_model(tier)
-
-        if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
-        if "grammar" not in kwargs:
-            grammar_str = self._resolve_grammar(tier)
-            if grammar_str:
-                kwargs["grammar"] = grammar_str
+        self._apply_tier_defaults(tier, kwargs)
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Generating with {tier.name} model (adapter: {adapter_name})")
@@ -385,13 +403,7 @@ class ModelOrchestrator:
 
         self._last_used_tier = tier
         model = await self._get_model(tier)
-
-        if "max_tokens" not in kwargs:
-            kwargs["max_tokens"] = self._tiers[tier].config.max_output_tokens
-        if "grammar" not in kwargs:
-            grammar_str = self._resolve_grammar(tier)
-            if grammar_str:
-                kwargs["grammar"] = grammar_str
+        self._apply_tier_defaults(tier, kwargs)
 
         adapter_name = type(model.adapter).__name__
         logger.debug(f"Streaming with {tier.name} model (adapter: {adapter_name})")
@@ -553,8 +565,8 @@ class ModelOrchestrator:
     def _parse_classification(self, raw_output: str) -> tuple[ModelTier, str]:
         """Extract classification tier from raw completion output."""
         for char in raw_output:
-            if char in self._classification_map:
-                return self._classification_map[char], char
+            if char in self._tier_map:
+                return self._tier_map[char], char
         logger.warning(
             f"[ROUTER] No valid digit in output: {raw_output!r}, "
             f"defaulting to {self.config.models.default}"

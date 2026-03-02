@@ -54,7 +54,7 @@ thinking:
 
 routing:
   enabled: true
-  fallback_model: normal
+  fallback_tier: normal
 
 generation:
   max_tokens: 4096
@@ -98,7 +98,7 @@ log_level: INFO
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `routing.enabled` | Boolean | true | Enable automatic task routing |
-| `routing.fallback_model` | String | normal | Fallback when routing fails |
+| `routing.fallback_tier` | String | normal | Fallback when routing fails |
 
 ### Generation
 

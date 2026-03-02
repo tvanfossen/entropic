@@ -12,6 +12,7 @@ from entropic.inference.adapters.base import (
 from entropic.inference.adapters.falcon import FalconAdapter
 from entropic.inference.adapters.qwen2 import Qwen2Adapter
 from entropic.inference.adapters.qwen3 import Qwen3Adapter
+from entropic.inference.adapters.qwen35 import Qwen35Adapter
 from entropic.inference.adapters.router import RouterAdapter
 from entropic.inference.adapters.smollm3 import SmolLM3Adapter
 
@@ -21,6 +22,7 @@ __all__ = [
     "GenericAdapter",
     "Qwen2Adapter",
     "Qwen3Adapter",
+    "Qwen35Adapter",
     "RouterAdapter",
     "SmolLM3Adapter",
     "get_adapter",

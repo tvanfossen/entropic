@@ -5,9 +5,9 @@ repos:
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^test-reports/
+        exclude: ^(test-reports/|vendor/)
       - id: end-of-file-fixer
-        exclude: ^test-reports/
+        exclude: ^(test-reports/|vendor/)
       - id: check-yaml
       - id: check-json
       - id: check-toml

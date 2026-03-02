@@ -32,12 +32,8 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said:  
-  1. "Hello"  
-  2. "What did I just say?"  
-  
-  Are you testing if I can track your conversation history? 😊 Let me know if you'd
-  like to continue!
+  You said "Hello" in your first message. However, I cannot access or recall prior
+  conversations outside of the current session. Let me know how I can assist you!
 end note
 note over T #palegreen
   **PASSED** (< 112s)

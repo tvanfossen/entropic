@@ -1,8 +1,13 @@
-"""Tests for grammar passthrough in LlamaCppBackend streaming path."""
+"""Tests for grammar passthrough and finish_reason in LlamaCppBackend."""
 
+from __future__ import annotations
+
+import asyncio
 from unittest.mock import MagicMock, patch
 
+import pytest
 from entropic.inference.backend import GenerationConfig
+from entropic.inference.llama_cpp import LlamaCppBackend
 
 
 class TestStreamGrammarInGenConfig:
@@ -36,8 +41,6 @@ class TestStreamToQueuePassesGrammar:
         )
 
         # Build a minimal mock backend to call _stream_to_queue
-        from entropic.inference.llama_cpp import LlamaCppBackend
-
         with patch.object(LlamaCppBackend, "__init__", lambda self, **kw: None):
             backend = LlamaCppBackend.__new__(LlamaCppBackend)
 
@@ -45,8 +48,6 @@ class TestStreamToQueuePassesGrammar:
         mock_model.create_chat_completion.return_value = iter([])
         backend._model = mock_model
         backend._last_finish_reason = "stop"
-
-        import asyncio
 
         loop = asyncio.new_event_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -65,8 +66,6 @@ class TestStreamToQueuePassesGrammar:
         """_stream_to_queue passes grammar=None when no grammar configured."""
         config = GenerationConfig(stream=True, grammar=None, stop=[])
 
-        from entropic.inference.llama_cpp import LlamaCppBackend
-
         with patch.object(LlamaCppBackend, "__init__", lambda self, **kw: None):
             backend = LlamaCppBackend.__new__(LlamaCppBackend)
 
@@ -74,8 +73,6 @@ class TestStreamToQueuePassesGrammar:
         mock_model.create_chat_completion.return_value = iter([])
         backend._model = mock_model
         backend._last_finish_reason = "stop"
-
-        import asyncio
 
         loop = asyncio.new_event_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -88,3 +85,52 @@ class TestStreamToQueuePassesGrammar:
         mock_grammar_cls.from_string.assert_not_called()
         call_kwargs = mock_model.create_chat_completion.call_args.kwargs
         assert call_kwargs["grammar"] is None
+
+
+# ===========================================================================
+# Non-streaming finish_reason propagation
+# ===========================================================================
+
+
+class TestNonStreamingFinishReason:
+    """Verify generate() updates _last_finish_reason (C1 fix)."""
+
+    @staticmethod
+    def _make_backend() -> LlamaCppBackend:
+        with patch.object(LlamaCppBackend, "__init__", lambda s, **kw: None):
+            backend = LlamaCppBackend.__new__(LlamaCppBackend)
+        backend._last_finish_reason = "stop"
+        backend._model = MagicMock()
+        backend._lock = MagicMock()
+        backend.config = MagicMock(temperature=0.7, top_p=0.9, top_k=40, repeat_penalty=1.1)
+        backend._adapter = MagicMock()
+        return backend
+
+    @pytest.mark.asyncio
+    async def test_length_propagates(self) -> None:
+        """finish_reason=length from model → _last_finish_reason updated."""
+        backend = self._make_backend()
+        response = {
+            "choices": [{"message": {"content": "partial"}, "finish_reason": "length"}],
+            "usage": {"completion_tokens": 100},
+        }
+        with patch.object(type(backend), "_generate_sync", return_value=response):
+            result = await backend.generate([], max_tokens=100)
+
+        assert result.finish_reason == "length"
+        assert backend._last_finish_reason == "length"
+
+    @pytest.mark.asyncio
+    async def test_stop_propagates(self) -> None:
+        """finish_reason=stop from model → _last_finish_reason updated."""
+        backend = self._make_backend()
+        backend._last_finish_reason = "length"
+        response = {
+            "choices": [{"message": {"content": "done"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 50},
+        }
+        with patch.object(type(backend), "_generate_sync", return_value=response):
+            result = await backend.generate([], max_tokens=100)
+
+        assert result.finish_reason == "stop"
+        assert backend._last_finish_reason == "stop"

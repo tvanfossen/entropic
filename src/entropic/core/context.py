@@ -218,25 +218,6 @@ class ContextBuilder:
         """
         self.config = config
 
-    def build_system_prompt(
-        self,
-        base_prompt: str,
-    ) -> str:
-        """
-        Build complete system prompt.
-
-        Project context (ENTROPIC.md) is injected by the caller via
-        engine.run(system_prompt=...). Constitution, identity, and
-        app_context are handled by PromptManager in the adapter layer.
-
-        Args:
-            base_prompt: Base system prompt from caller
-
-        Returns:
-            System prompt string (currently a pass-through)
-        """
-        return base_prompt
-
     def truncate_history(
         self,
         messages: list[Message],

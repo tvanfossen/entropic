@@ -84,9 +84,6 @@ class MockEntropyConfig:
         self.thinking = MagicMock()
         self.thinking.enabled = False
 
-        self.prompts_dir = None
-        self.use_bundled_prompts = True
-
 
 class TestModelOrchestratorLoading:
     """Tests for model loading behavior."""

@@ -6,11 +6,10 @@ from pathlib import Path
 import pytest
 from entropic.inference.adapters.base import GenericAdapter
 from entropic.prompts import (
+    _DATA_DIR,
     AppContextFrontmatter,
     ConstitutionFrontmatter,
     IdentityFrontmatter,
-    _resolve_identity_path,
-    get_tier_identity_prompt,
     load_tier_identity,
     parse_prompt_file,
 )
@@ -146,8 +145,8 @@ class TestBundledPromptFiles:
     @pytest.mark.parametrize("tier", TIERS)
     def test_identity_has_valid_frontmatter(self, tier: str) -> None:
         """Each tier identity file MUST have valid typed YAML frontmatter."""
-        path = _resolve_identity_path(tier)
-        assert path is not None, f"identity_{tier}.md not found"
+        path = _DATA_DIR / f"identity_{tier}.md"
+        assert path.exists(), f"identity_{tier}.md not found"
         fm, body = parse_prompt_file(path, "identity")
         assert isinstance(fm, IdentityFrontmatter)
         assert len(fm.focus) > 0, f"identity_{tier}.md has empty focus"
@@ -156,16 +155,14 @@ class TestBundledPromptFiles:
     @pytest.mark.parametrize("tier", TIERS)
     def test_identity_name_matches_tier(self, tier: str) -> None:
         """Frontmatter name must match the tier filename."""
-        path = _resolve_identity_path(tier)
-        assert path is not None
+        path = _DATA_DIR / f"identity_{tier}.md"
+        assert path.exists()
         fm, _body = parse_prompt_file(path, "identity")
         assert isinstance(fm, IdentityFrontmatter)
         assert fm.name == tier
 
     def test_constitution_has_valid_frontmatter(self) -> None:
         """Bundled constitution.md must have typed frontmatter."""
-        from entropic.prompts import _DATA_DIR
-
         fm, body = parse_prompt_file(_DATA_DIR / "constitution.md", "constitution")
         assert isinstance(fm, ConstitutionFrontmatter)
         assert fm.version == 1
@@ -173,8 +170,6 @@ class TestBundledPromptFiles:
 
     def test_app_context_has_valid_frontmatter(self) -> None:
         """Bundled app_context.md must have typed frontmatter."""
-        from entropic.prompts import _DATA_DIR
-
         fm, body = parse_prompt_file(_DATA_DIR / "app_context.md", "app_context")
         assert isinstance(fm, AppContextFrontmatter)
         assert fm.version == 1
@@ -244,26 +239,6 @@ class TestToolIsolation:
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
-    def test_thinking_identity_has_first_action_section(self) -> None:
-        """Thinking tier must instruct model to create todos before tool use."""
-        identity = get_tier_identity_prompt("thinking")
-        assert "## First Action" in identity
-        assert "entropic.todo_write" in identity
-
-    def test_thinking_identity_has_no_unauthorized_tools(self) -> None:
-        """Thinking tier identity must not mention tools outside its set."""
-        thinking_allowed = {
-            "entropic.todo_write",
-            "entropic.handoff",
-            "filesystem.read_file",
-            "bash.execute",
-        }
-        forbidden = [t for t in self.ALL_TOOLS if t not in thinking_allowed]
-
-        identity = get_tier_identity_prompt("thinking")
-        for name in forbidden:
-            assert name not in identity, f"identity_thinking.md mentions unauthorized tool '{name}'"
-
     @pytest.mark.parametrize("tier", TIERS)
     def test_tool_definitions_only_for_allowed(self, tier: str) -> None:
         """Tool definitions must only include tools in the filtered set."""
@@ -287,83 +262,6 @@ class TestToolIsolation:
             assert name not in non_identity, f"Tool '{name}' leaked into {tier} tier"
 
 
-class TestUseBundledPrompts:
-    """Tests for use_bundled_prompts=False skipping bundled fallback."""
-
-    def test_load_prompt_raises_when_bundled_disabled(self) -> None:
-        """load_prompt with use_bundled=False raises if not in prompts_dir."""
-        from entropic.prompts import load_prompt
-
-        with pytest.raises(FileNotFoundError):
-            load_prompt("constitution", prompts_dir=None, use_bundled=False)
-
-    def test_load_prompt_uses_prompts_dir_when_bundled_disabled(self, tmp_path: Path) -> None:
-        """load_prompt finds user file even with use_bundled=False."""
-        from entropic.prompts import load_prompt
-
-        user_prompt = tmp_path / "constitution.md"
-        user_prompt.write_text("Custom constitution")
-
-        result = load_prompt("constitution", prompts_dir=tmp_path, use_bundled=False)
-        assert result == "Custom constitution"
-
-    def test_resolve_identity_path_none_when_bundled_disabled(self) -> None:
-        """_resolve_identity_path returns None for bundled tiers when disabled."""
-        result = _resolve_identity_path("thinking", prompts_dir=None, use_bundled=False)
-        assert result is None
-
-
-class TestPromptsDir:
-    """Tests for prompts_dir enforcement — no silent fallback to bundled."""
-
-    def test_strict_load_prompt_raises_when_missing(self, tmp_path: Path) -> None:
-        """prompts_dir + use_bundled=False, file missing → error."""
-        from entropic.prompts import load_prompt
-
-        with pytest.raises(FileNotFoundError, match="not found in"):
-            load_prompt("constitution", prompts_dir=tmp_path, use_bundled=False)
-
-    def test_strict_resolve_identity_no_fallback(self, tmp_path: Path) -> None:
-        """_resolve_identity_path returns None in strict mode (no fallback)."""
-        result = _resolve_identity_path("thinking", prompts_dir=tmp_path, use_bundled=False)
-        assert result is None
-
-    def test_prompts_dir_with_bundled_falls_back(self, tmp_path: Path) -> None:
-        """prompts_dir set but use_bundled=True → falls back to bundled."""
-        from entropic.prompts import load_prompt
-
-        # tmp_path has no constitution.md, but bundled exists
-        result = load_prompt("constitution", prompts_dir=tmp_path, use_bundled=True)
-        assert len(result) > 0  # Got bundled constitution
-
-    def test_load_prompt_finds_file_in_prompts_dir(self, tmp_path: Path) -> None:
-        """prompts_dir set and file exists → loads from prompts_dir."""
-        from entropic.prompts import load_prompt
-
-        (tmp_path / "constitution.md").write_text("Custom content")
-        result = load_prompt("constitution", prompts_dir=tmp_path)
-        assert result == "Custom content"
-
-    def test_strict_get_identity_prompt_raises(self, tmp_path: Path) -> None:
-        """get_identity_prompt in strict mode raises when identity file missing."""
-        from entropic.prompts import get_identity_prompt
-
-        (tmp_path / "constitution.md").write_text("Constitution")
-
-        with pytest.raises(FileNotFoundError, match="identity_custom"):
-            get_identity_prompt("custom", prompts_dir=tmp_path, use_bundled=False)
-
-    def test_resolve_identity_path_finds_user_file(self, tmp_path: Path) -> None:
-        """_resolve_identity_path finds user file even with use_bundled=False."""
-        identity = tmp_path / "identity_custom.md"
-        identity.write_text(
-            "---\ntype: identity\nversion: 1\nname: custom\nfocus:\n  - testing\n---\nBody"
-        )
-
-        result = _resolve_identity_path("custom", prompts_dir=tmp_path, use_bundled=False)
-        assert result == identity
-
-
 class TestProgrammaticConfig:
     """Tests that EntropyConfig works without ConfigLoader or files."""
 
@@ -378,10 +276,3 @@ class TestProgrammaticConfig:
         assert config.models.default == "custom"
         assert "custom" in config.models.tiers
         assert config.routing.enabled is False
-
-    def test_entropy_config_with_use_bundled_false(self) -> None:
-        """use_bundled_prompts=False is accepted by EntropyConfig."""
-        from entropic.config.schema import EntropyConfig
-
-        config = EntropyConfig(use_bundled_prompts=False)
-        assert config.use_bundled_prompts is False

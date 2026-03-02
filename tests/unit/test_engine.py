@@ -236,16 +236,6 @@ class TestTokenBudget:
 class TestContextBuilder:
     """Tests for context builder."""
 
-    def test_build_system_prompt_returns_base(self) -> None:
-        """Test build_system_prompt is a pass-through."""
-        from entropic.config.schema import EntropyConfig
-
-        config = EntropyConfig()
-        builder = ContextBuilder(config)
-
-        prompt = builder.build_system_prompt("Test base prompt")
-        assert prompt == "Test base prompt"
-
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
         from entropic.config.schema import EntropyConfig

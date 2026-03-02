@@ -96,18 +96,19 @@ state management without the model needing to orchestrate these concerns.
 - CUDA 12.4+
 - Python 3.10+
 
-## Quick Start
+## Installation
 
-### From source (development)
+### From source (recommended for GPU users)
 
 ```bash
 git clone https://github.com/tvanfossen/entropic.git
 cd entropic
-./install.sh app
+./install.sh          # auto-detects GPU, builds CUDA support
 ```
 
-The install script creates a virtual environment, detects CUDA, and installs
-with the `[app]` extras (TUI + storage dependencies).
+The install script creates a virtual environment, clones and builds
+llama-cpp-python with CUDA support (if a GPU is detected), and installs
+entropic with the `[app]` extras.
 
 ```bash
 # Place GGUF models in ~/models/gguf/ (or configure paths in .entropic/config.local.yaml)
@@ -119,19 +120,28 @@ with the `[app]` extras (TUI + storage dependencies).
 .venv/bin/entropic --headless
 ```
 
-### With pipx (isolated install)
+### From PyPI
 
 ```bash
-pipx install entropic-engine[app]
+pip install entropic-engine
+entropic setup-cuda   # build llama-cpp-python with CUDA + latest model support
 ```
 
-If you have an NVIDIA GPU, rebuild `llama-cpp-python` with CUDA support:
+### What `setup-cuda` does
+
+- Clones llama-cpp-python v0.3.25 (JamePeng fork — upstream is abandoned)
+- Includes llama.cpp with Qwen3.5-MoE and other recent architectures
+- Builds with CUDA support (requires nvidia-smi, cmake, CUDA toolkit)
+- Installs into the current Python environment
+- Cached at ~/.entropic/.build/ — re-run is fast, use `--force` to rebuild
+
+### CPU-only (no GPU)
 
 ```bash
-PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="-DGGML_CUDA=on" \
-  pipx runpip entropic-engine install llama-cpp-python \
-  --force-reinstall --no-cache-dir
+pip install entropic-engine
 ```
+
+Models will run on CPU. Significantly slower but functional.
 
 ## CLI
 
@@ -142,6 +152,7 @@ entropic status             # Show model and system status
 entropic ask "question"     # Single-shot question
 entropic init               # Initialize .entropic/ in current directory
 entropic download <model>   # Download model files
+entropic setup-cuda         # Build llama-cpp-python with CUDA
 ```
 
 ## Configuration

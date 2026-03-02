@@ -22,10 +22,8 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm just a tool here to help you with whatever you need. While I don't 
-  have feelings, I'm here and ready to assist whenever you're facing challenges or
-  need guidance. Whether it's coding, writing, problem-solving, or anything else -
-  I've got your back! What can I help you with today? 😊
+  Hello! I'm just a chatbot, so I don't have feelings, but I'm here and ready to 
+  help you with whatever you need. How can I assist you today? 😊
 end note
 note over T #palegreen
   **PASSED** (< 38s)

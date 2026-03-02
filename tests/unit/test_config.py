@@ -87,7 +87,6 @@ class TestLibraryConfig:
         config = LibraryConfig()
         assert config.log_level == "INFO"
         assert config.routing.enabled is True
-        assert config.use_bundled_prompts is True
         assert config.models.default == "normal"
 
     def test_excludes_tui_fields(self) -> None:
@@ -109,6 +108,16 @@ class TestLibraryConfig:
         assert config.log_level == "INFO"
         # Also has TUI fields
         assert config.quality.enabled is True
+
+    def test_inject_model_context_default_true(self) -> None:
+        """inject_model_context defaults to True."""
+        config = LibraryConfig()
+        assert config.inject_model_context is True
+
+    def test_inject_model_context_disabled(self) -> None:
+        """inject_model_context can be set to False."""
+        config = LibraryConfig(inject_model_context=False)
+        assert config.inject_model_context is False
 
     def test_routing_validator_runs(self) -> None:
         """Cross-validation runs on LibraryConfig, not just EntropyConfig."""

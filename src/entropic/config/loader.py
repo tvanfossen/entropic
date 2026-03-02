@@ -5,7 +5,7 @@ Hierarchy (lowest to highest priority):
 1. Defaults (built into schema)
 2. Global config (~/.entropic/config.yaml) — user defaults for all projects
 3. Project config (.entropic/config.local.yaml) — source of truth per project
-4. Environment variables (ENTROPI_*)
+4. Environment variables (ENTROPIC_*)
 5. CLI arguments
 
 Seeding flow:
@@ -376,7 +376,7 @@ class ConfigLoader:
 
         # Layer 4: Environment variable overrides (for debugging)
         env_overrides = {
-            "ENTROPI_LOG_LEVEL": "log_level",
+            "ENTROPIC_LOG_LEVEL": "log_level",
         }
         for env_var, config_key in env_overrides.items():
             if env_var in os.environ:

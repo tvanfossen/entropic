@@ -42,13 +42,17 @@ from entropic.prompts import (
     IdentityFrontmatter,
     PromptFrontmatter,
     TierIdentity,
-    load_prompt,
     load_tier_identity,
     parse_prompt_file,
 )
 from entropic.prompts.manager import PromptManager
 
-__version__ = "1.0.0"
+try:
+    from importlib.metadata import version as _get_version
+
+    __version__ = _get_version("entropic-engine")
+except Exception:
+    __version__ = "0.0.0"  # fallback for editable installs without metadata
 __author__ = "Tristan VanFossen"
 
 __all__ = [
@@ -103,7 +107,6 @@ __all__ = [
     "IdentityFrontmatter",
     "PromptFrontmatter",
     "TierIdentity",
-    "load_prompt",
     "load_tier_identity",
     "parse_prompt_file",
     "PromptManager",

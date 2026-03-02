@@ -20,7 +20,6 @@ from entropic.config.loader import save_permission
 from entropic.config.schema import EntropyConfig
 from entropic.core.base import Message, ToolCall, ToolResult
 from entropic.core.compaction import CompactionManager, CompactionResult, TokenCounter
-from entropic.core.context import ContextBuilder
 from entropic.core.directives import DirectiveProcessor, DirectiveResult
 from entropic.core.logging import get_logger, get_model_logger
 from entropic.core.queue import MessageSource
@@ -194,7 +193,6 @@ class AgentEngine:
         self.config = config or EntropyConfig()
         self.loop_config = loop_config or LoopConfig()
 
-        self._context_builder = ContextBuilder(self.config)
         # Use threading.Event for thread-safe cross-loop signaling
         # (Textual runs on a different event loop than the generation worker)
         self._interrupt_event = threading.Event()
@@ -481,8 +479,7 @@ class AgentEngine:
         tools = await self.server_manager.list_tools()
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
-        # Build base system prompt (before adapter formatting)
-        system = self._context_builder.build_system_prompt(system_prompt or "")
+        system = system_prompt or ""
 
         # Store on ctx for system prompt rebuild on tier change
         ctx.all_tools = tools
@@ -596,19 +593,20 @@ class AgentEngine:
           - Model produced tool calls but ALL were blocked/denied
         """
         finish_reason = self.orchestrator.last_finish_reason
+
+        if await self._try_auto_chain(ctx, finish_reason):
+            logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
+            return
+
         if finish_reason == "length":
-            if await self._try_auto_chain(ctx, finish_reason):
-                logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
-            else:
-                logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
-        elif await self._try_auto_chain(ctx, finish_reason):
-            logger.info("[LOOP DECISION] auto_chain fired (grammar), continuing with new tier")
-        else:
-            adapter = self.orchestrator.get_adapter()
-            is_complete = adapter.is_response_complete(content, [])
-            logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
-            if is_complete:
-                self._set_state(ctx, AgentState.COMPLETE)
+            logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
+            return
+
+        adapter = self.orchestrator.get_adapter()
+        is_complete = adapter.is_response_complete(content, [])
+        logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
+        if is_complete:
+            self._set_state(ctx, AgentState.COMPLETE)
 
     def _log_model_output(
         self,
@@ -721,9 +719,33 @@ class AgentEngine:
         adapter = self.orchestrator.get_adapter(tier)
         tier_config = self.config.models.tiers.get(tier.name) if hasattr(tier, "name") else None
         enable_thinking = tier_config.enable_thinking if tier_config else True
-        return adapter.format_system_prompt(
-            ctx.base_system, filtered, enable_thinking=enable_thinking
+
+        system = ctx.base_system
+        if tier_config and self.config.inject_model_context:
+            system = self._inject_model_context(system, tier, tier_config)
+
+        return adapter.format_system_prompt(system, filtered, enable_thinking=enable_thinking)
+
+    def _inject_model_context(self, system: str, tier: Any, tier_config: Any) -> str:
+        """Append model configuration context to the system prompt.
+
+        Gives the model accurate self-knowledge about its own tier,
+        model file, and configuration — derived from actual config,
+        not hardcoded documentation.
+        """
+        model_name = (
+            tier_config.path.name if hasattr(tier_config.path, "name") else str(tier_config.path)
         )
+        tier_name = tier.name if hasattr(tier, "name") else str(tier)
+        lines = [
+            "\n\n## Model Context (auto-injected from config)",
+            f"- **Active tier**: {tier_name}",
+            f"- **Model file**: {model_name}",
+            f"- **Adapter**: {tier_config.adapter}",
+            f"- **Context length**: {tier_config.context_length:,} tokens",
+            f"- **GPU layers**: {tier_config.gpu_layers}",
+        ]
+        return system + "\n".join(lines)
 
     async def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
         """Route and lock tier before first generation, emitting callbacks."""

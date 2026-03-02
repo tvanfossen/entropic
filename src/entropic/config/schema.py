@@ -8,10 +8,34 @@ Principles:
 """
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _expand_path(v: Any) -> Path:
+    """Expand ~ in path values."""
+    return Path(v).expanduser()
+
+
+def _expand_optional_path(v: Any) -> Path | None:
+    """Expand ~ in optional path values (None passes through)."""
+    if v is None:
+        return None
+    return Path(v).expanduser()
+
+
+def _expand_tri_state_path(v: Any) -> Path | Literal[False] | None:
+    """Expand ~ in tri-state path values (None and False pass through)."""
+    if v is None or v is False:
+        return v
+    return Path(v).expanduser()
+
+
+ExpandedPath = Annotated[Path, BeforeValidator(_expand_path)]
+OptionalExpandedPath = Annotated[Path | None, BeforeValidator(_expand_optional_path)]
+TriStatePath = Annotated[Path | Literal[False] | None, BeforeValidator(_expand_tri_state_path)]
 
 
 class ModelConfig(BaseModel):
@@ -23,8 +47,8 @@ class ModelConfig(BaseModel):
             means all registered tools are visible to this model/tier.
     """
 
-    path: Path
-    adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, generic
+    path: ExpandedPath
+    adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, qwen35, falcon, generic
     context_length: int = Field(default=16384, ge=512, le=131072)
     max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
@@ -47,12 +71,6 @@ class ModelConfig(BaseModel):
                 )
         return v
 
-    @field_validator("path")
-    @classmethod
-    def validate_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
-
 
 class TierConfig(ModelConfig):
     """Model configuration for a specific tier.
@@ -68,26 +86,10 @@ class TierConfig(ModelConfig):
     """
 
     focus: list[str] = Field(default_factory=list)
-    identity: Path | Literal[False] | None = None
-    grammar: Path | None = None
+    identity: TriStatePath = None
+    grammar: OptionalExpandedPath = None
     auto_chain: bool = False
     enable_thinking: bool = True
-
-    @field_validator("identity", mode="before")
-    @classmethod
-    def validate_identity(cls, v: Any) -> Path | Literal[False] | None:
-        """Coerce identity: None = bundled, False = disabled, str = Path."""
-        if v is None or v is False:
-            return v
-        return Path(v).expanduser()
-
-    @field_validator("grammar", mode="before")
-    @classmethod
-    def validate_grammar(cls, v: Any) -> Path | None:
-        """Coerce grammar: None = unconstrained, str = Path to .gbnf file."""
-        if v is None:
-            return v
-        return Path(v).expanduser()
 
 
 class ModelsConfig(BaseModel):
@@ -208,30 +210,22 @@ class UIConfig(BaseModel):
 class StorageConfig(BaseModel):
     """Storage configuration."""
 
-    database_path: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "history.db")
+    database_path: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / ".entropic" / "history.db"
+    )
     max_conversations: int = Field(default=1000, ge=10)
     auto_save: bool = True
-
-    @field_validator("database_path")
-    @classmethod
-    def validate_database_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class ExternalMCPConfig(BaseModel):
     """Configuration for external MCP server (Claude Code integration)."""
 
     enabled: bool = False
-    socket_path: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "mcp.sock")
+    socket_path: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / ".entropic" / "mcp.sock"
+    )
     # Rate limiting: requests per minute
     rate_limit: int = Field(default=10, ge=1, le=100)
-
-    @field_validator("socket_path")
-    @classmethod
-    def validate_socket_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class FilesystemConfig(BaseModel):
@@ -354,16 +348,10 @@ class PersonaPlexSamplingConfig(BaseModel):
 class VoicePromptConfig(BaseModel):
     """Voice prompt file configuration."""
 
-    prompt_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "voices")
+    prompt_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic" / "voices")
     # Voice name from PersonaPlex (NATF0-3, NATM0-3, VARF0-4, VARM0-4)
     voice_name: str = "NATF2"
     thinking_audio: str = "thinking_moment.wav"
-
-    @field_validator("prompt_dir")
-    @classmethod
-    def validate_prompt_dir(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class VoiceConversationConfig(BaseModel):
@@ -387,17 +375,11 @@ class VoiceServerConfig(BaseModel):
 class SecondaryModelConfig(BaseModel):
     """Configuration for secondary LLM used in context compaction."""
 
-    model_path: Path = Field(
+    model_path: ExpandedPath = Field(
         default_factory=lambda: Path.home() / "models" / "gguf" / "Qwen3-0.6B-Q8_0.gguf"
     )
     max_tokens: int = Field(default=300, ge=50, le=1000)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
-
-    @field_validator("model_path")
-    @classmethod
-    def validate_model_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class VoiceConfig(BaseModel):
@@ -471,7 +453,7 @@ class LibraryConfig(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="ENTROPI_",
+        env_prefix="ENTROPIC_",
         env_nested_delimiter="__",
         extra="ignore",
     )
@@ -490,30 +472,15 @@ class LibraryConfig(BaseSettings):
 
     # Prompt handling — new per-type fields (Phase 2)
     # constitution: None = bundled, False = disabled, Path = custom
-    constitution: Path | Literal[False] | None = None
+    constitution: TriStatePath = None
     # app_context: None = disabled, False = disabled, Path = custom
-    app_context: Path | Literal[False] | None = None
+    app_context: TriStatePath = None
 
-    # Legacy prompt fields (still supported, will be removed post-migration)
-    use_bundled_prompts: bool = True
-    prompts_dir: Path | None = None
+    # Auto-inject model config (tier, model file, adapter) into system prompt
+    inject_model_context: bool = True
 
     # Paths
-    config_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic")
-
-    @field_validator("config_dir")
-    @classmethod
-    def validate_library_paths(cls, v: Path) -> Path:
-        """Expand user paths if ~ is used."""
-        return Path(v).expanduser()
-
-    @field_validator("constitution", "app_context", mode="before")
-    @classmethod
-    def validate_prompt_paths(cls, v: Any) -> Path | Literal[False] | None:
-        """Coerce prompt paths: None = default, False = disabled, str = Path."""
-        if v is None or v is False:
-            return v
-        return Path(v).expanduser()
+    config_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic")
 
     @model_validator(mode="after")
     def validate_routing_references(self) -> "LibraryConfig":
@@ -552,10 +519,6 @@ class EntropyConfig(LibraryConfig):
 
     # TUI-specific fields
     log_file: Path | None = None
-    commands_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "commands")
-
-    @field_validator("commands_dir")
-    @classmethod
-    def validate_tui_paths(cls, v: Path) -> Path:
-        """Expand user paths if ~ is used."""
-        return Path(v).expanduser()
+    commands_dir: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / ".entropic" / "commands"
+    )

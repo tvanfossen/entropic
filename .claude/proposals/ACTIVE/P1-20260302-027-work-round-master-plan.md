@@ -290,14 +290,14 @@ Log format: date, proposal ID, action taken, files changed.
   - 647 unit + 26 model tests pass
   - **Files changed:** engine.py, context_manager.py (new), test_engine.py
   - **Note:** engine.py at 716 lines. Line count target (< 400/500) was over-optimistic — did not account for 9 new lazy-factory/delegation methods (~90 lines) or docstring overhead. User accepted this; the structural goal (all impl logic in subsystems) is met.
-- [ ] Phase 1e: Remove lazy factories + thin delegations (adversarial analysis 2026-03-03)
-  - Remove `_ensure_response_generator()`, `_ensure_context_manager()` (cargo-cult lazy — all deps available at init)
-  - Remove all 6 thin delegation methods (`_generate_response`, `_refresh_context_limit`, `_prune_tool_results`, `_prune_old_tool_results`, `_inject_context_warning`, `_check_compaction`)
-  - Eager construction of RG + CM in `__init__` (non-nullable types); ToolExecutor stays lazy (server_manager async constraint)
-  - Replace `assert self.server_manager is not None` with explicit `RuntimeError`
-  - Call subsystem methods directly at call sites
-  - Update 2 test mocks: `_check_compaction`/`_inject_context_warning` → `engine._context_manager = MagicMock()`
-  - **No constructor injection params** — CFQ002 blocks it (7 params > 6 limit); post-construction assignment is sufficient
-  - Document lazy/eager asymmetry rule in `__init__` docstring
-  - Report: `.claude/reports/synthesis/20260303-adversarial-engine-refactor.md`
+- [x] Phase 1e: Remove lazy factories + thin delegations (adversarial analysis 2026-03-03)
+  - Commit: `6609ae2`
+  - Engine: 716 → ~620 lines (-8 methods)
+  - Removed `_ensure_response_generator()`, `_ensure_context_manager()` (cargo-cult lazy)
+  - Removed all 6 thin delegation methods
+  - Eager construction of RG + CM in `__init__` (non-nullable types); ToolExecutor stays lazy
+  - Replaced `assert self.server_manager is not None` with explicit `RuntimeError`
+  - Updated 3 test files: `_make_engine()`, `TestOverflowRecovery`, `test_engine_feedback_roles`
+  - 647 unit + 26 model tests pass
+  - **Files changed:** engine.py, test_engine.py, test_engine_feedback_roles.py
 - [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop

@@ -365,7 +365,7 @@ class ServerInfo:
 ## Implementation Log
 
 ### 2026-03-03
-- [ ] Proposal rewritten: bridge subprocess approach dropped, native MCP SDK
+- [x] Proposal rewritten: bridge subprocess approach dropped, native MCP SDK
   transports adopted, `.mcp.json` reading added, project-derived socket path
   and self-detection designed
 - **Decision**: MCP SDK 1.26.0 has native `sse_client`, `stdio_client`,
@@ -374,9 +374,15 @@ class ServerInfo:
 - **Decision**: Socket path = `~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock`
   for stable-per-project, unique-per-instance identity
 - **Decision**: Self-detection by socket path comparison (not command name)
-- **Files to change**: `mcp/client.py` (transport), `mcp/manager.py` (runtime
-  API + mcp.json), `mcp/servers/external.py` (socket path), `config/schema.py`
-  (path default), `core/engine.py` (consumer API)
+- [x] `mcp/client.py`: SSE transport via `sse_client`, transport inferred from `sse_url`
+- [x] `mcp/servers/external.py`: `compute_socket_path(project_dir)` utility; project_dir param
+- [x] `config/schema.py`: `socket_path: OptionalExpandedPath = None` (was fixed path)
+- [x] `mcp/manager.py`: `_load_mcp_json_servers()`, `connect_server()`, `disconnect_server()`,
+  `list_servers()`, `ServerInfo` dataclass, `asyncio.Lock` for `_clients`
+- [x] `core/engine.py`: `connect_server()` / `disconnect_server()` consumer API
+- [x] `app.py`: pass `project_dir` to `ExternalMCPServer`
+- [x] 24 unit tests in `tests/unit/test_mcp_runtime.py` — all green
+- [x] Merged to develop at v1.4.0
 
 ## References
 

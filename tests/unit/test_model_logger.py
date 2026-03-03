@@ -74,23 +74,22 @@ class TestSetupModelLogger:
 
 
 class TestEngineModelLogging:
-    """Tests for _log_model_output in AgentEngine."""
+    """Tests for _log_model_output in ResponseGenerator."""
 
     def test_log_model_output_writes_to_model_logger(self, tmp_path: Path) -> None:
         """_log_model_output writes raw and parsed output to model logger."""
-        from entropic.core.engine import AgentEngine
+        from entropic.core.response_generator import ResponseGenerator
 
         setup_model_logger(project_dir=tmp_path)
 
-        # Create engine with minimal mocks
-        engine = AgentEngine.__new__(AgentEngine)
+        rg = ResponseGenerator.__new__(ResponseGenerator)
         ctx = LoopContext(metrics=LoopMetrics(iterations=3))
 
         raw = "<think>planning</think>\nHere is my response."
         cleaned = "Here is my response."
         tool_calls: list[ToolCall] = []
 
-        engine._log_model_output(
+        rg._log_model_output(
             ctx,
             raw_content=raw,
             cleaned_content=cleaned,
@@ -109,11 +108,11 @@ class TestEngineModelLogging:
 
     def test_log_model_output_includes_tool_call_names(self, tmp_path: Path) -> None:
         """_log_model_output lists tool call names in parsed section."""
-        from entropic.core.engine import AgentEngine
+        from entropic.core.response_generator import ResponseGenerator
 
         setup_model_logger(project_dir=tmp_path)
 
-        engine = AgentEngine.__new__(AgentEngine)
+        rg = ResponseGenerator.__new__(ResponseGenerator)
         ctx = LoopContext(metrics=LoopMetrics(iterations=1))
 
         tool_calls = [
@@ -121,7 +120,7 @@ class TestEngineModelLogging:
             ToolCall(id="2", name="bash.run", arguments={"command": "ls"}),
         ]
 
-        engine._log_model_output(
+        rg._log_model_output(
             ctx,
             raw_content="raw",
             cleaned_content="cleaned",
@@ -139,17 +138,17 @@ class TestEngineModelLogging:
         self, tmp_path: Path, caplog: MagicMock
     ) -> None:
         """Session logger gets summary, not full raw output."""
-        from entropic.core.engine import AgentEngine
+        from entropic.core.response_generator import ResponseGenerator
 
         setup_model_logger(project_dir=tmp_path)
 
-        engine = AgentEngine.__new__(AgentEngine)
+        rg = ResponseGenerator.__new__(ResponseGenerator)
         ctx = LoopContext(metrics=LoopMetrics(iterations=2))
 
         raw = "A very long raw output " * 100
 
-        with caplog.at_level(logging.INFO, logger="entropic.core.engine"):
-            engine._log_model_output(
+        with caplog.at_level(logging.INFO, logger="entropic.core.response_generator"):
+            rg._log_model_output(
                 ctx,
                 raw_content=raw,
                 cleaned_content="short",
@@ -168,15 +167,15 @@ class TestEngineModelLogging:
 
 
 class TestAssembledPromptLogging:
-    """Tests for _log_assembled_prompt in AgentEngine."""
+    """Tests for _log_assembled_prompt in ResponseGenerator."""
 
     def test_logs_all_messages_untruncated(self, tmp_path: Path) -> None:
         """Full message content appears in model log, no truncation."""
-        from entropic.core.engine import AgentEngine
+        from entropic.core.response_generator import ResponseGenerator
 
         setup_model_logger(project_dir=tmp_path)
 
-        engine = AgentEngine.__new__(AgentEngine)
+        rg = ResponseGenerator.__new__(ResponseGenerator)
         long_system = "You are an AI assistant. " * 200  # ~5000 chars
         ctx = LoopContext(
             metrics=LoopMetrics(iterations=0),
@@ -185,11 +184,10 @@ class TestAssembledPromptLogging:
                 Message(role="user", content="Hello world"),
             ],
         )
-        # Mock locked_tier
         ctx.locked_tier = MagicMock()
         ctx.locked_tier.name = "thinking"
 
-        engine._log_assembled_prompt(ctx, "routed")
+        rg._log_assembled_prompt(ctx, "routed")
 
         log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()
@@ -200,11 +198,11 @@ class TestAssembledPromptLogging:
 
     def test_includes_roles_and_lengths(self, tmp_path: Path) -> None:
         """Role and char count header appears per message."""
-        from entropic.core.engine import AgentEngine
+        from entropic.core.response_generator import ResponseGenerator
 
         setup_model_logger(project_dir=tmp_path)
 
-        engine = AgentEngine.__new__(AgentEngine)
+        rg = ResponseGenerator.__new__(ResponseGenerator)
         ctx = LoopContext(
             metrics=LoopMetrics(iterations=0),
             messages=[
@@ -216,7 +214,7 @@ class TestAssembledPromptLogging:
         ctx.locked_tier = MagicMock()
         ctx.locked_tier.name = "normal"
 
-        engine._log_assembled_prompt(ctx, "routed")
+        rg._log_assembled_prompt(ctx, "routed")
 
         log_path = tmp_path / ".entropic" / "session_model.log"
         content = log_path.read_text()

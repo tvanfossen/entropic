@@ -67,7 +67,7 @@ validated by benchmarks.
 Phase 1: Foundation (parallel tracks)
 ├── Track 1: C (engine decomposition)
 │   └── Extract ToolExecutor, ContextManager, ResponseGenerator
-│       Engine is 1,528 lines / 68 methods. Decompose before B adds more.
+│       Engine is 1,552 lines / 69 methods. Decompose before B adds more.
 │
 ├── Track 2: A (VRAM orchestration)
 │   └── Three-state lifecycle (cold/warm/active), VRAM budget
@@ -82,7 +82,7 @@ Phase 1: Foundation (parallel tracks)
         Produces model perf data for identity assignments in Phase 2.
 
 Phase 1 complete when:
-  - [ ] Engine decomposed: 3 subsystem files extracted, engine.py < 400 lines
+  - [ ] Engine decomposed: 3 subsystem files extracted, engine.py reduced (line count target relaxed — see impl log 2026-03-03)
   - [ ] VRAM orchestration: warm→active swap measured and < 3s for 21GB model
   - [ ] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC
   - [ ] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results
@@ -249,3 +249,55 @@ Log format: date, proposal ID, action taken, files changed.
 - Moved P1-011, P1-014 to COMPLETE (already done)
 - Moved P3-023 to IDEAS (deferred)
 - All active proposals reference `src/entropic/` (old `src/entropi/` paths fixed)
+
+### 2026-03-02 — Pre-phase baseline (v1.1.0)
+- Instance #2 committed Qwen3.5 adapter, `enable_thinking` pipeline,
+  `inject_model_context` config, `entropic setup-cuda` CLI
+- Engine grew: 1,528 → 1,552 lines, 68 → 69 methods (+_inject_model_context)
+- Version bumped to 1.1.0
+- Config fields already landed: `TierConfig.enable_thinking`, `LibraryConfig.inject_model_context`
+- All proposals, examples, and test updates committed to develop
+- Clean working tree — ready for Phase 1
+
+### 2026-03-02 — Track 1: Engine Decomposition (P2-019)
+- [x] Phase 1a: Extracted `engine_types.py` (143 lines) — dataclasses/enums
+  - Commit: `b961a84`
+  - Engine: 1,552 → 1,441 lines (re-exports preserved)
+- [x] Phase 1b: Extracted `tool_executor.py` (442 lines) — 20 tool methods
+  - Engine: 1,441 → 1,089 lines (-352 lines)
+  - Refactored callbacks: individual attrs → shared `EngineCallbacks` container
+  - `set_callbacks()` now updates fields in place (subsystems see changes)
+  - ToolExecutor created lazily via `_ensure_tool_executor()` (server_manager may be None at init)
+  - Engine hooks: `after_tool_hook` (compaction+warning), `directive_hook` (directive processing)
+  - Updated 3 test files (test_engine, test_engine_auto_chain, test_engine_feedback_roles)
+  - 647 unit + model tests pass
+  - **Files changed:** engine.py, tool_executor.py (new), test_engine.py, test_engine_auto_chain.py, test_engine_feedback_roles.py
+- [x] Phase 1c: Extracted `response_generator.py` (402 lines) — 13 response/tier methods
+  - Engine: 1,089 → 805 lines (-284 lines)
+  - ResponseGenerator constructor: (orchestrator, config, loop_config, callbacks, interrupt_event, pause_event)
+  - `_directive_tier_change` delegates to `self._ensure_response_generator()` for prompt/logging methods
+  - `create_assistant_message` promoted to static method
+  - Updated 2 test files (test_engine.py, test_model_logger.py)
+  - 647 unit + model tests pass
+  - **Files changed:** engine.py, response_generator.py (new), test_engine.py, test_model_logger.py
+- [x] Phase 1d: Extracted `context_manager.py` (201 lines) — 5 context methods
+  - Commit: `d23af59`
+  - Engine: 805 → 716 lines (-89 lines)
+  - ContextManagerHooks: `after_compaction` hook → engine._reinject_context_anchors
+  - `_ensure_context_manager()` lazy factory (all deps available at init)
+  - ContextManager accesses token counter via compaction_manager.counter (same object)
+  - Updated 1 test file (test_engine.py: TestAutoPruneToolResults, TestContextWarningInjection create CM directly; TestPruneDirective pre-sets engine._context_manager)
+  - 647 unit + 26 model tests pass
+  - **Files changed:** engine.py, context_manager.py (new), test_engine.py
+  - **Note:** engine.py at 716 lines. Line count target (< 400/500) was over-optimistic — did not account for 9 new lazy-factory/delegation methods (~90 lines) or docstring overhead. User accepted this; the structural goal (all impl logic in subsystems) is met.
+- [x] Phase 1e: Remove lazy factories + thin delegations (adversarial analysis 2026-03-03)
+  - Commit: `6609ae2`
+  - Engine: 716 → ~620 lines (-8 methods)
+  - Removed `_ensure_response_generator()`, `_ensure_context_manager()` (cargo-cult lazy)
+  - Removed all 6 thin delegation methods
+  - Eager construction of RG + CM in `__init__` (non-nullable types); ToolExecutor stays lazy
+  - Replaced `assert self.server_manager is not None` with explicit `RuntimeError`
+  - Updated 3 test files: `_make_engine()`, `TestOverflowRecovery`, `test_engine_feedback_roles`
+  - 647 unit + 26 model tests pass
+  - **Files changed:** engine.py, test_engine.py, test_engine_feedback_roles.py
+- [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop

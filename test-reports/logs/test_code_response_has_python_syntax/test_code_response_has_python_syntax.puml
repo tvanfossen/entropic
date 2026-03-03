@@ -29,14 +29,12 @@ note right of Mdl
       return sum(numbers)
   ```
   
-  This implementation:
-  - Takes a list of numbers as input
-  - Uses Python's built-in `sum()` function for concise, efficient calculation
-  - Automatically handles empty lists by returning 0
-  - Works with both integers and floating-point numbers
+  **Explanation:**
+  - `sum()` is Python's built-in function for calculating the sum of an iterable
+  - Handles empty lists by returning 0 (since sum of empty list is 0 by default)
+  - Works with any list of numbers (integers or floats)
   
-  For a manual implementation without using built-in functions, you could do:
-  
+  Alternative implementation without using built-in functions:
   ```python
   def sum_list(numbers):
       total = 0
@@ -45,7 +43,9 @@ note right of Mdl
       return total
   ```
   
-  Both versions will correctly calculate the sum of any list of numbers.
+  Both versions will correctly calculate the sum of a list. The first version is 
+  more efficient and Pythonic, while the second demonstrates the manual 
+  implementation logic.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

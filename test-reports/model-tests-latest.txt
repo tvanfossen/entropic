@@ -1,31 +1,31 @@
 === Model Test Report ===
-Date: 2026-03-03 10:40:59
+Date: 2026-03-03 12:22:42
 
-Results: 26 passed, 0 failed (95.8s)
+Results: 26 passed, 0 failed (100.5s)
 
-  [PASS] test_grammar_constrains_output (7.8s)
-  [PASS] test_grammar_auto_chain_fires (8.3s)
-  [PASS] test_multi_tier_pipeline_completes (7.8s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (3.3s)
-  [PASS] test_code_request_produces_code [code] (13.7s)
+  [PASS] test_grammar_constrains_output (8.6s)
+  [PASS] test_grammar_auto_chain_fires (8.1s)
+  [PASS] test_multi_tier_pipeline_completes (9.3s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (6.3s)
+  [PASS] test_code_request_produces_code [code] (9.3s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (11.2s)
+  [PASS] test_code_response_has_python_syntax [code] (14.5s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (8.7s)
+  [PASS] test_response_ends_cleanly [normal] (8.5s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (4.3s)
+  [PASS] test_no_special_tokens_in_response [normal] (4.7s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (3.5s)
+  [PASS] test_generation_starts_and_ends [simple] (3.3s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (8.7s)
+  [PASS] test_multiple_messages_accumulate_history [normal] (7.5s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (10.8s)
+  [PASS] test_explanation_is_substantive [normal] (9.3s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (3.1s)
+  [PASS] test_hello_produces_response [simple] (3.3s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (3.0s)
+  [PASS] test_thanks_produces_acknowledgment [simple] (3.5s)
          Prompt: Thanks!
   [PASS] test_hello_routes_to_simple (0.1s)
   [PASS] test_hi_routes_to_simple (0.0s)
@@ -35,12 +35,12 @@ Results: 26 passed, 0 failed (95.8s)
   [PASS] test_add_feature_routes_to_code (0.0s)
   [PASS] test_explain_routes_to_reasoning (0.0s)
   [PASS] test_question_routes_to_reasoning (0.0s)
-  [PASS] test_complex_analysis_routes_to_thinking (1.0s)
-  [PASS] test_classification_under_500ms (0.0s)
+  [PASS] test_complex_analysis_routes_to_thinking (3.8s)
+  [PASS] test_classification_under_500ms (0.1s)
   [PASS] test_multiple_classifications_consistent (0.1s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 26 passed in 121.41s (0:02:01) ========================
+======================== 26 passed in 144.63s (0:02:24) ========================
 
 Result: PASSED

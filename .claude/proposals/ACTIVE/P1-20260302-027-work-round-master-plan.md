@@ -82,7 +82,7 @@ Phase 1: Foundation (parallel tracks)
         Produces model perf data for identity assignments in Phase 2.
 
 Phase 1 complete when:
-  - [ ] Engine decomposed: 3 subsystem files extracted, engine.py reduced (line count target relaxed — see impl log 2026-03-03)
+  - [x] Engine decomposed: 4 subsystem files extracted, engine.py 1,552 → 680 lines — merged develop @ v1.2.0
   - [ ] VRAM orchestration: warm→active swap measured and < 3s for 21GB model
   - [ ] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC
   - [ ] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results
@@ -300,4 +300,5 @@ Log format: date, proposal ID, action taken, files changed.
   - Updated 3 test files: `_make_engine()`, `TestOverflowRecovery`, `test_engine_feedback_roles`
   - 647 unit + 26 model tests pass
   - **Files changed:** engine.py, test_engine.py, test_engine_feedback_roles.py
-- [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop
+- [x] Phase 2: Integration verification, version bump 1.2.0, merge to develop
+  - Commit: `1bd3834` — merged develop @ v1.2.0

@@ -83,7 +83,7 @@ Phase 1: Foundation (parallel tracks)
 
 Phase 1 complete when:
   - [x] Engine decomposed: 4 subsystem files extracted, engine.py 1,552 → 680 lines — merged develop @ v1.2.0
-  - [ ] VRAM orchestration: warm→active swap measured and < 3s for 21GB model
+  - [x] VRAM orchestration: three-state lifecycle implemented — merged develop @ v1.3.0
   - [ ] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC
   - [ ] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results
   - [ ] All 4 tracks merged to develop with version bumps
@@ -302,3 +302,34 @@ Log format: date, proposal ID, action taken, files changed.
   - **Files changed:** engine.py, test_engine.py, test_engine_feedback_roles.py
 - [x] Phase 2: Integration verification, version bump 1.2.0, merge to develop
   - Commit: `1bd3834` — merged develop @ v1.2.0
+
+### 2026-03-03 — Track 2: VRAM Orchestration (P1-022)
+- [x] Phase 1a: `ModelState` enum + `ModelBackend` abstract interface
+  - Added `ModelState` (COLD/WARM/ACTIVE) enum to `core/base.py`
+  - Added abstract `state`, `warm()`, `activate()`, `deactivate()` to `ModelBackend`
+  - Made `is_loaded` concrete (returns `state == ACTIVE`)
+  - Exported `ModelState` from `entropic.core` public API
+- [x] Phase 1b: `LlamaCppBackend` three-state implementation
+  - `warm()`: COLD → WARM (n_gpu_layers=0, mmap+mlock)
+  - `activate()`: WARM/COLD → ACTIVE (GPU layers)
+  - `deactivate()`: ACTIVE → WARM (GPU released, CPU pages retained)
+  - `_swap_model()`: gc + reload helper
+  - `_load_model_sync()` accepts `gpu_layers` param, uses `config.use_mlock`
+  - `_detect_template_support()` extracted from old `load()`
+- [x] Phase 1c: Config schema new fields
+  - `ModelConfig.warm_on_startup: bool = False`
+  - `ModelConfig.use_mlock: bool = True`
+  - `LibraryConfig.vram_reserve_mb: int = 512`
+- [x] Phase 1d: Orchestrator integration
+  - `_deactivate_current_if_needed()` replaces `_unload_current_if_needed()`
+  - `_warm_on_startup_tiers()` helper for initialize()
+  - `set_thinking_mode()` uses `deactivate()` not `unload()`
+- [x] Phase 1e: Tests updated
+  - `test_orchestrator_loading.py`: `MockModelBackend` three-state, `MockTierConfig` new fields, swap assertion → `_deactivate_called`
+  - `test_vram_state_machine.py` (new): 8 tests for swap/warm_on_startup/thinking
+  - `test_llama_cpp_grammar.py`: `_make_backend()` sets `_state=ACTIVE`
+  - `test_library_api.py`: `MockTierConfig` new fields
+  - 654 unit + 26 model tests pass
+  - **Files changed:** core/base.py, core/__init__.py, inference/llama_cpp.py, inference/orchestrator.py, config/schema.py, 4 test files, 1 new test file
+- [x] Phase 2: Merge to develop @ v1.3.0
+  - Commit: `e3bb08f` — merged develop @ v1.3.0

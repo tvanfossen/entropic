@@ -19,6 +19,7 @@ warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 import click  # noqa: E402
 
 from entropic import __version__  # noqa: E402
+from entropic.benchmark.cli import benchmark  # noqa: E402
 from entropic.config.loader import reload_config  # noqa: E402
 from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E402
 
@@ -305,6 +306,9 @@ def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
     socket_path = str(socket) if socket else None
     exit_code = bridge_main(socket_path)
     sys.exit(exit_code)
+
+
+main.add_command(benchmark)
 
 
 if __name__ == "__main__":

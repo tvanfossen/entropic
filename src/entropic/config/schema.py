@@ -223,9 +223,10 @@ class ExternalMCPConfig(BaseModel):
     """Configuration for external MCP server (Claude Code integration)."""
 
     enabled: bool = False
-    socket_path: ExpandedPath = Field(
-        default_factory=lambda: Path.home() / ".entropic" / "mcp.sock"
-    )
+    # When None, socket path is derived from project_dir at runtime:
+    #   ~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock
+    # Set explicitly to override with a fixed path.
+    socket_path: OptionalExpandedPath = None
     # Rate limiting: requests per minute
     rate_limit: int = Field(default=10, ge=1, le=100)
 

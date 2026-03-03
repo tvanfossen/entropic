@@ -151,6 +151,7 @@ class Application:
             message_queue=self._message_queue,
             task_manager=self._task_manager,
             session_manager=self._session_manager,
+            project_dir=self.project_dir,
         )
 
         # Provide live conversation history to MCP get_history

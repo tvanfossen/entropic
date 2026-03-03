@@ -8,6 +8,7 @@ local models. Listens on a Unix socket for connections.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -26,6 +27,20 @@ if TYPE_CHECKING:
     from entropic.config.schema import EntropyConfig
 
 logger = get_logger("mcp.external")
+
+
+def compute_socket_path(project_dir: Path) -> Path:
+    """Compute a stable, project-unique Unix socket path.
+
+    Uses first 8 hex chars of SHA-256(abs(project_dir)) so each project
+    directory gets a distinct socket. Multiple Entropic instances at
+    different project dirs don't collide.
+
+    Returns:
+        Path like ~/.entropic/socks/{hash8}.sock
+    """
+    h = hashlib.sha256(str(project_dir.resolve()).encode()).hexdigest()[:8]
+    return Path.home() / ".entropic" / "socks" / f"{h}.sock"
 
 
 class RateLimiter:
@@ -78,6 +93,7 @@ class ExternalMCPServer:
         message_queue: MessageQueue,
         task_manager: TaskManager,
         session_manager: SessionManager,
+        project_dir: Path | None = None,
     ) -> None:
         """
         Initialize external MCP server.
@@ -87,6 +103,8 @@ class ExternalMCPServer:
             message_queue: Message queue for routing
             task_manager: Task manager for tracking
             session_manager: Session manager for history
+            project_dir: Project root used to derive socket path when
+                config.mcp.external.socket_path is None.
         """
         self._config = config
         self._queue = message_queue
@@ -96,11 +114,13 @@ class ExternalMCPServer:
         self._server = Server("entropic-external")
         self._rate_limiter = RateLimiter(config.mcp.external.rate_limit)
 
-        # Socket path - resolve relative paths from current working directory
-        socket_path = config.mcp.external.socket_path
-        if not socket_path.is_absolute():
-            socket_path = Path.cwd() / socket_path
-        self._socket_path = socket_path.resolve()
+        # Socket path: explicit config wins; None → project-derived hash path
+        cfg_path = config.mcp.external.socket_path
+        if cfg_path is not None:
+            socket_path: Path = cfg_path if cfg_path.is_absolute() else Path.cwd() / cfg_path
+            self._socket_path = socket_path.resolve()
+        else:
+            self._socket_path = compute_socket_path(project_dir or Path.cwd())
 
         # Connected clients for notifications
         self._clients: list[asyncio.StreamWriter] = []

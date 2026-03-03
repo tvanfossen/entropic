@@ -254,16 +254,19 @@ class _EngineTestBase:
     def _make_engine(self):
         """Create an Engine with mocked dependencies."""
         from entropic.core.directives import DirectiveProcessor
+        from entropic.core.engine_types import EngineCallbacks
 
         with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
-        engine._on_state_change = None
+        engine._callbacks = EngineCallbacks()
         engine._context_anchors = {}
         engine._directive_processor = DirectiveProcessor()
         engine._register_directive_handlers()
         engine._inject_context_warning = MagicMock()
-        engine._on_presenter_notify = None
+        engine.server_manager = MagicMock()
+        engine.orchestrator = MagicMock()
+        engine._tool_executor = None
         return engine
 
 
@@ -272,7 +275,9 @@ class TestCompactionAfterToolResults(_EngineTestBase):
 
     @pytest.mark.asyncio
     async def test_compaction_called_after_tool_result(self) -> None:
-        """_check_compaction is called after each tool result."""
+        """after_tool_hook (compaction + warning) is called after each tool result."""
+        from entropic.core.tool_executor import ToolExecutor
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -284,30 +289,39 @@ class TestCompactionAfterToolResults(_EngineTestBase):
             ToolCall(id="2", name="bash.execute", arguments={"command": "pwd"}),
         ]
 
-        compaction_calls = []
+        hook_calls = []
+
+        async def mock_after_tool(ctx):
+            hook_calls.append(True)
 
         async def mock_execute(ctx, tool_call):
             msg = Message(role="user", content=f"Result of {tool_call.name}")
             result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            compaction_calls.append(force)
+        from entropic.core.tool_executor import ToolExecutorHooks
 
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(
+                after_tool=mock_after_tool,
+                process_directives=engine._process_directives,
+            ),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
         assert len(messages) == 2
-        # _check_compaction called once per tool result
-        assert len(compaction_calls) == 2
-        assert all(f is False for f in compaction_calls)
+        # after_tool_hook called once per tool result
+        assert len(hook_calls) == 2
 
 
 class TestOverflowRecovery(_EngineTestBase):
@@ -376,6 +390,9 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         second in input, it executes after all other calls.  stop_processing
         fires on handoff, dropping any calls that would follow.
         """
+        from entropic.core.directives import StopProcessing
+        from entropic.core.tool_executor import ToolExecutor
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -388,8 +405,6 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
             ToolCall(id="3", name="entropic.todo_write", arguments={"todos": []}),
         ]
-
-        from entropic.core.directives import StopProcessing
 
         executed = []
 
@@ -405,14 +420,18 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             )
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            pass
+        from entropic.core.tool_executor import ToolExecutorHooks
 
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(process_directives=engine._process_directives),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
@@ -430,6 +449,8 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         Handoff sorted last by engine, but since no stop_processing fires
         (invalid tier → error string, no directives), both calls execute.
         """
+        from entropic.core.tool_executor import ToolExecutor, ToolExecutorHooks
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -449,14 +470,16 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            pass
-
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(process_directives=engine._process_directives),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
@@ -767,7 +790,7 @@ class TestStreamingInterrupt(_EngineTestBase):
         engine = self._make_engine()
         engine._interrupt_event = threading.Event()
         engine._pause_event = threading.Event()
-        engine._on_stream_chunk = None
+        engine._callbacks.on_stream_chunk = None
         engine._log_model_output = MagicMock()
         engine.orchestrator = MagicMock()
         engine.orchestrator.last_finish_reason = "stop"

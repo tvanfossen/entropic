@@ -11,13 +11,12 @@ import asyncio
 import json
 import threading
 import time
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from entropic.config.loader import save_permission
 from entropic.config.schema import EntropyConfig
-from entropic.core.base import Message, ToolCall, ToolResult
-from entropic.core.compaction import CompactionManager, CompactionResult, TokenCounter
+from entropic.core.base import Message, ToolCall
+from entropic.core.compaction import CompactionManager, TokenCounter
 from entropic.core.directives import DirectiveProcessor, DirectiveResult
 from entropic.core.engine_types import (  # noqa: F401 — re-exported for consumers
     AgentState,
@@ -31,8 +30,9 @@ from entropic.core.engine_types import (  # noqa: F401 — re-exported for consu
 )
 from entropic.core.logging import get_logger, get_model_logger
 from entropic.core.queue import MessageSource
-from entropic.inference.orchestrator import ModelOrchestrator, RoutingResult
-from entropic.mcp.manager import PermissionDeniedError, ServerManager
+from entropic.core.tool_executor import ToolExecutor, ToolExecutorHooks
+from entropic.inference.orchestrator import ModelOrchestrator
+from entropic.mcp.manager import ServerManager
 
 if TYPE_CHECKING:
     from entropic.core.directives import (
@@ -90,9 +90,6 @@ class AgentEngine:
         self._pause_event = threading.Event()
         self._interrupt_context: InterruptContext | None = None
 
-        # Callback for pause/inject prompting
-        self._on_pause_prompt: Callable[[str], Any] | None = None
-
         # Generic context anchors — keyed persistent messages in ctx.messages
         self._context_anchors: dict[str, str] = {}
 
@@ -109,19 +106,12 @@ class AgentEngine:
             orchestrator=orchestrator,
         )
 
-        # Callbacks
-        self._on_state_change: Callable[[AgentState], None] | None = None
-        self._on_tool_approval: Callable[[ToolCall], Any] | None = None  # Can be sync or async
-        self._on_stream_chunk: Callable[[str], None] | None = None
-        self._on_tool_start: Callable[[ToolCall], None] | None = None
-        self._on_tool_complete: Callable[[ToolCall, str, float], None] | None = None
-        self._on_presenter_notify: Callable[[str, dict[str, Any]], None] | None = None
-        self._on_compaction: Callable[[CompactionResult], None] | None = None
-        # Task tracking callback for external MCP integration
-        self._on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
-        self._on_tier_selected: Callable[[str], None] | None = None
-        self._on_routing_complete: Callable[[RoutingResult], None] | None = None
-        self._error_sanitizer: Callable[[str], str] | None = None
+        # Shared mutable callback container — all subsystems hold the same reference.
+        # set_callbacks() updates fields in place so subsystems see changes.
+        self._callbacks = EngineCallbacks()
+
+        # ToolExecutor created lazily (needs server_manager, which may be None at init)
+        self._tool_executor: ToolExecutor | None = None
 
     def _register_directive_handlers(self) -> None:
         """Register handlers for all known directive types."""
@@ -271,8 +261,8 @@ class AgentEngine:
         result: DirectiveResult,
     ) -> None:
         """Handle notify_presenter directive — pass through to UI callback."""
-        if self._on_presenter_notify:
-            self._on_presenter_notify(directive.key, directive.data)
+        if self._callbacks.on_presenter_notify:
+            self._callbacks.on_presenter_notify(directive.key, directive.data)
 
     def _get_max_context_tokens(self) -> int:
         """Get maximum context tokens from model config."""
@@ -305,21 +295,16 @@ class AgentEngine:
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.
 
+        Updates the shared EngineCallbacks instance in place so all
+        subsystems (ToolExecutor, etc.) see the changes immediately.
+
         Args:
             callbacks: Callback configuration for engine events
         """
-        self._on_state_change = callbacks.on_state_change
-        self._on_tool_approval = callbacks.on_tool_call
-        self._on_stream_chunk = callbacks.on_stream_chunk
-        self._on_tool_start = callbacks.on_tool_start
-        self._on_tool_complete = callbacks.on_tool_complete
-        self._on_presenter_notify = callbacks.on_presenter_notify
-        self._on_compaction = callbacks.on_compaction
-        self._on_pause_prompt = callbacks.on_pause_prompt
-        self._on_tool_record = callbacks.on_tool_record
-        self._on_tier_selected = callbacks.on_tier_selected
-        self._on_routing_complete = callbacks.on_routing_complete
-        self._error_sanitizer = callbacks.error_sanitizer
+        from dataclasses import fields
+
+        for f in fields(callbacks):
+            setattr(self._callbacks, f.name, getattr(callbacks, f.name))
 
     async def _create_default_server_manager(self) -> ServerManager:
         """Create and initialize a default ServerManager from config."""
@@ -654,16 +639,16 @@ class AgentEngine:
         model_logger.info(f"\n{'#' * 70}\n[ROUTED] tier={tier.name}\n{'#' * 70}")
         self._log_assembled_prompt(ctx, "routed")
 
-        if self._on_tier_selected:
-            self._on_tier_selected(tier.name)
+        if self._callbacks.on_tier_selected:
+            self._callbacks.on_tier_selected(tier.name)
         routing_result = self.orchestrator.last_routing_result
-        if routing_result and self._on_routing_complete:
-            self._on_routing_complete(routing_result)
+        if routing_result and self._callbacks.on_routing_complete:
+            self._callbacks.on_routing_complete(routing_result)
 
     def _notify_tier_selected(self, tier_value: str) -> None:
         """Notify callback of tier selection (for handoff)."""
-        if self._on_tier_selected:
-            self._on_tier_selected(tier_value)
+        if self._callbacks.on_tier_selected:
+            self._callbacks.on_tier_selected(tier_value)
 
     async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate model response, streaming or not.
@@ -700,8 +685,8 @@ class AgentEngine:
 
             content += chunk
 
-            if self._on_stream_chunk:
-                self._on_stream_chunk(chunk)
+            if self._callbacks.on_stream_chunk:
+                self._callbacks.on_stream_chunk(chunk)
 
         if interrupted:
             logger.info(f"Stream interrupted after {len(content)} chars")
@@ -746,8 +731,8 @@ class AgentEngine:
 
         # Call the pause prompt callback to get user input
         injection = None
-        if self._on_pause_prompt:
-            result = self._on_pause_prompt(partial_content)
+        if self._callbacks.on_pause_prompt:
+            result = self._callbacks.on_pause_prompt(partial_content)
             if asyncio.iscoroutine(result):
                 injection = await result
             else:
@@ -812,8 +797,8 @@ class AgentEngine:
                     break
 
             content += chunk
-            if self._on_stream_chunk:
-                self._on_stream_chunk(chunk)
+            if self._callbacks.on_stream_chunk:
+                self._callbacks.on_stream_chunk(chunk)
 
         return content
 
@@ -843,151 +828,38 @@ class AgentEngine:
             ],
         )
 
-    @staticmethod
-    def _sort_tool_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
-        """Sort tool calls so entropic.handoff is always last.
+    def _ensure_tool_executor(self) -> ToolExecutor:
+        """Create or return the ToolExecutor subsystem.
 
-        Handoff fires ``stop_processing`` which drops subsequent calls,
-        so it must be terminal in the batch.  Preserves relative order
-        of all other calls (stable sort).
+        Created lazily because server_manager may be None at __init__ time
+        (it's set up in run() on first call).
         """
-        return sorted(tool_calls, key=lambda tc: tc.name == "entropic.handoff")
+        if self._tool_executor is None:
+            assert self.server_manager is not None
+            self._tool_executor = ToolExecutor(
+                server_manager=self.server_manager,
+                orchestrator=self.orchestrator,
+                loop_config=self.loop_config,
+                callbacks=self._callbacks,
+                hooks=ToolExecutorHooks(
+                    after_tool=self._after_tool_hook,
+                    process_directives=self._process_directives,
+                ),
+            )
+        return self._tool_executor
+
+    async def _after_tool_hook(self, ctx: LoopContext) -> None:
+        """Post-tool hook: compaction check + context warning injection."""
+        await self._check_compaction(ctx)
+        self._inject_context_warning(ctx)
 
     async def _process_tool_calls(
         self, ctx: LoopContext, tool_calls: list[ToolCall]
     ) -> AsyncIterator[Message]:
-        """Process tool calls and yield result messages."""
-        logger.info(f"Processing {len(tool_calls)} tool calls")
-        self._set_state(ctx, AgentState.WAITING_TOOL)
-        limited_calls = self._sort_tool_calls(
-            tool_calls[: self.loop_config.max_tool_calls_per_turn]
-        )
-
-        for i, tool_call in enumerate(limited_calls):
-            # Check for duplicate tool calls
-            duplicate_result = self._check_duplicate_tool_call(ctx, tool_call)
-            if duplicate_result:
-                ctx.consecutive_duplicate_attempts += 1
-                logger.warning(
-                    f"Duplicate tool call #{ctx.consecutive_duplicate_attempts}: {tool_call.name}"
-                )
-
-                # Circuit breaker: if model is stuck in loop, force break
-                if ctx.consecutive_duplicate_attempts >= 3:
-                    logger.error(
-                        f"Model stuck in loop - {ctx.consecutive_duplicate_attempts} "
-                        f"consecutive duplicate tool calls"
-                    )
-                    break_msg = Message(
-                        role="user",
-                        content="STOP: You have called the same tool 3 times with identical arguments. "
-                        "This indicates you are stuck. Please try a completely different approach "
-                        "or respond to the user explaining what's blocking you.",
-                    )
-                    ctx.messages.append(break_msg)
-                    logger.info(f"[FEEDBACK] Circuit breaker triggered: {break_msg.content}")
-                    yield break_msg
-                    return  # Exit tool processing entirely
-
-                msg = self._create_duplicate_message(tool_call, duplicate_result)
-                ctx.messages.append(msg)
-                logger.info(f"[FEEDBACK] Duplicate message sent: {msg.content[:100]}...")
-                yield msg
-                continue
-
-            # Successful non-duplicate tool call - reset counter
-            ctx.consecutive_duplicate_attempts = 0
-
-            logger.debug(f"Executing tool {i + 1}/{len(limited_calls)}: {tool_call.name}")
-            msg, tool_result = await self._execute_tool(ctx, tool_call)
-            # Tag tool results with iteration for auto-pruning
-            if tool_result:
-                ctx.effective_tool_calls += 1
-                msg.metadata["added_at_iteration"] = ctx.metrics.iterations
-                msg.metadata["tool_name"] = tool_call.name
-            ctx.messages.append(msg)
+        """Delegate tool call processing to ToolExecutor."""
+        executor = self._ensure_tool_executor()
+        async for msg in executor.process_tool_calls(ctx, tool_calls):
             yield msg
-
-            # Track this tool call for duplicate detection
-            self._record_tool_call(ctx, tool_call, msg)
-
-            # Check compaction after each tool result to catch large results
-            await self._check_compaction(ctx)
-
-            # Warn if context usage is high after this tool result
-            self._inject_context_warning(ctx)
-
-            # Process directives from tool result (tier changes, pruning, etc.)
-            if tool_result and tool_result.directives:
-                directive_result = self._process_directives(ctx, tool_result.directives)
-                if directive_result.stop_processing:
-                    logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
-                    return
-
-        ctx.consecutive_errors = 0
-
-    def _get_tool_call_key(self, tool_call: ToolCall) -> str:
-        """Generate a unique key for a tool call based on name and arguments."""
-        args_str = json.dumps(tool_call.arguments, sort_keys=True, default=str)
-        return f"{tool_call.name}:{args_str}"
-
-    def _check_duplicate_tool_call(self, ctx: LoopContext, tool_call: ToolCall) -> str | None:
-        """Check if this tool call is a duplicate. Returns previous result if duplicate."""
-        # Delegate to server's skip_duplicate_check for tools with side effects
-        if self.server_manager.skip_duplicate_check(tool_call):
-            return None
-
-        key = self._get_tool_call_key(tool_call)
-        return ctx.recent_tool_calls.get(key)
-
-    def _record_tool_call(self, ctx: LoopContext, tool_call: ToolCall, result_msg: Message) -> None:
-        """Record a tool call for duplicate detection."""
-        key = self._get_tool_call_key(tool_call)
-        # Store the result content for reuse
-        ctx.recent_tool_calls[key] = result_msg.content
-
-    def _create_duplicate_message(self, tool_call: ToolCall, previous_result: str) -> Message:
-        """Create a message indicating a duplicate tool call was skipped.
-
-        Uses role="user" because llama-cpp doesn't render role="tool" properly,
-        which would cause the model to never see the feedback and loop forever.
-        """
-        content = f"""Tool `{tool_call.name}` was already called with the same arguments.
-
-Previous result:
-{previous_result}
-
-Do NOT call this tool again. Use the previous result above."""
-
-        return Message(role="user", content=content)
-
-    async def _execute_tool(
-        self, ctx: LoopContext, tool_call: ToolCall
-    ) -> tuple[Message, ToolResult | None]:
-        """Execute a single tool call.
-
-        All tools go through the same path: approval → start callback →
-        execute via ServerManager → complete callback. No tool-specific
-        handlers in the engine.
-
-        Returns:
-            Tuple of (message for context, ToolResult with directives or None if denied)
-        """
-        logger.info(f"[TOOL CALL] {tool_call.name}")
-        logger.info(f"[TOOL ARGS] {json.dumps(tool_call.arguments, indent=2, default=str)}")
-
-        # Check approval (returns denial message if not approved)
-        if denial_msg := await self._check_tool_approval(tool_call):
-            return denial_msg, None
-
-        # Enforce tier-level allowed_tools (defense against hallucinated calls)
-        if rejection := self._check_tier_allowed(ctx, tool_call):
-            return rejection, None
-
-        # Execute the tool (all tools, including entropic.*, go through ServerManager)
-        if self._on_tool_start:
-            self._on_tool_start(tool_call)
-        return await self._do_execute_tool(ctx, tool_call)
 
     def _process_directives(self, ctx: LoopContext, directives: list[Any]) -> DirectiveResult:
         """Process directives from a tool result.
@@ -1006,228 +878,6 @@ Do NOT call this tool again. Use the previous result above."""
             ctx.messages.append(injected)
 
         return result
-
-    def _check_tier_allowed(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
-        """Reject tool calls not in the current tier's allowed_tools.
-
-        Returns a feedback message if rejected, None if allowed.
-        """
-        if ctx.locked_tier is None:
-            return None
-        allowed = self.orchestrator.get_allowed_tools(ctx.locked_tier)
-        if allowed is None or tool_call.name in allowed:
-            return None
-        tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
-        logger.warning(
-            "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
-        )
-        reason = (
-            f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
-            f"Available tools: {sorted(allowed)}"
-        )
-        return self._create_denied_message(tool_call, reason)
-
-    async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
-        """Check tool approval. Returns denial message if not approved, None if approved."""
-        approval_result = await self._is_tool_approved(tool_call)
-        if approval_result is True:
-            return None
-        # Denied - format reason based on whether feedback was provided
-        if isinstance(approval_result, str):
-            logger.warning(f"Tool call denied with feedback: {tool_call.name}")
-            reason = f"Permission denied by user. Feedback: {approval_result}"
-        else:
-            logger.warning(f"Tool call denied by user: {tool_call.name}")
-            reason = "Permission denied by user"
-        denied_msg = self._create_denied_message(tool_call, reason)
-        logger.info(f"[FEEDBACK] Denied message sent: {denied_msg.content[:100]}...")
-        return denied_msg
-
-    async def _do_execute_tool(
-        self, ctx: LoopContext, tool_call: ToolCall
-    ) -> tuple[Message, ToolResult]:
-        """Execute tool and return both the formatted message and raw result.
-
-        The Message goes into ctx.messages for model context.
-        The ToolResult carries directives for engine-level side effects.
-        """
-        start_time = time.time()
-        try:
-            logger.debug(f"Executing tool via server manager: {tool_call.name}")
-            result = await self.server_manager.execute(tool_call)
-            ctx.metrics.tool_calls += 1
-            duration_ms = (time.time() - start_time) * 1000
-            self._log_tool_success(ctx, tool_call, result.result, duration_ms)
-            msg = self.orchestrator.get_adapter().format_tool_result(tool_call, result.result)
-            return msg, result
-        except PermissionDeniedError as e:
-            duration_ms = (time.time() - start_time) * 1000
-            msg = self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=True)
-            return msg, ToolResult(
-                call_id=tool_call.id,
-                name=tool_call.name,
-                result=str(e),
-                is_error=True,
-            )
-        except Exception as e:
-            duration_ms = (time.time() - start_time) * 1000
-            msg = self._handle_tool_error(ctx, tool_call, e, duration_ms, is_permission=False)
-            return msg, ToolResult(
-                call_id=tool_call.id,
-                name=tool_call.name,
-                result=str(e),
-                is_error=True,
-            )
-
-    def _log_tool_success(
-        self, ctx: LoopContext, tool_call: ToolCall, result: str, duration_ms: float
-    ) -> None:
-        """Log and notify about successful tool execution."""
-        result_str = str(result)
-        logger.debug(f"Tool result ({duration_ms:.0f}ms):\n{result_str}")
-        logger.info(
-            f"\n{'=' * 60}\n[TOOL RESULT: {tool_call.name}]\n{'=' * 60}\n{result_str}\n{'=' * 60}"
-        )
-        logger.info(
-            f"[TOOL COMPLETE] {tool_call.name} -> {len(result_str)} chars result ({duration_ms:.0f}ms)"
-        )
-        if self._on_tool_complete:
-            self._on_tool_complete(tool_call, result, duration_ms)
-        if ctx.task_id and self._on_tool_record:
-            self._on_tool_record(ctx.task_id, tool_call, "success", result, duration_ms)
-
-    def _handle_tool_error(
-        self,
-        ctx: LoopContext,
-        tool_call: ToolCall,
-        error: Exception,
-        duration_ms: float,
-        *,
-        is_permission: bool,
-    ) -> Message:
-        """Handle tool execution error and return appropriate message."""
-        raw_error = str(error)
-
-        # Log raw error (always unfiltered for diagnostics)
-        if is_permission:
-            logger.warning(f"Tool permission denied: {tool_call.name} - {raw_error}")
-            display_msg = f"Permission denied: {raw_error}"
-        else:
-            logger.error(f"Tool execution error: {tool_call.name} - {raw_error}")
-            display_msg = f"Error: {raw_error}"
-
-        if self._on_tool_complete:
-            self._on_tool_complete(tool_call, display_msg, duration_ms)
-        if ctx.task_id and self._on_tool_record:
-            self._on_tool_record(ctx.task_id, tool_call, "error", raw_error, duration_ms)
-
-        # Sanitize before sending to model — consumer controls what leaks
-        model_error = self._error_sanitizer(raw_error) if self._error_sanitizer else raw_error
-
-        msg = (
-            self._create_denied_message(tool_call, model_error)
-            if is_permission
-            else self._create_error_message(tool_call, model_error)
-        )
-        logger.info(f"[FEEDBACK] {'Permission denied' if is_permission else 'Error'} message sent")
-        return msg
-
-    async def _is_tool_approved(self, tool_call: ToolCall) -> bool | str:
-        """Check if tool call is approved.
-
-        Approval flow:
-        1. If auto_approve is set, always approve
-        2. If tool is explicitly in allow list, skip prompting
-        3. Otherwise, prompt user via callback
-        4. If user selects "Always allow/deny", save to config
-
-        Returns:
-            True if approved, False if denied, or str with feedback if denied with feedback.
-        """
-        # Early approval checks (no prompting needed)
-        if self._should_auto_approve(tool_call):
-            return True
-
-        # Prompt user via callback and convert result
-        result = await self._get_approval_result(tool_call)
-        return self._convert_approval_result(tool_call, result)
-
-    def _convert_approval_result(
-        self, tool_call: ToolCall, result: bool | str | ToolApproval
-    ) -> bool | str:
-        """Convert callback result to approval decision."""
-        if isinstance(result, str):
-            return result  # Feedback string as denial reason
-        if isinstance(result, ToolApproval):
-            return self._handle_approval_result(tool_call, result)
-        return bool(result)  # Legacy bool support
-
-    def _should_auto_approve(self, tool_call: ToolCall) -> bool:
-        """Check if tool should be auto-approved without prompting."""
-        if self.loop_config.auto_approve_tools:
-            return True
-        if self.server_manager.is_explicitly_allowed(tool_call):
-            return True
-        return self._on_tool_approval is None  # No callback = headless mode
-
-    async def _get_approval_result(self, tool_call: ToolCall) -> bool | str | ToolApproval:
-        """Get approval result from callback."""
-        assert self._on_tool_approval is not None
-        result = self._on_tool_approval(tool_call)
-        if asyncio.iscoroutine(result):
-            result = await result
-        return result
-
-    def _handle_approval_result(self, tool_call: ToolCall, approval: ToolApproval) -> bool:
-        """Handle ToolApproval result and save to config if needed."""
-        allowed = approval in (ToolApproval.ALLOW, ToolApproval.ALWAYS_ALLOW)
-
-        # Save permanent permissions
-        if approval in (ToolApproval.ALWAYS_ALLOW, ToolApproval.ALWAYS_DENY):
-            pattern = self._get_permission_pattern(tool_call)
-            logger.info(f"Saving 'always {'allow' if allowed else 'deny'}' permission: {pattern}")
-            save_permission(pattern, allow=allowed)
-            self.server_manager.add_permission(pattern, allow=allowed)
-
-        return allowed
-
-    def _get_permission_pattern(self, tool_call: ToolCall) -> str:
-        """Generate permission pattern via server class inheritance.
-
-        Delegates to ServerManager which routes to the server
-        class's get_permission_pattern() for proper granularity.
-        """
-        return self.server_manager.get_permission_pattern(
-            tool_call.name,
-            tool_call.arguments,
-        )
-
-    def _create_denied_message(self, tool_call: ToolCall, reason: str) -> Message:
-        """Create a permission denied message.
-
-        Uses role="user" because llama-cpp doesn't render role="tool" properly,
-        which would cause the model to never see the feedback and loop forever.
-        """
-        content = f"""Tool `{tool_call.name}` was denied: {reason}
-
-Try a different approach or ask the user for clarification."""
-
-        return Message(role="user", content=content)
-
-    def _create_error_message(self, tool_call: ToolCall, error: str) -> Message:
-        """Create a structured error message for the model to recover from.
-
-        Uses role="user" because llama-cpp doesn't render role="tool" properly,
-        which would cause the model to never see the feedback and loop forever.
-        """
-        content = f"""Tool `{tool_call.name}` failed with error: {error}
-
-RECOVERY:
-- Check arguments are correct
-- Try a different approach
-- Do NOT retry with the same arguments"""
-
-        return Message(role="user", content=content)
 
     def _prune_tool_results(self, ctx: LoopContext, keep_recent: int) -> tuple[int, int]:
         """Replace old tool results with stubs. Returns (pruned_count, freed_chars)."""
@@ -1360,8 +1010,8 @@ RECOVERY:
         """Set agent state and notify callback."""
         ctx.state = state
         logger.info(f"State: {state.name}")
-        if self._on_state_change:
-            self._on_state_change(state)
+        if self._callbacks.on_state_change:
+            self._callbacks.on_state_change(state)
 
     async def _check_compaction(self, ctx: LoopContext, *, force: bool = False) -> None:
         """Check if compaction is needed and perform if so."""
@@ -1376,8 +1026,8 @@ RECOVERY:
                 f"Compacted context: {result.old_token_count} -> {result.new_token_count} tokens"
             )
             # Notify via callback
-            if self._on_compaction:
-                self._on_compaction(result)
+            if self._callbacks.on_compaction:
+                self._callbacks.on_compaction(result)
             # Reinject context anchors so model retains awareness
             self._reinject_context_anchors(ctx)
 

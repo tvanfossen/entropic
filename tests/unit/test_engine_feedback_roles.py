@@ -37,8 +37,9 @@ class TestFeedbackMessageRoles:
 
     def test_duplicate_message_uses_user_role(self, engine, tool_call):
         """Verify _create_duplicate_message returns role='user'."""
+        te = engine._ensure_tool_executor()
         previous_result = "file contents here..."
-        msg = engine._create_duplicate_message(tool_call, previous_result)
+        msg = te._create_duplicate_message(tool_call, previous_result)
 
         assert msg.role == "user", f"Expected role='user', got role='{msg.role}'"
         assert "already called" in msg.content.lower()
@@ -47,8 +48,9 @@ class TestFeedbackMessageRoles:
 
     def test_denied_message_uses_user_role(self, engine, tool_call):
         """Verify _create_denied_message returns role='user'."""
+        te = engine._ensure_tool_executor()
         reason = "Permission denied by user"
-        msg = engine._create_denied_message(tool_call, reason)
+        msg = te._create_denied_message(tool_call, reason)
 
         assert msg.role == "user", f"Expected role='user', got role='{msg.role}'"
         assert "denied" in msg.content.lower()
@@ -56,8 +58,9 @@ class TestFeedbackMessageRoles:
 
     def test_error_message_uses_user_role(self, engine, tool_call):
         """Verify _create_error_message returns role='user'."""
+        te = engine._ensure_tool_executor()
         error = "Connection timeout"
-        msg = engine._create_error_message(tool_call, error)
+        msg = te._create_error_message(tool_call, error)
 
         assert msg.role == "user", f"Expected role='user', got role='{msg.role}'"
         assert "failed" in msg.content.lower() or "error" in msg.content.lower()
@@ -116,7 +119,8 @@ class TestCircuitBreaker:
         tool_call = ToolCall(id="1", name="bash.execute", arguments={"command": "ls"})
 
         # Pre-populate with a previous call result
-        key = engine._get_tool_call_key(tool_call)
+        te = engine._ensure_tool_executor()
+        key = te._get_tool_call_key(tool_call)
         ctx.recent_tool_calls[key] = "previous result"
 
         # Process the duplicate tool call
@@ -151,7 +155,6 @@ class TestCircuitBreaker:
             engine = AgentEngine(orchestrator, server_manager, config)
 
         # Mock approval, compaction, and context warning
-        engine._on_tool_approval = None
         engine.loop_config.auto_approve_tools = True
         engine._check_compaction = AsyncMock()
         engine._inject_context_warning = MagicMock()
@@ -187,7 +190,8 @@ class TestCircuitBreaker:
         ctx.consecutive_duplicate_attempts = 2  # Already had 2 duplicates
 
         tool_call = ToolCall(id="1", name="bash.execute", arguments={"command": "ls"})
-        key = engine._get_tool_call_key(tool_call)
+        te = engine._ensure_tool_executor()
+        key = te._get_tool_call_key(tool_call)
         ctx.recent_tool_calls[key] = "previous result"
 
         # Process 3rd duplicate - should trigger circuit breaker
@@ -231,9 +235,10 @@ class TestErrorSanitizer:
 
         engine.set_callbacks(EngineCallbacks(error_sanitizer=redact_secrets))
 
+        te = engine._ensure_tool_executor()
         ctx = LoopContext()
         error = Exception("Connection failed: password=hunter2")
-        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
+        msg = te._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
 
         # Model message should have sanitized error
         assert "password=***" in msg.content
@@ -241,9 +246,10 @@ class TestErrorSanitizer:
 
     def test_no_sanitizer_passes_raw_error(self, engine, tool_call):
         """Without sanitizer, raw error reaches model unchanged."""
+        te = engine._ensure_tool_executor()
         ctx = LoopContext()
         error = Exception("password=hunter2")
-        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
+        msg = te._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=False)
 
         assert "password=hunter2" in msg.content
 
@@ -255,9 +261,10 @@ class TestErrorSanitizer:
             EngineCallbacks(error_sanitizer=lambda e: e.replace("/secret/path", "***"))
         )
 
+        te = engine._ensure_tool_executor()
         ctx = LoopContext()
         error = Exception("Denied: /secret/path")
-        msg = engine._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=True)
+        msg = te._handle_tool_error(ctx, tool_call, error, 10.0, is_permission=True)
 
         assert "***" in msg.content
         assert "/secret/path" not in msg.content

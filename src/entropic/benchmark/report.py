@@ -66,22 +66,32 @@ def _print_rich_load(results: Layer1Results, console: Any, table_cls: Any) -> No
 
 
 def _print_rich_swap(results: Layer1Results, console: Any, table_cls: Any) -> None:
-    """Print the swap latency table with P1-022 target assessment."""
+    """Print the swap latency table with per-transition P1-022 target assessment."""
     swap = results.swap
     assert swap is not None
-    total = swap.activate_ms + swap.reactivate_ms
-    target_ok = total < SWAP_TARGET_MS
-    verdict = "[green]✓ MET[/green]" if target_ok else "[red]✗ MISSED[/red]"
 
-    t = table_cls(title=f"Swap Latency (target <{SWAP_TARGET_MS:.0f}ms: {verdict})")
+    def _verdict(ms: float) -> str:
+        return "[green]✓[/green]" if ms < SWAP_TARGET_MS else "[red]✗[/red]"
+
+    t = table_cls(title=f"Swap Latency (target: each WARM→ACTIVE < {SWAP_TARGET_MS:.0f}ms)")
     t.add_column("Transition")
     t.add_column("Time (ms)", justify="right")
     t.add_column("VRAM (MB)", justify="right")
-    t.add_row("COLD → WARM", f"{swap.warm_ms:.0f}", str(swap.vram_warm_mb))
-    t.add_row("WARM → ACTIVE", f"{swap.activate_ms:.0f}", str(swap.vram_active_mb))
-    t.add_row("ACTIVE → WARM", f"{swap.deactivate_ms:.0f}", str(swap.vram_warm_mb))
-    t.add_row("WARM → ACTIVE (re)", f"{swap.reactivate_ms:.0f}", str(swap.vram_active_mb))
-    t.add_row("[bold]activate + reactivate[/bold]", f"[bold]{total:.0f}[/bold]", "")
+    t.add_column("Target", justify="center")
+    t.add_row("COLD → WARM", f"{swap.warm_ms:.0f}", str(swap.vram_warm_mb), "[dim]startup[/dim]")
+    t.add_row(
+        "WARM → ACTIVE",
+        f"{swap.activate_ms:.0f}",
+        str(swap.vram_active_mb),
+        _verdict(swap.activate_ms),
+    )
+    t.add_row("ACTIVE → WARM", f"{swap.deactivate_ms:.0f}", str(swap.vram_warm_mb), "[dim]—[/dim]")
+    t.add_row(
+        "WARM → ACTIVE (re)",
+        f"{swap.reactivate_ms:.0f}",
+        str(swap.vram_active_mb),
+        _verdict(swap.reactivate_ms),
+    )
     console.print(t)
 
 
@@ -116,15 +126,13 @@ def _print_plain(results: Layer1Results) -> None:
 
     if results.swap:
         swap = results.swap
-        total = swap.activate_ms + swap.reactivate_ms
-        target_ok = total < SWAP_TARGET_MS
-        verdict = "MET" if target_ok else "MISSED"
-        print(f"\nSwap (target <{SWAP_TARGET_MS:.0f}ms: {verdict})")
-        print(f"  COLD→WARM:      {swap.warm_ms:.0f}ms")
-        print(f"  WARM→ACTIVE:    {swap.activate_ms:.0f}ms")
-        print(f"  ACTIVE→WARM:    {swap.deactivate_ms:.0f}ms")
-        print(f"  WARM→ACTIVE(re): {swap.reactivate_ms:.0f}ms")
-        print(f"  activate+reactivate: {total:.0f}ms")
+        print(f"\nSwap Latency (target: each WARM→ACTIVE < {SWAP_TARGET_MS:.0f}ms)")
+        print(f"  COLD→WARM:       {swap.warm_ms:.0f}ms  [startup]")
+        act_ok = "MET" if swap.activate_ms < SWAP_TARGET_MS else "MISSED"
+        print(f"  WARM→ACTIVE:     {swap.activate_ms:.0f}ms  [{act_ok}]")
+        print(f"  ACTIVE→WARM:     {swap.deactivate_ms:.0f}ms")
+        react_ok = "MET" if swap.reactivate_ms < SWAP_TARGET_MS else "MISSED"
+        print(f"  WARM→ACTIVE(re): {swap.reactivate_ms:.0f}ms  [{react_ok}]")
 
     if results.inference:
         inf = results.inference

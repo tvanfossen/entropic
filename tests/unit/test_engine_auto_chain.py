@@ -229,25 +229,31 @@ class TestToolCallSorting:
 
     def test_handoff_moved_to_end(self) -> None:
         """Handoff appearing first is moved to end."""
+        from entropic.core.tool_executor import ToolExecutor
+
         calls = [self._tc("entropic.handoff"), self._tc("entropic.todo_write")]
-        result = AgentEngine._sort_tool_calls(calls)
+        result = ToolExecutor._sort_tool_calls(calls)
         assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
 
     def test_handoff_already_last_unchanged(self) -> None:
         """Handoff already at end — order preserved."""
+        from entropic.core.tool_executor import ToolExecutor
+
         calls = [self._tc("entropic.todo_write"), self._tc("entropic.handoff")]
-        result = AgentEngine._sort_tool_calls(calls)
+        result = ToolExecutor._sort_tool_calls(calls)
         assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
 
     def test_non_handoff_order_preserved(self) -> None:
         """Relative order of non-handoff calls is stable."""
+        from entropic.core.tool_executor import ToolExecutor
+
         calls = [
             self._tc("entropic.todo_write"),
             self._tc("chess.make_move"),
             self._tc("entropic.handoff"),
             self._tc("entropic.prune_context"),
         ]
-        result = AgentEngine._sort_tool_calls(calls)
+        result = ToolExecutor._sort_tool_calls(calls)
         names = [c.name for c in result]
         assert names == [
             "entropic.todo_write",
@@ -258,13 +264,17 @@ class TestToolCallSorting:
 
     def test_no_handoff_unchanged(self) -> None:
         """No handoff in list — order unchanged."""
+        from entropic.core.tool_executor import ToolExecutor
+
         calls = [self._tc("entropic.todo_write"), self._tc("chess.make_move")]
-        result = AgentEngine._sort_tool_calls(calls)
+        result = ToolExecutor._sort_tool_calls(calls)
         assert [c.name for c in result] == ["entropic.todo_write", "chess.make_move"]
 
     def test_empty_list(self) -> None:
         """Empty list returns empty."""
-        assert AgentEngine._sort_tool_calls([]) == []
+        from entropic.core.tool_executor import ToolExecutor
+
+        assert ToolExecutor._sort_tool_calls([]) == []
 
 
 # ===========================================================================

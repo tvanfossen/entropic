@@ -67,7 +67,7 @@ validated by benchmarks.
 Phase 1: Foundation (parallel tracks)
 ├── Track 1: C (engine decomposition)
 │   └── Extract ToolExecutor, ContextManager, ResponseGenerator
-│       Engine is 1,528 lines / 68 methods. Decompose before B adds more.
+│       Engine is 1,552 lines / 69 methods. Decompose before B adds more.
 │
 ├── Track 2: A (VRAM orchestration)
 │   └── Three-state lifecycle (cold/warm/active), VRAM budget
@@ -249,3 +249,29 @@ Log format: date, proposal ID, action taken, files changed.
 - Moved P1-011, P1-014 to COMPLETE (already done)
 - Moved P3-023 to IDEAS (deferred)
 - All active proposals reference `src/entropic/` (old `src/entropi/` paths fixed)
+
+### 2026-03-02 — Pre-phase baseline (v1.1.0)
+- Instance #2 committed Qwen3.5 adapter, `enable_thinking` pipeline,
+  `inject_model_context` config, `entropic setup-cuda` CLI
+- Engine grew: 1,528 → 1,552 lines, 68 → 69 methods (+_inject_model_context)
+- Version bumped to 1.1.0
+- Config fields already landed: `TierConfig.enable_thinking`, `LibraryConfig.inject_model_context`
+- All proposals, examples, and test updates committed to develop
+- Clean working tree — ready for Phase 1
+
+### 2026-03-02 — Track 1: Engine Decomposition (P2-019)
+- [x] Phase 1a: Extracted `engine_types.py` (143 lines) — dataclasses/enums
+  - Commit: `b961a84`
+  - Engine: 1,552 → 1,441 lines (re-exports preserved)
+- [x] Phase 1b: Extracted `tool_executor.py` (442 lines) — 20 tool methods
+  - Engine: 1,441 → 1,089 lines (-352 lines)
+  - Refactored callbacks: individual attrs → shared `EngineCallbacks` container
+  - `set_callbacks()` now updates fields in place (subsystems see changes)
+  - ToolExecutor created lazily via `_ensure_tool_executor()` (server_manager may be None at init)
+  - Engine hooks: `after_tool_hook` (compaction+warning), `directive_hook` (directive processing)
+  - Updated 3 test files (test_engine, test_engine_auto_chain, test_engine_feedback_roles)
+  - 647 unit + model tests pass
+  - **Files changed:** engine.py, tool_executor.py (new), test_engine.py, test_engine_auto_chain.py, test_engine_feedback_roles.py
+- [ ] Phase 1c: Extract ResponseGenerator (~14 methods)
+- [ ] Phase 1d: Extract ContextManager (~8 methods)
+- [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop

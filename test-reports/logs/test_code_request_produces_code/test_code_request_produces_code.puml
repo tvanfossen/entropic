@@ -25,32 +25,25 @@ note right of Mdl
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(num: int) -&gt; bool:
-      """
-      Check if an integer is even.
-      
-      Args:
-          num (int): The number to check
-          
-      Returns:
-          bool: True if the number is even, False otherwise
-          
-      Examples:
-          &gt;&gt;&gt; is_even(4)
-          True
-          &gt;&gt;&gt; is_even(5)
-          False
-          &gt;&gt;&gt; is_even(0)
-          True
-          &gt;&gt;&gt; is_even(-2)
-          True
-      """
+  def is_even(num):
       return num % 2 == 0
   ```
   
-  This function works by using the modulo operator (`%`) to check if there's any 
-  remainder when dividing by 2. If the remainder is 0, the number is even. The 
-  function handles both positive and negative integers correctly.
+  **Usage example:**
+  ```python
+  print(is_even(4))   # Output: True
+  print(is_even(5))   # Output: False
+  print(is_even(-6))  # Output: True
+  print(is_even(0))   # Output: True
+  ```
+  
+  The function works for:
+  - Positive numbers
+  - Negative numbers
+  - Zero
+  - Both integers and floating-point numbers (e.g., 3.0 would return False)
+  
+  Would you like me to add any additional features or handle specific edge cases?
 end note
 note over T #palegreen
   **PASSED** (< 262s)

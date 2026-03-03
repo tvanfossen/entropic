@@ -267,6 +267,7 @@ class _EngineTestBase:
         engine.server_manager = MagicMock()
         engine.orchestrator = MagicMock()
         engine._tool_executor = None
+        engine._response_generator = None
         return engine
 
 
@@ -498,9 +499,11 @@ class TestDirectiveTierChange(_EngineTestBase):
         engine = self._make_engine()
         engine.orchestrator = MagicMock()
         engine.orchestrator.can_handoff = MagicMock(return_value=True)
-        engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
-        engine._log_assembled_prompt = MagicMock()
-        engine._notify_tier_selected = MagicMock()
+        mock_rg = MagicMock()
+        mock_rg._build_formatted_system_prompt = MagicMock(return_value="system prompt")
+        mock_rg._log_assembled_prompt = MagicMock()
+        mock_rg._notify_tier_selected = MagicMock()
+        engine._response_generator = mock_rg
         engine._reinject_context_anchors = MagicMock()
         return engine
 
@@ -529,7 +532,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
         assert ctx.locked_tier == "code"
         assert result.tier_changed is True
-        engine._build_formatted_system_prompt.assert_called_once()
+        engine._response_generator._build_formatted_system_prompt.assert_called_once()
 
     def test_tier_change_directive_rejects_invalid_tier(self) -> None:
         """tier_change with invalid tier is a no-op."""
@@ -785,21 +788,30 @@ class TestContextWarningInjection:
 class TestStreamingInterrupt(_EngineTestBase):
     """Interrupt event must stop streaming mid-generation."""
 
-    def _make_streaming_engine(self):
-        """Create engine wired for streaming interrupt tests."""
-        engine = self._make_engine()
-        engine._interrupt_event = threading.Event()
-        engine._pause_event = threading.Event()
-        engine._callbacks.on_stream_chunk = None
-        engine._log_model_output = MagicMock()
-        engine.orchestrator = MagicMock()
-        engine.orchestrator.last_finish_reason = "stop"
-        return engine
+    def _make_streaming_rg(self):
+        """Create ResponseGenerator wired for streaming interrupt tests."""
+        from entropic.core.engine_types import EngineCallbacks, GenerationEvents
+        from entropic.core.response_generator import ResponseGenerator
+
+        orchestrator = MagicMock()
+        orchestrator.last_finish_reason = "stop"
+        rg = ResponseGenerator(
+            orchestrator=orchestrator,
+            config=MagicMock(),
+            loop_config=LoopConfig(),
+            callbacks=EngineCallbacks(),
+            events=GenerationEvents(
+                interrupt=threading.Event(),
+                pause=threading.Event(),
+            ),
+        )
+        rg._log_model_output = MagicMock()
+        return rg
 
     @pytest.mark.asyncio
     async def test_interrupt_stops_streaming(self) -> None:
         """Setting _interrupt_event breaks out of stream loop."""
-        engine = self._make_streaming_engine()
+        rg = self._make_streaming_rg()
 
         chunks_yielded = 0
 
@@ -808,37 +820,37 @@ class TestStreamingInterrupt(_EngineTestBase):
             for word in ["Hello ", "world ", "this ", "should ", "stop "]:
                 chunks_yielded += 1
                 if chunks_yielded == 2:
-                    engine._interrupt_event.set()
+                    rg._interrupt_event.set()
                 yield word
 
-        engine.orchestrator.generate_stream = fake_stream
-        engine.orchestrator.get_adapter = MagicMock()
-        engine.orchestrator.get_adapter().parse_tool_calls.return_value = ("Hello ", [])
+        rg._orchestrator.generate_stream = fake_stream
+        rg._orchestrator.get_adapter = MagicMock()
+        rg._orchestrator.get_adapter().parse_tool_calls.return_value = ("Hello ", [])
 
         ctx = LoopContext(messages=[Message(role="system", content="test")])
-        content, tool_calls = await engine._generate_streaming(ctx)
+        await rg._generate_streaming(ctx)
 
         # Should have stopped after chunk 2 set the interrupt
         assert chunks_yielded == 2
-        assert "interrupted" in str(engine._log_model_output.call_args)
+        assert "interrupted" in str(rg._log_model_output.call_args)
 
     @pytest.mark.asyncio
     async def test_no_interrupt_streams_fully(self) -> None:
         """Without interrupt, all chunks are consumed."""
-        engine = self._make_streaming_engine()
+        rg = self._make_streaming_rg()
 
         async def fake_stream(*args, **kwargs):
             for word in ["Hello ", "world "]:
                 yield word
 
-        engine.orchestrator.generate_stream = fake_stream
-        engine.orchestrator.get_adapter = MagicMock()
-        engine.orchestrator.get_adapter().parse_tool_calls.return_value = (
+        rg._orchestrator.generate_stream = fake_stream
+        rg._orchestrator.get_adapter = MagicMock()
+        rg._orchestrator.get_adapter().parse_tool_calls.return_value = (
             "Hello world ",
             [],
         )
 
         ctx = LoopContext(messages=[Message(role="system", content="test")])
-        content, _ = await engine._generate_streaming(ctx)
+        content, _ = await rg._generate_streaming(ctx)
 
         assert content == "Hello world "

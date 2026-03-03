@@ -7,6 +7,7 @@ subsystems (ToolExecutor, ResponseGenerator, ContextManager).
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -141,3 +142,14 @@ class EngineCallbacks:
     on_tier_selected: Callable[[str], None] | None = None
     on_routing_complete: Callable[[RoutingResult], None] | None = None
     error_sanitizer: Callable[[str], str] | None = None
+
+
+@dataclass
+class GenerationEvents:
+    """Threading events passed to ResponseGenerator for interrupt/pause signaling."""
+
+    interrupt: threading.Event
+    """Hard interrupt — breaks out of the streaming/generation loop."""
+
+    pause: threading.Event
+    """Pause signal — pauses generation and prompts for user injection."""

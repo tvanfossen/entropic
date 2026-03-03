@@ -272,6 +272,13 @@ Log format: date, proposal ID, action taken, files changed.
   - Updated 3 test files (test_engine, test_engine_auto_chain, test_engine_feedback_roles)
   - 647 unit + model tests pass
   - **Files changed:** engine.py, tool_executor.py (new), test_engine.py, test_engine_auto_chain.py, test_engine_feedback_roles.py
-- [ ] Phase 1c: Extract ResponseGenerator (~14 methods)
+- [x] Phase 1c: Extracted `response_generator.py` (402 lines) — 13 response/tier methods
+  - Engine: 1,089 → 805 lines (-284 lines)
+  - ResponseGenerator constructor: (orchestrator, config, loop_config, callbacks, interrupt_event, pause_event)
+  - `_directive_tier_change` delegates to `self._ensure_response_generator()` for prompt/logging methods
+  - `create_assistant_message` promoted to static method
+  - Updated 2 test files (test_engine.py, test_model_logger.py)
+  - 647 unit + model tests pass
+  - **Files changed:** engine.py, response_generator.py (new), test_engine.py, test_model_logger.py
 - [ ] Phase 1d: Extract ContextManager (~8 methods)
 - [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop

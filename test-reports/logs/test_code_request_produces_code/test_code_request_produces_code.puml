@@ -25,8 +25,8 @@ note right of Mdl
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(n):
-      return n % 2 == 0
+  def is_even(num):
+      return num % 2 == 0
   ```
   
   **Usage example:**
@@ -36,13 +36,8 @@ note right of Mdl
   print(is_even(-2))  # Output: True
   ```
   
-  This function works for:
-  - Positive and negative integers
-  - Floats that represent whole numbers (e.g., 4.0)
-  - Any numeric type (int, float, etc.)
-  
-  The modulo operator `%` returns the remainder of the division by 2. If the 
-  remainder is 0, the number is even.
+  The function works by checking if the remainder when dividing by 2 is zero. This
+  handles both positive and negative integers correctly.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

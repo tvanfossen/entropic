@@ -333,7 +333,24 @@ for quick ad-hoc testing, but the canonical benchmark tool is `entropic benchmar
 
 ## Implementation Log
 
-{Entries added as work progresses}
+### 2026-03-03 — Layer 1 complete (P1-027 Track 3)
+
+- [x] Package structure: `src/entropic/benchmark/__init__.py`, `types.py`, `gpu.py`, `runner.py`, `layer1.py`, `report.py`, `cli.py`
+- [x] `types.py`: ModelSpec, LoadResult, InferenceResult, SwapResult, SweepPoint, Layer1Results
+- [x] `gpu.py`: get_vram_mb() (nvidia-smi), get_gpu_info(), free_model() (GC + VRAM poll), get_block_count()
+- [x] `runner.py`: BenchmarkRunner — timed_cold_load(), timed_swap(), timed_inference(), gpu_sweep()
+- [x] `layer1.py`: run_layer1() orchestration, save_results(), SWAP_TARGET_MS=3000ms
+- [x] `report.py`: Rich tables + plain-text fallback, results_to_json()
+- [x] `cli.py`: `entropic benchmark run <model.gguf> --layer1-only`, `entropic benchmark sweep`
+- [x] `src/entropic/cli.py`: registered `benchmark` subgroup
+- [x] Unit tests: test_benchmark_gpu.py (get_vram_mb, get_gpu_info, free_model), test_benchmark_runner.py (BenchmarkRunner, sweep helpers)
+- [x] Pre-commit: all hooks pass (ruff, flake8, pytest unit + model)
+- [x] Merged to develop at v1.3.1
+- **Decision:** Layer 1 uses LlamaCppBackend directly — no engine, no identities
+- **Decision:** JSON saved to ~/.entropic/benchmark/results/ by default
+- **Decision:** Patch bump (not minor) — benchmark is a diagnostic tool, not engine API
+- **Files changed:** src/entropic/benchmark/ (7 files), src/entropic/cli.py, tests/unit/test_benchmark_gpu.py, tests/unit/test_benchmark_runner.py
+- **Remaining (Layer 2):** identity-based evaluation — blocked on P1-024 (bundled identity library)
 
 ## References
 

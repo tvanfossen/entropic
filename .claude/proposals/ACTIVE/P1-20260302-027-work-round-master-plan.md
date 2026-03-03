@@ -333,3 +333,17 @@ Log format: date, proposal ID, action taken, files changed.
   - **Files changed:** core/base.py, core/__init__.py, inference/llama_cpp.py, inference/orchestrator.py, config/schema.py, 4 test files, 1 new test file
 - [x] Phase 2: Merge to develop @ v1.3.0
   - Commit: `e3bb08f` — merged develop @ v1.3.0
+
+### 2026-03-03 — Track 3: Benchmark Layer 1 (P1-029)
+- [x] Package structure: `src/entropic/benchmark/` (7 files: __init__, types, gpu, runner, layer1, report, cli)
+- [x] `types.py`: ModelSpec, LoadResult, InferenceResult, SwapResult, SweepPoint, Layer1Results
+- [x] `gpu.py`: get_vram_mb(), get_gpu_info(), free_model() (GC + VRAM polling), get_block_count()
+- [x] `runner.py`: BenchmarkRunner — timed_cold_load, timed_swap, timed_inference, gpu_sweep
+- [x] `layer1.py`: run_layer1() + save_results(); SWAP_TARGET_MS = 3000ms
+- [x] `report.py`: Rich tables + plain-text fallback, results_to_json()
+- [x] `cli.py`: `entropic benchmark run --layer1-only` + `entropic benchmark sweep`
+- [x] Unit tests: test_benchmark_gpu.py, test_benchmark_runner.py
+- [x] Pre-commit: all hooks pass (668 unit + 26 model tests pass)
+- [x] Merge to develop @ v1.3.1 (patch bump — diagnostic tool, not engine API)
+  - Commit: `8d9b75d` (bump), `827997b` (merge)
+- **Files changed:** src/entropic/benchmark/ (7 new), src/entropic/cli.py, tests/unit/ (2 new)

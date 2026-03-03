@@ -678,3 +678,48 @@ class AgentEngine:
     def is_paused(self) -> bool:
         """Check if generation is paused."""
         return self._pause_event.is_set()
+
+    async def connect_server(
+        self,
+        name: str,
+        command: str | None = None,
+        args: list[str] | None = None,
+        sse_url: str | None = None,
+    ) -> list[str]:
+        """Connect to an external MCP server at runtime.
+
+        Delegates to ServerManager.connect_server(). ServerManager must be
+        initialized before calling this method.
+
+        Args:
+            name: Unique server name.
+            command: stdio command (mutually exclusive with sse_url).
+            args: Arguments for the stdio command.
+            sse_url: SSE endpoint URL (mutually exclusive with command).
+
+        Returns:
+            List of tool names registered from the server.
+
+        Raises:
+            RuntimeError: If ServerManager is not initialized.
+            ValueError: If name conflicts with an existing server.
+        """
+        if self.server_manager is None:
+            raise RuntimeError("ServerManager not initialized — call run() first")
+        return await self.server_manager.connect_server(
+            name=name, command=command, args=args, sse_url=sse_url
+        )
+
+    async def disconnect_server(self, name: str) -> None:
+        """Disconnect and remove a runtime-registered MCP server.
+
+        Args:
+            name: Server name to disconnect.
+
+        Raises:
+            RuntimeError: If ServerManager is not initialized.
+            KeyError: If server is not found.
+        """
+        if self.server_manager is None:
+            raise RuntimeError("ServerManager not initialized — call run() first")
+        await self.server_manager.disconnect_server(name)

@@ -9,13 +9,14 @@ component: mcp
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-03-02
-updated: 2026-03-02
-tags: [mcp, tools, runtime, integration, bridge]
+updated: 2026-03-03
+tags: [mcp, tools, runtime, integration, sse]
 completed_date: null
 scoped_files:
   - "src/entropic/mcp/manager.py"
+  - "src/entropic/mcp/client.py"
   - "src/entropic/mcp/servers/external.py"
-  - "src/entropic/mcp/bridge.py"
+  - "src/entropic/config/schema.py"
   - "src/entropic/core/engine.py"
 depends_on: []
 blocks: []
@@ -80,136 +81,118 @@ Runtime:  ← NO PATH EXISTS
 
 ## Proposed Solution
 
-### Transport Architecture: stdio-native + SSE bridge
+### Transport Architecture: Native Multi-Transport via MCP SDK
 
-The engine speaks **one transport: stdio**. All MCP servers are managed as
-subprocesses communicating over stdin/stdout JSON-RPC.
-
-Non-stdio transports (HTTP SSE, WebSocket, Unix socket) are handled by a
-**bundled bridge utility** (`entropic-mcp-bridge`) that translates between
-the remote transport and stdio. The engine spawns the bridge as a regular
-stdio subprocess — it doesn't know or care what's on the other end.
+MCP SDK 1.26.0 provides native transport implementations — no bridge
+subprocess needed. `MCPClient` is extended to handle all transport types
+directly through SDK context managers:
 
 ```
-Native stdio:
-  Engine ←stdin/stdout→ MCP Server (subprocess)
+stdio:
+  MCPClient ←stdio_client()→ subprocess
 
-SSE via bridge:
-  Engine ←stdin/stdout→ entropic-mcp-bridge ←HTTP SSE→ Remote Server
+HTTP SSE:
+  MCPClient ←sse_client()→ HTTP SSE endpoint
 
-Socket via bridge:
-  Engine ←stdin/stdout→ entropic-mcp-bridge ←Unix socket→ Local Server
+Streamable HTTP:
+  MCPClient ←streamable_http_client()→ HTTP endpoint
 ```
 
-**Why stdio-native:**
-- Engine transport layer stays trivial: `subprocess.Popen` + pipe I/O
-- One code path for subprocess lifecycle, error handling, health checks
-- SSE complexity (reconnection, event buffering, HTTP auth, TLS, proxy)
-  stays outside the engine in a standalone, independently testable utility
-- Bridge is reusable outside entropic by any stdio-speaking MCP client
-- Adding new transports = new bridge flags, zero engine changes
+**Why native SDK transport:**
+- SDK already handles reconnection, event buffering, protocol negotiation
+- Single `MCPClient` class covers all transports — one code path
+- No additional subprocess per non-stdio server
+- No additional dependencies (`httpx` already used by MCP SDK)
+- New transports from SDK upgrades are free
 
-### API Surface
+### `.mcp.json` Support
 
-```python
-# Direct stdio server
-await server_manager.connect_server(
-    name="my-server",
-    command="my-mcp-server",
-    args=["--verbose"],
-)
-
-# SSE server via bridge (engine doesn't know the difference)
-await server_manager.connect_server(
-    name="remote-server",
-    command="entropic-mcp-bridge",
-    args=["--sse", "http://localhost:8080/sse"],
-)
-
-# Unix socket via bridge
-await server_manager.connect_server(
-    name="local-server",
-    command="entropic-mcp-bridge",
-    args=["--socket", "/tmp/my-server.sock"],
-)
-
-# Convenience: SSE shorthand (resolves to bridge internally)
-await server_manager.connect_server(
-    name="remote-server",
-    sse_url="http://localhost:8080/sse",
-)
-
-await server_manager.disconnect_server("my-server")
-```
-
-The `sse_url` and `socket_path` convenience parameters resolve to
-`command="entropic-mcp-bridge"` internally — sugar over the same stdio
-mechanism.
-
-### `entropic-mcp-bridge` Utility
-
-Bundled CLI tool, installed with `entropic-engine`. Translates non-stdio
-MCP transports to stdio for any consumer.
-
-```
-Usage: entropic-mcp-bridge [OPTIONS]
-
-Transports (mutually exclusive):
-  --sse URL          Connect to HTTP SSE endpoint
-  --socket PATH      Connect to Unix domain socket
-
-Options:
-  --header KEY=VAL   HTTP header (SSE only, repeatable)
-  --reconnect-delay  Seconds between reconnection attempts (default: 2)
-  --max-reconnects   Max reconnection attempts (default: 10, 0=infinite)
-  --timeout          Connection timeout in seconds (default: 30)
-  --verbose          Log bridge activity to stderr
-```
-
-**SSE bridge behavior:**
-- Connects to SSE endpoint, reads event stream
-- Translates SSE events → JSON-RPC messages on stdout
-- Translates JSON-RPC messages on stdin → HTTP POST requests
-- Automatic reconnection with exponential backoff
-- Auth headers passed via `--header Authorization=Bearer:xxx`
-- TLS/proxy handled by standard Python `httpx`/`aiohttp`
-- Clean shutdown on stdin EOF or SIGTERM
-
-**Socket bridge behavior:**
-- Connects to Unix domain socket
-- Bidirectional JSON-RPC relay between socket and stdio
-- Reconnection on socket disconnect
-
-### ExternalMCPServer Tool: `entropic.connect_server`
-
-Exposed via the external MCP socket so Claude (or any MCP client) can tell
-the engine to connect to a new server:
+Entropic reads `.mcp.json` at `ServerManager.initialize()` time (static,
+no file watching). This is the same file Claude Code uses, enabling a single
+source of truth for third-party MCP server configuration.
 
 ```json
 {
-  "name": "connect_server",
-  "description": "Connect to an external MCP tool server at runtime.",
-  "inputSchema": {
-    "type": "object",
-    "properties": {
-      "name": {"type": "string", "description": "Server name (unique ID)"},
-      "command": {"type": "string", "description": "Command to spawn (stdio)"},
-      "args": {"type": "array", "items": {"type": "string"}},
-      "sse_url": {"type": "string", "description": "SSE endpoint URL (uses bridge)"},
-      "socket_path": {"type": "string", "description": "Unix socket path (uses bridge)"}
+  "mcpServers": {
+    "pycommander": {
+      "type": "sse",
+      "url": "http://127.0.0.1:6277/sse"
     },
-    "required": ["name"],
-    "oneOf": [
-      {"required": ["command"]},
-      {"required": ["sse_url"]},
-      {"required": ["socket_path"]}
-    ]
+    "my-stdio-server": {
+      "type": "stdio",
+      "command": "my-mcp-server",
+      "args": ["--verbose"]
+    }
   }
 }
 ```
 
-Engine resolves `sse_url`/`socket_path` to bridge commands internally.
-Claude doesn't need to know about the bridge — just provides the endpoint.
+**Discovery order** (last wins on name collision):
+1. `mcp.external_servers` in YAML config
+2. `.mcp.json` in `project_dir`
+3. `.mcp.json` in `~/.entropic/` (global)
+
+**Self-detection**: Entries whose resolved transport matches the engine's
+own `ExternalMCPServer` socket are skipped automatically. This prevents
+Entropic connecting to itself while still connecting to other Entropic
+instances at different socket paths. See "Project-Derived Socket Path".
+
+### Project-Derived Socket Path
+
+`ExternalMCPServer` changes its default socket path from the fixed
+`~/.entropic/mcp.sock` to a project-derived path:
+
+```
+~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock
+```
+
+**Why project-derived:**
+- Stable across restarts (same project = same path)
+- Unique per project directory — multiple Entropic instances don't
+  collide
+- Enables self-detection: Entropic reads its own hash from `project_dir`
+  and skips any `.mcp.json` entry pointing to that socket
+- Enables N-Entropic topology: multiple instances at different project
+  dirs appear in `.mcp.json` with distinct paths; each connects to the
+  others but not itself
+
+```
+Instance A (project=/home/user/proj-a):
+  socket = ~/.entropic/socks/a1b2c3d4.sock
+  reads .mcp.json → skips a1b2c3d4.sock → connects to b5c6d7e8.sock
+
+Instance B (project=/home/user/proj-b):
+  socket = ~/.entropic/socks/b5c6d7e8.sock
+  reads .mcp.json → skips b5c6d7e8.sock → connects to a1b2c3d4.sock
+```
+
+**Self-detection logic** in `initialize()`:
+1. Compute own socket path from `project_dir`
+2. For each `.mcp.json` entry with `type: socket`, resolve the socket path
+3. Skip if resolved path == own socket path
+
+### API Surface
+
+```python
+# Runtime connection — any transport (MCPClient picks based on config)
+await server_manager.connect_server(
+    name="pycommander",
+    sse_url="http://127.0.0.1:6277/sse",
+)
+
+await server_manager.connect_server(
+    name="my-stdio-tool",
+    command="my-mcp-server",
+    args=["--verbose"],
+)
+
+# Disconnect at runtime
+await server_manager.disconnect_server("pycommander")
+
+# Inspect connected servers
+info = server_manager.list_servers()
+# {"pycommander": ServerInfo(status="connected", tools=[...]), ...}
+```
 
 ### ServerManager Changes
 
@@ -221,85 +204,102 @@ class ServerManager:
         command: str | None = None,
         args: list[str] | None = None,
         sse_url: str | None = None,
-        socket_path: str | None = None,
     ) -> list[str]:
         """Connect to an MCP server at runtime.
 
-        Exactly one of command, sse_url, or socket_path must be provided.
-        sse_url and socket_path are convenience parameters that resolve to
-        entropic-mcp-bridge as the command.
-
+        Exactly one of command+args (stdio) or sse_url must be provided.
         Returns list of tool names registered from the server.
-        Raises if name conflicts with existing server.
+        Raises ValueError if name conflicts with existing server.
         """
 
     async def disconnect_server(self, name: str) -> None:
         """Disconnect and remove a runtime-registered server."""
 
     def list_servers(self) -> dict[str, ServerInfo]:
-        """List all connected servers with connection status."""
+        """List all connected servers (static + runtime) with status."""
 ```
+
+**`MCPClient` transport selection** (new `transport` parameter):
+
+```python
+class MCPClient:
+    def __init__(
+        self,
+        name: str,
+        command: str | None = None,
+        args: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        sse_url: str | None = None,   # NEW
+        transport: str = "stdio",      # NEW: "stdio" | "sse" | "http"
+    ) -> None: ...
+```
+
+The `connect()` method selects the SDK context manager based on `transport`:
+- `"stdio"` → `stdio_client(StdioServerParameters(...))`
+- `"sse"` → `sse_client(url, ...)`
+- `"http"` → `streamable_http_client(url, ...)`
 
 ### Security Considerations
 
 - **Permission check**: Runtime-connected tools inherit the engine's
   permission system. Unknown tools prompt for approval. `allowed_tools`
   per-tier filtering applies.
-- **Command validation**: Stdio commands checked against permission deny
-  list. Bridge URLs validated for scheme (https preferred, http requires
-  explicit opt-in for non-localhost).
-- **Rate limiting**: Runtime servers subject to same rate limits as
-  config-defined servers.
-- **Namespace isolation**: Runtime server tools prefixed with server name
-  (`my-server.tool_name`) to prevent collision with built-in tools.
-- **Bridge isolation**: Bridge runs as a subprocess with no access to
-  engine internals. Compromise of a remote SSE server is contained to
-  the tool responses it can produce.
+- **URL validation**: SSE/HTTP URLs validated for scheme (https preferred;
+  http requires explicit opt-in for non-localhost via config).
+- **Self-detection only**: No blanket blocklist of socket paths — only
+  own socket is skipped. All other entries are treated as legitimate peers.
+- **Namespace isolation**: External server tools prefixed with server name
+  (`pycommander.tool_name`) to prevent collision with built-in tools.
 
 ## Acceptance Criteria
 
-- [ ] `ServerManager.connect_server()` spawns stdio subprocess, discovers tools
-- [ ] `ServerManager.disconnect_server()` terminates subprocess, removes tools
-- [ ] `sse_url` convenience parameter resolves to bridge command
-- [ ] `socket_path` convenience parameter resolves to bridge command
+- [ ] `MCPClient` supports SSE transport via `sse_client()` from MCP SDK
+- [ ] `MCPClient` supports stdio transport (existing behavior unchanged)
+- [ ] `.mcp.json` read statically at `ServerManager.initialize()`
+- [ ] Servers from `.mcp.json` merged with YAML `external_servers`
+- [ ] `ExternalMCPServer` default socket path is project-derived hash
+- [ ] Self-detection: entries matching own socket path are skipped
+- [ ] N-Entropic topology: instance A connects to B, B connects to A
+- [ ] `ServerManager.connect_server()` works post-`initialize()`
+- [ ] `ServerManager.disconnect_server()` removes server + tools
+- [ ] `list_servers()` returns all connected servers with transport info
 - [ ] Runtime-registered tools appear in `list_tools()` immediately
 - [ ] Per-tier `allowed_tools` filtering applies to runtime tools
-- [ ] `entropic.connect_server` tool exposed via ExternalMCPServer
-- [ ] Permission system applies to runtime-registered tools
-- [ ] `entropic-mcp-bridge --sse` connects and relays JSON-RPC
-- [ ] `entropic-mcp-bridge --socket` connects and relays JSON-RPC
-- [ ] Bridge reconnects on SSE disconnect with backoff
-- [ ] Bridge exits cleanly on stdin EOF / SIGTERM
-- [ ] Unit tests for connect/disconnect lifecycle
-- [ ] Unit tests for bridge transport translation
-- [ ] Integration test: start MCP server, connect at runtime, call tool
-- [ ] Integration test: SSE endpoint via bridge, call tool
+- [ ] Unit tests: MCPClient SSE transport (mocked `sse_client`)
+- [ ] Unit tests: `.mcp.json` parsing and merge with YAML config
+- [ ] Unit tests: self-detection (own socket skipped, other socket connected)
+- [ ] Unit tests: connect/disconnect lifecycle
+- [ ] Integration test: SSE server connected via `.mcp.json`, call tool
 
 ## Implementation Plan
 
-### Phase 1: ServerManager Runtime API (stdio only)
-- Add `connect_server()` / `disconnect_server()` to ServerManager
-- Subprocess lifecycle: spawn, pipe wiring, health check, kill
-- Tool discovery from newly connected server via `tools/list`
-- `list_servers()` with connection status
+### Phase 1: Project-Derived Socket Path + `.mcp.json` Reading
+- Change `ExternalMCPConfig.socket_path` default to
+  `~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock`
+- Add `project_dir`-aware default computation in `ExternalMCPServer`
+- Add `.mcp.json` parser in `ServerManager.initialize()`:
+  - Read `project_dir/.mcp.json` and `~/.entropic/.mcp.json`
+  - Convert entries to `MCPClient` instances (stdio or SSE)
+  - Skip entries matching own socket path (self-detection)
+- Unit tests: path derivation, `.mcp.json` parsing, self-detection
 
-### Phase 2: `entropic-mcp-bridge` Utility
-- CLI entry point bundled with `entropic-engine`
-- SSE transport: `httpx`-based SSE client ↔ stdio relay
-- Socket transport: Unix domain socket ↔ stdio relay
-- Reconnection with exponential backoff
-- Clean shutdown handling
+### Phase 2: MCPClient Multi-Transport
+- Add `sse_url` and `transport` parameters to `MCPClient`
+- `connect()`: select `sse_client` or `stdio_client` based on transport
+- Unit tests: SSE path (mock `sse_client`), existing stdio unchanged
 
-### Phase 3: Convenience Parameters + ExternalMCPServer Tool
-- `sse_url` / `socket_path` → bridge command resolution in `connect_server()`
-- `entropic.connect_server` tool on ExternalMCPServer
-- Parameter validation, error messages
+### Phase 3: Runtime connect/disconnect on ServerManager
+- `connect_server(name, command, args, sse_url)` — post-init registration
+- `disconnect_server(name)` — teardown + tool removal
+- `list_servers()` — status snapshot
+- Lock protects `_clients` during concurrent access
+- Unit tests: connect/disconnect lifecycle, name collision
 
-### Phase 4: Security & Permissions
-- Runtime tool permission enforcement
-- Command deny list validation
-- URL scheme validation (https preferred)
-- Namespace collision prevention
+### Phase 4: Engine Consumer API
+- `AgentEngine.connect_server(...)` / `disconnect_server(name)` delegates
+  to `ServerManager`
+- Tool list refresh (already works — `list_tools()` aggregates on call)
+- Integration test: SSE server via `.mcp.json`, call tool end-to-end
 
 ## Identity Library Interaction (P1-024)
 
@@ -317,86 +317,73 @@ tiers:
   code_writer:
     allowed_tools:
       - filesystem.write_file
-      - my-server.custom_lint     # Runtime tool, explicitly permitted
+      - pycommander.run_command     # Runtime tool, explicitly permitted
 ```
 
 ## Health Checking
 
-Runtime servers need liveness monitoring since they can crash independently
-of the engine.
-
-### Mechanism
-
-**Pipe EOF detection** (primary): Engine reads stdout pipe in a background
-task. If pipe closes (process exit), server is marked dead and removed.
-
-**Periodic ping** (secondary): Every 30s, engine sends JSON-RPC `ping`
-to each runtime server. If no response within 5s, server is marked
-unhealthy. After 3 consecutive failures, server is disconnected.
+External server crashes are detected via the MCP SDK session lifecycle —
+session methods raise when the underlying transport closes. The `MCPClient`
+wraps session calls in try/except; a transport failure marks `is_connected`
+False and logs at WARNING. No active ping loop is added for the initial
+implementation (SDK handles session-level errors).
 
 ```python
 @dataclass
 class ServerInfo:
     name: str
-    command: str
-    args: list[str]
-    status: Literal["connected", "unhealthy", "disconnected"]
-    tools: list[str]           # Tool names registered from this server
+    transport: str              # "stdio" | "sse" | "http"
+    url: str | None             # Set for SSE/HTTP servers
+    command: str | None         # Set for stdio servers
+    status: Literal["connected", "disconnected", "error"]
+    tools: list[str]            # Tool names registered from this server
     connected_at: datetime
-    last_ping: datetime | None
-    pid: int | None            # Subprocess PID (None if bridge/indirect)
+    source: str                 # "config" | "mcp_json" | "runtime"
 ```
-
-### Config Persistence
-
-Runtime servers are **ephemeral by default** — they don't survive engine
-restart. This is correct for the primary use cases (Claude spawning servers,
-dev workflow).
-
-Optional persistence via config for servers that should auto-reconnect:
-
-```yaml
-mcp:
-  runtime_servers:
-    - name: my-server
-      command: my-mcp-server
-      args: ["--verbose"]
-      auto_reconnect: true     # Reconnect on engine restart
-```
-
-Servers connected via `connect_server()` tool/API are NOT auto-persisted.
-Consumer must explicitly add to config if persistence is desired.
 
 ## Risks & Considerations
 
-- **Dangling connections**: Runtime server crashes → detected via pipe EOF
-  or ping failure. Server removed from tool list. Consumer notified via
-  callback if registered.
 - **Tool list invalidation**: `list_tools()` already aggregates from all
   providers at call time. New providers ARE discovered. Per-tier
   `allowed_tools` is resolved at tier lock time — a runtime server
   connected mid-generation won't be visible until the next tier lock.
   This is acceptable (tools appear on next turn, not mid-turn).
-- **Startup order**: If Claude starts an MCP server and immediately calls
-  `connect_server`, there's a race. `connect_server()` retries connection
-  up to 3 times with 1s backoff before failing.
-- **Bridge as dependency**: Bridge adds `httpx` (or `aiohttp`) as a
-  dependency for SSE support. Consider making it optional
-  (`entropic-engine[bridge]`) to keep base install minimal.
-- **Bridge process count**: Each bridged server = one additional subprocess.
-  Multiple remote servers = multiple bridge processes. Acceptable for
-  typical usage (1-3 servers), but document the scaling characteristic.
-- **Namespace collisions**: Two runtime servers with the same name →
-  `connect_server()` raises. Two servers providing a tool with the same
-  name → namespace prefix prevents collision (`server-a.read` vs
-  `server-b.read`).
+- **`.mcp.json` name collisions**: If YAML `external_servers` and
+  `.mcp.json` define the same server name, YAML wins (first write wins,
+  mcp.json processed second). Log at WARNING when overridden.
+- **Self-detection hash stability**: The hash is computed from
+  `abs(project_dir)`, so symlinks or different paths to the same directory
+  would produce different hashes. Document: use canonical paths. This is
+  acceptable — consumers control what they put in `.mcp.json`.
+- **SSE server unavailable at startup**: If an SSE server in `.mcp.json`
+  is unreachable, `_safe_connect()` logs the error and skips. Tools from
+  that server are simply absent. Same behavior as unreachable stdio servers.
+- **N-Entropic topology**: Each instance reads its own socket from
+  `project_dir`. If both instances include the other's socket in `.mcp.json`,
+  connection is symmetric. No special handling needed beyond self-detection.
 
 ## Implementation Log
 
-{Entries added as work progresses}
+### 2026-03-03
+- [ ] Proposal rewritten: bridge subprocess approach dropped, native MCP SDK
+  transports adopted, `.mcp.json` reading added, project-derived socket path
+  and self-detection designed
+- **Decision**: MCP SDK 1.26.0 has native `sse_client`, `stdio_client`,
+  `streamable_http_client` — no bridge utility needed
+- **Decision**: `.mcp.json` read statically at `initialize()` (no file watching)
+- **Decision**: Socket path = `~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock`
+  for stable-per-project, unique-per-instance identity
+- **Decision**: Self-detection by socket path comparison (not command name)
+- **Files to change**: `mcp/client.py` (transport), `mcp/manager.py` (runtime
+  API + mcp.json), `mcp/servers/external.py` (socket path), `config/schema.py`
+  (path default), `core/engine.py` (consumer API)
 
 ## References
 
-- MCP specification: transport types (stdio, SSE, socket)
-- Current ExternalMCPServer: `src/entropic/mcp/servers/external.py`
-- Library consumer guide: ServerManager initialization order
+- MCP SDK 1.26.0: `mcp.client.stdio.stdio_client`, `mcp.client.sse.sse_client`,
+  `mcp.client.streamable_http.streamable_http_client`
+- Current `MCPClient`: `src/entropic/mcp/client.py`
+- Current `ServerManager`: `src/entropic/mcp/manager.py`
+- Current `ExternalMCPServer`: `src/entropic/mcp/servers/external.py`
+- Current socket default: `ExternalMCPConfig.socket_path` in `config/schema.py:226`
+- `.mcp.json` format: Claude Code MCP server configuration spec

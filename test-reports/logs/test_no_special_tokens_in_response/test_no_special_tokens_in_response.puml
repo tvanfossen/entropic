@@ -22,8 +22,8 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm just a virtual assistant here to help you with whatever you need. How
-  can I assist you today? 😊
+  Hello! I'm just a tool here to help you with coding tasks and other questions. 
+  How can I assist you today? 😊
 end note
 note over T #palegreen
   **PASSED** (< 38s)

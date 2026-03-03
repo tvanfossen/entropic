@@ -1,5 +1,6 @@
 """Layer 1 benchmark orchestration: raw model performance."""
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,7 +16,12 @@ logger = get_logger("benchmark.layer1")
 SWAP_TARGET_MS = 3000.0
 
 
-async def run_layer1(spec: ModelSpec, *, sweep_step: int = 10) -> Layer1Results:
+async def run_layer1(
+    spec: ModelSpec,
+    *,
+    sweep_step: int = 10,
+    on_phase: Callable[[str], None] | None = None,
+) -> Layer1Results:
     """Run the full Layer 1 benchmark sequence for one model.
 
     Measures:
@@ -27,6 +33,7 @@ async def run_layer1(spec: ModelSpec, *, sweep_step: int = 10) -> Layer1Results:
     Args:
         spec: Model path and load parameters.
         sweep_step: n_gpu_layers increment for the GPU sweep.
+        on_phase: Optional callback invoked with phase description before each phase.
 
     Returns:
         Layer1Results with all measurements populated.
@@ -41,16 +48,24 @@ async def run_layer1(spec: ModelSpec, *, sweep_step: int = 10) -> Layer1Results:
         gpu_info=get_gpu_info(),
     )
 
+    if on_phase:
+        on_phase("Phase 1/4: cold load")
     logger.info("[layer1] Phase 1/4: cold load")
     results.cold_load = await runner.timed_cold_load()
 
+    if on_phase:
+        on_phase("Phase 2/4: swap latency")
     logger.info("[layer1] Phase 2/4: swap latency")
     results.swap = await runner.timed_swap()
     _log_swap_verdict(results.swap.activate_ms, results.swap.reactivate_ms)
 
+    if on_phase:
+        on_phase("Phase 3/4: inference tok/s")
     logger.info("[layer1] Phase 3/4: inference tok/s")
     results.inference = await runner.timed_inference()
 
+    if on_phase:
+        on_phase(f"Phase 4/4: GPU sweep (step={sweep_step})")
     logger.info(f"[layer1] Phase 4/4: GPU sweep (step={sweep_step})")
     results.sweep = await runner.gpu_sweep(step=sweep_step)
 

@@ -1,9 +1,40 @@
 """CLI commands for benchmark: entropic benchmark run/sweep."""
 
 import asyncio
+from contextlib import nullcontext
 from pathlib import Path
 
 import click
+
+
+def _make_progress_callback():
+    """Return (on_phase callback, progress context manager).
+
+    Uses Rich Progress if available, falls back to click.echo status lines.
+    The context manager must be entered before the callback is used.
+    """
+    try:
+        from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[bold cyan]{task.description}"),
+            BarColumn(bar_width=30),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+        )
+        task_id = progress.add_task("Starting...", total=4)
+
+        def on_phase(description: str) -> None:
+            progress.update(task_id, advance=1, description=description)
+
+        return on_phase, progress
+    except ImportError:
+
+        def on_phase_plain(description: str) -> None:
+            click.echo(f"  {description}...")
+
+        return on_phase_plain, nullcontext()
 
 
 @click.group()
@@ -73,7 +104,9 @@ def run(
         context_length=context_length,
         gpu_layers=gpu_layers,
     )
-    results = asyncio.run(run_layer1(spec, sweep_step=sweep_step))
+    on_phase, progress_ctx = _make_progress_callback()
+    with progress_ctx:
+        results = asyncio.run(run_layer1(spec, sweep_step=sweep_step, on_phase=on_phase))
     print_layer1_report(results)
 
     if output:

@@ -26,30 +26,33 @@ note right of Mdl
   problem by breaking it down into smaller, simpler subproblems. It relies on two 
   key components:
   
-  1. **Base Case**: A condition that stops the recursion (prevents infinite 
-  loops).
-  2. **Recursive Step**: The function calls itself with modified parameters to 
-  progress toward the base case.
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops).  
+     Example: `n == 0` in factorial calculations.
+  
+  2. **Recursive Case**: The function calls itself with modified parameters to 
+  reduce the problem size.  
+     Example: `factorial(n) = n * factorial(n-1)`.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
-          return n * factorial(n - 1)
+      else:       # Recursive case
+          return n * factorial(n-1)
   ```
   
   ### Key Concepts:
-  - **Stack Overflow Risk**: Deep recursion can exhaust the call stack, causing 
-  crashes.
-  - **Use Cases**: Ideal for problems with natural hierarchical structure (e.g., 
+  - **Call Stack**: Each recursive call adds a layer to the stack. Deep recursion 
+  can cause stack overflow.
+  - **Efficiency**: Recursion may be less efficient than iteration for large 
+  inputs due to overhead.
+  - **Use Cases**: Ideal for problems with natural hierarchical structures (e.g., 
   tree traversals, divide-and-conquer algorithms).
-  - **Comparison to Iteration**: Often less efficient than loops for simple tasks 
-  but more elegant for complex recursive problems.
   
-  Would you like to explore a specific example or compare recursion with 
-  iteration?
+  Recursion simplifies code for certain problems but requires careful handling of 
+  base cases and stack depth.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

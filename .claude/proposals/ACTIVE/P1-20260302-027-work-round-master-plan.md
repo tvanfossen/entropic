@@ -82,7 +82,7 @@ Phase 1: Foundation (parallel tracks)
         Produces model perf data for identity assignments in Phase 2.
 
 Phase 1 complete when:
-  - [ ] Engine decomposed: 3 subsystem files extracted, engine.py < 400 lines
+  - [ ] Engine decomposed: 3 subsystem files extracted, engine.py reduced (line count target relaxed — see impl log 2026-03-03)
   - [ ] VRAM orchestration: warm→active swap measured and < 3s for 21GB model
   - [ ] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC
   - [ ] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results
@@ -280,5 +280,24 @@ Log format: date, proposal ID, action taken, files changed.
   - Updated 2 test files (test_engine.py, test_model_logger.py)
   - 647 unit + model tests pass
   - **Files changed:** engine.py, response_generator.py (new), test_engine.py, test_model_logger.py
-- [ ] Phase 1d: Extract ContextManager (~8 methods)
+- [x] Phase 1d: Extracted `context_manager.py` (201 lines) — 5 context methods
+  - Commit: `d23af59`
+  - Engine: 805 → 716 lines (-89 lines)
+  - ContextManagerHooks: `after_compaction` hook → engine._reinject_context_anchors
+  - `_ensure_context_manager()` lazy factory (all deps available at init)
+  - ContextManager accesses token counter via compaction_manager.counter (same object)
+  - Updated 1 test file (test_engine.py: TestAutoPruneToolResults, TestContextWarningInjection create CM directly; TestPruneDirective pre-sets engine._context_manager)
+  - 647 unit + 26 model tests pass
+  - **Files changed:** engine.py, context_manager.py (new), test_engine.py
+  - **Note:** engine.py at 716 lines. Line count target (< 400/500) was over-optimistic — did not account for 9 new lazy-factory/delegation methods (~90 lines) or docstring overhead. User accepted this; the structural goal (all impl logic in subsystems) is met.
+- [ ] Phase 1e: Remove lazy factories + thin delegations (adversarial analysis 2026-03-03)
+  - Remove `_ensure_response_generator()`, `_ensure_context_manager()` (cargo-cult lazy — all deps available at init)
+  - Remove all 6 thin delegation methods (`_generate_response`, `_refresh_context_limit`, `_prune_tool_results`, `_prune_old_tool_results`, `_inject_context_warning`, `_check_compaction`)
+  - Eager construction of RG + CM in `__init__` (non-nullable types); ToolExecutor stays lazy (server_manager async constraint)
+  - Replace `assert self.server_manager is not None` with explicit `RuntimeError`
+  - Call subsystem methods directly at call sites
+  - Update 2 test mocks: `_check_compaction`/`_inject_context_warning` → `engine._context_manager = MagicMock()`
+  - **No constructor injection params** — CFQ002 blocks it (7 params > 6 limit); post-construction assignment is sufficient
+  - Document lazy/eager asymmetry rule in `__init__` docstring
+  - Report: `.claude/reports/synthesis/20260303-adversarial-engine-refactor.md`
 - [ ] Phase 2: Integration verification, version bump 1.2.0, merge to develop

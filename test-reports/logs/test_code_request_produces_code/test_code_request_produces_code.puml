@@ -32,18 +32,17 @@ note right of Mdl
   **Usage example:**
   ```python
   print(is_even(4))   # Output: True
-  print(is_even(7))   # Output: False
-  print(is_even(0))   # Output: True
-  print(is_even(-6))  # Output: True
+  print(is_even(5))   # Output: False
+  print(is_even(-2))  # Output: True
   ```
   
-  The function works for:
+  This function works for:
   - Positive and negative integers
-  - Zero (which is even)
-  - Floats that are whole numbers (e.g., 4.0, -2.0)
+  - Floats that represent whole numbers (e.g., 4.0)
+  - Any numeric type (int, float, etc.)
   
-  For non-integer floats (like 3.5), it will correctly return `False` since they 
-  aren't whole numbers.
+  The modulo operator `%` returns the remainder of the division by 2. If the 
+  remainder is 0, the number is even.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

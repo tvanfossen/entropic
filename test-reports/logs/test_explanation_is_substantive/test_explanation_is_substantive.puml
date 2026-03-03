@@ -26,39 +26,32 @@ note right of Mdl
   problem by breaking it down into smaller, simpler subproblems. It relies on two 
   key components:
   
-  1. **Base Case**:  
-     A condition that stops the recursion (prevents infinite loops). This is the 
-  simplest instance of the problem, which is solved directly.
-  
-  2. **Recursive Case**:  
-     The function calls itself with a modified parameter, gradually approaching 
-  the base case.
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops). This is typically a simple scenario with a known solution.
+  2. **Recursive Case**: The function call to itself with modified parameters, 
+  gradually approaching the base case.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
-      if n == 0:  # Base case
+      # Base case: stop when n reaches 0
+      if n == 0:
           return 1
-      else:       # Recursive case
-          return n * factorial(n - 1)
+      # Recursive case: n! = n * (n-1)!
+      return n * factorial(n - 1)
   ```
   
-  ### Key Concepts:
-  - **Call Stack**: Each recursive call adds a frame to the stack. If the base 
-  case isn't reached, it can cause a stack overflow.
-  - **Tail Recursion**: Some languages optimize recursion where the recursive call
-  is the final action (e.g., `return factorial(n-1) * n`), avoiding stack growth.
+  ### Key Characteristics:
+  - **Self-referential**: The function references itself in its definition.
+  - **Stack-based**: Each recursive call adds a new frame to the call stack until 
+  the base case is reached.
+  - **Use Cases**: Common in algorithms like tree traversal, divide-and-conquer 
+  problems (e.g., quicksort), and mathematical computations.
   
-  ### Use Cases:
-  - Tree traversals, divide-and-conquer algorithms (e.g., quicksort), and problems
-  with natural hierarchical structures (e.g., Fibonacci sequences).
-  
-  ### Limitations:
-  - Less efficient than iteration for simple loops due to stack overhead.
-  - Risk of stack overflow for deep recursions.
-  
-  Recursion is powerful but requires careful design to ensure termination and 
-  efficiency.
+  ### Caution:
+  - Missing base cases lead to infinite recursion and stack overflow errors.
+  - Recursive solutions can sometimes be less efficient than iterative ones due to
+  overhead from function calls.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

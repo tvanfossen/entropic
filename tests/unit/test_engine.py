@@ -263,12 +263,13 @@ class _EngineTestBase:
         engine._context_anchors = {}
         engine._directive_processor = DirectiveProcessor()
         engine._register_directive_handlers()
-        engine._inject_context_warning = MagicMock()
         engine.server_manager = MagicMock()
         engine.orchestrator = MagicMock()
         engine._tool_executor = None
-        engine._response_generator = None
-        engine._context_manager = None
+        engine._response_generator = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.check_compaction = AsyncMock()
+        engine._context_manager = mock_cm
         return engine
 
 
@@ -345,7 +346,7 @@ class TestOverflowRecovery(_EngineTestBase):
         async def mock_check_compaction(ctx, *, force=False):
             compaction_calls.append(force)
 
-        engine._check_compaction = mock_check_compaction
+        engine._context_manager.check_compaction = mock_check_compaction
         engine._set_state = MagicMock()
 
         messages = []

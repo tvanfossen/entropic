@@ -110,14 +110,29 @@ class AgentEngine:
         # set_callbacks() updates fields in place so subsystems see changes.
         self._callbacks = EngineCallbacks()
 
-        # ToolExecutor created lazily (needs server_manager, which may be None at init)
+        # Subsystem initialization:
+        #   ResponseGenerator, ContextManager — EAGER: all deps available at __init__
+        #   ToolExecutor — LAZY: server_manager is None at init, set async in run()
+        self._response_generator = ResponseGenerator(
+            orchestrator=self.orchestrator,
+            config=self.config,
+            loop_config=self.loop_config,
+            callbacks=self._callbacks,
+            events=GenerationEvents(
+                interrupt=self._interrupt_event,
+                pause=self._pause_event,
+            ),
+        )
+        self._context_manager = ContextManager(
+            config=self.config,
+            orchestrator=self.orchestrator,
+            compaction_manager=self._compaction_manager,
+            callbacks=self._callbacks,
+            hooks=ContextManagerHooks(
+                after_compaction=self._reinject_context_anchors,
+            ),
+        )
         self._tool_executor: ToolExecutor | None = None
-
-        # ResponseGenerator created lazily alongside ToolExecutor
-        self._response_generator: ResponseGenerator | None = None
-
-        # ContextManager created lazily for consistency with other subsystems
-        self._context_manager: ContextManager | None = None
 
     def _register_directive_handlers(self) -> None:
         """Register handlers for all known directive types."""
@@ -176,7 +191,7 @@ class AgentEngine:
         result.tier_changed = True
 
         # Rebuild system prompt for new tier
-        rg = self._ensure_response_generator()
+        rg = self._response_generator
         ctx.messages[0] = Message(
             role="system",
             content=rg._build_formatted_system_prompt(target_tier, ctx),
@@ -228,7 +243,9 @@ class AgentEngine:
         result: DirectiveResult,
     ) -> None:
         """Handle prune_messages directive — prune old tool results."""
-        pruned_count, freed_chars = self._prune_tool_results(ctx, directive.keep_recent)
+        pruned_count, freed_chars = self._context_manager.prune_tool_results(
+            ctx, directive.keep_recent
+        )
         logger.info(
             f"[DIRECTIVE] prune_messages: pruned {pruned_count} results "
             f"(~{freed_chars // 4} tokens freed)"
@@ -278,10 +295,6 @@ class AgentEngine:
         if tier_config:
             return tier_config.context_length
         return 16384
-
-    def _refresh_context_limit(self) -> None:
-        """Delegate context limit refresh to ContextManager."""
-        self._ensure_context_manager().refresh_context_limit()
 
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.
@@ -413,16 +426,16 @@ class AgentEngine:
         )
         try:
             # Refresh context limit in case model changed
-            self._refresh_context_limit()
+            self._context_manager.refresh_context_limit()
 
             # Prune old tool results before compaction check
-            self._prune_old_tool_results(ctx)
+            self._context_manager.prune_old_tool_results(ctx)
 
             # Check for compaction before generating
-            await self._check_compaction(ctx)
+            await self._context_manager.check_compaction(ctx)
 
             self._set_state(ctx, AgentState.EXECUTING)
-            content, tool_calls = await self._generate_response(ctx)
+            content, tool_calls = await self._response_generator.generate_response(ctx)
 
             logger.debug(
                 f"Iteration {ctx.metrics.iterations}: "
@@ -510,43 +523,6 @@ class AgentEngine:
         self._directive_tier_change(ctx, directive, result)
         return result.tier_changed
 
-    def _ensure_response_generator(self) -> ResponseGenerator:
-        """Create or return the ResponseGenerator subsystem.
-
-        Created lazily alongside ToolExecutor since both need
-        interrupt/pause events which are set up in __init__.
-        """
-        if self._response_generator is None:
-            self._response_generator = ResponseGenerator(
-                orchestrator=self.orchestrator,
-                config=self.config,
-                loop_config=self.loop_config,
-                callbacks=self._callbacks,
-                events=GenerationEvents(
-                    interrupt=self._interrupt_event,
-                    pause=self._pause_event,
-                ),
-            )
-        return self._response_generator
-
-    def _ensure_context_manager(self) -> ContextManager:
-        """Create or return the ContextManager subsystem."""
-        if self._context_manager is None:
-            self._context_manager = ContextManager(
-                config=self.config,
-                orchestrator=self.orchestrator,
-                compaction_manager=self._compaction_manager,
-                callbacks=self._callbacks,
-                hooks=ContextManagerHooks(
-                    after_compaction=self._reinject_context_anchors,
-                ),
-            )
-        return self._context_manager
-
-    async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
-        """Delegate response generation to ResponseGenerator."""
-        return await self._ensure_response_generator().generate_response(ctx)
-
     def _ensure_tool_executor(self) -> ToolExecutor:
         """Create or return the ToolExecutor subsystem.
 
@@ -554,7 +530,11 @@ class AgentEngine:
         (it's set up in run() on first call).
         """
         if self._tool_executor is None:
-            assert self.server_manager is not None
+            if self.server_manager is None:
+                raise RuntimeError(
+                    "ToolExecutor requires server_manager. "
+                    "Provide it at construction or let run() initialize a default."
+                )
             self._tool_executor = ToolExecutor(
                 server_manager=self.server_manager,
                 orchestrator=self.orchestrator,
@@ -569,8 +549,8 @@ class AgentEngine:
 
     async def _after_tool_hook(self, ctx: LoopContext) -> None:
         """Post-tool hook: compaction check + context warning injection."""
-        await self._check_compaction(ctx)
-        self._inject_context_warning(ctx)
+        await self._context_manager.check_compaction(ctx)
+        self._context_manager.inject_context_warning(ctx)
 
     async def _process_tool_calls(
         self, ctx: LoopContext, tool_calls: list[ToolCall]
@@ -598,24 +578,12 @@ class AgentEngine:
 
         return result
 
-    def _prune_tool_results(self, ctx: LoopContext, keep_recent: int) -> tuple[int, int]:
-        """Delegate tool result pruning to ContextManager."""
-        return self._ensure_context_manager().prune_tool_results(ctx, keep_recent)
-
-    def _prune_old_tool_results(self, ctx: LoopContext) -> None:
-        """Delegate auto-prune to ContextManager."""
-        self._ensure_context_manager().prune_old_tool_results(ctx)
-
-    def _inject_context_warning(self, ctx: LoopContext) -> None:
-        """Delegate context warning injection to ContextManager."""
-        self._ensure_context_manager().inject_context_warning(ctx)
-
     async def _handle_error(self, ctx: LoopContext, error: Exception) -> AsyncIterator[Message]:
         """Handle loop iteration error."""
         # Context overflow: recover via forced compaction instead of counting as error
         if isinstance(error, ValueError) and "exceed context window" in str(error):
             logger.warning(f"[RECOVERY] Context overflow detected, forcing compaction: {error}")
-            await self._check_compaction(ctx, force=True)
+            await self._context_manager.check_compaction(ctx, force=True)
             return
 
         logger.error(f"Loop error: {error}")
@@ -651,10 +619,6 @@ class AgentEngine:
         logger.info(f"State: {state.name}")
         if self._callbacks.on_state_change:
             self._callbacks.on_state_change(state)
-
-    async def _check_compaction(self, ctx: LoopContext, *, force: bool = False) -> None:
-        """Delegate compaction check to ContextManager."""
-        await self._ensure_context_manager().check_compaction(ctx, force=force)
 
     def _reinject_context_anchors(self, ctx: LoopContext) -> None:
         """Reinject all cached context anchors into ctx.messages.

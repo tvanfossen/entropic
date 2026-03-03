@@ -154,10 +154,11 @@ class TestCircuitBreaker:
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager, config)
 
-        # Mock approval, compaction, and context warning
+        # Mock approval and context management subsystem
         engine.loop_config.auto_approve_tools = True
-        engine._check_compaction = AsyncMock()
-        engine._inject_context_warning = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.check_compaction = AsyncMock()
+        engine._context_manager = mock_cm
 
         ctx = LoopContext()
         ctx.consecutive_duplicate_attempts = 2  # Simulate previous duplicates

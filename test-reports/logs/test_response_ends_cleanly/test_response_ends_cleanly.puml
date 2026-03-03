@@ -24,21 +24,20 @@ note right of Mdl
   **Model Output:**
   Here are three programming languages and their primary use cases:
   
-  1. **Python**  
-     - **Main Use Cases**: Data analysis, machine learning, automation scripting, 
-  scientific computing, and web development (with frameworks like Django/Flask).  
-     - Known for readability and extensive libraries.
-  
-  2. **JavaScript**  
+  1. **JavaScript**  
      - **Main Use Cases**: Front-end web development (browser-based interactive 
-  features) and back-end development (Node.js).  
-     - Essential for dynamic web pages and full-stack applications.
+  features), back-end development (with Node.js), and building mobile apps via 
+  frameworks like React Native.
+  
+  2. **Python**  
+     - **Main Use Cases**: Data analysis, machine learning, scientific computing, 
+  automation scripting, and rapid application development due to its readability 
+  and extensive libraries (e.g., NumPy, Pandas, TensorFlow).
   
   3. **Java**  
-     - **Main Use Cases**: Enterprise software, Android app development, and 
-  large-scale systems.  
-     - Popular in corporate environments due to its stability and "write once, run
-  anywhere" capability.
+     - **Main Use Cases**: Enterprise-scale applications (e.g., banking systems), 
+  Android app development, and large-system backend services, thanks to its 
+  platform independence and robust ecosystem.
   
   Let me know if you'd like examples or further details!
 end note

@@ -74,15 +74,16 @@ async def run_layer1(
 
 
 def _log_swap_verdict(activate_ms: float, reactivate_ms: float) -> None:
-    """Log whether the swap latency meets the P1-022 target."""
-    total = activate_ms + reactivate_ms
-    if total < SWAP_TARGET_MS:
-        logger.info(f"[layer1] swap target MET: {total:.0f}ms < {SWAP_TARGET_MS:.0f}ms")
-    else:
-        logger.warning(
-            f"[layer1] swap target MISSED: {total:.0f}ms >= {SWAP_TARGET_MS:.0f}ms "
-            f"(activate={activate_ms:.0f}ms reactivate={reactivate_ms:.0f}ms)"
-        )
+    """Log whether each warm→active transition meets the P1-022 target.
+
+    Both activate and reactivate are checked independently — the target
+    applies per-swap, not to their combined sum.
+    """
+    for label, ms in [("activate", activate_ms), ("reactivate", reactivate_ms)]:
+        if ms < SWAP_TARGET_MS:
+            logger.info(f"[layer1] {label} target MET: {ms:.0f}ms < {SWAP_TARGET_MS:.0f}ms")
+        else:
+            logger.warning(f"[layer1] {label} target MISSED: {ms:.0f}ms >= {SWAP_TARGET_MS:.0f}ms")
 
 
 def save_results(results: Layer1Results, output_dir: Path) -> Path:
@@ -129,14 +130,13 @@ def _results_to_dict(results: Layer1Results) -> dict:
 
     if results.swap:
         swap = results.swap
-        total = swap.activate_ms + swap.reactivate_ms
         data["layer1"]["swap"] = {
             "warm_ms": round(swap.warm_ms, 1),
             "activate_ms": round(swap.activate_ms, 1),
             "deactivate_ms": round(swap.deactivate_ms, 1),
             "reactivate_ms": round(swap.reactivate_ms, 1),
-            "total_swap_ms": round(total, 1),
-            "swap_target_met": total < SWAP_TARGET_MS,
+            "activate_target_met": swap.activate_ms < SWAP_TARGET_MS,
+            "reactivate_target_met": swap.reactivate_ms < SWAP_TARGET_MS,
             "vram_warm_mb": swap.vram_warm_mb,
             "vram_active_mb": swap.vram_active_mb,
         }

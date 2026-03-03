@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from entropic.core.base import ModelTier
+from entropic.core.base import ModelState, ModelTier
 from entropic.inference.orchestrator import ModelOrchestrator
 
 # Reusable tier instances for tests
@@ -26,22 +26,49 @@ class MockModelConfig:
 
 
 class MockModelBackend:
-    """Mock model backend for testing."""
+    """Mock model backend for testing (three-state lifecycle)."""
 
     def __init__(self, config: MockModelConfig, tier: str):
         self.config = config
         self.tier = tier
-        self.is_loaded = False
+        self._state: ModelState = ModelState.COLD
         self._load_called = 0
         self._unload_called = 0
+        self._warm_called = 0
+        self._activate_called = 0
+        self._deactivate_called = 0
 
-    async def load(self):
+    @property
+    def is_loaded(self) -> bool:
+        return self._state == ModelState.ACTIVE
+
+    @property
+    def state(self) -> ModelState:
+        return self._state
+
+    async def warm(self) -> None:
+        self._warm_called += 1
+        if self._state == ModelState.COLD:
+            self._state = ModelState.WARM
+
+    async def activate(self, gpu_layers: int = -1) -> None:
+        self._activate_called += 1
+        if self._state == ModelState.COLD:
+            await self.warm()
+        self._state = ModelState.ACTIVE
+
+    async def deactivate(self) -> None:
+        self._deactivate_called += 1
+        self._state = ModelState.WARM
+
+    async def load(self) -> None:
+        """Convenience: warm() + activate()."""
         self._load_called += 1
-        self.is_loaded = True
+        self._state = ModelState.ACTIVE
 
-    async def unload(self):
+    async def unload(self) -> None:
         self._unload_called += 1
-        self.is_loaded = False
+        self._state = ModelState.COLD
 
 
 class MockTierConfig:
@@ -52,6 +79,8 @@ class MockTierConfig:
         self.context_length = context_length
         self.max_output_tokens = 4096
         self.gpu_layers = -1
+        self.warm_on_startup = False
+        self.use_mlock = True
         self.adapter = "qwen2"
         self.temperature = 0.7
         self.top_p = 0.9
@@ -178,9 +207,10 @@ class TestModelOrchestratorLoading:
         # CODE should now be loaded
         assert result.is_loaded
         assert mocks[code].is_loaded
-        # NORMAL should be unloaded
+        # NORMAL should be deactivated (ACTIVE → WARM), not unloaded
         assert not mocks[normal].is_loaded
-        assert mocks[normal]._unload_called == 1
+        assert mocks[normal]._deactivate_called == 1
+        assert mocks[normal]._unload_called == 0
 
     @pytest.mark.asyncio
     async def test_same_file_no_swap(self) -> None:

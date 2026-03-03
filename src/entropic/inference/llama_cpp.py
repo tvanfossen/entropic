@@ -34,7 +34,7 @@ from typing import Any
 from llama_cpp import Llama, LlamaGrammar
 
 from entropic.config.schema import ModelConfig
-from entropic.core.base import GenerationResult, Message, ModelBackend
+from entropic.core.base import GenerationResult, Message, ModelBackend, ModelState
 from entropic.core.logging import get_logger
 from entropic.inference.adapters.base import ChatAdapter, get_adapter
 from entropic.inference.backend import GenerationConfig
@@ -99,71 +99,152 @@ class LlamaCppBackend(ModelBackend):
         self.config = config
         self._adapter = adapter or get_adapter(config.adapter, tier, prompt_manager=prompt_manager)
         self._model: Llama | None = None
+        self._state: ModelState = ModelState.COLD
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"
         self._has_chat_template_kwargs: bool = False
 
-    async def load(self) -> None:
-        """Load the model into memory."""
-        if self._model is not None:
+    # ------------------------------------------------------------------
+    # Three-state lifecycle: COLD → WARM → ACTIVE
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> ModelState:
+        """Current lifecycle state."""
+        return self._state
+
+    async def warm(self) -> None:
+        """Load model into CPU RAM only (n_gpu_layers=0).
+
+        COLD → WARM. No-op if already WARM or ACTIVE.
+        """
+        if self._state != ModelState.COLD:
             return
 
-        _check_gpu_offload()
-
         async with self._lock:
-            if self._model is not None:
+            if self._state != ModelState.COLD:
                 return
 
-            logger.info(f"Loading model: {self.config.path}")
+            _check_gpu_offload()
+            logger.info(f"[VRAM] Warming: {self.config.path.name}")
             start = time.time()
 
-            # Run in thread pool to avoid blocking
             loop = asyncio.get_running_loop()
             self._model = await loop.run_in_executor(
-                None,
-                self._load_model_sync,
+                None, lambda: self._load_model_sync(gpu_layers=0)
             )
+            self._detect_template_support()
+            self._state = ModelState.WARM
 
             elapsed = time.time() - start
-            logger.info(f"Model loaded in {elapsed:.2f}s")
+            logger.info(f"[VRAM] Warm in {elapsed:.2f}s (CPU RAM, mlock={self.config.use_mlock})")
 
-            # Detect chat_template_kwargs support (added in newer llama-cpp-python)
-            assert self._model is not None
-            sig = inspect.signature(self._model.create_chat_completion)
-            self._has_chat_template_kwargs = "chat_template_kwargs" in sig.parameters
-            if not self._has_chat_template_kwargs:
-                logger.info(
-                    "Installed llama-cpp-python does not support chat_template_kwargs. "
-                    "Template parameters (e.g. enable_thinking) will be skipped. "
-                    "Rebuild with ./install.sh or entropic setup-cuda for full support."
-                )
+    async def activate(self, gpu_layers: int = -1) -> None:
+        """Promote model to GPU (WARM/COLD → ACTIVE).
 
-    def _load_model_sync(self) -> Llama:
-        """Synchronous model loading."""
+        If COLD, warms first. No-op if already ACTIVE.
+
+        Args:
+            gpu_layers: GPU layers to offload. -1 = all layers.
+        """
+        if self._state == ModelState.ACTIVE:
+            return
+
+        if self._state == ModelState.COLD:
+            await self.warm()
+
+        async with self._lock:
+            if self._state == ModelState.ACTIVE:
+                return  # concurrent call already activated
+
+            logger.info(f"[VRAM] Activating: {self.config.path.name} ({gpu_layers} GPU layers)")
+            start = time.time()
+
+            await self._swap_model(gpu_layers)
+            self._state = ModelState.ACTIVE
+
+            elapsed = time.time() - start
+            logger.info(f"[VRAM] Active in {elapsed:.2f}s")
+
+    async def deactivate(self) -> None:
+        """Release GPU layers, return to WARM (ACTIVE → WARM).
+
+        No-op if not ACTIVE.
+        """
+        if self._state != ModelState.ACTIVE:
+            return
+
+        async with self._lock:
+            if self._state != ModelState.ACTIVE:
+                return
+
+            logger.info(f"[VRAM] Deactivating: {self.config.path.name}")
+            start = time.time()
+
+            await self._swap_model(gpu_layers=0)
+            self._state = ModelState.WARM
+
+            elapsed = time.time() - start
+            logger.info(f"[VRAM] Deactivated in {elapsed:.2f}s")
+
+    async def load(self) -> None:
+        """Load the model. Convenience wrapper: warm() + activate()."""
+        await self.warm()
+        await self.activate(self.config.gpu_layers)
+
+    async def unload(self) -> None:
+        """Unload the model fully (→ COLD). Releases all RAM and VRAM."""
+        async with self._lock:
+            self._model = None
+            self._state = ModelState.COLD
+            logger.info(f"[VRAM] Unloaded: {self.config.path.name}")
+
+    async def _swap_model(self, gpu_layers: int) -> None:
+        """Free current model instance and reload with specified GPU layers.
+
+        Caller must hold self._lock. Page cache (mlock) makes this fast
+        when going WARM→ACTIVE (~1–3s PCIe transfer, no disk I/O).
+        """
+        import gc
+
+        self._model = None
+        gc.collect()
+
+        loop = asyncio.get_running_loop()
+        self._model = await loop.run_in_executor(
+            None, lambda: self._load_model_sync(gpu_layers=gpu_layers)
+        )
+
+    def _load_model_sync(self, gpu_layers: int | None = None) -> Llama:
+        """Synchronous model load. gpu_layers=None uses config value."""
+        effective_layers = gpu_layers if gpu_layers is not None else self.config.gpu_layers
         # Suppress llama.cpp informational messages (n_ctx_per_seq < n_ctx_train etc)
-        # These go to stderr from the C++ layer and can't be controlled via verbose=False
         old_stderr = sys.stderr
         sys.stderr = io.StringIO()
         try:
-            model = Llama(
+            return Llama(
                 model_path=str(self.config.path),
                 n_ctx=self.config.context_length,
-                n_gpu_layers=self.config.gpu_layers,
+                n_gpu_layers=effective_layers,
                 chat_format=self._adapter.chat_format,
-                use_mlock=True,
+                use_mmap=True,
+                use_mlock=self.config.use_mlock,
                 verbose=False,
             )
         finally:
             sys.stderr = old_stderr
-        return model
 
-    async def unload(self) -> None:
-        """Unload the model from memory."""
-        async with self._lock:
-            if self._model is not None:
-                # Let garbage collector handle cleanup
-                self._model = None
-                logger.info("Model unloaded")
+    def _detect_template_support(self) -> None:
+        """Detect chat_template_kwargs support (added in newer llama-cpp-python)."""
+        assert self._model is not None
+        sig = inspect.signature(self._model.create_chat_completion)
+        self._has_chat_template_kwargs = "chat_template_kwargs" in sig.parameters
+        if not self._has_chat_template_kwargs:
+            logger.info(
+                "Installed llama-cpp-python does not support chat_template_kwargs. "
+                "Template parameters (e.g. enable_thinking) will be skipped. "
+                "Rebuild with ./install.sh or entropic setup-cuda for full support."
+            )
 
     def _build_gen_config(
         self,
@@ -207,7 +288,7 @@ class LlamaCppBackend(ModelBackend):
         Returns:
             Generation result
         """
-        if self._model is None:
+        if not self.is_loaded:
             await self.load()
 
         # Convert messages to llama-cpp format
@@ -296,7 +377,7 @@ class LlamaCppBackend(ModelBackend):
         Returns:
             Generation result
         """
-        if self._model is None:
+        if not self.is_loaded:
             await self.load()
 
         gen_config = self._build_gen_config(max_tokens=max_tokens, grammar=grammar, **kwargs)
@@ -356,7 +437,7 @@ class LlamaCppBackend(ModelBackend):
         Yields:
             Response chunks
         """
-        if self._model is None:
+        if not self.is_loaded:
             await self.load()
 
         llama_messages = self._convert_messages(messages)
@@ -481,11 +562,6 @@ class LlamaCppBackend(ModelBackend):
     def context_length(self) -> int:
         """Get the model's context length."""
         return int(self.config.context_length)
-
-    @property
-    def is_loaded(self) -> bool:
-        """Check if model is loaded."""
-        return self._model is not None
 
     @property
     def adapter(self) -> ChatAdapter:

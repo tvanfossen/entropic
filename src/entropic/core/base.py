@@ -8,6 +8,7 @@ consistent interfaces and enable dependency injection.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -106,6 +107,26 @@ class GenerationResult:
     generation_time_ms: int = 0
 
 
+class ModelState(Enum):
+    """Three-state model lifecycle.
+
+    COLD  — on disk only, no RAM consumed.
+    WARM  — mmap'd + mlock'd in system RAM, n_gpu_layers=0.
+            Inference possible but slow (~0.5–2 tok/s).
+    ACTIVE — N layers on GPU, full inference speed.
+
+    Subsystem initialization:
+        COLD → WARM: warm()          ~1–2s (demand paging, one-time)
+        WARM → ACTIVE: activate()    ~1–3s (PCIe transfer, no disk I/O)
+        ACTIVE → WARM: deactivate()  ~0.5–1s (no PCIe transfer needed)
+        WARM/ACTIVE → COLD: unload() negligible
+    """
+
+    COLD = "cold"
+    WARM = "warm"
+    ACTIVE = "active"
+
+
 class ModelBackend(ABC):
     """Abstract base class for model backends."""
 
@@ -113,14 +134,47 @@ class ModelBackend(ABC):
     config: "ModelConfig"
     _adapter: "ChatAdapter"
 
+    @property
+    @abstractmethod
+    def state(self) -> ModelState:
+        """Current lifecycle state of the model."""
+        ...
+
+    @abstractmethod
+    async def warm(self) -> None:
+        """Load model into CPU RAM only (n_gpu_layers=0, mmap+mlock).
+
+        COLD → WARM. No-op if already WARM or ACTIVE.
+        """
+        ...
+
+    @abstractmethod
+    async def activate(self, gpu_layers: int = -1) -> None:
+        """Promote model to GPU (WARM/COLD → ACTIVE).
+
+        If COLD, warms first. No-op if already ACTIVE.
+
+        Args:
+            gpu_layers: Number of layers to offload to GPU. -1 = all layers.
+        """
+        ...
+
+    @abstractmethod
+    async def deactivate(self) -> None:
+        """Release GPU layers, return to WARM (ACTIVE → WARM).
+
+        No-op if not ACTIVE.
+        """
+        ...
+
     @abstractmethod
     async def load(self) -> None:
-        """Load the model into memory."""
+        """Load the model. Convenience wrapper: warm() + activate()."""
         pass
 
     @abstractmethod
     async def unload(self) -> None:
-        """Unload the model from memory."""
+        """Unload the model fully (→ COLD). Releases all RAM and VRAM."""
         pass
 
     @abstractmethod
@@ -172,10 +226,9 @@ class ModelBackend(ABC):
         pass
 
     @property
-    @abstractmethod
     def is_loaded(self) -> bool:
-        """Check if model is loaded."""
-        pass
+        """Returns True when model is ACTIVE (backward compatibility)."""
+        return self.state == ModelState.ACTIVE
 
     @property
     @abstractmethod

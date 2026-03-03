@@ -187,22 +187,38 @@ class ModelOrchestrator:
             logger.warning("No models configured")
             return
 
-        # Pre-load only ONE main model (default) to maximize VRAM
+        # Determine the default main tier to activate
         default_tier = self._get_default_tier()
         if self._thinking_mode:
             thinking = self._find_tier("thinking")
             if thinking and thinking in self._tiers:
                 default_tier = thinking
 
+        await self._warm_on_startup_tiers(default_tier)
+
+        # Activate the default main tier (COLD/WARM → ACTIVE)
         if default_tier in self._tiers:
             await self._tiers[default_tier].load()
             self._loaded_main_tier = default_tier
-            logger.info(f"Pre-loaded {default_tier.name} model (default)")
+            logger.info(f"Activated {default_tier.name} model (default)")
 
-        # Pre-load router (small, always needed)
+        # Router stays ACTIVE permanently (small model, always needed)
         if self._router:
             await self._router.load()
-            logger.info("Pre-loaded ROUTER model")
+            logger.info("Activated ROUTER model")
+
+    async def _warm_on_startup_tiers(self, default_tier: ModelTier) -> None:
+        """Warm non-default tiers with warm_on_startup=True (CPU preload)."""
+        for name, tier_config in self.config.models.tiers.items():
+            tier = self._find_tier(name)
+            if (
+                tier
+                and tier in self._tiers
+                and tier != default_tier
+                and tier_config.warm_on_startup
+            ):
+                logger.info(f"Warming {name} model (warm_on_startup=True)")
+                await self._tiers[tier].warm()
 
     def _create_backend(self, model_config: ModelConfig, tier_name: str) -> ModelBackend:
         """Create a backend using the configured factory."""
@@ -320,16 +336,16 @@ class ModelOrchestrator:
 
         # At this point, `required` is proven non-None and in self._tiers
         async with self._lock:
-            # Unload the opposite tier to free VRAM
+            # Deactivate the opposite tier (ACTIVE → WARM, keeps CPU pages for fast re-swap)
             opposite = normal_tier if enabled else thinking_tier
             if opposite and opposite in self._tiers:
                 model = self._tiers[opposite]
                 if model.is_loaded:
-                    await model.unload()
-                    logger.info(f"Unloaded {opposite.name} model to free VRAM")
+                    await model.deactivate()
+                    logger.info(f"Deactivated {opposite.name} model (ACTIVE → WARM)")
 
-            await self._tiers[required].load()
-            logger.info(f"Loaded {required.name} model")
+            await self._tiers[required].load()  # WARM → ACTIVE or COLD → WARM → ACTIVE
+            logger.info(f"Activated {required.name} model")
 
             self._thinking_mode = enabled
             return True
@@ -443,7 +459,7 @@ class ModelOrchestrator:
                 self._update_swap_action("reused")
                 return reusable
 
-            await self._unload_current_if_needed(model)
+            await self._deactivate_current_if_needed(model)
 
             logger.info(f"Loading {tier.name} model")
             await model.load()
@@ -469,14 +485,14 @@ class ModelOrchestrator:
             return current
         return None
 
-    async def _unload_current_if_needed(self, model: ModelBackend) -> None:
-        """Unload currently loaded model if it's a different file."""
+    async def _deactivate_current_if_needed(self, model: ModelBackend) -> None:
+        """Deactivate currently loaded model if it's a different file (ACTIVE → WARM)."""
         if not self._loaded_main_tier:
             return
         current = self._tiers.get(self._loaded_main_tier)
         if current and current.is_loaded and current.config.path != model.config.path:
-            logger.info(f"Unloading {self._loaded_main_tier.name} model for swap")
-            await current.unload()
+            logger.info(f"Deactivating {self._loaded_main_tier.name} model for swap")
+            await current.deactivate()
 
     @property
     def tier_names(self) -> list[str]:

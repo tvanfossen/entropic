@@ -6,6 +6,7 @@ import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
+from entropic.core.base import ModelState
 from entropic.inference.backend import GenerationConfig
 from entropic.inference.llama_cpp import LlamaCppBackend
 
@@ -99,6 +100,7 @@ class TestNonStreamingFinishReason:
     def _make_backend() -> LlamaCppBackend:
         with patch.object(LlamaCppBackend, "__init__", lambda s, **kw: None):
             backend = LlamaCppBackend.__new__(LlamaCppBackend)
+        backend._state = ModelState.ACTIVE  # skip load() in generate()
         backend._last_finish_reason = "stop"
         backend._model = MagicMock()
         backend._lock = MagicMock()

@@ -86,6 +86,8 @@ class MockTierConfig:
         self.context_length = 4096
         self.max_output_tokens = 4096
         self.gpu_layers = -1
+        self.warm_on_startup = False
+        self.use_mlock = True
         self.adapter = "qwen2"
         self.temperature = 0.7
         self.top_p = 0.9

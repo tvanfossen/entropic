@@ -52,6 +52,8 @@ class ModelConfig(BaseModel):
     context_length: int = Field(default=16384, ge=512, le=131072)
     max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
+    warm_on_startup: bool = False  # Pre-load into CPU RAM at startup (COLD → WARM)
+    use_mlock: bool = True  # Lock model pages in RAM (prevents OS swap; reduces activate latency)
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
     top_p: float = Field(default=0.9, ge=0.0, le=1.0)
     top_k: int = Field(default=40, ge=0)
@@ -478,6 +480,9 @@ class LibraryConfig(BaseSettings):
 
     # Auto-inject model config (tier, model file, adapter) into system prompt
     inject_model_context: bool = True
+
+    # VRAM management
+    vram_reserve_mb: int = Field(default=512, ge=0, le=65536)  # Reserved VRAM headroom (MB)
 
     # Paths
     config_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic")

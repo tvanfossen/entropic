@@ -268,6 +268,7 @@ class _EngineTestBase:
         engine.orchestrator = MagicMock()
         engine._tool_executor = None
         engine._response_generator = None
+        engine._context_manager = None
         return engine
 
 
@@ -585,22 +586,26 @@ class TestDirectiveTierChange(_EngineTestBase):
 class TestAutoPruneToolResults:
     """Auto-prune replaces old tool results with stubs."""
 
-    def _make_engine_with_compaction(self):
-        """Create engine with real compaction config for pruning tests."""
+    def _make_context_manager(self):
+        """Create ContextManager with real compaction config for pruning tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
-
-        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
-            engine = AgentEngine.__new__(AgentEngine)
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         config = CompactionConfig(tool_result_ttl=2)
         counter = TokenCounter(max_tokens=16384)
-        engine._compaction_manager = CompactionManager(config, counter)
-        return engine
+        cm = CompactionManager(config, counter)
+        return ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
 
     def test_prune_old_tool_results(self) -> None:
         """Tool results older than TTL are replaced with stubs."""
-        engine = self._make_engine_with_compaction()
+        cm = self._make_context_manager()
 
         ctx = LoopContext(
             messages=[
@@ -624,7 +629,7 @@ class TestAutoPruneToolResults:
             3  # TTL=2: iteration 0 is stale (age 3), iteration 2 is fresh (age 1)
         )
 
-        engine._prune_old_tool_results(ctx)
+        cm.prune_old_tool_results(ctx)
 
         # First tool result (iteration 0, age=3) should be pruned
         assert ctx.messages[1].content.startswith("[Previous:")
@@ -634,7 +639,7 @@ class TestAutoPruneToolResults:
 
     def test_prune_preserves_recent(self) -> None:
         """Tool results within TTL are preserved."""
-        engine = self._make_engine_with_compaction()
+        cm = self._make_context_manager()
 
         ctx = LoopContext(
             messages=[
@@ -649,7 +654,7 @@ class TestAutoPruneToolResults:
         )
         ctx.metrics.iterations = 3  # TTL=2, iteration 2 is within TTL
 
-        engine._prune_old_tool_results(ctx)
+        cm.prune_old_tool_results(ctx)
 
         assert ctx.messages[1].content == "recent file"
 
@@ -661,13 +666,21 @@ class TestPruneDirective:
         """Create engine with compaction manager for prune tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig()
         counter = TokenCounter(max_tokens=16384)
-        engine._compaction_manager = CompactionManager(config, counter)
+        cm = CompactionManager(config, counter)
+        engine._context_manager = ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
         return engine
 
     def test_prune_directive_replaces_old_results(self) -> None:
@@ -715,22 +728,26 @@ class TestPruneDirective:
 class TestContextWarningInjection:
     """Context warning injected when usage exceeds threshold."""
 
-    def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
-        """Create engine with compaction for warning tests."""
+    def _make_context_manager(self, max_tokens=1000, threshold=0.6):
+        """Create ContextManager with compaction for warning tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
-
-        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
-            engine = AgentEngine.__new__(AgentEngine)
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         config = CompactionConfig(warning_threshold_percent=threshold)
         counter = TokenCounter(max_tokens=max_tokens)
-        engine._compaction_manager = CompactionManager(config, counter)
-        return engine
+        cm = CompactionManager(config, counter)
+        return ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
 
     def test_warning_injected_above_threshold(self) -> None:
         """Warning message injected when context usage exceeds threshold."""
-        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+        cm = self._make_context_manager(max_tokens=100, threshold=0.5)
 
         # Create context that uses ~70% (well above 50% threshold)
         ctx = LoopContext(
@@ -743,7 +760,7 @@ class TestContextWarningInjection:
         ctx.metrics.iterations = 1
         initial_count = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
 
         assert len(ctx.messages) == initial_count + 1
         assert "[CONTEXT WARNING]" in ctx.messages[-1].content
@@ -751,7 +768,7 @@ class TestContextWarningInjection:
 
     def test_warning_not_repeated_same_iteration(self) -> None:
         """Warning not injected twice in same iteration."""
-        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+        cm = self._make_context_manager(max_tokens=100, threshold=0.5)
 
         ctx = LoopContext(
             messages=[
@@ -761,15 +778,15 @@ class TestContextWarningInjection:
         )
         ctx.metrics.iterations = 1
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
         count_after_first = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
         assert len(ctx.messages) == count_after_first  # No new message
 
     def test_no_warning_below_threshold(self) -> None:
         """No warning when context usage is below threshold."""
-        engine = self._make_engine_with_compaction(max_tokens=10000, threshold=0.6)
+        cm = self._make_context_manager(max_tokens=10000, threshold=0.6)
 
         ctx = LoopContext(
             messages=[
@@ -780,7 +797,7 @@ class TestContextWarningInjection:
         ctx.metrics.iterations = 1
         initial_count = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
 
         assert len(ctx.messages) == initial_count
 

@@ -31,14 +31,13 @@ note right of Mdl
   
   **Example usage:**
   ```python
-  print(sum_list([1, 2, 3]))  # Output: 6
-  print(sum_list([]))        # Output: 0 (handles empty lists)
+  print(sum_list([1, 2, 3, 4]))  # Output: 10
   ```
   
   This implementation:
   - Uses Python's built-in `sum()` function for efficiency
-  - Automatically handles empty lists by returning 0
-  - Works with both integers and floating-point numbers
+  - Handles empty lists by returning 0 (since `sum([])` naturally returns 0)
+  - Assumes the input is a list of numbers
   
   Would you like me to implement this in a different programming language or add 
   any additional features?

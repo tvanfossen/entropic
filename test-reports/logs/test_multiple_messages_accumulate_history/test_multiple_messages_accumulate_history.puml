@@ -22,7 +22,7 @@ note right: **NORMAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I assist you today? 😊
+  Hello! How can I assist you today?
 end note
 note right of Eng
   **Follow-up message:**
@@ -32,7 +32,9 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" earlier. How can I assist you today? 😊
+  You just said: "Hello"
+  
+  Is there something specific you'd like assistance with?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

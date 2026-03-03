@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from entropic.config.schema import EntropyConfig
 from entropic.core.base import Message, ToolCall
 from entropic.core.compaction import CompactionManager, TokenCounter
+from entropic.core.context_manager import ContextManager, ContextManagerHooks
 from entropic.core.directives import DirectiveProcessor, DirectiveResult
 from entropic.core.engine_types import (  # noqa: F401 — re-exported for consumers
     AgentState,
@@ -114,6 +115,9 @@ class AgentEngine:
 
         # ResponseGenerator created lazily alongside ToolExecutor
         self._response_generator: ResponseGenerator | None = None
+
+        # ContextManager created lazily for consistency with other subsystems
+        self._context_manager: ContextManager | None = None
 
     def _register_directive_handlers(self) -> None:
         """Register handlers for all known directive types."""
@@ -276,24 +280,8 @@ class AgentEngine:
         return 16384
 
     def _refresh_context_limit(self) -> None:
-        """Refresh context limit based on current model.
-
-        When models swap (e.g., normal → thinking), the context limit
-        may change. This method updates the token counter to use the
-        current model's context length.
-        """
-        last_tier = self.orchestrator.last_used_tier
-        if last_tier is None:
-            return
-
-        tier_config = self.config.models.tiers.get(str(last_tier))
-        if tier_config:
-            new_max = tier_config.context_length
-            if new_max != self._token_counter.max_tokens:
-                logger.debug(
-                    f"Updating context limit: {self._token_counter.max_tokens} -> {new_max}"
-                )
-                self._token_counter.max_tokens = new_max
+        """Delegate context limit refresh to ContextManager."""
+        self._ensure_context_manager().refresh_context_limit()
 
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.
@@ -541,6 +529,20 @@ class AgentEngine:
             )
         return self._response_generator
 
+    def _ensure_context_manager(self) -> ContextManager:
+        """Create or return the ContextManager subsystem."""
+        if self._context_manager is None:
+            self._context_manager = ContextManager(
+                config=self.config,
+                orchestrator=self.orchestrator,
+                compaction_manager=self._compaction_manager,
+                callbacks=self._callbacks,
+                hooks=ContextManagerHooks(
+                    after_compaction=self._reinject_context_anchors,
+                ),
+            )
+        return self._context_manager
+
     async def _generate_response(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Delegate response generation to ResponseGenerator."""
         return await self._ensure_response_generator().generate_response(ctx)
@@ -597,96 +599,16 @@ class AgentEngine:
         return result
 
     def _prune_tool_results(self, ctx: LoopContext, keep_recent: int) -> tuple[int, int]:
-        """Replace old tool results with stubs. Returns (pruned_count, freed_chars)."""
-        # Find all tool result messages (newest first for keep_recent logic)
-        tool_result_indices = [i for i, msg in enumerate(ctx.messages) if msg.tool_results]
-
-        # Keep the most recent N
-        to_prune = tool_result_indices[:-keep_recent] if keep_recent > 0 else tool_result_indices
-
-        pruned_count = 0
-        freed_chars = 0
-        for idx in to_prune:
-            msg = ctx.messages[idx]
-            # Skip already-pruned messages
-            if msg.content.startswith("[Previous:"):
-                continue
-
-            tool_name = msg.metadata.get("tool_name", "unknown")
-            char_count = len(msg.content)
-            freed_chars += char_count
-
-            stub = f"[Previous: {tool_name} result — {char_count} chars, pruned to save context]"
-            ctx.messages[idx] = Message(
-                role=msg.role,
-                content=stub,
-                metadata=msg.metadata,
-            )
-            pruned_count += 1
-
-        if pruned_count > 0:
-            self._compaction_manager.counter.clear_cache()
-
-        return pruned_count, freed_chars
+        """Delegate tool result pruning to ContextManager."""
+        return self._ensure_context_manager().prune_tool_results(ctx, keep_recent)
 
     def _prune_old_tool_results(self, ctx: LoopContext) -> None:
-        """Auto-prune tool results older than TTL iterations."""
-        ttl = self._compaction_manager.config.tool_result_ttl
-        current_iteration = ctx.metrics.iterations
-
-        pruned = 0
-        for i, msg in enumerate(ctx.messages):
-            if not msg.tool_results:
-                continue
-            if msg.content.startswith("[Previous:"):
-                continue
-
-            added_at = msg.metadata.get("added_at_iteration")
-            if added_at is None:
-                continue
-
-            if current_iteration - added_at >= ttl:
-                tool_name = msg.metadata.get("tool_name", "unknown")
-                char_count = len(msg.content)
-                stub = (
-                    f"[Previous: {tool_name} result — {char_count} chars, pruned to save context]"
-                )
-                ctx.messages[i] = Message(
-                    role=msg.role,
-                    content=stub,
-                    metadata=msg.metadata,
-                )
-                pruned += 1
-
-        if pruned > 0:
-            self._compaction_manager.counter.clear_cache()
-            logger.info(f"[AUTO-PRUNE] Pruned {pruned} tool results (TTL={ttl} iterations)")
+        """Delegate auto-prune to ContextManager."""
+        self._ensure_context_manager().prune_old_tool_results(ctx)
 
     def _inject_context_warning(self, ctx: LoopContext) -> None:
-        """Inject context usage warning if over threshold."""
-        threshold = self._compaction_manager.config.warning_threshold_percent
-        usage = self._compaction_manager.counter.usage_percent(ctx.messages)
-
-        if usage < threshold:
-            return
-
-        # Don't repeat warning in same iteration
-        last_warned = ctx.metadata.get("last_warning_iteration")
-        if last_warned == ctx.metrics.iterations:
-            return
-
-        max_tokens = self._compaction_manager.counter.max_tokens
-        current_tokens = self._compaction_manager.counter.count_messages(ctx.messages)
-        pct = int(usage * 100)
-
-        warning = (
-            f"[CONTEXT WARNING] Context at {pct}% capacity ({current_tokens}/{max_tokens} tokens). "
-            f"Capture findings with entropic.todo_write if needed, "
-            f"then call entropic.prune_context."
-        )
-        ctx.messages.append(Message(role="user", content=warning))
-        ctx.metadata["last_warning_iteration"] = ctx.metrics.iterations
-        logger.info(f"[WARNING] Context at {pct}% — warning injected")
+        """Delegate context warning injection to ContextManager."""
+        self._ensure_context_manager().inject_context_warning(ctx)
 
     async def _handle_error(self, ctx: LoopContext, error: Exception) -> AsyncIterator[Message]:
         """Handle loop iteration error."""
@@ -731,22 +653,8 @@ class AgentEngine:
             self._callbacks.on_state_change(state)
 
     async def _check_compaction(self, ctx: LoopContext, *, force: bool = False) -> None:
-        """Check if compaction is needed and perform if so."""
-        ctx.messages, result = await self._compaction_manager.check_and_compact(
-            conversation_id=None,  # TODO: pass actual conversation ID
-            messages=ctx.messages,
-            force=force,
-        )
-
-        if result.compacted:
-            logger.info(
-                f"Compacted context: {result.old_token_count} -> {result.new_token_count} tokens"
-            )
-            # Notify via callback
-            if self._callbacks.on_compaction:
-                self._callbacks.on_compaction(result)
-            # Reinject context anchors so model retains awareness
-            self._reinject_context_anchors(ctx)
+        """Delegate compaction check to ContextManager."""
+        await self._ensure_context_manager().check_compaction(ctx, force=force)
 
     def _reinject_context_anchors(self, ctx: LoopContext) -> None:
         """Reinject all cached context anchors into ctx.messages.

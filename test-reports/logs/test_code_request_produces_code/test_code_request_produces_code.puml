@@ -25,25 +25,25 @@ note right of Mdl
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(num):
-      return num % 2 == 0
+  def is_even(n):
+      return n % 2 == 0
   ```
   
   **Usage example:**
   ```python
   print(is_even(4))   # Output: True
-  print(is_even(5))   # Output: False
-  print(is_even(-6))  # Output: True
+  print(is_even(7))   # Output: False
   print(is_even(0))   # Output: True
+  print(is_even(-6))  # Output: True
   ```
   
   The function works for:
-  - Positive numbers
-  - Negative numbers
-  - Zero
-  - Both integers and floating-point numbers (e.g., 3.0 would return False)
+  - Positive and negative integers
+  - Zero (which is even)
+  - Floats that are whole numbers (e.g., 4.0, -2.0)
   
-  Would you like me to add any additional features or handle specific edge cases?
+  For non-integer floats (like 3.5), it will correctly return `False` since they 
+  aren't whole numbers.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

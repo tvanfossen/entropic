@@ -23,38 +23,42 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion in programming is a technique where a function calls itself to solve a
-  problem by breaking it down into smaller, similar subproblems. It relies on two 
+  problem by breaking it down into smaller, simpler subproblems. It relies on two 
   key components:
   
-  1. **Base Case**: A condition that stops the recursion (prevents infinite 
-  loops).  
-     Example: `if n == 0: return 1` in factorial calculations.
+  1. **Base Case**:  
+     A condition that stops the recursion (prevents infinite loops). This is the 
+  simplest instance of the problem, which is solved directly.
   
-  2. **Recursive Step**: The function calls itself with modified parameters to 
-  reduce the problem size.  
-     Example: `factorial(n) = n * factorial(n-1)`.
+  2. **Recursive Case**:  
+     The function calls itself with a modified parameter, gradually approaching 
+  the base case.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
-          return n * factorial(n-1)
+      else:       # Recursive case
+          return n * factorial(n - 1)
   ```
   
-  ### Key Benefits:
-  - Simplifies code for problems with repetitive, nested structures (e.g., tree 
-  traversals, Fibonacci sequences).
-  - Encapsulates logic cleanly by leveraging problem decomposition.
+  ### Key Concepts:
+  - **Call Stack**: Each recursive call adds a frame to the stack. If the base 
+  case isn't reached, it can cause a stack overflow.
+  - **Tail Recursion**: Some languages optimize recursion where the recursive call
+  is the final action (e.g., `return factorial(n-1) * n`), avoiding stack growth.
   
-  ### Caveats:
-  - **Stack Overflow Risk**: Deep recursion can exhaust the call stack.
-  - **Performance Overhead**: Recursive calls may be slower than iterative 
-  solutions due to function call overhead.
+  ### Use Cases:
+  - Tree traversals, divide-and-conquer algorithms (e.g., quicksort), and problems
+  with natural hierarchical structures (e.g., Fibonacci sequences).
   
-  Recursion is ideal for divide-and-conquer algorithms (e.g., quicksort, 
-  mergesort) but requires careful design to avoid infinite loops.
+  ### Limitations:
+  - Less efficient than iteration for simple loops due to stack overhead.
+  - Risk of stack overflow for deep recursions.
+  
+  Recursion is powerful but requires careful design to ensure termination and 
+  efficiency.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

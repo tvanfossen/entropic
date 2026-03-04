@@ -32,8 +32,7 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" first, then asked "What did I just say?" 😊 Are you trying to 
-  check if we're on the same page? Let me know how I can help!
+  You just said: "Hello." Is there something else I can help with? 😊
 end note
 note over T #palegreen
   **PASSED** (< 112s)

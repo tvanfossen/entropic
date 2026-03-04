@@ -1,0 +1,12 @@
+root    ::= "{" ws "\"steps\":" ws "[" ws step (ws "," ws step)* ws "]" ws "}"
+step    ::= "{" ws
+              "\"description\":" ws string ws "," ws
+              "\"target_files\":" ws str-array ws "," ws
+              "\"dependencies\":" ws str-array
+            ws "}"
+
+str-array ::= "[" ws "]"
+            | "[" ws string (ws "," ws string)* ws "]"
+
+string  ::= "\"" ([^"\\] | "\\" .)* "\""
+ws      ::= [ \t\n]*

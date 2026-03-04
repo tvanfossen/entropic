@@ -1,0 +1,19 @@
+root     ::= "{" ws
+               "\"verdict\":" ws verdict ws "," ws
+               "\"findings\":" ws "[" ws findings ws "]"
+             ws "}"
+verdict  ::= "\"pass\"" | "\"fail\"" | "\"warn\""
+findings ::= | finding (ws "," ws finding)*
+finding  ::= "{" ws
+               "\"category\":" ws category ws "," ws
+               "\"severity\":" ws severity ws "," ws
+               "\"element\":" ws string ws "," ws
+               "\"issue\":" ws string ws "," ws
+               "\"suggestion\":" ws string
+             ws "}"
+category ::= "\"semantic\"" | "\"accessibility\"" | "\"contrast\""
+           | "\"responsive\"" | "\"hierarchy\"" | "\"performance\""
+           | "\"interaction\""
+severity ::= "\"error\"" | "\"warning\"" | "\"info\""
+string   ::= "\"" ([^"\\] | "\\" .)* "\""
+ws       ::= [ \t\n]*

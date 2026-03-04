@@ -1,0 +1,16 @@
+root     ::= "{" ws
+               "\"verdict\":" ws verdict ws "," ws
+               "\"findings\":" ws "[" ws findings ws "]"
+             ws "}"
+verdict  ::= "\"pass\"" | "\"fail\""
+findings ::= | finding (ws "," ws finding)*
+finding  ::= "{" ws
+               "\"line\":" ws number ws "," ws
+               "\"severity\":" ws severity ws "," ws
+               "\"issue\":" ws string ws "," ws
+               "\"suggestion\":" ws string
+             ws "}"
+severity ::= "\"error\"" | "\"warning\"" | "\"info\""
+number   ::= [0-9]+
+string   ::= "\"" ([^"\\] | "\\" .)* "\""
+ws       ::= [ \t\n]*

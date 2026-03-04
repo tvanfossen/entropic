@@ -1,0 +1,3 @@
+root     ::= "```" language "\n" code "```"
+language ::= "python" | "c" | "cpp" | "javascript" | "typescript" | "yaml" | "bash" | "rust" | "go"
+code     ::= ([^`] | "`" [^`] | "``" [^`])+

@@ -1,0 +1,19 @@
+root      ::= "{" ws
+                "\"viewport\":" ws string ws "," ws
+                "\"title\":" ws string ws "," ws
+                "\"components\":" ws comp-list ws "," ws
+                "\"layout\":" ws string ws "," ws
+                "\"notes\":" ws string
+              ws "}"
+comp-list ::= "[" ws comp (ws "," ws comp)* ws "]"
+comp      ::= "{" ws
+                "\"name\":" ws string ws "," ws
+                "\"type\":" ws comp-type ws "," ws
+                "\"notes\":" ws string
+              ws "}"
+comp-type ::= "\"nav\"" | "\"header\"" | "\"hero\"" | "\"section\""
+            | "\"card\"" | "\"form\"" | "\"button\"" | "\"footer\""
+            | "\"sidebar\"" | "\"modal\"" | "\"list\"" | "\"table\""
+            | "\"input\"" | "\"image\"" | "\"other\""
+string    ::= "\"" ([^"\\] | "\\" .)* "\""
+ws        ::= [ \t\n]*

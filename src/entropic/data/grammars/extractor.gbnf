@@ -1,0 +1,10 @@
+root    ::= "{" ws "\"entities\":" ws "[" ws entities ws "]" ws "}"
+entities ::= | entity (ws "," ws entity)*
+entity  ::= "{" ws
+              "\"type\":" ws string ws "," ws
+              "\"value\":" ws string ws "," ws
+              "\"source\":" ws string
+            ws "}"
+
+string  ::= "\"" ([^"\\] | "\\" .)* "\""
+ws      ::= [ \t\n]*

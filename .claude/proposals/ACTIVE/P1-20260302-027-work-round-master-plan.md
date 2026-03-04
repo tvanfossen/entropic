@@ -9,7 +9,7 @@ component: all
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-03-02
-updated: 2026-03-02
+updated: 2026-03-04
 tags: [master-plan, identities, vram, engine, mcp, tui, benchmark]
 completed_date: null
 scoped_files: []
@@ -84,10 +84,10 @@ Phase 1: Foundation (parallel tracks)
 Phase 1 complete when:
   - [x] Engine decomposed: 4 subsystem files extracted, engine.py 1,552 → 680 lines — merged develop @ v1.2.0
   - [x] VRAM orchestration: three-state lifecycle implemented — merged develop @ v1.3.0
-  - [ ] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC
-  - [ ] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results
-  - [ ] All 4 tracks merged to develop with version bumps
-  - [ ] docs/ updated for each track's new features
+  - [x] MCP runtime: connect/disconnect lifecycle works, bridge relays JSON-RPC — merged develop @ v1.4.0
+  - [x] Benchmark Layer 1: `entropic benchmark run --layer1-only` produces results — merged develop @ v1.3.1
+  - [x] All 4 tracks merged to develop with version bumps
+  - [x] docs/ updated for each track's new features
 
 Phase 2: Core Feature
 └── B (identity library)
@@ -347,3 +347,34 @@ Log format: date, proposal ID, action taken, files changed.
 - [x] Merge to develop @ v1.3.1 (patch bump — diagnostic tool, not engine API)
   - Commit: `8d9b75d` (bump), `827997b` (merge)
 - **Files changed:** src/entropic/benchmark/ (7 new), src/entropic/cli.py, tests/unit/ (2 new)
+
+### 2026-03-04 — Track 4: Runtime MCP Registration (P2-026)
+- [x] Post-init registration: `register_runtime_server()`, `register_external_runtime()` on ServerManager
+- [x] Unregistration: `unregister_server()` with disconnect + cleanup
+- [x] Dynamic tool list refresh via `on_tools_changed` callback
+- [x] Engine consumer API: `register_server()` / `register_external_server()` / `disconnect_server()`
+- [x] `.mcp.json` auto-discovery at initialize() (YAML wins on name collision, self-detection skips own socket)
+- [x] Bridge: stdio→socket relay subprocess for Claude Code integration
+- [x] Config: `mcp.external.socket_path` (None = auto-derived from cwd hash)
+- [x] ServerInfo.source field (`.mcp.json` / `config` / `runtime`)
+- [x] Unit tests: 681+ unit + 26 model tests pass
+- [x] Merge to develop @ v1.4.0
+  - Commit: `4840e39` (MCP registration), `81911ac` (bridge+config alignment)
+- **Files changed:** mcp/manager.py, mcp/bridge.py (new), mcp/client.py, core/engine.py, config/schema.py, cli.py, tests/unit/ (new tests)
+
+### 2026-03-04 — Headless observability fixes (v1.4.1)
+- [x] Fix: `cli.py` — skip `setup_logging` for `mcp-bridge` subcommand (was wiping main session.log)
+- [x] Fix: `ui/headless.py` — `set_queue_consumer` was a no-op; implemented asyncio consumer task started in `run_async()`
+- [x] Fix: `inference/llama_cpp.py` — GC crash in `_swap_model`: moved old model cleanup into executor thread (`_free_and_load`)
+- [x] End-to-end verified: `mcp__entropic__chat` → model routes → tool call (`pycommander.device_info_query`) → response
+- [x] session_model.log confirmed: system prompt (35,023 chars + all MCP tools), model reasoning, tool calls logged correctly
+- [x] Merge to develop @ v1.4.1
+- **Files changed:** cli.py, ui/headless.py, inference/llama_cpp.py
+
+### 2026-03-04 — Phase 1 docs complete (v1.4.1)
+- [x] `docs/configuration.md`: added `warm_on_startup`, `use_mlock`, VRAM section (`vram_reserve_mb`), MCP section (`mcp.external.socket_path`)
+- [x] `docs/library-consumer-guide.md`: added VRAM lifecycle, subsystem injection (P2-019), runtime MCP registration (P2-026), benchmark CLI (P1-029); added `ModelState` to Public API Surface table
+- [x] `README.md`: added VRAM lifecycle + runtime MCP + benchmark CLI bullets to Features; added `mcp-bridge` and `benchmark run` to CLI table
+- [x] All Phase 1 checkboxes ticked in master plan
+- [x] Merged to develop — Phase 1 complete @ v1.4.1
+- **Files changed:** docs/configuration.md, docs/library-consumer-guide.md, README.md

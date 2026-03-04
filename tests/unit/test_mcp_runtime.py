@@ -190,6 +190,46 @@ class TestMcpJsonParsing:
         mgr._load_mcp_json_servers()  # should not raise
         assert mgr._clients == {}
 
+    def test_builtin_name_shadowed_not_replaced(self, tmp_path: Path) -> None:
+        """Simulate the real .mcp.json: 'entropic' entry is already a built-in.
+
+        When .mcp.json has {"entropic": stdio, "pycommander": sse}, the
+        pre-registered "entropic" built-in must not be replaced, but
+        "pycommander" must be registered.
+        """
+        from unittest.mock import MagicMock
+
+        mcp_json = tmp_path / ".mcp.json"
+        mcp_json.write_text(
+            json.dumps(
+                {
+                    "mcpServers": {
+                        "entropic": {
+                            "type": "stdio",
+                            "command": "entropic",
+                            "args": ["mcp-bridge"],
+                        },
+                        "pycommander": {
+                            "type": "sse",
+                            "url": "http://127.0.0.1:6277/sse",
+                        },
+                    }
+                }
+            )
+        )
+        mgr = _make_manager(tmp_path)
+        builtin_stub = MagicMock()
+        mgr._clients["entropic"] = builtin_stub  # simulate pre-registered built-in
+
+        mgr._load_mcp_json_servers()
+
+        assert mgr._clients["entropic"] is builtin_stub  # not replaced
+        assert "pycommander" in mgr._clients
+        info = mgr._server_info["pycommander"]
+        assert info.transport == "sse"
+        assert info.url == "http://127.0.0.1:6277/sse"
+        assert info.source == "mcp_json"
+
 
 class TestSelfDetection:
     def test_own_socket_skipped(self, tmp_path: Path) -> None:

@@ -65,8 +65,7 @@ mcp:
   # External MCP server for Claude Code integration
   external:
     enabled: false  # Set to true to enable Claude Code delegation
-    # Socket in project dir for portability
-    socket_path: .entropic/mcp.sock
+    # socket_path: null  # Default: ~/.entropic/socks/{hash(project_dir)}.sock
     rate_limit: 10  # requests per minute
 
 # Voice interface configuration (NVIDIA PersonaPlex)

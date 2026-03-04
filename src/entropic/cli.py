@@ -278,7 +278,7 @@ def setup_cuda(force: bool, cpu: bool) -> None:
 @click.option(
     "--socket",
     type=click.Path(path_type=Path),
-    help="Path to Unix socket (default: ~/.entropic/mcp.sock)",
+    help="Path to Unix socket (default: ~/.entropic/socks/{hash(cwd)}.sock)",
 )
 @click.pass_context
 def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:

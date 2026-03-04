@@ -204,16 +204,28 @@ class LlamaCppBackend(ModelBackend):
 
         Caller must hold self._lock. Page cache (mlock) makes this fast
         when going WARM→ACTIVE (~1–3s PCIe transfer, no disk I/O).
-        """
-        import gc
 
+        Old model is freed inside the executor thread so llama_free() fires
+        in a native thread context, not the asyncio event loop (which causes
+        a GC-triggered crash in llama_cpp._internals.free_model).
+        """
+        old_model = self._model
         self._model = None
-        gc.collect()
 
         loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
-            None, lambda: self._load_model_sync(gpu_layers=gpu_layers)
+            None, lambda: self._free_and_load(old_model, gpu_layers)
         )
+
+    def _free_and_load(self, old_model: "Llama | None", gpu_layers: int) -> "Llama":
+        """Free old model and load new one in the executor thread."""
+        import gc
+
+        if old_model is not None:
+            del old_model
+            gc.collect()
+
+        return self._load_model_sync(gpu_layers=gpu_layers)
 
     def _load_model_sync(self, gpu_layers: int | None = None) -> Llama:
         """Synchronous model load. gpu_layers=None uses config value."""

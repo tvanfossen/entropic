@@ -23,36 +23,44 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion in programming is a technique where a function calls itself to solve a
-  problem by breaking it down into smaller, simpler subproblems. It relies on two 
+  problem by breaking it down into smaller, similar subproblems. It relies on two 
   key components:
   
   1. **Base Case**: A condition that stops the recursion (prevents infinite 
   loops).  
-     Example: `if n &lt;= 1 return 1` in factorial calculations.
+     Example: `if n == 0: return 1` in factorial calculations.
   
-  2. **Recursive Step**: The function calls itself with modified parameters to 
-  reduce the problem size.  
+  2. **Recursive Case**: The function calls itself with modified parameters to 
+  progress toward the base case.  
      Example: `return n * factorial(n-1)` for factorial.
+  
+  ### Key Concepts:
+  - **Call Stack**: Each recursive call adds a new frame to the stack, which 
+  consumes memory. Deep recursion can lead to stack overflow errors.
+  - **Tail Recursion**: Some languages optimize recursive calls that occur as the 
+  final step (e.g., `return factorial(n-1) * n`), avoiding stack growth. Python 
+  does not fully support this optimization.
   
   ### Example: Factorial Calculation
   ```python
   def factorial(n):
       if n == 0:  # Base case
           return 1
-      else:       # Recursive step
+      else:       # Recursive case
           return n * factorial(n-1)
   ```
   
-  ### Key Concepts:
-  - **Stack Overflow**: Deep recursion can exhaust the call stack (e.g., 
-  `factorial(10000)`).
-  - **Tail Recursion**: Some languages optimize recursive calls to reuse stack 
-  frames (not universally supported in Python).
-  - **Use Cases**: Tree traversal, divide-and-conquer algorithms (e.g., 
-  quicksort), and mathematical definitions (e.g., Fibonacci sequence).
+  ### Advantages:
+  - Simplifies code for problems with natural recursive structures (e.g., tree 
+  traversals, divide-and-conquer algorithms).
+  - Can make logic more intuitive for certain problems.
   
-  Recursion simplifies code for problems with repetitive structures but requires 
-  careful design to avoid performance issues.
+  ### Disadvantages:
+  - Risk of stack overflow for deep recursion.
+  - Potential inefficiency due to repeated calculations (e.g., naive Fibonacci).
+  - Higher memory usage compared to iterative solutions.
+  
+  Recursion is powerful but requires careful design to avoid performance pitfalls.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

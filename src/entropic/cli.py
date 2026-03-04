@@ -5,6 +5,7 @@ Handles command-line arguments and initializes the application.
 """
 
 import asyncio
+import logging
 import sys
 import warnings
 from pathlib import Path
@@ -85,8 +86,13 @@ def main(
     project_dir = project or Path.cwd()
 
     # Setup logging (writes to .entropic/session.log and session_model.log)
-    logger = setup_logging(app_config, project_dir=project_dir)
-    setup_model_logger(project_dir=project_dir)
+    # mcp-bridge is a relay subprocess — skip session log setup so it doesn't
+    # truncate the main process's session.log with mode='w'.
+    if ctx.invoked_subcommand != "mcp-bridge":
+        logger = setup_logging(app_config, project_dir=project_dir)
+        setup_model_logger(project_dir=project_dir)
+    else:
+        logger = logging.getLogger("entropic")
 
     # Store in context for subcommands
     ctx.ensure_object(dict)

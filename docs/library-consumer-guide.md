@@ -485,6 +485,182 @@ except Exception:
 If `orchestrator.initialize()` succeeds but later steps fail, you must still call
 `orchestrator.shutdown()` to release GPU memory.
 
+## VRAM Model Lifecycle (P1-022)
+
+Models transition through three states:
+
+```
+COLD → WARM → ACTIVE
+         ↑       ↓
+         └─ deactivate
+```
+
+| State | RAM | VRAM | Notes |
+|-------|-----|------|-------|
+| COLD | ✗ | ✗ | Not loaded |
+| WARM | ✅ | ✗ | mlock pages in CPU RAM, fast GPU promotion |
+| ACTIVE | ✅ | ✅ | Generating |
+
+**`warm_on_startup`** pre-loads a tier to WARM at `orchestrator.initialize()` time. The GPU promotion (WARM→ACTIVE) then takes ~1–3s instead of a full load from disk.
+
+```yaml
+models:
+  tiers:
+    thinking:
+      path: ~/models/Qwen3-14B-Q4_K_M.gguf
+      warm_on_startup: true   # Pre-load to CPU RAM at startup
+      use_mlock: true         # Lock pages (default). Prevents OS swap.
+```
+
+**`vram_reserve_mb`** keeps headroom free to avoid OOM during swaps:
+
+```yaml
+library:
+  vram_reserve_mb: 512   # Keep 512MB free (default)
+```
+
+`ModelState` is exported from `entropic.core` for consumers that need to inspect tier state:
+
+```python
+from entropic.core import ModelState
+
+state = orchestrator.get_tier("thinking").backend.state
+if state == ModelState.WARM:
+    print("Thinking tier is pre-loaded, next request will be fast")
+```
+
+## Subsystem Injection (P2-019)
+
+The engine's internal subsystems (`ToolExecutor`, `ResponseGenerator`, `ContextManager`) are constructed eagerly but can be replaced via post-construction assignment for testing or custom behavior:
+
+```python
+from entropic import AgentEngine
+from entropic.core.tool_executor import ToolExecutor
+
+engine = AgentEngine(orchestrator, server_manager, config, loop_config)
+
+# Replace with a custom subclass after construction
+engine._tool_executor = MyToolExecutor(
+    server_manager=server_manager,
+    orchestrator=orchestrator,
+    config=config,
+    callbacks=engine._callbacks,
+)
+```
+
+This pattern is used in tests to inject mock subsystems:
+
+```python
+from unittest.mock import AsyncMock
+from entropic.core.context_manager import ContextManager
+
+engine._context_manager = AsyncMock(spec=ContextManager)
+engine._context_manager.check_compaction.return_value = False
+```
+
+`EngineCallbacks` is a shared mutable dataclass — all subsystems hold a reference to the same instance. Call `engine.set_callbacks()` to update callbacks in place; all subsystems see the change immediately.
+
+## Runtime MCP Registration (P2-026)
+
+### `.mcp.json` Auto-Discovery
+
+Entropic reads `.mcp.json` at `ServerManager.initialize()` time and connects any listed MCP servers automatically. This is the same file Claude Code uses, so third-party tool servers can be declared once:
+
+```json
+{
+  "mcpServers": {
+    "my-tool-server": {
+      "type": "sse",
+      "url": "http://127.0.0.1:9000/sse"
+    },
+    "my-stdio-server": {
+      "type": "stdio",
+      "command": "my-mcp-server",
+      "args": ["--verbose"]
+    }
+  }
+}
+```
+
+Supported transports: `sse`, `stdio`. YAML `mcp.external_servers` takes priority on name collision.
+
+**Self-detection:** If an entry's socket path matches Entropic's own socket (derived from `project_dir`), it is skipped. This prevents circular connections when Entropic is listed in its own `.mcp.json`.
+
+### Runtime connect/disconnect
+
+Connect an external MCP server after the engine is running:
+
+```python
+# SSE server (HTTP)
+tool_names = await engine.connect_server(
+    name="pycommander",
+    sse_url="http://127.0.0.1:6277/sse",
+)
+print(f"Connected: {tool_names}")
+
+# stdio server (subprocess)
+tool_names = await engine.connect_server(
+    name="my-cli-tool",
+    command="my-mcp-server",
+    args=["--verbose"],
+)
+
+# Disconnect
+await engine.disconnect_server("pycommander")
+```
+
+Runtime-connected tools appear in `list_tools()` immediately and follow per-tier `allowed_tools` filtering on the next turn.
+
+```python
+# Inspect all connected servers
+servers = engine.server_manager.list_servers()
+for name, info in servers.items():
+    print(f"{name}: {info.transport} {info.status} ({info.source})")
+```
+
+`ServerInfo.source` is one of `"config"`, `"mcp_json"`, or `"runtime"`.
+
+### Tool namespacing
+
+All external MCP server tools are prefixed with the server name: `{server}.{tool}`. Add them explicitly to `allowed_tools` for tiers that need them:
+
+```yaml
+tiers:
+  code_writer:
+    allowed_tools:
+      - filesystem.write_file
+      - pycommander.device_info.query   # Runtime server tool, explicitly permitted
+```
+
+## Benchmark CLI (P1-029)
+
+Layer 1 benchmarks measure raw model performance: load times, token/s, swap latency, and GPU sweep.
+
+```bash
+# Full Layer 1 benchmark
+entropic benchmark run /path/to/model.gguf --layer1-only
+
+# GPU layer sweep only
+entropic benchmark sweep /path/to/model.gguf --max-layers 40
+
+# Save results to JSON
+entropic benchmark run /path/to/model.gguf --layer1-only --output results.json
+```
+
+**Layer 1 measures:**
+
+| Metric | Description |
+|--------|-------------|
+| Cold load time | COLD → ACTIVE (disk read + GPU transfer) |
+| Warm load time | WARM → ACTIVE (RAM → GPU only, validates `warm_on_startup`) |
+| Token/s | Inference throughput at target GPU layers |
+| Swap latency | ACTIVE → WARM → ACTIVE round-trip (validates <3s target) |
+| GPU sweep | Token/s vs layers curve, OOM detection |
+
+Results are printed as tables and optionally exported as JSON for comparison across model versions.
+
+The benchmark bypasses the engine identity system — it uses `LlamaCppBackend` directly with no routing, tool execution, or context management. This gives clean baseline measurements unaffected by engine overhead.
+
 ## Public API Surface
 
 Exported from `entropic`:
@@ -509,6 +685,7 @@ Exported from `entropic`:
 | `Message` | Core | Chat message |
 | `GenerationResult` | Core | Model output |
 | `ModelBackend` | Core | Backend ABC |
+| `ModelState` | Core | COLD/WARM/ACTIVE enum |
 | `ModelTier` | Core | Tier metadata |
 | `ToolCall` | Core | Tool invocation |
 | `ToolProvider` | Core | Tool provider ABC |

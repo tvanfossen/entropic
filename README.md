@@ -83,9 +83,12 @@ state management without the model needing to orchestrate these concerns.
 - **Auto-Chain** — Automatic tier handoff on token exhaustion or grammar completion
 - **GBNF Grammar** — Per-tier output constraints via GBNF grammars (streaming and non-streaming)
 - **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
+- **VRAM Lifecycle** — Three-state model lifecycle (COLD→WARM→ACTIVE): warm models pin to CPU RAM via mlock, activate to GPU on demand — no reload from disk on tier swap
 - **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
 - **Auto-Compaction** — Context summarization for long conversations
 - **MCP Tools** — Filesystem, bash, diagnostics, git, and extensible tool servers
+- **Runtime MCP** — Register and unregister MCP servers at runtime via `connect_server()` / `disconnect_server()`; `.mcp.json` auto-discovered at startup
+- **Benchmark CLI** — Layer 1 benchmarks (load time, tok/s, VRAM, tier swap latency) via `entropic benchmark run`
 - **Headless Mode** — Full engine without TUI for automation and testing
 - **TUI** — Terminal interface built on Textual with streaming, tool approval, voice input
 
@@ -153,6 +156,8 @@ entropic ask "question"     # Single-shot question
 entropic init               # Initialize .entropic/ in current directory
 entropic download <model>   # Download model files
 entropic setup-cuda         # Build llama-cpp-python with CUDA
+entropic mcp-bridge         # Stdio→socket bridge for Claude Code integration
+entropic benchmark run <model.gguf> --layer1-only   # Raw inference benchmarks
 ```
 
 ## Configuration

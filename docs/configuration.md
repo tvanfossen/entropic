@@ -83,6 +83,8 @@ log_level: INFO
 | `models.tiers.*.context_length` | Integer | 16384 | Maximum context window |
 | `models.tiers.*.max_output_tokens` | Integer | 4096 | Max tokens per generation |
 | `models.tiers.*.gpu_layers` | Integer | -1 | GPU layers (-1 = all) |
+| `models.tiers.*.warm_on_startup` | Boolean | false | Pre-load model to CPU RAM at startup (WARM state) |
+| `models.tiers.*.use_mlock` | Boolean | true | Lock model pages in RAM (prevents swap, faster GPU promotion) |
 | `models.tiers.*.identity` | Path/False/None | None | Per-tier system prompt file. None=bundled, False=disabled |
 | `models.tiers.*.grammar` | Path/None | None | Path to `.gbnf` grammar file for output constraints |
 | `models.tiers.*.auto_chain` | Boolean | false | Chain to next tier on completion |
@@ -107,6 +109,20 @@ log_level: INFO
 | `generation.max_tokens` | Integer | 4096 | Max tokens per response |
 | `generation.default_temperature` | Float | 0.7 | Sampling temperature |
 | `generation.default_top_p` | Float | 0.9 | Top-p sampling |
+
+### VRAM
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `library.vram_reserve_mb` | Integer | 512 | VRAM headroom to keep free (MB). Informs load decisions. |
+
+### MCP
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mcp.external.socket_path` | Path/None | None | Unix socket path for the external MCP server. None = auto-derived from project directory (`~/.entropic/socks/{hash(cwd)}.sock`). |
+
+External MCP servers (from `.mcp.json` or `mcp.external_servers`) are connected at `initialize()` time. See [Runtime MCP Registration](#runtime-mcp-registration) in the library consumer guide for the `connect_server()` API.
 
 ### Logging
 

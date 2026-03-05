@@ -46,64 +46,38 @@ def get_default_config_path() -> Path:
         return Path(__file__).parent.parent / "data" / "default_config.yaml"
 
 
-_SLOT_RENAMES: dict[str, str] = {
-    "primary": "thinking",
-    "workhorse": "normal",
-    "fast": "code",
-}
+def _normalize_flat_tiers(models: dict[str, Any]) -> None:
+    """Convert flat tier config to nested ``tiers`` dict.
 
+    Consumers may define tiers as top-level keys under ``models:`` instead of
+    nesting them under ``models.tiers:``. This normalises both forms into the
+    canonical ``tiers`` dict expected by the schema.
 
-def _migrate_model_slots(models: dict[str, Any]) -> None:
-    """Rename legacy model slot names (primary→thinking, etc.)."""
-    for old_name, new_name in _SLOT_RENAMES.items():
-        if old_name in models and new_name not in models:
-            models[new_name] = models.pop(old_name)
-
-
-def _migrate_routing(data: dict[str, Any]) -> None:
-    """Migrate routing config: fallback_model→fallback_tier, default slot names."""
-    routing = data.get("routing", {})
-
-    # fallback_model → fallback_tier
-    fallback = routing.pop("fallback_model", None)
-    if fallback and "fallback_tier" not in routing:
-        routing["fallback_tier"] = _SLOT_RENAMES.get(fallback, fallback)
-
-    # Migrate default model name
-    models = data.get("models", {})
-    default = models.get("default")
-    if default and default in _SLOT_RENAMES:
-        models["default"] = _SLOT_RENAMES[default]
-
-
-def _migrate_named_slots_to_tiers(models: dict[str, Any]) -> None:
-    """Convert named-slot model config (thinking, normal, ...) to tiers dict."""
+    Reserved top-level keys under models: tiers, router, default.
+    Any other key that maps to a dict with a ``path`` field is treated as a tier.
+    """
     if "tiers" in models:
         return
+    _reserved = frozenset({"tiers", "router", "default"})
     tiers: dict[str, Any] = {}
-    for name in ["thinking", "normal", "code", "simple"]:
-        if name in models:
+    for name in list(models.keys()):
+        if name in _reserved:
+            continue
+        value = models[name]
+        if isinstance(value, dict) and "path" in value:
             tiers[name] = models.pop(name)
     if tiers:
         models["tiers"] = tiers
 
 
-def _migrate_config(data: dict[str, Any]) -> dict[str, Any]:
-    """Migrate old config format to current schema.
+def _normalize_config(data: dict[str, Any]) -> dict[str, Any]:
+    """Normalise config structure before schema validation.
 
-    Args:
-        data: Configuration dictionary
-
-    Returns:
-        Migrated configuration dictionary
+    Handles flat-tier → nested-tier conversion. No legacy name migration
+    — consumers use the tier names they define.
     """
-    if "models" not in data:
-        return data
-
-    _migrate_model_slots(data["models"])
-    _migrate_routing(data)
-    _migrate_named_slots_to_tiers(data["models"])
-
+    if "models" in data:
+        _normalize_flat_tiers(data["models"])
     return data
 
 
@@ -353,7 +327,7 @@ class ConfigLoader:
         if self.global_config_dir is not None:
             try:
                 global_path = self.global_config_dir / "config.yaml"
-                global_config = _migrate_config(
+                global_config = _normalize_config(
                     load_yaml_config(global_path),
                 )
                 config = deep_merge(config, global_config)
@@ -362,7 +336,7 @@ class ConfigLoader:
 
         # Layer 2: Project config (source of truth)
         local_path = self._app_dir / "config.local.yaml"
-        local_config = _migrate_config(
+        local_config = _normalize_config(
             load_yaml_config(local_path),
         )
         config = deep_merge(config, local_config)
@@ -469,7 +443,7 @@ def validate_config(data: dict[str, Any] | Path) -> list[str]:
     if isinstance(data, Path):
         data = load_yaml_config(data)
 
-    data = _migrate_config(data)
+    data = _normalize_config(data)
 
     try:
         EntropyConfig(**data)

@@ -15,19 +15,24 @@ from entropic.inference.adapters.base import ChatAdapter, register_adapter
 class RouterAdapter(ChatAdapter):
     """Minimal adapter for router/classification models.
 
-    Uses plain chatml without thinking support. The router model
-    receives only the classification prompt and outputs a digit.
+    Uses the GGUF's embedded jinja template (chat_format=None triggers
+    auto-detection) with thinking disabled. The router model receives
+    only the classification prompt and outputs a digit.
     """
 
+    enable_thinking: bool = False
+
     @property
-    def chat_format(self) -> str:
-        """Plain chatml — no thinking template."""
-        return "chatml"
+    def chat_format(self) -> str | None:
+        """Use GGUF's embedded template (auto-detected by llama-cpp-python)."""
+        return None
 
     def format_system_prompt(
         self,
         base_prompt: str,
         tools: list[dict[str, Any]] | None = None,
+        *,
+        enable_thinking: bool = True,
     ) -> str:
         """Pass through as-is. Router has no identity or tools."""
         return base_prompt

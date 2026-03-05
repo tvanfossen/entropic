@@ -6,30 +6,24 @@ constitution: prompts/constitution.md
 
 models:
   tiers:
-    # Thinker tier: fast analysis + strategic planning (thinking ON)
+    # Thinker tier: fast analysis + strategic planning
     thinker:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+      adapter: qwen35
       identity: prompts/identity_thinker.md
       grammar: data/grammars/chess_thinker.gbnf
       context_length: 8192
-      max_output_tokens: 1024
-      temperature: 0.6
-      enable_thinking: false
       auto_chain: true
       allowed_tools:
         - entropic.handoff
 
-    # Executor tier: action-only with small budget (/no-think)
+    # Executor tier: action-only with small token budget
     executor:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+      path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
+      adapter: qwen35
       identity: prompts/identity_executor.md
       grammar: data/grammars/chess_executor.gbnf
       context_length: 8192
-      max_output_tokens: 128
-      temperature: 0.1
-      enable_thinking: false
       allowed_tools:
         - chess.make_move
 

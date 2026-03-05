@@ -17,6 +17,7 @@ temperature: 0.4
 enable_thinking: false
 model_preference: primary
 interstitial: false
+routable: false
 ---
 
 # Test Writer

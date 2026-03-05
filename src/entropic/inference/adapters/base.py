@@ -52,7 +52,7 @@ class ChatAdapter(ABC):
         Initialize adapter.
 
         Args:
-            tier: Model tier (thinking, normal, code, simple)
+            tier: Model tier (conversational, planner, code_writer, quick)
             prompt_manager: Central prompt loader (constitution + identity + app_context)
         """
         self._tier = tier
@@ -104,8 +104,12 @@ class ChatAdapter(ABC):
 
     @property
     @abstractmethod
-    def chat_format(self) -> str:
-        """Get llama-cpp chat format name."""
+    def chat_format(self) -> str | None:
+        """Get llama-cpp chat format name.
+
+        Return None to use the GGUF model's embedded jinja template
+        (auto-detected by llama-cpp-python).
+        """
         pass
 
     def format_system_prompt(

@@ -15,7 +15,8 @@ max_output_tokens: 256
 temperature: 0.2
 enable_thinking: false
 model_preference: any
-interstitial: true
+interstitial: false
+routable: false
 ---
 
 # Pruner

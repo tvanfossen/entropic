@@ -1,7 +1,7 @@
-# Hello World — two-tier entropic config with routing.
+# Hello World — minimal entropic consumer config.
 #
-# Demonstrates the core entropic value: automatic model routing
-# and tier handoff between a fast model and a thinking model.
+# Demonstrates automatic model routing between a conversational tier
+# and a planner tier using the same underlying model.
 #
 # Uses Qwen3.5-35B-A3B MoE (Q2_K) — full GPU offload at 16GB VRAM,
 # 30-41 tok/s. MoE architecture: 35B total params, ~3B active per token.
@@ -14,26 +14,23 @@ app_context: prompts/app_context.md
 
 models:
   tiers:
-    normal:
+    conversational:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
       adapter: qwen35
       context_length: 16384
-      gpu_layers: 40
-    thinking:
+    planner:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
       adapter: qwen35
       context_length: 16384
-      gpu_layers: 40
-      enable_thinking: true
   router:
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: router
     context_length: 2048
-  default: normal
+  default: conversational
 
 routing:
   enabled: true
-  fallback_tier: normal
+  fallback_tier: conversational
 
 mcp:
   enable_filesystem: false

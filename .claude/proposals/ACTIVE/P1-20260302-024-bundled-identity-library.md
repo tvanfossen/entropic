@@ -862,7 +862,32 @@ The prompt manager must:
 
 ## Implementation Log
 
-{Entries added as work progresses}
+### 2026-03-04 — Phase 1: Bundled identity library (commit 9b15b3a)
+- [x] 15 identities created with YAML frontmatter (focus, examples, grammar, inference params)
+- [x] 11 GBNF grammars bundled (code, json, markdown, etc.)
+- [x] IdentityFrontmatter schema: temperature, max_output_tokens, repeat_penalty, enable_thinking
+- [x] Router expanded from 4→9 routable tiers with auto-derived tier_map
+- [x] Model tests: 9 parametrized routing + 9 confidence tests (all green)
+
+### 2026-03-05 — Phase 2: Config + orchestrator alignment
+- [x] **Change 1**: Remove ThinkingConfig from schema.py, lean ModelConfig (hardware only)
+- [x] **Change 2**: Remove ThinkingConfig export from config/__init__.py
+- [x] **Change 3**: IdentityFrontmatter declares inference params (no longer silently dropped)
+- [x] **Change 4**: Orchestrator reads identity frontmatter via _apply_tier_defaults(identity_fm)
+- [x] **Change 5**: ResponseGenerator passes identity_fm to generate/generate_stream
+- [x] **Change 6**: Thinking mode removed from app, CLI, commands, presenter, components, widgets, TUI
+- [x] **Change 7**: default_config.yaml — 14 lean tiers (hardware only), 3 model files, Qwen3-0.6B router
+- [x] **Change 8**: config.local.yaml aligned — no inference params, no thinking section
+- [x] **Change 9**: Tests cleaned — ThinkingConfig mocks removed, tier names updated
+- [x] **Change 10**: Backend deduplication — _model_pool keyed by resolved path, adapter separation
+- [x] Router switched from Qwen3.5-0.8B to Qwen3-0.6B (Qwen3.5 resists classification)
+- [x] Router uses complete() (raw text continuation) instead of generate() (chat template)
+- [x] No-think handler survives activate/deactivate cycles (_detect_template_support after _swap_model)
+- [x] Routing tests simplified: classify identity examples directly (fuzzer deferred)
+- **Decision**: Qwen3 0.6B outperforms Qwen3.5 models at classification (inverse scaling)
+- **Decision**: GBNF grammar distorts classification — removed from router path
+- **Files changed**: 101 files, +1916/-1512 lines
+- **Tests**: 681 unit + 36 model, all green
 
 ## References
 

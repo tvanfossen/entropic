@@ -17,22 +17,59 @@ note right of T
   List three programming languages and their main use cases
 end note
 App -> Orch: route
-note right: **NORMAL** tier
+note right: **QUICK** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  1. **JavaScript**  
-     - **Main Use Cases**: Web development (front-end and back-end via Node.js), 
-  interactive web applications, and browser-based scripting.
+  Python (data
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Python (
+end note
+== Turn 3 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  &lt;think&gt;
+  The user asked for three programming languages and their main use cases. This is
+  a trivial knowledge question that I should answer concisely in one sentence or 
+  less, as per my instructions.
   
-  2. **Python**  
-     - **Main Use Cases**: Data analysis, machine learning, automation scripting, 
-  scientific computing, and rapid application development.
+  I need to be direct and not provide more than one sentence response.
   
-  3. **Java**  
-     - **Main Use Cases**: Enterprise software development, Android app 
-  development, large-scale systems, and distributed applications.
+  Let me format this properly: Python (general
+end note
+== Turn 4 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  &lt;think&gt;
+  I need to complete this response concisely. Let me finish listing three 
+  programming languages and their main use cases in one sentence or less as per my
+  instructions.
+  
+  Python - data science, web development, automation
+  JavaScript - frontend web apps, Node.js backend
+  Java - enterprise applications, Android development
+  
+  That
+end note
+== Turn 5 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  &lt;think&gt;
+  I need to complete the response. The user asked for three programming languages 
+  and their main use cases, and I should respond concisely in one sentence or less
+  as per my instructions.
+  
+  Let me provide a concise answer:
+  
+  Python (data science/automation), JavaScript (web development/front-end), Java (
 end note
 note over T #palegreen
   **PASSED** (< 75s)

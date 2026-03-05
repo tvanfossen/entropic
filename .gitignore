@@ -88,3 +88,5 @@ test-reports/*.png
 # Override *.log and logs/ rules for committed test logs
 !test-reports/logs/
 !test-reports/logs/**/*.log
+
+.claude/tmp/

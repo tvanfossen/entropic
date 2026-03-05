@@ -38,12 +38,26 @@ class AppContextFrontmatter(PromptFrontmatter):
 
 
 class IdentityFrontmatter(PromptFrontmatter):
-    """Frontmatter for tier identity prompt files."""
+    """Frontmatter for tier identity prompt files.
+
+    Inference behavior params live here (not in ModelConfig).
+    Config contains hardware/load-time params only.
+    """
 
     type: Literal["identity"] = "identity"
     name: str
     focus: list[str] = Field(min_length=1)
     examples: list[str] = []
+    grammar: str | None = None
+    auto_chain: str | None = None
+    allowed_tools: list[str] = []
+    max_output_tokens: int = 1024
+    temperature: float = 0.7
+    repeat_penalty: float = 1.1
+    enable_thinking: bool = False
+    model_preference: str = "primary"
+    interstitial: bool = False
+    routable: bool = True
 
 
 # Map type string to schema class

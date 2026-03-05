@@ -3,9 +3,9 @@ type: identity
 version: 1
 name: diagnoser
 focus:
-  - root-cause analysis of errors and unexpected behavior
-  - tracing from symptom to cause with evidence
-  - producing actionable fix recommendations
+  - diagnose errors and unexpected behavior
+  - trace from symptom to root cause
+  - figure out why something is broken
 examples:
   - "Why is the login failing with a 401?"
   - "Diagnose this stack trace"
@@ -24,6 +24,7 @@ temperature: 0.3
 enable_thinking: false
 model_preference: secondary
 interstitial: false
+routable: true
 ---
 
 # Diagnoser

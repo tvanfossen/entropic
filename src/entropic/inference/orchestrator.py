@@ -5,6 +5,7 @@ Manages loading, routing, and lifecycle of multiple models.
 """
 
 import asyncio
+import math
 import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from entropic.config.schema import EntropyConfig, ModelConfig
 from entropic.core.base import GenerationResult, Message, ModelBackend, ModelTier
 from entropic.core.logging import get_logger
 from entropic.inference.adapters import ChatAdapter
+from entropic.inference.adapters.base import get_adapter
 from entropic.inference.llama_cpp import LlamaCppBackend
 from entropic.prompts import build_classification_prompt
 from entropic.prompts.manager import PromptManager
@@ -22,6 +24,14 @@ from entropic.prompts.manager import PromptManager
 logger = get_logger("inference.orchestrator")
 
 BackendFactory = Callable[[ModelConfig, str], ModelBackend]
+
+
+def _logprob_to_confidence(logprobs: list[dict[str, Any]] | None) -> float:
+    """Convert first token's log-probability to a 0–1 confidence score."""
+    if not logprobs:
+        return 0.0
+    lp = logprobs[0].get("logprob", 0.0)
+    return math.exp(lp)
 
 
 @dataclass
@@ -61,9 +71,10 @@ class ModelOrchestrator:
         """
         self.config = config
         self._tiers: dict[ModelTier, ModelBackend] = {}
+        self._model_pool: dict[Path, ModelBackend] = {}  # resolved_path → backend (dedup)
+        self._adapters: dict[ModelTier, ChatAdapter] = {}  # per-tier adapter (not per-backend)
         self._router: ModelBackend | None = None
         self._lock = asyncio.Lock()
-        self._thinking_mode: bool = config.thinking.enabled
         self._last_used_tier: ModelTier | None = None
         self._loaded_main_tier: ModelTier | None = None
         self._last_routed_tier: ModelTier | None = None
@@ -86,20 +97,26 @@ class ModelOrchestrator:
         self._backend_factory: BackendFactory = backend_factory or self._default_backend_factory
 
     def _build_tiers_from_config(self) -> list[ModelTier]:
-        """Build ModelTier instances from config + identity frontmatter."""
+        """Build ModelTier instances from config + identity frontmatter.
+
+        Only routable tiers are included — tiers with ``routable=False``
+        are excluded from router classification (chain-only or infrastructure).
+        """
         tiers: list[ModelTier] = []
         for name, tier_config in self.config.models.tiers.items():
-            focus = tier_config.focus
-            examples: list[str] = []
+            # Check routable from both config AND identity frontmatter.
+            # Either source can mark a tier non-routable.
+            fm = self._prompt_manager.get_identity_frontmatter(name)
+            fm_routable = fm.routable if fm else True
+            if not tier_config.routable or not fm_routable:
+                logger.debug("Tier '%s' is non-routable, skipping router classification", name)
+                continue
+
+            focus: list[str] = fm.focus if fm else []
+            examples: list[str] = fm.examples if fm else []
 
             if not focus:
-                fm = self._prompt_manager.get_identity_frontmatter(name)
-                if fm:
-                    focus = fm.focus
-                    examples = fm.examples
-
-            if not focus:
-                logger.warning(f"Tier '{name}' has no focus (config or identity file)")
+                logger.warning(f"Tier '{name}' has no focus (identity file missing or empty)")
                 focus = [name]
 
             tiers.append(ModelTier(name, focus=focus, examples=examples))
@@ -164,22 +181,40 @@ class ModelOrchestrator:
                 raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
 
     async def initialize(self) -> None:
-        """Initialize and load configured models."""
+        """Initialize and load configured models.
+
+        Creates ONE backend per unique model file (not per tier). Multiple
+        tiers sharing the same .gguf file share a single backend instance,
+        avoiding duplicate VRAM compute buffer allocation (~1.1GB each).
+        """
         logger.info("Initializing model orchestrator")
 
         models_config = self.config.models
 
-        # Create backends for configured tiers
+        # Create deduplicated backends: one per unique model path
         for name, tier_config in models_config.tiers.items():
             tier = self._find_tier(name)
             if tier is None:
                 logger.warning(f"Tier config '{name}' has no matching ModelTier")
                 continue
-            self._tiers[tier] = self._create_backend(tier_config, tier.name)
 
-        # Create router backend (separate from tiers)
+            resolved_path = tier_config.path.resolve()
+            if resolved_path not in self._model_pool:
+                self._model_pool[resolved_path] = self._create_backend(tier_config, name)
+            self._tiers[tier] = self._model_pool[resolved_path]
+
+            # Per-tier adapter (identity-specific, independent of shared backend)
+            self._adapters[tier] = get_adapter(
+                tier_config.adapter, name, prompt_manager=self._prompt_manager
+            )
+
+        unique_count = len(self._model_pool)
+        tier_count = len(self._tiers)
+        logger.info(f"Created {unique_count} unique backend(s) for {tier_count} tier(s)")
+
+        # Create router backend (separate from tiers, speed-optimized)
         if models_config.router:
-            self._router = self._create_backend(models_config.router, "router")
+            self._router = self._backend_factory(models_config.router, "router")
 
         self._validate_tiers()
 
@@ -189,10 +224,6 @@ class ModelOrchestrator:
 
         # Determine the default main tier to activate
         default_tier = self._get_default_tier()
-        if self._thinking_mode:
-            thinking = self._find_tier("thinking")
-            if thinking and thinking in self._tiers:
-                default_tier = thinking
 
         await self._warm_on_startup_tiers(default_tier)
 
@@ -208,17 +239,26 @@ class ModelOrchestrator:
             logger.info("Activated ROUTER model")
 
     async def _warm_on_startup_tiers(self, default_tier: ModelTier) -> None:
-        """Warm non-default tiers with warm_on_startup=True (CPU preload)."""
+        """Warm non-default tiers with warm_on_startup=True (CPU preload).
+
+        Tracks already-warmed backends to avoid warming a shared backend
+        multiple times when several tiers reference the same model file.
+        """
+        warmed_backends: set[int] = set()  # id() of already-warmed backends
+        default_backend = self._tiers.get(default_tier)
+
         for name, tier_config in self.config.models.tiers.items():
             tier = self._find_tier(name)
-            if (
-                tier
-                and tier in self._tiers
-                and tier != default_tier
-                and tier_config.warm_on_startup
-            ):
-                logger.info(f"Warming {name} model (warm_on_startup=True)")
-                await self._tiers[tier].warm()
+            if not (tier and tier in self._tiers and tier_config.warm_on_startup):
+                continue
+            backend = self._tiers[tier]
+            # Skip default tier's backend (it gets load() not warm())
+            # Skip already-warmed backends (shared by another tier)
+            if backend is default_backend or id(backend) in warmed_backends:
+                continue
+            logger.info(f"Warming {name} model (warm_on_startup=True)")
+            await backend.warm()
+            warmed_backends.add(id(backend))
 
     def _create_backend(self, model_config: ModelConfig, tier_name: str) -> ModelBackend:
         """Create a backend using the configured factory."""
@@ -235,11 +275,11 @@ class ModelOrchestrator:
     def _resolve_grammar(self, tier: ModelTier) -> str | None:
         """Load and cache grammar string from tier config path.
 
-        Resolves from the tier's own backend config, NOT the runtime model.
-        This ensures the correct grammar is used even when a model is reused
-        across tiers (e.g. thinker and executor share the same .gguf file).
+        Resolves from the tier's config entry (not the shared backend's config),
+        so the correct grammar is used even when tiers share a backend.
         """
-        grammar_path = getattr(self._tiers[tier].config, "grammar", None)
+        tier_config = self.config.models.tiers.get(tier.name)
+        grammar_path = getattr(tier_config, "grammar", None) if tier_config else None
         if grammar_path is None:
             return None
         resolved = grammar_path.expanduser().resolve()
@@ -256,13 +296,17 @@ class ModelOrchestrator:
         return self._grammar_cache[resolved]
 
     async def shutdown(self) -> None:
-        """Shutdown and unload all models."""
+        """Shutdown and unload all models.
+
+        Iterates unique backends (model pool), not per-tier mapping,
+        to avoid double-unloading shared backends.
+        """
         logger.info("Shutting down model orchestrator")
 
-        for tier, model in self._tiers.items():
+        for path, model in self._model_pool.items():
             if model.is_loaded:
                 await model.unload()
-                logger.info(f"Unloaded {tier.name} model")
+                logger.info(f"Unloaded model: {path.name}")
 
         if self._router and self._router.is_loaded:
             await self._router.unload()
@@ -277,10 +321,10 @@ class ModelOrchestrator:
         import gc
 
         async with self._lock:
-            for tier, model in self._tiers.items():
+            for path, model in self._model_pool.items():
                 if model.is_loaded:
                     await model.unload()
-                    logger.info(f"Unloaded {tier.name} model for VRAM release")
+                    logger.info(f"Unloaded {path.name} for VRAM release")
             if self._router and self._router.is_loaded:
                 await self._router.unload()
                 logger.info("Unloaded ROUTER model for VRAM release")
@@ -301,10 +345,6 @@ class ModelOrchestrator:
         """Reload the default models after unload_all_models()."""
         async with self._lock:
             default_tier = self._get_default_tier()
-            if self._thinking_mode:
-                thinking = self._find_tier("thinking")
-                if thinking and thinking in self._tiers:
-                    default_tier = thinking
 
             if default_tier in self._tiers and not self._tiers[default_tier].is_loaded:
                 await self._tiers[default_tier].load()
@@ -315,57 +355,32 @@ class ModelOrchestrator:
                 await self._router.load()
                 logger.info("Reloaded ROUTER model")
 
-    # Thinking mode methods
-
-    def get_thinking_mode(self) -> bool:
-        """Get current thinking mode state."""
-        return self._thinking_mode
-
-    async def set_thinking_mode(self, enabled: bool) -> bool:
-        """Toggle thinking mode. Returns True if successful."""
-        if enabled == self._thinking_mode:
-            return True
-
-        thinking_tier = self._find_tier("thinking")
-        normal_tier = self._find_tier("normal")
-        required = thinking_tier if enabled else normal_tier
-
-        if required is None or required not in self._tiers:
-            logger.warning(f"{'thinking' if enabled else 'normal'} model not configured")
-            return False
-
-        # At this point, `required` is proven non-None and in self._tiers
-        async with self._lock:
-            # Deactivate the opposite tier (ACTIVE → WARM, keeps CPU pages for fast re-swap)
-            opposite = normal_tier if enabled else thinking_tier
-            if opposite and opposite in self._tiers:
-                model = self._tiers[opposite]
-                if model.is_loaded:
-                    await model.deactivate()
-                    logger.info(f"Deactivated {opposite.name} model (ACTIVE → WARM)")
-
-            await self._tiers[required].load()  # WARM → ACTIVE or COLD → WARM → ACTIVE
-            logger.info(f"Activated {required.name} model")
-
-            self._thinking_mode = enabled
-            return True
-
-    def _apply_tier_defaults(self, tier: ModelTier, kwargs: dict[str, Any]) -> None:
+    def _apply_tier_defaults(
+        self, tier: ModelTier, kwargs: dict[str, Any], identity_fm: Any = None
+    ) -> None:
         """Inject tier-specific defaults into generation kwargs.
 
-        Ensures the correct tier's sampling parameters are used even when
-        the backend instance is reused across tiers (shared .gguf file).
-        Only sets values not already present in kwargs, so explicit caller
-        overrides are preserved.
+        Reads inference params from identity frontmatter if available,
+        otherwise uses conservative fallbacks. Only sets values not
+        already present in kwargs, so explicit caller overrides are preserved.
+
+        Args:
+            tier: The model tier being used
+            kwargs: Generation kwargs dict (mutated in-place)
+            identity_fm: IdentityFrontmatter for the tier, or None
         """
-        tier_config = self._tiers[tier].config
-        defaults = {
-            "max_tokens": tier_config.max_output_tokens,
-            "temperature": tier_config.temperature,
-            "top_p": tier_config.top_p,
-            "top_k": tier_config.top_k,
-            "repeat_penalty": tier_config.repeat_penalty,
-        }
+        if identity_fm is not None:
+            defaults: dict[str, Any] = {
+                "max_tokens": identity_fm.max_output_tokens,
+                "temperature": identity_fm.temperature,
+                "repeat_penalty": identity_fm.repeat_penalty,
+            }
+            if "chat_template_kwargs" not in kwargs:
+                kwargs["chat_template_kwargs"] = {"enable_thinking": identity_fm.enable_thinking}
+        else:
+            # Fallback for custom tiers without a bundled identity
+            defaults = {"max_tokens": 1024, "temperature": 0.7, "repeat_penalty": 1.1}
+
         for key, value in defaults.items():
             if key not in kwargs:
                 kwargs[key] = value
@@ -375,14 +390,11 @@ class ModelOrchestrator:
             if grammar_str:
                 kwargs["grammar"] = grammar_str
 
-        # Thread enable_thinking to chat template (Qwen3.5 uses this natively)
-        if "chat_template_kwargs" not in kwargs and hasattr(tier_config, "enable_thinking"):
-            kwargs["chat_template_kwargs"] = {"enable_thinking": tier_config.enable_thinking}
-
     async def generate(
         self,
         messages: list[Message],
         tier: ModelTier | None = None,
+        identity_fm: Any = None,
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response using the appropriate model."""
@@ -391,15 +403,16 @@ class ModelOrchestrator:
 
         self._last_used_tier = tier
         model = await self._get_model(tier)
-        self._apply_tier_defaults(tier, kwargs)
+        self._apply_tier_defaults(tier, kwargs, identity_fm)
 
-        adapter_name = type(model.adapter).__name__
+        adapter = self._adapters.get(tier)
+        adapter_name = type(adapter).__name__ if adapter else "unknown"
         logger.debug(f"Generating with {tier.name} model (adapter: {adapter_name})")
         result = await model.generate(messages, **kwargs)
 
-        if result.content:
+        if result.content and adapter:
             result.raw_content = result.content
-            cleaned_content, parsed_calls = model.adapter.parse_tool_calls(result.content)
+            cleaned_content, parsed_calls = adapter.parse_tool_calls(result.content)
             result.content = cleaned_content
             if parsed_calls:
                 result.tool_calls = parsed_calls
@@ -411,6 +424,7 @@ class ModelOrchestrator:
         self,
         messages: list[Message],
         tier: ModelTier | None = None,
+        identity_fm: Any = None,
         **kwargs: Any,
     ) -> AsyncIterator[str]:
         """Generate a streaming response."""
@@ -419,9 +433,10 @@ class ModelOrchestrator:
 
         self._last_used_tier = tier
         model = await self._get_model(tier)
-        self._apply_tier_defaults(tier, kwargs)
+        self._apply_tier_defaults(tier, kwargs, identity_fm)
 
-        adapter_name = type(model.adapter).__name__
+        adapter = self._adapters.get(tier)
+        adapter_name = type(adapter).__name__ if adapter else "unknown"
         logger.debug(f"Streaming with {tier.name} model (adapter: {adapter_name})")
         async for chunk in model.generate_stream(messages, **kwargs):
             yield chunk
@@ -473,24 +488,29 @@ class ModelOrchestrator:
             self._last_routing_result.swap_action = action
 
     def _find_reusable_model(self, tier: ModelTier, model: ModelBackend) -> ModelBackend | None:
-        """Find an already-loaded model that can be reused (same file path)."""
+        """Find an already-loaded model that can be reused.
+
+        With backend deduplication, tiers sharing the same model file share
+        the same backend instance. If the requested backend is already loaded
+        (identity: ``model is current``), it can be reused directly.
+        """
         if not self._loaded_main_tier:
             return None
         current = self._tiers.get(self._loaded_main_tier)
-        if current and current.is_loaded and current.config.path == model.config.path:
+        if current and current.is_loaded and current is model:
             logger.info(
-                f"Reusing {self._loaded_main_tier.name} model for {tier.name} "
-                f"(same file: {model.config.path.name})"
+                f"Reusing {self._loaded_main_tier.name} backend for {tier.name} "
+                f"(shared backend: {model.config.path.name})"
             )
             return current
         return None
 
     async def _deactivate_current_if_needed(self, model: ModelBackend) -> None:
-        """Deactivate currently loaded model if it's a different file (ACTIVE → WARM)."""
+        """Deactivate currently loaded model if it's a different backend (ACTIVE → WARM)."""
         if not self._loaded_main_tier:
             return
         current = self._tiers.get(self._loaded_main_tier)
-        if current and current.is_loaded and current.config.path != model.config.path:
+        if current and current.is_loaded and current is not model:
             logger.info(f"Deactivating {self._loaded_main_tier.name} model for swap")
             await current.deactivate()
 
@@ -516,16 +536,6 @@ class ModelOrchestrator:
 
         tier, raw_output = await self._classify_task(messages)
 
-        # Thinking mode override: upgrade normal → thinking if forced on
-        thinking_tier = self._find_tier("thinking")
-        if (
-            self._thinking_mode
-            and tier == "normal"
-            and thinking_tier is not None
-            and thinking_tier in self._tiers
-        ):
-            tier = thinking_tier
-
         self._last_routing_result = RoutingResult(
             tier=tier,
             previous_tier=previous_tier,
@@ -542,41 +552,68 @@ class ModelOrchestrator:
         logger.info(f"[ROUTER] {tier.name} | {swap} | {routing_ms:.0f}ms")
         return tier
 
+    @staticmethod
+    def _extract_user_context(messages: list[Message]) -> tuple[str, list[str]]:
+        """Extract latest user message and up to 5 history messages."""
+        user_message = ""
+        history: list[str] = []
+        for msg in reversed(messages):
+            if msg.role != "user":
+                continue
+            if not user_message:
+                user_message = msg.content
+            else:
+                history.append(msg.content)
+                if len(history) >= 5:
+                    break
+        history.reverse()
+        return user_message, history
+
     async def _classify_task(self, messages: list[Message]) -> tuple[ModelTier, str]:
-        """Classify task type using router model."""
+        """Classify task type using router model.
+
+        Uses raw text completion (no chat template) with the digit-based
+        classification prompt. The prompt ends with ``"user message" -> ``
+        and the model continues with the tier digit.
+        """
         if not self._router:
             logger.warning("[ROUTER] No router model configured, using default tier")
             return self._get_default_tier(), ""
 
-        user_message = ""
-        history_messages: list[str] = []
-        for msg in reversed(messages):
-            if msg.role == "user":
-                if not user_message:
-                    user_message = msg.content
-                else:
-                    history_messages.append(msg.content)
-                    if len(history_messages) >= 5:
-                        break
-        history_messages.reverse()
-
+        user_message, history = self._extract_user_context(messages)
         classification_prompt = build_classification_prompt(
-            self._tier_list, user_message, history=history_messages
+            self._tier_list, user_message, history=history
         )
 
-        # Router is always loaded separately, not in _tiers
         if not self._router.is_loaded:
             await self._router.load()
 
         result = await self._router.complete(
             classification_prompt,
-            max_tokens=16,
+            max_tokens=1,
             temperature=0.0,
         )
-
         raw = result.content.strip()
         tier, digit = self._parse_classification(raw)
+
+        self._log_classification(tier, digit, result.logprobs)
         return tier, digit
+
+    @staticmethod
+    def _log_classification(
+        tier: ModelTier, digit: str, logprobs: list[dict[str, Any]] | None
+    ) -> None:
+        """Log classification result with optional confidence."""
+        if logprobs:
+            confidence = _logprob_to_confidence(logprobs)
+            logger.info(
+                "[ROUTER] classified as %s (digit=%s, confidence=%.0f%%)",
+                tier.name,
+                digit,
+                confidence * 100,
+            )
+        else:
+            logger.info("[ROUTER] classified as %s (digit=%s)", tier.name, digit)
 
     def _parse_classification(self, raw_output: str) -> tuple[ModelTier, str]:
         """Extract classification tier from raw completion output."""
@@ -590,10 +627,14 @@ class ModelOrchestrator:
         return self._get_default_tier(), ""
 
     def get_allowed_tools(self, tier: ModelTier) -> set[str] | None:
-        """Get allowed tools for a tier, or None if all tools allowed."""
-        model = self._tiers.get(tier)
-        if model and model.config.allowed_tools is not None:
-            return set(model.config.allowed_tools)
+        """Get allowed tools for a tier, or None if all tools allowed.
+
+        Reads from tier config directly (not shared backend config),
+        so each tier can have its own allowed_tools even when sharing a backend.
+        """
+        tier_config = self.config.models.tiers.get(tier.name)
+        if tier_config and tier_config.allowed_tools is not None:
+            return set(tier_config.allowed_tools)
         return None
 
     def get_adapter(self, tier: ModelTier | None = None) -> ChatAdapter:
@@ -603,12 +644,12 @@ class ModelOrchestrator:
             if tier is None:
                 tier = self._get_default_tier()
 
-        if tier in self._tiers:
-            return self._tiers[tier].adapter
+        if tier in self._adapters:
+            return self._adapters[tier]
 
-        from entropic.inference.adapters import get_adapter
+        from entropic.inference.adapters.base import get_adapter as _get_adapter
 
-        return get_adapter("generic", tier.name, prompt_manager=self._prompt_manager)
+        return _get_adapter("generic", tier.name, prompt_manager=self._prompt_manager)
 
     @property
     def last_used_tier(self) -> ModelTier | None:

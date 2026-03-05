@@ -37,7 +37,7 @@ from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E40
     "--model",
     "-m",
     type=str,
-    help="Model tier to use (e.g., thinking, normal, code)",
+    help="Model tier to use (e.g., conversational, planner, code_writer)",
 )
 @click.option(
     "--log-level",
@@ -144,9 +144,6 @@ def status(ctx: click.Context) -> None:
         table.add_row("Router Model", str(config.models.router.path))
     else:
         table.add_row("Router Model", "[dim]Not configured[/dim]")
-
-    # Thinking mode
-    table.add_row("Thinking Mode Default", str(config.thinking.enabled))
 
     # Settings
     table.add_row("Routing Enabled", str(config.routing.enabled))

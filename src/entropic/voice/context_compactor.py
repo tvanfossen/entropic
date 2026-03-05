@@ -277,7 +277,7 @@ class ContextCompactor:
     Compacts conversation context using a secondary LLM.
 
     Designed to run during the "thinking moment" between PersonaPlex
-    conversation windows, using a small, fast model (e.g., Qwen3-0.6B).
+    conversation windows, using a small, fast model (configured via voice.secondary_model).
 
     Uses structured prompts with priority levels to ensure:
     1. Safety/ethics context is never lost (CRITICAL)

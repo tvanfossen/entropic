@@ -288,8 +288,7 @@ class HeadlessPresenter(Presenter):
     def print_status(self, status: StatusInfo) -> None:
         """Display system status - logged only."""
         self._logger.debug(
-            f"Status: model={status.model}, thinking={status.thinking_mode}, "
-            f"context={status.context_used}/{status.context_max}"
+            f"Status: model={status.model}, context={status.context_used}/{status.context_max}"
         )
 
     # === Injection ===

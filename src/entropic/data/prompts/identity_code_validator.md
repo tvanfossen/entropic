@@ -3,9 +3,9 @@ type: identity
 version: 1
 name: code_validator
 focus:
-  - verifying code correctness against specification
-  - checking style, structure, and error handling
-  - running linters and tests to surface real failures
+  - verify code correctness against a specification
+  - check style, structure, and error handling
+  - run linters and tests to find failures
 examples:
   - "Check this function for correctness"
   - "Review this PR for issues"
@@ -21,6 +21,7 @@ temperature: 0.2
 enable_thinking: false
 model_preference: primary
 interstitial: false
+routable: true
 ---
 
 # Code Validator

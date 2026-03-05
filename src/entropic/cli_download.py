@@ -16,35 +16,37 @@ from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
-# Model registry - Task-specialized models (bartowski quantizations)
+# Model registry — bundled defaults reference these by role, not model name.
+# URLs and model names will change as the ecosystem evolves; keep this registry
+# in sync with default_config.yaml tier assignments.
 MODELS: dict[str, dict[str, Any]] = {
-    "thinking": {
-        "name": "Qwen_Qwen3-14B-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen_Qwen3-14B-GGUF/resolve/main/Qwen_Qwen3-14B-Q4_K_M.gguf",
-        "size_gb": 9.0,
-        "sha256": None,  # Add hash for verification
-        "description": "Deep reasoning model (thinking mode)",
-    },
-    "normal": {
-        "name": "Qwen_Qwen3-8B-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen_Qwen3-8B-GGUF/resolve/main/Qwen_Qwen3-8B-Q4_K_M.gguf",
-        "size_gb": 5.0,
+    "primary": {
+        "name": "Qwen3.5-35B-A3B-Q2_K",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-Q2_K.gguf",
+        "size_gb": 13.0,
         "sha256": None,
-        "description": "General reasoning model (fast mode)",
+        "description": "Primary workhorse — conversational, code, planning tiers",
     },
-    "code": {
-        "name": "Qwen2.5-Coder-7B-Instruct-Q4_K_M",
-        "url": "https://huggingface.co/bartowski/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
-        "size_gb": 4.7,
+    "mid": {
+        "name": "Qwen3.5-9B-Q8_0",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q8_0.gguf",
+        "size_gb": 9.5,
         "sha256": None,
-        "description": "Code generation model",
+        "description": "Mid-tier — analysis and tooling roles",
     },
-    "micro": {
-        "name": "qwen2.5-coder-0.5b-instruct-q8_0",
-        "url": "https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q8_0.gguf",
-        "size_gb": 0.5,
+    "lightweight": {
+        "name": "Qwen3.5-4B-Q8_0",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf",
+        "size_gb": 4.2,
         "sha256": None,
-        "description": "Routing classifier model",
+        "description": "Lightweight — quick responses and utilities",
+    },
+    "router": {
+        "name": "Qwen3.5-0.8B-Q8_0",
+        "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf",
+        "size_gb": 0.8,
+        "sha256": None,
+        "description": "Classification router — always loaded",
     },
 }
 
@@ -58,7 +60,7 @@ def download_models(
     Download Entropic models.
 
     Args:
-        model: Model key ('thinking', 'normal', 'code', 'micro', 'all')
+        model: Model key (tier name from config, or 'all')
         output_dir: Output directory for models
         force: Overwrite existing files
     """

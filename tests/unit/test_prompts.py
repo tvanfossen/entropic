@@ -15,7 +15,22 @@ from entropic.prompts import (
 )
 from pydantic import ValidationError
 
-TIERS = ["simple", "code", "normal", "thinking"]
+TIERS = [
+    "quick",
+    "compactor",
+    "pruner",
+    "planner",
+    "searcher",
+    "diagnoser",
+    "code_writer",
+    "test_writer",
+    "code_validator",
+    "extractor",
+    "tool_runner",
+    "conversational",
+    "wireframer",
+    "design_validator",
+]
 
 
 class TestParsePromptFile:
@@ -206,8 +221,8 @@ class TestToolIsolation:
         "diagnostics.check_errors",
     ]
 
-    def test_thinking_tier_only_sees_allowed_tools(self) -> None:
-        """Thinking tier with allowed tools must not leak other names."""
+    def test_planner_tier_only_sees_allowed_tools(self) -> None:
+        """Planner tier with allowed tools must not leak other names."""
         allowed = [
             "entropic.todo_write",
             "entropic.handoff",
@@ -216,7 +231,7 @@ class TestToolIsolation:
         ]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
-        adapter = GenericAdapter(tier="thinking")
+        adapter = GenericAdapter(tier="planner")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 
@@ -226,12 +241,12 @@ class TestToolIsolation:
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
-    def test_simple_tier_only_sees_handoff(self) -> None:
-        """Simple tier with only handoff must not leak any other tools."""
+    def test_quick_tier_only_sees_handoff(self) -> None:
+        """Quick tier with only handoff must not leak any other tools."""
         allowed = ["entropic.handoff"]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
-        adapter = GenericAdapter(tier="simple")
+        adapter = GenericAdapter(tier="quick")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 

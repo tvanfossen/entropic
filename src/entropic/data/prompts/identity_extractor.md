@@ -15,6 +15,7 @@ temperature: 0.1
 enable_thinking: false
 model_preference: any
 interstitial: false
+routable: false
 ---
 
 # Extractor

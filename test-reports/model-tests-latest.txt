@@ -1,46 +1,70 @@
 === Model Test Report ===
-Date: 2026-03-04 09:23:25
+Date: 2026-03-05 11:37:09
 
-Results: 26 passed, 0 failed (96.7s)
+Results: 36 passed, 0 failed (287.4s)
 
-  [PASS] test_grammar_constrains_output (7.2s)
-  [PASS] test_grammar_auto_chain_fires (8.2s)
-  [PASS] test_multi_tier_pipeline_completes (8.5s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (6.3s)
-  [PASS] test_code_request_produces_code [code] (8.4s)
+  [PASS] test_grammar_constrains_output (14.4s)
+  [PASS] test_grammar_auto_chain_fires (15.4s)
+  [PASS] test_multi_tier_pipeline_completes (15.4s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (9.3s)
+  [PASS] test_code_request_produces_code [quick] (12.9s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code] (8.5s)
+  [PASS] test_code_response_has_python_syntax [code_writer] (12 tools) (143.0s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [normal] (9.1s)
+  [PASS] test_response_ends_cleanly [quick] (18.1s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [normal] (4.2s)
+  [PASS] test_no_special_tokens_in_response [quick] (2.0s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [simple] (3.1s)
+  [PASS] test_generation_starts_and_ends [quick] (3.6s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [normal] (8.5s)
+  [PASS] test_multiple_messages_accumulate_history [quick] (40.4s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [normal] (13.4s)
+  [PASS] test_explanation_is_substantive [quick] (4.4s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [simple] (3.4s)
+  [PASS] test_hello_produces_response [quick] (4.4s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [simple] (3.0s)
+  [PASS] test_thanks_produces_acknowledgment [quick] (1.7s)
          Prompt: Thanks!
-  [PASS] test_hello_routes_to_simple (0.1s)
-  [PASS] test_hi_routes_to_simple (0.0s)
-  [PASS] test_thanks_routes_to_simple (0.0s)
-  [PASS] test_write_code_routes_to_code (0.0s)
-  [PASS] test_fix_bug_routes_to_code (0.0s)
-  [PASS] test_add_feature_routes_to_code (0.0s)
-  [PASS] test_explain_routes_to_reasoning (0.0s)
-  [PASS] test_question_routes_to_reasoning (0.0s)
-  [PASS] test_complex_analysis_routes_to_thinking (4.3s)
-  [PASS] test_classification_under_500ms (0.1s)
-  [PASS] test_multiple_classifications_consistent (0.2s)
+  [PASS] test_example_classifies_to_own_tier[code_validator] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[code_writer] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[conversational] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[design_validator] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[diagnoser] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[planner] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[quick] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[searcher] (0.0s)
+  [PASS] test_example_classifies_to_own_tier[wireframer] (0.0s)
+  [PASS] test_classification_under_500ms (0.0s)
+  [PASS] test_multiple_classifications_consistent (0.0s)
+  [PASS] test_route_to_non_default_model_tier (1.9s)
+  [PASS] test_confidence_above_threshold[code_validator] (0.3s)
+  [PASS] test_confidence_above_threshold[code_writer] (0.0s)
+  [PASS] test_confidence_above_threshold[conversational] (0.0s)
+  [PASS] test_confidence_above_threshold[design_validator] (0.0s)
+  [PASS] test_confidence_above_threshold[diagnoser] (0.0s)
+  [PASS] test_confidence_above_threshold[planner] (0.0s)
+  [PASS] test_confidence_above_threshold[quick] (0.0s)
+  [PASS] test_confidence_above_threshold[searcher] (0.0s)
+  [PASS] test_confidence_above_threshold[wireframer] (0.0s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 26 passed in 145.12s (0:02:25) ========================
+=============================== warnings summary ===============================
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    read_at=datetime.utcnow(),
+
+tests/model/test_headless_code.py: 10 warnings
+  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:28: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    return datetime.utcnow() - self.read_at > max_age
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================= 36 passed, 15 warnings in 336.70s (0:05:36) ==================
 
 Result: PASSED

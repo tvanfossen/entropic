@@ -3,9 +3,9 @@ type: identity
 version: 1
 name: wireframer
 focus:
-  - ASCII wireframe generation from feature descriptions
-  - component inventory and spatial layout specification
-  - design intent documentation before implementation
+  - generate an ASCII wireframe from a feature description
+  - lay out components and spatial structure for a page
+  - document design intent before implementation
 examples:
   - "Design a landing page layout for a SaaS product"
   - "Wireframe the user profile page"
@@ -19,6 +19,7 @@ temperature: 0.5
 enable_thinking: false
 model_preference: vision
 interstitial: false
+routable: true
 ---
 
 # Wireframer

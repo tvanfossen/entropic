@@ -1,13 +1,12 @@
 """Configuration module for Entropic."""
 
 from entropic.config.loader import ConfigLoader, get_config, reload_config
-from entropic.config.schema import EntropyConfig, ModelConfig, ThinkingConfig
+from entropic.config.schema import EntropyConfig, ModelConfig
 
 __all__ = [
     "ConfigLoader",
     "EntropyConfig",
     "ModelConfig",
-    "ThinkingConfig",
     "get_config",
     "reload_config",
 ]

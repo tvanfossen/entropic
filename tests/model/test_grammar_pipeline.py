@@ -25,7 +25,6 @@ if str(_PYCHESS_ROOT) not in sys.path:
 
 from chess_server import board_to_pieces  # noqa: E402
 from entropic import AgentEngine, LoopConfig, ServerManager  # noqa: E402
-from entropic.inference.orchestrator import ModelOrchestrator  # noqa: E402
 
 from .conftest import with_timeout  # noqa: E402
 
@@ -140,48 +139,55 @@ class TestGrammarPipeline:
         )
 
     @pytest.mark.asyncio
-    async def test_grammar_without_auto_chain_is_terminal(self, pychess_config) -> None:
-        """Grammar tier without auto_chain → engine marks COMPLETE, no handoff."""
-        import copy
+    async def test_grammar_without_auto_chain_is_terminal(
+        self, pychess_config, pychess_orchestrator
+    ) -> None:
+        """Grammar tier without auto_chain → engine marks COMPLETE, no handoff.
 
+        Reuses the module-scoped orchestrator (single model instance). Config
+        fields ``auto_chain`` and ``allowed_tools`` are read at runtime, so
+        mutating the shared config is sufficient — no second orchestrator needed.
+        """
         from chess_server import ChessServer
 
-        config = copy.deepcopy(pychess_config)
-        config.models.tiers["thinker"].auto_chain = False
-        # Remove handoff from allowed_tools — grammar still emits it,
-        # but engine blocks it. Tests that the tier is truly terminal.
-        config.models.tiers["thinker"].allowed_tools = []
+        thinker = pychess_config.models.tiers["thinker"]
+        orig_auto_chain = thinker.auto_chain
+        orig_allowed_tools = thinker.allowed_tools
 
-        # Fresh orchestrator so allowed_tools change takes effect
-        orch = ModelOrchestrator(config)
-        await orch.initialize()
+        thinker.auto_chain = False
+        thinker.allowed_tools = []
 
-        chess_server = ChessServer()
-        server_manager = ServerManager(config, tier_names=orch.tier_names)
-        server_manager.register_server(chess_server)
-        await server_manager.initialize()
+        try:
+            chess_server = ChessServer()
+            server_manager = ServerManager(
+                pychess_config, tier_names=pychess_orchestrator.tier_names
+            )
+            server_manager.register_server(chess_server)
+            await server_manager.initialize()
 
-        loop_config = LoopConfig(auto_approve_tools=True, max_iterations=4)
-        engine = AgentEngine(orch, server_manager, config, loop_config)
+            loop_config = LoopConfig(auto_approve_tools=True, max_iterations=4)
+            engine = AgentEngine(pychess_orchestrator, server_manager, pychess_config, loop_config)
 
-        chess_server.board.push(chess.Move.from_uci("e2e4"))
+            chess_server.board.push(chess.Move.from_uci("e2e4"))
 
-        system, prompt = _build_prompt(chess_server.board)
-        messages = []
-        await with_timeout(
-            _collect_messages(engine, prompt, system, messages),
-            expected_turns=2,
-            name="grammar_terminal",
-        )
+            system, prompt = _build_prompt(chess_server.board)
+            messages = []
+            await with_timeout(
+                _collect_messages(engine, prompt, system, messages),
+                expected_turns=2,
+                name="grammar_terminal",
+            )
 
-        # Should see thinker output but NO executor (no handoff)
-        assistant_msgs = [m for m in messages if m.role == "assistant"]
-        assert len(assistant_msgs) >= 1
-        # No move should be made (executor never runs)
-        assert len(chess_server.board.move_stack) == 1, (
-            f"Expected no AI move (thinker is terminal), "
-            f"but board has {len(chess_server.board.move_stack)} moves"
-        )
+            # Should see thinker output but NO executor (no handoff)
+            assistant_msgs = [m for m in messages if m.role == "assistant"]
+            assert len(assistant_msgs) >= 1
+            # No move should be made (executor never runs)
+            assert len(chess_server.board.move_stack) == 1, (
+                f"Expected no AI move (thinker is terminal), "
+                f"but board has {len(chess_server.board.move_stack)} moves"
+            )
 
-        await server_manager.shutdown()
-        await orch.shutdown()
+            await server_manager.shutdown()
+        finally:
+            thinker.auto_chain = orig_auto_chain
+            thinker.allowed_tools = orig_allowed_tools

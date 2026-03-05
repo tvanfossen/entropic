@@ -1,18 +1,41 @@
 """Tests for model loading and swapping in ModelOrchestrator."""
 
 import asyncio
+import random
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import entropic
 import pytest
 from entropic.core.base import ModelState, ModelTier
 from entropic.inference.orchestrator import ModelOrchestrator
 
-# Reusable tier instances for tests
-NORMAL = ModelTier("normal", focus=["general reasoning"])
-CODE = ModelTier("code", focus=["writing code"])
-THINKING = ModelTier("thinking", focus=["complex analysis"])
-SIMPLE = ModelTier("simple", focus=["greetings"])
+# ---------------------------------------------------------------------------
+# Identity discovery — avoids hardcoding tier names that rot on every rename
+# ---------------------------------------------------------------------------
+_PROMPTS_DIR = Path(entropic.__file__).parent / "data" / "prompts"
+
+
+def _available_identity_names() -> list[str]:
+    """Return names of all bundled routable identities."""
+    import yaml
+
+    result = []
+    for path in sorted(_PROMPTS_DIR.glob("identity_*.md")):
+        name = path.stem.removeprefix("identity_")
+        text = path.read_text()
+        if not text.startswith("---"):
+            continue
+        end = text.index("---", 3)
+        fm = yaml.safe_load(text[3:end])
+        if fm.get("routable", True):
+            result.append(name)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Mock infrastructure
+# ---------------------------------------------------------------------------
 
 
 class MockModelConfig:
@@ -21,7 +44,6 @@ class MockModelConfig:
     def __init__(self, path: str = "/models/test.gguf", context_length: int = 4096):
         self.path = Path(path)
         self.context_length = context_length
-        self.max_output_tokens = 4096
         self.allowed_tools = None
 
 
@@ -72,46 +94,47 @@ class MockModelBackend:
 
 
 class MockTierConfig:
-    """Mock tier config for dict-based ModelsConfig."""
+    """Mock tier config — hardware params only (no inference params)."""
 
     def __init__(self, path: str = "/models/test.gguf", context_length: int = 4096):
         self.path = Path(path)
         self.context_length = context_length
-        self.max_output_tokens = 4096
         self.gpu_layers = -1
         self.warm_on_startup = False
         self.use_mlock = True
         self.adapter = "qwen2"
-        self.temperature = 0.7
-        self.top_p = 0.9
-        self.top_k = 40
-        self.repeat_penalty = 1.1
+        self.logits_all = False
         self.allowed_tools = None
-        self.focus = []
+        self.identity = None
+        self.routable = True
 
 
 class MockEntropyConfig:
-    """Mock entropy configuration with dict-based tiers."""
+    """Config that samples four real identity names to avoid hardcoding tier names."""
 
     def __init__(self):
+        names = random.sample(_available_identity_names(), 4)
+        # Semantic roles used in tests — actual names are random
+        self.default_tier = names[0]  # loaded by default
+        self.tier_b = names[1]  # first swap target
+        self.tier_c = names[2]  # second swap target
+        self.tier_d = names[3]  # same-file tier in same_file tests
+
         self.models = MagicMock()
-        self.models.default = "normal"
+        self.models.default = self.default_tier
         self.models.tiers = {
-            "normal": MockTierConfig("/models/normal.gguf"),
-            "code": MockTierConfig("/models/code.gguf"),
-            "thinking": MockTierConfig("/models/thinking.gguf"),
-            "simple": MockTierConfig("/models/simple.gguf"),
+            self.default_tier: MockTierConfig(f"/models/{self.default_tier}.gguf"),
+            self.tier_b: MockTierConfig(f"/models/{self.tier_b}.gguf"),
+            self.tier_c: MockTierConfig(f"/models/{self.tier_c}.gguf"),
+            self.tier_d: MockTierConfig(f"/models/{self.tier_d}.gguf"),
         }
         self.models.router = MockTierConfig("/models/router.gguf")
 
         self.routing = MagicMock()
         self.routing.enabled = False
-        self.routing.fallback_tier = "normal"
+        self.routing.fallback_tier = self.default_tier
         self.routing.tier_map = {}
         self.routing.handoff_rules = {}
-
-        self.thinking = MagicMock()
-        self.thinking.enabled = False
 
 
 class TestModelOrchestratorLoading:
@@ -125,37 +148,31 @@ class TestModelOrchestratorLoading:
         self,
         same_file: bool = False,
     ) -> tuple[ModelOrchestrator, dict[ModelTier, MockModelBackend]]:
-        """
-        Create an orchestrator with mock backends.
+        """Create an orchestrator with mock backends."""
+        orchestrator = ModelOrchestrator(self.config)  # type: ignore[arg-type]
+        cfg = self.config
 
-        Args:
-            same_file: If True, NORMAL and SIMPLE use same model file
+        default_path = f"/models/{cfg.default_tier}.gguf"
 
-        Returns:
-            Tuple of (orchestrator, dict of mock backends by tier)
-        """
-        orchestrator = ModelOrchestrator(self.config)
+        t_default = orchestrator._find_tier(cfg.default_tier)
+        t_b = orchestrator._find_tier(cfg.tier_b)
+        t_c = orchestrator._find_tier(cfg.tier_c)
+        t_d = orchestrator._find_tier(cfg.tier_d)
+        assert t_default and t_b and t_c and t_d
 
-        # Create mock backends
-        normal_path = "/models/normal.gguf"
-        simple_path = normal_path if same_file else "/models/simple.gguf"
-
-        # Find the tier instances created by the orchestrator
-        normal = orchestrator._find_tier("normal")
-        code = orchestrator._find_tier("code")
-        thinking = orchestrator._find_tier("thinking")
-        simple = orchestrator._find_tier("simple")
-
-        mocks = {
-            normal: MockModelBackend(MockModelConfig(normal_path), "normal"),
-            code: MockModelBackend(MockModelConfig("/models/code.gguf"), "code"),
-            thinking: MockModelBackend(MockModelConfig("/models/thinking.gguf"), "thinking"),
-            simple: MockModelBackend(MockModelConfig(simple_path), "simple"),
+        default_backend = MockModelBackend(MockModelConfig(default_path), cfg.default_tier)
+        mocks: dict[ModelTier, MockModelBackend] = {
+            t_default: default_backend,
+            t_b: MockModelBackend(MockModelConfig(f"/models/{cfg.tier_b}.gguf"), cfg.tier_b),
+            t_c: MockModelBackend(MockModelConfig(f"/models/{cfg.tier_c}.gguf"), cfg.tier_c),
+            # same_file=True → share the same backend instance (dedup behavior)
+            t_d: default_backend
+            if same_file
+            else MockModelBackend(MockModelConfig(f"/models/{cfg.tier_d}.gguf"), cfg.tier_d),
         }
 
-        # Router is separate
-        orchestrator._router = MockModelBackend(MockModelConfig("/models/router.gguf"), "router")
-        orchestrator._tiers = mocks
+        orchestrator._router = MockModelBackend(MockModelConfig("/models/router.gguf"), "router")  # type: ignore[assignment]
+        orchestrator._tiers = mocks  # type: ignore[assignment]
         return orchestrator, mocks
 
     def _tier(self, orchestrator: ModelOrchestrator, name: str) -> ModelTier:
@@ -168,183 +185,168 @@ class TestModelOrchestratorLoading:
     async def test_only_one_main_model_loaded_after_init(self) -> None:
         """Only default + router loaded at start."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
 
-        # Simulate initialize() - load default (normal) and router
-        await mocks[normal].load()
-        orchestrator._loaded_main_tier = normal
+        # Simulate initialize() — load default and router
+        await mocks[t_default].load()
+        orchestrator._loaded_main_tier = t_default
+        assert orchestrator._router is not None
         await orchestrator._router.load()
 
         loaded = orchestrator.get_loaded_models()
 
-        # Only normal (default main) and router should be loaded
-        assert "normal" in loaded
+        assert cfg.default_tier in loaded
         assert "router" in loaded
-        assert "thinking" not in loaded
-        assert "code" not in loaded
-        assert "simple" not in loaded
-
-        # Only 2 models loaded
+        assert cfg.tier_b not in loaded
+        assert cfg.tier_c not in loaded
+        assert cfg.tier_d not in loaded
         assert len(loaded) == 2
 
     @pytest.mark.asyncio
     async def test_model_swap_unloads_previous(self) -> None:
-        """Switching tiers unloads old model."""
+        """Switching tiers deactivates old model (ACTIVE → WARM)."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
-        code = self._tier(orchestrator, "code")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
+        t_b = self._tier(orchestrator, cfg.tier_b)
 
-        # Start with normal loaded
-        await mocks[normal].load()
-        orchestrator._loaded_main_tier = normal
+        await mocks[t_default].load()
+        orchestrator._loaded_main_tier = t_default
 
-        assert mocks[normal].is_loaded
-        assert not mocks[code].is_loaded
+        assert mocks[t_default].is_loaded
+        assert not mocks[t_b].is_loaded
 
-        # Request CODE model - should swap
-        result = await orchestrator._get_model(code)
+        result = await orchestrator._get_model(t_b)
 
-        # CODE should now be loaded
         assert result.is_loaded
-        assert mocks[code].is_loaded
-        # NORMAL should be deactivated (ACTIVE → WARM), not unloaded
-        assert not mocks[normal].is_loaded
-        assert mocks[normal]._deactivate_called == 1
-        assert mocks[normal]._unload_called == 0
+        assert mocks[t_b].is_loaded
+        # Default deactivated (ACTIVE → WARM), not unloaded
+        assert not mocks[t_default].is_loaded
+        assert mocks[t_default]._deactivate_called == 1
+        assert mocks[t_default]._unload_called == 0
 
     @pytest.mark.asyncio
     async def test_same_file_no_swap(self) -> None:
-        """Same file for different tiers = no swap, returns current model."""
+        """Same file for different tiers = shared backend, no swap needed."""
         orchestrator, mocks = self._create_orchestrator_with_mocks(same_file=True)
-        normal = self._tier(orchestrator, "normal")
-        simple = self._tier(orchestrator, "simple")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
+        t_d = self._tier(orchestrator, cfg.tier_d)
 
-        # Start with normal loaded
-        await mocks[normal].load()
-        orchestrator._loaded_main_tier = normal
+        await mocks[t_default].load()
+        orchestrator._loaded_main_tier = t_default
 
-        # Request SIMPLE (which uses same file)
-        result = await orchestrator._get_model(simple)
+        # tier_d shares the same backend instance as default (dedup)
+        result = await orchestrator._get_model(t_d)
 
-        # Should return the NORMAL model (already loaded, same file)
-        assert result is mocks[normal]
-        # NORMAL should still be loaded (not unloaded)
-        assert mocks[normal].is_loaded
-        assert mocks[normal]._unload_called == 0
-        # SIMPLE should NOT be loaded (we reuse NORMAL)
-        assert not mocks[simple].is_loaded
+        assert result is mocks[t_default]
+        assert result is mocks[t_d]  # same object — backend dedup
+        assert mocks[t_default].is_loaded
+        assert mocks[t_default]._unload_called == 0
+        assert mocks[t_default]._deactivate_called == 0
 
     @pytest.mark.asyncio
     async def test_get_loaded_models_accurate(self) -> None:
         """get_loaded_models() returns correct list."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
 
-        # Nothing loaded initially
         assert orchestrator.get_loaded_models() == []
 
-        # Load normal
-        await mocks[normal].load()
-        assert "normal" in orchestrator.get_loaded_models()
+        await mocks[t_default].load()
+        assert cfg.default_tier in orchestrator.get_loaded_models()
 
-        # Load router
+        assert orchestrator._router is not None
         await orchestrator._router.load()
         loaded = orchestrator.get_loaded_models()
-        assert "normal" in loaded
+        assert cfg.default_tier in loaded
         assert "router" in loaded
 
-        # Unload normal
-        await mocks[normal].unload()
+        await mocks[t_default].unload()
         loaded = orchestrator.get_loaded_models()
-        assert "normal" not in loaded
+        assert cfg.default_tier not in loaded
         assert "router" in loaded
 
     @pytest.mark.asyncio
     async def test_already_loaded_returns_immediately(self) -> None:
         """Requesting already-loaded model returns it without swap."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
 
-        # Start with normal loaded
-        await mocks[normal].load()
-        orchestrator._loaded_main_tier = normal
-        initial_load_count = mocks[normal]._load_called
+        await mocks[t_default].load()
+        orchestrator._loaded_main_tier = t_default
+        initial_load_count = mocks[t_default]._load_called
 
-        # Request normal again
-        result = await orchestrator._get_model(normal)
+        result = await orchestrator._get_model(t_default)
 
-        assert result is mocks[normal]
-        # Should not have called load again
-        assert mocks[normal]._load_called == initial_load_count
+        assert result is mocks[t_default]
+        assert mocks[t_default]._load_called == initial_load_count
 
     @pytest.mark.asyncio
     async def test_fallback_when_tier_not_configured(self) -> None:
         """Falls back to default when requested tier not in _tiers."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
-        thinking = self._tier(orchestrator, "thinking")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
+        t_c = self._tier(orchestrator, cfg.tier_c)
 
-        # Remove THINKING from tiers
-        del orchestrator._tiers[thinking]
+        # Remove tier_c from tiers
+        del orchestrator._tiers[t_c]
 
-        # Start with normal loaded (fallback)
-        await mocks[normal].load()
-        orchestrator._loaded_main_tier = normal
+        await mocks[t_default].load()
+        orchestrator._loaded_main_tier = t_default
 
-        # Request THINKING - should fallback to normal
-        result = await orchestrator._get_model(thinking)
+        result = await orchestrator._get_model(t_c)
 
-        assert result is mocks[normal]
+        assert result is mocks[t_default]
 
     @pytest.mark.asyncio
     async def test_concurrent_requests_no_race(self) -> None:
         """Concurrent requests for same model don't cause race conditions."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
         orchestrator._loaded_main_tier = None
 
-        # Add a small delay to load to make race more likely
-        original_load = mocks[normal].load
+        original_load = mocks[t_default].load
 
         async def slow_load():
             await asyncio.sleep(0.01)
             await original_load()
 
-        mocks[normal].load = slow_load
+        mocks[t_default].load = slow_load
 
-        # Make concurrent requests
         results = await asyncio.gather(
-            orchestrator._get_model(normal),
-            orchestrator._get_model(normal),
-            orchestrator._get_model(normal),
+            orchestrator._get_model(t_default),
+            orchestrator._get_model(t_default),
+            orchestrator._get_model(t_default),
         )
 
-        # All should return the same model
-        assert all(r is mocks[normal] for r in results)
-        # Model should only be loaded once (lock prevents duplicates)
-        assert mocks[normal].is_loaded
+        assert all(r is mocks[t_default] for r in results)
+        assert mocks[t_default].is_loaded
 
     @pytest.mark.asyncio
     async def test_tracks_loaded_main_tier(self) -> None:
         """_loaded_main_tier correctly tracks which main model is loaded."""
-        orchestrator, mocks = self._create_orchestrator_with_mocks()
-        normal = self._tier(orchestrator, "normal")
-        code = self._tier(orchestrator, "code")
-        thinking = self._tier(orchestrator, "thinking")
+        orchestrator, _ = self._create_orchestrator_with_mocks()
+        cfg = self.config
+        t_default = self._tier(orchestrator, cfg.default_tier)
+        t_b = self._tier(orchestrator, cfg.tier_b)
+        t_c = self._tier(orchestrator, cfg.tier_c)
 
         assert orchestrator._loaded_main_tier is None
 
-        # Load normal
-        await orchestrator._get_model(normal)
-        assert orchestrator._loaded_main_tier == normal
+        await orchestrator._get_model(t_default)
+        assert orchestrator._loaded_main_tier == t_default
 
-        # Swap to code
-        await orchestrator._get_model(code)
-        assert orchestrator._loaded_main_tier == code
+        await orchestrator._get_model(t_b)
+        assert orchestrator._loaded_main_tier == t_b
 
-        # Swap to thinking
-        await orchestrator._get_model(thinking)
-        assert orchestrator._loaded_main_tier == thinking
+        await orchestrator._get_model(t_c)
+        assert orchestrator._loaded_main_tier == t_c
 
 
 class TestBackendFactory:
@@ -362,20 +364,20 @@ class TestBackendFactory:
             created.append((str(model_config.path), tier_name))
             return MockModelBackend(MockModelConfig(str(model_config.path)), tier_name)
 
-        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)
+        orchestrator = ModelOrchestrator(self.config, backend_factory=mock_factory)  # type: ignore[arg-type]
         await orchestrator.initialize()
 
-        # Factory should have been called for each tier + router
+        cfg = self.config
         tier_names = [name for _, name in created]
-        assert "normal" in tier_names
-        assert "code" in tier_names
-        assert "thinking" in tier_names
-        assert "simple" in tier_names
+        assert cfg.default_tier in tier_names
+        assert cfg.tier_b in tier_names
+        assert cfg.tier_c in tier_names
+        assert cfg.tier_d in tier_names
         assert "router" in tier_names
 
     def test_default_factory_when_none_provided(self) -> None:
         """Without backend_factory, _default_backend_factory is used."""
-        orchestrator = ModelOrchestrator(self.config)
+        orchestrator = ModelOrchestrator(self.config)  # type: ignore[arg-type]
         assert orchestrator._backend_factory == orchestrator._default_backend_factory
 
 
@@ -387,34 +389,35 @@ class TestIdentityFileValidation:
 
     def test_custom_identity_missing_raises(self, tmp_path: Path) -> None:
         """PromptManager raises when custom identity path doesn't exist."""
-        # Set identity to a non-existent file on a tier
-        self.config.models.tiers["normal"].identity = tmp_path / "nonexistent.md"
+        tier_name = self.config.default_tier
+        self.config.models.tiers[tier_name].identity = tmp_path / "nonexistent.md"
 
         with pytest.raises(FileNotFoundError):
-            ModelOrchestrator(self.config)
+            ModelOrchestrator(self.config)  # type: ignore[arg-type]
 
     def test_custom_identity_exists_passes(self, tmp_path: Path) -> None:
         """PromptManager loads when custom identity path exists."""
-        identity_path = tmp_path / "identity_normal.md"
+        tier_name = self.config.default_tier
+        identity_path = tmp_path / f"identity_{tier_name}.md"
         identity_path.write_text(
-            "---\ntype: identity\nversion: 1\nname: normal\n" "focus:\n  - testing\n---\n# Normal\n"
+            f"---\ntype: identity\nversion: 1\nname: {tier_name}\n"
+            "focus:\n  - testing\n---\n# Custom Identity\n"
         )
-        self.config.models.tiers["normal"].identity = identity_path
+        self.config.models.tiers[tier_name].identity = identity_path
 
-        # Should not raise — custom file exists and validates
-        orchestrator = ModelOrchestrator(self.config)
-        assert orchestrator._prompt_manager.get_identity("normal") is not None
+        orchestrator = ModelOrchestrator(self.config)  # type: ignore[arg-type]
+        assert orchestrator._prompt_manager.get_identity(tier_name) is not None
 
     def test_bundled_default_loads(self) -> None:
         """Bundled identity loads when tier identity is None (default)."""
-        # Default config: identity=None → bundled default
-        orchestrator = ModelOrchestrator(self.config)
-        # Bundled identity files exist for normal, code, thinking, simple
-        assert orchestrator._prompt_manager.get_identity("normal") is not None
+        tier_name = self.config.default_tier
+        orchestrator = ModelOrchestrator(self.config)  # type: ignore[arg-type]
+        assert orchestrator._prompt_manager.get_identity(tier_name) is not None
 
     def test_identity_disabled(self) -> None:
         """Identity disabled when tier identity is False."""
-        self.config.models.tiers["normal"].identity = False
+        tier_name = self.config.default_tier
+        self.config.models.tiers[tier_name].identity = False
 
-        orchestrator = ModelOrchestrator(self.config)
-        assert orchestrator._prompt_manager.get_identity("normal") is None
+        orchestrator = ModelOrchestrator(self.config)  # type: ignore[arg-type]
+        assert orchestrator._prompt_manager.get_identity(tier_name) is None

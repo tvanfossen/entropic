@@ -301,7 +301,6 @@ class TestHeadlessPresenter:
                 vram_used=4.0,
                 vram_total=8.0,
                 tokens=1000,
-                thinking_mode=False,
                 context_used=2000,
                 context_max=8000,
             )

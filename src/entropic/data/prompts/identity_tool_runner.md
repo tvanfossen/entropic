@@ -9,12 +9,13 @@ focus:
 examples: []
 grammar: null
 auto_chain: null
-allowed_tools: null
+allowed_tools: []
 max_output_tokens: 256
 temperature: 0.1
 enable_thinking: false
 model_preference: primary
 interstitial: false
+routable: false
 ---
 
 # Tool Runner

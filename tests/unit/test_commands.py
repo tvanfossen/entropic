@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+from entropic.config.schema import EntropyConfig
 from entropic.core.base import Message
 from entropic.core.commands import CommandContext, CommandRegistry
 from entropic.core.context import ContextCompactor, ProjectContext
@@ -86,27 +87,41 @@ class TestCommandRegistry:
     async def test_model_command_valid(self, registry: CommandRegistry) -> None:
         """Test model command with valid model."""
         await registry.discover()
+        config = EntropyConfig(
+            models={
+                "tiers": {"conversational": {"path": "/m.gguf"}},
+                "default": "conversational",
+            },
+            routing={"enabled": False, "fallback_tier": "conversational"},
+        )
         context = CommandContext(
             app=None,
             conversation_id=None,
             project_dir=Path("."),
-            config=None,
+            config=config,
         )
 
-        result = await registry.execute("/model normal", context)
+        result = await registry.execute("/model conversational", context)
         assert result.success
         assert result.data["action"] == "switch_model"
-        assert result.data["model"] == "normal"
+        assert result.data["model"] == "conversational"
 
     @pytest.mark.asyncio
     async def test_model_command_invalid(self, registry: CommandRegistry) -> None:
         """Test model command with invalid model."""
         await registry.discover()
+        config = EntropyConfig(
+            models={
+                "tiers": {"conversational": {"path": "/m.gguf"}},
+                "default": "conversational",
+            },
+            routing={"enabled": False, "fallback_tier": "conversational"},
+        )
         context = CommandContext(
             app=None,
             conversation_id=None,
             project_dir=Path("."),
-            config=None,
+            config=config,
         )
 
         result = await registry.execute("/model invalid", context)

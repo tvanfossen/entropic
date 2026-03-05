@@ -97,7 +97,12 @@ class ResponseGenerator:
         filtered = self._filter_tools_for_tier(ctx.all_tools, tier)
         adapter = self._orchestrator.get_adapter(tier)
         tier_config = self._config.models.tiers.get(tier.name) if hasattr(tier, "name") else None
-        enable_thinking = tier_config.enable_thinking if tier_config else True
+        identity_fm = (
+            self._orchestrator._prompt_manager.get_identity_frontmatter(tier.name)
+            if hasattr(tier, "name")
+            else None
+        )
+        enable_thinking = identity_fm.enable_thinking if identity_fm is not None else False
 
         system = ctx.base_system
         if tier_config and self._config.inject_model_context:
@@ -220,12 +225,21 @@ class ResponseGenerator:
 
         return await self._generate_non_streaming(ctx)
 
+    def _get_identity_fm(self, ctx: LoopContext) -> Any:
+        """Look up identity frontmatter for the locked tier."""
+        if ctx.locked_tier is None or not hasattr(ctx.locked_tier, "name"):
+            return None
+        return self._orchestrator._prompt_manager.get_identity_frontmatter(ctx.locked_tier.name)
+
     async def _generate_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate response via streaming."""
         content = ""
+        identity_fm = self._get_identity_fm(ctx)
 
         interrupted = False
-        async for chunk in self._orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
+        async for chunk in self._orchestrator.generate_stream(
+            ctx.messages, tier=ctx.locked_tier, identity_fm=identity_fm
+        ):
             if self._interrupt_event.is_set():
                 interrupted = True
                 break
@@ -257,7 +271,10 @@ class ResponseGenerator:
 
     async def _generate_non_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate response without streaming."""
-        result = await self._orchestrator.generate(ctx.messages, tier=ctx.locked_tier)
+        identity_fm = self._get_identity_fm(ctx)
+        result = await self._orchestrator.generate(
+            ctx.messages, tier=ctx.locked_tier, identity_fm=identity_fm
+        )
 
         self._log_model_output(
             ctx,
@@ -349,7 +366,10 @@ class ResponseGenerator:
 
         # Generate new response with injected context
         content = ""
-        async for chunk in self._orchestrator.generate_stream(ctx.messages, tier=ctx.locked_tier):
+        identity_fm = self._get_identity_fm(ctx)
+        async for chunk in self._orchestrator.generate_stream(
+            ctx.messages, tier=ctx.locked_tier, identity_fm=identity_fm
+        ):
             if self._interrupt_event.is_set():
                 break
 

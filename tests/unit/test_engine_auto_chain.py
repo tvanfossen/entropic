@@ -77,7 +77,7 @@ def _setup_handoff_mocks(engine: AgentEngine) -> ModelTier:
 
 
 class TestTierConfigAutoChain:
-    """Tests for auto_chain and enable_thinking on TierConfig."""
+    """Tests for auto_chain on TierConfig."""
 
     def test_auto_chain_default_false(self) -> None:
         """auto_chain defaults to False."""
@@ -88,16 +88,6 @@ class TestTierConfigAutoChain:
         """auto_chain=True parses correctly."""
         tc = _tier_config(auto_chain=True)
         assert tc.auto_chain is True
-
-    def test_enable_thinking_default_true(self) -> None:
-        """enable_thinking defaults to True."""
-        tc = _tier_config()
-        assert tc.enable_thinking is True
-
-    def test_enable_thinking_false(self) -> None:
-        """enable_thinking=False parses correctly."""
-        tc = _tier_config(enable_thinking=False)
-        assert tc.enable_thinking is False
 
 
 # ===========================================================================

@@ -1,137 +1,170 @@
 """
 Test model routing classification with real model inference.
 
-These tests validate that the router model correctly classifies user prompts
-into the appropriate model tiers (simple, code, normal, thinking).
+Tests validate that the router model correctly classifies user prompts
+into appropriate model tiers. Tier names are discovered dynamically from
+the bundled identity library.
+
+Classification tests use ``_classify_task()`` directly — router model only,
+no model swap triggered. A separate test validates cross-model swap lifecycle.
 
 Run with: pytest tests/model/test_routing.py -v
 Skip with: pytest -m "not model"
 """
 
+import random
+from pathlib import Path
+
+import entropic
 import pytest
+import yaml
+from entropic.config.loader import ConfigLoader
 from entropic.core.base import Message
 from entropic.inference.orchestrator import ModelOrchestrator
+
+# ---------------------------------------------------------------------------
+# Identity discovery — avoids hardcoding tier names
+# ---------------------------------------------------------------------------
+_PROMPTS_DIR = Path(entropic.__file__).parent / "data" / "prompts"
+
+
+def _routable_identities() -> list[tuple[str, list[str], list[str]]]:
+    """Return (name, focus, examples) for all routable identities.
+
+    Parses YAML frontmatter directly from bundled identity files.
+    Only includes identities where routable=True.
+    """
+    result = []
+    for path in sorted(_PROMPTS_DIR.glob("identity_*.md")):
+        name = path.stem.removeprefix("identity_")
+        text = path.read_text()
+        if not text.startswith("---"):
+            continue
+        end = text.index("---", 3)
+        fm = yaml.safe_load(text[3:end])
+        if fm.get("routable", True):
+            result.append((name, fm.get("focus", []), fm.get("examples", [])))
+    return result
+
+
+_ROUTABLE = _routable_identities()
+_IDENTITY_NAMES = [name for name, _, _ in _ROUTABLE]
+
+
+def _tiers_on_non_default_model() -> list[str]:
+    """Return routable tier names that use a different model file than the default."""
+    config = ConfigLoader().load()
+    default_name = config.models.default
+    default_config = config.models.tiers.get(default_name)
+    if not default_config:
+        return []
+    default_path = str(default_config.path)
+    result = []
+    for name in _IDENTITY_NAMES:
+        tier_config = config.models.tiers.get(name)
+        if tier_config and str(tier_config.path) != default_path:
+            result.append(name)
+    return result
+
+
+_NON_DEFAULT_MODEL_TIERS = _tiers_on_non_default_model()
+
+
+# ---------------------------------------------------------------------------
+# Parametrized routing tests — one per routable identity
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.model
 class TestRoutingClassification:
-    """Test task classification using router model."""
+    """Test that example prompts classify to their source identity.
 
-    # === SIMPLE tier tests (greetings) ===
+    Dynamically parametrized from the bundled identity library.
+    Each test picks a random example from the identity's frontmatter
+    and verifies the router classifies it to the correct tier.
 
-    @pytest.mark.asyncio
-    async def test_hello_routes_to_simple(self, orchestrator: ModelOrchestrator):
-        """'Hello' should route to simple tier."""
-        tier = await orchestrator.route([Message(role="user", content="Hello")])
-        assert tier == "simple", f"Expected simple, got {tier}"
-
-    @pytest.mark.asyncio
-    async def test_hi_routes_to_simple(self, orchestrator: ModelOrchestrator):
-        """'Hi' should route to simple tier."""
-        tier = await orchestrator.route([Message(role="user", content="Hi")])
-        assert tier == "simple", f"Expected simple, got {tier}"
+    Uses _classify_task() directly — router model only, no model swap.
+    """
 
     @pytest.mark.asyncio
-    async def test_thanks_routes_to_simple(self, orchestrator: ModelOrchestrator):
-        """'Thanks!' should route to simple tier."""
-        tier = await orchestrator.route([Message(role="user", content="Thanks!")])
-        assert tier == "simple", f"Expected simple, got {tier}"
-
-    # === CODE tier tests ===
-
-    @pytest.mark.asyncio
-    async def test_write_code_routes_to_code(self, orchestrator: ModelOrchestrator):
-        """Code writing request should route to code tier."""
-        tier = await orchestrator.route(
-            [Message(role="user", content="Write a Python function to calculate fibonacci numbers")]
-        )
-        assert tier == "code", f"Expected code, got {tier}"
-
-    @pytest.mark.asyncio
-    async def test_fix_bug_routes_to_code(self, orchestrator: ModelOrchestrator):
-        """Bug fix request should route to code tier."""
-        tier = await orchestrator.route(
-            [Message(role="user", content="Fix the bug in the authentication module")]
-        )
-        assert tier == "code", f"Expected code, got {tier}"
-
-    @pytest.mark.asyncio
-    async def test_add_feature_routes_to_code(self, orchestrator: ModelOrchestrator):
-        """Feature request should route to code tier."""
-        tier = await orchestrator.route(
-            [Message(role="user", content="Add a login button to the header component")]
-        )
-        assert tier == "code", f"Expected code, got {tier}"
-
-    # === NORMAL (reasoning) tier tests ===
-
-    @pytest.mark.asyncio
-    async def test_explain_routes_to_reasoning(self, orchestrator: ModelOrchestrator):
-        """Explanation request should route to normal (reasoning) tier."""
-        tier = await orchestrator.route(
-            [Message(role="user", content="Explain how HTTP cookies work")]
-        )
-        assert tier == "normal", f"Expected normal, got {tier}"
-
-    @pytest.mark.asyncio
-    async def test_question_routes_to_reasoning(self, orchestrator: ModelOrchestrator):
-        """Question should route to normal (reasoning) tier."""
-        tier = await orchestrator.route(
-            [Message(role="user", content="What is the difference between TCP and UDP?")]
-        )
-        assert tier == "normal", f"Expected normal, got {tier}"
-
-    # === THINKING (complex) tier tests ===
-
-    @pytest.mark.asyncio
-    async def test_complex_analysis_routes_to_thinking(
-        self, orchestrator: ModelOrchestrator, models_available: dict
+    @pytest.mark.parametrize("identity_name", _IDENTITY_NAMES)
+    async def test_example_classifies_to_own_tier(
+        self, orchestrator: ModelOrchestrator, identity_name: str
     ):
-        """Complex analysis should route to thinking tier (if available)."""
-        tier = await orchestrator.route(
-            [
-                Message(
-                    role="user",
-                    content="Analyze the trade-offs between microservices and monolithic "
-                    "architecture for a high-traffic e-commerce platform, considering "
-                    "scalability, maintainability, and team structure implications",
-                )
-            ]
-        )
+        """An example prompt from an identity should classify to that tier."""
+        examples = next(e for n, _, e in _ROUTABLE if n == identity_name)
 
-        if models_available.get("thinking", False):
-            assert tier == "thinking", f"Expected thinking, got {tier}"
-        else:
-            # Falls back to normal if thinking not available
-            assert tier == "normal", f"Expected normal fallback, got {tier}"
+        prompt = random.choice(examples)
+        tier, raw = await orchestrator._classify_task([Message(role="user", content=prompt)])
+        assert tier == identity_name, (
+            f"Example '{prompt}' expected to classify as {identity_name}, "
+            f"got {tier} (raw: {raw!r})"
+        )
 
 
 @pytest.mark.model
 class TestClassificationSpeed:
-    """Test that classification is fast (using small router model)."""
+    """Test that classification is fast (using small router model).
+
+    Uses the bundled router config (logits_all=False) — same as real engine.
+    """
 
     @pytest.mark.asyncio
     async def test_classification_under_500ms(self, orchestrator: ModelOrchestrator):
-        """Classification should complete in under 500ms."""
+        """Steady-state classification should complete in under 500ms.
+
+        A warm-up classification runs first to eliminate cold-cache effects.
+        The timed run measures pure routing speed.
+        """
         import time
 
-        messages = [Message(role="user", content="Hello, how are you?")]
+        _, _, examples = random.choice(_ROUTABLE)
+        prompt = random.choice(examples)
+        messages = [Message(role="user", content=prompt)]
+
+        # Warm-up
+        await orchestrator._classify_task(messages)
+
         start = time.perf_counter()
         await orchestrator._classify_task(messages)
         elapsed_ms = (time.perf_counter() - start) * 1000
 
-        # Router model (0.6B) should classify very quickly
         assert elapsed_ms < 500, f"Classification took {elapsed_ms:.0f}ms, expected <500ms"
 
     @pytest.mark.asyncio
     async def test_multiple_classifications_consistent(self, orchestrator: ModelOrchestrator):
-        """Same prompt should classify consistently."""
-        messages = [Message(role="user", content="Write a unit test for the login function")]
+        """Same prompt should classify consistently (deterministic with temp=0)."""
+        _, _, examples = random.choice(_ROUTABLE)
+        prompt = random.choice(examples)
+
+        messages = [Message(role="user", content=prompt)]
         results = []
         for _ in range(3):
-            tier, _raw = await orchestrator._classify_task(messages)
+            tier, _ = await orchestrator._classify_task(messages)
             results.append(tier)
 
-        # All results should be the same (deterministic with temp=0)
         assert all(r == results[0] for r in results), f"Inconsistent results: {results}"
-        assert results[0] == "code", f"Expected code, got '{results[0]}'"
+
+
+@pytest.mark.model
+class TestCrossModelSwap:
+    """Test that routing to a tier on a different model file works.
+
+    Validates the full route() → deactivate → load lifecycle for cross-model
+    transitions. Randomly selects a non-default-model tier to test.
+    """
+
+    @pytest.mark.asyncio
+    async def test_route_to_non_default_model_tier(self, orchestrator: ModelOrchestrator):
+        """Routing to a tier on a different model file completes without error."""
+        if not _NON_DEFAULT_MODEL_TIERS:
+            pytest.skip("No non-default-model routable tiers available")
+
+        target_name = random.choice(_NON_DEFAULT_MODEL_TIERS)
+        target_tier = orchestrator._find_tier(target_name)
+        assert target_tier is not None, f"Tier '{target_name}' not found in orchestrator"
+
+        # Force route to specific tier (bypasses classification)
+        model = await orchestrator._get_model(target_tier)
+
+        assert model.is_loaded, f"Model for {target_name} not loaded after swap"

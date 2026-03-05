@@ -25,7 +25,6 @@ class StatusInfo:
     vram_used: float
     vram_total: float
     tokens: int
-    thinking_mode: bool
     context_used: int
     context_max: int
 
@@ -119,7 +118,7 @@ class Presenter(ABC):
         Optional - implementations may no-op if tier display not supported.
 
         Args:
-            tier: Tier name (e.g., 'code', 'thinking', 'normal', 'simple')
+            tier: Tier name (e.g., 'conversational', 'planner', 'code_writer')
         """
         _ = tier
 

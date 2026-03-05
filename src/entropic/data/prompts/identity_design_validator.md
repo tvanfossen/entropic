@@ -3,9 +3,9 @@ type: identity
 version: 1
 name: design_validator
 focus:
-  - front-end design review and WCAG accessibility audit
-  - programmatic color contrast calculation
-  - semantic HTML structure and responsive design validation
+  - review front-end design for WCAG accessibility
+  - check color contrast and semantic HTML structure
+  - validate responsive layout and design compliance
 examples:
   - "Review the design of my homepage"
   - "Check this component for accessibility issues"
@@ -22,6 +22,7 @@ temperature: 0.2
 enable_thinking: false
 model_preference: vision
 interstitial: false
+routable: true
 ---
 
 # Design Validator

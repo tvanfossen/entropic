@@ -32,6 +32,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from llama_cpp import Llama, LlamaGrammar
+from llama_cpp.llama_chat_format import Jinja2ChatFormatter
 
 from entropic.config.schema import ModelConfig
 from entropic.core.base import GenerationResult, Message, ModelBackend, ModelState
@@ -92,7 +93,7 @@ class LlamaCppBackend(ModelBackend):
 
         Args:
             config: Model configuration
-            tier: Model tier (thinking, normal, code, simple, router)
+            tier: Model tier name
             adapter: Chat adapter (resolved from config.adapter if None)
             prompt_manager: Central prompt loader
         """
@@ -161,6 +162,7 @@ class LlamaCppBackend(ModelBackend):
             start = time.time()
 
             await self._swap_model(gpu_layers)
+            self._detect_template_support()
             self._state = ModelState.ACTIVE
 
             elapsed = time.time() - start
@@ -182,6 +184,7 @@ class LlamaCppBackend(ModelBackend):
             start = time.time()
 
             await self._swap_model(gpu_layers=0)
+            self._detect_template_support()
             self._state = ModelState.WARM
 
             elapsed = time.time() - start
@@ -195,6 +198,8 @@ class LlamaCppBackend(ModelBackend):
     async def unload(self) -> None:
         """Unload the model fully (→ COLD). Releases all RAM and VRAM."""
         async with self._lock:
+            if self._model is not None:
+                self._model.close()
             self._model = None
             self._state = ModelState.COLD
             logger.info(f"[VRAM] Unloaded: {self.config.path.name}")
@@ -218,10 +223,19 @@ class LlamaCppBackend(ModelBackend):
         )
 
     def _free_and_load(self, old_model: "Llama | None", gpu_layers: int) -> "Llama":
-        """Free old model and load new one in the executor thread."""
+        """Free old model and load new one in the executor thread.
+
+        Explicitly closes the Llama model's native resources before dropping
+        the Python reference. This prevents the GC-triggered ``__del__`` →
+        ``free_model`` segfault in llama_cpp._internals, where native CUDA
+        resources are freed in an inconsistent state during garbage collection.
+        """
         import gc
 
         if old_model is not None:
+            # Explicit close releases native resources (CUDA, mmap) in a
+            # controlled context — NOT during GC's __del__ finalization.
+            old_model.close()
             del old_model
             gc.collect()
 
@@ -241,22 +255,59 @@ class LlamaCppBackend(ModelBackend):
                 chat_format=self._adapter.chat_format,
                 use_mmap=True,
                 use_mlock=self.config.use_mlock,
+                logits_all=self.config.logits_all,
                 verbose=False,
             )
         finally:
             sys.stderr = old_stderr
 
     def _detect_template_support(self) -> None:
-        """Detect chat_template_kwargs support (added in newer llama-cpp-python)."""
+        """Detect chat_template_kwargs support and install no-think handler if needed."""
         assert self._model is not None
         sig = inspect.signature(self._model.create_chat_completion)
         self._has_chat_template_kwargs = "chat_template_kwargs" in sig.parameters
-        if not self._has_chat_template_kwargs:
-            logger.info(
-                "Installed llama-cpp-python does not support chat_template_kwargs. "
-                "Template parameters (e.g. enable_thinking) will be skipped. "
-                "Rebuild with ./install.sh or entropic setup-cuda for full support."
-            )
+
+        if (
+            not self._has_chat_template_kwargs
+            and getattr(self._adapter, "enable_thinking", True) is False
+        ):
+            self._install_no_think_handler()
+
+    def _install_no_think_handler(self) -> None:
+        """Install a chat handler that injects enable_thinking=False into the jinja template.
+
+        Works around llama-cpp-python's Jinja2ChatFormatter not forwarding
+        extra kwargs to the template render call. Constructs a formatter from
+        the GGUF's embedded template and monkey-patches its render method to
+        always set enable_thinking=False.
+        """
+        assert self._model is not None
+        template = self._model.metadata.get("tokenizer.chat_template")
+        if not template:
+            logger.warning("No chat template in GGUF metadata, cannot install no-think handler")
+            return
+
+        eos_id = self._model.token_eos()
+        bos_id = self._model.token_bos()
+        eos_token = self._model._model.token_get_text(eos_id) if eos_id != -1 else ""
+        bos_token = self._model._model.token_get_text(bos_id) if bos_id != -1 else ""
+
+        formatter = Jinja2ChatFormatter(
+            template=template,
+            eos_token=eos_token,
+            bos_token=bos_token,
+            stop_token_ids=[eos_id],
+        )
+
+        original_render = formatter._environment.render
+
+        def render_no_think(**kwargs):
+            kwargs.setdefault("enable_thinking", False)
+            return original_render(**kwargs)
+
+        formatter._environment.render = render_no_think
+        self._model.chat_handler = formatter.to_chat_handler()
+        logger.info("Installed no-think chat handler (enable_thinking=False)")
 
     def _build_gen_config(
         self,
@@ -269,12 +320,13 @@ class LlamaCppBackend(ModelBackend):
         """Build GenerationConfig with kwargs overriding backend defaults."""
         return GenerationConfig(
             max_tokens=max_tokens,
-            temperature=kwargs.get("temperature", self.config.temperature),
-            top_p=kwargs.get("top_p", self.config.top_p),
-            top_k=kwargs.get("top_k", self.config.top_k),
-            repeat_penalty=kwargs.get("repeat_penalty", self.config.repeat_penalty),
+            temperature=kwargs.get("temperature", 0.7),
+            top_p=kwargs.get("top_p", 0.9),
+            top_k=kwargs.get("top_k", 40),
+            repeat_penalty=kwargs.get("repeat_penalty", 1.1),
             stop=stop or [],
             grammar=grammar,
+            logprobs=kwargs.get("logprobs"),
             stream=stream,
             chat_template_kwargs=kwargs.get("chat_template_kwargs", {}),
         )
@@ -402,13 +454,28 @@ class LlamaCppBackend(ModelBackend):
         )
         elapsed = int((time.time() - start) * 1000)
 
-        content = result["choices"][0].get("text", "")
+        choice = result["choices"][0]
+        content = choice.get("text", "")
+
+        # Extract logprobs if requested
+        raw_logprobs = choice.get("logprobs")
+        logprobs_list = None
+        if raw_logprobs and raw_logprobs.get("token_logprobs"):
+            logprobs_list = [
+                {"token": tok, "logprob": lp}
+                for tok, lp in zip(
+                    raw_logprobs["tokens"], raw_logprobs["token_logprobs"], strict=False
+                )
+                if lp is not None
+            ]
+
         return GenerationResult(
             content=content,
             tool_calls=[],
-            finish_reason=result["choices"][0].get("finish_reason", "stop"),
+            finish_reason=choice.get("finish_reason", "stop"),
             token_count=result.get("usage", {}).get("completion_tokens", 0),
             generation_time_ms=elapsed,
+            logprobs=logprobs_list,
         )
 
     def _complete_sync(self, prompt: str, config: GenerationConfig) -> dict[str, Any]:
@@ -422,6 +489,7 @@ class LlamaCppBackend(ModelBackend):
             "top_p": config.top_p,
             "top_k": config.top_k,
             "repeat_penalty": config.repeat_penalty,
+            "logprobs": config.logprobs,
         }
 
         if config.grammar:

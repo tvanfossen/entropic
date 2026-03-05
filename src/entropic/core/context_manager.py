@@ -64,7 +64,7 @@ class ContextManager:
     def refresh_context_limit(self) -> None:
         """Refresh context limit based on current model.
 
-        When models swap (e.g., normal → thinking), the context limit
+        When models swap (e.g., conversational → planner), the context limit
         may change. Updates the token counter to use the current model's
         context length.
         """

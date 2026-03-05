@@ -33,7 +33,7 @@ class ModelTier:
 
     @property
     def name(self) -> str:
-        """Tier name (e.g. 'thinking', 'normal', 'code')."""
+        """Tier name (e.g. 'conversational', 'planner', 'code_writer')."""
         return self._name
 
     @property
@@ -105,6 +105,7 @@ class GenerationResult:
     finish_reason: str = "stop"
     token_count: int = 0
     generation_time_ms: int = 0
+    logprobs: list[dict[str, Any]] | None = None  # Per-token log-probabilities
 
 
 class ModelState(Enum):

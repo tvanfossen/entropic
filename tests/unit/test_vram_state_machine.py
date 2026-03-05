@@ -1,18 +1,46 @@
 """Tests for three-state VRAM lifecycle (COLD/WARM/ACTIVE)."""
 
+import random
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import entropic
 import pytest
 from entropic.core.base import ModelState
 from entropic.inference.orchestrator import ModelOrchestrator
+
+# ---------------------------------------------------------------------------
+# Identity discovery — avoids hardcoding tier names that rot on every rename
+# ---------------------------------------------------------------------------
+_PROMPTS_DIR = Path(entropic.__file__).parent / "data" / "prompts"
+
+
+def _available_identity_names() -> list[str]:
+    """Return names of all bundled routable identities."""
+    import yaml
+
+    result = []
+    for path in sorted(_PROMPTS_DIR.glob("identity_*.md")):
+        name = path.stem.removeprefix("identity_")
+        text = path.read_text()
+        if not text.startswith("---"):
+            continue
+        end = text.index("---", 3)
+        fm = yaml.safe_load(text[3:end])
+        if fm.get("routable", True):
+            result.append(name)
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Mock infrastructure
+# ---------------------------------------------------------------------------
 
 
 class MockModelConfig:
     def __init__(self, path: str = "/models/test.gguf"):
         self.path = Path(path)
         self.context_length = 4096
-        self.max_output_tokens = 4096
         self.allowed_tools = None
 
 
@@ -65,58 +93,70 @@ class MockTierConfig:
     def __init__(self, path: str = "/models/test.gguf", warm_on_startup: bool = False):
         self.path = Path(path)
         self.context_length = 4096
-        self.max_output_tokens = 4096
         self.gpu_layers = -1
         self.warm_on_startup = warm_on_startup
         self.use_mlock = True
         self.adapter = "qwen2"
-        self.temperature = 0.7
-        self.top_p = 0.9
-        self.top_k = 40
-        self.repeat_penalty = 1.1
+        self.logits_all = False
         self.allowed_tools = None
-        self.focus = []
+        self.identity = None
+        self.routable = True
 
 
 class MockEntropyConfig:
+    """Config that samples two real identity names to avoid hardcoding tier names."""
+
     def __init__(self, warm_non_default: bool = False):
+        names = random.sample(_available_identity_names(), 2)
+        self.default_tier, self.alt_tier = names[0], names[1]
+
         self.models = MagicMock()
-        self.models.default = "normal"
+        self.models.default = self.default_tier
         self.models.tiers = {
-            "normal": MockTierConfig("/models/normal.gguf"),
-            "code": MockTierConfig("/models/code.gguf", warm_on_startup=warm_non_default),
-            "thinking": MockTierConfig("/models/thinking.gguf"),
+            self.default_tier: MockTierConfig(f"/models/{self.default_tier}.gguf"),
+            self.alt_tier: MockTierConfig(
+                f"/models/{self.alt_tier}.gguf", warm_on_startup=warm_non_default
+            ),
         }
         self.models.router = None
 
         self.routing = MagicMock()
         self.routing.enabled = False
-        self.routing.fallback_tier = "normal"
+        self.routing.fallback_tier = self.default_tier
         self.routing.tier_map = {}
         self.routing.handoff_rules = {}
-
-        self.thinking = MagicMock()
-        self.thinking.enabled = False
 
 
 def _make_orchestrator_with_mocks(
     config: MockEntropyConfig,
 ) -> tuple[ModelOrchestrator, dict[str, MockModelBackend]]:
     """Create orchestrator with injected mock backends."""
-    orch = ModelOrchestrator(config)
+    orch = ModelOrchestrator(config)  # type: ignore[arg-type]
 
-    normal = orch._find_tier("normal")
-    code = orch._find_tier("code")
-    thinking = orch._find_tier("thinking")
+    default_tier = orch._find_tier(config.default_tier)
+    alt_tier = orch._find_tier(config.alt_tier)
+    assert default_tier is not None, f"Tier '{config.default_tier}' not found"
+    assert alt_tier is not None, f"Tier '{config.alt_tier}' not found"
 
     mocks: dict[str, MockModelBackend] = {
-        "normal": MockModelBackend(MockModelConfig("/models/normal.gguf"), "normal"),
-        "code": MockModelBackend(MockModelConfig("/models/code.gguf"), "code"),
-        "thinking": MockModelBackend(MockModelConfig("/models/thinking.gguf"), "thinking"),
+        config.default_tier: MockModelBackend(
+            MockModelConfig(f"/models/{config.default_tier}.gguf"), config.default_tier
+        ),
+        config.alt_tier: MockModelBackend(
+            MockModelConfig(f"/models/{config.alt_tier}.gguf"), config.alt_tier
+        ),
     }
-    orch._tiers = {normal: mocks["normal"], code: mocks["code"], thinking: mocks["thinking"]}
-    orch._router = None
+    orch._tiers = {  # type: ignore[assignment]
+        default_tier: mocks[config.default_tier],
+        alt_tier: mocks[config.alt_tier],
+    }
+    orch._router = None  # type: ignore[assignment]
     return orch, mocks
+
+
+# ---------------------------------------------------------------------------
+# Tests: Tier swap uses deactivate (ACTIVE → WARM), not unload (ACTIVE → COLD)
+# ---------------------------------------------------------------------------
 
 
 class TestSwapLeavesModelWarm:
@@ -126,47 +166,59 @@ class TestSwapLeavesModelWarm:
     async def test_swap_leaves_previous_in_warm_state(self) -> None:
         config = MockEntropyConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
-        normal_tier = orch._find_tier("normal")
-        code_tier = orch._find_tier("code")
 
-        # Start with normal loaded
-        await mocks["normal"].load()
-        orch._loaded_main_tier = normal_tier
+        default_tier = orch._find_tier(config.default_tier)
+        alt_tier = orch._find_tier(config.alt_tier)
+        assert default_tier is not None
+        assert alt_tier is not None
 
-        # Request code — triggers deactivate(normal) + load(code)
-        await orch._get_model(code_tier)
+        await mocks[config.default_tier].load()
+        orch._loaded_main_tier = default_tier
 
-        # Normal is WARM (not COLD): pages stay in RAM, fast re-activate
-        assert mocks["normal"].state == ModelState.WARM
-        assert mocks["normal"]._deactivate_called == 1
-        assert mocks["normal"]._unload_called == 0
+        # Request alt tier — triggers deactivate(default) + load(alt)
+        await orch._get_model(alt_tier)
+
+        # Default is WARM (not COLD): pages stay in RAM, fast re-activate
+        assert mocks[config.default_tier].state == ModelState.WARM
+        assert mocks[config.default_tier]._deactivate_called == 1
+        assert mocks[config.default_tier]._unload_called == 0
 
     @pytest.mark.asyncio
     async def test_swap_activates_new_model(self) -> None:
         config = MockEntropyConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
-        normal_tier = orch._find_tier("normal")
-        code_tier = orch._find_tier("code")
 
-        await mocks["normal"].load()
-        orch._loaded_main_tier = normal_tier
+        default_tier = orch._find_tier(config.default_tier)
+        alt_tier = orch._find_tier(config.alt_tier)
+        assert default_tier is not None
+        assert alt_tier is not None
 
-        result = await orch._get_model(code_tier)
+        await mocks[config.default_tier].load()
+        orch._loaded_main_tier = default_tier
 
-        assert result is mocks["code"]
-        assert mocks["code"].state == ModelState.ACTIVE
+        result = await orch._get_model(alt_tier)
+
+        assert result is mocks[config.alt_tier]
+        assert mocks[config.alt_tier].state == ModelState.ACTIVE
 
     @pytest.mark.asyncio
     async def test_cold_to_active_uses_load(self) -> None:
         """First load of a model goes COLD → ACTIVE via load()."""
         config = MockEntropyConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
-        normal_tier = orch._find_tier("normal")
 
-        assert mocks["normal"].state == ModelState.COLD
-        await orch._get_model(normal_tier)
-        assert mocks["normal"].state == ModelState.ACTIVE
-        assert mocks["normal"]._load_called == 1
+        default_tier = orch._find_tier(config.default_tier)
+        assert default_tier is not None
+
+        assert mocks[config.default_tier].state == ModelState.COLD
+        await orch._get_model(default_tier)
+        assert mocks[config.default_tier].state == ModelState.ACTIVE
+        assert mocks[config.default_tier]._load_called == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: warm_on_startup
+# ---------------------------------------------------------------------------
 
 
 class TestWarmOnStartup:
@@ -187,11 +239,11 @@ class TestWarmOnStartup:
             backend.warm = tracking_warm  # type: ignore[method-assign]
             return backend
 
-        orch = ModelOrchestrator(config, backend_factory=mock_factory)
+        orch = ModelOrchestrator(config, backend_factory=mock_factory)  # type: ignore[arg-type]
         await orch.initialize()
 
-        # Code tier has warm_on_startup=True and is not the default tier
-        assert "code" in warm_called
+        # alt tier has warm_on_startup=True and is not the default tier
+        assert config.alt_tier in warm_called
 
     @pytest.mark.asyncio
     async def test_warm_on_startup_false_does_not_warm(self) -> None:
@@ -208,54 +260,8 @@ class TestWarmOnStartup:
             backend.warm = tracking_warm  # type: ignore[method-assign]
             return backend
 
-        orch = ModelOrchestrator(config, backend_factory=mock_factory)
+        orch = ModelOrchestrator(config, backend_factory=mock_factory)  # type: ignore[arg-type]
         await orch.initialize()
 
-        # Code tier has warm_on_startup=False — should NOT be pre-warmed
-        assert "code" not in warm_called
-
-
-class TestThinkingModeDeactivates:
-    """set_thinking_mode() deactivates the opposite tier (ACTIVE → WARM)."""
-
-    @pytest.mark.asyncio
-    async def test_thinking_mode_on_deactivates_normal(self) -> None:
-        config = MockEntropyConfig()
-        orch, mocks = _make_orchestrator_with_mocks(config)
-        normal_tier = orch._find_tier("normal")
-
-        # Start: normal is loaded, thinking mode off
-        await mocks["normal"].load()
-        orch._loaded_main_tier = normal_tier
-        orch._thinking_mode = False
-
-        result = await orch.set_thinking_mode(True)
-
-        assert result is True
-        # Normal deactivated to WARM (not unloaded to COLD)
-        assert mocks["normal"].state == ModelState.WARM
-        assert mocks["normal"]._deactivate_called == 1
-        assert mocks["normal"]._unload_called == 0
-        # Thinking now active
-        assert mocks["thinking"].state == ModelState.ACTIVE
-
-    @pytest.mark.asyncio
-    async def test_thinking_mode_off_deactivates_thinking(self) -> None:
-        config = MockEntropyConfig()
-        orch, mocks = _make_orchestrator_with_mocks(config)
-        thinking_tier = orch._find_tier("thinking")
-
-        # Start: thinking is loaded
-        await mocks["thinking"].load()
-        orch._loaded_main_tier = thinking_tier
-        orch._thinking_mode = True
-
-        result = await orch.set_thinking_mode(False)
-
-        assert result is True
-        # Thinking deactivated to WARM
-        assert mocks["thinking"].state == ModelState.WARM
-        assert mocks["thinking"]._deactivate_called == 1
-        assert mocks["thinking"]._unload_called == 0
-        # Normal now active
-        assert mocks["normal"].state == ModelState.ACTIVE
+        # alt tier has warm_on_startup=False — should NOT be pre-warmed
+        assert config.alt_tier not in warm_called

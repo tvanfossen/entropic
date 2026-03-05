@@ -39,12 +39,12 @@ class TestPromptManagerDefaults:
 
     def test_bundled_identities_load(self) -> None:
         pm = PromptManager(
-            tier_identities={"normal": None, "thinking": None},
+            tier_identities={"conversational": None, "planner": None},
             quiet=True,
         )
-        assert pm.get_identity("normal") is not None
-        assert pm.get_identity("thinking") is not None
-        assert "Normal" in (pm.get_identity("normal") or "")
+        assert pm.get_identity("conversational") is not None
+        assert pm.get_identity("planner") is not None
+        assert "Conversational" in (pm.get_identity("conversational") or "")
 
     def test_missing_bundled_identity_warns(self) -> None:
         pm = PromptManager(
@@ -68,10 +68,10 @@ class TestPromptManagerDisable:
 
     def test_identity_disabled(self) -> None:
         pm = PromptManager(
-            tier_identities={"normal": False},
+            tier_identities={"conversational": False},
             quiet=True,
         )
-        assert pm.get_identity("normal") is None
+        assert pm.get_identity("conversational") is None
 
 
 class TestPromptManagerCustomPaths:
@@ -145,11 +145,11 @@ class TestAssembledPrompt:
         pm = PromptManager(
             constitution=False,
             app_context=False,
-            tier_identities={"normal": None},
+            tier_identities={"conversational": None},
             quiet=True,
         )
-        assembled = pm.get_assembled_prompt("normal")
-        assert "Normal" in assembled
+        assembled = pm.get_assembled_prompt("conversational")
+        assert "Conversational" in assembled
         assert "Constitution" not in assembled
 
     def test_assembly_empty_when_all_disabled(self) -> None:
@@ -166,12 +166,12 @@ class TestIdentityFrontmatter:
 
     def test_get_identity_frontmatter(self) -> None:
         pm = PromptManager(
-            tier_identities={"thinking": None},
+            tier_identities={"planner": None},
             quiet=True,
         )
-        fm = pm.get_identity_frontmatter("thinking")
+        fm = pm.get_identity_frontmatter("planner")
         assert fm is not None
-        assert fm.name == "thinking"
+        assert fm.name == "planner"
         assert len(fm.focus) > 0
 
     def test_frontmatter_none_for_missing_tier(self) -> None:
@@ -188,14 +188,14 @@ class TestTerminalOutput:
 
     def test_default_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
         PromptManager(
-            tier_identities={"normal": None},
+            tier_identities={"conversational": None},
             quiet=False,
         )
         output = capsys.readouterr().out
         assert "Prompts:" in output
         assert "constitution" in output
         assert "bundled" in output
-        assert "normal:" in output
+        assert "conversational:" in output
 
     def test_disabled_shows_disabled(self, capsys: pytest.CaptureFixture[str]) -> None:
         PromptManager(constitution=False, quiet=False)
@@ -227,16 +227,16 @@ class TestFromConfig:
         config = EntropyConfig(
             models={
                 "tiers": {
-                    "normal": {"path": "/tmp/model.gguf"},
-                    "thinking": {"path": "/tmp/model.gguf"},
+                    "conversational": {"path": "/tmp/model.gguf"},
+                    "planner": {"path": "/tmp/model.gguf"},
                 },
-                "default": "normal",
+                "default": "conversational",
             },
-            routing={"enabled": False, "fallback_tier": "normal"},
+            routing={"enabled": False, "fallback_tier": "conversational"},
         )
         pm = PromptManager.from_config(config, quiet=True)
-        assert pm.get_identity("normal") is not None
-        assert pm.get_identity("thinking") is not None
+        assert pm.get_identity("conversational") is not None
+        assert pm.get_identity("planner") is not None
 
     def test_from_config_constitution_disabled(self) -> None:
         from entropic.config.schema import EntropyConfig

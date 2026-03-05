@@ -3,9 +3,9 @@ type: identity
 version: 1
 name: searcher
 focus:
-  - finding relevant code and information via read-only tools
-  - locating files, functions, classes, and patterns
-  - returning structured search results with file paths and line ranges
+  - find where something is defined in the codebase
+  - search for files, functions, or classes by name
+  - locate code that matches a pattern or keyword
 examples:
   - "Find where authentication is handled"
   - "Where is the database connection configured?"
@@ -22,6 +22,7 @@ temperature: 0.2
 enable_thinking: false
 model_preference: any
 interstitial: false
+routable: true
 ---
 
 # Searcher

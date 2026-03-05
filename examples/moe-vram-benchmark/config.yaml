@@ -4,45 +4,38 @@
 # and GPU layer optimization across dense (8B) and MoE (35B-A3B) models
 # at different quantization levels.
 #
-# max_output_tokens kept low — this is a benchmark, not a chat session.
-# Runaway generation at 2 tok/s on partial GPU offload is unacceptable.
+# Tier names are benchmark-specific (not identity-based) — this consumer
+# defines its own tiers for measurement purposes.
 
 app_context: prompts/app_context.md
 
 models:
   tiers:
-    normal:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+    dense_8b:
+      path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
+      adapter: qwen35
       context_length: 8192
-      max_output_tokens: 256
-      gpu_layers: -1
-    thinking_q4:
+    moe_q4:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q4_K_M.gguf
-      adapter: qwen3
+      adapter: qwen35
       context_length: 8192
-      max_output_tokens: 256
       gpu_layers: 25
-      enable_thinking: false
-    thinking_q2:
+    moe_q2:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen3
+      adapter: qwen35
       context_length: 8192
-      max_output_tokens: 256
-      gpu_layers: 40
-      enable_thinking: false
   router:
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: router
     context_length: 2048
-  default: normal
+  default: dense_8b
 
 routing:
   enabled: true
-  fallback_tier: normal
+  fallback_tier: dense_8b
   tier_map:
-    "1": normal
-    "2": thinking_q4
+    "1": dense_8b
+    "2": moe_q4
 
 mcp:
   enable_filesystem: false

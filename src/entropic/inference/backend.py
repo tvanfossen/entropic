@@ -29,6 +29,7 @@ class GenerationConfig:
     stop: list[str] = field(default_factory=list)
     stream: bool = False
     grammar: str | None = None  # Optional GBNF grammar to constrain output
+    logprobs: int | None = None  # Number of top log-probs to return per token
     chat_template_kwargs: dict[str, Any] = field(default_factory=dict)
 
 

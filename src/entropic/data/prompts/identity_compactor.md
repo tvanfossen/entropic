@@ -15,6 +15,7 @@ temperature: 0.3
 enable_thinking: false
 model_preference: any
 interstitial: false
+routable: false
 ---
 
 # Compactor

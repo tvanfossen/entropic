@@ -1287,7 +1287,6 @@ class EntropiApp(App[None]):
         """Print status information."""
         footer = self.query_one("#status-footer", StatusFooter)
         footer.set_model(status.model)
-        footer.set_thinking_mode(status.thinking_mode)
 
         if status.context_max > 0:
             context_bar = self.query_one("#context-bar", ContextBar)

@@ -72,7 +72,6 @@ class Application:
         # Session state
         self._conversation_id: str | None = None
         self._messages: list[Message] = []
-        self._thinking_mode: bool = config.thinking.enabled
 
     async def initialize(self) -> None:
         """Initialize all components with loading feedback."""
@@ -438,8 +437,6 @@ class Application:
         handlers: dict[str, Any] = {
             "clear_history": self._action_clear_history,
             "show_status": self._show_status,
-            "set_thinking_mode": self._action_set_thinking_mode,
-            "show_thinking_status": self._action_show_thinking_status,
             "switch_model": self._action_switch_model,
             "save_conversation": lambda d: self._save_conversation(d.get("name")),
             "load_conversation": self._action_load_conversation,
@@ -463,32 +460,6 @@ class Application:
                 title="New Conversation",
                 project_path=str(self.project_dir),
             )
-
-    async def _action_set_thinking_mode(self, data: dict[str, Any]) -> None:
-        """Set thinking mode enabled/disabled."""
-        enabled = data.get("enabled", False)
-        if not self._orchestrator:
-            if self._presenter:
-                self._presenter.print_error("Orchestrator not available")
-            return
-        success = await self._orchestrator.set_thinking_mode(enabled)
-        if not self._presenter:
-            return
-        if success:
-            self._thinking_mode = enabled
-            mode = "enabled" if enabled else "disabled"
-            self._presenter.print_info(f"Thinking mode {mode}")
-        else:
-            self._presenter.print_error("Thinking model not configured")
-
-    def _action_show_thinking_status(self, _data: dict[str, Any]) -> None:
-        """Show current thinking mode status."""
-        if not self._presenter:
-            return
-        if self._thinking_mode:
-            self._presenter.print_info("Thinking: ON (forced for all reasoning)")
-        else:
-            self._presenter.print_info("Thinking: AUTO (complex tasks only)")
 
     def _action_switch_model(self, data: dict[str, Any]) -> None:
         """Switch the default model."""
@@ -694,8 +665,6 @@ class Application:
 
         # Get model info
         model = self.config.models.default
-        if self._thinking_mode:
-            model = "thinking"
 
         # Get token count from current conversation
         tokens = sum(len(m.content) // 4 for m in self._messages)
@@ -713,7 +682,6 @@ class Application:
                 vram_used=vram_used,
                 vram_total=vram_total,
                 tokens=tokens,
-                thinking_mode=self._thinking_mode,
                 context_used=context_used,
                 context_max=context_max,
             )

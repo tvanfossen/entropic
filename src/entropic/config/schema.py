@@ -41,6 +41,9 @@ TriStatePath = Annotated[Path | Literal[False] | None, BeforeValidator(_expand_t
 class ModelConfig(BaseModel):
     """Configuration for a single model.
 
+    Load-time hardware params only. Inference behavior (temperature,
+    max_output_tokens, etc.) belongs in identity frontmatter.
+
     Attributes:
         allowed_tools: Tool visibility filter using fully-qualified names
             in ``{server_name}.{tool_name}`` format. ``None`` (default)
@@ -50,14 +53,10 @@ class ModelConfig(BaseModel):
     path: ExpandedPath
     adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, qwen35, falcon, generic
     context_length: int = Field(default=16384, ge=512, le=131072)
-    max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
     warm_on_startup: bool = False  # Pre-load into CPU RAM at startup (COLD → WARM)
     use_mlock: bool = True  # Lock model pages in RAM (prevents OS swap; reduces activate latency)
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
-    top_k: int = Field(default=40, ge=0)
-    repeat_penalty: float = Field(default=1.1, ge=1.0, le=2.0)
+    logits_all: bool = False  # Compute logits for all positions (required for logprobs)
     allowed_tools: list[str] | None = None
 
     @field_validator("allowed_tools")
@@ -77,9 +76,8 @@ class ModelConfig(BaseModel):
 class TierConfig(ModelConfig):
     """Model configuration for a specific tier.
 
-    Extends ModelConfig with optional focus points. Focus can also come
-    from ModelTier instances or identity file frontmatter — config is
-    one of three resolution paths.
+    Extends ModelConfig with identity resolution. Inference behavior
+    (temperature, max_output_tokens, etc.) lives in identity frontmatter.
 
     Identity prompt resolution:
         absent/None  → bundled default (ships with entropic-engine)
@@ -87,11 +85,10 @@ class TierConfig(ModelConfig):
         path string  → custom file (must exist, validated at load)
     """
 
-    focus: list[str] = Field(default_factory=list)
     identity: TriStatePath = None
     grammar: OptionalExpandedPath = None
     auto_chain: bool = False
-    enable_thinking: bool = True
+    routable: bool = True  # If False, tier is excluded from router classification
 
 
 class ModelsConfig(BaseModel):
@@ -103,7 +100,7 @@ class ModelsConfig(BaseModel):
 
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
     router: ModelConfig | None = None
-    default: str = "normal"
+    default: str = "conversational"
 
     @model_validator(mode="after")
     def validate_default_tier(self) -> "ModelsConfig":
@@ -121,26 +118,10 @@ class RoutingConfig(BaseModel):
     """
 
     enabled: bool = True
-    fallback_tier: str = "normal"
+    fallback_tier: str = "conversational"
     classification_prompt: str | None = None  # None = auto-generate from tier focus
     tier_map: dict[str, str] = Field(default_factory=dict)  # Empty = auto-derive
     handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all
-
-
-class ThinkingConfig(BaseModel):
-    """Configuration for thinking mode."""
-
-    enabled: bool = False  # Default to OFF (use normal reasoning model)
-    auto_enable_keywords: list[str] = Field(
-        default_factory=lambda: [
-            "architect",
-            "design",
-            "think through",
-            "complex",
-            "deeply",
-        ]
-    )
-    swap_timeout_seconds: int = Field(default=10, ge=1, le=60)
 
 
 class QualityRulesConfig(BaseModel):
@@ -379,7 +360,7 @@ class SecondaryModelConfig(BaseModel):
     """Configuration for secondary LLM used in context compaction."""
 
     model_path: ExpandedPath = Field(
-        default_factory=lambda: Path.home() / "models" / "gguf" / "Qwen3-0.6B-Q8_0.gguf"
+        default_factory=lambda: Path.home() / "models" / "gguf" / "router.gguf"
     )
     max_tokens: int = Field(default=300, ge=50, le=1000)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
@@ -464,7 +445,6 @@ class LibraryConfig(BaseSettings):
     # Core inference configuration
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
-    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)

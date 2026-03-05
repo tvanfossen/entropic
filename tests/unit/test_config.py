@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-from entropic.config.loader import ConfigLoader, deep_merge, load_yaml_config, validate_config
+from entropic.config.loader import (
+    ConfigLoader,
+    _normalize_config,
+    deep_merge,
+    load_yaml_config,
+    validate_config,
+)
 from entropic.config.schema import (
     CompactionConfig,
     EntropyConfig,
@@ -87,7 +93,7 @@ class TestLibraryConfig:
         config = LibraryConfig()
         assert config.log_level == "INFO"
         assert config.routing.enabled is True
-        assert config.models.default == "normal"
+        assert config.models.default == "conversational"
 
     def test_excludes_tui_fields(self) -> None:
         """LibraryConfig does not expose TUI-specific fields."""
@@ -153,11 +159,6 @@ class TestEntropyConfig:
         with pytest.raises(ValueError):
             ModelConfig(path=Path("/test"), context_length=200000)  # Above maximum
 
-    def test_validation_temperature(self) -> None:
-        """Test temperature validation."""
-        with pytest.raises(ValueError):
-            ModelConfig(path=Path("/test"), temperature=3.0)  # Above maximum of 2.0
-
     def test_allowed_tools_valid_format(self) -> None:
         """Test allowed_tools accepts fully-qualified names."""
         config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.handoff"])
@@ -177,7 +178,7 @@ class TestEntropyConfig:
         """Test default routing configuration."""
         config = EntropyConfig()
         assert config.routing.enabled is True
-        assert config.routing.fallback_tier == "normal"
+        assert config.routing.fallback_tier == "conversational"
 
     def test_default_quality_rules(self) -> None:
         """Test default quality rules."""
@@ -205,16 +206,6 @@ class TestTierConfigFields:
         tc = TierConfig(path=Path("/test.gguf"), auto_chain=True)
         assert tc.auto_chain is True
 
-    def test_enable_thinking_defaults_true(self) -> None:
-        """enable_thinking defaults to True."""
-        tc = _tier()
-        assert tc.enable_thinking is True
-
-    def test_enable_thinking_false(self) -> None:
-        """enable_thinking=False round-trips through config."""
-        tc = TierConfig(path=Path("/test.gguf"), enable_thinking=False)
-        assert tc.enable_thinking is False
-
     def test_full_config_with_auto_chain(self) -> None:
         """EntropyConfig with auto_chain tier parses correctly."""
         config = EntropyConfig(
@@ -223,11 +214,9 @@ class TestTierConfigFields:
                     "thinker": {
                         "path": "/test.gguf",
                         "auto_chain": True,
-                        "enable_thinking": True,
                     },
                     "executor": {
                         "path": "/test.gguf",
-                        "enable_thinking": False,
                     },
                 },
                 "default": "thinker",
@@ -235,9 +224,7 @@ class TestTierConfigFields:
             routing={"enabled": False, "fallback_tier": "thinker"},
         )
         assert config.models.tiers["thinker"].auto_chain is True
-        assert config.models.tiers["thinker"].enable_thinking is True
         assert config.models.tiers["executor"].auto_chain is False
-        assert config.models.tiers["executor"].enable_thinking is False
 
 
 class TestTierConfigGrammar:
@@ -519,10 +506,26 @@ class TestValidateConfig:
         missing = tmp_path / "nope.yaml"
         assert validate_config(missing) == []
 
-    def test_legacy_format_migrated(self) -> None:
-        """Legacy config format is migrated before validation."""
+    def test_flat_tiers_normalized(self) -> None:
+        """Flat tier config (tiers as top-level keys) is normalized before validation."""
         data = {
-            "models": {"primary": _tier(), "default": "primary"},
-            "routing": {"enabled": False, "fallback_model": "primary"},
+            "models": {"mytier": {"path": "/m.gguf"}, "default": "mytier"},
+            "routing": {"enabled": False, "fallback_tier": "mytier"},
         }
         assert validate_config(data) == []
+
+    def test_normalize_config_flat_to_nested(self) -> None:
+        """_normalize_config moves flat tiers into models.tiers dict."""
+        data = {
+            "models": {
+                "fast": {"path": "/fast.gguf"},
+                "slow": {"path": "/slow.gguf"},
+                "default": "fast",
+            },
+        }
+        result = _normalize_config(data)
+        assert "tiers" in result["models"]
+        assert "fast" in result["models"]["tiers"]
+        assert "slow" in result["models"]["tiers"]
+        # Reserved keys stay at top level
+        assert result["models"]["default"] == "fast"

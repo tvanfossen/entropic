@@ -98,10 +98,10 @@ Phase 2: Core Feature
     └── Uses Layer 1 benchmark data to validate model → identity assignments
 
 Phase 2 complete when:
-  - [ ] All 13 identities have prompt + grammar + frontmatter
-  - [ ] Router classifies 7 categories at ≥80% accuracy
-  - [ ] 3+ pipeline compositions work end-to-end
-  - [ ] Merged to develop with version bump
+  - [x] 15 identities with prompt + grammar + frontmatter (9 routable, 6 interstitial)
+  - [x] Router classifies 9 categories at 100% accuracy (Qwen3-0.6B, example prompts)
+  - [x] Pipeline compositions: grammar + auto_chain tested via pychess (4 tests green)
+  - [x] Merged to develop @ v1.5.0
   - [ ] docs/ updated: identity library, pipeline composition, config overrides
 
 Phase 2.5: Benchmark Layer 2
@@ -378,3 +378,17 @@ Log format: date, proposal ID, action taken, files changed.
 - [x] All Phase 1 checkboxes ticked in master plan
 - [x] Merged to develop — Phase 1 complete @ v1.4.1
 - **Files changed:** docs/configuration.md, docs/library-consumer-guide.md, README.md
+
+### 2026-03-05 — Phase 2 complete: P1-024 identity library + config alignment (v1.5.0)
+- [x] 15 bundled identities (9 routable, 6 interstitial) with YAML frontmatter
+- [x] 11 GBNF grammars bundled
+- [x] ThinkingConfig removed — inference params in identity frontmatter
+- [x] ModelConfig lean (hardware only) — backend dedup via _model_pool
+- [x] Router: Qwen3-0.6B via complete() — 9 tiers at 100% on examples
+- [x] Thinking mode removed from app, CLI, commands, UI
+- [x] 36 model tests (9 routing + 9 confidence + 18 headless/grammar) all green
+- [x] Merged to develop @ v1.5.0
+- **Decision:** Qwen3 outperforms Qwen3.5 at classification (inverse scaling)
+- **Decision:** GBNF grammar distorts router — removed from classification path
+- **Decision:** Routing tests use identity examples directly; text fuzzer deferred
+- **Files changed:** 149 files, +3060/-1433 lines

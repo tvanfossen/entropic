@@ -112,6 +112,10 @@ mcp:
   enable_bash: true
   enable_git: true
   enable_diagnostics: true
+  enable_web: true
+
+  filesystem:
+    allow_outside_root: true
 
   # External MCP server for Claude Code integration
   external:

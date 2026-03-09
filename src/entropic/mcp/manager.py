@@ -358,6 +358,7 @@ class ServerManager:
         from entropic.mcp.servers.entropic import EntropicServer
         from entropic.mcp.servers.filesystem import FilesystemServer
         from entropic.mcp.servers.git import GitServer
+        from entropic.mcp.servers.web import WebServer
 
         lsp_manager = self._create_lsp_manager(mcp_config)
         model_context_bytes = self._compute_model_context_bytes()
@@ -389,6 +390,10 @@ class ServerManager:
                 self._clients["diagnostics"] = InProcessProvider("diagnostics", server)
             else:
                 logger.warning("Diagnostics enabled but LSP not available")
+
+        if mcp_config.enable_web:
+            self._server_classes["web"] = WebServer
+            self._clients["web"] = InProcessProvider("web", WebServer())
 
         self._server_classes["entropic"] = EntropicServer
         self._clients["entropic"] = InProcessProvider(

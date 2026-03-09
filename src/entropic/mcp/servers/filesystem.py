@@ -173,10 +173,12 @@ class FilesystemServer(BaseMCPServer):
             path = os.path.expanduser(path)
         resolved = (self.root_dir / path).resolve()
 
-        # Security: ensure path is within root
-        root_resolved = self.root_dir.resolve()
-        if not resolved.is_relative_to(root_resolved):
-            raise ValueError(f"Path outside root directory: {path}")
+        # Security: ensure path is within root (unless config allows outside)
+        allow_outside = self._config.allow_outside_root if self._config else False
+        if not allow_outside:
+            root_resolved = self.root_dir.resolve()
+            if not resolved.is_relative_to(root_resolved):
+                raise ValueError(f"Path outside root directory: {path}")
 
         return resolved
 

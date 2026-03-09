@@ -1,0 +1,62 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_code_request_produces_code\n<size:11>[PASSED] < 262s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  Write a Python function to check if a number is even
+end note
+App -> Orch: route
+note right: **CODE_VALIDATOR** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  ```python
+  def is_even(n):
+      """Check if a number is even.
+  
+      Args:
+          n (int): The number to check.
+  
+      Returns:
+          bool: True if the number is even, False otherwise.
+      """
+      return n % 2 == 0
+  ```
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  {
+    "verdict": "pass"
+  ,
+    "findings": [
+      {
+        "line": 1,
+        "severity": "info",
+        "issue": "Consider adding input validation for non-integer inputs if the 
+  function should only accept integers."
+      ,
+        "suggestion": "Add a type check or docstring clarification about expected 
+  input types."
+      }
+    ]
+  }
+end note
+note over T #palegreen
+  **PASSED** (< 262s)
+end note
+
+@enduml

@@ -39,10 +39,11 @@ note right of Mdl
       {
         "line": 1,
         "severity": "info",
-        "issue": "No input validation. The function assumes 'numbers' is a list of
-  numeric types. Consider adding type hints or validation for robustness."
+        "issue": "Consider adding input validation to handle edge cases like empty
+  lists or non-numeric inputs."
       ,
-        "suggestion": "Add type hint: def sum_list(numbers: list) -&gt; int:"
+        "suggestion": "Add a check: `if not numbers: return 0` and validate that 
+  all elements are numeric."
       }
     ]
   }

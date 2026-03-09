@@ -705,6 +705,15 @@ class AgentEngine:
         self._pause_event.clear()
         self._interrupt_event.set()
 
+    def context_usage(self, messages: list[Message]) -> tuple[int, int]:
+        """Return (tokens_used, max_tokens) for the given message list.
+
+        Public accessor for context usage — avoids consumers reaching
+        into _token_counter directly.
+        """
+        used = self._token_counter.count_messages(messages)
+        return used, self._token_counter.max_tokens
+
     @property
     def is_paused(self) -> bool:
         """Check if generation is paused."""

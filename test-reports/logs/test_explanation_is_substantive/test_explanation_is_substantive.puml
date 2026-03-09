@@ -23,66 +23,51 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is a programming technique where a function calls itself to solve a 
-  problem. Instead of using loops (like `for` or `while`) to repeat tasks, 
-  recursion breaks a problem down into smaller instances of the same problem until
-  it reaches a point where it can be solved directly.
+  problem. It's particularly useful for breaking down complex problems into 
+  simpler, self-similar sub-problems.
   
-  ### Key Concepts
+  Think of it like this: To understand recursion, you need to understand recursion
+  (a classic recursive definition!). But seriously, here's how it works in 
+  practice:
   
-  1.  **Base Case**: This is crucial. It defines when the recursion stops. Without
-  a base case, the function will call itself infinitely (infinite recursion), 
-  leading to a stack overflow error.
-  2.  **Recursive Case**: The part of the code where the function calls itself 
-  with modified arguments, moving closer to the base case.
+  ## Key Components
   
-  ### How it Works
-  Imagine you have a large puzzle. Instead of trying to solve the whole thing at 
-  once, you take one piece out, set it aside (the recursive step), and then ask 
-  someone else (yourself) to solve the remaining puzzle. Eventually, only one 
-  piece remains; that's your base case. You solve that single piece, return the 
-  result, and pass it back up the chain so everyone can assemble their part of the
-  picture.
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive Case**: The part where the function calls itself with modified 
+  parameters
   
-  ### Simple Example
-  Here is a classic example: calculating the factorial of a number (e.g., 5! = 5 ×
-  4 × 3 × 2 × 1).
+  ## Simple Example (Factorial)
   
-  **Iterative approach (using loops):**
   ```python
-  def factorial_iter(n):
-      result = 1
-      for i in range(1, n + 1):
-          result *= i
-      return result
-  ```
-  
-  **Recursive approach:**
-  ```python
-  def factorial_rec(n):
-      # Base Case: If n is 0 or 1, the answer is 1
+  def factorial(n):
+      # Base case: stop when n is 0 or 1
       if n &lt;= 1:
           return 1
       
-      # Recursive Case: n * factorial of (n-1)
-      return n * factorial_rec(n - 1)
+      # Recursive case: multiply n by factorial of (n-1)
+      return n * factorial(n - 1)
   ```
   
-  ### Pros and Cons
-  *   **Pros**: Code can be very elegant and readable, especially for problems 
-  that naturally have a recursive structure (like traversing trees or graphs). It 
-  often reduces the amount of code needed.
-  *   **Cons**: Can be less efficient than loops due to memory usage (each call 
-  adds a new layer to the "call stack"). If not implemented carefully with a 
-  proper base case, it causes crashes.
+  ## How it works step-by-step:
+  - `factorial(3)` calls `factorial(2)`
+  - `factorial(2)` calls `factorial(1)`  
+  - `factorial(1)` returns 1 (base case reached)
+  - Then each call returns its result up the chain
   
-  ### When to use it?
-  Use recursion when:
-  *   The problem naturally divides into smaller sub-problems of the same type 
-  (e.g., sorting algorithms like QuickSort, traversing file systems).
-  *   You need cleaner code and performance isn't critical for the specific task.
+  ## Common Uses
+  - **Tree traversal** (file systems, DOM trees)
+  - **Divide and conquer algorithms** (quick sort, merge sort)
+  - **Mathematical sequences** (Fibonacci, factorials)
+  - **Backtracking problems** (puzzles, maze solving)
   
-  **Warning**: Always ensure your recursive function has a terminating condition 
-  (base case) to prevent infinite loops!
+  ## Important Considerations
+  - **Stack overflow**: Too many recursive calls can crash your program
+  - **Performance**: Sometimes iterative solutions are faster
+  - **Debugging**: Can be harder to trace than loops
+  
+  The key is ensuring you have a clear base case and that each recursive call 
+  moves toward it. Otherwise, you get infinite recursion!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

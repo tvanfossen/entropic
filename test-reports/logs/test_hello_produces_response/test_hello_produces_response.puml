@@ -22,7 +22,7 @@ note right: **QUICK** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  I'm here to help with trivial requests.
+  Hello! How can I help you?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

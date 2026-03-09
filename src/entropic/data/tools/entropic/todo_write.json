@@ -30,7 +30,7 @@
             "target_tier": {
               "type": "string",
               "description": "Which tier should execute this todo. Omit for self-directed tasks.",
-              "enum": ["thinking", "normal", "code", "simple"]
+              "enum": []
             }
           },
           "required": ["content", "status", "active_form"]
@@ -55,8 +55,8 @@
       },
       "target_tier": {
         "type": "string",
-        "enum": ["thinking", "normal", "code", "simple"],
-        "description": "New target tier (for 'update' action)"
+        "description": "New target tier (for 'update' action)",
+        "enum": []
       }
     },
     "required": ["action"]

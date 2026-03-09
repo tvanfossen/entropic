@@ -27,6 +27,7 @@ from entropic import (
     LoopConfig,
     ModelOrchestrator,
     setup_logging,
+    setup_model_logger,
 )
 
 EXAMPLE_ROOT = Path(__file__).resolve().parent
@@ -43,8 +44,9 @@ async def main() -> None:
     )
     config = loader.load()
 
-    # 2. Set up logging (writes to .hello-world/session.log)
+    # 2. Set up logging (writes to .hello-world/session.log + session_model.log)
     setup_logging(config, project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
+    setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
 
     # 3. Initialize orchestrator (loads router + default tier into VRAM)
     orchestrator = ModelOrchestrator(config)

@@ -33,9 +33,39 @@ logger = logging.getLogger(__name__)
 class TodoWriteTool(BaseTool):
     """Manage the internal todo list."""
 
-    def __init__(self, todo_list: TodoList) -> None:
-        super().__init__("todo_write", "entropic")
+    def __init__(self, todo_list: TodoList, tier_names: list[str] | None = None) -> None:
+        definition = self._build_definition(tier_names) if tier_names else None
+        if definition:
+            super().__init__(definition=definition)
+        else:
+            super().__init__("todo_write", "entropic")
         self._todo_list = todo_list
+
+    @staticmethod
+    def _build_definition(tier_names: list[str]) -> Tool:
+        """Build todo_write definition with patched target_tier enums."""
+        tool = load_tool_definition("todo_write", "entropic")
+        schema = dict(tool.inputSchema)
+        props = dict(schema["properties"])
+
+        # Patch target_tier enum in todos[].items.properties
+        todos_prop = dict(props["todos"])
+        items = dict(todos_prop["items"])
+        item_props = dict(items["properties"])
+        tt = dict(item_props["target_tier"])
+        tt["enum"] = list(tier_names)
+        item_props["target_tier"] = tt
+        items["properties"] = item_props
+        todos_prop["items"] = items
+        props["todos"] = todos_prop
+
+        # Patch top-level target_tier enum (for 'update' action)
+        top_tt = dict(props["target_tier"])
+        top_tt["enum"] = list(tier_names)
+        props["target_tier"] = top_tt
+
+        schema["properties"] = props
+        return Tool(name=tool.name, description=tool.description, inputSchema=schema)
 
     async def execute(self, arguments: dict[str, Any]) -> ServerResponse:
         """Update todo list, return context anchor + presenter notification."""
@@ -184,7 +214,7 @@ class EntropicServer(BaseMCPServer):
         super().__init__("entropic")
         self._todo_list = TodoList()
         self._tier_names = tier_names
-        self.register_tool(TodoWriteTool(self._todo_list))
+        self.register_tool(TodoWriteTool(self._todo_list, tier_names))
         if not tier_names or len(tier_names) > 1:
             self.register_tool(HandoffTool(self._todo_list, tier_names))
         self.register_tool(PruneContextTool())

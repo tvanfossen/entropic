@@ -37,3 +37,6 @@ mcp:
   enable_bash: false
   enable_git: false
   enable_diagnostics: false
+
+lsp:
+  enabled: false

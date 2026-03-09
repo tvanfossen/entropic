@@ -22,15 +22,13 @@ note right: **QUICK** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  &lt;tool_call&gt;{"name": "entropic.todo_write", "arguments": {"action": "add", 
-  "todos": "[{\"content\": \"Greet user\", \"status\": \"completed\", 
-  \"active_form\": \"Greetings exchanged\"}]"}}&lt;/tool_call&gt;
+  &lt;tool_call&gt;
 end note
 Mdl --> Eng: tool_call(entropic.todo_write)
 Eng -> MCP: entropic.todo_write
 note right of MCP
   action: add
-  todos: [{"content": "Greet user", "status": "completed", "active_form": "Greetings exchanged"}]
+  todos: [{"content": "Greet the user", "status": "completed", "active_form": "Greeting the user"}]
 end note
 MCP --> Eng: result
 note right of MCP
@@ -49,6 +47,16 @@ note right of MCP
   Item 3: missing required field 'active_form'
   Item 3: 
 end note
+Mdl --> Eng: tool_call(entropic.prune_context)
+Eng -> MCP: entropic.prune_context
+note right of MCP
+  keep_recent: 2
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Prune requested.
+end note
 note right of Eng
   **Follow-up message:**
   &lt;tool_response&gt;
@@ -65,10 +73,47 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I help you today?
+  &lt;tool_call&gt;{"name": "entropic.prune_context", "arguments": {"keep_recent":
+  2}}&lt;/tool_call&gt;
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  Prune requested.
+  &lt;/tool_response&gt;
+  
+  Continue. Batch multiple tool calls in one response when possible.
+end note
+== Turn 3 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  &lt;tool_call&gt;
+  &lt;function=entropic.todo_write&gt;
+  &lt;parameter=action&gt;
+  add
+  &lt;/parameter&gt;
+  &lt;parameter=todos&gt;
+  [{"content": "Manage context by tracking findings and pruning", "status": 
+  "pending", "active_form": "Tracking findings for context management"}]
+  &lt;/parameter&gt;
+end note
+== Turn 4 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  &lt;tool_call&gt;{"name": "entropic.prune_context", "arguments": {"keep_recent":
+  2}}&lt;/tool_call&gt;
+end note
+Eng -> Mdl: tool result
+== Turn 5 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Hello! I'm ready to help. What would you like to work on?
 end note
 note over T #palegreen
-  **PASSED** (< 38s, 1 tool calls)
+  **PASSED** (< 38s, 2 tool calls)
 end note
 
 @enduml

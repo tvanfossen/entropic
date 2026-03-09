@@ -28,15 +28,19 @@ note right of Mdl
   add&lt;/parameter&gt;
   &lt;parameter=todos&gt;
   [{"content": "Write Python function to check if number is even", "status": 
-  "completed", "active_form": "Writing Python function"}]
+  "completed", "active_form": "Writing function"}]
   &lt;/parameter&gt;
+  &lt;/
 end note
 == Turn 2 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
+  Here's a Python function to check if a number is even:
+  
   ```python
   def is_even(n):
+      """Check if a number is even."""
       return n % 2 == 0
   ```
 end note

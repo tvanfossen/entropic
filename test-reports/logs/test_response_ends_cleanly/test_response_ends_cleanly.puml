@@ -22,8 +22,8 @@ note right: **QUICK** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Python is used for data science and AI, JavaScript for web development, and Go 
-  for high-performance backend services.
+  Python is ideal for data science and automation, JavaScript dominates web 
+  development, and Rust excels in system-level programming.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

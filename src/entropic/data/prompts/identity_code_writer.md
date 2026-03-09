@@ -12,7 +12,6 @@ examples:
   - "Add rate limiting to the API handler"
   - "Write the database migration for the new users table"
   - "Fix the bug in the login module"
-grammar: grammars/code_writer.gbnf
 auto_chain: code_validator
 allowed_tools:
   - filesystem.write_file
@@ -20,7 +19,7 @@ allowed_tools:
   - filesystem.read_file
   - entropic.todo_write
   - entropic.handoff
-max_output_tokens: 512
+max_output_tokens: 4096
 temperature: 0.3
 enable_thinking: false
 model_preference: primary
@@ -34,8 +33,6 @@ benchmark:
           value: "def is_palindrome"
         - type: contains
           value: "return"
-        - type: regex
-          pattern: "```python"
     - prompt: "Write a function to calculate the factorial of a number"
       checks:
         - type: contains
@@ -73,6 +70,4 @@ Read the target file and at least one adjacent file. Understand:
 
 ## Output
 
-Respond ONLY with a fenced code block showing the written or edited code. No prose before or after. No explanation after the block.
-
-The language tag must match the file type. The code must be complete and syntactically valid.
+Write code directly to files using `filesystem.write_file` or `filesystem.edit_file`. Briefly confirm what was done after each tool call. No lengthy explanations.

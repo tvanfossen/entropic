@@ -7,13 +7,12 @@ focus:
   - finding edge cases, boundary conditions, and failure modes
   - adversarial test design
 examples: []
-grammar: grammars/code_writer.gbnf
 auto_chain: code_validator
 allowed_tools:
   - filesystem.write_file
   - filesystem.read_file
   - entropic.handoff
-max_output_tokens: 512
+max_output_tokens: 4096
 temperature: 0.4
 enable_thinking: false
 model_preference: primary
@@ -27,8 +26,6 @@ benchmark:
           value: "def test_"
         - type: contains
           value: "assert"
-        - type: regex
-          pattern: "```python"
 ---
 
 # Test Writer
@@ -61,4 +58,4 @@ Think like an attacker, not a user:
 
 ## Output
 
-Respond ONLY with a fenced code block containing all test functions. No prose before or after.
+Write tests directly to files using `filesystem.write_file`. Read the existing test files first to match conventions. Briefly confirm what was written.

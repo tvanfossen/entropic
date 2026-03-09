@@ -11,14 +11,13 @@ examples:
   - "Where is the database connection configured?"
   - "Show me all places that call the payment API"
   - "Find the function that parses config files"
-grammar: grammars/searcher.gbnf
 auto_chain: null
 allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - filesystem.grep
   - entropic.handoff
-max_output_tokens: 512
+max_output_tokens: 2048
 temperature: 0.2
 enable_thinking: false
 model_preference: any
@@ -51,10 +50,11 @@ You find relevant code and information. You have read-only access — you cannot
 
 ## Output
 
-Respond ONLY with valid JSON matching the searcher schema. No prose before or after.
+Use your tools to find the answer, then present results clearly.
 
-Each result:
-- `file`: Absolute or project-relative path
-- `line_start` / `line_end`: Line range of the relevant section
-- `snippet`: The relevant code or text, verbatim, trimmed to the essential lines
-- `relevance`: One sentence explaining why this location is relevant to the search
+For each location found:
+- **File path** and line range
+- **Relevant snippet** — the essential lines, verbatim
+- **Why it matters** — one sentence explaining relevance to the search
+
+If the search target is better handled by another identity (e.g. needs code changes), hand off via `entropic.handoff`.

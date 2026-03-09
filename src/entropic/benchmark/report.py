@@ -3,18 +3,14 @@
 Uses Rich for formatted tables when available; falls back to plain text.
 """
 
-from pathlib import Path
 from typing import Any
 
-from entropic.benchmark.layer1 import SWAP_TARGET_MS
-from entropic.benchmark.types import Layer1Results
+from entropic.benchmark.performance import SWAP_TARGET_MS
+from entropic.benchmark.types import PerfResults
 
 
-def print_layer1_report(results: Layer1Results) -> None:
-    """Print a Layer 1 benchmark report to stdout.
-
-    Uses Rich tables if available, otherwise plain text.
-    """
+def print_perf_report(results: PerfResults) -> None:
+    """Print a performance benchmark report to stdout."""
     try:
         from rich.console import Console
         from rich.table import Table
@@ -24,9 +20,9 @@ def print_layer1_report(results: Layer1Results) -> None:
         _print_plain(results)
 
 
-def _print_rich(results: Layer1Results, console: Any, table_cls: Any) -> None:
+def _print_rich(results: PerfResults, console: Any, table_cls: Any) -> None:
     """Print formatted tables using Rich."""
-    console.print(f"\n[bold]Layer 1 Benchmark[/bold]: {results.model_path.name}")
+    console.print(f"\n[bold]Performance Benchmark[/bold]: {results.model_path.name}")
     console.print(f"Engine v{results.engine_version} | {results.timestamp[:10]}")
 
     if results.gpu_info:
@@ -53,49 +49,37 @@ def _print_rich(results: Layer1Results, console: Any, table_cls: Any) -> None:
         _print_rich_sweep(results, console, table_cls)
 
 
-def _print_rich_load(results: Layer1Results, console: Any, table_cls: Any) -> None:
-    """Print the load time table."""
-    t = table_cls(title="Load Times")
-    t.add_column("Phase")
-    t.add_column("Time (ms)", justify="right")
-    t.add_column("VRAM (MB)", justify="right")
-    ld = results.cold_load
-    assert ld is not None
-    t.add_row(ld.phase, f"{ld.elapsed_ms:.0f}", str(ld.vram_used_mb))
+def _print_rich_load(results: PerfResults, console: Any, table_cls: Any) -> None:
+    """Print the cold start timing table."""
+    t = table_cls(title="Cold Start")
+    t.add_column("Metric")
+    t.add_column("Value", justify="right")
+    cl = results.cold_load
+    assert cl is not None
+    t.add_row("Total (load + inference)", f"{cl.elapsed_ms:.0f} ms")
+    t.add_row("Model load/swap", f"{cl.swap_ms:.0f} ms")
+    t.add_row("VRAM after load", f"{cl.vram_used_mb} MB")
     console.print(t)
 
 
-def _print_rich_swap(results: Layer1Results, console: Any, table_cls: Any) -> None:
-    """Print the swap latency table with per-transition P1-022 target assessment."""
+def _print_rich_swap(results: PerfResults, console: Any, table_cls: Any) -> None:
+    """Print the swap latency table with P1-022 target assessment."""
     swap = results.swap
     assert swap is not None
 
     def _verdict(ms: float) -> str:
-        return "[green]✓[/green]" if ms < SWAP_TARGET_MS else "[red]✗[/red]"
+        return "[green]MET[/green]" if ms < SWAP_TARGET_MS else "[red]MISSED[/red]"
 
-    t = table_cls(title=f"Swap Latency (target: each WARM→ACTIVE < {SWAP_TARGET_MS:.0f}ms)")
-    t.add_column("Transition")
+    t = table_cls(title=f"Swap Latency (target: < {SWAP_TARGET_MS:.0f}ms)")
+    t.add_column("Direction")
     t.add_column("Time (ms)", justify="right")
-    t.add_column("VRAM (MB)", justify="right")
     t.add_column("Target", justify="center")
-    t.add_row("COLD → WARM", f"{swap.warm_ms:.0f}", str(swap.vram_warm_mb), "[dim]startup[/dim]")
-    t.add_row(
-        "WARM → ACTIVE",
-        f"{swap.activate_ms:.0f}",
-        str(swap.vram_active_mb),
-        _verdict(swap.activate_ms),
-    )
-    t.add_row("ACTIVE → WARM", f"{swap.deactivate_ms:.0f}", str(swap.vram_warm_mb), "[dim]—[/dim]")
-    t.add_row(
-        "WARM → ACTIVE (re)",
-        f"{swap.reactivate_ms:.0f}",
-        str(swap.vram_active_mb),
-        _verdict(swap.reactivate_ms),
-    )
+    t.add_row("Swap away", f"{swap.swap_away_ms:.0f}", _verdict(swap.swap_away_ms))
+    t.add_row("Swap back", f"{swap.swap_back_ms:.0f}", _verdict(swap.swap_back_ms))
     console.print(t)
 
 
-def _print_rich_sweep(results: Layer1Results, console: Any, table_cls: Any) -> None:
+def _print_rich_sweep(results: PerfResults, console: Any, table_cls: Any) -> None:
     """Print the GPU layer sweep table."""
     t = table_cls(title="GPU Layer Sweep")
     t.add_column("Layers", justify="right")
@@ -115,24 +99,24 @@ def _print_rich_sweep(results: Layer1Results, console: Any, table_cls: Any) -> N
     console.print(t)
 
 
-def _print_plain(results: Layer1Results) -> None:
+def _print_plain(results: PerfResults) -> None:
     """Plain text fallback when Rich is not installed."""
-    print(f"\nLayer 1 Benchmark: {results.model_path.name}")
+    print(f"\nPerformance Benchmark: {results.model_path.name}")
     print(f"Engine v{results.engine_version} | {results.timestamp[:10]}")
 
     if results.cold_load:
-        ld = results.cold_load
-        print(f"\nLoad ({ld.phase}): {ld.elapsed_ms:.0f}ms, VRAM={ld.vram_used_mb}MB")
+        cl = results.cold_load
+        print(
+            f"\nCold Start: {cl.elapsed_ms:.0f}ms total, load={cl.swap_ms:.0f}ms, VRAM={cl.vram_used_mb}MB"
+        )
 
     if results.swap:
         swap = results.swap
-        print(f"\nSwap Latency (target: each WARM→ACTIVE < {SWAP_TARGET_MS:.0f}ms)")
-        print(f"  COLD→WARM:       {swap.warm_ms:.0f}ms  [startup]")
-        act_ok = "MET" if swap.activate_ms < SWAP_TARGET_MS else "MISSED"
-        print(f"  WARM→ACTIVE:     {swap.activate_ms:.0f}ms  [{act_ok}]")
-        print(f"  ACTIVE→WARM:     {swap.deactivate_ms:.0f}ms")
-        react_ok = "MET" if swap.reactivate_ms < SWAP_TARGET_MS else "MISSED"
-        print(f"  WARM→ACTIVE(re): {swap.reactivate_ms:.0f}ms  [{react_ok}]")
+        print(f"\nSwap Latency (target: < {SWAP_TARGET_MS:.0f}ms)")
+        away_ok = "MET" if swap.swap_away_ms < SWAP_TARGET_MS else "MISSED"
+        print(f"  Swap away: {swap.swap_away_ms:.0f}ms  [{away_ok}]")
+        back_ok = "MET" if swap.swap_back_ms < SWAP_TARGET_MS else "MISSED"
+        print(f"  Swap back: {swap.swap_back_ms:.0f}ms  [{back_ok}]")
 
     if results.inference:
         inf = results.inference
@@ -146,12 +130,72 @@ def _print_plain(results: Layer1Results) -> None:
             print(f"  {p.gpu_layers:>6}  {p.load_ms:>8.0f}  {p.tok_s:>7.1f}  {p.vram_mb:>7}{oom}")
 
 
-def results_to_json(results: Layer1Results, output_path: Path) -> None:
-    """Write results as JSON to output_path."""
-    import json
+def print_quality_report(results: Any) -> None:
+    """Print a quality benchmark report to stdout."""
+    try:
+        from rich.console import Console
+        from rich.table import Table
 
-    from entropic.benchmark.layer1 import _results_to_dict
+        _print_quality_rich(results, Console(), Table)
+    except ImportError:
+        _print_quality_plain(results)
 
-    data = _results_to_dict(results)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(data, indent=2))
+
+def _print_quality_rich(results: Any, console: Any, table_cls: Any) -> None:
+    """Print quality results using Rich."""
+    console.print(f"\n[bold]Quality Benchmark[/bold]: {results.config_source}")
+    console.print(f"Engine v{results.engine_version} | {results.timestamp[:10]}")
+    console.print(
+        f"Total: [green]{results.total_passed} passed[/green], "
+        f"[red]{results.total_failed} failed[/red]"
+    )
+
+    t = table_cls(title="Identity Results")
+    t.add_column("Identity")
+    t.add_column("Passed", justify="right")
+    t.add_column("Failed", justify="right")
+    t.add_column("Total ms", justify="right")
+    t.add_column("Swap ms", justify="right")
+    t.add_column("Infer ms", justify="right")
+    t.add_column("Status")
+    for ir in results.identities:
+        status = "[green]PASS[/green]" if ir.failed == 0 else "[red]FAIL[/red]"
+        if ir.skipped:
+            status = f"[yellow]SKIP: {ir.skip_reason}[/yellow]"
+            t.add_row(ir.name, "-", "-", "-", "-", "-", status)
+            continue
+        avg_total = _avg_timing(ir.prompt_results, "total_ms")
+        avg_swap = _avg_timing(ir.prompt_results, "swap_ms")
+        avg_infer = _avg_timing(ir.prompt_results, "inference_ms")
+        t.add_row(
+            ir.name,
+            str(ir.passed),
+            str(ir.failed),
+            f"{avg_total:.0f}" if avg_total else "-",
+            f"{avg_swap:.0f}" if avg_swap else "-",
+            f"{avg_infer:.0f}" if avg_infer else "-",
+            status,
+        )
+    console.print(t)
+
+
+def _avg_timing(prompt_results: Any, field: str) -> float:
+    """Compute average of a timing field across prompt results."""
+    vals = [getattr(pr, field, 0.0) for pr in prompt_results if getattr(pr, field, 0.0) > 0]
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def _print_quality_plain(results: Any) -> None:
+    """Plain text quality report."""
+    print(f"\nQuality Benchmark: {results.config_source}")
+    print(f"Engine v{results.engine_version} | {results.timestamp[:10]}")
+    print(f"Total: {results.total_passed} passed, {results.total_failed} failed")
+    for ir in results.identities:
+        status = "PASS" if ir.failed == 0 else "FAIL"
+        if ir.skipped:
+            status = f"SKIP: {ir.skip_reason}"
+            print(f"  {ir.name}: [{status}]")
+            continue
+        avg_total = _avg_timing(ir.prompt_results, "total_ms")
+        timing = f" ({avg_total:.0f}ms)" if avg_total else ""
+        print(f"  {ir.name}: {ir.passed} passed, {ir.failed} failed [{status}]{timing}")

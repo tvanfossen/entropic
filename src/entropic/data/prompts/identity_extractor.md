@@ -16,6 +16,14 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: false
+benchmark:
+  prompts:
+    - prompt: "Extract all function definitions from this code:\ndef validate_email(addr):\n    return '@' in addr\n\ndef send_email(to, subject, body):\n    smtp = connect()\n    smtp.send(to, subject, body)"
+      checks:
+        - type: regex
+          pattern: "(?i)(validate_email|send_email)"
+        - type: regex
+          pattern: "(?i)(function|entities)"
 ---
 
 # Extractor

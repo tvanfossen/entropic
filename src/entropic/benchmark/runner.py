@@ -12,7 +12,7 @@ from entropic.benchmark.types import (
     InferenceResult,
     LoadResult,
     ModelSpec,
-    SwapResult,
+    RawSwapResult,
     SweepPoint,
 )
 from entropic.config.schema import ModelConfig
@@ -28,7 +28,7 @@ _INFERENCE_PROMPT = "Explain in two sentences why the sky appears blue."
 class BenchmarkRunner:
     """Measures raw model performance using LlamaCppBackend directly.
 
-    Does not use AgentEngine, routing, or identities (Layer 1 only).
+    Does not use AgentEngine, routing, or identities (performance benchmarks only).
     """
 
     def __init__(self, spec: ModelSpec) -> None:
@@ -66,7 +66,7 @@ class BenchmarkRunner:
         logger.info(f"[bench] cold_to_active: {elapsed_ms:.0f}ms")
         return LoadResult(phase="cold_to_active", elapsed_ms=elapsed_ms, vram_used_mb=vram_used)
 
-    async def timed_swap(self) -> SwapResult:
+    async def timed_swap(self) -> RawSwapResult:
         """Measure the full three-state swap sequence.
 
         Sequence:
@@ -76,7 +76,7 @@ class BenchmarkRunner:
           4. WARM → ACTIVE again (reactivate_ms)
 
         Returns:
-            SwapResult with timings for each transition.
+            RawSwapResult with timings for each transition.
         """
         backend = self._make_backend()
 
@@ -106,7 +106,7 @@ class BenchmarkRunner:
             f"[bench] swap: warm={warm_ms:.0f}ms activate={activate_ms:.0f}ms "
             f"deactivate={deactivate_ms:.0f}ms reactivate={reactivate_ms:.0f}ms"
         )
-        return SwapResult(
+        return RawSwapResult(
             warm_ms=warm_ms,
             activate_ms=activate_ms,
             deactivate_ms=deactivate_ms,

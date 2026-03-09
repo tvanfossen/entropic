@@ -501,15 +501,15 @@ COLD → WARM → ACTIVE
 | WARM | ✅ | ✗ | mlock pages in CPU RAM, fast GPU promotion |
 | ACTIVE | ✅ | ✅ | Generating |
 
-**`warm_on_startup`** pre-loads a tier to WARM at `orchestrator.initialize()` time. The GPU promotion (WARM→ACTIVE) then takes ~1–3s instead of a full load from disk.
+**`keep_warm`** enables the WARM state for a tier's model. At startup, the model is pre-loaded to CPU RAM. On swap-out, it deactivates to WARM (not fully unloaded), so GPU promotion (WARM→ACTIVE) takes ~1–3s instead of a full cold load from disk. Models without `keep_warm` go COLD on swap-out, freeing all VRAM and RAM.
 
 ```yaml
 models:
   tiers:
-    thinking:
-      path: ~/models/Qwen3-14B-Q4_K_M.gguf
-      warm_on_startup: true   # Pre-load to CPU RAM at startup
-      use_mlock: true         # Lock pages (default). Prevents OS swap.
+    conversational:
+      path: ~/models/Qwen3.5-35B-A3B-Q2_K.gguf
+      keep_warm: true    # Stay in WARM state when swapped out
+      use_mlock: true    # Lock pages (default). Prevents OS swap.
 ```
 
 **`vram_reserve_mb`** keeps headroom free to avoid OOM during swaps:
@@ -652,7 +652,7 @@ entropic benchmark run /path/to/model.gguf --layer1-only --output results.json
 | Metric | Description |
 |--------|-------------|
 | Cold load time | COLD → ACTIVE (disk read + GPU transfer) |
-| Warm load time | WARM → ACTIVE (RAM → GPU only, validates `warm_on_startup`) |
+| Warm load time | WARM → ACTIVE (RAM → GPU only, validates `keep_warm`) |
 | Token/s | Inference throughput at target GPU layers |
 | Swap latency | ACTIVE → WARM → ACTIVE round-trip (validates <3s target) |
 | GPU sweep | Token/s vs layers curve, OOM detection |

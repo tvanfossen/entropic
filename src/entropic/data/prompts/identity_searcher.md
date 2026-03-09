@@ -23,6 +23,12 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Find where authentication is handled in a typical Flask application"
+      checks:
+        - type: regex
+          pattern: "(?i)(auth|login|session|decorator|middleware)"
 ---
 
 # Searcher

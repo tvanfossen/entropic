@@ -49,6 +49,9 @@ class TestStreamToQueuePassesGrammar:
         mock_model.create_chat_completion.return_value = iter([])
         backend._model = mock_model
         backend._last_finish_reason = "stop"
+        backend._has_chat_template_kwargs = False
+        backend._no_think_chat_handler = None
+        backend._default_chat_handler = None
 
         loop = asyncio.new_event_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -74,6 +77,9 @@ class TestStreamToQueuePassesGrammar:
         mock_model.create_chat_completion.return_value = iter([])
         backend._model = mock_model
         backend._last_finish_reason = "stop"
+        backend._has_chat_template_kwargs = False
+        backend._no_think_chat_handler = None
+        backend._default_chat_handler = None
 
         loop = asyncio.new_event_loop()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
@@ -86,6 +92,99 @@ class TestStreamToQueuePassesGrammar:
         mock_grammar_cls.from_string.assert_not_called()
         call_kwargs = mock_model.create_chat_completion.call_args.kwargs
         assert call_kwargs["grammar"] is None
+
+
+# ===========================================================================
+# Per-request no-think handler swap
+# ===========================================================================
+
+
+class TestNoThinkHandlerSwap:
+    """Verify _generate_sync swaps to no-think handler when enable_thinking=False."""
+
+    @staticmethod
+    def _make_backend_with_handlers() -> LlamaCppBackend:
+        """Build a mock backend with both chat handlers cached."""
+        with patch.object(LlamaCppBackend, "__init__", lambda self, **kw: None):
+            backend = LlamaCppBackend.__new__(LlamaCppBackend)
+
+        mock_model = MagicMock()
+        mock_model.create_chat_completion.return_value = {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 1},
+        }
+
+        default_handler = MagicMock(name="default_handler")
+        no_think_handler = MagicMock(name="no_think_handler")
+        mock_model.chat_handler = default_handler
+
+        backend._model = mock_model
+        backend._has_chat_template_kwargs = False
+        backend._default_chat_handler = default_handler
+        backend._no_think_chat_handler = no_think_handler
+        return backend
+
+    def test_swaps_to_no_think_when_enable_thinking_false(self) -> None:
+        """Handler swapped to no-think for enable_thinking=False, restored after."""
+        backend = self._make_backend_with_handlers()
+        config = GenerationConfig(
+            stop=[],
+            chat_template_kwargs={"enable_thinking": False},
+        )
+
+        # Track handler assignments during generation
+        handlers_during_gen: list[object] = []
+        original_call = backend._model.create_chat_completion
+
+        def capture_handler(**kwargs):
+            handlers_during_gen.append(backend._model.chat_handler)
+            return original_call.return_value
+
+        backend._model.create_chat_completion.side_effect = capture_handler
+
+        backend._generate_sync([], config)
+
+        # During generation, handler should have been the no-think handler
+        assert handlers_during_gen[0] is backend._no_think_chat_handler
+        # After generation, handler should be restored to default
+        assert backend._model.chat_handler is backend._default_chat_handler
+
+    def test_no_swap_when_enable_thinking_true(self) -> None:
+        """Handler stays default when enable_thinking=True."""
+        backend = self._make_backend_with_handlers()
+        config = GenerationConfig(
+            stop=[],
+            chat_template_kwargs={"enable_thinking": True},
+        )
+
+        backend._generate_sync([], config)
+
+        # Handler should never have been swapped
+        assert backend._model.chat_handler is backend._default_chat_handler
+
+    def test_no_swap_when_no_chat_template_kwargs(self) -> None:
+        """Handler stays default when no chat_template_kwargs provided."""
+        backend = self._make_backend_with_handlers()
+        config = GenerationConfig(stop=[])
+
+        backend._generate_sync([], config)
+
+        assert backend._model.chat_handler is backend._default_chat_handler
+
+    def test_handler_restored_on_generation_error(self) -> None:
+        """Handler restored to default even if generation raises."""
+        backend = self._make_backend_with_handlers()
+        config = GenerationConfig(
+            stop=[],
+            chat_template_kwargs={"enable_thinking": False},
+        )
+        backend._model.create_chat_completion.side_effect = RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            backend._generate_sync([], config)
+
+        # Handler must be restored despite the error
+        assert backend._model.chat_handler is backend._default_chat_handler
 
 
 # ===========================================================================

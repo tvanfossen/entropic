@@ -7,7 +7,7 @@ from typing import Any
 
 @dataclass
 class ModelSpec:
-    """Specification for a model to benchmark."""
+    """Specification for a model to benchmark (used by runner/sweep)."""
 
     path: Path
     context_length: int = 4096
@@ -18,10 +18,10 @@ class ModelSpec:
 class LoadResult:
     """Timing for a model load operation."""
 
-    phase: str  # "cold_to_active", "warm_only", "activate_only"
-    elapsed_ms: float
+    phase: str  # "cold_start"
+    elapsed_ms: float  # total wall clock (load + inference)
+    swap_ms: float = 0.0  # time spent in model swap/load
     vram_used_mb: int = 0
-    notes: str = ""
 
 
 @dataclass
@@ -41,15 +41,30 @@ class InferenceResult:
 
 @dataclass
 class SwapResult:
-    """Timing for the three-state lifecycle transitions (validates P1-022).
+    """Timing for model swap measured via generate().
 
-    Measures each state transition in isolation:
+    swap_away_ms — time to swap from home model to alternate model
+    swap_back_ms — time to swap back from alternate to home model
+
+    These measure the orchestrator's _get_model() path which handles
+    unload/load internally.
+    """
+
+    swap_away_ms: float
+    swap_back_ms: float
+    vram_before_mb: int = 0
+    vram_after_mb: int = 0
+
+
+@dataclass
+class RawSwapResult:
+    """Raw backend lifecycle transition timings (used by runner/sweep).
+
+    Measures each state transition in isolation via direct backend calls:
       warm_ms      — COLD → WARM (disk read + mlock into CPU RAM)
       activate_ms  — WARM → ACTIVE (PCIe transfer to GPU)
       deactivate_ms — ACTIVE → WARM (GPU release, CPU pages retained)
       reactivate_ms — WARM → ACTIVE again (should be ≤ activate_ms)
-
-    Target: activate_ms + deactivate_ms + reactivate_ms < 3000ms for 21GB model.
     """
 
     warm_ms: float
@@ -74,14 +89,14 @@ class SweepPoint:
 
 
 @dataclass
-class Layer1Results:
-    """Aggregated Layer 1 benchmark results for one model."""
+class PerfResults:
+    """Aggregated performance benchmark results for one model."""
 
     model_path: Path
     timestamp: str
     engine_version: str
     gpu_info: dict[str, Any] = field(default_factory=dict)
     cold_load: LoadResult | None = None
-    swap: SwapResult | None = None
     inference: InferenceResult | None = None
+    swap: SwapResult | None = None
     sweep: list[SweepPoint] = field(default_factory=list)

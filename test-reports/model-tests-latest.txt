@@ -1,31 +1,31 @@
 === Model Test Report ===
-Date: 2026-03-05 11:37:09
+Date: 2026-03-09 06:57:31
 
-Results: 36 passed, 0 failed (287.4s)
+Results: 36 passed, 0 failed (107.0s)
 
-  [PASS] test_grammar_constrains_output (14.4s)
-  [PASS] test_grammar_auto_chain_fires (15.4s)
-  [PASS] test_multi_tier_pipeline_completes (15.4s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (9.3s)
-  [PASS] test_code_request_produces_code [quick] (12.9s)
+  [PASS] test_grammar_constrains_output (13.9s)
+  [PASS] test_grammar_auto_chain_fires (19.4s)
+  [PASS] test_multi_tier_pipeline_completes (16.8s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (10.7s)
+  [PASS] test_code_request_produces_code [quick] (6.0s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code_writer] (12 tools) (143.0s)
+  [PASS] test_code_response_has_python_syntax [code_writer] (8.7s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [quick] (18.1s)
+  [PASS] test_response_ends_cleanly [quick] (3.4s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [quick] (2.0s)
+  [PASS] test_no_special_tokens_in_response [quick] (1.8s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [quick] (3.6s)
+  [PASS] test_generation_starts_and_ends [quick] (1 tools) (5.9s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [quick] (40.4s)
+  [PASS] test_multiple_messages_accumulate_history [quick] (3.4s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [quick] (4.4s)
+  [PASS] test_explanation_is_substantive [quick] (3.6s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [quick] (4.4s)
+  [PASS] test_hello_produces_response [quick] (1 tools) (8.5s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [quick] (1.7s)
+  [PASS] test_thanks_produces_acknowledgment [quick] (1.6s)
          Prompt: Thanks!
   [PASS] test_example_classifies_to_own_tier[code_validator] (0.0s)
   [PASS] test_example_classifies_to_own_tier[code_writer] (0.0s)
@@ -38,8 +38,8 @@ Results: 36 passed, 0 failed (287.4s)
   [PASS] test_example_classifies_to_own_tier[wireframer] (0.0s)
   [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.0s)
-  [PASS] test_route_to_non_default_model_tier (1.9s)
-  [PASS] test_confidence_above_threshold[code_validator] (0.3s)
+  [PASS] test_route_to_non_default_model_tier (2.7s)
+  [PASS] test_confidence_above_threshold[code_validator] (0.4s)
   [PASS] test_confidence_above_threshold[code_writer] (0.0s)
   [PASS] test_confidence_above_threshold[conversational] (0.0s)
   [PASS] test_confidence_above_threshold[design_validator] (0.0s)
@@ -51,20 +51,6 @@ Results: 36 passed, 0 failed (287.4s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-=============================== warnings summary ===============================
-tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
-tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
-tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
-tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
-tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
-  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-    read_at=datetime.utcnow(),
-
-tests/model/test_headless_code.py: 10 warnings
-  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:28: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-    return datetime.utcnow() - self.read_at > max_age
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-================= 36 passed, 15 warnings in 336.70s (0:05:36) ==================
+======================== 36 passed in 160.80s (0:02:40) ========================
 
 Result: PASSED

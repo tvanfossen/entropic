@@ -22,6 +22,20 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Hello"
+      checks:
+        - type: token_count_max
+          max: 30
+        - type: not_contains
+          value: "<think>"
+    - prompt: "What is Python?"
+      checks:
+        - type: contains
+          value: "programming"
+        - type: token_count_max
+          max: 50
 ---
 
 You handle only trivial interactions. Respond concisely and directly — one sentence or less. No preamble, no hedging, no elaboration. If the request is beyond trivial, say so in one sentence.

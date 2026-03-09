@@ -34,14 +34,33 @@ models:
     context_length: 8192
     gpu_layers: 40
 
-  # Mid-tier — 9B for analysis and tooling roles
-  diagnoser:
-    path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
+  # 35B tier — benchmark-validated upgrades from 9B
+  searcher:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 16384
-    gpu_layers: -1
+    context_length: 8192
+    gpu_layers: 40
 
   design_validator:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: 40
+
+  tool_runner:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: 40
+
+  pruner:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: 40
+
+  # Mid-tier — 9B for roles where quality matches 35B
+  diagnoser:
     path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
     adapter: qwen35
     context_length: 16384
@@ -53,19 +72,7 @@ models:
     context_length: 16384
     gpu_layers: -1
 
-  tool_runner:
-    path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 16384
-    gpu_layers: -1
-
-  searcher:
-    path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 16384
-    gpu_layers: -1
-
-  # Lightweight tier — 4B for quick responses and utilities
+  # Lightweight tier — 4B for roles where quality matches 35B
   quick:
     path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
     adapter: qwen35
@@ -73,12 +80,6 @@ models:
     gpu_layers: -1
 
   compactor:
-    path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 8192
-    gpu_layers: -1
-
-  pruner:
     path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
     adapter: qwen35
     context_length: 8192

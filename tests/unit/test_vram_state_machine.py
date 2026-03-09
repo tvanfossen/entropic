@@ -38,10 +38,11 @@ def _available_identity_names() -> list[str]:
 
 
 class MockModelConfig:
-    def __init__(self, path: str = "/models/test.gguf"):
+    def __init__(self, path: str = "/models/test.gguf", keep_warm: bool = False):
         self.path = Path(path)
         self.context_length = 4096
         self.allowed_tools = None
+        self.keep_warm = keep_warm
 
 
 class MockModelBackend:
@@ -90,11 +91,11 @@ class MockModelBackend:
 
 
 class MockTierConfig:
-    def __init__(self, path: str = "/models/test.gguf", warm_on_startup: bool = False):
+    def __init__(self, path: str = "/models/test.gguf", keep_warm: bool = False):
         self.path = Path(path)
         self.context_length = 4096
         self.gpu_layers = -1
-        self.warm_on_startup = warm_on_startup
+        self.keep_warm = keep_warm
         self.use_mlock = True
         self.adapter = "qwen2"
         self.logits_all = False
@@ -115,7 +116,7 @@ class MockEntropyConfig:
         self.models.tiers = {
             self.default_tier: MockTierConfig(f"/models/{self.default_tier}.gguf"),
             self.alt_tier: MockTierConfig(
-                f"/models/{self.alt_tier}.gguf", warm_on_startup=warm_non_default
+                f"/models/{self.alt_tier}.gguf", keep_warm=warm_non_default
             ),
         }
         self.models.router = None
@@ -155,15 +156,16 @@ def _make_orchestrator_with_mocks(
 
 
 # ---------------------------------------------------------------------------
-# Tests: Tier swap uses deactivate (ACTIVE → WARM), not unload (ACTIVE → COLD)
+# Tests: Tier swap target state is config-driven (keep_warm)
 # ---------------------------------------------------------------------------
 
 
-class TestSwapLeavesModelWarm:
-    """Tier swap deactivates old model (ACTIVE → WARM), not unloads it (ACTIVE → COLD)."""
+class TestSwapTargetState:
+    """Swap target state depends on keep_warm config of the outgoing model."""
 
     @pytest.mark.asyncio
-    async def test_swap_leaves_previous_in_warm_state(self) -> None:
+    async def test_swap_unloads_to_cold_when_keep_warm_false(self) -> None:
+        """Default: keep_warm=False → full unload (ACTIVE → COLD)."""
         config = MockEntropyConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
 
@@ -175,10 +177,33 @@ class TestSwapLeavesModelWarm:
         await mocks[config.default_tier].load()
         orch._loaded_main_tier = default_tier
 
-        # Request alt tier — triggers deactivate(default) + load(alt)
         await orch._get_model(alt_tier)
 
-        # Default is WARM (not COLD): pages stay in RAM, fast re-activate
+        # keep_warm=False → full unload to COLD
+        assert mocks[config.default_tier].state == ModelState.COLD
+        assert mocks[config.default_tier]._unload_called == 1
+        assert mocks[config.default_tier]._deactivate_called == 0
+
+    @pytest.mark.asyncio
+    async def test_swap_deactivates_to_warm_when_keep_warm_true(self) -> None:
+        """keep_warm=True → deactivate only (ACTIVE → WARM)."""
+        config = MockEntropyConfig()
+        orch, mocks = _make_orchestrator_with_mocks(config)
+
+        # Override the default tier's config to have keep_warm=True
+        mocks[config.default_tier].config.keep_warm = True
+
+        default_tier = orch._find_tier(config.default_tier)
+        alt_tier = orch._find_tier(config.alt_tier)
+        assert default_tier is not None
+        assert alt_tier is not None
+
+        await mocks[config.default_tier].load()
+        orch._loaded_main_tier = default_tier
+
+        await orch._get_model(alt_tier)
+
+        # keep_warm=True → deactivate to WARM (keep CPU pages locked)
         assert mocks[config.default_tier].state == ModelState.WARM
         assert mocks[config.default_tier]._deactivate_called == 1
         assert mocks[config.default_tier]._unload_called == 0
@@ -217,15 +242,15 @@ class TestSwapLeavesModelWarm:
 
 
 # ---------------------------------------------------------------------------
-# Tests: warm_on_startup
+# Tests: keep_warm
 # ---------------------------------------------------------------------------
 
 
 class TestWarmOnStartup:
-    """warm_on_startup=True causes warm() to be called in initialize()."""
+    """keep_warm=True causes warm() to be called in initialize()."""
 
     @pytest.mark.asyncio
-    async def test_warm_on_startup_calls_warm_for_non_default_tiers(self) -> None:
+    async def test_keep_warm_calls_warm_for_non_default_tiers(self) -> None:
         config = MockEntropyConfig(warm_non_default=True)
         warm_called: list[str] = []
 
@@ -242,11 +267,11 @@ class TestWarmOnStartup:
         orch = ModelOrchestrator(config, backend_factory=mock_factory)  # type: ignore[arg-type]
         await orch.initialize()
 
-        # alt tier has warm_on_startup=True and is not the default tier
+        # alt tier has keep_warm=True and is not the default tier
         assert config.alt_tier in warm_called
 
     @pytest.mark.asyncio
-    async def test_warm_on_startup_false_does_not_warm(self) -> None:
+    async def test_keep_warm_false_does_not_warm(self) -> None:
         config = MockEntropyConfig(warm_non_default=False)
         warm_called: list[str] = []
 
@@ -263,5 +288,5 @@ class TestWarmOnStartup:
         orch = ModelOrchestrator(config, backend_factory=mock_factory)  # type: ignore[arg-type]
         await orch.initialize()
 
-        # alt tier has warm_on_startup=False — should NOT be pre-warmed
+        # alt tier has keep_warm=False — should NOT be pre-warmed
         assert config.alt_tier not in warm_called

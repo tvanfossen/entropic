@@ -1,0 +1,59 @@
+{
+  "identity": "pruner",
+  "model": "/home/tvanfossen/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf",
+  "gpu_info": {
+    "gpu_name": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+    "vram_total_mb": 16303,
+    "driver_version": "580.126.09"
+  },
+  "runs": {
+    "2026-03-06": [
+      {
+        "timestamp": "2026-03-06T17:21:01.261028+00:00",
+        "engine_version": "1.5.0",
+        "passed": 1,
+        "failed": 0,
+        "prompts": [
+          {
+            "prompt": "Evaluate these messages for pruning: [0] User: 'Search for auth code' [1] Tool: grep found 3 files [2] User: 'Actually search for login code instead' [3] Tool: grep found 5 files [4] User: 'Read the first result'",
+            "output": "{\n  \"prune\": [\n    {\n      \"message_index\": 0,\n      \"reason\": \"The user's intent has shifted from 'auth code' to 'login code'. The initial search request is now obsolete and contradicts the subsequent instruction.\"\n    ,\n      \"keep_summary\": false\n    }\n  ]\n}",
+            "all_passed": true,
+            "total_ms": 5314.0,
+            "routing_ms": 0.0,
+            "swap_ms": 0.0,
+            "inference_ms": 5313,
+            "token_count": 75,
+            "checks": [
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 5"
+              }
+            ]
+          }
+        ],
+        "judge": {
+          "grade": "B",
+          "reason": "Correct intent-shift identification, defensible keep_summary logic, but only evaluated one message.",
+          "timestamp": "2026-03-06T17:28:22.503264+00:00",
+          "grader": "claude-opus-4-6",
+          "per_prompt": [
+            {
+              "grade": "B",
+              "reason": "Correct that search intent shifted, but incomplete \u2014 only pruned 1 of N messages."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "average": {
+    "run_count": 1,
+    "pass_rate": 1.0,
+    "total_passed": 1,
+    "total_failed": 0,
+    "avg_total_ms": 5314.0,
+    "avg_inference_ms": 5313.0,
+    "avg_swap_ms": 0.0
+  }
+}

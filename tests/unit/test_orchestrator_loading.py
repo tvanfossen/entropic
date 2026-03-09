@@ -45,6 +45,7 @@ class MockModelConfig:
         self.path = Path(path)
         self.context_length = context_length
         self.allowed_tools = None
+        self.keep_warm = False
 
 
 class MockModelBackend:
@@ -100,7 +101,7 @@ class MockTierConfig:
         self.path = Path(path)
         self.context_length = context_length
         self.gpu_layers = -1
-        self.warm_on_startup = False
+        self.keep_warm = False
         self.use_mlock = True
         self.adapter = "qwen2"
         self.logits_all = False
@@ -205,7 +206,7 @@ class TestModelOrchestratorLoading:
 
     @pytest.mark.asyncio
     async def test_model_swap_unloads_previous(self) -> None:
-        """Switching tiers deactivates old model (ACTIVE → WARM)."""
+        """Switching tiers fully unloads old model (ACTIVE → COLD) by default."""
         orchestrator, mocks = self._create_orchestrator_with_mocks()
         cfg = self.config
         t_default = self._tier(orchestrator, cfg.default_tier)
@@ -221,10 +222,10 @@ class TestModelOrchestratorLoading:
 
         assert result.is_loaded
         assert mocks[t_b].is_loaded
-        # Default deactivated (ACTIVE → WARM), not unloaded
+        # Default has keep_warm=False → full unload to COLD
         assert not mocks[t_default].is_loaded
-        assert mocks[t_default]._deactivate_called == 1
-        assert mocks[t_default]._unload_called == 0
+        assert mocks[t_default]._unload_called == 1
+        assert mocks[t_default]._deactivate_called == 0
 
     @pytest.mark.asyncio
     async def test_same_file_no_swap(self) -> None:

@@ -18,6 +18,16 @@ enable_thinking: false
 model_preference: primary
 interstitial: false
 routable: false
+benchmark:
+  prompts:
+    - prompt: "Write tests for this function:\ndef is_even(n):\n    return n % 2 == 0"
+      checks:
+        - type: contains
+          value: "def test_"
+        - type: contains
+          value: "assert"
+        - type: regex
+          pattern: "```python"
 ---
 
 # Test Writer

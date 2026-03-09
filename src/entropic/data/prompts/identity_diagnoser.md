@@ -11,7 +11,7 @@ examples:
   - "Diagnose this stack trace"
   - "Why does the test pass locally but fail in CI?"
   - "What's causing the memory leak?"
-grammar: grammars/diagnoser.gbnf
+grammar: null
 auto_chain: planner
 allowed_tools:
   - filesystem.read_file
@@ -19,12 +19,20 @@ allowed_tools:
   - filesystem.grep
   - bash.execute
   - diagnostics.check_errors
-max_output_tokens: 512
+max_output_tokens: 4096
 temperature: 0.3
-enable_thinking: false
+enable_thinking: true
 model_preference: secondary
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Why is the login failing with a 401 error when the credentials are correct?"
+      checks:
+        - type: regex
+          pattern: "(?i)(cause|reason|because|issue|problem)"
+        - type: regex
+          pattern: "(?i)(token|session|auth|header|credential)"
 ---
 
 # Diagnoser
@@ -55,4 +63,4 @@ Work backwards from the error. Do not speculate — follow the evidence.
 
 ## Output
 
-Respond ONLY with valid JSON matching the diagnoser schema. No prose before or after.
+State the root cause, evidence, confidence level, and recommended fix clearly.

@@ -11,7 +11,7 @@ examples:
   - "What is the difference between TCP and UDP?"
   - "Help me debug this error"
   - "Help me think through this architecture decision"
-  - "What are the tradeoffs between these two approaches?"
+  - "Can you explain what dependency injection is?"
 grammar: null
 auto_chain: null
 allowed_tools:
@@ -24,6 +24,22 @@ enable_thinking: false
 model_preference: primary
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Explain how HTTP cookies work"
+      checks:
+        - type: contains
+          value: "cookie"
+        - type: regex
+          pattern: "(?i)(browser|server|request|response)"
+    - prompt: "What is the difference between TCP and UDP?"
+      checks:
+        - type: contains
+          value: "TCP"
+        - type: contains
+          value: "UDP"
+        - type: regex
+          pattern: "(?i)(reliable|connection|packet)"
 ---
 
 # Conversational

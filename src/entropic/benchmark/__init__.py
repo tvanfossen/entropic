@@ -1,26 +1,35 @@
 """Benchmark package for entropic-engine.
 
-Layer 1: Raw llama-cpp-python performance (load times, tok/s, swap latency,
-         GPU layer sweep, VRAM consumption). No engine or identity system needed.
+Performance: Engine-level speed (cold start, tok/s, swap latency) measured
+             through the orchestrator's generate() path — same as production.
+             GPU layer sweep uses raw backend for hardware planning.
 
-Layer 2 (future): Identity-driven quality evaluation via benchmark.yaml
-                  definitions shipped with each identity.
+Quality: Identity-driven output evaluation. Each identity ships benchmark
+         definitions (prompts + checks) in its frontmatter. Shared check
+         primitives in ``checks.py`` are used by both benchmark CLI and
+         ``tests/model/``.
 """
 
+from entropic.benchmark.checks import CheckResult, run_check, run_checks
 from entropic.benchmark.types import (
     InferenceResult,
-    Layer1Results,
     LoadResult,
     ModelSpec,
+    PerfResults,
+    RawSwapResult,
     SwapResult,
     SweepPoint,
 )
 
 __all__ = [
+    "CheckResult",
     "InferenceResult",
-    "Layer1Results",
     "LoadResult",
     "ModelSpec",
+    "PerfResults",
+    "RawSwapResult",
     "SwapResult",
     "SweepPoint",
+    "run_check",
+    "run_checks",
 ]

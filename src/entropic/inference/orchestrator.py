@@ -225,7 +225,7 @@ class ModelOrchestrator:
         # Determine the default main tier to activate
         default_tier = self._get_default_tier()
 
-        await self._warm_on_startup_tiers(default_tier)
+        await self._keep_warm_tiers(default_tier)
 
         # Activate the default main tier (COLD/WARM → ACTIVE)
         if default_tier in self._tiers:
@@ -238,8 +238,8 @@ class ModelOrchestrator:
             await self._router.load()
             logger.info("Activated ROUTER model")
 
-    async def _warm_on_startup_tiers(self, default_tier: ModelTier) -> None:
-        """Warm non-default tiers with warm_on_startup=True (CPU preload).
+    async def _keep_warm_tiers(self, default_tier: ModelTier) -> None:
+        """Warm non-default tiers with keep_warm=True (CPU preload).
 
         Tracks already-warmed backends to avoid warming a shared backend
         multiple times when several tiers reference the same model file.
@@ -249,14 +249,14 @@ class ModelOrchestrator:
 
         for name, tier_config in self.config.models.tiers.items():
             tier = self._find_tier(name)
-            if not (tier and tier in self._tiers and tier_config.warm_on_startup):
+            if not (tier and tier in self._tiers and tier_config.keep_warm):
                 continue
             backend = self._tiers[tier]
             # Skip default tier's backend (it gets load() not warm())
             # Skip already-warmed backends (shared by another tier)
             if backend is default_backend or id(backend) in warmed_backends:
                 continue
-            logger.info(f"Warming {name} model (warm_on_startup=True)")
+            logger.info(f"Warming {name} model (keep_warm=True)")
             await backend.warm()
             warmed_backends.add(id(backend))
 
@@ -272,17 +272,34 @@ class ModelOrchestrator:
             prompt_manager=self._prompt_manager,
         )
 
-    def _resolve_grammar(self, tier: ModelTier) -> str | None:
-        """Load and cache grammar string from tier config path.
+    def _resolve_grammar(self, tier: ModelTier, identity_fm: Any = None) -> str | None:
+        """Resolve grammar string for a tier.
 
-        Resolves from the tier's config entry (not the shared backend's config),
-        so the correct grammar is used even when tiers share a backend.
+        Resolution order:
+          1. Config override (``config.models.tiers[name].grammar``) — user override
+          2. Identity frontmatter (``identity_fm.grammar``) — bundled default
+          3. None — no grammar constraint
+
+        Frontmatter grammar paths are relative to the bundled data directory.
         """
+        # 1. Config override
         tier_config = self.config.models.tiers.get(tier.name)
-        grammar_path = getattr(tier_config, "grammar", None) if tier_config else None
-        if grammar_path is None:
-            return None
-        resolved = grammar_path.expanduser().resolve()
+        config_grammar = getattr(tier_config, "grammar", None) if tier_config else None
+        if config_grammar is not None:
+            return self._load_grammar_file(config_grammar.expanduser().resolve())
+
+        # 2. Identity frontmatter
+        fm_grammar = getattr(identity_fm, "grammar", None) if identity_fm else None
+        if fm_grammar is not None:
+            import entropic
+
+            data_dir = Path(entropic.__file__).parent / "data"
+            return self._load_grammar_file((data_dir / fm_grammar).resolve())
+
+        return None
+
+    def _load_grammar_file(self, resolved: Path) -> str | None:
+        """Load and cache a grammar file by resolved path."""
         if resolved not in self._grammar_cache:
             if not resolved.exists():
                 logger.warning("Grammar file not found: %s", resolved)
@@ -386,7 +403,7 @@ class ModelOrchestrator:
                 kwargs[key] = value
 
         if "grammar" not in kwargs:
-            grammar_str = self._resolve_grammar(tier)
+            grammar_str = self._resolve_grammar(tier, identity_fm)
             if grammar_str:
                 kwargs["grammar"] = grammar_str
 
@@ -398,11 +415,19 @@ class ModelOrchestrator:
         **kwargs: Any,
     ) -> GenerationResult:
         """Generate a response using the appropriate model."""
+        t_start = time.perf_counter()
+
+        t_route = time.perf_counter()
         if tier is None:
             tier = await self.route(messages)
+        routing_ms = (time.perf_counter() - t_route) * 1000
 
         self._last_used_tier = tier
+
+        t_swap = time.perf_counter()
         model = await self._get_model(tier)
+        swap_ms = (time.perf_counter() - t_swap) * 1000
+
         self._apply_tier_defaults(tier, kwargs, identity_fm)
 
         adapter = self._adapters.get(tier)
@@ -418,6 +443,9 @@ class ModelOrchestrator:
                 result.tool_calls = parsed_calls
                 logger.debug(f"Parsed tool calls from content: {[tc.name for tc in parsed_calls]}")
 
+        result.routing_ms = routing_ms
+        result.swap_ms = swap_ms
+        result.total_ms = (time.perf_counter() - t_start) * 1000
         return result
 
     async def generate_stream(
@@ -506,13 +534,35 @@ class ModelOrchestrator:
         return None
 
     async def _deactivate_current_if_needed(self, model: ModelBackend) -> None:
-        """Deactivate currently loaded model if it's a different backend (ACTIVE → WARM)."""
+        """Swap out the currently loaded model to make room for a new one.
+
+        The target state is config-driven:
+        - ``keep_warm=True`` → ACTIVE → WARM (keeps CPU pages locked,
+          fast reactivation, but costs ~1.1GB CUDA compute buffer)
+        - ``keep_warm=False`` → ACTIVE → COLD (full unload, frees
+          all VRAM and RAM — slower to reload but zero residual cost)
+
+        Only called when the incoming model is a *different backend* from
+        the current one. Same-backend reuse goes through
+        ``_find_reusable_model`` instead.
+        """
         if not self._loaded_main_tier:
             return
         current = self._tiers.get(self._loaded_main_tier)
         if current and current.is_loaded and current is not model:
-            logger.info(f"Deactivating {self._loaded_main_tier.name} model for swap")
-            await current.deactivate()
+            keep_warm = current.config.keep_warm
+            if keep_warm:
+                logger.info(
+                    f"Deactivating {self._loaded_main_tier.name} model "
+                    f"for swap (keep_warm=True, keeping WARM)"
+                )
+                await current.deactivate()
+            else:
+                logger.info(
+                    f"Unloading {self._loaded_main_tier.name} model "
+                    f"for swap (keep_warm=False, going COLD)"
+                )
+                await current.unload()
 
     @property
     def tier_names(self) -> list[str]:

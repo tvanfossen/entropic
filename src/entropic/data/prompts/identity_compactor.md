@@ -16,6 +16,14 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: false
+benchmark:
+  prompts:
+    - prompt: "Summarize this conversation: User asked to add a login page. Assistant read auth.py and views.py. Assistant found the login route was missing. Assistant wrote a new login view. User confirmed it works. Assistant then fixed a typo in the template. User said thanks."
+      checks:
+        - type: regex
+          pattern: "(?i)(login|auth|view)"
+        - type: regex
+          pattern: "(?i)(key_facts|preserved|dropped)"
 ---
 
 # Compactor

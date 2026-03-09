@@ -22,8 +22,9 @@ note right: **QUICK** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is when a function calls itself to solve smaller versions of the same 
-  problem, typically using a base case to stop the process.
+  Recursion is a programming technique where a function calls itself to solve 
+  smaller instances of the same problem, typically requiring a base case to 
+  terminate the process.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

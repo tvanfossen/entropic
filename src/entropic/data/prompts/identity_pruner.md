@@ -17,6 +17,12 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: false
+benchmark:
+  prompts:
+    - prompt: "Evaluate these messages for pruning: [0] User: 'Search for auth code' [1] Tool: grep found 3 files [2] User: 'Actually search for login code instead' [3] Tool: grep found 5 files [4] User: 'Read the first result'"
+      checks:
+        - type: regex
+          pattern: "(?i)(prune|remove|keep|index)"
 ---
 
 # Pruner

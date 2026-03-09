@@ -25,6 +25,22 @@ enable_thinking: false
 model_preference: primary
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Write a Python function called is_palindrome that checks if a string is a palindrome"
+      checks:
+        - type: contains
+          value: "def is_palindrome"
+        - type: contains
+          value: "return"
+        - type: regex
+          pattern: "```python"
+    - prompt: "Write a function to calculate the factorial of a number"
+      checks:
+        - type: contains
+          value: "def "
+        - type: contains
+          value: "return"
 ---
 
 # Code Writer

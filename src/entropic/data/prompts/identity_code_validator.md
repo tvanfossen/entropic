@@ -22,6 +22,12 @@ enable_thinking: false
 model_preference: primary
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Check this function for correctness: def add(a, b): return a - b"
+      checks:
+        - type: regex
+          pattern: "(?i)(bug|error|incorrect|wrong|subtract|minus)"
 ---
 
 # Code Validator

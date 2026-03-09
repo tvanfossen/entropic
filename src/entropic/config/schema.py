@@ -54,7 +54,7 @@ class ModelConfig(BaseModel):
     adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, qwen35, falcon, generic
     context_length: int = Field(default=16384, ge=512, le=131072)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
-    warm_on_startup: bool = False  # Pre-load into CPU RAM at startup (COLD → WARM)
+    keep_warm: bool = False  # Use WARM state: pre-warm at startup, deactivate (not unload) on swap
     use_mlock: bool = True  # Lock model pages in RAM (prevents OS swap; reduces activate latency)
     logits_all: bool = False  # Compute logits for all positions (required for logprobs)
     allowed_tools: list[str] | None = None

@@ -1,0 +1,64 @@
+{
+  "identity": "diagnoser",
+  "model": "/home/tvanfossen/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf",
+  "gpu_info": {
+    "gpu_name": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+    "vram_total_mb": 16303,
+    "driver_version": "580.126.09"
+  },
+  "runs": {
+    "2026-03-06": [
+      {
+        "timestamp": "2026-03-06T17:21:01.261028+00:00",
+        "engine_version": "1.5.0",
+        "passed": 1,
+        "failed": 0,
+        "prompts": [
+          {
+            "prompt": "Why is the login failing with a 401 error when the credentials are correct?",
+            "output": "A **401 Unauthorized** error means the server received your request but cannot authenticate it as valid, even if you believe the credentials are correct. This is often a \"false negative\" caused by how the credentials are formatted or transmitted rather than the username/password themselves.\n\nHere are the most common reasons why this happens despite having the right credentials:\n\n### 1. Header Formatting Issues (Most Common)\nThe `Authorization` header must follow a specific format. If there is even a tiny typo in the scheme or spacing, the server will reject it immediately.\n*   **Wrong Scheme:** Using `Basic` instead of `Bearer`, or vice versa.\n    *   \u274c `Authorization: Basic ...` (if expecting Bearer)\n    *   \u2705 `Authorization: Bearer <token>`\n*   **Missing Space:** There must be a space between the scheme and the token.\n    *   \u274c `Authorization: Basicabc123`\n    *   \u2705 `Authorization: Basic abc123` (Note the space after \"Basic\")\n\n### 2. Encoding Errors\nIf your credentials contain special characters, they might be encoded incorrectly before being sent to the server.\n*   **Base64 Issues:** For HTTP Basic Auth, the username and password are usually Base64 encoded (`base64(\"user:pass\")`). If you manually encode them or use a library that doesn't handle encoding correctly, the resulting string will be wrong.\n*   **URL Encoding:** Ensure special characters in your username/password aren't being double-encoded (e.g., `%` becoming `%25`).\n\n### 3. Token Expiration or Revocation\nIf you are using an OAuth flow or a session-based login:\n*   The token might have expired, even if the initial credentials were correct.\n*   The server might be rejecting the request because the `Access-Control-Allow-Origin` header is missing (CORS issues), causing the browser to block the response before it reaches your code.\n\n### 4. Case Sensitivity and Whitespace\nServers are often extremely strict about string matching:\n*   **Case Sensitivity:** \"admin\" vs \"Admin\".\n*   **Hidden Characters:** Copy-pasting from a PDF or Word doc can introduce non-breaking spaces (Unicode `0xA0`) instead of standard spaces (`0x20`), or invisible characters like zero-width joiners.\n\n### 5. IP Address or Network Restrictions\nSome systems return a generic \"401\" even if the credentials are wrong, but they might also trigger this if:\n*   Your request is coming from an IP address that has been rate-limited or blocked.\n*   You are trying to access the API via a proxy or NAT that changes your source IP unexpectedly.\n\n### 6. Multi-Factor Authentication (MFA)\nIf the system requires MFA, sending just username/password will result in a 401 because the server expects a second factor (like an OTP code) in the header or body.\n\n---\n\n### How to Debug This\n\nTo pinpoint the exact cause, try these steps:\n\n1.  **Inspect the Request:** Use tools like **Postman**, **cURL**, or browser DevTools (Network tab). Look at the `Authorization` header exactly as it is sent.\n    *   Check for extra spaces: `\"Bearer abc\"` vs `\"Bearerabc\"`.\n    *   Verify the scheme matches what the API expects (`Basic`, `Bearer`, `Token`).\n2.  **Check the Response Body:** Sometimes a 401 response includes a JSON body with an error message like `\"Invalid token format\"` or `\"Missing scope: read\"`.\n3.  **Test with Raw cURL:** Run a raw command to rule out browser/JS library issues:\n    ```bash\n    curl -H \"Authorization: Bearer YOUR_TOKEN_HERE\" https://api.example.com/login\n    ```\n4.  **Verify Credentials in Code:** If you are coding this, print the exact string being sent (before encoding) to ensure no hidden characters exist.\n\nIf you can share the specific API documentation or the structure of your request header, I can give a more targeted solution.",
+            "all_passed": true,
+            "total_ms": 26475.4,
+            "routing_ms": 0.0,
+            "swap_ms": 0.0,
+            "inference_ms": 26475,
+            "token_count": 882,
+            "checks": [
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 187"
+              },
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 10"
+              }
+            ]
+          }
+        ],
+        "judge": {
+          "grade": "A",
+          "reason": "Comprehensive 401 analysis with header formatting, scheme, and token issues.",
+          "timestamp": "2026-03-06T17:28:22.503264+00:00",
+          "grader": "claude-opus-4-6",
+          "per_prompt": [
+            {
+              "grade": "A",
+              "reason": "Well-structured breakdown of 401 causes with specific examples."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "average": {
+    "run_count": 1,
+    "pass_rate": 1.0,
+    "total_passed": 1,
+    "total_failed": 0,
+    "avg_total_ms": 26475.4,
+    "avg_inference_ms": 26475.0,
+    "avg_swap_ms": 0.0
+  }
+}

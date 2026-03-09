@@ -104,6 +104,8 @@ class LlamaCppBackend(ModelBackend):
         self._lock = asyncio.Lock()
         self._last_finish_reason: str = "stop"
         self._has_chat_template_kwargs: bool = False
+        self._default_chat_handler: Any = None
+        self._no_think_chat_handler: Any = None
 
     # ------------------------------------------------------------------
     # Three-state lifecycle: COLD → WARM → ACTIVE
@@ -262,30 +264,38 @@ class LlamaCppBackend(ModelBackend):
             sys.stderr = old_stderr
 
     def _detect_template_support(self) -> None:
-        """Detect chat_template_kwargs support and install no-think handler if needed."""
+        """Detect chat_template_kwargs support and cache no-think handler.
+
+        When llama-cpp-python doesn't support ``chat_template_kwargs``, we build
+        a no-think chat handler from the GGUF template. Both the default and
+        no-think handlers are cached so they can be swapped per-request — the
+        same backend may serve identities with and without thinking enabled.
+        """
         assert self._model is not None
         sig = inspect.signature(self._model.create_chat_completion)
         self._has_chat_template_kwargs = "chat_template_kwargs" in sig.parameters
 
-        if (
-            not self._has_chat_template_kwargs
-            and getattr(self._adapter, "enable_thinking", True) is False
-        ):
-            self._install_no_think_handler()
+        # Cache default handler + build no-think variant for per-request swap
+        if not self._has_chat_template_kwargs:
+            self._default_chat_handler = self._model.chat_handler
+            self._no_think_chat_handler = self._build_no_think_handler()
 
-    def _install_no_think_handler(self) -> None:
-        """Install a chat handler that injects enable_thinking=False into the jinja template.
+    def _build_no_think_handler(self) -> Any:
+        """Build a chat handler that injects enable_thinking=False into the jinja template.
 
         Works around llama-cpp-python's Jinja2ChatFormatter not forwarding
         extra kwargs to the template render call. Constructs a formatter from
         the GGUF's embedded template and monkey-patches its render method to
         always set enable_thinking=False.
+
+        Returns:
+            The patched chat handler, or None if template not available.
         """
         assert self._model is not None
         template = self._model.metadata.get("tokenizer.chat_template")
         if not template:
-            logger.warning("No chat template in GGUF metadata, cannot install no-think handler")
-            return
+            logger.warning("No chat template in GGUF metadata, cannot build no-think handler")
+            return None
 
         eos_id = self._model.token_eos()
         bos_id = self._model.token_bos()
@@ -306,8 +316,9 @@ class LlamaCppBackend(ModelBackend):
             return original_render(**kwargs)
 
         formatter._environment.render = render_no_think
-        self._model.chat_handler = formatter.to_chat_handler()
-        logger.info("Installed no-think chat handler (enable_thinking=False)")
+        handler = formatter.to_chat_handler()
+        logger.info("Built no-think chat handler (enable_thinking=False)")
+        return handler
 
     def _build_gen_config(
         self,
@@ -417,7 +428,24 @@ class LlamaCppBackend(ModelBackend):
         if config.chat_template_kwargs and self._has_chat_template_kwargs:
             kwargs["chat_template_kwargs"] = config.chat_template_kwargs
 
-        result: dict[str, Any] = self._model.create_chat_completion(**kwargs)
+        # Per-request no-think handler swap when llama-cpp doesn't support
+        # chat_template_kwargs natively. Swap handler before generation,
+        # restore after — backends are shared across identities.
+        needs_no_think = (
+            not self._has_chat_template_kwargs
+            and config.chat_template_kwargs
+            and config.chat_template_kwargs.get("enable_thinking") is False
+            and self._no_think_chat_handler is not None
+        )
+        if needs_no_think:
+            self._model.chat_handler = self._no_think_chat_handler
+
+        try:
+            result: dict[str, Any] = self._model.create_chat_completion(**kwargs)
+        finally:
+            if needs_no_think:
+                self._model.chat_handler = self._default_chat_handler
+
         return result
 
     async def complete(
@@ -593,8 +621,23 @@ class LlamaCppBackend(ModelBackend):
             }
             if config.chat_template_kwargs and self._has_chat_template_kwargs:
                 stream_kwargs["chat_template_kwargs"] = config.chat_template_kwargs
-            stream = self._model.create_chat_completion(**stream_kwargs)
-            self._process_stream_chunks(stream, queue, loop, cancel)
+
+            # Per-request no-think handler swap (same as _generate_sync)
+            needs_no_think = (
+                not self._has_chat_template_kwargs
+                and config.chat_template_kwargs
+                and config.chat_template_kwargs.get("enable_thinking") is False
+                and self._no_think_chat_handler is not None
+            )
+            if needs_no_think:
+                self._model.chat_handler = self._no_think_chat_handler
+
+            try:
+                stream = self._model.create_chat_completion(**stream_kwargs)
+                self._process_stream_chunks(stream, queue, loop, cancel)
+            finally:
+                if needs_no_think:
+                    self._model.chat_handler = self._default_chat_handler
         except Exception as e:
             logger.exception(f"Stream error: {e}")
         finally:

@@ -106,6 +106,10 @@ class GenerationResult:
     token_count: int = 0
     generation_time_ms: int = 0
     logprobs: list[dict[str, Any]] | None = None  # Per-token log-probabilities
+    # Engine timing — populated by orchestrator during generate()
+    routing_ms: float = 0.0
+    swap_ms: float = 0.0
+    total_ms: float = 0.0
 
 
 class ModelState(Enum):

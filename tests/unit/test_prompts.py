@@ -30,6 +30,7 @@ TIERS = [
     "conversational",
     "wireframer",
     "design_validator",
+    "benchmark_judge",
 ]
 
 
@@ -275,6 +276,60 @@ class TestToolIsolation:
 
         for name in leaked_names:
             assert name not in non_identity, f"Tool '{name}' leaked into {tier} tier"
+
+
+class TestEnableThinkingConsistency:
+    """Verify enable_thinking frontmatter is honored for all bundled identities."""
+
+    @pytest.mark.parametrize("tier", TIERS)
+    def test_no_think_identities_set_enable_thinking_false(self, tier: str) -> None:
+        """Identities with enable_thinking: false must pass it through generation kwargs.
+
+        This guards against the silent-drop bug where enable_thinking=False was
+        ignored because llama-cpp-python didn't support chat_template_kwargs.
+        The fix uses a per-request no-think handler swap.
+        """
+        path = _DATA_DIR / f"identity_{tier}.md"
+        fm, _body = parse_prompt_file(path, "identity")
+        assert isinstance(fm, IdentityFrontmatter)
+
+        # Every identity must explicitly declare enable_thinking
+        assert isinstance(
+            fm.enable_thinking, bool
+        ), f"{tier}: enable_thinking must be a bool, got {type(fm.enable_thinking)}"
+
+    def test_at_least_one_identity_disables_thinking(self) -> None:
+        """Sanity check: at least one bundled identity has enable_thinking=False."""
+        no_think = []
+        for tier in TIERS:
+            path = _DATA_DIR / f"identity_{tier}.md"
+            fm, _ = parse_prompt_file(path, "identity")
+            assert isinstance(fm, IdentityFrontmatter)
+            if not fm.enable_thinking:
+                no_think.append(tier)
+        assert len(no_think) > 0, "No bundled identities have enable_thinking=False"
+
+    def test_at_least_one_identity_enables_thinking(self) -> None:
+        """Sanity check: at least one bundled identity has enable_thinking=True."""
+        think = []
+        for tier in TIERS:
+            path = _DATA_DIR / f"identity_{tier}.md"
+            fm, _ = parse_prompt_file(path, "identity")
+            assert isinstance(fm, IdentityFrontmatter)
+            if fm.enable_thinking:
+                think.append(tier)
+        assert len(think) > 0, "No bundled identities have enable_thinking=True"
+
+    def test_thinking_identities_have_no_grammar(self) -> None:
+        """Thinking-enabled identities must not have GBNF grammar (incompatible)."""
+        for tier in TIERS:
+            path = _DATA_DIR / f"identity_{tier}.md"
+            fm, _ = parse_prompt_file(path, "identity")
+            assert isinstance(fm, IdentityFrontmatter)
+            if fm.enable_thinking:
+                assert (
+                    fm.grammar is None
+                ), f"{tier}: enable_thinking=True is incompatible with grammar={fm.grammar}"
 
 
 class TestProgrammaticConfig:

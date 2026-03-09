@@ -16,6 +16,12 @@ enable_thinking: false
 model_preference: primary
 interstitial: false
 routable: false
+benchmark:
+  prompts:
+    - prompt: "Execute this plan: Step 1: Read file config.yaml. Step 2: Check if 'database' key exists. Step 3: Report findings."
+      checks:
+        - type: regex
+          pattern: "(?i)(step|execute|read|config)"
 ---
 
 # Tool Runner

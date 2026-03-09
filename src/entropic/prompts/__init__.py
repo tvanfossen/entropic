@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -37,6 +37,20 @@ class AppContextFrontmatter(PromptFrontmatter):
     type: Literal["app_context"] = "app_context"
 
 
+class BenchmarkPrompt(BaseModel):
+    """A single benchmark prompt with quality checks."""
+
+    prompt: str
+    checks: list[dict[str, Any]] = []
+
+
+class BenchmarkSpec(BaseModel):
+    """Benchmark definition for an identity (optional frontmatter section)."""
+
+    prompts: list[BenchmarkPrompt] = []
+    grammar_test: dict[str, Any] | None = None
+
+
 class IdentityFrontmatter(PromptFrontmatter):
     """Frontmatter for tier identity prompt files.
 
@@ -58,6 +72,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     model_preference: str = "primary"
     interstitial: bool = False
     routable: bool = True
+    benchmark: BenchmarkSpec | None = None
 
 
 # Map type string to schema class

@@ -1,0 +1,64 @@
+{
+  "identity": "compactor",
+  "model": "/home/tvanfossen/models/gguf/Qwen3.5-4B-Q8_0.gguf",
+  "gpu_info": {
+    "gpu_name": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+    "vram_total_mb": 16303,
+    "driver_version": "580.126.09"
+  },
+  "runs": {
+    "2026-03-06": [
+      {
+        "timestamp": "2026-03-06T17:05:37.986608+00:00",
+        "engine_version": "1.5.0",
+        "passed": 1,
+        "failed": 0,
+        "prompts": [
+          {
+            "prompt": "Summarize this conversation: User asked to add a login page. Assistant read auth.py and views.py. Assistant found the login route was missing. Assistant wrote a new login view. User confirmed it works. Assistant then fixed a typo in the template. User said thanks.",
+            "output": "{\n  \"key_facts\": [\n    \"User requested the addition of a login page.\",\n    \"Assistant reviewed existing code (auth.py and views.py) and identified a missing login route.\",\n    \"Assistant implemented a new login view.\",\n    \"The feature was confirmed working by the user, followed by a minor template typo fix from the assistant.\",\n    \"Conversation concluded with mutual thanks.\"\n  ],\n  \"preserved_tool_results\": [\n    \"Code review of auth.py and views.py\",\n    \"Creation of new login view\"\n  ],\"dropped\": []}",
+            "all_passed": true,
+            "total_ms": 6538.4,
+            "routing_ms": 0.0,
+            "swap_ms": 1446.9,
+            "inference_ms": 5091,
+            "token_count": 131,
+            "checks": [
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 57"
+              },
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 5"
+              }
+            ]
+          }
+        ],
+        "judge": {
+          "grade": "A",
+          "reason": "Summarize this conversation: User asked to add a login page.: A \u2014 The model output accurately summarizes the conversation by extracting key facts, preserved tool results, and dropped information. The summary is concise, factually correct based on the provided prompt, and follows the requested JSON structure perfectly.",
+          "timestamp": "2026-03-06T17:12:59.981651+00:00",
+          "grader": "Qwen3.5-35B-A3B-Q2_K",
+          "per_prompt": [
+            {
+              "grade": "A",
+              "reason": "Summarize this conversation: User asked to add a login page.: A \u2014 The model output accurately summarizes the conversation by extracting key facts, preserved tool results, and dropped information. The summary is concise, factually correct based on the provided prompt, and follows the requested JSON structure perfectly."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "average": {
+    "run_count": 1,
+    "pass_rate": 1.0,
+    "total_passed": 1,
+    "total_failed": 0,
+    "avg_total_ms": 6538.4,
+    "avg_inference_ms": 5091.0,
+    "avg_swap_ms": 1446.9
+  }
+}

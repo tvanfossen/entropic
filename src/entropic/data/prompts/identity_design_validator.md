@@ -23,6 +23,12 @@ enable_thinking: false
 model_preference: vision
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Check this button for accessibility: <button style='background: #777; color: #999'>Submit</button>"
+      checks:
+        - type: regex
+          pattern: "(?i)(contrast|WCAG|accessibility|color)"
 ---
 
 # Design Validator

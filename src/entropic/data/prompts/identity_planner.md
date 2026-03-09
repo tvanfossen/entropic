@@ -13,19 +13,31 @@ examples:
   - "Break down this feature into tasks"
   - "Analyze the tradeoffs between these two approaches"
   - "Design a scalable architecture for this system"
-grammar: grammars/planner.gbnf
+grammar: null
 auto_chain: null
 allowed_tools:
   - entropic.todo_write
   - filesystem.read_file
   - filesystem.glob
   - filesystem.grep
-max_output_tokens: 512
+max_output_tokens: 4096
 temperature: 0.4
-enable_thinking: false
+enable_thinking: true
 model_preference: primary
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Plan the refactor of the payment module into separate service and repository layers"
+      checks:
+        - type: regex
+          pattern: "(?i)(step|phase|task|todo)"
+        - type: regex
+          pattern: "\\d"
+    - prompt: "What steps do I need to add WebSocket support to the API?"
+      checks:
+        - type: regex
+          pattern: "(?i)(step|phase|task|todo)"
 ---
 
 # Planner
@@ -42,7 +54,7 @@ Before reading any files or running any searches, call `entropic.todo_write` wit
 
 Your deliverable is two things:
 1. A structured todo list via `entropic.todo_write` — each item an imperative instruction with file/line refs, `status: pending`, and `target_tier: code_writer` for execution steps
-2. The grammar-constrained JSON steps array as your response
+2. A structured steps list as your response
 
 The executing identity works through your todo list item by item.
 
@@ -73,4 +85,4 @@ Each step:
 
 ## Output (planning mode)
 
-After completing your investigation and creating the todo list, respond ONLY with valid JSON matching the planner schema. No prose before or after.
+After completing your investigation and creating the todo list, respond with a structured plan. Use the Steps JSON Format above when planning tasks. For analysis tasks, respond with your findings directly.

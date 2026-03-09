@@ -4,8 +4,7 @@ key-facts   ::= "\"key_facts\":" ws str-array
 preserved   ::= "\"preserved_tool_results\":" ws str-array
 dropped     ::= "\"dropped\":" ws str-array
 
-str-array   ::= "[" ws "]"
-             | "[" ws string (ws "," ws string)* ws "]"
+str-array   ::= "[" ws "]" | "[" ws string (ws "," ws string)* ws "]"
 
 string      ::= "\"" ([^"\\] | "\\" .)* "\""
 ws          ::= [ \t\n]*

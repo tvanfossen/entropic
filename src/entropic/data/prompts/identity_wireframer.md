@@ -20,6 +20,14 @@ enable_thinking: false
 model_preference: vision
 interstitial: false
 routable: true
+benchmark:
+  prompts:
+    - prompt: "Wireframe a login page with email, password, and social login buttons"
+      checks:
+        - type: regex
+          pattern: "(?i)(email|password|login|button)"
+        - type: regex
+          pattern: "[|+\\-=\\[\\]]"
 ---
 
 # Wireframer

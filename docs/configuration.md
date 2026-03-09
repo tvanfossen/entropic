@@ -83,7 +83,7 @@ log_level: INFO
 | `models.tiers.*.context_length` | Integer | 16384 | Maximum context window |
 | `models.tiers.*.max_output_tokens` | Integer | 4096 | Max tokens per generation |
 | `models.tiers.*.gpu_layers` | Integer | -1 | GPU layers (-1 = all) |
-| `models.tiers.*.warm_on_startup` | Boolean | false | Pre-load model to CPU RAM at startup (WARM state) |
+| `models.tiers.*.keep_warm` | Boolean | false | Use WARM state: pre-warm at startup, deactivate (not unload) on swap |
 | `models.tiers.*.use_mlock` | Boolean | true | Lock model pages in RAM (prevents swap, faster GPU promotion) |
 | `models.tiers.*.identity` | Path/False/None | None | Per-tier system prompt file. None=bundled, False=disabled |
 | `models.tiers.*.grammar` | Path/None | None | Path to `.gbnf` grammar file for output constraints |

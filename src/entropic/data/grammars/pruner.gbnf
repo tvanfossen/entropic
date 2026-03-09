@@ -1,11 +1,6 @@
-root    ::= "{" ws "\"prune\":" ws "[" ws items ws "]" ws "}"
-items   ::= | item (ws "," ws item)*
-item    ::= "{" ws
-              "\"message_index\":" ws number ws "," ws
-              "\"reason\":" ws string ws "," ws
-              "\"keep_summary\":" ws boolean
-            ws "}"
-
+root    ::= "{" ws "\"prune\":" ws itemsarr ws "}"
+itemsarr ::= "[" ws "]" | "[" ws item (ws "," ws item)* ws "]"
+item    ::= "{" ws "\"message_index\":" ws number ws "," ws "\"reason\":" ws string ws "," ws "\"keep_summary\":" ws boolean ws "}"
 number  ::= [0-9]+
 boolean ::= "true" | "false"
 string  ::= "\"" ([^"\\] | "\\" .)* "\""

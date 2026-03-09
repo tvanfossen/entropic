@@ -46,10 +46,11 @@ note right of Mdl
       {
         "line": 1,
         "severity": "info",
-        "issue": "No type hints for the argument `n` in the docstring. Consider 
-  adding `int` to clarify expected input."
+        "issue": "Consider adding input validation to handle non-integer inputs 
+  gracefully."
       ,
-        "suggestion": "Update docstring: Args: n (int): The number to check."
+        "suggestion": "Add a type check or try/except block before the modulo 
+  operation."
       }
     ]
   }

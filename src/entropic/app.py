@@ -287,8 +287,7 @@ class Application:
 
         # Show context usage after each response
         if self._engine:
-            context_used = self._engine._token_counter.count_messages(self._messages)
-            context_max = self._engine._token_counter.max_tokens
+            context_used, context_max = self._engine.context_usage(self._messages)
             presenter.print_context_usage(context_used, context_max)
 
         # Invoke callback with result
@@ -557,8 +556,7 @@ class Application:
 
             # Show context usage after each response
             if self._engine:
-                context_used = self._engine._token_counter.count_messages(self._messages)
-                context_max = self._engine._token_counter.max_tokens
+                context_used, context_max = self._engine.context_usage(self._messages)
                 self._presenter.print_context_usage(context_used, context_max)
 
             # Save to storage
@@ -602,8 +600,7 @@ class Application:
     def _emit_context_update(self) -> None:
         """Push current context usage to the presenter."""
         if self._engine and self._presenter:
-            used = self._engine._token_counter.count_messages(self._messages)
-            max_t = self._engine._token_counter.max_tokens
+            used, max_t = self._engine.context_usage(self._messages)
             self._presenter.print_context_usage(used, max_t)
 
     def _format_routing_info(self, result: RoutingResult) -> str:
@@ -677,8 +674,7 @@ class Application:
         context_used = 0
         context_max = 16384
         if self._engine:
-            context_used = self._engine._token_counter.count_messages(self._messages)
-            context_max = self._engine._token_counter.max_tokens
+            context_used, context_max = self._engine.context_usage(self._messages)
 
         self._presenter.print_status(
             StatusInfo(

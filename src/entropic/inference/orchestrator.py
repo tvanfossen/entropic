@@ -80,6 +80,9 @@ class ModelOrchestrator:
         self._last_routed_tier: ModelTier | None = None
         self._last_routing_result: RoutingResult | None = None
 
+        # Recent tier history (most recent last, capped at 5)
+        self._tier_history: list[str] = []
+
         # Grammar file cache (path → contents)
         self._grammar_cache: dict[Path, str] = {}
 
@@ -598,6 +601,9 @@ class ModelOrchestrator:
         routing_ms = (time.perf_counter() - start) * 1000
         self._last_routing_result.routing_ms = routing_ms
         self._last_routed_tier = tier
+        self._tier_history.append(tier.name)
+        if len(self._tier_history) > 5:
+            self._tier_history = self._tier_history[-5:]
 
         swap = self._last_routing_result.swap_action
         logger.info(f"[ROUTER] {tier.name} | {swap} | {routing_ms:.0f}ms")
@@ -629,7 +635,11 @@ class ModelOrchestrator:
             return self._get_default_tier(), ""
 
         user_message = self._extract_latest_user_message(messages)
-        classification_prompt = build_classification_prompt(self._tier_list, user_message)
+        classification_prompt = build_classification_prompt(
+            self._tier_list,
+            user_message,
+            recent_tiers=self._tier_history or None,
+        )
 
         if not self._router.is_loaded:
             await self._router.load()
@@ -690,6 +700,11 @@ class ModelOrchestrator:
             return fm_val
 
         return default
+
+    @property
+    def tier_history(self) -> list[str]:
+        """Recent tier activations (most recent last, max 5)."""
+        return list(self._tier_history)
 
     def get_allowed_tools(self, tier: ModelTier) -> set[str] | None:
         """Get allowed tools for a tier, or None if all tools allowed."""

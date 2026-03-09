@@ -198,6 +198,16 @@ class AgentEngine:
         )
 
         current_name = str(current_tier) if current_tier else "none"
+
+        # Inject chain context so the receiving identity knows why it was activated
+        chain_note = (
+            f"[SYSTEM] You were activated via {reason} from the "
+            f"{current_name} identity. Review the conversation history "
+            f"for context on the task in progress. Continue the work "
+            f"using your available tools."
+        )
+        ctx.messages.append(Message(role="user", content=chain_note))
+
         model_logger.info(
             f"\n{'#' * 70}\n"
             f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
@@ -509,17 +519,33 @@ class AgentEngine:
     async def _try_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
         """Attempt auto-chain handoff on token exhaustion or grammar completion.
 
+        The auto_chain frontmatter value is a tier name (e.g. "code_writer").
+        Uses that directly as the target. Falls back to route_among handoff
+        targets only if the named tier is not found.
+
         Returns True if chain fired (tier changed), False otherwise.
         """
         if not self._should_auto_chain(ctx, finish_reason):
             return False
 
-        targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
-        if not targets:
-            logger.warning("[AUTO_CHAIN] auto_chain=True but no handoff targets configured")
-            return False
+        chain_target = self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain")
 
-        target = await self.orchestrator.route_among(targets)
+        # Resolve named target tier (auto_chain is a tier name string)
+        target = None
+        if isinstance(chain_target, str):
+            target = self.orchestrator._find_tier(chain_target)
+
+        if target is None:
+            # Named tier not found — fall back to route_among
+            targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
+            if not targets:
+                logger.warning(
+                    "[AUTO_CHAIN] auto_chain=%s but tier not found and "
+                    "no handoff targets configured",
+                    chain_target,
+                )
+                return False
+            target = await self.orchestrator.route_among(targets)
 
         from entropic.core.directives import TierChange
 

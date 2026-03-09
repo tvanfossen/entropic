@@ -283,13 +283,13 @@ class TestEntropicServerDynamicTiers:
         assert "`execute`" in handoff.description
         assert "simple" not in handoff.description
 
-    def test_default_server_uses_static_tiers(self) -> None:
-        """Server without tier_names uses the static handoff.json enum."""
+    def test_default_server_uses_empty_enum(self) -> None:
+        """Server without tier_names uses handoff.json with empty enum."""
         server = EntropicServer()
         tools = server.get_tools()
         handoff = next(t for t in tools if t.name == "handoff")
         enum = handoff.inputSchema["properties"]["target_tier"]["enum"]
-        assert enum == ["simple", "normal", "code", "thinking"]
+        assert enum == []
 
     @pytest.mark.asyncio
     async def test_handoff_rejects_invalid_tier(self, server: EntropicServer) -> None:

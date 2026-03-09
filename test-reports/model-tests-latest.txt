@@ -1,31 +1,31 @@
 === Model Test Report ===
-Date: 2026-03-09 10:42:19
+Date: 2026-03-09 11:43:39
 
-Results: 44 passed, 0 failed (139.5s)
+Results: 44 passed, 0 failed (117.4s)
 
-  [PASS] test_grammar_constrains_output (13.7s)
-  [PASS] test_grammar_auto_chain_fires (17.3s)
-  [PASS] test_multi_tier_pipeline_completes (21.5s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (13.1s)
-  [PASS] test_code_request_produces_code [planner] (20.4s)
+  [PASS] test_grammar_constrains_output (15.4s)
+  [PASS] test_grammar_auto_chain_fires (16.6s)
+  [PASS] test_multi_tier_pipeline_completes (16.6s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (8.8s)
+  [PASS] test_code_request_produces_code [code_validator] (14.0s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [planner] (12.5s)
+  [PASS] test_code_response_has_python_syntax [code_validator] (11.2s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [planner] (13.4s)
+  [PASS] test_response_ends_cleanly [planner] (9.9s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [quick] (2.4s)
+  [PASS] test_no_special_tokens_in_response [quick] (1.8s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [quick] (2.9s)
+  [PASS] test_generation_starts_and_ends [conversational] (1 tools) (7.3s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [quick] (2.2s)
+  [PASS] test_multiple_messages_accumulate_history [quick] (2.1s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [conversational] (14.0s)
+  [PASS] test_explanation_is_substantive [conversational] (8.6s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [quick] (1 tools) (3.3s)
+  [PASS] test_hello_produces_response [quick] (1.7s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [quick] (0.5s)
+  [PASS] test_thanks_produces_acknowledgment [quick] (0.8s)
          Prompt: Thanks!
   [PASS] test_example_classifies_to_own_tier[code_validator] (0.0s)
   [PASS] test_example_classifies_to_own_tier[code_writer] (0.0s)
@@ -46,8 +46,8 @@ Results: 44 passed, 0 failed (139.5s)
   [PASS] test_novel_prompt_classifies_correctly[What are the tradeoffs of microservices?] (0.0s)
   [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.0s)
-  [PASS] test_route_to_non_default_model_tier (1.5s)
-  [PASS] test_confidence_above_threshold[code_validator] (0.4s)
+  [PASS] test_route_to_non_default_model_tier (2.0s)
+  [PASS] test_confidence_above_threshold[code_validator] (0.3s)
   [PASS] test_confidence_above_threshold[code_writer] (0.0s)
   [PASS] test_confidence_above_threshold[conversational] (0.0s)
   [PASS] test_confidence_above_threshold[design_validator] (0.0s)
@@ -59,6 +59,6 @@ Results: 44 passed, 0 failed (139.5s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 44 passed in 198.55s (0:03:18) ========================
+======================== 44 passed in 167.33s (0:02:47) ========================
 
 Result: PASSED

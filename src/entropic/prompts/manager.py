@@ -96,7 +96,12 @@ class PromptManager:
         if spec is None or spec is False:
             logger.info("App context disabled (not configured)")
             return
-        self._app_context = self._load_custom(Path(spec), "app_context")
+        path = Path(spec)
+        if not path.is_absolute() and str(path) == path.name:
+            # Bare filename — resolve as bundled prompt
+            self._app_context = self._load_bundled(str(path), "app_context")
+        else:
+            self._app_context = self._load_custom(path, "app_context")
 
     def _load_identity(self, tier_name: str, spec: Path | Literal[False] | None) -> None:
         if spec is False:

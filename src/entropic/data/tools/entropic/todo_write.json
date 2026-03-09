@@ -1,6 +1,6 @@
 {
   "name": "todo_write",
-  "description": "Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nIMPORTANT:\n- Use 'add' to build the list incrementally\n- Use 'update' with an index to change status\n- Indices are shown in [CURRENT TODO STATE] context",
+  "description": "Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nRules:\n- Only mark an item 'completed' when the described work is actually done (files written, investigation performed, etc.). Do not mark items completed as a formality.\n- Batch multiple status updates in a single response when possible. Do not use one turn per update.\n- Use 'add' to build the list incrementally\n- Use 'update' with an index to change status\n- Indices are shown in [CURRENT TODO STATE] context",
   "inputSchema": {
     "type": "object",
     "properties": {

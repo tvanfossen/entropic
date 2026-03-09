@@ -114,6 +114,10 @@ def main(
 
             presenter = HeadlessPresenter()
 
+        # TUI uses bundled app_context_tui.md unless consumer overrides
+        if app_config.app_context is None:
+            app_config.app_context = Path("app_context_tui.md")
+
         app = Application(
             config=app_config,
             project_dir=ctx.obj["project"],

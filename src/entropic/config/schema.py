@@ -219,6 +219,10 @@ class FilesystemConfig(BaseModel):
     diagnostics_on_edit: bool = True
     fail_on_errors: bool = True  # Rollback edit if it introduces errors
     diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
+    # Allow file operations outside workspace root (../../ references)
+    # The permissions system still governs approval — this only lifts the
+    # path containment check.
+    allow_outside_root: bool = False
     # Max file size for read_file (bytes). None = derive from model context.
     # Explicit value overrides dynamic calculation.
     max_read_bytes: int | None = Field(default=None, ge=1_000, le=500_000)
@@ -234,6 +238,7 @@ class MCPConfig(BaseModel):
     enable_bash: bool = True
     enable_git: bool = True
     enable_diagnostics: bool = True  # LSP diagnostics tool
+    enable_web: bool = True
 
     # Filesystem server config
     filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)

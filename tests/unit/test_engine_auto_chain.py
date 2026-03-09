@@ -43,6 +43,15 @@ def _make_engine(
     )
     orchestrator = MagicMock()
     orchestrator.tier_names = list(tiers.keys())
+
+    # Wire get_tier_param to resolve from config (same as real orchestrator)
+    def _get_tier_param(tier: ModelTier, attr: str, dflt: object = None) -> object:
+        tc = config.models.tiers.get(tier.name)
+        val = getattr(tc, attr, None) if tc else None
+        return val if val is not None else dflt
+
+    orchestrator.get_tier_param.side_effect = _get_tier_param
+
     server_manager = MagicMock()
     with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
         engine = AgentEngine(orchestrator, server_manager, config, LoopConfig())
@@ -79,10 +88,10 @@ def _setup_handoff_mocks(engine: AgentEngine) -> ModelTier:
 class TestTierConfigAutoChain:
     """Tests for auto_chain on TierConfig."""
 
-    def test_auto_chain_default_false(self) -> None:
-        """auto_chain defaults to False."""
+    def test_auto_chain_default_none(self) -> None:
+        """auto_chain defaults to None (defer to identity frontmatter)."""
         tc = _tier_config()
-        assert tc.auto_chain is False
+        assert tc.auto_chain is None
 
     def test_auto_chain_true(self) -> None:
         """auto_chain=True parses correctly."""

@@ -104,11 +104,12 @@ class ModelOrchestrator:
         """
         tiers: list[ModelTier] = []
         for name, tier_config in self.config.models.tiers.items():
-            # Check routable from both config AND identity frontmatter.
-            # Either source can mark a tier non-routable.
+            # Resolve routable: config override → identity frontmatter → True
             fm = self._prompt_manager.get_identity_frontmatter(name)
+            config_routable = tier_config.routable
             fm_routable = fm.routable if fm else True
-            if not tier_config.routable or not fm_routable:
+            routable = config_routable if config_routable is not None else fm_routable
+            if not routable:
                 logger.debug("Tier '%s' is non-routable, skipping router classification", name)
                 continue
 
@@ -603,21 +604,18 @@ class ModelOrchestrator:
         return tier
 
     @staticmethod
-    def _extract_user_context(messages: list[Message]) -> tuple[str, list[str]]:
-        """Extract latest user message and up to 5 history messages."""
-        user_message = ""
-        history: list[str] = []
+    def _extract_latest_user_message(messages: list[Message]) -> str:
+        """Extract the latest user message for classification.
+
+        The router only needs the current user message — no conversation
+        history.  Passing history risks context overflow (tool results in
+        user-role messages can be enormous) and adds noise to a 0.6B
+        classifier that works best with minimal, focused input.
+        """
         for msg in reversed(messages):
-            if msg.role != "user":
-                continue
-            if not user_message:
-                user_message = msg.content
-            else:
-                history.append(msg.content)
-                if len(history) >= 5:
-                    break
-        history.reverse()
-        return user_message, history
+            if msg.role == "user":
+                return msg.content
+        return ""
 
     async def _classify_task(self, messages: list[Message]) -> tuple[ModelTier, str]:
         """Classify task type using router model.
@@ -630,10 +628,8 @@ class ModelOrchestrator:
             logger.warning("[ROUTER] No router model configured, using default tier")
             return self._get_default_tier(), ""
 
-        user_message, history = self._extract_user_context(messages)
-        classification_prompt = build_classification_prompt(
-            self._tier_list, user_message, history=history
-        )
+        user_message = self._extract_latest_user_message(messages)
+        classification_prompt = build_classification_prompt(self._tier_list, user_message)
 
         if not self._router.is_loaded:
             await self._router.load()
@@ -676,16 +672,29 @@ class ModelOrchestrator:
         )
         return self._get_default_tier(), ""
 
-    def get_allowed_tools(self, tier: ModelTier) -> set[str] | None:
-        """Get allowed tools for a tier, or None if all tools allowed.
+    def get_tier_param(self, tier: ModelTier, attr: str, default: Any = None) -> Any:
+        """Resolve a tier parameter: config override → identity frontmatter → default.
 
-        Reads from tier config directly (not shared backend config),
-        so each tier can have its own allowed_tools even when sharing a backend.
+        Single resolution path for ALL tier-level params that can appear
+        in both config (TierConfig) and identity frontmatter. Config wins
+        when explicitly set (not None); otherwise frontmatter is consulted.
         """
         tier_config = self.config.models.tiers.get(tier.name)
-        if tier_config and tier_config.allowed_tools is not None:
-            return set(tier_config.allowed_tools)
-        return None
+        config_val = getattr(tier_config, attr, None) if tier_config else None
+        if config_val is not None:
+            return config_val
+
+        fm = self._prompt_manager.get_identity_frontmatter(tier.name)
+        fm_val = getattr(fm, attr, None) if fm else None
+        if fm_val is not None:
+            return fm_val
+
+        return default
+
+    def get_allowed_tools(self, tier: ModelTier) -> set[str] | None:
+        """Get allowed tools for a tier, or None if all tools allowed."""
+        result = self.get_tier_param(tier, "allowed_tools")
+        return set(result) if result is not None else None
 
     def get_adapter(self, tier: ModelTier | None = None) -> ChatAdapter:
         """Get the chat adapter for a model tier."""

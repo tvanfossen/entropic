@@ -19,6 +19,7 @@ allowed_tools:
   - filesystem.edit_file
   - filesystem.read_file
   - entropic.todo_write
+  - entropic.handoff
 max_output_tokens: 512
 temperature: 0.3
 enable_thinking: false

@@ -5,6 +5,7 @@ Provides structured task tracking for complex multi-step operations.
 The model manages todos through the entropic.todo_write internal tool.
 """
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -189,6 +190,7 @@ class TodoList:
         Returns:
             Status message
         """
+        arguments = self._normalize_arguments(arguments)
         action = arguments.get("action", "replace")
         handlers = {
             "add": self._handle_add,
@@ -200,6 +202,19 @@ class TodoList:
         if not handler:
             return f"Error: Unknown action '{action}'. Use: add, update, remove, replace"
         return handler(arguments)
+
+    @staticmethod
+    def _normalize_arguments(args: dict[str, Any]) -> dict[str, Any]:
+        """Parse stringified JSON values that models sometimes produce."""
+        todos = args.get("todos")
+        if isinstance(todos, str):
+            try:
+                parsed = json.loads(todos)
+                if isinstance(parsed, list):
+                    args = {**args, "todos": parsed}
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return args
 
     def update_from_tool_call(self, todos: list[dict[str, Any]]) -> str:
         """Legacy wrapper — delegates to handle_tool_call with replace action."""

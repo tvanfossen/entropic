@@ -64,7 +64,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     examples: list[str] = []
     grammar: str | None = None
     auto_chain: str | None = None
-    allowed_tools: list[str] = []
+    allowed_tools: list[str] | None = None
     max_output_tokens: int = 1024
     temperature: float = 0.7
     repeat_penalty: float = 1.1
@@ -143,6 +143,33 @@ def load_tier_identity(path: Path) -> tuple[TierIdentity, str]:
     return frontmatter, body
 
 
+def _interleave_examples(tiers: list[ModelTier]) -> list[str]:
+    """Round-robin interleave few-shot examples across tiers.
+
+    Cycling through tiers prevents recency bias — no single tier's
+    examples dominate the tail of the prompt.
+    """
+    # Build per-tier example queues: list of (digit, example_text)
+    queues: list[list[tuple[int, str]]] = []
+    for i, tier in enumerate(tiers, 1):
+        if tier.examples:
+            queues.append([(i, ex) for ex in tier.examples])
+
+    lines: list[str] = []
+    round_idx = 0
+    while True:
+        added = False
+        for q in queues:
+            if round_idx < len(q):
+                digit, ex = q[round_idx]
+                lines.append(f'"{ex}" -> {digit}')
+                added = True
+        if not added:
+            break
+        round_idx += 1
+    return lines
+
+
 def build_classification_prompt(
     tiers: list[ModelTier],
     message: str,
@@ -165,11 +192,10 @@ def build_classification_prompt(
         identity_lines.append(f"{i} = {tier.name.upper()}: {focus_str}")
     identities_text = "\n".join(identity_lines)
 
-    # Few-shot examples from tier.examples (frontmatter)
-    example_lines = []
-    for i, tier in enumerate(tiers, 1):
-        for ex in tier.examples:
-            example_lines.append(f'"{ex}" -> {i}')
+    # Few-shot examples — round-robin interleaved across tiers to prevent
+    # recency bias in the small router model.  Grouped-by-tier ordering
+    # caused the 0.6B model to parrot the last tier's digit.
+    example_lines = _interleave_examples(tiers)
     examples_text = "\n".join(example_lines)
 
     # History context (compact for small router model)

@@ -489,14 +489,19 @@ class AgentEngine:
     def _should_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
         """Check whether auto-chain should trigger for the current tier.
 
-        Triggers when auto_chain=True AND either:
+        Triggers when auto_chain is set AND either:
           - finish_reason == "length" (token budget exhausted)
           - finish_reason == "stop" AND tier has grammar configured
+
+        Reads auto_chain and grammar via orchestrator.get_tier_param()
+        (config override → identity frontmatter → default).
         """
-        tier_config = self.config.models.tiers.get(ctx.locked_tier.name if ctx.locked_tier else "")
-        if not tier_config or not tier_config.auto_chain:
+        if not ctx.locked_tier:
             return False
-        is_grammar_completion = finish_reason == "stop" and tier_config.grammar is not None
+        if not self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain"):
+            return False
+        has_grammar = bool(self.orchestrator.get_tier_param(ctx.locked_tier, "grammar"))
+        is_grammar_completion = finish_reason == "stop" and has_grammar
         if is_grammar_completion:
             logger.info("[AUTO_CHAIN] Grammar completion trigger (grammar + stop)")
         return finish_reason == "length" or is_grammar_completion

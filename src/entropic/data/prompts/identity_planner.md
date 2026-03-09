@@ -20,6 +20,7 @@ allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - filesystem.grep
+  - entropic.handoff
 max_output_tokens: 4096
 temperature: 0.4
 enable_thinking: true

@@ -102,6 +102,50 @@ class TestRoutingClassification:
         )
 
 
+# ---------------------------------------------------------------------------
+# Novel prompt tests — messages NOT in any identity's examples
+# ---------------------------------------------------------------------------
+
+# (prompt, acceptable_tiers) — must NOT appear in any identity's examples.
+# Ambiguous prompts list multiple acceptable tiers.
+_NOVEL_PROMPTS = [
+    ("Tell me about Python decorators", {"conversational"}),
+    ("Create a REST API endpoint for user registration", {"code_writer"}),
+    ("Break this project into milestones", {"planner"}),
+    ("Why is my test segfaulting?", {"diagnoser"}),
+    ("Hey", {"quick"}),
+    ("Thanks, that's all", {"quick"}),
+    ("Where is the config parser defined?", {"searcher"}),
+    ("What are the tradeoffs of microservices?", {"conversational", "planner"}),
+]
+
+
+@pytest.mark.model
+class TestNovelClassification:
+    """Test routing with prompts NOT in the few-shot examples.
+
+    This catches recency bias and overfitting to examples — the router
+    must generalize to unseen messages, not just pattern-match.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "prompt,acceptable",
+        _NOVEL_PROMPTS,
+        ids=[p[0][:40] for p in _NOVEL_PROMPTS],
+    )
+    async def test_novel_prompt_classifies_correctly(
+        self, orchestrator: ModelOrchestrator, prompt: str, acceptable: set[str]
+    ):
+        """A novel prompt should classify to one of the acceptable tiers."""
+        tier, raw = await orchestrator._classify_task([Message(role="user", content=prompt)])
+        tier_name = tier.name if hasattr(tier, "name") else str(tier)
+        assert tier_name in acceptable, (
+            f"Novel prompt '{prompt}' expected one of {acceptable}, "
+            f"got {tier_name} (raw: {raw!r})"
+        )
+
+
 @pytest.mark.model
 class TestClassificationSpeed:
     """Test that classification is fast (using small router model).

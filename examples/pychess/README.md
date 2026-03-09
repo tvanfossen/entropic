@@ -69,7 +69,7 @@ routing:
 
 ## Prerequisites
 
-- A GGUF model file (the config defaults to `~/models/gguf/Qwen3-8B-Q4_K_M.gguf`)
+- GGUF model files (thinker defaults to `~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf`, executor to `~/models/gguf/Qwen3.5-4B-Q8_0.gguf`)
 - `entropic-engine` installed (the example uses an editable install)
 - `python-chess` package
 

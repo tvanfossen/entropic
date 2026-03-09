@@ -90,3 +90,5 @@ test-reports/*.png
 !test-reports/logs/**/*.log
 
 .claude/tmp/
+
+examples/hello-world/.hello-world/

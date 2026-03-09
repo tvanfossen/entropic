@@ -174,6 +174,7 @@ def build_classification_prompt(
     tiers: list[ModelTier],
     message: str,
     history: list[str] | None = None,
+    recent_tiers: list[str] | None = None,
 ) -> str:
     """Auto-generate classification prompt from tier focus + examples.
 
@@ -181,6 +182,7 @@ def build_classification_prompt(
         tiers: Ordered list of tiers (index+1 = classification digit)
         message: User message to classify
         history: Recent user messages for context
+        recent_tiers: Recent tier activations for continuity context
 
     Returns:
         Classification prompt ending with trailing space for digit output
@@ -203,10 +205,18 @@ def build_classification_prompt(
     if history:
         history_text = "Recent messages: " + " | ".join(history[-5:])
 
+    # Tier continuity context
+    tier_context = ""
+    if recent_tiers:
+        tier_context = "Recent tiers: " + " -> ".join(recent_tiers)
+
     # Assemble prompt
     parts = ["Classify the message. Reply with the number only.", ""]
     parts.append(identities_text)
     parts.append("")
+    if tier_context:
+        parts.append(tier_context)
+        parts.append("")
     if history_text:
         parts.append(history_text)
         parts.append("")

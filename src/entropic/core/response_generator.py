@@ -121,6 +121,8 @@ class ResponseGenerator:
             tier_config.path.name if hasattr(tier_config.path, "name") else str(tier_config.path)
         )
         tier_name = tier.name if hasattr(tier, "name") else str(tier)
+        history = self._orchestrator.tier_history
+        history_str = " → ".join(history) if history else "(first prompt)"
         lines = [
             "\n\n## Model Context (auto-injected from config)",
             f"- **Active tier**: {tier_name}",
@@ -128,6 +130,7 @@ class ResponseGenerator:
             f"- **Adapter**: {tier_config.adapter}",
             f"- **Context length**: {tier_config.context_length:,} tokens",
             f"- **GPU layers**: {tier_config.gpu_layers}",
+            f"- **Recent tiers**: {history_str}",
         ]
         return system + "\n".join(lines)
 

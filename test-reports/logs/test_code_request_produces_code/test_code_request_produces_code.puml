@@ -46,11 +46,10 @@ note right of Mdl
       {
         "line": 1,
         "severity": "info",
-        "issue": "Consider adding input validation for non-integer inputs if the 
-  function should only accept integers."
+        "issue": "No type hints for the argument `n` in the docstring. Consider 
+  adding `int` to clarify expected input."
       ,
-        "suggestion": "Add a type check or docstring clarification about expected 
-  input types."
+        "suggestion": "Update docstring: Args: n (int): The number to check."
       }
     ]
   }

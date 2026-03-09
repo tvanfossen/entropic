@@ -17,44 +17,15 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **CONVERSATIONAL** tier
+note right: **QUICK** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  &lt;tool_call&gt;
-end note
-Mdl --> Eng: tool_call(entropic.handoff)
-Eng -> MCP: entropic.handoff
-note right of MCP
-  target_tier: conversational
-  reason: Greeting requires conversational engagement, not technical problem-solving.
-  task_state: not_started
-end note
-MCP --> Eng: result
-note right of MCP
-  **Tool Result:**
-  Handoff requested to conversational. Reason: Greeting requires conversational 
-  engagement, not technical problem-solving.
-end note
-note right of Eng
-  **Follow-up message:**
-  &lt;tool_response&gt;
-  Handoff requested to conversational. Reason: Greeting requires conversational 
-  engagement, not technical problem-solving.
-  &lt;/tool_response&gt;
-  
-  Continue. Batch multiple tool calls in one response when possible.
-end note
-== Turn 2 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  Hello! How can I help you today? Whether it's a question about code, system 
-  architecture, or just a casual chat—I'm here to assist. What's on your mind?
+  Hello! How can I assist you?
 end note
 note over T #palegreen
-  **PASSED** (< 38s, 1 tool calls)
+  **PASSED** (< 38s)
 end note
 
 @enduml

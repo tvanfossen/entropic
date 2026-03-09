@@ -23,43 +23,66 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is a programming technique where a function calls itself to solve a 
-  problem. It's essentially breaking down a complex problem into smaller, similar 
-  sub-problems until you reach a simple case that can be solved directly.
+  problem. Instead of using loops (like `for` or `while`) to repeat tasks, 
+  recursion breaks a problem down into smaller instances of the same problem until
+  it reaches a point where it can be solved directly.
   
-  Here are the key concepts:
+  ### Key Concepts
   
-  **Core Components:**
-  - **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops)
-  - **Recursive Case**: The function calling itself with modified parameters to 
-  get closer to the base case
+  1.  **Base Case**: This is crucial. It defines when the recursion stops. Without
+  a base case, the function will call itself infinitely (infinite recursion), 
+  leading to a stack overflow error.
+  2.  **Recursive Case**: The part of the code where the function calls itself 
+  with modified arguments, moving closer to the base case.
   
-  **Simple Example (Factorial):**
+  ### How it Works
+  Imagine you have a large puzzle. Instead of trying to solve the whole thing at 
+  once, you take one piece out, set it aside (the recursive step), and then ask 
+  someone else (yourself) to solve the remaining puzzle. Eventually, only one 
+  piece remains; that's your base case. You solve that single piece, return the 
+  result, and pass it back up the chain so everyone can assemble their part of the
+  picture.
+  
+  ### Simple Example
+  Here is a classic example: calculating the factorial of a number (e.g., 5! = 5 ×
+  4 × 3 × 2 × 1).
+  
+  **Iterative approach (using loops):**
   ```python
-  def factorial(n):
-      # Base case: 0! = 1, 1! = 1
+  def factorial_iter(n):
+      result = 1
+      for i in range(1, n + 1):
+          result *= i
+      return result
+  ```
+  
+  **Recursive approach:**
+  ```python
+  def factorial_rec(n):
+      # Base Case: If n is 0 or 1, the answer is 1
       if n &lt;= 1:
           return 1
       
-      # Recursive case: n! = n × (n-1)!
-      return n * factorial(n - 1)
-  
-  # Usage: factorial(5) = 5 × 4 × 3 × 2 × 1 = 120
+      # Recursive Case: n * factorial of (n-1)
+      return n * factorial_rec(n - 1)
   ```
   
-  **Common Use Cases:**
-  - **Tree traversals**: Walking through hierarchical data structures
-  - **Divide and conquer algorithms**: Merge sort, quicksort
-  - **Mathematical calculations**: Fibonacci sequence, factorials
-  - **Parsing nested structures**: JSON/XML processing
+  ### Pros and Cons
+  *   **Pros**: Code can be very elegant and readable, especially for problems 
+  that naturally have a recursive structure (like traversing trees or graphs). It 
+  often reduces the amount of code needed.
+  *   **Cons**: Can be less efficient than loops due to memory usage (each call 
+  adds a new layer to the "call stack"). If not implemented carefully with a 
+  proper base case, it causes crashes.
   
-  **Important Considerations:**
-  - Every recursive function needs a base case to terminate
-  - Stack space is used for each call (can cause stack overflow)
-  - Often more elegant than iterative solutions but sometimes less efficient
+  ### When to use it?
+  Use recursion when:
+  *   The problem naturally divides into smaller sub-problems of the same type 
+  (e.g., sorting algorithms like QuickSort, traversing file systems).
+  *   You need cleaner code and performance isn't critical for the specific task.
   
-  Recursion works well when the problem has naturally recursive structure, though 
-  it's not always the most performant solution compared to iteration.
+  **Warning**: Always ensure your recursive function has a terminating condition 
+  (base case) to prevent infinite loops!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

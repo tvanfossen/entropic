@@ -196,10 +196,10 @@ def _tier(path: str = "/test.gguf") -> TierConfig:
 class TestTierConfigFields:
     """Tests for TierConfig auto_chain and enable_thinking fields."""
 
-    def test_auto_chain_defaults_false(self) -> None:
-        """auto_chain defaults to False."""
+    def test_auto_chain_defaults_none(self) -> None:
+        """auto_chain defaults to None (defer to identity frontmatter)."""
         tc = _tier()
-        assert tc.auto_chain is False
+        assert tc.auto_chain is None
 
     def test_auto_chain_true(self) -> None:
         """auto_chain=True round-trips through config."""
@@ -224,7 +224,7 @@ class TestTierConfigFields:
             routing={"enabled": False, "fallback_tier": "thinker"},
         )
         assert config.models.tiers["thinker"].auto_chain is True
-        assert config.models.tiers["executor"].auto_chain is False
+        assert config.models.tiers["executor"].auto_chain is None
 
 
 class TestTierConfigGrammar:

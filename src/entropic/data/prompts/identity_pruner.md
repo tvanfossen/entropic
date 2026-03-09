@@ -11,6 +11,7 @@ grammar: grammars/pruner.gbnf
 auto_chain: null
 allowed_tools:
   - entropic.prune_context
+  - entropic.handoff
 max_output_tokens: 256
 temperature: 0.2
 enable_thinking: false

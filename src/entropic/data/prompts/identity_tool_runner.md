@@ -9,7 +9,8 @@ focus:
 examples: []
 grammar: null
 auto_chain: null
-allowed_tools: []
+allowed_tools:
+  - entropic.handoff
 max_output_tokens: 256
 temperature: 0.1
 enable_thinking: false

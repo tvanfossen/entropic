@@ -12,6 +12,7 @@ auto_chain: code_validator
 allowed_tools:
   - filesystem.write_file
   - filesystem.read_file
+  - entropic.handoff
 max_output_tokens: 512
 temperature: 0.4
 enable_thinking: false

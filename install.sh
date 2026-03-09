@@ -182,7 +182,7 @@ echo "=== Installing Entropic ==="
 echo ""
 
 echo "Installing entropic-engine[$EXTRAS]..."
-$PIP install -e "$SCRIPT_DIR[$EXTRAS]"
+PIP_CONFIG_FILE=/dev/null $PIP install -e "$SCRIPT_DIR[$EXTRAS]"
 
 echo ""
 echo -e "${GREEN}✓${NC} Entropic installed!"

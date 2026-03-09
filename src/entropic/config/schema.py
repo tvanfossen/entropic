@@ -87,8 +87,8 @@ class TierConfig(ModelConfig):
 
     identity: TriStatePath = None
     grammar: OptionalExpandedPath = None
-    auto_chain: bool = False
-    routable: bool = True  # If False, tier is excluded from router classification
+    auto_chain: bool | None = None  # None = defer to identity frontmatter
+    routable: bool | None = None  # None = defer to identity frontmatter
 
 
 class ModelsConfig(BaseModel):

@@ -9,7 +9,8 @@ focus:
 examples: []
 grammar: grammars/extractor.gbnf
 auto_chain: null
-allowed_tools: []
+allowed_tools:
+  - entropic.handoff
 max_output_tokens: 512
 temperature: 0.1
 enable_thinking: false

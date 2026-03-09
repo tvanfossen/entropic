@@ -13,8 +13,10 @@ examples:
   - "Design the mobile navigation for this app"
 grammar: grammars/wireframer.gbnf
 auto_chain: code_writer
-allowed_tools: []
-max_output_tokens: 512
+allowed_tools:
+  - filesystem.write_file
+  - entropic.handoff
+max_output_tokens: 2048
 temperature: 0.5
 enable_thinking: false
 model_preference: vision

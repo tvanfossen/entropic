@@ -15,7 +15,8 @@ examples:
   - "Okay, got it"
 grammar: null
 auto_chain: null
-allowed_tools: []
+allowed_tools:
+  - entropic.handoff
 max_output_tokens: 64
 temperature: 0.7
 enable_thinking: false

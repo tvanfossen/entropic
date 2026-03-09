@@ -16,6 +16,7 @@ allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - bash.execute
+  - entropic.handoff
 max_output_tokens: 512
 temperature: 0.2
 enable_thinking: false

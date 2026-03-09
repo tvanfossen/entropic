@@ -19,6 +19,7 @@ allowed_tools:
   - filesystem.grep
   - bash.execute
   - diagnostics.check_errors
+  - entropic.handoff
 max_output_tokens: 4096
 temperature: 0.3
 enable_thinking: true

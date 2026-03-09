@@ -123,6 +123,8 @@ class AssistantMessage(Static):
         "quick": "dim",
         "diagnoser": "yellow",
         "searcher": "yellow",
+        "design_validator": "magenta",
+        "wireframer": "yellow",
     }
 
     def __init__(self, content: str = "", **kwargs: Any) -> None:

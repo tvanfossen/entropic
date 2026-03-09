@@ -25,29 +25,28 @@ note right of Mdl
   Here are three widely-used programming languages and their main use cases:
   
   ## 1. **Python**
-  - **Primary Use Cases**: Data science, machine learning, artificial 
-  intelligence, web development (Django/Flask), automation/scripting, scientific 
-  computing
-  - **Why Popular**: Readable syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), strong community support
+  - **Main Use Cases**: Data science, machine learning, artificial intelligence, 
+  web development (Django/Flask), scripting/automation, scientific computing
+  - **Why Popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
+  TensorFlow), beginner-friendly, strong community support
   
   ## 2. **JavaScript**
-  - **Primary Use Cases**: Web development (frontend + backend with Node.js), 
-  browser-based applications, mobile apps (React Native)
-  - **Why Popular**: Runs natively in browsers, massive ecosystem of frameworks 
-  (React, Vue, Angular), event-driven architecture
+  - **Main Use Cases**: Frontend web development, backend with Node.js, mobile 
+  apps (React Native), cross-platform desktop apps (Electron)
+  - **Why Popular**: Runs in browsers natively, massive ecosystem (npm), 
+  event-driven architecture, full-stack capabilities
   
-  ## 3. **Go (Golang)**
-  - **Primary Use Cases**: Backend services, cloud infrastructure, microservices, 
-  concurrent systems, network programming
-  - **Why Popular**: Fast compilation, built-in concurrency support (goroutines), 
-  simple syntax, strong standard library
+  ## 3. **Java**
+  - **Main Use Cases**: Enterprise applications, Android app development, big data
+  processing (Hadoop/Spark), backend services, cloud infrastructure
+  - **Why Popular**: Platform independence (JVM), strong typing, mature frameworks
+  (Spring), excellent for large-scale systems
   
   ---
   
-  **Note**: These are generalizations — each language can be used in many contexts
-  beyond its primary use case. The best choice depends on your specific project 
-  requirements, team expertise, and ecosystem needs.
+  Each language excels in its domain: Python for data/AI, JavaScript for 
+  web/mobile, and Java for enterprise/backend. The choice depends on your specific
+  needs rather than one being universally "best."
 end note
 note over T #palegreen
   **PASSED** (< 75s)

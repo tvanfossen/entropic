@@ -177,13 +177,32 @@ class AgentEngine:
         target_tier = self.orchestrator._find_tier(target_tier_str)
         if target_tier is None:
             logger.error(f"[DIRECTIVE] Invalid tier in tier_change: {target_tier_str}")
+            ctx.messages.append(
+                Message(
+                    role="user",
+                    content=f"[SYSTEM] Handoff rejected: '{target_tier_str}' is not a valid identity tier.",
+                )
+            )
             return
 
         if not self.orchestrator.can_handoff(ctx.locked_tier, target_tier):
             current_name = str(ctx.locked_tier) if ctx.locked_tier else "none"
+            is_self = ctx.locked_tier == target_tier
+            if is_self:
+                msg = (
+                    f"[SYSTEM] Handoff rejected: you ARE the {current_name} identity. "
+                    f"You cannot hand off to yourself. Execute the task directly "
+                    f"using your available tools."
+                )
+            else:
+                msg = (
+                    f"[SYSTEM] Handoff rejected: {current_name} cannot hand off to "
+                    f"{target_tier_str}. Use entropic.handoff with a permitted target."
+                )
             logger.warning(
                 f"[DIRECTIVE] Handoff not permitted: {current_name} -> {target_tier_str}"
             )
+            ctx.messages.append(Message(role="user", content=msg))
             return
 
         current_tier = ctx.locked_tier

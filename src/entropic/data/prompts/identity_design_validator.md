@@ -11,14 +11,13 @@ examples:
   - "Check this component for accessibility issues"
   - "Does this CSS meet WCAG contrast requirements?"
   - "Review the responsive layout of this page"
-grammar: grammars/design_validator.gbnf
 auto_chain: null
 allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - bash.execute
   - entropic.handoff
-max_output_tokens: 512
+max_output_tokens: 2048
 temperature: 0.2
 enable_thinking: false
 model_preference: vision
@@ -99,8 +98,11 @@ You review front-end code for design quality, accessibility, and WCAG compliance
 
 ## Output
 
-Respond ONLY with valid JSON matching the design_validator schema. No prose before or after.
+Use your tools to read and inspect the code, then present your findings.
 
-`verdict: "pass"` — no errors or warnings found.
-`verdict: "warn"` — info-level findings only, or warnings that should be addressed.
-`verdict: "fail"` — one or more error-severity findings requiring fixes before shipping.
+- Read HTML/CSS files with `filesystem.read_file`
+- Use `filesystem.glob` to find related templates and stylesheets
+- Run contrast calculation scripts via `bash.execute` if color values are found
+- Present a clear verdict: **PASS**, **WARN**, or **FAIL**
+- List findings by category with severity (error/warning/info), line numbers, and suggestions
+- If FAIL, hand off to code_writer via `entropic.handoff` with details of what needs fixing

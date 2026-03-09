@@ -17,46 +17,66 @@ note right of T
   Write a Python function to check if a number is even
 end note
 App -> Orch: route
-note right: **CODE_VALIDATOR** tier
+note right: **CODE_WRITER** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  ```python
-  def is_even(n):
-      """Check if a number is even.
+  &lt;tool_call&gt;{"name": "filesystem.write_file", "arguments": {"path": 
+  "check_even.py", "content": "def is_even(n):\n    \"\"\"Check if a number is 
+  even.\n    \n    Args:\n        n (int): The number to check\n        \n    
+  Returns:\n        bool: True if the number is even, False otherwise\n    
+  \"\"\"\n    return n % 2 == 0"}}&lt;/tool_call&gt;
+end note
+Mdl --> Eng: tool_call(filesystem.write_file)
+Eng -> MCP: filesystem.write_file
+note right of MCP
+  path: check_even.py
+  content: def is_even(n):
+    """Check if a number is even.
+    
+    Args:
+        n (int): The number to check
+        
+    Returns:
+        bool: True if the number is even, False otherwise
+    """
+    return
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  {"success": true, "bytes_written": 211, "path": "check_even.py"}
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  {"success": true, "bytes_written": 211, "path": "check_even.py"}
+  &lt;/tool_response&gt;
   
-      Args:
-          n (int): The number to check.
-  
-      Returns:
-          bool: True if the number is even, False otherwise.
-      """
-      return n % 2 == 0
-  ```
+  Continue. Batch multiple tool calls in one response when possible.
 end note
 == Turn 2 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  {
-    "verdict": "pass"
-  ,
-    "findings": [
-      {
-        "line": 1,
-        "severity": "info",
-        "issue": "Consider adding input validation to handle non-integer inputs 
-  gracefully."
-      ,
-        "suggestion": "Add a type check or try/except block before the modulo 
-  operation."
-      }
-    ]
-  }
+  I've created a Python function `is_even` that checks if a number is even. The 
+  file has been written to `check_even.py`.
+  
+  The function:
+  - Takes an integer as input
+  - Returns `True` if the number is even (divisible by 2)
+  - Returns `False` otherwise
+  - Uses the modulo operator (`%`) for the check
+  
+  You can use it like this:
+  ```python
+  print(is_even(4))   # True
+  print(is_even(7))   # False
+  ```
 end note
 note over T #palegreen
-  **PASSED** (< 262s)
+  **PASSED** (< 262s, 1 tool calls)
 end note
 
 @enduml

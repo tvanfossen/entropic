@@ -22,7 +22,7 @@ note right: **QUICK** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  I'm operating as a quick-tier assistant focused on trivial interactions.
+  I'm functioning normally and ready to assist.
 end note
 note over T #palegreen
   **PASSED** (< 38s)

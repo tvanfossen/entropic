@@ -22,52 +22,49 @@ note right: **CONVERSATIONAL** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem. It's particularly useful for breaking down complex problems into 
-  simpler, self-similar sub-problems.
+  Recursion is a fundamental concept in programming where a function calls itself 
+  to solve a problem. It's essentially the process of breaking down a complex task
+  into smaller, similar sub-tasks until you reach a simple base case that can be 
+  solved directly.
   
-  Think of it like this: To understand recursion, you need to understand recursion
-  (a classic recursive definition!). But seriously, here's how it works in 
-  practice:
+  Here are the key aspects:
   
-  ## Key Components
-  
+  **Core Components:**
   1. **Base Case**: The condition that stops the recursion (prevents infinite 
   loops)
-  2. **Recursive Case**: The part where the function calls itself with modified 
-  parameters
+  2. **Recursive Case**: Where the function calls itself with modified parameters
   
-  ## Simple Example (Factorial)
+  **How it works:**
+  - Each recursive call creates a new stack frame
+  - The function keeps calling itself until hitting the base case
+  - Once the base case is reached, results "bubble back up" through the call stack
   
+  **Simple Example (Factorial):**
   ```python
   def factorial(n):
-      # Base case: stop when n is 0 or 1
+      # Base case: factorial of 0 or 1 is 1
       if n &lt;= 1:
           return 1
       
-      # Recursive case: multiply n by factorial of (n-1)
+      # Recursive case: n * factorial(n-1)
       return n * factorial(n - 1)
   ```
   
-  ## How it works step-by-step:
-  - `factorial(3)` calls `factorial(2)`
-  - `factorial(2)` calls `factorial(1)`  
-  - `factorial(1)` returns 1 (base case reached)
-  - Then each call returns its result up the chain
+  **Common Use Cases:**
+  - Tree traversals (file systems, DOM trees)
+  - Divide and conquer algorithms (merge sort, quicksort)
+  - Mathematical calculations (Fibonacci sequence, factorials)
+  - Parsing nested data structures
   
-  ## Common Uses
-  - **Tree traversal** (file systems, DOM trees)
-  - **Divide and conquer algorithms** (quick sort, merge sort)
-  - **Mathematical sequences** (Fibonacci, factorials)
-  - **Backtracking problems** (puzzles, maze solving)
+  **Pros &amp; Cons:**
+  ✅ **Advantages**: Elegant code for naturally recursive problems, cleaner than 
+  iterative alternatives for some tasks  
+  ⚠️ **Drawbacks**: Can be memory-intensive due to stack overhead, risk of stack 
+  overflow errors, potentially slower than iteration
   
-  ## Important Considerations
-  - **Stack overflow**: Too many recursive calls can crash your program
-  - **Performance**: Sometimes iterative solutions are faster
-  - **Debugging**: Can be harder to trace than loops
-  
-  The key is ensuring you have a clear base case and that each recursive call 
-  moves toward it. Otherwise, you get infinite recursion!
+  The key is ensuring your recursion will terminate—every recursive call must move
+  toward the base case. Without this safety net, you get infinite recursion and a 
+  crashed program!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -1,29 +1,29 @@
 === Model Test Report ===
-Date: 2026-03-09 14:00:03
+Date: 2026-03-09 14:41:24
 
-Results: 44 passed, 0 failed (134.2s)
+Results: 44 passed, 0 failed (153.9s)
 
-  [PASS] test_grammar_constrains_output (18.1s)
-  [PASS] test_grammar_auto_chain_fires (18.2s)
-  [PASS] test_multi_tier_pipeline_completes (18.3s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (14.6s)
-  [PASS] test_code_request_produces_code [code_validator] (14.9s)
+  [PASS] test_grammar_constrains_output (16.8s)
+  [PASS] test_grammar_auto_chain_fires (18.5s)
+  [PASS] test_multi_tier_pipeline_completes (15.6s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (13.7s)
+  [PASS] test_code_request_produces_code [code_writer] (1 tools) (13.4s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [code_validator] (12.7s)
+  [PASS] test_code_response_has_python_syntax [code_writer] (3 tools) (22.0s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [planner] (14.0s)
+  [PASS] test_response_ends_cleanly [planner] (2 tools) (29.6s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [quick] (2.0s)
+  [PASS] test_no_special_tokens_in_response [quick] (1.9s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [quick] (1.9s)
+  [PASS] test_generation_starts_and_ends [quick] (3.2s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [quick] (0.8s)
+  [PASS] test_multiple_messages_accumulate_history [quick] (2.2s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [conversational] (13.6s)
+  [PASS] test_explanation_is_substantive [conversational] (12.6s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [quick] (2.2s)
+  [PASS] test_hello_produces_response [quick] (1.9s)
          Prompt: Hello
   [PASS] test_thanks_produces_acknowledgment [quick] (0.5s)
          Prompt: Thanks!
@@ -46,7 +46,7 @@ Results: 44 passed, 0 failed (134.2s)
   [PASS] test_novel_prompt_classifies_correctly[What are the tradeoffs of microservices?] (0.0s)
   [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.0s)
-  [PASS] test_route_to_non_default_model_tier (1.7s)
+  [PASS] test_route_to_non_default_model_tier (1.5s)
   [PASS] test_confidence_above_threshold[code_validator] (0.4s)
   [PASS] test_confidence_above_threshold[code_writer] (0.0s)
   [PASS] test_confidence_above_threshold[conversational] (0.0s)
@@ -59,6 +59,22 @@ Results: 44 passed, 0 failed (134.2s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-======================== 44 passed in 206.04s (0:03:26) ========================
+=============================== warnings summary ===============================
+tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    read_at=datetime.utcnow(),
+
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_completeness.py::TestResponseCompleteness::test_response_ends_cleanly
+  <string>:8: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+
+tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
+tests/model/test_headless_completeness.py::TestResponseCompleteness::test_response_ends_cleanly
+  /home/tvanfossen/Projects/entropic/src/entropic/core/todos.py:265: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    item.completed_at = datetime.utcnow()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================== 44 passed, 6 warnings in 207.48s (0:03:27) ==================
 
 Result: PASSED

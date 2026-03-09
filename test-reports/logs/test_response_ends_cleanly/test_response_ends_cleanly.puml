@@ -1,0 +1,56 @@
+@startuml
+skinparam backgroundColor #FEFEFE
+skinparam noteBorderColor #999999
+skinparam noteBackgroundColor #FFFFEE
+title test_response_ends_cleanly\n<size:11>[PASSED] < 75s</size>
+
+participant "Test" as T
+participant "Application" as App
+participant "Engine" as Eng
+participant "Orchestrator" as Orch
+participant "Model" as Mdl
+participant "MCP Tools" as MCP
+
+T -> App: process_message
+note right of T
+  **Prompt:**
+  List three programming languages and their main use cases
+end note
+App -> Orch: route
+note right: **PLANNER** tier
+== Turn 1 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Here are three widely-used programming languages and their main use cases:
+  
+  ## 1. **Python**
+  - **Primary Use Cases**: Data science, machine learning, artificial 
+  intelligence, web development (Django/Flask), automation/scripting, scientific 
+  computing
+  - **Why Popular**: Readable syntax, extensive libraries (NumPy, Pandas, 
+  TensorFlow), strong community support
+  
+  ## 2. **JavaScript**
+  - **Primary Use Cases**: Web development (frontend + backend with Node.js), 
+  browser-based applications, mobile apps (React Native)
+  - **Why Popular**: Runs natively in browsers, massive ecosystem of frameworks 
+  (React, Vue, Angular), event-driven architecture
+  
+  ## 3. **Go (Golang)**
+  - **Primary Use Cases**: Backend services, cloud infrastructure, microservices, 
+  concurrent systems, network programming
+  - **Why Popular**: Fast compilation, built-in concurrency support (goroutines), 
+  simple syntax, strong standard library
+  
+  ---
+  
+  **Note**: These are generalizations — each language can be used in many contexts
+  beyond its primary use case. The best choice depends on your specific project 
+  requirements, team expertise, and ecosystem needs.
+end note
+note over T #palegreen
+  **PASSED** (< 75s)
+end note
+
+@enduml

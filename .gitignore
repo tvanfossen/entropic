@@ -88,6 +88,9 @@ test-reports/*.png
 # Override *.log and logs/ rules for committed test logs
 !test-reports/logs/
 !test-reports/logs/**/*.log
+!test-reports/logs/**/*.puml
+# Generated PNGs from sequence diagrams (regenerable from .puml)
+test-reports/logs/**/*.png
 
 .claude/tmp/
 

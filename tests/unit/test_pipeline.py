@@ -84,6 +84,14 @@ class TestPipelineTool:
         result = await tool.execute({"stages": ["a", "b"], "task": "test"})
         assert isinstance(result, ServerResponse)
 
+    @pytest.mark.asyncio
+    async def test_stages_string_parsed_as_list(self) -> None:
+        """Stringified JSON array is parsed into a real list."""
+        tool = PipelineTool(tier_names=["eng", "qa"])
+        result = await tool.execute({"stages": '["eng", "qa"]', "task": "test"})
+        assert isinstance(result, ServerResponse)
+        assert result.directives[0].stages == ["eng", "qa"]
+
 
 class TestPipelineExecution:
     """DelegationManager.execute_pipeline runs stages sequentially."""

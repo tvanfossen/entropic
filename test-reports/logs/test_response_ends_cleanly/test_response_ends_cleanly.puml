@@ -22,22 +22,31 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three widely-used programming languages and their main use cases:
+  Here are three popular programming languages and their main use cases:
   
-  1. **Python** — Data science, machine learning, web development (Django/Flask), 
-  automation scripts, scientific computing. Known for readability and extensive 
-  libraries like NumPy, Pandas, TensorFlow.
+  ## 1. **Python**
+  - **Main Use Cases:** Data science, machine learning, artificial intelligence, 
+  scripting/automation, web development (Django, Flask), scientific computing
+  - **Why Popular:** Readable syntax, extensive libraries (NumPy, Pandas, 
+  TensorFlow), strong community support
   
-  2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
-  backend services, full-stack applications. Essential for modern web apps with 
-  frameworks like React, Vue, Angular.
+  ## 2. **JavaScript**
+  - **Main Use Cases:** Frontend web development, backend development (Node.js), 
+  mobile apps (React Native), browser automation
+  - **Why Popular:** Runs natively in browsers, massive ecosystem of frameworks 
+  (React, Vue, Angular)
   
-  3. **Rust** — Systems programming, performance-critical applications, embedded 
-  systems, blockchain infrastructure. Offers memory safety without garbage 
-  collection, used where C/C++ would be but with better safety guarantees.
+  ## 3. **C/C++**
+  - **Main Use Cases:** Systems programming, embedded systems, game engines, 
+  operating system development, high-performance applications
+  - **Why Popular:** Direct memory management, minimal runtime overhead, 
+  hardware-level control
   
-  These three cover a broad range of domains: general-purpose/data work (Python), 
-  web development (JavaScript), and low-level/systems work (Rust).
+  ---
+  
+  These three cover a wide range of scenarios from high-level scripting to 
+  low-level systems work. Each has its strengths depending on your project 
+  requirements!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -243,7 +243,7 @@
   │  │ circuit breaker    │     │ prompt user for      │     │  │ "bash.execute"          → BashServer                          │    │  │
   │  │ (force stop)       │     │ Allow/Deny/          │     │  │ "git.status"            → GitServer                           │    │  │
   │  │                    │     │ Always Allow/         │     │  │ "diagnostics.health"    → DiagnosticsServer                   │    │  │
-  │  └────────┬───────────┘     │ Always Deny          │     │  │ "entropic.handoff"      → EntropicServer                     │    │  │
+  │  └────────┬───────────┘     │ Always Deny          │     │  │ "entropic.delegate"      → EntropicServer                     │    │  │
   │           │ pass            └──────────┬───────────┘     │  │                                                               │    │  │
   │           └────────────────────────────┘                 │  │ All extend BaseMCPServer (src/entropic/mcp/servers/base.py)   │    │  │
   │                                        │                 │  └──────────────────────────────┬────────────────────────────────┘    │  │
@@ -265,7 +265,7 @@
   │  │ Directives are tool→engine signals returned in _directives key of tool results:                                             │   │
   │  │                                                                                                                             │   │
   │  │   StopProcessing  ──► halt agentic loop                                                                                     │   │
-  │  │   TierChange      ──► unlock tier, re-route on next iteration (model handoff)                                               │   │
+  │  │   Delegate        ──► spawn child tier in worktree, await result, return to parent                                               │   │
   │  │   InjectContext   ──► insert a message into conversation                                                                     │   │
   │  │   ContextAnchor   ──► persist a keyed message across run() calls                                                            │   │
   │  │   PruneMessages   ──► drop old tool results from context                                                                     │   │

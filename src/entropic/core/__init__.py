@@ -25,7 +25,14 @@ from entropic.core.context import (
     ProjectContext,
     TokenBudget,
 )
-from entropic.core.logging import get_logger, get_model_logger, setup_logging, setup_model_logger
+from entropic.core.logging import (
+    get_display_logger,
+    get_logger,
+    get_model_logger,
+    setup_display_logger,
+    setup_logging,
+    setup_model_logger,
+)
 from entropic.core.parser import ToolCallParser
 from entropic.core.todos import TodoItem, TodoList, TodoStatus
 
@@ -81,8 +88,10 @@ __all__ = [
     "ToolCallParser",
     "ToolProvider",
     "ToolResult",
+    "get_display_logger",
     "get_logger",
     "get_model_logger",
+    "setup_display_logger",
     "setup_logging",
     "setup_model_logger",
 ]

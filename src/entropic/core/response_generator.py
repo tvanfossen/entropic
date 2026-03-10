@@ -137,6 +137,9 @@ class ResponseGenerator:
     async def _lock_tier_if_needed(self, ctx: LoopContext) -> None:
         """Route and lock tier before first generation, emitting callbacks."""
         if ctx.locked_tier is not None:
+            # Pre-locked (delegation child) — still notify TUI of active tier
+            if self._callbacks.on_tier_selected:
+                self._callbacks.on_tier_selected(ctx.locked_tier.name)
             return
         # Route to determine tier before generation starts
         tier = await self._orchestrator.route(ctx.messages)

@@ -22,32 +22,22 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three popular programming languages and their main use cases:
+  Here are three widely-used programming languages and their main use cases:
   
-  ## 1. **Python**
-  - **Main Use Cases**: Data science, machine learning, artificial intelligence, 
-  scripting/automation, web development (Django/Flask), scientific computing
-  - **Why Popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), beginner-friendly, strong community support
+  1. **Python** — Data science, machine learning, web development (Django/Flask), 
+  automation scripts, scientific computing. Known for readability and extensive 
+  libraries like NumPy, Pandas, TensorFlow.
   
-  ## 2. **JavaScript**
-  - **Main Use Cases**: Frontend web development, backend with Node.js, mobile 
-  apps (React Native), browser automation
-  - **Why Popular**: Runs in all browsers, event-driven architecture, massive 
-  ecosystem of frameworks and libraries
+  2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
+  backend services, full-stack applications. Essential for modern web apps with 
+  frameworks like React, Vue, Angular.
   
-  ## 3. **Rust**
-  - **Main Use Cases**: Systems programming, embedded systems, 
-  performance-critical applications, blockchain/infrastructure tools
-  - **Why Popular**: Memory safety without garbage collection, zero-cost 
-  abstractions, strong type system, growing adoption in infrastructure projects
+  3. **Rust** — Systems programming, performance-critical applications, embedded 
+  systems, blockchain infrastructure. Offers memory safety without garbage 
+  collection, used where C/C++ would be but with better safety guarantees.
   
-  ---
-  
-  These three represent different approaches: Python for rapid development and 
-  data work, JavaScript for web-focused tasks, and Rust for systems-level 
-  programming where performance and memory safety matter. Each has its strengths 
-  depending on your project requirements.
+  These three cover a broad range of domains: general-purpose/data work (Python), 
+  web development (JavaScript), and low-level/systems work (Rust).
 end note
 note over T #palegreen
   **PASSED** (< 75s)

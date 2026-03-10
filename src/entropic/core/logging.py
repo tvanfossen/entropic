@@ -121,6 +121,58 @@ def setup_model_logger(
     return model_logger
 
 
+def setup_display_logger(
+    project_dir: Path | None = None,
+    *,
+    app_dir_name: str = ".entropic",
+) -> logging.Logger:
+    """
+    Set up dedicated display mirror logger.
+
+    Writes a text representation of TUI display events to
+    ``<project_dir>/<app_dir_name>/session_display.log``,
+    giving a readable transcript of what the user saw.
+
+    Args:
+        project_dir: Project directory for log file location
+        app_dir_name: Application directory name (default ``.entropic``).
+            Consumer apps pass their own (e.g. ``.pychess``).
+
+    Returns:
+        Display mirror logger
+    """
+    display_logger = logging.getLogger("entropic.display")
+    display_logger.setLevel(logging.INFO)
+    display_logger.handlers.clear()
+    display_logger.propagate = False
+
+    log_dir = (project_dir or Path.cwd()) / app_dir_name
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "session_display.log"
+
+    file_handler = logging.FileHandler(log_path, mode="w")
+    file_handler.setLevel(logging.INFO)
+    file_format = logging.Formatter(
+        "%(asctime)s %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    file_handler.setFormatter(file_format)
+    display_logger.addHandler(file_handler)
+
+    display_logger.info("Display mirror log started")
+    return display_logger
+
+
+def get_display_logger() -> logging.Logger:
+    """
+    Get the dedicated display mirror logger.
+
+    Returns:
+        Display mirror logger (must call setup_display_logger first)
+    """
+    return logging.getLogger("entropic.display")
+
+
 def get_logger(name: str) -> logging.Logger:
     """
     Get a logger for a specific component.

@@ -22,7 +22,11 @@ import click  # noqa: E402
 from entropic import __version__  # noqa: E402
 from entropic.benchmark.cli import benchmark  # noqa: E402
 from entropic.config.loader import reload_config  # noqa: E402
-from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E402
+from entropic.core.logging import (  # noqa: E402
+    setup_display_logger,
+    setup_logging,
+    setup_model_logger,
+)
 
 
 @click.group(invoke_without_command=True)
@@ -91,6 +95,7 @@ def main(
     if ctx.invoked_subcommand != "mcp-bridge":
         logger = setup_logging(app_config, project_dir=project_dir)
         setup_model_logger(project_dir=project_dir)
+        setup_display_logger(project_dir=project_dir)
     else:
         logger = logging.getLogger("entropic")
 

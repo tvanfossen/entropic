@@ -61,18 +61,21 @@ class ContextManager:
     # Context limit management
     # ------------------------------------------------------------------
 
-    def refresh_context_limit(self) -> None:
+    def refresh_context_limit(self, ctx: LoopContext | None = None) -> None:
         """Refresh context limit based on current model.
 
         When models swap (e.g., lead → eng), the context limit
         may change. Updates the token counter to use the current model's
         context length.
+
+        Prefers ctx.locked_tier (accurate for child delegation loops)
+        over orchestrator.last_used_tier (which may reflect parent state).
         """
-        last_tier = self._orchestrator.last_used_tier
-        if last_tier is None:
+        tier = (ctx.locked_tier if ctx else None) or self._orchestrator.last_used_tier
+        if tier is None:
             return
 
-        tier_config = self._config.models.tiers.get(str(last_tier))
+        tier_config = self._config.models.tiers.get(str(tier))
         if tier_config:
             new_max = tier_config.context_length
             if new_max != self._compaction_manager.counter.max_tokens:

@@ -1,36 +1,42 @@
 === Model Test Report ===
-Date: 2026-03-10 10:54:44
+Date: 2026-03-10 11:17:32
 
-Results: 15 passed, 1 failed (248.0s)
+Results: 15 passed, 1 failed (282.0s)
 
-  [PASS] test_grammar_constrains_output (55.2s)
-  [PASS] test_grammar_auto_chain_fires (69.1s)
-  [PASS] test_multi_tier_pipeline_completes (37.1s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (9.6s)
-  [PASS] test_code_request_produces_code [lead] (9.6s)
+  [PASS] test_grammar_constrains_output (50.6s)
+  [PASS] test_grammar_auto_chain_fires (52.4s)
+  [PASS] test_multi_tier_pipeline_completes (56.9s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (10.2s)
+  [PASS] test_code_request_produces_code [lead] (2 tools) (49.1s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [lead] (15.6s)
+  [PASS] test_code_response_has_python_syntax [lead] (8.8s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [lead] (7.9s)
+  [PASS] test_response_ends_cleanly [lead] (8.0s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [lead] (6.2s)
+  [PASS] test_no_special_tokens_in_response [lead] (7.4s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [lead] (5.3s)
+  [PASS] test_generation_starts_and_ends [lead] (5.2s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [lead] (11.2s)
+  [PASS] test_multiple_messages_accumulate_history [lead] (10.5s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [lead] (12.3s)
+  [PASS] test_explanation_is_substantive [lead] (13.2s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [lead] (5.0s)
+  [PASS] test_hello_produces_response [lead] (4.4s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [lead] (3.9s)
+  [PASS] test_thanks_produces_acknowledgment [lead] (5.2s)
          Prompt: Thanks!
   [FAIL] test_route_to_non_default_model_tier (0.0s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-================== 15 passed, 13 skipped in 291.02s (0:04:51) ==================
+=============================== warnings summary ===============================
+tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
+  /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    read_at=datetime.utcnow(),
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+============ 15 passed, 13 skipped, 1 warning in 326.40s (0:05:26) =============
 
 Result: PASSED

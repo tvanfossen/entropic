@@ -82,7 +82,7 @@
 ║  │ │  • Server lifecycle  │  │ ┌──────────────┐ ┌──────────┐ ┌─────────┐ ┌───────────────┐ ┌───────────────────┐  │   │   ║
 ║  │ │  • Unified tool      │  │ │ Filesystem   │ │ Bash     │ │ Git     │ │ Diagnostics   │ │ Entropic          │  │   │   ║
 ║  │ │    discovery         │  │ │              │ │          │ │         │ │               │ │                   │  │   │   ║
-║  │ │  • Permission check  │  │ │ read_file    │ │ execute  │ │ status  │ │ health        │ │ handoff (tier     │  │   │   ║
+║  │ │  • Permission check  │  │ │ read_file    │ │ execute  │ │ status  │ │ health        │ │ delegate (tier     │  │   │   ║
 ║  │ │  • Tool routing      │  │ │ write_file   │ │ run      │ │ diff    │ │ model_info    │ │   change via      │  │   │   ║
 ║  │ │    by name prefix    │  │ │ list_dir     │ │          │ │ log     │ │ context_usage │ │   directive)      │  │   │   ║
 ║  │ │  • Tier-based tool   │  │ │ search       │ │          │ │ commit  │ │               │ │ status            │  │   │   ║
@@ -170,7 +170,7 @@
 │ │  │  asyncio.Lock prevents TOCTOU races   │                                                                      │     │
   │  │  Unload before load on tier swap      │                                                                      │
 │ │  │  torch.cuda.empty_cache() on full     │                                                                      │     │
-  │  │  unload (voice mode handoff)          │                                                                      │
+  │  │  unload (voice mode transition)          │                                                                      │
 │ │  └───────────────────────────────────────┘                                                                      │     │
   └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 │                                                                                                                         │

@@ -191,7 +191,7 @@ server_manager.register_server(my_server)   # BEFORE initialize()
 await server_manager.initialize()
 ```
 
-`tier_names` is passed so the `entropic.handoff` tool knows which tiers exist.
+`tier_names` is passed so the `entropic.delegate` tool knows which tiers exist.
 
 ### 8. Agent Engine
 
@@ -217,7 +217,7 @@ async for msg in engine.run(prompt, system_prompt=context):
     pass  # Messages yielded as conversation progresses
 ```
 
-The engine handles routing, generation, tool execution, and tier handoffs
+The engine handles routing, generation, tool execution, and delegation
 automatically. Returns when the model stops or max iterations reached.
 
 ### 10. Shutdown
@@ -317,75 +317,92 @@ tiers:
   suggest:
     allowed_tools:
       - chess.get_board       # server_name.tool_name
-      - entropic.handoff       # built-in handoff tool
+      - entropic.delegate       # built-in delegation tool
 ```
 
 `None` (default) means all tools are visible to the tier.
 
-## Grammar + Auto-Chain Interaction
+## Delegation System
 
-Grammar (GBNF output constraints) and auto-chain (tier handoff) interact as follows:
+Tiers delegate work to other tiers using `entropic.delegate` (single role) or
+`entropic.pipeline` (multi-stage chain). Delegation spawns an isolated child
+inference loop — the child runs to completion with fresh context, then returns
+its final message to the parent.
+
+### Delegation Tools
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `entropic.delegate` | Single-role delegation | `delegate(target="eng", task="Fix the login bug")` |
+| `entropic.pipeline` | Multi-stage chain | `pipeline(stages=["eng", "qa"], task="Implement and test feature")` |
+| `entropic.todo_write` | Planning (required before delegation) | Create work plan with `target_tier` per item |
+
+The delegate tool **rejects calls when no todos exist** — the delegating tier
+must plan first using `todo_write`, then delegate.
+
+### Child Loop Isolation
+
+Each delegation creates:
+- **Fresh context**: system prompt + task only — no parent conversation history
+- **Git worktree** (if git repo): isolated filesystem for child modifications
+- **Scoped state**: TodoList and context anchors saved/restored around child loop
+
+On success, the worktree is merged back. On failure, it's discarded.
+
+### Auto-Chain (Return to Parent)
+
+Front-office tiers (eng, qa, arch, etc.) have `auto_chain: lead` in their
+identity frontmatter. When a child loop completes (stop + no tool calls),
+auto_chain fires — but in a delegation child, it signals `COMPLETE` instead
+of performing a tier change. The child's final message returns to the parent.
+
+### Grammar + Auto-Chain Interaction
+
+Grammar and auto_chain compose with delegation:
 
 | Config Combination | Behavior |
 |---|---|
 | `grammar` only | Structured output, tier is terminal |
-| `auto_chain` only | Chains on token exhaustion (`finish_reason=length`) |
-| `grammar` + `auto_chain` | Chains on grammar completion (`stop`) — tier is never terminal |
-| `grammar` + `auto_chain` + handoff in grammar | Handoff tool call fires tier transition; auto_chain is fallback if blocked |
-| `grammar` + `auto_chain` + non-handoff tool calls | Tool calls processed; if all blocked, falls through to auto_chain |
-| `auto_chain` + no handoff targets | Warning at config load, no-op at runtime |
+| `auto_chain` only | Returns to parent on completion (delegation) or chains (root) |
+| `grammar` + `auto_chain` | Chains on grammar completion (`stop`) |
+| `auto_chain` at depth 0 | In-place tier change to `auto_chain` target |
+| `auto_chain` at depth > 0 | Signals `COMPLETE`, returns to parent |
 
-**Why grammar changes auto_chain behavior:** Without grammar, `auto_chain` fires when
-the model exhausts its token budget (`finish_reason=length`). Grammar constrains output
-to a finite structure, so the model always completes within budget
-(`finish_reason=stop`). The grammar trigger restores the auto-chain functionality that
-grammar would otherwise silently break.
-
-### Pattern A: Engine-Managed Handoff (Recommended)
-
-Set `auto_chain: true` + `grammar` on the tier. The engine handles transitions
-automatically. Best for pipelines where tier names may change or routing is dynamic.
+### Delegation Rules
 
 ```yaml
-tiers:
-  analyzer:
-    grammar: data/grammars/analysis.gbnf
-    auto_chain: true
-  executor:
-    # no grammar, no auto_chain — terminal tier
 routing:
   handoff_rules:
-    analyzer: [executor]
+    lead: [eng, qa, arch, ux, ui, analyst]  # Lead can delegate to these
+    eng: [qa]                                # Eng can only delegate to QA
+    qa: []                                   # QA is terminal
 ```
 
-### Pattern B: Grammar-Embedded Handoff
+Empty rules (default) means all-to-all delegation is allowed.
 
-The grammar itself produces an `entropic.handoff` tool call. The engine
-processes it through normal tool execution — handoff fires `stop_processing`,
-halting any remaining tool calls. Best for fixed pipelines where the consumer
-controls the full topology and wants deterministic, structural handoff.
+### Delegation Callbacks
 
-```yaml
-tiers:
-  analyzer:
-    grammar: data/grammars/analysis_with_handoff.gbnf
-    auto_chain: true            # Fallback if handoff tool call fails
-    allowed_tools:
-      - entropic.todo_write     # Side-effect tools
-      - entropic.handoff        # Must be in allowed_tools for grammar to use it
-routing:
-  handoff_rules:
-    analyzer: [executor]
+```python
+callbacks = EngineCallbacks(
+    on_delegation_start=lambda conv_id, tier, task: ...,
+    on_delegation_complete=lambda conv_id, tier, summary, success: ...,
+)
 ```
 
-The grammar enforces ordering: side-effect tools first, handoff last. The engine
-additionally sorts `entropic.handoff` to the end of any tool call batch as an
-invariant — even if the grammar or model gets the order wrong, handoff always
-executes after all other tools in the batch.
+### Pipeline Pattern
 
-Both patterns compose naturally: if grammar embeds a handoff tool call, tool
-processing handles the transition and auto_chain is skipped. If the handoff
-tool call is blocked or fails, auto_chain catches it as a fallback.
+Lead uses `entropic.pipeline` for multi-stage work. Each stage receives
+the original task plus the previous stage's output:
+
+```
+pipeline(stages=["arch", "eng", "qa"], task="Design and implement login")
+
+  arch receives: "Design and implement login"
+  eng receives:  "Original task: ... Previous stage (arch) output: ..."
+  qa receives:   "Original task: ... Previous stage (eng) output: ..."
+```
+
+If any stage fails, the pipeline stops and returns the failure to the parent.
 
 ## Security Considerations
 
@@ -423,12 +440,12 @@ tiers:
   reader:
     allowed_tools:
       - myserver.get_data
-      - entropic.handoff
+      - entropic.delegate
   writer:
     allowed_tools:
       - myserver.get_data
       - myserver.write_data
-      - entropic.handoff
+      - entropic.delegate
 ```
 
 ### Error Sanitization
@@ -704,4 +721,4 @@ Exported from `entropic`:
 | `TierIdentity` | Prompts | Identity file schema |
 | `load_tier_identity` | Prompts | Parse identity frontmatter |
 | `setup_logging` | Logging | Session logging |
-| `setup_model_logger` | Logging | Model logging |
+| `setup_model_logger` | Logging | Model logging |\n| `setup_display_logger` | Logging | Display mirror logging |

@@ -213,7 +213,7 @@ class TestToolIsolation:
         "git.checkout",
         "git.reset",
         "entropic.todo_write",
-        "entropic.handoff",
+        "entropic.delegate",
         "diagnostics.check_errors",
     ]
 
@@ -221,7 +221,7 @@ class TestToolIsolation:
         """Arch tier with allowed tools must not leak other names."""
         allowed = [
             "entropic.todo_write",
-            "entropic.handoff",
+            "entropic.delegate",
             "filesystem.read_file",
             "bash.execute",
         ]
@@ -237,16 +237,16 @@ class TestToolIsolation:
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
-    def test_scribe_tier_only_sees_handoff(self) -> None:
-        """Scribe tier with only handoff must not leak any other tools."""
-        allowed = ["entropic.handoff"]
+    def test_scribe_tier_only_sees_delegate(self) -> None:
+        """Scribe tier with only delegate must not leak any other tools."""
+        allowed = ["entropic.delegate"]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
         adapter = GenericAdapter(tier="scribe")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 
-        assert "entropic.handoff" in prompt
+        assert "entropic.delegate" in prompt
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 

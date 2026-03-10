@@ -10,7 +10,7 @@ examples: []
 grammar: grammars/compactor.gbnf
 auto_chain: null
 allowed_tools:
-  - entropic.handoff
+  - entropic.delegate
 max_output_tokens: 512
 temperature: 0.3
 enable_thinking: false

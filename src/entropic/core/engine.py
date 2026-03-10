@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from entropic.core.directives import (
         ClearSelfTodos,
         ContextAnchor,
+        Delegate,
         InjectContext,
         NotifyPresenter,
         PruneMessages,
@@ -139,6 +140,7 @@ class AgentEngine:
         from entropic.core.directives import (
             ClearSelfTodos,
             ContextAnchor,
+            Delegate,
             InjectContext,
             NotifyPresenter,
             PruneMessages,
@@ -148,6 +150,7 @@ class AgentEngine:
 
         self._directive_processor.register(StopProcessing, self._directive_stop_processing)
         self._directive_processor.register(TierChange, self._directive_tier_change)
+        self._directive_processor.register(Delegate, self._directive_delegate)
         self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
@@ -163,6 +166,29 @@ class AgentEngine:
         """Handle stop_processing directive."""
         logger.info("[DIRECTIVE] stop_processing — halting tool call loop")
         result.stop_processing = True
+
+    def _directive_delegate(
+        self,
+        ctx: LoopContext,
+        directive: Delegate,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle delegate directive.
+
+        Phase 1: Treats delegation as a tier change (in-place swap).
+        Phase 2 will replace this with child loop spawning.
+        """
+        from entropic.core.directives import TierChange
+
+        logger.info(
+            "[DIRECTIVE] delegate: target=%s task=%s max_turns=%s",
+            directive.target,
+            directive.task[:80],
+            directive.max_turns,
+        )
+        # Phase 1: delegate as tier change — child loop in Phase 2
+        tier_directive = TierChange(tier=directive.target, reason=f"delegation: {directive.task}")
+        self._directive_tier_change(ctx, tier_directive, result)
 
     def _directive_tier_change(
         self,
@@ -180,7 +206,7 @@ class AgentEngine:
             ctx.messages.append(
                 Message(
                     role="user",
-                    content=f"[SYSTEM] Handoff rejected: '{target_tier_str}' is not a valid identity tier.",
+                    content=f"[SYSTEM] Delegation rejected: '{target_tier_str}' is not a valid identity tier.",
                 )
             )
             return
@@ -190,17 +216,17 @@ class AgentEngine:
             is_self = ctx.locked_tier == target_tier
             if is_self:
                 msg = (
-                    f"[SYSTEM] Handoff rejected: you ARE the {current_name} identity. "
-                    f"You cannot hand off to yourself. Execute the task directly "
+                    f"[SYSTEM] Delegation rejected: you ARE the {current_name} identity. "
+                    f"You cannot delegate to yourself. Execute the task directly "
                     f"using your available tools."
                 )
             else:
                 msg = (
-                    f"[SYSTEM] Handoff rejected: {current_name} cannot hand off to "
-                    f"{target_tier_str}. Use entropic.handoff with a permitted target."
+                    f"[SYSTEM] Delegation rejected: {current_name} cannot delegate to "
+                    f"{target_tier_str}. Use entropic.delegate with a permitted target."
                 )
             logger.warning(
-                f"[DIRECTIVE] Handoff not permitted: {current_name} -> {target_tier_str}"
+                f"[DIRECTIVE] Delegation not permitted: {current_name} -> {target_tier_str}"
             )
             ctx.messages.append(Message(role="user", content=msg))
             return
@@ -229,10 +255,10 @@ class AgentEngine:
 
         model_logger.info(
             f"\n{'#' * 70}\n"
-            f"[HANDOFF] {current_name} -> {target_tier_str} | reason: {reason}\n"
+            f"[DELEGATE] {current_name} -> {target_tier_str} | reason: {reason}\n"
             f"{'#' * 70}"
         )
-        rg._log_assembled_prompt(ctx, "handoff")
+        rg._log_assembled_prompt(ctx, "delegate")
         rg._notify_tier_selected(target_tier_str)
 
         # Reinject context anchors for new tier's awareness
@@ -501,7 +527,7 @@ class AgentEngine:
         """
         finish_reason = self.orchestrator.last_finish_reason
 
-        if await self._try_auto_chain(ctx, finish_reason):
+        if await self._try_auto_chain(ctx, finish_reason, content):
             logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
             return
 
@@ -515,36 +541,42 @@ class AgentEngine:
         if is_complete:
             self._set_state(ctx, AgentState.COMPLETE)
 
-    def _should_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
+    def _should_auto_chain(self, ctx: LoopContext, finish_reason: str, content: str = "") -> bool:
         """Check whether auto-chain should trigger for the current tier.
 
         Triggers when auto_chain is set AND either:
           - finish_reason == "length" (token budget exhausted)
-          - finish_reason == "stop" AND tier has grammar configured
+          - finish_reason == "stop" AND response is complete (no pending work)
 
-        Reads auto_chain and grammar via orchestrator.get_tier_param()
-        (config override → identity frontmatter → default).
+        The is_response_complete() guard prevents premature chaining when
+        the model emits a partial response (e.g. "Let me think...") with
+        stop but no tool calls.
         """
-        if not ctx.locked_tier:
+        if not ctx.locked_tier or not self.orchestrator.get_tier_param(
+            ctx.locked_tier, "auto_chain"
+        ):
             return False
-        if not self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain"):
-            return False
-        has_grammar = bool(self.orchestrator.get_tier_param(ctx.locked_tier, "grammar"))
-        is_grammar_completion = finish_reason == "stop" and has_grammar
-        if is_grammar_completion:
-            logger.info("[AUTO_CHAIN] Grammar completion trigger (grammar + stop)")
-        return finish_reason == "length" or is_grammar_completion
+        triggered = finish_reason == "length" or (
+            finish_reason == "stop"
+            and self.orchestrator.get_adapter().is_response_complete(content, [])
+        )
+        if triggered:
+            trigger = "token budget" if finish_reason == "length" else "complete response"
+            logger.info("[AUTO_CHAIN] %s trigger", trigger)
+        return triggered
 
-    async def _try_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
-        """Attempt auto-chain handoff on token exhaustion or grammar completion.
+    async def _try_auto_chain(
+        self, ctx: LoopContext, finish_reason: str, content: str = ""
+    ) -> bool:
+        """Attempt auto-chain on token exhaustion or completed response.
 
-        The auto_chain frontmatter value is a tier name (e.g. "eng").
+        The auto_chain frontmatter value is a tier name (e.g. "lead").
         Uses that directly as the target. Falls back to route_among handoff
         targets only if the named tier is not found.
 
         Returns True if chain fired (tier changed), False otherwise.
         """
-        if not self._should_auto_chain(ctx, finish_reason):
+        if not self._should_auto_chain(ctx, finish_reason, content):
             return False
 
         chain_target = self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain")

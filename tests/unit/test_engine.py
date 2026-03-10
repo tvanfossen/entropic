@@ -389,9 +389,9 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
     async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
         """Tool calls after a stop_processing directive are dropped.
 
-        Engine sorts entropic.handoff last, so even though handoff appears
+        Engine sorts entropic.delegate last, so even though delegate appears
         second in input, it executes after all other calls.  stop_processing
-        fires on handoff, dropping any calls that would follow.
+        fires on delegate, dropping any calls that would follow.
         """
         from entropic.core.directives import StopProcessing
         from entropic.core.tool_executor import ToolExecutor
@@ -402,10 +402,10 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             messages=[Message(role="system", content="test")],
         )
 
-        # Handoff in the middle — engine sorts it last
+        # Delegate in the middle — engine sorts it last
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
-            ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="2", name="entropic.delegate", arguments={"target": "code"}),
             ToolCall(id="3", name="entropic.todo_write", arguments={"todos": []}),
         ]
 
@@ -414,7 +414,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
             msg = Message(role="user", content=f"Result of {tool_call.name}")
-            directives = [StopProcessing()] if tool_call.name == "entropic.handoff" else []
+            directives = [StopProcessing()] if tool_call.name == "entropic.delegate" else []
             result = ToolResult(
                 call_id=tool_call.id,
                 name=tool_call.name,
@@ -440,16 +440,16 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        # Sorted order: bash.execute, todo_write, handoff (last)
-        # handoff fires stop_processing — but it's already last, so all 3 execute
-        assert executed == ["bash.execute", "entropic.todo_write", "entropic.handoff"]
+        # Sorted order: bash.execute, todo_write, delegate (last)
+        # delegate fires stop_processing — but it's already last, so all 3 execute
+        assert executed == ["bash.execute", "entropic.todo_write", "entropic.delegate"]
         assert len(messages) == 3
 
     @pytest.mark.asyncio
     async def test_no_directive_continues_processing(self) -> None:
         """Tool calls continue when no stop directive is returned.
 
-        Handoff sorted last by engine, but since no stop_processing fires
+        Delegate sorted last by engine, but since no stop_processing fires
         (invalid tier → error string, no directives), both calls execute.
         """
         from entropic.core.tool_executor import ToolExecutor, ToolExecutorHooks
@@ -461,7 +461,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         )
 
         calls = [
-            ToolCall(id="1", name="entropic.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="1", name="entropic.delegate", arguments={"target": "invalid"}),
             ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
         ]
 
@@ -488,8 +488,8 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        # Sorted: bash.execute first, then handoff last
-        assert executed == ["bash.execute", "entropic.handoff"]
+        # Sorted: bash.execute first, then delegate last
+        assert executed == ["bash.execute", "entropic.delegate"]
         assert len(messages) == 2
 
 

@@ -8,13 +8,14 @@ focus:
   - responsive design and viewport adaptation
   - design system compliance
 examples: []
-auto_chain: null
+auto_chain: lead
 allowed_tools:
   - filesystem.read_file
   - filesystem.write_file
   - filesystem.glob
   - filesystem.grep
-  - entropic.handoff
+  - entropic.delegate
+  - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.5
 enable_thinking: true

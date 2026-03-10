@@ -8,14 +8,15 @@ focus:
   - compare alternatives with structured analysis
   - synthesize information from multiple sources
 examples: []
-auto_chain: null
+auto_chain: lead
 allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - filesystem.grep
   - web.web_search
   - web.web_fetch
-  - entropic.handoff
+  - entropic.delegate
+  - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.4
 enable_thinking: true

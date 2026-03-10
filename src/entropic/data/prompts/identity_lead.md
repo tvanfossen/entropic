@@ -15,7 +15,8 @@ examples:
   - "Thanks"
 auto_chain: null
 allowed_tools:
-  - entropic.handoff
+  - entropic.delegate
+  - entropic.pipeline
   - entropic.todo_write
   - entropic.prune_context
   - filesystem.read_file
@@ -55,7 +56,7 @@ You are the team lead. Every request from the user comes to you first. Your job 
 
 ## How to delegate
 
-Use `entropic.handoff` with the target role and a clear task description. Include relevant context the role needs — don't make them re-read the entire conversation.
+Use `entropic.delegate` with the target role and a clear task description. Include relevant context the role needs — don't make them re-read the entire conversation.
 
 ## Reviewing results
 

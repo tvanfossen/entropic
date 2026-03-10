@@ -79,13 +79,13 @@ class ToolExecutor:
 
     @staticmethod
     def _sort_tool_calls(tool_calls: list[ToolCall]) -> list[ToolCall]:
-        """Sort tool calls so entropic.handoff is always last.
+        """Sort tool calls so entropic.delegate is always last.
 
-        Handoff fires ``stop_processing`` which drops subsequent calls,
+        Delegate fires ``stop_processing`` which drops subsequent calls,
         so it must be terminal in the batch.  Preserves relative order
         of all other calls (stable sort).
         """
-        return sorted(tool_calls, key=lambda tc: tc.name == "entropic.handoff")
+        return sorted(tool_calls, key=lambda tc: tc.name == "entropic.delegate")
 
     async def process_tool_calls(
         self, ctx: LoopContext, tool_calls: list[ToolCall]

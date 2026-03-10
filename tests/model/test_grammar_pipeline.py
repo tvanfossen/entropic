@@ -94,7 +94,7 @@ class TestGrammarPipeline:
 
     @pytest.mark.asyncio
     async def test_grammar_auto_chain_fires(self, pychess_engine) -> None:
-        """auto_chain=True + grammar + stop → handoff fires, two tiers observed."""
+        """auto_chain=True + grammar + stop → delegation fires, two tiers observed."""
         engine, chess_server = pychess_engine
 
         chess_server.board.push(chess.Move.from_uci("e2e4"))
@@ -142,7 +142,7 @@ class TestGrammarPipeline:
     async def test_grammar_without_auto_chain_is_terminal(
         self, pychess_config, pychess_orchestrator
     ) -> None:
-        """Grammar tier without auto_chain → engine marks COMPLETE, no handoff.
+        """Grammar tier without auto_chain → engine marks COMPLETE, no delegation.
 
         Reuses the module-scoped orchestrator (single model instance). Config
         fields ``auto_chain`` and ``allowed_tools`` are read at runtime, so
@@ -178,7 +178,7 @@ class TestGrammarPipeline:
                 name="grammar_terminal",
             )
 
-            # Should see thinker output but NO executor (no handoff)
+            # Should see thinker output but NO executor (no delegation)
             assistant_msgs = [m for m in messages if m.role == "assistant"]
             assert len(assistant_msgs) >= 1
             # No move should be made (executor never runs)

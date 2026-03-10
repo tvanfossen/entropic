@@ -72,8 +72,8 @@ class ServerManager:
         Args:
             config: Application configuration
             project_dir: Project root directory for server working dirs
-            tier_names: Custom tier names for the handoff tool schema.
-                When ``None``, uses default tiers from ``handoff.json``.
+            tier_names: Custom tier names for the delegate tool schema.
+                When ``None``, uses default tiers from ``delegate.json``.
         """
         self.config = config
         self._project_dir = project_dir or Path.cwd()

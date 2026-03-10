@@ -8,13 +8,14 @@ focus:
   - accessibility compliance and cognitive load assessment
   - information architecture
 examples: []
-auto_chain: null
+auto_chain: lead
 allowed_tools:
   - filesystem.read_file
   - filesystem.glob
   - filesystem.grep
   - bash.execute
-  - entropic.handoff
+  - entropic.delegate
+  - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.5
 enable_thinking: true
@@ -64,4 +65,4 @@ Review the code and present findings by category. For each issue:
 - Who it affects (all users, screen reader users, mobile users, etc.)
 - What the fix looks like
 
-Hand off implementation work to `eng` via `entropic.handoff`.
+Hand off implementation work to `eng` via `entropic.delegate`.

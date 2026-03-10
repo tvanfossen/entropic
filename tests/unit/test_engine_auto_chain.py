@@ -1,4 +1,4 @@
-"""Tests for auto-chain tier handoff on token exhaustion and grammar completion."""
+"""Tests for auto-chain tier delegation on token exhaustion and grammar completion."""
 
 import warnings
 from pathlib import Path
@@ -138,12 +138,29 @@ class TestAutoChain:
         assert ctx.locked_tier == executor_tier
 
     @pytest.mark.asyncio
-    async def test_skips_stop_without_grammar(self) -> None:
-        """finish_reason=stop + no grammar + auto_chain=True → does NOT chain."""
+    async def test_fires_on_stop_with_complete_response(self) -> None:
+        """finish_reason=stop + auto_chain + complete response → chains."""
+        engine = _make_engine(handoff_rules={"thinker": ["executor"]})
+        ctx = _make_ctx("thinker")
+        _setup_handoff_mocks(engine)
+
+        # Mock adapter to say response is complete
+        engine.orchestrator.get_adapter.return_value.is_response_complete.return_value = True
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop", content="Done.")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_skips_stop_with_incomplete_response(self) -> None:
+        """finish_reason=stop + auto_chain + incomplete response → does NOT chain."""
         engine = _make_engine(handoff_rules={"thinker": ["executor"]})
         ctx = _make_ctx("thinker")
 
-        result = await engine._try_auto_chain(ctx, finish_reason="stop")
+        # Mock adapter to say response is NOT complete
+        engine.orchestrator.get_adapter.return_value.is_response_complete.return_value = False
+
+        result = await engine._try_auto_chain(ctx, finish_reason="stop", content="Let me think...")
 
         assert result is False
 
@@ -213,12 +230,12 @@ class TestAutoChain:
 
 
 # ===========================================================================
-# Tool call sorting (handoff-last)
+# Tool call sorting (delegate-last)
 # ===========================================================================
 
 
 class TestToolCallSorting:
-    """Tests for _sort_tool_calls — entropic.handoff always last."""
+    """Tests for _sort_tool_calls — entropic.delegate always last."""
 
     @staticmethod
     def _tc(name: str) -> MagicMock:
@@ -226,30 +243,30 @@ class TestToolCallSorting:
         tc.name = name
         return tc
 
-    def test_handoff_moved_to_end(self) -> None:
-        """Handoff appearing first is moved to end."""
+    def test_delegate_moved_to_end(self) -> None:
+        """Delegate appearing first is moved to end."""
         from entropic.core.tool_executor import ToolExecutor
 
-        calls = [self._tc("entropic.handoff"), self._tc("entropic.todo_write")]
+        calls = [self._tc("entropic.delegate"), self._tc("entropic.todo_write")]
         result = ToolExecutor._sort_tool_calls(calls)
-        assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
+        assert [c.name for c in result] == ["entropic.todo_write", "entropic.delegate"]
 
-    def test_handoff_already_last_unchanged(self) -> None:
-        """Handoff already at end — order preserved."""
+    def test_delegate_already_last_unchanged(self) -> None:
+        """Delegate already at end — order preserved."""
         from entropic.core.tool_executor import ToolExecutor
 
-        calls = [self._tc("entropic.todo_write"), self._tc("entropic.handoff")]
+        calls = [self._tc("entropic.todo_write"), self._tc("entropic.delegate")]
         result = ToolExecutor._sort_tool_calls(calls)
-        assert [c.name for c in result] == ["entropic.todo_write", "entropic.handoff"]
+        assert [c.name for c in result] == ["entropic.todo_write", "entropic.delegate"]
 
-    def test_non_handoff_order_preserved(self) -> None:
-        """Relative order of non-handoff calls is stable."""
+    def test_non_delegate_order_preserved(self) -> None:
+        """Relative order of non-delegate calls is stable."""
         from entropic.core.tool_executor import ToolExecutor
 
         calls = [
             self._tc("entropic.todo_write"),
             self._tc("chess.make_move"),
-            self._tc("entropic.handoff"),
+            self._tc("entropic.delegate"),
             self._tc("entropic.prune_context"),
         ]
         result = ToolExecutor._sort_tool_calls(calls)
@@ -258,11 +275,11 @@ class TestToolCallSorting:
             "entropic.todo_write",
             "chess.make_move",
             "entropic.prune_context",
-            "entropic.handoff",
+            "entropic.delegate",
         ]
 
-    def test_no_handoff_unchanged(self) -> None:
-        """No handoff in list — order unchanged."""
+    def test_no_delegate_unchanged(self) -> None:
+        """No delegate in list — order unchanged."""
         from entropic.core.tool_executor import ToolExecutor
 
         calls = [self._tc("entropic.todo_write"), self._tc("chess.make_move")]

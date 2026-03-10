@@ -7,11 +7,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from entropic.core.worktree import (
+    WorktreeInfo,
     WorktreeManager,
     _get_server_instance,
     _swap_git_repo_dir,
     scoped_worktree,
 )
+
+
+def _make_info(tmp_path: Path, tier: str = "eng") -> WorktreeInfo:
+    """Create a WorktreeInfo for testing."""
+    return WorktreeInfo(
+        path=tmp_path / ".worktrees" / "delegation-abc12345",
+        branch=f"delegation/{tier}-abc12345",
+        delegation_id="abc12345-full-uuid",
+    )
 
 
 class TestWorktreeManager:
@@ -22,20 +32,27 @@ class TestWorktreeManager:
         return WorktreeManager(tmp_path)
 
     @pytest.mark.asyncio
-    async def test_create_worktree_returns_path_on_success(
-        self, manager: WorktreeManager, tmp_path: Path
-    ) -> None:
-        """Successful worktree creation returns a Path."""
+    async def test_create_worktree_returns_info_on_success(self, manager: WorktreeManager) -> None:
+        """Successful worktree creation returns WorktreeInfo."""
         with patch("entropic.core.worktree._run_git", new_callable=AsyncMock) as mock_git:
             mock_git.return_value = (True, "")
-            result = await manager.create_worktree("abc123", "eng")
+            result = await manager.create_worktree("abc12345", "eng")
 
         assert result is not None
-        assert "delegation-abc12345" in str(result) or "delegation-abc123" in str(result)
+        assert isinstance(result, WorktreeInfo)
+        assert result.branch == "delegation/eng-abc12345"
+        assert "delegation-abc12345" in str(result.path)
         mock_git.assert_called_once()
-        args = mock_git.call_args[0][1]
-        assert "worktree" in args
-        assert "add" in args
+
+    @pytest.mark.asyncio
+    async def test_create_worktree_branch_includes_tier(self, manager: WorktreeManager) -> None:
+        """Branch name includes tier for unique identification."""
+        with patch("entropic.core.worktree._run_git", new_callable=AsyncMock) as mock_git:
+            mock_git.return_value = (True, "")
+            result = await manager.create_worktree("abc12345", "qa")
+
+        assert result is not None
+        assert result.branch == "delegation/qa-abc12345"
 
     @pytest.mark.asyncio
     async def test_create_worktree_returns_none_on_failure(self, manager: WorktreeManager) -> None:
@@ -58,41 +75,35 @@ class TestWorktreeManager:
         assert (tmp_path / ".worktrees").exists()
 
     @pytest.mark.asyncio
-    async def test_merge_worktree_calls_merge(self, manager: WorktreeManager) -> None:
-        """Successful merge calls git merge then cleanup."""
-        calls: list[list[str]] = []
-
-        # Response lookup: key on (args[0], args[1] if present)
-        responses = {
-            ("diff", "HEAD"): (True, ""),
-            ("branch", "--list"): (True, "  delegation/abc12345-eng"),
-        }
-
-        async def fake_git(cwd, args):
-            calls.append(args)
-            key = (args[0], args[1]) if len(args) > 1 else (args[0],)
-            return responses.get(key, (True, ""))
-
-        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
-            result = await manager.merge_worktree("abc12345")
-
-        assert result is True
-
-    @pytest.mark.asyncio
-    async def test_merge_worktree_auto_commits_uncommitted(
+    async def test_merge_uses_exact_branch_name(
         self, manager: WorktreeManager, tmp_path: Path
     ) -> None:
-        """Uncommitted changes in worktree are auto-committed before merge."""
+        """Merge uses the branch name from WorktreeInfo, not a reconstructed one."""
+        info = _make_info(tmp_path)
+        merge_args = []
+
+        async def fake_git(cwd, args):
+            if args[0] == "merge":
+                merge_args.extend(args)
+            return (True, "")
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            result = await manager.merge_worktree(info)
+
+        assert result is True
+        assert "delegation/eng-abc12345" in merge_args
+
+    @pytest.mark.asyncio
+    async def test_merge_auto_commits_dirty_worktree(
+        self, manager: WorktreeManager, tmp_path: Path
+    ) -> None:
+        """Uncommitted changes auto-committed before merge."""
+        info = _make_info(tmp_path)
+        info.path.mkdir(parents=True)
+
         calls: list[tuple[str, list[str]]] = []
 
-        # Create the worktree directory so the diff check works
-        wt_dir = tmp_path / ".worktrees" / "delegation-abc12345"
-        wt_dir.mkdir(parents=True)
-
-        responses = {
-            ("diff", "HEAD"): (True, " file.py | 5 +++++"),
-            ("branch", "--list"): (True, "  delegation/abc12345-eng"),
-        }
+        responses = {("diff", "HEAD"): (True, " file.py | 5 +++++")}
 
         async def fake_git(cwd, args):
             calls.append((str(cwd), args))
@@ -100,36 +111,70 @@ class TestWorktreeManager:
             return responses.get(key, (True, ""))
 
         with patch("entropic.core.worktree._run_git", side_effect=fake_git):
-            await manager.merge_worktree("abc12345")
+            await manager.merge_worktree(info)
 
-        # Verify add + commit were called
         git_cmds = [c[1] for c in calls]
         assert ["add", "-A"] in git_cmds
         assert any(c[0] == "commit" for c in git_cmds)
 
     @pytest.mark.asyncio
-    async def test_discard_worktree_removes_and_deletes_branch(
+    async def test_merge_returns_false_on_conflict(
         self, manager: WorktreeManager, tmp_path: Path
     ) -> None:
-        """Discard removes worktree and deletes branch."""
-        # Create the worktree directory
-        wt_dir = tmp_path / ".worktrees" / "delegation-abc12345"
-        wt_dir.mkdir(parents=True)
-
-        calls = []
+        """Failed merge returns False and logs error."""
+        info = _make_info(tmp_path)
 
         async def fake_git(cwd, args):
-            calls.append(args)
-            if args[:2] == ["branch", "--list"]:
-                return (True, "  delegation/abc12345-eng")
+            if args[0] == "merge":
+                return (False, "CONFLICT (content): Merge conflict")
             return (True, "")
 
         with patch("entropic.core.worktree._run_git", side_effect=fake_git):
-            await manager.discard_worktree("abc12345")
+            result = await manager.merge_worktree(info)
 
-        git_cmds = calls
-        assert any("worktree" in c and "remove" in c for c in git_cmds)
-        assert any("branch" in c and "-D" in c for c in git_cmds)
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_discard_removes_worktree_and_branch(
+        self, manager: WorktreeManager, tmp_path: Path
+    ) -> None:
+        """Discard removes worktree dir and deletes the exact branch."""
+        info = _make_info(tmp_path)
+        info.path.mkdir(parents=True)
+
+        calls: list[list[str]] = []
+
+        async def fake_git(cwd, args):
+            calls.append(args)
+            return (True, "")
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            await manager.discard_worktree(info)
+
+        assert any("worktree" in c and "remove" in c for c in calls)
+        # Branch delete uses exact name from info, not a glob search
+        branch_delete = [c for c in calls if "-D" in c]
+        assert len(branch_delete) == 1
+        assert "delegation/eng-abc12345" in branch_delete[0]
+
+    @pytest.mark.asyncio
+    async def test_cleanup_logs_branch_delete_failure(
+        self, manager: WorktreeManager, tmp_path: Path
+    ) -> None:
+        """Failed branch delete is logged as warning, not silent."""
+        info = _make_info(tmp_path)
+
+        responses = {
+            ("branch", "-D"): (False, "error: branch not found"),
+        }
+
+        async def fake_git(cwd, args):
+            key = (args[0], args[1]) if len(args) > 1 else (args[0],)
+            return responses.get(key, (True, ""))
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            # Should not raise — logs warning instead
+            await manager.discard_worktree(info)
 
 
 class TestSwapGitRepoDir:

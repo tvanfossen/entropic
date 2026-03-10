@@ -27,45 +27,54 @@ note right of Mdl
   
   ## Key Concepts
   
-  1. **Self-Reference**: A recursive function includes a call to itself within its
-  own definition.
+  1. **Base case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive case**: Where the function calls itself with modified input
   
-  2. **Base Case**: Every recursive function needs at least one condition that 
-  stops the recursion (prevents infinite loops). This is where the function 
-  returns without calling itself again.
-  
-  3. **Recursive Case**: The part of the function that calls itself with modified 
-  parameters, moving toward the base case.
-  
-  ## Simple Example (Factorial)
+  ## Simple Example
   
   ```python
   def factorial(n):
-      # Base case: stop when n = 0 or 1
+      # Base case: stop when n is 0 or 1
       if n &lt;= 1:
           return 1
       
-      # Recursive case: n * factorial of smaller value
+      # Recursive case: multiply n by factorial of (n-1)
       return n * factorial(n - 1)
+  
+  # factorial(4) = 4 × 3 × 2 × 1 = 24
   ```
   
-  ## When to Use Recursion
+  ## Visualizing the Call Stack
   
-  - **Natural fit**: Problems that can be broken into identical sub-problems (tree
-  traversal, sorting algorithms like quicksort/mergesort)
-  - **Cleaner code**: Sometimes recursive solutions are more elegant than 
-  iterative ones for certain problems
-  - **Tradeoff**: Can use more memory (call stack) and may be slower than 
-  iteration
+  When you call `factorial(4)`:
+  ```
+  factorial(4) → needs factorial(3)
+    factorial(3) → needs factorial(2)
+      factorial(2) → needs factorial(1)
+        factorial(1) = 1 (base case!)
+      returns 1 × 2 = 2
+    returns 2 × 3 = 6
+  returns 6 × 4 = 24
+  ```
   
-  ## When to Avoid Recursion
+  ## Common Uses
   
-  - Simple loops work better for straightforward iterations
-  - Deep recursion can cause stack overflow errors
-  - Performance-critical code often benefits from iterative approaches
+  - **Tree traversal** (file systems, DOM trees)
+  - **Divide-and-conquer algorithms** (merge sort, quicksort)
+  - **Mathematical sequences** (Fibonacci, factorials)
+  - **Backtracking problems** (maze solving, puzzles)
   
-  The key is recognizing when a problem has the "self-similar" structure that 
-  makes recursion appropriate.
+  ## Tradeoffs
+  
+  | Pros | Cons |
+  |------|------|
+  | Elegant for recursive data structures | Can be slower than iteration |
+  | Natural fit for certain algorithms | Risk of stack overflow |
+  | Often more readable | Harder to debug |
+  
+  The key is ensuring your base case will eventually be reached, or you'll get 
+  infinite recursion and a crash.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

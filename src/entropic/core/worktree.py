@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,15 @@ async def _run_git(cwd: Path, args: list[str]) -> tuple[bool, str]:
     return success, output or error
 
 
+@dataclass
+class WorktreeInfo:
+    """Tracks a created worktree's path and branch for later merge/discard."""
+
+    path: Path
+    branch: str
+    delegation_id: str
+
+
 class WorktreeManager:
     """Create, merge, and discard git worktrees for delegation isolation."""
 
@@ -51,13 +61,14 @@ class WorktreeManager:
         self._repo_dir = repo_dir
         self._worktree_base = repo_dir / WORKTREE_DIR
 
-    async def create_worktree(self, delegation_id: str, tier: str) -> Path | None:
+    async def create_worktree(self, delegation_id: str, tier: str) -> WorktreeInfo | None:
         """Create a git worktree for a delegation.
 
-        Returns the worktree path, or None if creation failed.
+        Returns WorktreeInfo with path and branch, or None on failure.
         """
-        branch_name = f"delegation/{tier}-{delegation_id[:8]}"
-        worktree_path = self._worktree_base / f"delegation-{delegation_id[:8]}"
+        short_id = delegation_id[:8]
+        branch_name = f"delegation/{tier}-{short_id}"
+        worktree_path = self._worktree_base / f"delegation-{short_id}"
 
         self._worktree_base.mkdir(parents=True, exist_ok=True)
 
@@ -75,87 +86,75 @@ class WorktreeManager:
             worktree_path,
             branch_name,
         )
-        return worktree_path
+        return WorktreeInfo(path=worktree_path, branch=branch_name, delegation_id=delegation_id)
 
-    async def merge_worktree(self, delegation_id: str) -> bool:
+    async def merge_worktree(self, info: WorktreeInfo) -> bool:
         """Merge worktree branch back to current branch.
 
         Returns True if merge succeeded (or nothing to merge).
         """
-        worktree_path = self._worktree_base / f"delegation-{delegation_id[:8]}"
+        await self._auto_commit_if_dirty(info)
 
-        # Check if worktree has any commits beyond the base
-        success, diff = await _run_git(
-            worktree_path,
-            ["diff", "HEAD", "--stat"],
-        )
-        has_uncommitted = success and bool(diff.strip())
-
-        if has_uncommitted:
-            # Auto-commit uncommitted changes in worktree
-            await _run_git(worktree_path, ["add", "-A"])
-            await _run_git(
-                worktree_path,
-                ["commit", "-m", f"delegation/{delegation_id[:8]}: child work"],
-            )
-
-        # Find the full branch name
-        full_branch = await self._find_branch(delegation_id)
-        if not full_branch:
-            await self._cleanup_worktree(delegation_id)
-            return True
-
-        # Merge the branch
         success, output = await _run_git(
             self._repo_dir,
-            ["merge", full_branch, "--no-edit"],
+            ["merge", info.branch, "--no-edit"],
         )
 
         if not success:
-            logger.error("[WORKTREE] Merge failed: %s", output)
-            await self._cleanup_worktree(delegation_id)
+            logger.error("[WORKTREE] Merge failed for branch %s: %s", info.branch, output)
+            await self._cleanup(info)
             return False
 
-        logger.info("[WORKTREE] Merged branch %s", full_branch)
-        await self._cleanup_worktree(delegation_id)
+        logger.info("[WORKTREE] Merged branch %s successfully", info.branch)
+        await self._cleanup(info)
         return True
 
-    async def discard_worktree(self, delegation_id: str) -> None:
+    async def discard_worktree(self, info: WorktreeInfo) -> None:
         """Remove worktree and delete branch without merging."""
-        await self._cleanup_worktree(delegation_id)
-        logger.info("[WORKTREE] Discarded worktree for delegation %s", delegation_id[:8])
-
-    async def _find_branch(self, delegation_id: str) -> str | None:
-        """Find the full branch name for a delegation."""
-        prefix = f"delegation/{delegation_id[:8]}"
-        success, output = await _run_git(
-            self._repo_dir,
-            ["branch", "--list", f"{prefix}*"],
+        await self._cleanup(info)
+        logger.info(
+            "[WORKTREE] Discarded worktree %s (branch: %s)",
+            info.path.name,
+            info.branch,
         )
-        if not success or not output.strip():
-            return None
-        # Strip leading whitespace and * marker
-        branches = [b.strip().lstrip("* ") for b in output.splitlines()]
-        return branches[0] if branches else None
 
-    async def _cleanup_worktree(self, delegation_id: str) -> None:
+    async def _auto_commit_if_dirty(self, info: WorktreeInfo) -> None:
+        """Auto-commit uncommitted changes in worktree before merge."""
+        if not info.path.exists():
+            logger.warning("[WORKTREE] Worktree path missing: %s", info.path)
+            return
+
+        success, diff = await _run_git(info.path, ["diff", "HEAD", "--stat"])
+        if not success or not diff.strip():
+            return
+
+        logger.info("[WORKTREE] Auto-committing dirty worktree: %s", info.path.name)
+        await _run_git(info.path, ["add", "-A"])
+        await _run_git(
+            info.path,
+            ["commit", "-m", f"delegation/{info.delegation_id[:8]}: child work"],
+        )
+
+    async def _cleanup(self, info: WorktreeInfo) -> None:
         """Remove worktree directory and delete branch."""
-        worktree_path = self._worktree_base / f"delegation-{delegation_id[:8]}"
-
-        if worktree_path.exists():
-            # git worktree remove (force to handle uncommitted changes)
+        if info.path.exists():
             success, _ = await _run_git(
                 self._repo_dir,
-                ["worktree", "remove", str(worktree_path), "--force"],
+                ["worktree", "remove", str(info.path), "--force"],
             )
             if not success:
-                # Fallback: manual removal
-                shutil.rmtree(worktree_path, ignore_errors=True)
+                logger.warning(
+                    "[WORKTREE] git worktree remove failed, falling back to rmtree: %s",
+                    info.path,
+                )
+                shutil.rmtree(info.path, ignore_errors=True)
 
         # Delete the branch
-        full_branch = await self._find_branch(delegation_id)
-        if full_branch:
-            await _run_git(self._repo_dir, ["branch", "-D", full_branch])
+        success, output = await _run_git(self._repo_dir, ["branch", "-D", info.branch])
+        if success:
+            logger.info("[WORKTREE] Deleted branch %s", info.branch)
+        else:
+            logger.warning("[WORKTREE] Failed to delete branch %s: %s", info.branch, output)
 
 
 def _get_server_instance(engine: AgentEngine, name: str) -> Any:

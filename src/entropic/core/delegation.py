@@ -10,7 +10,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from entropic.core.base import Message
+from entropic.core.base import Message, StorageBackend
 from entropic.core.engine_types import AgentState, LoopConfig, LoopContext
 from entropic.core.logging import get_logger
 
@@ -40,8 +40,9 @@ class DelegationManager:
     as the delegation result.
     """
 
-    def __init__(self, engine: AgentEngine) -> None:
+    def __init__(self, engine: AgentEngine, storage: StorageBackend | None = None) -> None:
         self._engine = engine
+        self._storage = storage
 
     async def execute_delegation(
         self,
@@ -49,16 +50,16 @@ class DelegationManager:
         target_tier: str,
         task: str,
         max_turns: int | None = None,
+        parent_conversation_id: str | None = None,
     ) -> DelegationResult:
         """Run a child inference loop for the target tier.
 
         1. Resolve tier via orchestrator
-        2. Build child LoopContext (fresh messages, locked to target tier)
-        3. Build system prompt for target tier
-        4. Inject task as user message
-        5. Run engine._loop(child_ctx) to completion
-        6. Extract final assistant message
-        7. Return DelegationResult
+        2. Persist delegation record (if storage available)
+        3. Build child LoopContext (fresh messages, locked to target tier)
+        4. Run engine._loop(child_ctx) to completion
+        5. Persist child messages + complete delegation record
+        6. Return DelegationResult
         """
         tier = self._engine.orchestrator._find_tier(target_tier)
         if tier is None:
@@ -70,6 +71,11 @@ class DelegationManager:
                 turns_used=0,
             )
 
+        delegating_tier = str(parent_ctx.locked_tier) if parent_ctx.locked_tier else "unknown"
+        delegation_id, child_conv_id = await self._create_storage_records(
+            parent_conversation_id, delegating_tier, target_tier, task, max_turns
+        )
+
         child_ctx = self._build_child_context(parent_ctx, tier, task)
 
         logger.info(
@@ -80,12 +86,25 @@ class DelegationManager:
             child_ctx.delegation_depth,
         )
 
-        # Save engine state that child might mutate
+        result = await self._run_child_loop(child_ctx, target_tier, task, max_turns)
+
+        # Persist child messages and mark delegation complete
+        await self._complete_storage_records(delegation_id, child_conv_id, result)
+
+        return result
+
+    async def _run_child_loop(
+        self,
+        child_ctx: LoopContext,
+        target_tier: str,
+        task: str,
+        max_turns: int | None,
+    ) -> DelegationResult:
+        """Run the child loop with engine state save/restore."""
         saved_anchors = dict(self._engine._context_anchors)
         saved_loop_config = self._engine.loop_config
         saved_todo_list = self._save_todo_list()
 
-        # Override max_iterations for child if max_turns specified
         if max_turns is not None:
             self._engine.loop_config = LoopConfig(
                 max_iterations=max_turns,
@@ -109,7 +128,6 @@ class DelegationManager:
                 child_messages=child_ctx.messages,
             )
         finally:
-            # Restore engine state
             self._engine._context_anchors = saved_anchors
             self._engine.loop_config = saved_loop_config
             self._restore_todo_list(saved_todo_list)
@@ -133,6 +151,43 @@ class DelegationManager:
             turns_used=child_ctx.metrics.iterations,
             child_messages=child_ctx.messages,
         )
+
+    async def _create_storage_records(
+        self,
+        parent_conversation_id: str | None,
+        delegating_tier: str,
+        target_tier: str,
+        task: str,
+        max_turns: int | None,
+    ) -> tuple[str | None, str | None]:
+        """Create delegation + child conversation in storage. Returns (delegation_id, child_conv_id)."""
+        if not self._storage or not parent_conversation_id:
+            return None, None
+        try:
+            return await self._storage.create_delegation(
+                parent_conversation_id, delegating_tier, target_tier, task, max_turns
+            )
+        except Exception as e:
+            logger.warning("[DELEGATION] Storage create failed (non-fatal): %s", e)
+            return None, None
+
+    async def _complete_storage_records(
+        self,
+        delegation_id: str | None,
+        child_conv_id: str | None,
+        result: DelegationResult,
+    ) -> None:
+        """Persist child messages and mark delegation complete."""
+        if not self._storage:
+            return
+        try:
+            if child_conv_id:
+                await self._storage.save_conversation(child_conv_id, result.child_messages)
+            if delegation_id:
+                status = "completed" if result.success else "failed"
+                await self._storage.complete_delegation(delegation_id, status, result.summary[:500])
+        except Exception as e:
+            logger.warning("[DELEGATION] Storage complete failed (non-fatal): %s", e)
 
     def _build_child_context(
         self,

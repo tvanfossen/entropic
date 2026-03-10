@@ -322,3 +322,34 @@ class StorageBackend(ABC):
     ) -> list[dict[str, Any]]:
         """Search conversations."""
         pass
+
+    async def create_delegation(
+        self,
+        parent_conversation_id: str,
+        delegating_tier: str,
+        target_tier: str,
+        task: str,
+        max_turns: int | None = None,
+    ) -> tuple[str, str]:
+        """Create a delegation record.
+
+        Returns:
+            (delegation_id, child_conversation_id)
+        """
+        raise NotImplementedError
+
+    async def complete_delegation(
+        self,
+        delegation_id: str,
+        status: str,
+        result_summary: str | None = None,
+    ) -> None:
+        """Mark a delegation as completed or failed."""
+        raise NotImplementedError
+
+    async def get_delegations(
+        self,
+        conversation_id: str,
+    ) -> list[dict[str, Any]]:
+        """Get delegations for a conversation."""
+        raise NotImplementedError

@@ -23,66 +23,55 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion in programming is when a function calls itself to solve a problem by 
-  breaking it down into smaller, similar sub-problems. It's like solving a puzzle 
-  by repeatedly applying the same solution pattern until you reach a simple enough
-  case that can be solved directly.
+  breaking it down into smaller, similar sub-problems. Think of it like a set of 
+  Russian nesting dolls — each doll contains a smaller version of itself until you
+  reach the smallest one.
   
   ## Key Concepts
   
-  **Base Case**: The condition where recursion stops. Without this, the function 
-  would call itself forever (infinite recursion).
+  **A recursive function has two essential parts:**
+  1. **Base case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive case**: Where the function calls itself with modified input
   
-  **Recursive Case**: Where the function calls itself with modified parameters, 
-  moving toward the base case.
-  
-  ## Simple Example (Fibonacci)
-  
-  ```python
-  def fibonacci(n):
-      # Base case: first two numbers are 0 and 1
-      if n &lt;= 1:
-          return n
-      
-      # Recursive case: sum of previous two numbers
-      return fibonacci(n-1) + fibonacci(n-2)
-  ```
-  
-  ## Another Example (Factorial)
+  ## Simple Example
   
   ```python
   def factorial(n):
-      # Base case: 0! = 1, 1! = 1
+      # Base case: stop when n is 0 or 1
       if n &lt;= 1:
           return 1
       
-      # Recursive case: n * (n-1)!
-      return n * factorial(n-1)
+      # Recursive case: call itself with smaller value
+      return n * factorial(n - 1)
+  
+  print(factorial(5))  # Output: 120 (5 × 4 × 3 × 2 × 1)
   ```
   
-  ## When to Use Recursion
+  ## How It Works
   
-  **Good for:**
-  - Tree traversals (file systems, DOM trees)
-  - Divide-and-conquer algorithms (merge sort, quicksort)
-  - Problems with natural recursive structure (factorial, Fibonacci, graph 
-  traversal)
+  When you call `factorial(5)`:
+  - It calls `factorial(4)` → which calls `factorial(3)` → etc.
+  - Each call waits for the next one to return
+  - When it hits the base case (returns 1), each function returns its result up 
+  the chain
   
-  **Consider alternatives when:**
-  - Performance matters (recursion has overhead)
-  - Iterative solutions are clearer
-  - Deep recursion risks stack overflow
+  ## Common Uses
   
-  ## Tradeoffs
+  - **Tree traversal** (file systems, DOM trees)
+  - **Divide and conquer algorithms** (quick sort, merge sort)
+  - **Mathematical calculations** (Fibonacci sequence, factorials)
+  - **Parsing nested structures** (JSON, XML)
   
-  | Pros | Cons |
-  |------|------|
-  | Elegant for certain problems | Can be slower than iteration |
-  | Clear mapping to mathematical definitions | Risk of stack overflow on deep 
-  recursions |
-  | Often simpler code | Harder to debug sometimes |
+  ## Important Considerations
   
-  The key is recognizing when a problem naturally breaks into smaller versions of 
-  itself—that's where recursion shines!
+  ⚠️ **Watch out for:**
+  - Infinite recursion (missing base case) → stack overflow error
+  - Performance overhead from repeated calls
+  - Memory usage (each call adds to the call stack)
+  
+  Recursion is powerful but not always the best tool — sometimes iteration (loops)
+  works better depending on your needs!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

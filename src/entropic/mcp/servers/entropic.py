@@ -31,6 +31,23 @@ from entropic.mcp.tools import BaseTool
 logger = logging.getLogger(__name__)
 
 
+def _parse_json_string(value: Any, expected_type: type) -> Any:
+    """Parse a stringified JSON value if it matches the expected type.
+
+    Models sometimes emit JSON arrays/objects as strings rather than
+    native structures. This normalizes them before validation.
+    """
+    if not isinstance(value, str):
+        return value
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, expected_type):
+            return parsed
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return value
+
+
 class TodoWriteTool(BaseTool):
     """Manage the internal todo list."""
 
@@ -218,7 +235,7 @@ class PipelineTool(BaseTool):
 
     async def execute(self, arguments: dict[str, Any]) -> str | ServerResponse:
         """Validate and execute pipeline."""
-        stages = arguments.get("stages", [])
+        stages = _parse_json_string(arguments.get("stages", []), list)
         task = arguments.get("task", "")
 
         if len(stages) < 2:

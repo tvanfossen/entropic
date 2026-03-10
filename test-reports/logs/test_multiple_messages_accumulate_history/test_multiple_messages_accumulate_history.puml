@@ -23,8 +23,9 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Hello! I'm the team lead here. How can I help you today? Whether it's planning a
-  new feature, fixing a bug, or just answering a quick question, I'm ready to get 
-  started.
+  new feature, fixing a bug, or just clarifying something technical, I'm here to 
+  guide the process and ensure we get quality results. What would you like to 
+  tackle first?
 end note
 note right of Eng
   **Follow-up message:**
@@ -34,11 +35,9 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" — my greeting back was "Hello! I'm the team lead here. How can 
-  I help you today?" 
+  You said: **"Hello"**
   
-  Is there something specific you'd like to work on, or were you just testing that
-  I remember our conversation?
+  That was your first message in our conversation! How can I help you today?
 end note
 note over T #palegreen
   **PASSED** (< 112s)

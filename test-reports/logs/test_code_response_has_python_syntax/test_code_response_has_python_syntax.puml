@@ -22,7 +22,7 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a simple Python function that returns the sum of a list:
+  Here's a Python function that returns the sum of a list:
   
   ```python
   def sum_list(numbers):
@@ -37,31 +37,46 @@ note right of Mdl
           
       Raises:
           TypeError: If any element is not a number
+          ValueError: If the list is empty
       """
+      if not numbers:
+          raise ValueError("Cannot sum an empty list")
+      
       total = 0
       for num in numbers:
           if not isinstance(num, (int, float)):
-              raise TypeError(f"Expected number, got {type(num).__name__}")
+              raise TypeError(f"Expected numeric type, got {type(num).__name__}")
           total += num
+      
       return total
   
   
-  # Example usage:
+  # Alternative using built-in sum() with validation
+  def sum_list_v2(numbers):
+      """Calculate the sum of all numbers in a list."""
+      if not numbers:
+          raise ValueError("Cannot sum an empty list")
+      
+      for num in numbers:
+          if not isinstance(num, (int, float)):
+              raise TypeError(f"Expected numeric type, got {type(num).__name__}")
+      
+      return sum(numbers)
+  
+  
+  # Usage example:
   if __name__ == "__main__":
       print(sum_list([1, 2, 3, 4, 5]))  # Output: 15
-      print(sum_list([]))               # Output: 0
   ```
   
-  **Alternative using built-in `sum()`**: If you're okay with Python's built-in 
-  function, it's even simpler:
+  **Key features:**
+  - Validates input types to prevent runtime errors
+  - Handles edge cases (empty lists)
+  - Clear documentation with docstrings
+  - Two implementations: manual loop or built-in `sum()`
   
-  ```python
-  def sum_list(numbers):
-      return sum(numbers)
-  ```
-  
-  The first version includes type checking for educational purposes. The second is
-  more Pythonic and efficient for production code.
+  Choose based on your needs—`v2` is more Pythonic, while `v1` shows the logic 
+  explicitly.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

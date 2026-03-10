@@ -695,8 +695,8 @@ class TestStructuredSummary:
         assert CompactionManager._parse_path_from_result(result) is None
 
 
-class TestCompressForHandoff:
-    """Tests for tier handoff compression."""
+class TestCompressForDelegate:
+    """Tests for tier delegation compression."""
 
     def setup_method(self) -> None:
         """Set up test fixtures."""
@@ -705,8 +705,8 @@ class TestCompressForHandoff:
         self.manager = CompactionManager(self.config, self.counter)
 
     @pytest.mark.asyncio
-    async def test_handoff_includes_reason(self) -> None:
-        """Handoff compression includes the handoff reason."""
+    async def test_delegate_includes_reason(self) -> None:
+        """Delegate compression includes the delegation reason."""
         messages = [
             Message(role="system", content="System prompt"),
             _user_msg("Build a feature"),
@@ -723,8 +723,8 @@ class TestCompressForHandoff:
         assert "Original task: Build a feature" in handoff_msg.content
 
     @pytest.mark.asyncio
-    async def test_handoff_preserves_system(self) -> None:
-        """System message preserved in handoff compression."""
+    async def test_delegate_preserves_system(self) -> None:
+        """System message preserved in delegate compression."""
         messages = [
             Message(role="system", content="System prompt"),
             _user_msg("Task"),
@@ -738,8 +738,8 @@ class TestCompressForHandoff:
         assert result[0].content == "System prompt"
 
     @pytest.mark.asyncio
-    async def test_handoff_keeps_user_messages(self) -> None:
-        """User messages preserved, tool results stripped in handoff."""
+    async def test_delegate_keeps_user_messages(self) -> None:
+        """User messages preserved, tool results stripped in delegation."""
         messages = [
             Message(role="system", content="System prompt"),
             _user_msg("First task"),

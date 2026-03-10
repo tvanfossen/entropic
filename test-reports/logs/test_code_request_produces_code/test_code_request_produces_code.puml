@@ -23,31 +23,6 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Here's a Python function to check if a number is even:
-end note
-Mdl --> Eng: tool_call(entropic.todo_write)
-Eng -> MCP: entropic.todo_write
-note right of MCP
-  action: add
-  todos: [{"content": "Write Python function to check if a number is even", "status": "in_progress", "active_form": "Writing Python function to check if a number is even"}]
-end note
-MCP --> Eng: result
-note right of MCP
-  **Tool Result:**
-  Added 1 item(s). Total: 1
-end note
-note right of Eng
-  **Follow-up message:**
-  &lt;tool_response&gt;
-  Added 1 item(s). Total: 1
-  &lt;/tool_response&gt;
-  
-  Continue. Batch multiple tool calls in one response when possible.
-end note
-== Turn 2 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  Here's a Python function to check if a number is even:
   
   ```python
   def is_even(number):
@@ -59,36 +34,31 @@ note right of Mdl
           
       Returns:
           bool: True if the number is even, False otherwise
+          
+      Raises:
+          TypeError: If the input is not a number
       """
-      # Handle non-integer inputs by converting or returning False
-      try:
-          return int(number) % 2 == 0
-      except (ValueError, TypeError):
-          return False
-  
-  # Example usage:
-  print(is_even(4))      # True
-  print(is_even(7))      # False
-  print(is_even(0))      # True
-  print(is_even(-2))     # True
+      if not isinstance(number, (int, float)):
+          raise TypeError(f"Expected number, got {type(number).__name__}")
+      
+      return number % 2 == 0
   ```
   
-  **Alternative one-liner version:**
+  **Usage examples:**
+  
   ```python
-  is_even = lambda n: int(n) % 2 == 0
+  is_even(4)      # True
+  is_even(7)      # False
+  is_even(-2)     # True
+  is_even(0.0)    # True (if you want to handle floats too)
   ```
   
-  **Key points:**
-  - Uses the modulo operator (`%`) to check divisibility by 2
-  - Handles edge cases like negative numbers and zero
-  - Includes error handling for non-numeric inputs
-  - Zero is considered even (mathematically correct)
-  
-  Would you like me to add any additional features, such as input validation or 
-  type hints?
+  **Note:** This function handles both integers and floats. If you only need 
+  integer checking, you can simplify by removing the type check or adding `int()` 
+  conversion.
 end note
 note over T #palegreen
-  **PASSED** (< 262s, 1 tool calls)
+  **PASSED** (< 262s)
 end note
 
 @enduml

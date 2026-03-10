@@ -8,7 +8,7 @@ focus:
   - implement designs and specifications
   - write documentation alongside code
 examples: []
-auto_chain: null
+auto_chain: lead
 allowed_tools:
   - filesystem.read_file
   - filesystem.write_file
@@ -16,7 +16,7 @@ allowed_tools:
   - filesystem.glob
   - filesystem.grep
   - bash.execute
-  - entropic.handoff
+  - entropic.delegate
   - entropic.todo_write
 max_output_tokens: 8192
 temperature: 0.15

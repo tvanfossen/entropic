@@ -11,6 +11,7 @@ from entropic.core.directives import (
     _DIRECTIVE_REGISTRY,
     ClearSelfTodos,
     ContextAnchor,
+    Delegate,
     Directive,
     DirectiveProcessor,
     DirectiveResult,
@@ -317,10 +318,11 @@ class TestDirectiveResult:
 class TestDirectiveRegistry:
     """Directive registry maps string type names to dataclass types."""
 
-    def test_all_seven_types_registered(self) -> None:
+    def test_all_registered_types_present(self) -> None:
         expected = {
             "stop_processing": StopProcessing,
             "tier_change": TierChange,
+            "delegate": Delegate,
             "clear_self_todos": ClearSelfTodos,
             "inject_context": InjectContext,
             "prune_messages": PruneMessages,

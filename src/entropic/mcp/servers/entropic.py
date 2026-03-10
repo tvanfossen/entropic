@@ -1,7 +1,7 @@
 """
 Entropic MCP server.
 
-Provides entropic-internal tools: todo management, tier handoff,
+Provides entropic-internal tools: todo management, task delegation,
 and context pruning. Returns ``ServerResponse`` with native typed
 directives for engine-level side effects.
 """
@@ -17,11 +17,11 @@ from mcp.types import Tool
 from entropic.core.directives import (
     ClearSelfTodos,
     ContextAnchor,
+    Delegate,
     InjectContext,
     NotifyPresenter,
     PruneMessages,
     StopProcessing,
-    TierChange,
 )
 from entropic.core.todos import TodoList, TodoStatus
 from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
@@ -86,71 +86,72 @@ class TodoWriteTool(BaseTool):
         )
 
 
-class HandoffTool(BaseTool):
-    """Transfer the current task to a different model tier."""
+class DelegateTool(BaseTool):
+    """Delegate a task to a different identity tier."""
 
     def __init__(self, todo_list: TodoList, tier_names: list[str] | None) -> None:
         definition = self._build_definition(tier_names) if tier_names else None
         if definition:
             super().__init__(definition=definition)
         else:
-            super().__init__("handoff", "entropic")
+            super().__init__("delegate", "entropic")
         self._todo_list = todo_list
         self._tier_names = tier_names
 
     @staticmethod
     def _build_definition(tier_names: list[str]) -> Tool:
-        """Build handoff tool definition with patched tier enum."""
-        tool = load_tool_definition("handoff", "entropic")
+        """Build delegate tool definition with patched tier enum."""
+        tool = load_tool_definition("delegate", "entropic")
         schema = dict(tool.inputSchema)
         props = dict(schema["properties"])
-        target_prop = dict(props["target_tier"])
+        target_prop = dict(props["target"])
         target_prop["enum"] = list(tier_names)
-        props["target_tier"] = target_prop
+        props["target"] = target_prop
         schema["properties"] = props
 
         tier_list = ", ".join(f"`{t}`" for t in tier_names)
         description = (
-            "Transfer the current task to a different model tier.\n\n"
+            "Delegate a task to a different identity tier.\n\n"
             f"Available tiers: {tier_list}\n\n"
-            "Use this tool when the task would be better handled "
-            "by a different tier's capabilities."
+            "Use this tool to assign work to a tier whose specialty "
+            "matches the task."
         )
         return Tool(name=tool.name, description=description, inputSchema=schema)
 
     async def execute(self, arguments: dict[str, Any]) -> str | ServerResponse:
-        """Validate and execute tier handoff."""
-        target_tier = arguments.get("target_tier", "")
-        reason = arguments.get("reason", "")
+        """Validate and execute delegation."""
+        target = arguments.get("target", "")
+        task = arguments.get("task", "")
+        max_turns = arguments.get("max_turns")
 
-        error = self._validate_handoff(target_tier)
+        error = self._validate_delegate(target)
         if error:
             return error
 
-        directives = self._build_directives(target_tier, reason)
+        directives = self._build_directives(target, task, max_turns)
         return ServerResponse(
-            result=f"Handoff requested to {target_tier}. Reason: {reason}",
+            result=f"Delegation requested to {target}. Task: {task}",
             directives=directives,
         )
 
-    def _validate_handoff(self, target_tier: str) -> str | None:
-        """Check tier validity and todo requirements. Returns error JSON or None."""
-        if self._tier_names and target_tier not in self._tier_names:
+    def _validate_delegate(self, target: str) -> str | None:
+        """Check tier validity. Returns error JSON or None."""
+        if self._tier_names and target not in self._tier_names:
             return json.dumps(
-                {"error": f"Unknown tier: '{target_tier}'. Available tiers: {self._tier_names}"}
+                {"error": f"Unknown tier: '{target}'. Available tiers: {self._tier_names}"}
             )
 
         execution_todos = [t for t in self._todo_list.items if t.target_tier is not None]
         if not execution_todos and not self._todo_list.is_empty:
             logger.warning(
-                "[HANDOFF] %d todo(s) exist but none have target_tier set. "
-                "Proceeding with handoff — todos are self-directed.",
+                "[DELEGATE] %d todo(s) exist but none have target_tier set. "
+                "Proceeding with delegation — todos are self-directed.",
                 len(self._todo_list.items),
             )
         return None
 
-    def _build_directives(self, target_tier: str, reason: str) -> list:
-        """Build handoff directives including optional warning."""
+    def _build_directives(self, target: str, task: str, max_turns: int | None) -> list:
+        """Build delegation directives including optional warning."""
         directives = []
 
         incomplete_self = [
@@ -163,7 +164,7 @@ class HandoffTool(BaseTool):
                 InjectContext(
                     content=(
                         f"[SYSTEM] Warning: {len(incomplete_self)} self-directed "
-                        f"todo(s) not yet completed. Proceeding with handoff."
+                        f"todo(s) not yet completed. Proceeding with delegation."
                     ),
                 )
             )
@@ -171,7 +172,7 @@ class HandoffTool(BaseTool):
         directives.extend(
             [
                 ClearSelfTodos(),
-                TierChange(tier=target_tier, reason=reason),
+                Delegate(target=target, task=task, max_turns=max_turns),
                 StopProcessing(),
             ]
         )
@@ -196,18 +197,18 @@ class PruneContextTool(BaseTool):
 class EntropicServer(BaseMCPServer):
     """Entropic internal tools MCP server.
 
-    Owns the TodoList instance and provides handoff, prune_context,
+    Owns the TodoList instance and provides delegate, prune_context,
     and todo_write tools. Returns ``ServerResponse`` with native typed
-    directives for engine-level side effects (tier changes, context pruning, etc.).
+    directives for engine-level side effects (delegation, context pruning, etc.).
     """
 
     def __init__(self, tier_names: list[str] | None = None) -> None:
         """Initialize entropic server with internal todo list.
 
         Args:
-            tier_names: Custom tier names for the handoff tool schema.
-                When ``None``, uses the default tiers from ``handoff.json``.
-                Single-tier lists skip handoff registration (handoff to
+            tier_names: Custom tier names for the delegate tool schema.
+                When ``None``, uses the default tiers from ``delegate.json``.
+                Single-tier lists skip delegate registration (delegating to
                 yourself is meaningless). Consumer apps pass their own
                 (e.g. ``["suggest", "validate", "execute"]``).
         """
@@ -216,13 +217,13 @@ class EntropicServer(BaseMCPServer):
         self._tier_names = tier_names
         self.register_tool(TodoWriteTool(self._todo_list, tier_names))
         if not tier_names or len(tier_names) > 1:
-            self.register_tool(HandoffTool(self._todo_list, tier_names))
+            self.register_tool(DelegateTool(self._todo_list, tier_names))
         self.register_tool(PruneContextTool())
 
     @staticmethod
     def skip_duplicate_check(tool_name: str) -> bool:
-        """Handoff must always execute — validation depends on runtime state."""
-        return tool_name == "handoff"
+        """Delegate must always execute — validation depends on runtime state."""
+        return tool_name == "delegate"
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute an entropic tool.

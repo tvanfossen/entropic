@@ -161,8 +161,8 @@ class TestEntropyConfig:
 
     def test_allowed_tools_valid_format(self) -> None:
         """Test allowed_tools accepts fully-qualified names."""
-        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.handoff"])
-        assert config.allowed_tools == ["server.tool", "entropic.handoff"]
+        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.delegate"])
+        assert config.allowed_tools == ["server.tool", "entropic.delegate"]
 
     def test_allowed_tools_none_default(self) -> None:
         """Test allowed_tools defaults to None (all tools visible)."""

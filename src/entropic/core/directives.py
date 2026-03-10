@@ -46,10 +46,24 @@ class StopProcessing(Directive):
 
 @dataclass
 class TierChange(Directive):
-    """Request a tier handoff."""
+    """Request a tier change (internal auto_chain use)."""
 
     tier: str
     reason: str = ""
+
+
+@dataclass
+class Delegate(Directive):
+    """Delegate a task to a child inference loop.
+
+    The engine spawns a fresh context for the target tier,
+    runs it to completion, and injects the result back into
+    the parent context.
+    """
+
+    target: str
+    task: str
+    max_turns: int | None = None
 
 
 @dataclass
@@ -107,6 +121,7 @@ class NotifyPresenter(Directive):
 
 STOP_PROCESSING = "stop_processing"
 TIER_CHANGE = "tier_change"
+DELEGATE = "delegate"
 CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
@@ -121,6 +136,7 @@ NOTIFY_PRESENTER = "notify_presenter"
 _DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
     "stop_processing": StopProcessing,
     "tier_change": TierChange,
+    "delegate": Delegate,
     "clear_self_todos": ClearSelfTodos,
     "inject_context": InjectContext,
     "prune_messages": PruneMessages,

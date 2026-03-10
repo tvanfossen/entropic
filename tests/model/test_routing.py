@@ -52,7 +52,7 @@ _IDENTITY_NAMES = [name for name, _, _ in _ROUTABLE]
 
 # Routing tests require at least 2 routable identities for meaningful classification.
 # With P1-035 (role-based identities), only 'lead' is routable — routing is disabled
-# by default and lead delegates via handoff tool calls. These tests remain valid for
+# by default and lead delegates via delegate tool calls. These tests remain valid for
 # future multi-tier routing configurations.
 _SKIP_ROUTING = len(_IDENTITY_NAMES) < 2
 

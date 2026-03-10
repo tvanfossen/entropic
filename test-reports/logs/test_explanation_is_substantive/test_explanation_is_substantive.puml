@@ -23,48 +23,46 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller instances of the same problem.
+  problem by breaking it down into smaller, similar sub-problems.
   
   ## Key Concepts
   
-  **How it works:**
-  - A recursive function has two parts:
-    - **Base case**: The condition that stops the recursion (prevents infinite 
-  loops)
-    - **Recursive case**: Where the function calls itself with modified parameters
+  **Basic Structure:** Every recursive function needs two parts:
+  1. **Base case**: A condition that stops the recursion (prevents infinite loops)
+  2. **Recursive case**: The function calling itself with modified parameters
   
-  **Simple example in Python:**
+  **Simple Example (Fibonacci):**
   ```python
-  def factorial(n):
-      if n == 0 or n == 1:  # Base case
-          return 1
-      else:                   # Recursive case
-          return n * factorial(n - 1)
+  def fibonacci(n):
+      if n &lt;= 1:          # Base case
+          return n
+      return fibonacci(n-1) + fibonacci(n-2)  # Recursive case
   ```
   
   ## When to Use Recursion
   
-  **Good for:**
-  - Problems with natural recursive structure (tree traversal, sorting algorithms 
-  like quicksort/mergesort)
-  - Mathematical sequences (Fibonacci, factorials)
-  - Parsing nested data structures
+  ✅ **Good for:**
+  - Problems with natural recursive structure (trees, graphs)
+  - Divide-and-conquer algorithms (sorting, searching)
+  - Mathematical sequences and combinatorics
   
-  **Not ideal for:**
-  - Simple iterative problems where loops work better
-  - Deep recursion that might cause stack overflow errors
-  - Performance-critical code (recursion can be slower than iteration)
+  ❌ **Avoid when:**
+  - Simple iteration works better (performance matters)
+   - Risk of stack overflow on deep recursion
+  - The problem doesn't naturally decompose recursively
   
   ## Tradeoffs
   
   | Pros | Cons |
   |------|------|
-  | Elegant, clean solutions | Can be harder to understand initially |
-  | Natural for recursive problems | Risk of infinite loops if base case missing |
-  | Often shorter code | Stack overflow risk with deep recursion |
+  | Clean, elegant code for certain problems | Can be slower than iterative 
+  solutions |
+  | Natural mapping to mathematical definitions | Stack space limitations (stack 
+  overflow) |
+  | Often more readable for complex structures | Harder to debug sometimes |
   
-  The key is knowing when recursion adds value versus when a simple loop would 
-  work better.
+  **Bottom line:** Use recursion when it makes the solution clearer and the 
+  problem size is manageable. Otherwise, iteration is often preferable.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -24,54 +24,65 @@ note right of Mdl
   **Model Output:**
   Recursion in programming is when a function calls itself to solve a problem by 
   breaking it down into smaller, similar sub-problems. It's like solving a puzzle 
-  by repeatedly applying the same solution pattern until you reach a simple case 
-  that doesn't need further breakdown.
+  by repeatedly applying the same solution pattern until you reach a simple enough
+  case that can be solved directly.
   
   ## Key Concepts
   
-  **The two essential parts:**
-  1. **Base case** - The stopping condition (e.g., "if n equals 0, return 1")
-  2. **Recursive case** - Where the function calls itself with modified input
+  **Base Case**: The condition where recursion stops. Without this, the function 
+  would call itself forever (infinite recursion).
   
-  ## Simple Example: Factorial
+  **Recursive Case**: Where the function calls itself with modified parameters, 
+  moving toward the base case.
+  
+  ## Simple Example (Fibonacci)
+  
+  ```python
+  def fibonacci(n):
+      # Base case: first two numbers are 0 and 1
+      if n &lt;= 1:
+          return n
+      
+      # Recursive case: sum of previous two numbers
+      return fibonacci(n-1) + fibonacci(n-2)
+  ```
+  
+  ## Another Example (Factorial)
   
   ```python
   def factorial(n):
-      # Base case
-      if n == 0 or n == 1:
+      # Base case: 0! = 1, 1! = 1
+      if n &lt;= 1:
           return 1
       
-      # Recursive case
-      return n * factorial(n - 1)
+      # Recursive case: n * (n-1)!
+      return n * factorial(n-1)
   ```
-  
-  **How it works:** `factorial(4)` = 4 × factorial(3) = 4 × (3 × factorial(2)) = 
-  ... = 4 × 3 × 2 × 1 = 24
   
   ## When to Use Recursion
   
-  ✅ **Good for:**
-  - Problems with natural recursive structure (trees, graphs, divide-and-conquer 
-  algorithms)
-  - Clean, readable solutions where iteration would be complex
-  - Mathematical definitions that are inherently recursive (Fibonacci, factorials)
+  **Good for:**
+  - Tree traversals (file systems, DOM trees)
+  - Divide-and-conquer algorithms (merge sort, quicksort)
+  - Problems with natural recursive structure (factorial, Fibonacci, graph 
+  traversal)
   
-  ⚠️ **Be careful with:**
-  - Stack overflow if recursion depth is too deep
-  - Performance overhead compared to iterative approaches
-  - Problems better solved with loops or dynamic programming
+  **Consider alternatives when:**
+  - Performance matters (recursion has overhead)
+  - Iterative solutions are clearer
+  - Deep recursion risks stack overflow
   
-  ## Common Pitfalls
+  ## Tradeoffs
   
-  - Forgetting the base case → infinite loop / stack overflow
-  - Not making progress toward the base case
-  - Redundant calculations (e.g., naive Fibonacci)
+  | Pros | Cons |
+  |------|------|
+  | Elegant for certain problems | Can be slower than iteration |
+  | Clear mapping to mathematical definitions | Risk of stack overflow on deep 
+  recursions |
+  | Often simpler code | Harder to debug sometimes |
   
-  ---
-  
-  **Note:** I'm explaining this conceptually—I can't actually execute code, but I 
-  can help you understand patterns and write pseudocode. Want to explore a 
-  specific recursive problem or algorithm?
+  The key is recognizing when a problem naturally breaks into smaller versions of 
+  itself—that's where recursion shines!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

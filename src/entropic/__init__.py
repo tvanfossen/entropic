@@ -28,7 +28,7 @@ from entropic.core.base import (
     ToolResult,
 )
 from entropic.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
-from entropic.core.logging import setup_logging, setup_model_logger
+from entropic.core.logging import setup_display_logger, setup_logging, setup_model_logger
 from entropic.core.tool_validation import ToolValidationError
 from entropic.inference.adapters import ChatAdapter, get_adapter, register_adapter
 from entropic.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
@@ -70,6 +70,7 @@ __all__ = [
     "EngineCallbacks",
     "LoopConfig",
     # Logging
+    "setup_display_logger",
     "setup_logging",
     "setup_model_logger",
     # Config

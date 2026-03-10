@@ -2,13 +2,14 @@
 TUI Presenter implementation.
 
 Wraps the existing EntropiApp (Textual TUI) to implement the Presenter interface.
-Pure delegation - no behavior changes from existing TUI.
+Mirrors display events to session_display.log for debugging.
 """
 
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from entropic.config.schema import EntropyConfig
+from entropic.core.logging import get_display_logger
 from entropic.ui.presenter import Presenter, StatusInfo
 from entropic.ui.tui import EntropiApp
 
@@ -24,6 +25,7 @@ class TUIPresenter(Presenter):
 
     This is a thin wrapper that implements the Presenter ABC by
     delegating all calls to the underlying Textual TUI application.
+    Display events are mirrored to session_display.log.
     """
 
     def __init__(
@@ -44,6 +46,8 @@ class TUIPresenter(Presenter):
             version=version,
             models=models,
         )
+        self._display = get_display_logger()
+        self._current_tier: str | None = None
 
     # === Lifecycle ===
 
@@ -89,20 +93,25 @@ class TUIPresenter(Presenter):
 
     def set_tier(self, tier: str) -> None:
         """Set the active model tier for display."""
+        self._current_tier = tier
+        self._display.info("[TIER] %s", tier.upper())
         self._app.set_tier(tier)
 
     def show_routing_info(self, info_text: str) -> None:
         """Display routing decision info."""
+        self._display.info("[ROUTING] %s", info_text)
         self._app.show_routing_info(info_text)
 
     # === Generation Lifecycle ===
 
     def start_generation(self) -> None:
         """Mark generation as active."""
+        self._display.info("[GEN START]")
         self._app.start_generation()
 
     def end_generation(self) -> None:
         """Mark generation as complete."""
+        self._display.info("[GEN END]")
         self._app.end_generation()
 
     # === Streaming ===
@@ -115,28 +124,35 @@ class TUIPresenter(Presenter):
 
     def add_message(self, role: str, content: str) -> None:
         """Add a message to the display."""
+        tier_tag = f" ({self._current_tier})" if self._current_tier else ""
+        self._display.info("[%s%s] %s", role.upper(), tier_tag, content)
         self._app.add_message(role, content)
 
     def print_info(self, message: str) -> None:
         """Print informational message."""
+        self._display.info("[INFO] %s", message)
         self._app.print_info(message)
 
     def print_warning(self, message: str) -> None:
         """Print warning message."""
+        self._display.info("[WARN] %s", message)
         self._app.print_warning(message)
 
     def print_error(self, message: str) -> None:
         """Print error message."""
+        self._display.info("[ERROR] %s", message)
         self._app.print_error(message)
 
     # === Tool Feedback ===
 
     def print_tool_start(self, name: str, arguments: dict[str, Any]) -> None:
         """Display tool execution start."""
+        self._display.info("[TOOL START] %s(%s)", name, arguments)
         self._app.print_tool_start(name, arguments)
 
     def print_tool_complete(self, name: str, result: str, duration_ms: float) -> None:
         """Display tool execution complete."""
+        self._display.info("[TOOL DONE] %s (%.0fms) → %s", name, duration_ms, result)
         self._app.print_tool_complete(name, result, duration_ms)
 
     async def prompt_tool_approval(
@@ -153,6 +169,7 @@ class TUIPresenter(Presenter):
 
     def update_state(self, state: "AgentState") -> None:
         """Update displayed agent state."""
+        self._display.info("[STATE] %s", state)
         self._app.update_state(state)
 
     def print_context_usage(self, used: int, maximum: int) -> None:
@@ -161,10 +178,14 @@ class TUIPresenter(Presenter):
 
     def print_compaction_notice(self, result: "CompactionResult") -> None:
         """Display context compaction notice."""
+        self._display.info(
+            "[COMPACTION] %d → %d tokens", result.old_token_count, result.new_token_count
+        )
         self._app.print_compaction_notice(result)
 
     def print_todo_panel(self, todo_list: "TodoList") -> None:
         """Display todo list panel."""
+        self._display.info("[TODOS] %d items", len(todo_list.items))
         self._app.print_todo_panel(todo_list)
 
     def print_status(self, status: StatusInfo) -> None:

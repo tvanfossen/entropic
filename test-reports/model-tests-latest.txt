@@ -1,36 +1,36 @@
 === Model Test Report ===
-Date: 2026-03-10 11:32:52
+Date: 2026-03-10 11:47:11
 
-Results: 15 passed, 1 failed (295.4s)
+Results: 15 passed, 1 failed (267.8s)
 
-  [PASS] test_grammar_constrains_output (70.1s)
-  [PASS] test_grammar_auto_chain_fires (69.6s)
-  [PASS] test_multi_tier_pipeline_completes (60.9s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (10.4s)
-  [PASS] test_code_request_produces_code [lead] (16.0s)
+  [PASS] test_grammar_constrains_output (67.9s)
+  [PASS] test_grammar_auto_chain_fires (60.7s)
+  [PASS] test_multi_tier_pipeline_completes (45.4s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (11.7s)
+  [PASS] test_code_request_produces_code [lead] (11.3s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [lead] (11.5s)
+  [PASS] test_code_response_has_python_syntax [lead] (11.2s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [lead] (11.0s)
+  [PASS] test_response_ends_cleanly [lead] (11.6s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [lead] (6.8s)
+  [PASS] test_no_special_tokens_in_response [lead] (4.3s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [lead] (5.8s)
+  [PASS] test_generation_starts_and_ends [lead] (6.4s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [lead] (8.4s)
+  [PASS] test_multiple_messages_accumulate_history [lead] (5.2s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [lead] (14.3s)
+  [PASS] test_explanation_is_substantive [lead] (18.8s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [lead] (6.2s)
+  [PASS] test_hello_produces_response [lead] (6.1s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [lead] (4.3s)
+  [PASS] test_thanks_produces_acknowledgment [lead] (7.0s)
          Prompt: Thanks!
   [FAIL] test_route_to_non_default_model_tier (0.0s)
 
 Per-test artifacts: test-reports/logs/<test_name>/
 
-================== 15 passed, 13 skipped in 341.93s (0:05:41) ==================
+================== 15 passed, 13 skipped in 313.94s (0:05:13) ==================
 
 Result: PASSED

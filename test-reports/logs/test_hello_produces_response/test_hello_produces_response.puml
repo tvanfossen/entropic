@@ -24,9 +24,9 @@ note right of Mdl
   **Model Output:**
   Hello! 👋 
   
-  I'm here as your Technical Team Lead. How can I help you today? Whether it's 
-  architecture planning, code implementation, testing, or just answering some 
-  quick questions - I'm ready to assist.
+  I'm here as your technical team lead. How can I help you today? Whether it's 
+  architecture planning, code implementation, testing, or any other development 
+  task — I'm ready to assist.
 end note
 note over T #palegreen
   **PASSED** (< 38s)

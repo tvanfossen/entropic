@@ -22,8 +22,7 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  I'll write a function that returns the sum of a list. Here's a clean 
-  implementation:
+  Here's a Python function that calculates the sum of a list:
   
   ```python
   def sum_list(numbers):
@@ -36,36 +35,30 @@ note right of Mdl
       Returns:
           int or float: The sum of all elements
           
-      Examples:
-          &gt;&gt;&gt; sum_list([1, 2, 3])
-          6
-          &gt;&gt;&gt; sum_list([])
-          0
-          &gt;&gt;&gt; sum_list([-1, 1, -2, 2])
-          0
+      Raises:
+          TypeError: If any element is not a number
+          ValueError: If the input is not a list
       """
+      if not isinstance(numbers, list):
+          raise ValueError("Input must be a list")
+      
       return sum(numbers)
   ```
   
-  **Alternative implementation (manual loop):**
-  
+  **Usage example:**
   ```python
-  def sum_list_manual(numbers):
-      """Calculate the sum of all numbers in a list using manual iteration."""
-      total = 0
-      for number in numbers:
-          total += number
-      return total
+  result = sum_list([1, 2, 3, 4, 5])
+  print(result)  # Output: 15
   ```
   
-  **Key points:**
-  - Uses Python's built-in `sum()` function (most efficient)
-  - Handles empty lists correctly (returns 0)
-  - Works with integers, floats, and mixed numeric types
-  - Time complexity: O(n), Space complexity: O(1)
+  **Notes:**
+  - This uses Python's built-in `sum()` function for efficiency
+  - Handles empty lists (returns 0)
+  - Works with integers and floats
+  - Raises clear errors if the input is invalid
   
-  Would you like me to add type hints, error handling for non-numeric elements, or
-  adapt this for a specific programming language?
+  Would you like me to add more features, such as handling nested lists or 
+  supporting different data types?
 end note
 note over T #palegreen
   **PASSED** (< 262s)

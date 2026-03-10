@@ -20,6 +20,7 @@ from entropic.core.directives import (
     Delegate,
     InjectContext,
     NotifyPresenter,
+    Pipeline,
     PruneMessages,
     StopProcessing,
 )
@@ -179,6 +180,52 @@ class DelegateTool(BaseTool):
         return directives
 
 
+class PipelineTool(BaseTool):
+    """Execute a multi-stage delegation pipeline."""
+
+    def __init__(self, tier_names: list[str] | None) -> None:
+        definition = self._build_definition(tier_names) if tier_names else None
+        if definition:
+            super().__init__(definition=definition)
+        else:
+            super().__init__("pipeline", "entropic")
+        self._tier_names = tier_names
+
+    @staticmethod
+    def _build_definition(tier_names: list[str]) -> Tool:
+        """Build pipeline tool definition with patched tier enum."""
+        tool = load_tool_definition("pipeline", "entropic")
+        schema = dict(tool.inputSchema)
+        props = dict(schema["properties"])
+        stages_prop = dict(props["stages"])
+        items = dict(stages_prop["items"])
+        items["enum"] = list(tier_names)
+        stages_prop["items"] = items
+        props["stages"] = stages_prop
+        schema["properties"] = props
+        return Tool(name=tool.name, description=tool.description, inputSchema=schema)
+
+    async def execute(self, arguments: dict[str, Any]) -> str | ServerResponse:
+        """Validate and execute pipeline."""
+        stages = arguments.get("stages", [])
+        task = arguments.get("task", "")
+
+        if len(stages) < 2:
+            return json.dumps({"error": "Pipeline requires at least 2 stages."})
+
+        if self._tier_names:
+            invalid = [s for s in stages if s not in self._tier_names]
+            if invalid:
+                return json.dumps(
+                    {"error": f"Unknown tier(s): {invalid}. Available: {self._tier_names}"}
+                )
+
+        return ServerResponse(
+            result=f"Pipeline requested: {' → '.join(stages)}. Task: {task}",
+            directives=[Pipeline(stages=stages, task=task), StopProcessing()],
+        )
+
+
 class PruneContextTool(BaseTool):
     """Request context pruning to reduce message history."""
 
@@ -218,12 +265,13 @@ class EntropicServer(BaseMCPServer):
         self.register_tool(TodoWriteTool(self._todo_list, tier_names))
         if not tier_names or len(tier_names) > 1:
             self.register_tool(DelegateTool(self._todo_list, tier_names))
+            self.register_tool(PipelineTool(tier_names))
         self.register_tool(PruneContextTool())
 
     @staticmethod
     def skip_duplicate_check(tool_name: str) -> bool:
         """Delegate must always execute — validation depends on runtime state."""
-        return tool_name == "delegate"
+        return tool_name in ("delegate", "pipeline")
 
     async def execute_tool(self, name: str, arguments: dict[str, Any]) -> str | ServerResponse:
         """Execute an entropic tool.

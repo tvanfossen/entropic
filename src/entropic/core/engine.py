@@ -42,6 +42,7 @@ if TYPE_CHECKING:
         Delegate,
         InjectContext,
         NotifyPresenter,
+        Pipeline,
         PruneMessages,
         StopProcessing,
         TierChange,
@@ -144,6 +145,7 @@ class AgentEngine:
             Delegate,
             InjectContext,
             NotifyPresenter,
+            Pipeline,
             PruneMessages,
             StopProcessing,
             TierChange,
@@ -152,6 +154,7 @@ class AgentEngine:
         self._directive_processor.register(StopProcessing, self._directive_stop_processing)
         self._directive_processor.register(TierChange, self._directive_tier_change)
         self._directive_processor.register(Delegate, self._directive_delegate)
+        self._directive_processor.register(Pipeline, self._directive_pipeline)
         self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
@@ -192,6 +195,24 @@ class AgentEngine:
             "target": directive.target,
             "task": directive.task,
             "max_turns": directive.max_turns,
+        }
+        result.stop_processing = True
+
+    def _directive_pipeline(
+        self,
+        ctx: LoopContext,
+        directive: Pipeline,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle pipeline directive — store for async execution."""
+        logger.info(
+            "[DIRECTIVE] pipeline: stages=%s task=%s",
+            directive.stages,
+            directive.task[:80],
+        )
+        ctx.metadata["pending_pipeline"] = {
+            "stages": directive.stages,
+            "task": directive.task,
         }
         result.stop_processing = True
 
@@ -517,9 +538,13 @@ class AgentEngine:
                 async for msg in self._process_tool_calls(ctx, tool_calls):
                     yield msg
 
-                # Execute pending delegation if directive was processed
+                # Execute pending delegation/pipeline if directive was processed
                 if "pending_delegation" in ctx.metadata:
                     async for msg in self._execute_pending_delegation(ctx):
+                        yield msg
+                    return
+                if "pending_pipeline" in ctx.metadata:
+                    async for msg in self._execute_pending_pipeline(ctx):
                         yield msg
                     return
 
@@ -602,6 +627,40 @@ class AgentEngine:
             )
 
         # Resume parent loop — parent processes the result
+        self._set_state(ctx, AgentState.EXECUTING)
+
+    async def _execute_pending_pipeline(self, ctx: LoopContext) -> AsyncIterator[Message]:
+        """Execute a pending pipeline request stored by _directive_pipeline."""
+        pipeline = ctx.metadata.pop("pending_pipeline")
+        stages = pipeline["stages"]
+        task = pipeline["task"]
+
+        self._set_state(ctx, AgentState.DELEGATING)
+
+        from entropic.core.delegation import DelegationManager
+
+        manager = DelegationManager(self, storage=self._storage)
+        result = await manager.execute_pipeline(
+            ctx,
+            stages,
+            task,
+            parent_conversation_id=ctx.metadata.get("conversation_id"),
+        )
+
+        # Inject final result into parent context
+        status = "COMPLETE" if result.success else "FAILED"
+        stage_str = " → ".join(stages)
+        result_msg = Message(
+            role="user",
+            content=(
+                f"[PIPELINE {status}: {stage_str}] {result.summary}\n"
+                f"(turns used: {result.turns_used})"
+            ),
+            metadata={"pipeline_result": True, "stages": stages},
+        )
+        ctx.messages.append(result_msg)
+        yield result_msg
+
         self._set_state(ctx, AgentState.EXECUTING)
 
     def _should_auto_chain(self, ctx: LoopContext, finish_reason: str, content: str = "") -> bool:

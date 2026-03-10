@@ -93,6 +93,43 @@ class DelegationManager:
 
         return result
 
+    async def execute_pipeline(
+        self,
+        parent_ctx: LoopContext,
+        stages: list[str],
+        task: str,
+        parent_conversation_id: str | None = None,
+    ) -> DelegationResult:
+        """Run a multi-stage delegation pipeline sequentially.
+
+        Each stage receives the original task plus the previous stage's output.
+        Returns the final stage's DelegationResult.
+        """
+        stage_input = task
+        last_result: DelegationResult | None = None
+
+        for stage in stages:
+            result = await self.execute_delegation(
+                parent_ctx,
+                stage,
+                stage_input,
+                parent_conversation_id=parent_conversation_id,
+            )
+
+            if not result.success:
+                logger.warning("[PIPELINE] Stage '%s' failed: %s", stage, result.summary[:100])
+                return result
+
+            last_result = result
+            # Feed this stage's output into the next stage
+            stage_input = (
+                f"Original task: {task}\n\n" f"Previous stage ({stage}) output:\n{result.summary}"
+            )
+
+        # Should always have at least one result (stages has minItems=2)
+        assert last_result is not None
+        return last_result
+
     async def _run_child_loop(
         self,
         child_ctx: LoopContext,

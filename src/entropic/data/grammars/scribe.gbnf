@@ -1,0 +1,13 @@
+root          ::= "{" ws ts-pair "," ws dec-pair "," ws del-pair "," ws fc-pair "," ws ct-pair "," ws rem-pair ws "}"
+
+ts-pair       ::= "\"timestamp\":" ws string
+dec-pair      ::= "\"decisions\":" ws "[" ws (string ("," ws string)*)? ws "]"
+del-pair      ::= "\"delegations\":" ws "[" ws (delegation ("," ws delegation)*)? ws "]"
+fc-pair       ::= "\"files_changed\":" ws "[" ws (string ("," ws string)*)? ws "]"
+ct-pair       ::= "\"current_task\":" ws string
+rem-pair      ::= "\"remaining\":" ws "[" ws (string ("," ws string)*)? ws "]"
+
+delegation    ::= "{" ws "\"from\":" ws string "," ws "\"to\":" ws string "," ws "\"task\":" ws string "," ws "\"result\":" ws string ws "}"
+
+string        ::= "\"" ([^"\\] | "\\" .)* "\""
+ws            ::= [ \t\n]*

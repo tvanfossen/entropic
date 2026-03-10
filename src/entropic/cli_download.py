@@ -25,7 +25,7 @@ MODELS: dict[str, dict[str, Any]] = {
         "url": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-Q2_K.gguf",
         "size_gb": 13.0,
         "sha256": None,
-        "description": "Primary workhorse — conversational, code, planning tiers",
+        "description": "Primary workhorse — all roles (single model architecture)",
     },
     "mid": {
         "name": "Qwen3.5-9B-Q8_0",
@@ -39,7 +39,7 @@ MODELS: dict[str, dict[str, Any]] = {
         "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf",
         "size_gb": 4.2,
         "sha256": None,
-        "description": "Lightweight — quick responses and utilities",
+        "description": "Lightweight — alternative for smaller VRAM budgets",
     },
     "router": {
         "name": "Qwen3.5-0.8B-Q8_0",

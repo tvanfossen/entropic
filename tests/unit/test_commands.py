@@ -89,10 +89,10 @@ class TestCommandRegistry:
         await registry.discover()
         config = EntropyConfig(
             models={
-                "tiers": {"conversational": {"path": "/m.gguf"}},
-                "default": "conversational",
+                "tiers": {"lead": {"path": "/m.gguf"}},
+                "default": "lead",
             },
-            routing={"enabled": False, "fallback_tier": "conversational"},
+            routing={"enabled": False, "fallback_tier": "lead"},
         )
         context = CommandContext(
             app=None,
@@ -101,10 +101,10 @@ class TestCommandRegistry:
             config=config,
         )
 
-        result = await registry.execute("/model conversational", context)
+        result = await registry.execute("/model lead", context)
         assert result.success
         assert result.data["action"] == "switch_model"
-        assert result.data["model"] == "conversational"
+        assert result.data["model"] == "lead"
 
     @pytest.mark.asyncio
     async def test_model_command_invalid(self, registry: CommandRegistry) -> None:
@@ -112,10 +112,10 @@ class TestCommandRegistry:
         await registry.discover()
         config = EntropyConfig(
             models={
-                "tiers": {"conversational": {"path": "/m.gguf"}},
-                "default": "conversational",
+                "tiers": {"lead": {"path": "/m.gguf"}},
+                "default": "lead",
             },
-            routing={"enabled": False, "fallback_tier": "conversational"},
+            routing={"enabled": False, "fallback_tier": "lead"},
         )
         context = CommandContext(
             app=None,

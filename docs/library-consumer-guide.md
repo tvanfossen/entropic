@@ -506,7 +506,7 @@ COLD → WARM → ACTIVE
 ```yaml
 models:
   tiers:
-    conversational:
+    lead:
       path: ~/models/Qwen3.5-35B-A3B-Q2_K.gguf
       keep_warm: true    # Stay in WARM state when swapped out
       use_mlock: true    # Lock pages (default). Prevents OS swap.
@@ -626,7 +626,7 @@ All external MCP server tools are prefixed with the server name: `{server}.{tool
 
 ```yaml
 tiers:
-  code_writer:
+  eng:
     allowed_tools:
       - filesystem.write_file
       - pycommander.device_info.query   # Runtime server tool, explicitly permitted

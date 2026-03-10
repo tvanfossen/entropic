@@ -118,7 +118,7 @@ class Presenter(ABC):
         Optional - implementations may no-op if tier display not supported.
 
         Args:
-            tier: Tier name (e.g., 'conversational', 'planner', 'code_writer')
+            tier: Tier name (e.g., 'lead', 'eng', 'arch')
         """
         _ = tier
 

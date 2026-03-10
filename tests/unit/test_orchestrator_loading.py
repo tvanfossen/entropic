@@ -17,19 +17,11 @@ _PROMPTS_DIR = Path(entropic.__file__).parent / "data" / "prompts"
 
 
 def _available_identity_names() -> list[str]:
-    """Return names of all bundled routable identities."""
-    import yaml
-
+    """Return names of all bundled identities (routable or not)."""
     result = []
     for path in sorted(_PROMPTS_DIR.glob("identity_*.md")):
         name = path.stem.removeprefix("identity_")
-        text = path.read_text()
-        if not text.startswith("---"):
-            continue
-        end = text.index("---", 3)
-        fm = yaml.safe_load(text[3:end])
-        if fm.get("routable", True):
-            result.append(name)
+        result.append(name)
     return result
 
 

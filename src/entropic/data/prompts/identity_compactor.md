@@ -17,6 +17,13 @@ enable_thinking: false
 model_preference: any
 interstitial: false
 routable: false
+role_type: back_office
+phases:
+  default:
+    temperature: 0.3
+    max_output_tokens: 512
+    enable_thinking: false
+    repeat_penalty: 1.1
 benchmark:
   prompts:
     - prompt: "Summarize this conversation: User asked to add a login page. Assistant read auth.py and views.py. Assistant found the login route was missing. Assistant wrote a new login view. User confirmed it works. Assistant then fixed a typo in the template. User said thanks."

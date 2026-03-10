@@ -100,7 +100,7 @@ class ModelsConfig(BaseModel):
 
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
     router: ModelConfig | None = None
-    default: str = "conversational"
+    default: str = "lead"
 
     @model_validator(mode="after")
     def validate_default_tier(self) -> "ModelsConfig":
@@ -117,8 +117,8 @@ class RoutingConfig(BaseModel):
     prompt is auto-generated from tier definitions or explicitly configured.
     """
 
-    enabled: bool = True
-    fallback_tier: str = "conversational"
+    enabled: bool = False
+    fallback_tier: str = "lead"
     classification_prompt: str | None = None  # None = auto-generate from tier focus
     tier_map: dict[str, str] = Field(default_factory=dict)  # Empty = auto-derive
     handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all

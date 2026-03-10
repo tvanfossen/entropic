@@ -52,7 +52,7 @@ class ChatAdapter(ABC):
         Initialize adapter.
 
         Args:
-            tier: Model tier (conversational, planner, code_writer, quick)
+            tier: Model tier (lead, eng, arch, qa, etc.)
             prompt_manager: Central prompt loader (constitution + identity + app_context)
         """
         self._tier = tier

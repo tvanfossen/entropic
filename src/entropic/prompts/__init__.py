@@ -51,6 +51,20 @@ class BenchmarkSpec(BaseModel):
     grammar_test: dict[str, Any] | None = None
 
 
+class PhaseConfig(BaseModel):
+    """Inference parameters for a single identity phase.
+
+    Each role has one or more named phases. V1 ships with one phase
+    ("default") per role. The engine resolves inference params from
+    the active phase at generation time.
+    """
+
+    temperature: float = 0.7
+    max_output_tokens: int = 4096
+    enable_thinking: bool = False
+    repeat_penalty: float = 1.1
+
+
 class IdentityFrontmatter(PromptFrontmatter):
     """Frontmatter for tier identity prompt files.
 
@@ -72,6 +86,8 @@ class IdentityFrontmatter(PromptFrontmatter):
     model_preference: str = "primary"
     interstitial: bool = False
     routable: bool = True
+    role_type: Literal["front_office", "back_office", "utility"] = "front_office"
+    phases: dict[str, PhaseConfig] | None = None
     benchmark: BenchmarkSpec | None = None
 
 

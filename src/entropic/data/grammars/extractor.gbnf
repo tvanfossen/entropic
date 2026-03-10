@@ -1,5 +1,0 @@
-root    ::= "{" ws "\"entities\":" ws entitiesarr ws "}"
-entitiesarr ::= "[" ws "]" | "[" ws entity (ws "," ws entity)* ws "]"
-entity  ::= "{" ws "\"type\":" ws string ws "," ws "\"value\":" ws string ws "," ws "\"source\":" ws string ws "}"
-string  ::= "\"" ([^"\\] | "\\" .)* "\""
-ws      ::= [ \t\n]*

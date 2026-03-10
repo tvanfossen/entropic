@@ -1,5 +1,0 @@
-root       ::= "{" ws "\"error\":" ws string ws "," ws "\"root_cause\":" ws string ws "," ws "\"evidence\":" ws str-array ws "," ws "\"confidence\":" ws confidence ws "," ws "\"fix\":" ws string ws "}"
-confidence ::= "\"high\"" | "\"medium\"" | "\"low\""
-str-array  ::= "[" ws "]" | "[" ws string (ws "," ws string)* ws "]"
-string     ::= "\"" ([^"\\] | "\\" .)* "\""
-ws         ::= [ \t\n]*

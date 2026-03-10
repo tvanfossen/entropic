@@ -17,36 +17,25 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **QUICK** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  &lt;tool_call&gt;
-  &lt;function=entropic.handoff&gt;
-  &lt;parameter=target_tier&gt;
-  conversational&lt;/parameter&gt;
-  &lt;parameter=reason&gt;
-  Simple greeting requires no technical work, so I'll handle it directly per my 
-  constitutional constraints.&lt;/parameter&gt;
-  &lt;parameter=task_state&gt;
-  not_started&lt;/parameter&gt;
-end note
-== Turn 2 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  Hello.
+  Hello! I'm here as your technical team lead. How can I help you today? Whether 
+  it's planning architecture, implementing features, reviewing code, or testing 
+  systems — I'll coordinate the right expertise to get quality results.
 end note
 note right of Eng
   **Follow-up message:**
   What did I just say?
 end note
-== Turn 3 ==
+== Turn 2 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said, "What did I just say?"
+  You said "Hello". It was your opening greeting to me as your technical team 
+  lead.
 end note
 note over T #palegreen
   **PASSED** (< 112s)

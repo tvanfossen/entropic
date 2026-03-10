@@ -17,27 +17,16 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **QUICK** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  &lt;tool_call&gt;
-  &lt;function=entropic.handoff&gt;
-  &lt;parameter=target_tier&gt;
-  quick&lt;/parameter&gt;
-  &lt;parameter=reason&gt;
-  Simple greeting requires no complex processing, just a direct response within 
-  the quick tier's scope.&lt;/parameter&gt;
-  &lt;parameter=task_state&gt;
-  not_started&lt;/parameter&gt;
-  &lt;/
-end note
-== Turn 2 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  Hello. How can I help?
+  Hello! 👋 I'm here to help you with your technical tasks. Whether you need code 
+  implementation, architecture planning, testing, or just have a question—I'm 
+  ready to assist.
+  
+  What would you like to work on today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

@@ -50,6 +50,12 @@ def _routable_identities() -> list[tuple[str, list[str], list[str]]]:
 _ROUTABLE = _routable_identities()
 _IDENTITY_NAMES = [name for name, _, _ in _ROUTABLE]
 
+# Routing tests require at least 2 routable identities for meaningful classification.
+# With P1-035 (role-based identities), only 'lead' is routable — routing is disabled
+# by default and lead delegates via handoff tool calls. These tests remain valid for
+# future multi-tier routing configurations.
+_SKIP_ROUTING = len(_IDENTITY_NAMES) < 2
+
 
 def _tiers_on_non_default_model() -> list[str]:
     """Return routable tier names that use a different model file than the default."""
@@ -76,6 +82,7 @@ _NON_DEFAULT_MODEL_TIERS = _tiers_on_non_default_model()
 
 
 @pytest.mark.model
+@pytest.mark.skipif(_SKIP_ROUTING, reason="<2 routable identities — routing disabled")
 class TestRoutingClassification:
     """Test that example prompts classify to their source identity.
 
@@ -109,18 +116,19 @@ class TestRoutingClassification:
 # (prompt, acceptable_tiers) — must NOT appear in any identity's examples.
 # Ambiguous prompts list multiple acceptable tiers.
 _NOVEL_PROMPTS = [
-    ("Tell me about Python decorators", {"conversational"}),
-    ("Create a REST API endpoint for user registration", {"code_writer"}),
-    ("Break this project into milestones", {"planner"}),
-    ("Why is my test segfaulting?", {"diagnoser"}),
-    ("Hey", {"quick"}),
-    ("Thanks, that's all", {"quick"}),
-    ("Where is the config parser defined?", {"searcher"}),
-    ("What are the tradeoffs of microservices?", {"conversational", "planner"}),
+    ("Tell me about Python decorators", {"lead", "analyst"}),
+    ("Create a REST API endpoint for user registration", {"eng"}),
+    ("Break this project into milestones", {"arch"}),
+    ("Why is my test segfaulting?", {"qa", "eng"}),
+    ("Hey", {"lead"}),
+    ("Thanks, that's all", {"lead"}),
+    ("Where is the config parser defined?", {"eng", "analyst"}),
+    ("What are the tradeoffs of microservices?", {"arch", "lead"}),
 ]
 
 
 @pytest.mark.model
+@pytest.mark.skipif(_SKIP_ROUTING, reason="<2 routable identities — routing disabled")
 class TestNovelClassification:
     """Test routing with prompts NOT in the few-shot examples.
 
@@ -147,6 +155,7 @@ class TestNovelClassification:
 
 
 @pytest.mark.model
+@pytest.mark.skipif(_SKIP_ROUTING, reason="<2 routable identities — routing disabled")
 class TestClassificationSpeed:
     """Test that classification is fast (using small router model).
 

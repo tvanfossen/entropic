@@ -4,8 +4,8 @@ Two-tier entropic integration with automatic routing.
 
 Demonstrates the core entropic value proposition: a tiny router model
 classifies each prompt and routes it to the right tier automatically.
-Simple prompts route to the conversational tier, complex analysis routes
-to the planner tier. Only one main model is loaded in VRAM at a time.
+Simple prompts route to the lead tier, complex analysis routes
+to the arch tier. Only one main model is loaded in VRAM at a time.
 
 ## Setup
 
@@ -26,8 +26,8 @@ to the planner tier. Only one main model is loaded in VRAM at a time.
 ## Try it
 
 ```
-You: hello                                    → routed to: conversational
-You: design a caching strategy for a REST API → routed to: planner
+You: hello                                    → routed to: lead
+You: design a caching strategy for a REST API → routed to: arch
 ```
 
 ## Next steps

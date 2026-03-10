@@ -3,106 +3,72 @@
 # Hardware params only — inference behavior lives in identity frontmatter.
 
 models:
-  # Primary workhorse tier — conversational, code, planning
-  conversational:
+  # Single model serves all roles — maximize VRAM for KV cache
+  lead:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  planner:
+  arch:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  code_writer:
+  eng:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  code_validator:
+  qa:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  test_writer:
+  ux:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  # 35B tier — benchmark-validated upgrades from 9B
-  searcher:
+  ui:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
 
-  design_validator:
+  analyst:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
     gpu_layers: 40
-
-  tool_runner:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-    adapter: qwen35
-    context_length: 8192
-    gpu_layers: 40
-
-  pruner:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-    adapter: qwen35
-    context_length: 8192
-    gpu_layers: 40
-
-  # Mid-tier — 9B for roles where quality matches 35B
-  diagnoser:
-    path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 16384
-    gpu_layers: -1
-
-  wireframer:
-    path: ~/models/gguf/Qwen3.5-9B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 16384
-    gpu_layers: -1
-
-  # Lightweight tier — 4B for roles where quality matches 35B
-  quick:
-    path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
-    adapter: qwen35
-    context_length: 8192
-    gpu_layers: -1
 
   compactor:
-    path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
-    gpu_layers: -1
+    gpu_layers: 40
 
-  extractor:
-    path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
+  scribe:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
     context_length: 8192
-    gpu_layers: -1
+    gpu_layers: 40
 
-  # Classification router — always loaded, never swapped out
-  router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: router
-    context_length: 2048
-    gpu_layers: -1
+  benchmark_judge:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: 40
 
-  default: conversational
+  default: lead
 
 routing:
-  enabled: true
-  fallback_tier: conversational
+  enabled: false
+  fallback_tier: lead
 
 log_level: INFO
 

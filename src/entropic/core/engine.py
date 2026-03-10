@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 logger = get_logger("core.engine")
 model_logger = get_model_logger()
 
+# Maximum nesting depth for delegation chains.
+# depth 0 = root (lead), depth 1 = child, depth 2 = grandchild (max).
+MAX_DELEGATION_DEPTH = 2
+
 
 class AgentEngine:
     """
@@ -85,6 +89,7 @@ class AgentEngine:
         self.config = config or EntropyConfig()
         self.loop_config = loop_config or LoopConfig()
         self._storage: Any = None  # Optional StorageBackend for delegation persistence
+        self._repo_root: Any = None  # Original repo root for worktree creation
 
         # Use threading.Event for thread-safe cross-loop signaling
         # (Textual runs on a different event loop than the generation worker)
@@ -378,14 +383,25 @@ class AgentEngine:
         return 16384
 
     def _get_repo_dir(self) -> Any:
-        """Get repo directory from filesystem server (for worktree isolation).
+        """Get original repo directory for worktree creation.
+
+        Caches the filesystem server's root_dir on first call so that
+        nested delegations (which swap root_dir to a worktree) still
+        create worktrees from the real repo root — not from inside
+        another worktree.
 
         Returns a Path or None. Typed as Any to avoid import at module level.
         """
+        if self._repo_root is not None:
+            return self._repo_root
+
         from entropic.core.worktree import _get_server_instance
 
         server = _get_server_instance(self, "filesystem")
-        return getattr(server, "root_dir", None) if server else None
+        root = getattr(server, "root_dir", None) if server else None
+        if root is not None:
+            self._repo_root = root
+        return root
 
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.
@@ -599,6 +615,27 @@ class AgentEngine:
         task = delegation["task"]
         max_turns = delegation.get("max_turns")
 
+        # Enforce depth limit — prevent unbounded recursive delegation
+        if ctx.delegation_depth >= MAX_DELEGATION_DEPTH:
+            logger.warning(
+                "[DELEGATION] Rejected: depth %d >= max %d",
+                ctx.delegation_depth,
+                MAX_DELEGATION_DEPTH,
+            )
+            error_msg = Message(
+                role="user",
+                content=(
+                    f"[DELEGATION REJECTED] Cannot delegate at depth {ctx.delegation_depth} "
+                    f"(max {MAX_DELEGATION_DEPTH}). Complete your current task directly "
+                    "instead of delegating further."
+                ),
+                metadata={"delegation_rejected": True},
+            )
+            ctx.messages.append(error_msg)
+            yield error_msg
+            self._set_state(ctx, AgentState.EXECUTING)
+            return
+
         self._set_state(ctx, AgentState.DELEGATING)
 
         # Fire delegation start callback
@@ -644,6 +681,25 @@ class AgentEngine:
         pipeline = ctx.metadata.pop("pending_pipeline")
         stages = pipeline["stages"]
         task = pipeline["task"]
+
+        if ctx.delegation_depth >= MAX_DELEGATION_DEPTH:
+            logger.warning(
+                "[PIPELINE] Rejected: depth %d >= max %d",
+                ctx.delegation_depth,
+                MAX_DELEGATION_DEPTH,
+            )
+            error_msg = Message(
+                role="user",
+                content=(
+                    f"[PIPELINE REJECTED] Cannot run pipeline at depth {ctx.delegation_depth} "
+                    f"(max {MAX_DELEGATION_DEPTH}). Complete your current task directly."
+                ),
+                metadata={"pipeline_rejected": True},
+            )
+            ctx.messages.append(error_msg)
+            yield error_msg
+            self._set_state(ctx, AgentState.EXECUTING)
+            return
 
         self._set_state(ctx, AgentState.DELEGATING)
 

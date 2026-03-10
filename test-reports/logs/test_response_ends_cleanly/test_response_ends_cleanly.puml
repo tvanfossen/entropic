@@ -22,31 +22,24 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three popular programming languages and their main use cases:
+  Here are three programming languages and their main use cases:
   
-  ## 1. **Python**
-  - **Main Use Cases:** Data science, machine learning, artificial intelligence, 
-  scripting/automation, web development (Django, Flask), scientific computing
-  - **Why Popular:** Readable syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), strong community support
+  1. **Python** — Data science, machine learning, scripting, web development 
+  (Django/Flask), automation, and scientific computing. Known for its readable 
+  syntax and extensive libraries like NumPy, Pandas, and TensorFlow.
   
-  ## 2. **JavaScript**
-  - **Main Use Cases:** Frontend web development, backend development (Node.js), 
-  mobile apps (React Native), browser automation
-  - **Why Popular:** Runs natively in browsers, massive ecosystem of frameworks 
-  (React, Vue, Angular)
+  2. **JavaScript** — Web development (frontend with frameworks like React/Vue, 
+  backend with Node.js), browser automation, mobile apps (React Native), and 
+  serverless functions. The only language that runs natively in web browsers.
   
-  ## 3. **C/C++**
-  - **Main Use Cases:** Systems programming, embedded systems, game engines, 
-  operating system development, high-performance applications
-  - **Why Popular:** Direct memory management, minimal runtime overhead, 
-  hardware-level control
+  3. **Java** — Enterprise applications, Android development, large-scale 
+  distributed systems, banking/financial software, and big data technologies 
+  (Hadoop). Known for strong typing, JVM performance, and platform independence 
+  via bytecode.
   
-  ---
-  
-  These three cover a wide range of scenarios from high-level scripting to 
-  low-level systems work. Each has its strengths depending on your project 
-  requirements!
+  Each language has strengths suited to different domains—Python excels in rapid 
+  prototyping and AI workloads, JavaScript dominates web ecosystems, while Java 
+  powers robust backend infrastructure.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

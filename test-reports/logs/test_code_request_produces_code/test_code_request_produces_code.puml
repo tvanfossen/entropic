@@ -25,20 +25,47 @@ note right of Mdl
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(n):
-      """Check if a number is even."""
-      return n % 2 == 0
+  def is_even(number):
+      """Check if a number is even.
+      
+      Args:
+          number (int or float): The number to check
+          
+      Returns:
+          bool: True if the number is even, False otherwise
+          
+      Raises:
+          TypeError: If the input is not a number
+      """
+      if not isinstance(number, (int, float)):
+          raise TypeError(f"Expected number, got {type(number).__name__}")
+      
+      # Handle negative numbers correctly
+      return number % 2 == 0
+  
+  # Example usage:
+  print(is_even(4))      # True
+  print(is_even(7))      # False
+  print(is_even(-2))     # True
+  print(is_even(3.5))    # False (not an integer)
   ```
   
-  **Usage example:**
+  **Key points:**
+  - Uses the modulo operator (`%`) to check if there's a remainder when divided by
+  2
+  - Handles negative numbers correctly (e.g., -2 is even)
+  - Includes type checking and error handling for robustness
+  - Returns `True` only for integers divisible by 2
+  
+  **Alternative implementation** using bitwise operation:
   ```python
-  print(is_even(4))   # True
-  print(is_even(7))   # False
-  print(is_even(-2))  # True (negative numbers work too)
+  def is_even_bitwise(number):
+      """Check if a number is even using bitwise AND."""
+      return (number &amp; 1) == 0
   ```
   
-  **Note:** This function works with integers. If you need to handle floats or 
-  other types, let me know and I can extend it accordingly.
+  The modulo approach is more readable, while the bitwise version can be slightly 
+  faster for large-scale computations.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

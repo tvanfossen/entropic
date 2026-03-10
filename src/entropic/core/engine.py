@@ -83,6 +83,7 @@ class AgentEngine:
         self.server_manager: ServerManager | None = server_manager
         self.config = config or EntropyConfig()
         self.loop_config = loop_config or LoopConfig()
+        self._storage: Any = None  # Optional StorageBackend for delegation persistence
 
         # Use threading.Event for thread-safe cross-loop signaling
         # (Textual runs on a different event loop than the generation worker)
@@ -369,6 +370,10 @@ class AgentEngine:
         for f in fields(callbacks):
             setattr(self._callbacks, f.name, getattr(callbacks, f.name))
 
+    def set_storage(self, storage: Any) -> None:
+        """Set the storage backend for delegation persistence."""
+        self._storage = storage
+
     async def _create_default_server_manager(self) -> ServerManager:
         """Create and initialize a default ServerManager from config."""
         tier_names = list(self.config.models.tiers.keys()) or None
@@ -568,8 +573,14 @@ class AgentEngine:
 
         from entropic.core.delegation import DelegationManager
 
-        manager = DelegationManager(self)
-        result = await manager.execute_delegation(ctx, target, task, max_turns)
+        manager = DelegationManager(self, storage=self._storage)
+        result = await manager.execute_delegation(
+            ctx,
+            target,
+            task,
+            max_turns,
+            parent_conversation_id=ctx.metadata.get("conversation_id"),
+        )
 
         # Inject result into parent context
         status = "COMPLETE" if result.success else "FAILED"

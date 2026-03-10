@@ -91,6 +91,34 @@ MIGRATIONS = {
             INSERT INTO messages_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
         END;
     """,
+    "003_delegations": """
+        CREATE TABLE IF NOT EXISTS delegations (
+            id TEXT PRIMARY KEY,
+            parent_conversation_id TEXT NOT NULL,
+            child_conversation_id TEXT NOT NULL,
+            delegating_tier TEXT NOT NULL,
+            target_tier TEXT NOT NULL,
+            task TEXT NOT NULL,
+            max_turns INTEGER,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK(status IN ('pending', 'running', 'completed', 'failed')),
+            result_summary TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            FOREIGN KEY (parent_conversation_id)
+                REFERENCES conversations(id) ON DELETE CASCADE,
+            FOREIGN KEY (child_conversation_id)
+                REFERENCES conversations(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_delegations_parent
+            ON delegations(parent_conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_delegations_child
+            ON delegations(child_conversation_id);
+    """,
+    "004_message_attribution": """
+        ALTER TABLE messages ADD COLUMN identity_tier TEXT;
+    """,
 }
 
 

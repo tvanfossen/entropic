@@ -89,8 +89,15 @@ class ModelOrchestrator:
         # Central prompt loading — must exist before _build_tiers_from_config
         self._prompt_manager = PromptManager.from_config(config, quiet=True)
 
-        # Build tier list from config if not provided programmatically
-        self._tier_list: list[ModelTier] = tiers or self._build_tiers_from_config()
+        # Build tier lists from config if not provided programmatically.
+        # _all_tiers: every configured tier (for backend init, handoff, tool exposure)
+        # _tier_list: routable tiers only (for router classification)
+        if tiers:
+            all_tiers = routable_tiers = tiers
+        else:
+            all_tiers, routable_tiers = self._build_tiers_from_config()
+        self._all_tiers: list[ModelTier] = all_tiers
+        self._tier_list: list[ModelTier] = routable_tiers
 
         # Derive routing data from config
         self._tier_map = self._build_tier_map()
@@ -99,23 +106,17 @@ class ModelOrchestrator:
         # Backend creation — consumer can inject custom factory
         self._backend_factory: BackendFactory = backend_factory or self._default_backend_factory
 
-    def _build_tiers_from_config(self) -> list[ModelTier]:
+    def _build_tiers_from_config(self) -> tuple[list[ModelTier], list[ModelTier]]:
         """Build ModelTier instances from config + identity frontmatter.
 
-        Only routable tiers are included — tiers with ``routable=False``
-        are excluded from router classification (chain-only or infrastructure).
+        Returns:
+            (all_tiers, routable_tiers): All configured tiers for backend
+            init/handoff, and routable-only tiers for router classification.
         """
-        tiers: list[ModelTier] = []
-        for name, tier_config in self.config.models.tiers.items():
-            # Resolve routable: config override → identity frontmatter → True
+        all_tiers: list[ModelTier] = []
+        routable_tiers: list[ModelTier] = []
+        for name in self.config.models.tiers:
             fm = self._prompt_manager.get_identity_frontmatter(name)
-            config_routable = tier_config.routable
-            fm_routable = fm.routable if fm else True
-            routable = config_routable if config_routable is not None else fm_routable
-            if not routable:
-                logger.debug("Tier '%s' is non-routable, skipping router classification", name)
-                continue
-
             focus: list[str] = fm.focus if fm else []
             examples: list[str] = fm.examples if fm else []
 
@@ -123,8 +124,19 @@ class ModelOrchestrator:
                 logger.warning(f"Tier '{name}' has no focus (identity file missing or empty)")
                 focus = [name]
 
-            tiers.append(ModelTier(name, focus=focus, examples=examples))
-        return tiers
+            tier = ModelTier(name, focus=focus, examples=examples)
+            all_tiers.append(tier)
+
+            # Resolve routable: config override → identity frontmatter → True
+            config_routable = self.config.models.tiers[name].routable
+            fm_routable = fm.routable if fm else True
+            routable = config_routable if config_routable is not None else fm_routable
+            if routable:
+                routable_tiers.append(tier)
+            else:
+                logger.debug("Tier '%s' is non-routable, skipping router classification", name)
+
+        return all_tiers, routable_tiers
 
     def _build_tier_map(self) -> dict[str, ModelTier]:
         """Build digit-to-tier mapping from config or auto-number."""
@@ -151,7 +163,7 @@ class ModelOrchestrator:
     def _build_handoff_rules(self) -> dict[ModelTier, frozenset[ModelTier]]:
         """Build handoff rules from config or default to all-to-all."""
         routing = self.config.routing
-        tier_by_name = {t.name: t for t in self._tier_list}
+        tier_by_name = {t.name: t for t in self._all_tiers}
 
         if routing.handoff_rules:
             return {
@@ -161,12 +173,12 @@ class ModelOrchestrator:
             }
 
         # Default: all-to-all (every tier can hand off to every other)
-        all_tiers = frozenset(self._tier_list)
-        return {tier: all_tiers - {tier} for tier in self._tier_list}
+        all_tiers = frozenset(self._all_tiers)
+        return {tier: all_tiers - {tier} for tier in self._all_tiers}
 
     def _find_tier(self, name: str) -> ModelTier | None:
-        """Find a tier by name from the tier list."""
-        for tier in self._tier_list:
+        """Find a tier by name from all configured tiers."""
+        for tier in self._all_tiers:
             if tier == name:
                 return tier
         return None
@@ -180,7 +192,7 @@ class ModelOrchestrator:
 
     def _validate_tiers(self) -> None:
         """Validate tier config entries exist for all tier definitions."""
-        for tier in self._tier_list:
+        for tier in self._all_tiers:
             if tier not in self._tiers:
                 raise ValueError(f"ModelTier '{tier.name}' has no config entry in models.tiers")
 
@@ -570,8 +582,8 @@ class ModelOrchestrator:
 
     @property
     def tier_names(self) -> list[str]:
-        """Get ordered list of tier names."""
-        return [t.name for t in self._tier_list]
+        """Get ordered list of all tier names (routable + non-routable)."""
+        return [t.name for t in self._all_tiers]
 
     @property
     def last_routing_result(self) -> RoutingResult | None:

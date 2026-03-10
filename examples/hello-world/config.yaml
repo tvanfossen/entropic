@@ -1,7 +1,7 @@
 # Hello World — minimal entropic consumer config.
 #
-# Demonstrates automatic model routing between a conversational tier
-# and a planner tier using the same underlying model.
+# Demonstrates automatic model routing between a lead tier
+# and an arch tier using the same underlying model.
 #
 # Uses Qwen3.5-35B-A3B MoE (Q2_K) — full GPU offload at 16GB VRAM,
 # 30-41 tok/s. MoE architecture: 35B total params, ~3B active per token.
@@ -14,11 +14,11 @@ app_context: prompts/app_context.md
 
 models:
   tiers:
-    conversational:
+    lead:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
       adapter: qwen35
       context_length: 16384
-    planner:
+    arch:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
       adapter: qwen35
       context_length: 16384
@@ -26,11 +26,11 @@ models:
     path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
     adapter: router
     context_length: 2048
-  default: conversational
+  default: lead
 
 routing:
   enabled: true
-  fallback_tier: conversational
+  fallback_tier: lead
 
 mcp:
   enable_filesystem: false

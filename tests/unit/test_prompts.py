@@ -16,20 +16,15 @@ from entropic.prompts import (
 from pydantic import ValidationError
 
 TIERS = [
-    "quick",
+    "lead",
+    "arch",
+    "eng",
+    "qa",
+    "ux",
+    "ui",
+    "analyst",
     "compactor",
-    "pruner",
-    "planner",
-    "searcher",
-    "diagnoser",
-    "code_writer",
-    "test_writer",
-    "code_validator",
-    "extractor",
-    "tool_runner",
-    "conversational",
-    "wireframer",
-    "design_validator",
+    "scribe",
     "benchmark_judge",
 ]
 
@@ -222,8 +217,8 @@ class TestToolIsolation:
         "diagnostics.check_errors",
     ]
 
-    def test_planner_tier_only_sees_allowed_tools(self) -> None:
-        """Planner tier with allowed tools must not leak other names."""
+    def test_arch_tier_only_sees_allowed_tools(self) -> None:
+        """Arch tier with allowed tools must not leak other names."""
         allowed = [
             "entropic.todo_write",
             "entropic.handoff",
@@ -232,7 +227,7 @@ class TestToolIsolation:
         ]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
-        adapter = GenericAdapter(tier="planner")
+        adapter = GenericAdapter(tier="arch")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 
@@ -242,12 +237,12 @@ class TestToolIsolation:
         for name in forbidden:
             assert name not in prompt, f"Forbidden tool '{name}' leaked"
 
-    def test_quick_tier_only_sees_handoff(self) -> None:
-        """Quick tier with only handoff must not leak any other tools."""
+    def test_scribe_tier_only_sees_handoff(self) -> None:
+        """Scribe tier with only handoff must not leak any other tools."""
         allowed = ["entropic.handoff"]
         forbidden = [t for t in self.ALL_TOOLS if t not in allowed]
 
-        adapter = GenericAdapter(tier="quick")
+        adapter = GenericAdapter(tier="scribe")
         tools = [_make_tool_def(name) for name in allowed]
         prompt = adapter.format_system_prompt("", tools)
 

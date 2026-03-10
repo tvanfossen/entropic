@@ -1,8 +1,0 @@
-root     ::= "{" ws "\"verdict\":" ws verdict ws "," ws "\"findings\":" ws findingsarr ws "}"
-verdict  ::= "\"pass\"" | "\"fail\""
-findingsarr ::= "[" ws "]" | "[" ws finding (ws "," ws finding)* ws "]"
-finding  ::= "{" ws "\"line\":" ws number ws "," ws "\"severity\":" ws severity ws "," ws "\"issue\":" ws string ws "," ws "\"suggestion\":" ws string ws "}"
-severity ::= "\"error\"" | "\"warning\"" | "\"info\""
-number   ::= [0-9]+
-string   ::= "\"" ([^"\\] | "\\" .)* "\""
-ws       ::= [ \t\n]*

@@ -47,6 +47,8 @@ def _routable_identities() -> list[tuple[str, list[str], list[str]]]:
 _ROUTABLE = _routable_identities()
 _IDENTITY_NAMES = [name for name, _, _ in _ROUTABLE]
 
+_SKIP_ROUTING = len(_IDENTITY_NAMES) < 2
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator with logits_all=True on router
@@ -77,6 +79,7 @@ async def confidence_orchestrator(config: EntropyConfig, models_available: dict[
 
 
 @pytest.mark.model
+@pytest.mark.skipif(_SKIP_ROUTING, reason="<2 routable identities — routing disabled")
 class TestClassificationConfidence:
     """Test that classification achieves sufficient confidence per tier.
 

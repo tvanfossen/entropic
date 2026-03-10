@@ -538,7 +538,7 @@ class AgentEngine:
     async def _try_auto_chain(self, ctx: LoopContext, finish_reason: str) -> bool:
         """Attempt auto-chain handoff on token exhaustion or grammar completion.
 
-        The auto_chain frontmatter value is a tier name (e.g. "code_writer").
+        The auto_chain frontmatter value is a tier name (e.g. "eng").
         Uses that directly as the target. Falls back to route_among handoff
         targets only if the named tier is not found.
 

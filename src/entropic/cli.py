@@ -37,7 +37,7 @@ from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E40
     "--model",
     "-m",
     type=str,
-    help="Model tier to use (e.g., conversational, planner, code_writer)",
+    help="Model tier to use (e.g., lead, eng, arch)",
 )
 @click.option(
     "--log-level",

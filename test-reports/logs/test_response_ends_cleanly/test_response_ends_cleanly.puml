@@ -17,94 +17,33 @@ note right of T
   List three programming languages and their main use cases
 end note
 App -> Orch: route
-note right: **PLANNER** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  &lt;tool_call&gt;{"name": "entropic.todo_write", "arguments": {"action": "add", 
-  "todos": "[{\"content\": \"Identify three programming languages and their main 
-  use cases\", \"active_form\": \"Identifying programming languages and their use 
-  cases\", \"status\": \"pending\"}]"}}&lt;/tool_call&gt;
-end note
-Mdl --> Eng: tool_call(entropic.todo_write)
-Eng -> MCP: entropic.todo_write
-note right of MCP
-  action: add
-  todos: [{"content": "Identify three programming languages and their main use cases", "active_form": "Identifying programming languages and their use cases", "status": "pending"}]
-end note
-MCP --> Eng: result
-note right of MCP
-  **Tool Result:**
-  Added 1 item(s). Total: 1
-end note
-Mdl --> Eng: tool_call(entropic.todo_write)
-Eng -> MCP: entropic.todo_write
-note right of MCP
-  action: update
-  index: 0
-  status: completed
-end note
-MCP --> Eng: result
-note right of MCP
-  **Tool Result:**
-  Updated item 0: Identify three programming languages and their mai
-end note
-note right of Eng
-  **Follow-up message:**
-  &lt;tool_response&gt;
-  Added 1 item(s). Total: 1
-  &lt;/tool_response&gt;
+  Here are three widely-used programming languages and their main use cases:
   
-  Continue. Batch multiple tool calls in one response when possible.
-end note
-== Turn 2 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  &lt;tool_call&gt;{"name": "entropic.todo_write", "arguments": {"action": 
-  "update", "index": 0, "status": "completed"}}&lt;/tool_call&gt;
-end note
-note right of Eng
-  **Follow-up message:**
-  &lt;tool_response&gt;
-  Updated item 0: Identify three programming languages and their mai
-  &lt;/tool_response&gt;
+  1. **Python** — Data science, machine learning, scripting, web development 
+  (Django/Flask), automation, and scientific computing. Known for its clean syntax
+  and extensive libraries like NumPy, Pandas, and TensorFlow.
   
-  Continue. Batch multiple tool calls in one response when possible.
-end note
-== Turn 3 ==
-Orch -> Mdl: generate_stream
-note right of Mdl
-  **Model Output:**
-  Here are three programming languages and their main use cases:
+  2. **JavaScript** — Frontend web development, browser-based applications, and 
+  increasingly backend development via Node.js. Essential for interactive 
+  websites, mobile apps (React Native), and serverless functions.
   
-  ## 1. Python
-  - **Primary Use Cases**: Data science, machine learning, artificial 
-  intelligence, web development (Django/Flask), scripting/automation, scientific 
-  computing
-  - **Why Popular**: Readable syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), strong community support
+  3. **Java** — Enterprise applications, Android app development, large-scale 
+  distributed systems, and backend services. Valued for its strong typing, JVM 
+  performance, and robust ecosystem (Spring framework).
   
-  ## 2. JavaScript
-  - **Primary Use Cases**: Frontend web development, backend/server-side 
-  (Node.js), mobile apps (React Native), browser-based applications
-  - **Why Popular**: Runs natively in browsers, versatile full-stack capabilities,
-  massive ecosystem of frameworks and tools
+  ---
   
-  ## 3. Java
-  - **Primary Use Cases**: Enterprise software, Android app development, 
-  large-scale distributed systems, banking/financial systems
-  - **Why Popular**: Platform independence (JVM), strong typing, mature tooling, 
-  excellent for multi-threaded applications
-  
-  Each language excels in different domains based on its design philosophy and 
-  ecosystem. Python prioritizes developer productivity, JavaScript bridges web 
-  technologies seamlessly, while Java emphasizes robustness and scalability for 
-  enterprise environments.
+  These three cover a broad range of modern software development needs—from data 
+  work to web apps to enterprise systems. Let me know if you'd like details on any
+  specific language or use case!
 end note
 note over T #palegreen
-  **PASSED** (< 75s, 2 tool calls)
+  **PASSED** (< 75s)
 end note
 
 @enduml

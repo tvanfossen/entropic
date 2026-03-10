@@ -17,54 +17,55 @@ note right of T
   What is recursion in programming?
 end note
 App -> Orch: route
-note right: **CONVERSATIONAL** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a fundamental concept in programming where a function calls itself 
-  to solve a problem. It's essentially the process of breaking down a complex task
-  into smaller, similar sub-tasks until you reach a simple base case that can be 
-  solved directly.
+  Recursion in programming is when a function calls itself to solve a problem by 
+  breaking it down into smaller instances of the same problem.
   
-  Here are the key aspects:
+  ## How it works
   
-  **Core Components:**
-  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  A recursive function typically has two parts:
+  
+  1. **Base case** — The condition that stops the recursion (prevents infinite 
   loops)
-  2. **Recursive Case**: Where the function calls itself with modified parameters
+  2. **Recursive case** — Where the function calls itself with modified input
   
-  **How it works:**
-  - Each recursive call creates a new stack frame
-  - The function keeps calling itself until hitting the base case
-  - Once the base case is reached, results "bubble back up" through the call stack
+  ## Simple example (factorial)
   
-  **Simple Example (Factorial):**
   ```python
   def factorial(n):
-      # Base case: factorial of 0 or 1 is 1
-      if n &lt;= 1:
+      if n == 0 or n == 1:  # Base case
           return 1
-      
-      # Recursive case: n * factorial(n-1)
-      return n * factorial(n - 1)
+      else:                   # Recursive case
+          return n * factorial(n - 1)
   ```
   
-  **Common Use Cases:**
-  - Tree traversals (file systems, DOM trees)
-  - Divide and conquer algorithms (merge sort, quicksort)
-  - Mathematical calculations (Fibonacci sequence, factorials)
-  - Parsing nested data structures
+  Calling `factorial(5)` computes: `5 × 4 × 3 × 2 × 1 = 120`
   
-  **Pros &amp; Cons:**
-  ✅ **Advantages**: Elegant code for naturally recursive problems, cleaner than 
-  iterative alternatives for some tasks  
-  ⚠️ **Drawbacks**: Can be memory-intensive due to stack overhead, risk of stack 
-  overflow errors, potentially slower than iteration
+  ## When to use recursion
   
-  The key is ensuring your recursion will terminate—every recursive call must move
-  toward the base case. Without this safety net, you get infinite recursion and a 
-  crashed program!
+  **Good for:**
+  - Problems with natural recursive structure (trees, graphs, divide-and-conquer)
+  - Clean, readable code when the problem fits naturally
+  - Examples: tree traversal, sorting algorithms, Fibonacci sequence
+  
+  **Not ideal for:**
+  - Simple iterative problems (loops work better)
+  - Deep recursion that risks stack overflow
+  - Performance-critical code where iteration is faster
+  
+  ## Key considerations
+  
+  | Aspect | Note |
+  |--------|------|
+  | **Stack depth** | Each call uses memory; deep recursion can crash programs |
+  | **Performance** | Often slower than loops due to function call overhead |
+  | **Debugging** | Can be tricky to trace through multiple calls |
+  
+  Would you like me to show more examples or explain a specific recursive pattern?
 end note
 note over T #palegreen
   **PASSED** (< 75s)

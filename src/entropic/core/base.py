@@ -33,7 +33,7 @@ class ModelTier:
 
     @property
     def name(self) -> str:
-        """Tier name (e.g. 'conversational', 'planner', 'code_writer')."""
+        """Tier name (e.g. 'lead', 'eng', 'arch')."""
         return self._name
 
     @property

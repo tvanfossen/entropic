@@ -92,8 +92,8 @@ class TestLibraryConfig:
         """LibraryConfig constructs with sensible defaults."""
         config = LibraryConfig()
         assert config.log_level == "INFO"
-        assert config.routing.enabled is True
-        assert config.models.default == "conversational"
+        assert config.routing.enabled is False
+        assert config.models.default == "lead"
 
     def test_excludes_tui_fields(self) -> None:
         """LibraryConfig does not expose TUI-specific fields."""
@@ -141,7 +141,7 @@ class TestEntropyConfig:
         """Test default configuration values."""
         config = EntropyConfig()
         assert config.log_level == "INFO"
-        assert config.routing.enabled is True
+        assert config.routing.enabled is False
         assert config.quality.enabled is True
 
     def test_model_config_path_expansion(self) -> None:
@@ -177,8 +177,8 @@ class TestEntropyConfig:
     def test_default_routing_config(self) -> None:
         """Test default routing configuration."""
         config = EntropyConfig()
-        assert config.routing.enabled is True
-        assert config.routing.fallback_tier == "conversational"
+        assert config.routing.enabled is False
+        assert config.routing.fallback_tier == "lead"
 
     def test_default_quality_rules(self) -> None:
         """Test default quality rules."""

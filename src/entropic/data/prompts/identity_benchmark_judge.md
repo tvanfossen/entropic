@@ -14,6 +14,13 @@ enable_thinking: false
 model_preference: primary
 interstitial: true
 routable: false
+role_type: utility
+phases:
+  default:
+    temperature: 0.1
+    max_output_tokens: 256
+    enable_thinking: false
+    repeat_penalty: 1.1
 ---
 
 # Benchmark Judge

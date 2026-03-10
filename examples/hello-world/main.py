@@ -2,8 +2,8 @@
 
 Demonstrates entropic's core features:
     - Automatic routing: a tiny router model classifies prompts
-    - Tier routing: simple questions go to conversational,
-      complex analysis goes to planner
+    - Tier routing: simple questions go to lead,
+      complex analysis goes to arch
     - VRAM management: only one main model loaded at a time
 
 Usage:
@@ -65,7 +65,7 @@ async def main() -> None:
     )
 
     # 6. Interactive loop
-    print("entropic hello-world — conversational + planner tiers (Qwen3.5-35B-A3B MoE)")
+    print("entropic hello-world — lead + arch tiers (Qwen3.5-35B-A3B MoE)")
     print("The router automatically picks the right tier per prompt.")
     print("Type 'quit' to exit.\n")
 

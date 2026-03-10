@@ -1,6 +1,0 @@
-root    ::= "{" ws "\"results\":" ws resultsarr ws "}"
-resultsarr ::= "[" ws "]" | "[" ws result (ws "," ws result)* ws "]"
-result  ::= "{" ws "\"file\":" ws string ws "," ws "\"line_start\":" ws number ws "," ws "\"line_end\":" ws number ws "," ws "\"snippet\":" ws string ws "," ws "\"relevance\":" ws string ws "}"
-number  ::= [0-9]+
-string  ::= "\"" ([^"\\] | "\\" .)* "\""
-ws      ::= [ \t\n]*

@@ -39,12 +39,12 @@ class TestPromptManagerDefaults:
 
     def test_bundled_identities_load(self) -> None:
         pm = PromptManager(
-            tier_identities={"conversational": None, "planner": None},
+            tier_identities={"lead": None, "arch": None},
             quiet=True,
         )
-        assert pm.get_identity("conversational") is not None
-        assert pm.get_identity("planner") is not None
-        assert "Conversational" in (pm.get_identity("conversational") or "")
+        assert pm.get_identity("lead") is not None
+        assert pm.get_identity("arch") is not None
+        assert "Lead" in (pm.get_identity("lead") or "")
 
     def test_missing_bundled_identity_warns(self) -> None:
         pm = PromptManager(
@@ -68,10 +68,10 @@ class TestPromptManagerDisable:
 
     def test_identity_disabled(self) -> None:
         pm = PromptManager(
-            tier_identities={"conversational": False},
+            tier_identities={"lead": False},
             quiet=True,
         )
-        assert pm.get_identity("conversational") is None
+        assert pm.get_identity("lead") is None
 
 
 class TestPromptManagerCustomPaths:
@@ -145,11 +145,11 @@ class TestAssembledPrompt:
         pm = PromptManager(
             constitution=False,
             app_context=False,
-            tier_identities={"conversational": None},
+            tier_identities={"lead": None},
             quiet=True,
         )
-        assembled = pm.get_assembled_prompt("conversational")
-        assert "Conversational" in assembled
+        assembled = pm.get_assembled_prompt("lead")
+        assert "Lead" in assembled
         assert "Constitution" not in assembled
 
     def test_assembly_empty_when_all_disabled(self) -> None:
@@ -166,12 +166,12 @@ class TestIdentityFrontmatter:
 
     def test_get_identity_frontmatter(self) -> None:
         pm = PromptManager(
-            tier_identities={"planner": None},
+            tier_identities={"arch": None},
             quiet=True,
         )
-        fm = pm.get_identity_frontmatter("planner")
+        fm = pm.get_identity_frontmatter("arch")
         assert fm is not None
-        assert fm.name == "planner"
+        assert fm.name == "arch"
         assert len(fm.focus) > 0
 
     def test_frontmatter_none_for_missing_tier(self) -> None:
@@ -188,14 +188,14 @@ class TestTerminalOutput:
 
     def test_default_prints_summary(self, capsys: pytest.CaptureFixture[str]) -> None:
         PromptManager(
-            tier_identities={"conversational": None},
+            tier_identities={"lead": None},
             quiet=False,
         )
         output = capsys.readouterr().out
         assert "Prompts:" in output
         assert "constitution" in output
         assert "bundled" in output
-        assert "conversational:" in output
+        assert "lead:" in output
 
     def test_disabled_shows_disabled(self, capsys: pytest.CaptureFixture[str]) -> None:
         PromptManager(constitution=False, quiet=False)
@@ -227,16 +227,16 @@ class TestFromConfig:
         config = EntropyConfig(
             models={
                 "tiers": {
-                    "conversational": {"path": "/tmp/model.gguf"},
-                    "planner": {"path": "/tmp/model.gguf"},
+                    "lead": {"path": "/tmp/model.gguf"},
+                    "arch": {"path": "/tmp/model.gguf"},
                 },
-                "default": "conversational",
+                "default": "lead",
             },
-            routing={"enabled": False, "fallback_tier": "conversational"},
+            routing={"enabled": False, "fallback_tier": "lead"},
         )
         pm = PromptManager.from_config(config, quiet=True)
-        assert pm.get_identity("conversational") is not None
-        assert pm.get_identity("planner") is not None
+        assert pm.get_identity("lead") is not None
+        assert pm.get_identity("arch") is not None
 
     def test_from_config_constitution_disabled(self) -> None:
         from entropic.config.schema import EntropyConfig

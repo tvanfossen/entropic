@@ -115,16 +115,16 @@ class AssistantMessage(Static):
     """
 
     TIER_STYLES: dict[str, str] = {
-        "conversational": "green",
-        "planner": "magenta",
-        "code_writer": "cyan",
-        "code_validator": "cyan",
-        "test_writer": "cyan",
-        "quick": "dim",
-        "diagnoser": "yellow",
-        "searcher": "yellow",
-        "design_validator": "magenta",
-        "wireframer": "yellow",
+        "lead": "green",
+        "arch": "magenta",
+        "eng": "cyan",
+        "qa": "yellow",
+        "ux": "magenta",
+        "ui": "cyan",
+        "analyst": "yellow",
+        "compactor": "dim",
+        "scribe": "dim",
+        "benchmark_judge": "dim",
     }
 
     def __init__(self, content: str = "", **kwargs: Any) -> None:
@@ -155,7 +155,7 @@ class AssistantMessage(Static):
         """Set the model tier and update display.
 
         Args:
-            tier: Tier name (e.g., 'conversational', 'planner', 'code_writer')
+            tier: Tier name (e.g., 'lead', 'eng', 'arch')
         """
         self._tier = tier
         self._update_display()

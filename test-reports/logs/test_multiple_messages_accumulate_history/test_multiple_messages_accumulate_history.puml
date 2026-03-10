@@ -22,9 +22,7 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm here as your technical team lead. How can I help you today? Whether 
-  it's planning architecture, implementing features, reviewing code, or testing 
-  systems — I'll coordinate the right expertise to get quality results.
+  Hello! How can I help you today?
 end note
 note right of Eng
   **Follow-up message:**
@@ -34,8 +32,12 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello". It was your opening greeting to me as your technical team 
-  lead.
+  You said "Hello" — that was your first message. Then you asked "What did I just 
+  say?" which is your second message.
+  
+  I'm the Lead here, so I handle all requests directly and coordinate with other 
+  team members (arch, eng, qa, ux, ui, analyst) when needed to get quality results
+  for you.
 end note
 note over T #palegreen
   **PASSED** (< 112s)

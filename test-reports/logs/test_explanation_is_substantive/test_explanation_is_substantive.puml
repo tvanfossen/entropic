@@ -22,50 +22,54 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion in programming is when a function calls itself to solve a problem by 
-  breaking it down into smaller instances of the same problem.
+  Recursion is a programming technique where **a function calls itself** to solve 
+  a problem by breaking it down into smaller, similar sub-problems.
   
-  ## How it works
+  ## How It Works
   
   A recursive function typically has two parts:
   
-  1. **Base case** — The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case** — Where the function calls itself with modified input
+  1. **Base case**: The condition that stops recursion (prevents infinite loops)
+  2. **Recursive case**: Where the function calls itself with modified input
   
-  ## Simple example (factorial)
+  ### Example in Python:
   
   ```python
   def factorial(n):
-      if n == 0 or n == 1:  # Base case
+      # Base case
+      if n == 0 or n == 1:
           return 1
-      else:                   # Recursive case
-          return n * factorial(n - 1)
+      
+      # Recursive case
+      return n * factorial(n - 1)
+  
+  print(factorial(5))  # Output: 120 (5 × 4 × 3 × 2 × 1)
   ```
   
-  Calling `factorial(5)` computes: `5 × 4 × 3 × 2 × 1 = 120`
+  ## Common Use Cases
   
-  ## When to use recursion
+  - **Tree traversal** (file systems, DOM trees)
+  - **Divide and conquer algorithms** (quick sort, merge sort)
+  - **Mathematical calculations** (Fibonacci sequence, factorials)
+  - **Parsing nested structures** (JSON, XML)
   
-  **Good for:**
-  - Problems with natural recursive structure (trees, graphs, divide-and-conquer)
-  - Clean, readable code when the problem fits naturally
-  - Examples: tree traversal, sorting algorithms, Fibonacci sequence
+  ## Key Considerations
   
-  **Not ideal for:**
-  - Simple iterative problems (loops work better)
-  - Deep recursion that risks stack overflow
-  - Performance-critical code where iteration is faster
+  | Aspect | What to Watch For |
+  |--------|-------------------|
+  | **Base case needed** | Without it → infinite recursion → stack overflow |
+  | **Stack memory** | Each call uses stack space; deep recursion can crash |
+  | **Performance** | Often slower than iteration due to function call overhead |
   
-  ## Key considerations
+  ## When to Use vs. Avoid
   
-  | Aspect | Note |
-  |--------|------|
-  | **Stack depth** | Each call uses memory; deep recursion can crash programs |
-  | **Performance** | Often slower than loops due to function call overhead |
-  | **Debugging** | Can be tricky to trace through multiple calls |
+  ✅ **Good for**: Problems naturally recursive (trees, graphs), clean code 
+  readability  
+  ⚠️ **Consider alternatives**: Simple loops where recursion adds unnecessary 
+  complexity
   
-  Would you like me to show more examples or explain a specific recursive pattern?
+  The key is ensuring your base case will eventually be reached with each 
+  recursive step!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

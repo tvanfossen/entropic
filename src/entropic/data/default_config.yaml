@@ -7,61 +7,61 @@ models:
   lead:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   arch:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   eng:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   qa:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   ux:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   ui:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   analyst:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   compactor:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   scribe:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   benchmark_judge:
     path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
     adapter: qwen35
-    context_length: 8192
+    context_length: 32768
     gpu_layers: 40
 
   default: lead

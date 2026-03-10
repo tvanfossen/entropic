@@ -124,13 +124,26 @@ class Qwen35Adapter(ChatAdapter):
         return tool_calls
 
     def _extract_xml_parameters(self, func_body: str) -> dict[str, Any]:
-        """Extract parameter key-value pairs from XML function body."""
+        """Extract parameter key-value pairs from XML function body.
+
+        Stops at any nested ``<function=`` tag (malformed multi-call output)
+        and skips parameters with empty or whitespace-only values.
+        """
+        # Truncate at nested function start (model emitted two calls without closing)
+        nested = func_body.find("<function=")
+        if nested != -1:
+            self._logger.warning("Truncating function body at nested <function= tag")
+            func_body = func_body[:nested]
+
         arguments: dict[str, Any] = {}
         param_pattern = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
 
         for param_match in param_pattern.finditer(func_body):
             key = param_match.group(1).strip()
             value = param_match.group(2).strip()
+            if not key or not value:
+                self._logger.warning("Skipping empty XML parameter: key=%r value=%r", key, value)
+                continue
             arguments[key] = self._convert_typed_value(value)
 
         return arguments

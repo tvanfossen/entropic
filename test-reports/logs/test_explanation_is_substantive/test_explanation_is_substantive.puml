@@ -22,59 +22,56 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  **Recursion** is when a function calls itself to solve a problem by breaking it 
-  down into smaller, similar sub-problems.
+  Recursion in programming is when a function calls itself to solve a problem by 
+  breaking it down into smaller, similar sub-problems. It's like solving a puzzle 
+  by repeatedly applying the same solution pattern until you reach a simple case 
+  that doesn't need further breakdown.
   
   ## Key Concepts
   
-  1. **Base case**: The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case**: Where the function calls itself with modified input
+  **The two essential parts:**
+  1. **Base case** - The stopping condition (e.g., "if n equals 0, return 1")
+  2. **Recursive case** - Where the function calls itself with modified input
   
-  ## Simple Example
+  ## Simple Example: Factorial
   
   ```python
   def factorial(n):
-      # Base case: stop when n is 0 or 1
-      if n &lt;= 1:
+      # Base case
+      if n == 0 or n == 1:
           return 1
       
-      # Recursive case: multiply n by factorial of (n-1)
+      # Recursive case
       return n * factorial(n - 1)
-  
-  # factorial(4) = 4 × 3 × 2 × 1 = 24
   ```
   
-  ## Visualizing the Call Stack
+  **How it works:** `factorial(4)` = 4 × factorial(3) = 4 × (3 × factorial(2)) = 
+  ... = 4 × 3 × 2 × 1 = 24
   
-  When you call `factorial(4)`:
-  ```
-  factorial(4) → needs factorial(3)
-    factorial(3) → needs factorial(2)
-      factorial(2) → needs factorial(1)
-        factorial(1) = 1 (base case!)
-      returns 1 × 2 = 2
-    returns 2 × 3 = 6
-  returns 6 × 4 = 24
-  ```
+  ## When to Use Recursion
   
-  ## Common Uses
+  ✅ **Good for:**
+  - Problems with natural recursive structure (trees, graphs, divide-and-conquer 
+  algorithms)
+  - Clean, readable solutions where iteration would be complex
+  - Mathematical definitions that are inherently recursive (Fibonacci, factorials)
   
-  - **Tree traversal** (file systems, DOM trees)
-  - **Divide-and-conquer algorithms** (merge sort, quicksort)
-  - **Mathematical sequences** (Fibonacci, factorials)
-  - **Backtracking problems** (maze solving, puzzles)
+  ⚠️ **Be careful with:**
+  - Stack overflow if recursion depth is too deep
+  - Performance overhead compared to iterative approaches
+  - Problems better solved with loops or dynamic programming
   
-  ## Tradeoffs
+  ## Common Pitfalls
   
-  | Pros | Cons |
-  |------|------|
-  | Elegant for recursive data structures | Can be slower than iteration |
-  | Natural fit for certain algorithms | Risk of stack overflow |
-  | Often more readable | Harder to debug |
+  - Forgetting the base case → infinite loop / stack overflow
+  - Not making progress toward the base case
+  - Redundant calculations (e.g., naive Fibonacci)
   
-  The key is ensuring your base case will eventually be reached, or you'll get 
-  infinite recursion and a crash.
+  ---
+  
+  **Note:** I'm explaining this conceptually—I can't actually execute code, but I 
+  can help you understand patterns and write pseudocode. Want to explore a 
+  specific recursive problem or algorithm?
 end note
 note over T #palegreen
   **PASSED** (< 75s)

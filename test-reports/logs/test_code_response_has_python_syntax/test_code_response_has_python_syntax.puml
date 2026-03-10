@@ -22,76 +22,92 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
+  I'll write a function that calculates the sum of a list with proper error 
+  handling and documentation:
+end note
+Mdl --> Eng: tool_call(entropic.todo_write)
+Eng -> MCP: entropic.todo_write
+note right of MCP
+  action: add
+  todos: [{"content": "Write a function to calculate the sum of a list", "status": "in_progress", "active_form": "Writing a function to calculate the sum of a list"}]
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Added 1 item(s). Total: 1
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  Added 1 item(s). Total: 1
+  &lt;/tool_response&gt;
+  
+  Continue. Batch multiple tool calls in one response when possible.
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
   Here's a Python function that calculates the sum of a list:
   
   ```python
-  def sum_list(numbers):
+  def calculate_sum(numbers):
       """
-      Calculate the sum of all numbers in a list.
+      Calculate the sum of all elements in a numeric list.
       
       Args:
-          numbers (list): A list of numeric values
+          numbers (list): A list of numeric values (int, float)
           
       Returns:
           int or float: The sum of all elements
           
       Raises:
-          TypeError: If any element is not a number
-          ValueError: If the list is empty
-      
+          TypeError: If any element is not numeric
+          ValueError: If the input is not a list
+          
       Examples:
-          &gt;&gt;&gt; sum_list([1, 2, 3])
+          &gt;&gt;&gt; calculate_sum([1, 2, 3])
           6
-          &gt;&gt;&gt; sum_list([-1, 0, 1])
-          0
+          &gt;&gt;&gt; calculate_sum([1.5, 2.5, 3.0])
+          7.0
       """
-      if not numbers:
-          raise ValueError("Cannot sum an empty list")
-      
-      total = 0
-      for num in numbers:
-          if not isinstance(num, (int, float)):
-              raise TypeError(f"Expected number, got {type(num).__name__}")
-          total += num
-      
-      return total
-  
-  
-  # Alternative using built-in sum() with validation
-  def sum_list_builtin(numbers):
-      """Calculate sum with minimal overhead."""
-      if not numbers:
-          raise ValueError("Cannot sum an empty list")
-      
-      # Validate all elements first
-      for i, num in enumerate(numbers):
-          if not isinstance(num, (int, float)):
-              raise TypeError(f"Invalid element at index {i}: expected number")
+      if not isinstance(numbers, list):
+          raise ValueError("Input must be a list")
       
       return sum(numbers)
   
   
-  # Example usage:
+  # Alternative implementation with explicit loop (for educational purposes)
+  def calculate_sum_explicit(numbers):
+      """Calculate sum using explicit iteration."""
+      total = 0
+      for num in numbers:
+          if not isinstance(num, (int, float)):
+              raise TypeError(f"Non-numeric element found: {num}")
+          total += num
+      return total
+  
+  
+  # Usage example
   if __name__ == "__main__":
-      print(sum_list([10, 20, 30]))  # Output: 60
+      test_list = [10, 20, 30, 40]
+      result = calculate_sum(test_list)
+      print(f"Sum of {test_list} is: {result}")
   ```
   
   **Key features:**
-  - **Input validation**: Checks for empty lists and non-number elements
-  - **Type safety**: Raises clear errors when inputs are invalid
-  - **Documentation**: Docstring with examples for clarity
-  - **Two implementations**: One explicit loop (educational), one using built-in 
-  `sum()` (efficient)
+  - **Input validation**: Checks that input is a list
+  - **Type safety**: Ensures all elements are numeric
+  - **Documentation**: Clear docstring with examples
+  - **Error handling**: Raises appropriate exceptions for invalid inputs
+  - **Multiple implementations**: Built-in `sum()` vs explicit loop
   
-  **Tradeoffs:**
-  - The manual loop version is more educational and easier to extend (e.g., add 
-  logging, custom operations)
-  - The builtin version is faster for large lists but less flexible
-  
-  Would you like me to adapt this for a specific use case or language?
+  The first function uses Python's built-in `sum()` which is optimized and handles
+  most cases well. The second version shows how to implement it manually if you 
+  need more control over the iteration process.
 end note
 note over T #palegreen
-  **PASSED** (< 262s)
+  **PASSED** (< 262s, 1 tool calls)
 end note
 
 @enduml

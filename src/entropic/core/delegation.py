@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from entropic.core.base import Message, StorageBackend
 from entropic.core.engine_types import AgentState, LoopConfig, LoopContext
 from entropic.core.logging import get_logger
+from entropic.core.worktree import WorktreeManager, scoped_worktree
 
 if TYPE_CHECKING:
     from entropic.core.engine import AgentEngine
@@ -40,9 +42,18 @@ class DelegationManager:
     as the delegation result.
     """
 
-    def __init__(self, engine: AgentEngine, storage: StorageBackend | None = None) -> None:
+    def __init__(
+        self,
+        engine: AgentEngine,
+        storage: StorageBackend | None = None,
+        repo_dir: Path | None = None,
+    ) -> None:
         self._engine = engine
         self._storage = storage
+        self._repo_dir = repo_dir
+        self._worktree_mgr: WorktreeManager | None = None
+        if repo_dir is not None:
+            self._worktree_mgr = WorktreeManager(repo_dir)
 
     async def execute_delegation(
         self,
@@ -151,6 +162,47 @@ class DelegationManager:
                 auto_approve_tools=saved_loop_config.auto_approve_tools,
             )
 
+        # Create worktree for filesystem isolation (if enabled)
+        delegation_id = child_ctx.parent_conversation_id or str(uuid.uuid4())
+        worktree_path = await self._create_worktree(delegation_id, target_tier)
+        result: DelegationResult | None = None
+
+        try:
+            result = await self._execute_child_in_context(
+                child_ctx, target_tier, task, worktree_path
+            )
+        finally:
+            self._engine._context_anchors = saved_anchors
+            self._engine.loop_config = saved_loop_config
+            self._restore_todo_list(saved_todo_list)
+            if result is not None:
+                await self._finalize_worktree(delegation_id, worktree_path, result)
+            elif worktree_path is not None and self._worktree_mgr is not None:
+                await self._worktree_mgr.discard_worktree(delegation_id)
+
+        assert result is not None  # _execute_child_in_context always returns
+        return result
+
+    async def _execute_child_in_context(
+        self,
+        child_ctx: LoopContext,
+        target_tier: str,
+        task: str,
+        worktree_path: Path | None,
+    ) -> DelegationResult:
+        """Run the child loop, optionally inside a worktree scope."""
+        if worktree_path is not None:
+            async with scoped_worktree(self._engine, worktree_path):
+                return await self._run_engine_loop(child_ctx, target_tier, task)
+        return await self._run_engine_loop(child_ctx, target_tier, task)
+
+    async def _run_engine_loop(
+        self,
+        child_ctx: LoopContext,
+        target_tier: str,
+        task: str,
+    ) -> DelegationResult:
+        """Execute engine._loop and build DelegationResult."""
         try:
             async for _msg in self._engine._loop(child_ctx):
                 pass  # Consume all messages — child runs to completion
@@ -164,10 +216,6 @@ class DelegationManager:
                 turns_used=child_ctx.metrics.iterations,
                 child_messages=child_ctx.messages,
             )
-        finally:
-            self._engine._context_anchors = saved_anchors
-            self._engine.loop_config = saved_loop_config
-            self._restore_todo_list(saved_todo_list)
 
         summary = self._extract_final_summary(child_ctx)
         success = child_ctx.state == AgentState.COMPLETE
@@ -188,6 +236,28 @@ class DelegationManager:
             turns_used=child_ctx.metrics.iterations,
             child_messages=child_ctx.messages,
         )
+
+    async def _create_worktree(self, delegation_id: str, tier: str) -> Path | None:
+        """Create a worktree if manager is available."""
+        if self._worktree_mgr is None:
+            return None
+        return await self._worktree_mgr.create_worktree(delegation_id, tier)
+
+    async def _finalize_worktree(
+        self,
+        delegation_id: str,
+        worktree_path: Path | None,
+        result: DelegationResult,
+    ) -> None:
+        """Merge or discard worktree based on delegation result."""
+        if self._worktree_mgr is None or worktree_path is None:
+            return
+        if result.success:
+            merged = await self._worktree_mgr.merge_worktree(delegation_id)
+            if not merged:
+                logger.warning("[DELEGATION] Worktree merge failed for %s", delegation_id[:8])
+        else:
+            await self._worktree_mgr.discard_worktree(delegation_id)
 
     async def _create_storage_records(
         self,

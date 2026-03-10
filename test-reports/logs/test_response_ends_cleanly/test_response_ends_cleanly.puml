@@ -24,23 +24,21 @@ note right of Mdl
   **Model Output:**
   Here are three widely-used programming languages and their primary applications:
   
-  1. **Python** — Data science, machine learning, scripting, web development 
-  (Django/Flask), automation, and scientific computing. Known for its readability 
-  and extensive libraries like NumPy, Pandas, and TensorFlow.
+  1. **Python** — Data science, machine learning, automation scripts, web backends
+  (Django/Flask), scientific computing. Known for readability and extensive 
+  libraries like NumPy, Pandas, TensorFlow.
   
-  2. **JavaScript** — Frontend web development, backend with Node.js, mobile apps 
-  (React Native), browser extensions, and increasingly server-side applications. 
-  Essential for modern interactive web experiences.
+  2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
+  server-side applications, cross-platform mobile apps (React Native). Essential 
+  for modern interactive websites.
   
-  3. **Rust** — Systems programming, performance-critical applications, embedded 
-  systems, blockchain development, and tools requiring memory safety without 
-  garbage collection. Gaining adoption where C/C++ traditionally dominated but 
-  with better safety guarantees.
+  3. **Rust** — Systems programming, embedded devices, performance-critical 
+  infrastructure, tooling and compilers. Emphasizes memory safety without garbage 
+  collection, competing with C/C++ in domains requiring low-level control.
   
-  Each language excels in its domain: Python for rapid development and data work, 
-  JavaScript for web ecosystems, and Rust for safe low-level programming. The 
-  "best" choice depends on your specific needs—there's rarely a single right 
-  answer across all scenarios.
+  Each language serves different needs: Python excels at rapid development and 
+  data work, JavaScript dominates the web ecosystem, and Rust targets 
+  high-performance systems where safety matters.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

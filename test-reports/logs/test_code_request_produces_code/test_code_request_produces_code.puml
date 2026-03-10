@@ -26,27 +26,45 @@ note right of Mdl
   
   ```python
   def is_even(n):
-      """Check if a number is even."""
+      """Check if a number is even.
+      
+      Args:
+          n: The number to check (can be int or float)
+      
+      Returns:
+          True if the number is even, False otherwise
+      
+      Raises:
+          TypeError: If input is not a number
+      """
+      if not isinstance(n, (int, float)):
+          raise TypeError(f"Expected number, got {type(n).__name__}")
+      
+      # Handle negative numbers correctly using modulo
       return n % 2 == 0
+  
+  
+  # Example usage:
+  print(is_even(4))      # True
+  print(is_even(7))      # False
+  print(is_even(-2))     # True (negative even)
+  print(is_even(0.5))    # False (not an integer)
   ```
   
-  **Usage example:**
+  **Alternative implementation using bitwise AND:**
   ```python
-  print(is_even(4))   # True
-  print(is_even(7))   # False
-  print(is_even(-2))  # True (negative numbers work too)
+  def is_even_bitwise(n):
+      """Check if a number is even using bitwise operation."""
+      return n &amp; 1 == 0
   ```
   
-  **Note:** This function assumes you're passing an integer. If you need to handle
-  other input types, you might want to add validation:
+  The modulo approach (`%`) is more readable and handles floats correctly. The 
+  bitwise version is slightly faster for large-scale integer operations but less 
+  clear to readers unfamiliar with bit manipulation.
   
-  ```python
-  def is_even(n):
-      """Check if a number is even."""
-      if not isinstance(n, int):
-          raise TypeError("Input must be an integer")
-      return n % 2 == 0
-  ```
+  **Note:** This function assumes you're checking if the number divides evenly by 
+  2 (i.e., no remainder). If you need to check specifically for integers only, add
+  `isinstance(n, int)` validation.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

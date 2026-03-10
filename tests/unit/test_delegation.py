@@ -7,7 +7,7 @@ import pytest
 from entropic.config.schema import EntropyConfig, TierConfig
 from entropic.core.base import Message, ModelTier
 from entropic.core.delegation import DelegationManager, DelegationResult
-from entropic.core.engine import AgentEngine, LoopConfig, LoopContext
+from entropic.core.engine import MAX_DELEGATION_DEPTH, AgentEngine, LoopConfig, LoopContext
 from entropic.core.engine_types import AgentState
 
 # ---------------------------------------------------------------------------
@@ -432,3 +432,93 @@ class TestExecutePendingDelegation:
         assert start_calls[0][2] == "do work"  # task
         assert len(complete_calls) == 1
         assert complete_calls[0][3] is True  # success
+
+
+# ---------------------------------------------------------------------------
+# Depth enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestDelegationDepthEnforcement:
+    @pytest.mark.asyncio
+    async def test_delegation_rejected_at_max_depth(self):
+        """Delegation at MAX_DELEGATION_DEPTH is rejected with error message."""
+        engine = _make_engine()
+        ctx = _make_parent_ctx()
+        ctx.delegation_depth = MAX_DELEGATION_DEPTH
+        ctx.metadata["pending_delegation"] = {
+            "target": "eng",
+            "task": "too deep",
+        }
+
+        messages = []
+        async for msg in engine._execute_pending_delegation(ctx):
+            messages.append(msg)
+
+        assert len(messages) == 1
+        assert "DELEGATION REJECTED" in messages[0].content
+        assert messages[0].metadata.get("delegation_rejected") is True
+        # DelegationManager should NOT have been called
+        assert ctx.state != AgentState.DELEGATING
+
+    @pytest.mark.asyncio
+    async def test_delegation_allowed_below_max_depth(self):
+        """Delegation below MAX_DELEGATION_DEPTH proceeds normally."""
+        engine = _make_engine()
+        ctx = _make_parent_ctx()
+        ctx.delegation_depth = MAX_DELEGATION_DEPTH - 1
+        ctx.metadata["pending_delegation"] = {
+            "target": "eng",
+            "task": "still ok",
+        }
+
+        mock_result = DelegationResult(
+            summary="Done.",
+            success=True,
+            target_tier="eng",
+            task="still ok",
+            turns_used=1,
+        )
+
+        with patch("entropic.core.delegation.DelegationManager") as mock_cls:
+            mock_cls.return_value.execute_delegation = AsyncMock(return_value=mock_result)
+            messages = []
+            async for msg in engine._execute_pending_delegation(ctx):
+                messages.append(msg)
+
+        assert len(messages) == 1
+        assert "DELEGATION COMPLETE" in messages[0].content
+
+    def test_max_depth_constant_is_reasonable(self):
+        """MAX_DELEGATION_DEPTH should be small to prevent runaway chains."""
+        assert 1 <= MAX_DELEGATION_DEPTH <= 5
+
+
+# ---------------------------------------------------------------------------
+# Repo root caching (_get_repo_dir)
+# ---------------------------------------------------------------------------
+
+
+class TestRepoRootCaching:
+    def test_repo_dir_cached_on_first_call(self):
+        """_get_repo_dir caches the filesystem root on first call."""
+        engine = _make_engine()
+        fs_server = MagicMock()
+        fs_server.root_dir = Path("/original/project")
+
+        with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
+            result1 = engine._get_repo_dir()
+            assert result1 == Path("/original/project")
+
+            # Simulate worktree swap changing root_dir
+            fs_server.root_dir = Path("/worktree/path")
+            result2 = engine._get_repo_dir()
+
+            # Should still return original, not swapped path
+            assert result2 == Path("/original/project")
+
+    def test_repo_dir_returns_none_when_no_server(self):
+        """_get_repo_dir returns None when no filesystem server exists."""
+        engine = _make_engine()
+        with patch("entropic.core.worktree._get_server_instance", return_value=None):
+            assert engine._get_repo_dir() is None

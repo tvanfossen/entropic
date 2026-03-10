@@ -22,56 +22,59 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion in programming is when a function calls itself to solve a problem by 
-  breaking it down into smaller, similar sub-problems. Think of it like a set of 
-  Russian nesting dolls — each doll contains a smaller version of itself until you
-  reach the smallest one.
-  
-  ## Key Concepts
-  
-  **A recursive function has two essential parts:**
-  1. **Base case**: The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case**: Where the function calls itself with modified input
-  
-  ## Simple Example
-  
-  ```python
-  def factorial(n):
-      # Base case: stop when n is 0 or 1
-      if n &lt;= 1:
-          return 1
-      
-      # Recursive case: call itself with smaller value
-      return n * factorial(n - 1)
-  
-  print(factorial(5))  # Output: 120 (5 × 4 × 3 × 2 × 1)
-  ```
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem by breaking it down into smaller, similar sub-problems. Think of it like
+  a set of Russian nesting dolls — each doll contains another smaller one inside.
   
   ## How It Works
   
-  When you call `factorial(5)`:
-  - It calls `factorial(4)` → which calls `factorial(3)` → etc.
-  - Each call waits for the next one to return
-  - When it hits the base case (returns 1), each function returns its result up 
-  the chain
+  A recursive function has two key parts:
+  
+  1. **Base case** — The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive case** — The part where the function calls itself with modified 
+  input
+  
+  ## Simple Example (Factorial)
+  
+  ```python
+  def factorial(n):
+      # Base case: stop when we reach 0 or 1
+      if n &lt;= 1:
+          return 1
+      
+      # Recursive case: multiply n by factorial of (n-1)
+      return n * factorial(n - 1)
+  
+  # Usage
+  factorial(5)  # Returns 120 (5 × 4 × 3 × 2 × 1)
+  ```
+  
+  ## Visualizing the Call Stack
+  
+  When you call `factorial(3)`:
+  - `factorial(3)` calls `factorial(2)`
+  - `factorial(2)` calls `factorial(1)`
+  - `factorial(1)` returns `1` (base case!)
+  - Then it unwinds: `2 × 1 = 2`, then `3 × 2 = 6`
   
   ## Common Uses
   
-  - **Tree traversal** (file systems, DOM trees)
-  - **Divide and conquer algorithms** (quick sort, merge sort)
-  - **Mathematical calculations** (Fibonacci sequence, factorials)
-  - **Parsing nested structures** (JSON, XML)
+  - **Tree traversal** — navigating file systems, DOM trees
+  - **Divide and conquer algorithms** — quicksort, merge sort
+  - **Mathematical sequences** — Fibonacci numbers, factorials
+  - **Backtracking problems** — maze solving, puzzles like N-Queens
   
-  ## Important Considerations
+  ## When to Use (and Not)
   
-  ⚠️ **Watch out for:**
-  - Infinite recursion (missing base case) → stack overflow error
-  - Performance overhead from repeated calls
-  - Memory usage (each call adds to the call stack)
+  ✅ Good for: Problems with natural recursive structure  
+  ❌ Avoid when: Simple iteration works better (recursion uses more memory)
   
-  Recursion is powerful but not always the best tool — sometimes iteration (loops)
-  works better depending on your needs!
+  ⚠️ **Warning**: Always ensure your base case is reachable! Infinite recursion 
+  causes stack overflow errors.
+  
+  Would you like me to show a specific example, or explain how to debug common 
+  recursion issues?
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -22,13 +22,10 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm ready to help you with your technical tasks. As the team lead, I can:
-  
-  - Plan and coordinate work across different roles (architecture, engineering, 
-  QA, UX/UI, analysis)
-  - Execute multi-stage pipelines for complex tasks
-  - Handle direct questions or simple requests myself
-  - Ensure quality through proper review processes
+  Hello! 👋 I'm here to help you with your technical tasks. Whether you're working 
+  on architecture design, code implementation, testing, or anything else in 
+  between — I can assist directly or coordinate with the appropriate team members 
+  (architects, engineers, QA, etc.) depending on what you need.
   
   What would you like to work on today?
 end note

@@ -135,8 +135,8 @@ class TestEntropicServerDelegate:
         assert delegate_d.task == "Implementation ready"
 
     @pytest.mark.asyncio
-    async def test_delegate_empty_list_succeeds(self, server: EntropicServer) -> None:
-        """Delegate with empty todo list succeeds (no gate)."""
+    async def test_delegate_empty_list_rejected(self, server: EntropicServer) -> None:
+        """Delegate with empty todo list is rejected — must plan first."""
         result = await server.execute_tool(
             "delegate",
             {
@@ -144,9 +144,10 @@ class TestEntropicServerDelegate:
                 "task": "Quick delegation",
             },
         )
-        assert isinstance(result, ServerResponse)
-        assert "Delegation requested" in result.result
-        assert len(result.directives) > 0
+        assert isinstance(result, str)
+        data = json.loads(result)
+        assert "error" in data
+        assert "todo_write" in data["error"]
 
     @pytest.mark.asyncio
     async def test_delegate_succeeds_without_execution_todos(self, server: EntropicServer) -> None:
@@ -304,7 +305,21 @@ class TestEntropicServerDynamicTiers:
 
     @pytest.mark.asyncio
     async def test_delegate_accepts_valid_custom_tier(self, server: EntropicServer) -> None:
-        """Delegate succeeds with a valid custom tier name."""
+        """Delegate succeeds with a valid custom tier name (after planning)."""
+        await server.execute_tool(
+            "todo_write",
+            {
+                "action": "add",
+                "todos": [
+                    {
+                        "content": "Validate move",
+                        "active_form": "Validating",
+                        "status": "pending",
+                        "target_tier": "validate",
+                    }
+                ],
+            },
+        )
         result = await server.execute_tool(
             "delegate",
             {

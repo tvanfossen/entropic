@@ -136,14 +136,25 @@ class DelegateTool(BaseTool):
         )
 
     def _validate_delegate(self, target: str) -> str | None:
-        """Check tier validity. Returns error JSON or None."""
+        """Check tier validity and planning requirements. Returns error JSON or None."""
         if self._tier_names and target not in self._tier_names:
             return json.dumps(
                 {"error": f"Unknown tier: '{target}'. Available tiers: {self._tier_names}"}
             )
 
+        if self._todo_list.is_empty:
+            return json.dumps(
+                {
+                    "error": (
+                        "Cannot delegate without a plan. Use entropic.todo_write first "
+                        "to create todos describing the work, then delegate. "
+                        "Each todo should have a target_tier matching the role that will do it."
+                    )
+                }
+            )
+
         execution_todos = [t for t in self._todo_list.items if t.target_tier is not None]
-        if not execution_todos and not self._todo_list.is_empty:
+        if not execution_todos:
             logger.warning(
                 "[DELEGATE] %d todo(s) exist but none have target_tier set. "
                 "Proceeding with delegation — todos are self-directed.",

@@ -29,6 +29,7 @@ class AgentState(Enum):
     EXECUTING = auto()
     WAITING_TOOL = auto()
     VERIFYING = auto()
+    DELEGATING = auto()  # Waiting for child delegation to complete
     COMPLETE = auto()
     ERROR = auto()
     INTERRUPTED = auto()
@@ -110,6 +111,12 @@ class LoopContext:
     base_system: str = ""
     # General-purpose metadata for runtime state (e.g., warning tracking)
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Delegation: 0 = root context, 1+ = child delegation depth
+    delegation_depth: int = 0
+    # Delegation: parent conversation ID (if this is a child context)
+    parent_conversation_id: str | None = None
+    # Delegation: child conversation IDs spawned from this context
+    child_conversation_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -141,6 +148,10 @@ class EngineCallbacks:
     on_tool_record: Callable[[str, ToolCall, str, str | None, float], None] | None = None
     on_tier_selected: Callable[[str], None] | None = None
     on_routing_complete: Callable[[RoutingResult], None] | None = None
+    on_delegation_start: Callable[[str, str, str], None] | None = None
+    """(child_conv_id, target_tier, task)"""
+    on_delegation_complete: Callable[[str, str, str, bool], None] | None = None
+    """(child_conv_id, tier, summary, success)"""
     error_sanitizer: Callable[[str], str] | None = None
 
 

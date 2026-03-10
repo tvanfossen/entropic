@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
 from entropic.config.schema import EntropyConfig
-from entropic.core.base import Message, ToolCall
+from entropic.core.base import Message, ModelTier, ToolCall
 from entropic.core.compaction import CompactionManager, TokenCounter
 from entropic.core.context_manager import ContextManager, ContextManagerHooks
 from entropic.core.directives import DirectiveProcessor, DirectiveResult
@@ -173,22 +173,26 @@ class AgentEngine:
         directive: Delegate,
         result: DirectiveResult,
     ) -> None:
-        """Handle delegate directive.
+        """Handle delegate directive — spawn child inference loop.
 
-        Phase 1: Treats delegation as a tier change (in-place swap).
-        Phase 2 will replace this with child loop spawning.
+        Validates depth, fires callbacks, runs DelegationManager, and
+        injects the child's result back into the parent context.
         """
-        from entropic.core.directives import TierChange
-
         logger.info(
-            "[DIRECTIVE] delegate: target=%s task=%s max_turns=%s",
+            "[DIRECTIVE] delegate: target=%s task=%s max_turns=%s depth=%d",
             directive.target,
             directive.task[:80],
             directive.max_turns,
+            ctx.delegation_depth,
         )
-        # Phase 1: delegate as tier change — child loop in Phase 2
-        tier_directive = TierChange(tier=directive.target, reason=f"delegation: {directive.task}")
-        self._directive_tier_change(ctx, tier_directive, result)
+
+        # Store delegation request for async execution after directive processing
+        ctx.metadata["pending_delegation"] = {
+            "target": directive.target,
+            "task": directive.task,
+            "max_turns": directive.max_turns,
+        }
+        result.stop_processing = True
 
     def _directive_tier_change(
         self,
@@ -481,7 +485,7 @@ class AgentEngine:
         )
         try:
             # Refresh context limit in case model changed
-            self._context_manager.refresh_context_limit()
+            self._context_manager.refresh_context_limit(ctx)
 
             # Prune old tool results before compaction check
             self._context_manager.prune_old_tool_results(ctx)
@@ -507,6 +511,13 @@ class AgentEngine:
                 ctx.effective_tool_calls = 0
                 async for msg in self._process_tool_calls(ctx, tool_calls):
                     yield msg
+
+                # Execute pending delegation if directive was processed
+                if "pending_delegation" in ctx.metadata:
+                    async for msg in self._execute_pending_delegation(ctx):
+                        yield msg
+                    return
+
                 # All tool calls blocked/denied — fall through to standard decision
                 if ctx.effective_tool_calls == 0:
                     await self._evaluate_no_tool_decision(ctx, content)
@@ -541,6 +552,47 @@ class AgentEngine:
         if is_complete:
             self._set_state(ctx, AgentState.COMPLETE)
 
+    async def _execute_pending_delegation(self, ctx: LoopContext) -> AsyncIterator[Message]:
+        """Execute a pending delegation request stored by _directive_delegate."""
+        delegation = ctx.metadata.pop("pending_delegation")
+        target = delegation["target"]
+        task = delegation["task"]
+        max_turns = delegation.get("max_turns")
+
+        self._set_state(ctx, AgentState.DELEGATING)
+
+        # Fire delegation start callback
+        child_conv_id = str(__import__("uuid").uuid4())
+        if self._callbacks.on_delegation_start:
+            self._callbacks.on_delegation_start(child_conv_id, target, task)
+
+        from entropic.core.delegation import DelegationManager
+
+        manager = DelegationManager(self)
+        result = await manager.execute_delegation(ctx, target, task, max_turns)
+
+        # Inject result into parent context
+        status = "COMPLETE" if result.success else "FAILED"
+        result_msg = Message(
+            role="user",
+            content=(
+                f"[DELEGATION {status}: {target}] {result.summary}\n"
+                f"(turns used: {result.turns_used})"
+            ),
+            metadata={"delegation_result": True, "target_tier": target},
+        )
+        ctx.messages.append(result_msg)
+        yield result_msg
+
+        # Fire delegation complete callback
+        if self._callbacks.on_delegation_complete:
+            self._callbacks.on_delegation_complete(
+                child_conv_id, target, result.summary[:200], result.success
+            )
+
+        # Resume parent loop — parent processes the result
+        self._set_state(ctx, AgentState.EXECUTING)
+
     def _should_auto_chain(self, ctx: LoopContext, finish_reason: str, content: str = "") -> bool:
         """Check whether auto-chain should trigger for the current tier.
 
@@ -570,33 +622,27 @@ class AgentEngine:
     ) -> bool:
         """Attempt auto-chain on token exhaustion or completed response.
 
-        The auto_chain frontmatter value is a tier name (e.g. "lead").
-        Uses that directly as the target. Falls back to route_among handoff
-        targets only if the named tier is not found.
+        At depth 0 (root): auto_chain = TierChange to lead (existing behavior).
+        At depth > 0 (child): auto_chain = COMPLETE (return to parent).
 
-        Returns True if chain fired (tier changed), False otherwise.
+        Returns True if chain fired, False otherwise.
         """
         if not self._should_auto_chain(ctx, finish_reason, content):
             return False
 
-        chain_target = self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain")
+        # In child delegation: auto_chain means "I'm done, return to parent"
+        if ctx.delegation_depth > 0:
+            logger.info("[AUTO_CHAIN] child depth=%d — completing delegation", ctx.delegation_depth)
+            self._set_state(ctx, AgentState.COMPLETE)
+            return True
 
-        # Resolve named target tier (auto_chain is a tier name string)
-        target = None
-        if isinstance(chain_target, str):
-            target = self.orchestrator._find_tier(chain_target)
+        return await self._execute_root_auto_chain(ctx)
 
+    async def _execute_root_auto_chain(self, ctx: LoopContext) -> bool:
+        """Execute auto_chain TierChange at root depth. Returns True if chain fired."""
+        target = await self._resolve_auto_chain_target(ctx)
         if target is None:
-            # Named tier not found — fall back to route_among
-            targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
-            if not targets:
-                logger.warning(
-                    "[AUTO_CHAIN] auto_chain=%s but tier not found and "
-                    "no handoff targets configured",
-                    chain_target,
-                )
-                return False
-            target = await self.orchestrator.route_among(targets)
+            return False
 
         from entropic.core.directives import TierChange
 
@@ -604,6 +650,29 @@ class AgentEngine:
         result = DirectiveResult()
         self._directive_tier_change(ctx, directive, result)
         return result.tier_changed
+
+    async def _resolve_auto_chain_target(self, ctx: LoopContext) -> ModelTier | None:
+        """Resolve the target tier for auto_chain at depth 0."""
+        chain_target = self.orchestrator.get_tier_param(ctx.locked_tier, "auto_chain")
+
+        # Resolve named target tier (auto_chain is a tier name string)
+        target = None
+        if isinstance(chain_target, str):
+            target = self.orchestrator._find_tier(chain_target)
+
+        if target is not None:
+            return target
+
+        # Named tier not found — fall back to route_among
+        targets = self.orchestrator.get_handoff_targets(ctx.locked_tier)
+        if not targets:
+            logger.warning(
+                "[AUTO_CHAIN] auto_chain=%s but tier not found and "
+                "no handoff targets configured",
+                chain_target,
+            )
+            return None
+        return await self.orchestrator.route_among(targets)
 
     def _ensure_tool_executor(self) -> ToolExecutor:
         """Create or return the ToolExecutor subsystem.

@@ -35,37 +35,33 @@ note right of Mdl
       Returns:
           int or float: The sum of all elements
           
-      Examples:
-          &gt;&gt;&gt; sum_list([1, 2, 3])
-          6
-          &gt;&gt;&gt; sum_list([])
-          0
-          &gt;&gt;&gt; sum_list([-1, 1])
-          0
+      Raises:
+          TypeError: If any element is not a number
       """
-      return sum(numbers)
+      total = 0
+      for num in numbers:
+          if not isinstance(num, (int, float)):
+              raise TypeError(f"Expected number, got {type(num).__name__}")
+          total += num
+      return total
+  
+  
+  # Example usage:
+  if __name__ == "__main__":
+      print(sum_list([1, 2, 3, 4, 5]))  # Output: 15
+      print(sum_list([]))               # Output: 0
   ```
   
-  Or if you want a manual implementation without using the built-in `sum()`:
+  **Alternative using built-in `sum()`**: If you're okay with Python's built-in 
+  function, it's even simpler:
   
   ```python
   def sum_list(numbers):
-      """Calculate the sum of all numbers in a list."""
-      total = 0
-      for num in numbers:
-          total += num
-      return total
+      return sum(numbers)
   ```
   
-  **Usage example:**
-  ```python
-  result = sum_list([1, 2, 3, 4, 5])
-  print(result)  # Output: 15
-  ```
-  
-  The built-in `sum()` is optimized and handles edge cases like empty lists 
-  (returns 0). If you need to handle type validation or custom logic, I can extend
-  this further.
+  The first version includes type checking for educational purposes. The second is
+  more Pythonic and efficient for production code.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

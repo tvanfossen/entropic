@@ -320,6 +320,8 @@ class TodoList:
 
     def _validate_items(self, todos: list[dict[str, Any]]) -> list[str]:
         """Validate todo item dicts. Returns list of error strings (empty = valid)."""
+        if not isinstance(todos, list):
+            return [f"'todos' must be an array, got {type(todos).__name__}"]
         errors = []
         for i, t in enumerate(todos):
             if "content" not in t:

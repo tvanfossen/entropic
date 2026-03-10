@@ -32,7 +32,8 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello".
+  You just said "Hello". That was our first exchange - I greeted you back and 
+  asked how I could help.
 end note
 note over T #palegreen
   **PASSED** (< 112s)

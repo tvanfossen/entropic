@@ -377,6 +377,16 @@ class AgentEngine:
             return tier_config.context_length
         return 16384
 
+    def _get_repo_dir(self) -> Any:
+        """Get repo directory from filesystem server (for worktree isolation).
+
+        Returns a Path or None. Typed as Any to avoid import at module level.
+        """
+        from entropic.core.worktree import _get_server_instance
+
+        server = _get_server_instance(self, "filesystem")
+        return getattr(server, "root_dir", None) if server else None
+
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.
 
@@ -598,7 +608,7 @@ class AgentEngine:
 
         from entropic.core.delegation import DelegationManager
 
-        manager = DelegationManager(self, storage=self._storage)
+        manager = DelegationManager(self, storage=self._storage, repo_dir=self._get_repo_dir())
         result = await manager.execute_delegation(
             ctx,
             target,
@@ -639,7 +649,7 @@ class AgentEngine:
 
         from entropic.core.delegation import DelegationManager
 
-        manager = DelegationManager(self, storage=self._storage)
+        manager = DelegationManager(self, storage=self._storage, repo_dir=self._get_repo_dir())
         result = await manager.execute_pipeline(
             ctx,
             stages,

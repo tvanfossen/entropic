@@ -22,58 +22,50 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller, similar sub-problems.
+  **Recursion** is when a function calls itself to solve a problem by breaking it 
+  down into smaller, similar sub-problems.
   
   ## Key Concepts
   
-  **Basic Structure:** Every recursive function needs two parts:
-  1. **Base case** - The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case** - Where the function calls itself with modified parameters
+  1. **Self-Reference**: A recursive function includes a call to itself within its
+  own definition.
   
-  **Example in Python:**
+  2. **Base Case**: Every recursive function needs at least one condition that 
+  stops the recursion (prevents infinite loops). This is where the function 
+  returns without calling itself again.
+  
+  3. **Recursive Case**: The part of the function that calls itself with modified 
+  parameters, moving toward the base case.
+  
+  ## Simple Example (Factorial)
+  
   ```python
   def factorial(n):
-      if n == 0 or n == 1:  # Base case
+      # Base case: stop when n = 0 or 1
+      if n &lt;= 1:
           return 1
-      else:                   # Recursive case
-          return n * factorial(n - 1)
+      
+      # Recursive case: n * factorial of smaller value
+      return n * factorial(n - 1)
   ```
   
-  ## How It Works
+  ## When to Use Recursion
   
-  When `factorial(3)` is called:
-  - Calls `factorial(2)` → calls `factorial(1)` → returns 1 (base case)
-  - Returns 2 × 1 = 2
-  - Returns 3 × 2 = 6
+  - **Natural fit**: Problems that can be broken into identical sub-problems (tree
+  traversal, sorting algorithms like quicksort/mergesort)
+  - **Cleaner code**: Sometimes recursive solutions are more elegant than 
+  iterative ones for certain problems
+  - **Tradeoff**: Can use more memory (call stack) and may be slower than 
+  iteration
   
-  ## Common Uses
+  ## When to Avoid Recursion
   
-  - **Tree traversals** (file systems, DOM trees)
-  - **Divide and conquer algorithms** (merge sort, quicksort)
-  - **Mathematical calculations** (Fibonacci sequence, factorials)
-  - **Backtracking problems** (mazes, puzzles like N-Queens)
+  - Simple loops work better for straightforward iterations
+  - Deep recursion can cause stack overflow errors
+  - Performance-critical code often benefits from iterative approaches
   
-  ## Pros &amp; Cons
-  
-  | Advantages | Disadvantages |
-  |------------|---------------|
-  | Elegant, clean code for certain problems | Can be harder to understand 
-  initially |
-  | Natural fit for recursive data structures | Memory overhead from call stack |
-  | Often simpler than iterative alternatives | Risk of stack overflow with deep 
-  recursion |
-  
-  ## When to Use
-  
-  - The problem naturally breaks into smaller versions of itself
-  - Working with recursive data structures (trees, graphs)
-  - Readability outweighs performance concerns
-  
-  **Note:** For very large inputs or performance-critical code, consider whether 
-  iteration might be better. Some languages optimize tail-call recursion; others 
-  don't.
+  The key is recognizing when a problem has the "self-similar" structure that 
+  makes recursion appropriate.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

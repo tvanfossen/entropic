@@ -95,3 +95,6 @@ test-reports/logs/**/*.png
 .claude/tmp/
 
 examples/hello-world/.hello-world/
+
+# Git worktrees for delegation isolation
+.worktrees/

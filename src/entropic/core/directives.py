@@ -67,6 +67,18 @@ class Delegate(Directive):
 
 
 @dataclass
+class Pipeline(Directive):
+    """Execute a multi-stage delegation pipeline.
+
+    The engine runs each stage sequentially, passing the previous
+    stage's output as additional context to the next.
+    """
+
+    stages: list[str]
+    task: str
+
+
+@dataclass
 class ClearSelfTodos(Directive):
     """Clear self-directed todos (handled server-side, engine no-op)."""
 
@@ -122,6 +134,7 @@ class NotifyPresenter(Directive):
 STOP_PROCESSING = "stop_processing"
 TIER_CHANGE = "tier_change"
 DELEGATE = "delegate"
+PIPELINE = "pipeline"
 CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
@@ -137,6 +150,7 @@ _DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
     "stop_processing": StopProcessing,
     "tier_change": TierChange,
     "delegate": Delegate,
+    "pipeline": Pipeline,
     "clear_self_todos": ClearSelfTodos,
     "inject_context": InjectContext,
     "prune_messages": PruneMessages,

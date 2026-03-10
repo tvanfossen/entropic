@@ -214,6 +214,7 @@ class TestToolIsolation:
         "git.reset",
         "entropic.todo_write",
         "entropic.delegate",
+        "entropic.pipeline",
         "diagnostics.check_errors",
     ]
 

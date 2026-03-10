@@ -27,12 +27,12 @@ note right of Mdl
   
   ## Key Concepts
   
-  **How it works:** A recursive function has two essential parts:
-  1. **Base case**: The condition that stops the recursion (prevents infinite 
+  **Basic Structure:** Every recursive function needs two parts:
+  1. **Base case** - The condition that stops the recursion (prevents infinite 
   loops)
-  2. **Recursive case**: Where the function calls itself with modified input
+  2. **Recursive case** - Where the function calls itself with modified parameters
   
-  **Example:**
+  **Example in Python:**
   ```python
   def factorial(n):
       if n == 0 or n == 1:  # Base case
@@ -41,31 +41,39 @@ note right of Mdl
           return n * factorial(n - 1)
   ```
   
-  ## When to use recursion
+  ## How It Works
   
-  - **Natural fit**: Problems that can be divided into identical sub-problems 
-  (tree traversal, sorting algorithms like quicksort, Fibonacci sequence)
-  - **Cleaner code**: Often more elegant than iterative alternatives for certain 
-  problems
+  When `factorial(3)` is called:
+  - Calls `factorial(2)` → calls `factorial(1)` → returns 1 (base case)
+  - Returns 2 × 1 = 2
+  - Returns 3 × 2 = 6
   
-  ## Considerations
+  ## Common Uses
   
-  | Pros | Cons |
-  |------|------|
-  | Elegant solutions for recursive problems | Can use more memory (stack space) |
-  | Simpler logic for complex structures | Risk of stack overflow if not careful |
-  | Natural mapping to mathematical definitions | May be slower than iterative 
-  approaches |
+  - **Tree traversals** (file systems, DOM trees)
+  - **Divide and conquer algorithms** (merge sort, quicksort)
+  - **Mathematical calculations** (Fibonacci sequence, factorials)
+  - **Backtracking problems** (mazes, puzzles like N-Queens)
   
-  ## Common pitfalls
+  ## Pros &amp; Cons
   
-  - **Missing base case**: Infinite recursion → stack overflow error
-  - **No progress toward base case**: Function never terminates
-  - **Redundant calculations**: Like naive Fibonacci (use memoization)
+  | Advantages | Disadvantages |
+  |------------|---------------|
+  | Elegant, clean code for certain problems | Can be harder to understand 
+  initially |
+  | Natural fit for recursive data structures | Memory overhead from call stack |
+  | Often simpler than iterative alternatives | Risk of stack overflow with deep 
+  recursion |
   
-  **Rule of thumb**: If you find yourself writing nested loops or complex 
-  iteration logic, consider whether recursion might be cleaner. But always ensure 
-  your recursive calls will eventually reach a stopping point!
+  ## When to Use
+  
+  - The problem naturally breaks into smaller versions of itself
+  - Working with recursive data structures (trees, graphs)
+  - Readability outweighs performance concerns
+  
+  **Note:** For very large inputs or performance-critical code, consider whether 
+  iteration might be better. Some languages optimize tail-call recursion; others 
+  don't.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

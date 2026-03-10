@@ -23,12 +23,10 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Hello! I'm doing well, thank you for asking. As your technical team lead, I'm 
-  here to help coordinate our work and ensure we deliver quality results 
-  efficiently.
+  ready to help with whatever you need — whether that's architecture planning, 
+  code implementation, testing, or just answering questions.
   
-  How can I assist you today? Whether it's architecture planning, code 
-  implementation, testing, or any other aspect of the project, I'm ready to get 
-  started.
+  How can I assist you today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

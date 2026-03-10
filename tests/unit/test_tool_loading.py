@@ -23,6 +23,7 @@ ALL_TOOLS = [
     ("diagnostics", "diagnostics"),
     ("check_errors", "diagnostics"),
     ("todo_write", "entropic"),
+    ("pipeline", "entropic"),
 ]
 
 

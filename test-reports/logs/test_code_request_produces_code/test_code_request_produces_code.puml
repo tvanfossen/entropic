@@ -25,50 +25,27 @@ note right of Mdl
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(number):
-      """Check if a number is even.
-      
-      Args:
-          number (int or float): The number to check
-          
-      Returns:
-          bool: True if the number is even, False otherwise
-          
-      Raises:
-          TypeError: If the input is not a number
-      """
-      if not isinstance(number, (int, float)):
-          raise TypeError(f"Expected number, got {type(number).__name__}")
-      
-      return number % 2 == 0
-  
-  
-  # Example usage:
-  print(is_even(4))      # True
-  print(is_even(7))      # False
-  print(is_even(-2))     # True
-  print(is_even(3.5))    # False (not an integer)
+  def is_even(n):
+      """Check if a number is even."""
+      return n % 2 == 0
   ```
   
-  **Alternative approach:** You could also use the `divmod()` function:
-  
+  **Usage example:**
   ```python
-  def is_even(number):
-      """Check if a number is even using divmod."""
-      return divmod(number, 2)[1] == 0
+  print(is_even(4))   # True
+  print(is_even(7))   # False
+  print(is_even(-2))  # True (negative numbers work too)
   ```
   
-  **Note on edge cases:** This function handles negative numbers correctly (they 
-  can be even), but it will return `False` for non-integer floats like `3.5`. If 
-  you want to check if a number is an integer first, add that validation:
+  **Note:** This function assumes you're passing an integer. If you need to handle
+  other input types, you might want to add validation:
   
   ```python
-  def is_even(number):
-      """Check if a number is even (must be an integer)."""
-      if not isinstance(number, int) or isinstance(number, bool):
-          raise TypeError("Number must be an integer")
-      
-      return number % 2 == 0
+  def is_even(n):
+      """Check if a number is even."""
+      if not isinstance(n, int):
+          raise TypeError("Input must be an integer")
+      return n % 2 == 0
   ```
 end note
 note over T #palegreen

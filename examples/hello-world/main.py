@@ -1,17 +1,14 @@
-"""Hello World — two-tier entropic integration.
+"""Hello World — minimal entropic integration.
 
 Demonstrates entropic's core features:
-    - Automatic routing: a tiny router model classifies prompts
-    - Tier routing: simple questions go to lead,
-      complex analysis goes to arch
-    - VRAM management: only one main model loaded at a time
+    - Single-tier config with bundled lead identity
+    - Streaming output via callbacks
+    - App context injection (consumer personality)
 
 Usage:
     1. Run once to seed config: python main.py
-    2. Edit .hello-world/config.local.yaml with your model paths
+    2. Edit .hello-world/config.local.yaml with your model path
     3. Run again: python main.py
-    4. Try simple prompts ("hello") and complex ones
-       ("design a REST API for a todo app") to see routing in action
 """
 
 from __future__ import annotations
@@ -34,7 +31,7 @@ EXAMPLE_ROOT = Path(__file__).resolve().parent
 
 
 async def main() -> None:
-    """Interactive prompt loop with automatic tier routing."""
+    """Interactive prompt loop."""
     # 1. Load config — seeds .hello-world/config.local.yaml on first run
     loader = ConfigLoader(
         project_root=EXAMPLE_ROOT,
@@ -48,7 +45,7 @@ async def main() -> None:
     setup_logging(config, project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
     setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
 
-    # 3. Initialize orchestrator (loads router + default tier into VRAM)
+    # 3. Initialize orchestrator (loads default tier into VRAM)
     orchestrator = ModelOrchestrator(config)
     await orchestrator.initialize()
 
@@ -56,17 +53,15 @@ async def main() -> None:
     loop_config = LoopConfig(max_iterations=5, auto_approve_tools=True)
     engine = AgentEngine(orchestrator, config=config, loop_config=loop_config)
 
-    # 5. Wire callbacks: streaming + tier selection visibility
+    # 5. Wire callbacks: streaming output
     engine.set_callbacks(
         EngineCallbacks(
             on_stream_chunk=lambda chunk: print(chunk, end="", flush=True),
-            on_tier_selected=lambda tier: print(f"\n[routed to: {tier}]"),
         )
     )
 
     # 6. Interactive loop
-    print("entropic hello-world — lead + arch tiers (Qwen3.5-35B-A3B MoE)")
-    print("The router automatically picks the right tier per prompt.")
+    print("entropic hello-world (Qwen3.5-35B-A3B MoE)")
     print("Type 'quit' to exit.\n")
 
     while True:

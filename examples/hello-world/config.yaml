@@ -1,12 +1,12 @@
 # Hello World — minimal entropic consumer config.
 #
-# Demonstrates automatic model routing between a lead tier
-# and an arch tier using the same underlying model.
+# Single-tier example using the bundled lead identity.
+# No routing — just one model, one identity, streaming output.
 #
 # Uses Qwen3.5-35B-A3B MoE (Q2_K) — full GPU offload at 16GB VRAM,
 # 30-41 tok/s. MoE architecture: 35B total params, ~3B active per token.
 #
-# Edit `path` values to point to your GGUF model files.
+# Edit `path` to point to your GGUF model file.
 # See docs/library-consumer-guide.md for full config reference.
 
 # App context: consumer-specific personality injected into every prompt
@@ -18,18 +18,10 @@ models:
       path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
       adapter: qwen35
       context_length: 16384
-    arch:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 16384
-  router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: router
-    context_length: 2048
   default: lead
 
 routing:
-  enabled: true
+  enabled: false
   fallback_tier: lead
 
 mcp:

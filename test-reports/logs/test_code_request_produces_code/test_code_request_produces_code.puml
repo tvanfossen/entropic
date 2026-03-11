@@ -22,53 +22,23 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a Python function to check if a number is even:
+  Here's a simple Python function to check if a number is even:
   
   ```python
   def is_even(n):
-      """Check if a number is even.
-      
-      Args:
-          n (int or float): The number to check
-          
-      Returns:
-          bool: True if the number is even, False otherwise
-          
-      Raises:
-          TypeError: If input is not a number
-      """
-      # Handle non-numeric inputs
-      if not isinstance(n, (int, float)):
-          raise TypeError(f"Expected numeric type, got {type(n).__name__}")
-      
-      # Check divisibility by 2
+      """Check if a number is even."""
       return n % 2 == 0
-  
-  # Example usage:
-  print(is_even(4))      # True
-  print(is_even(7))      # False
-  print(is_even(-2))     # True (negative even numbers)
-  print(is_even(0.5))    # False (floats can be checked too)
   ```
   
-  **Alternative implementation using bitwise operation:**
-  
+  **Usage example:**
   ```python
-  def is_even_bitwise(n):
-      """Check if a number is even using bitwise AND.
-      
-      This is often faster than modulo for large numbers.
-      """
-      return n &amp; 1 == 0
+  print(is_even(4))   # True
+  print(is_even(7))   # False
+  print(is_even(-2))  # True (negative numbers work too)
   ```
   
-  The first version with `n % 2` is more readable and Pythonic. The bitwise 
-  version (`n &amp; 1`) can be slightly faster in performance-critical code since 
-  it avoids division operations.
-  
-  **Note:** This function works for integers (positive, negative, zero) and 
-  floats. For very large numbers or decimal values, you may want to add additional
-  validation depending on your use case.
+  This works by checking if the number divided by 2 has no remainder. The modulo 
+  operator `%` gives us that remainder, and we compare it to `0`.
 end note
 note over T #palegreen
   **PASSED** (< 262s)

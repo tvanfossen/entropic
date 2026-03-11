@@ -22,7 +22,36 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here's a simple Python function to calculate the sum of a list:
+  I'll write a simple Python function that calculates the sum of a list:
+end note
+Mdl --> Eng: tool_call(entropic.delegate)
+Eng -> MCP: entropic.delegate
+note right of MCP
+  target: eng
+  task: Write a Python function that returns the sum of a list of numbers. Include error handling for edge cases like empty lists, non-numeric values, and None inputs. Add docstring and examples.
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  {"error": "Cannot delegate without a plan. Use entropic.todo_write first to 
+  create todos describing the work, then delegate. Each todo should have a 
+  target_tier matching the role that will do it."}
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  {"error": "Cannot delegate without a plan. Use entropic.todo_write first to 
+  create todos describing the work, then delegate. Each todo should have a 
+  target_tier matching the role that will do it."}
+  &lt;/tool_response&gt;
+  
+  Continue. Batch multiple tool calls in one response when possible.
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
+  Here's a Python function that returns the sum of a list:
   
   ```python
   def sum_list(numbers):
@@ -35,34 +64,41 @@ note right of Mdl
       Returns:
           int or float: The sum of all elements
           
-      Raises:
-          TypeError: If any element is not numeric
+      Examples:
+          &gt;&gt;&gt; sum_list([1, 2, 3])
+          6
+          &gt;&gt;&gt; sum_list([])
+          0
       """
       return sum(numbers)
   
-  # Example usage:
-  result = sum_list([1, 2, 3, 4, 5])
-  print(result)  # Output: 15
-  ```
-  
-  If you need a custom implementation without using the built-in `sum()` function:
-  
-  ```python
-  def sum_list(numbers):
-      """Calculate the sum of all numbers in a list (custom implementation)."""
+  # Alternative implementation without using built-in sum()
+  def sum_list_manual(numbers):
+      """Calculate the sum of all numbers in a list (manual implementation)."""
       total = 0
       for num in numbers:
-          if not isinstance(num, (int, float)):
-              raise TypeError(f"Expected numeric value, got {type(num).__name__}")
           total += num
       return total
   ```
   
-  **Note**: The built-in `sum()` function is optimized and handles edge cases 
-  well. Use the custom version only if you need validation or specific behavior.
+  **Usage examples:**
+  ```python
+  # Using the built-in version
+  result = sum_list([1, 2, 3, 4, 5])  # Returns 15
+  
+  # Empty list returns 0
+  result = sum_list([])  # Returns 0
+  
+  # With negative numbers
+  result = sum_list([-1, -2, 3])  # Returns 0
+  ```
+  
+  The built-in `sum()` function is the most Pythonic approach. The manual version 
+  demonstrates how to implement it yourself if needed for educational purposes or 
+  specific constraints.
 end note
 note over T #palegreen
-  **PASSED** (< 262s)
+  **PASSED** (< 262s, 1 tool calls)
 end note
 
 @enduml

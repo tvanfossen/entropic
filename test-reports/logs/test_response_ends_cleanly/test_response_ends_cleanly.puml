@@ -24,32 +24,29 @@ note right of Mdl
   **Model Output:**
   Here are three programming languages and their main use cases:
   
-  ## 1. Python
-  **Main Use Cases:**
-  - Data science and machine learning (libraries like NumPy, pandas, scikit-learn)
-  - Web development (Django, Flask frameworks)
-  - Scripting and automation
-  - Scientific computing and research
+  ### 1. **Python**
+  - **Main Use Cases**: Data science, machine learning/artificial intelligence, 
+  web development (Django/Flask), scripting/automation, scientific computing
+  - **Why Popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
+  TensorFlow), beginner-friendly
   
-  ## 2. JavaScript
-  **Main Use Cases:**
-  - Frontend web development (browser-based interactivity)
-  - Backend development with Node.js
-  - Cross-platform mobile apps (React Native, Ionic)
-  - Real-time applications (chat, streaming)
+  ### 2. **JavaScript**
+  - **Main Use Cases**: Frontend web development (browser-based UIs), backend 
+  development with Node.js, mobile apps (React Native), serverless functions
+  - **Why Popular**: Runs natively in browsers, massive ecosystem (npm packages), 
+  full-stack capabilities
   
-  ## 3. Java
-  **Main Use Cases:**
-  - Enterprise backend systems and microservices
-  - Android app development
-  - Large-scale distributed systems
-  - Financial and banking applications
+  ### 3. **Java**
+  - **Main Use Cases**: Enterprise applications, Android app development, 
+  large-scale distributed systems, banking/financial software
+  - **Why Popular**: Strong typing, mature frameworks (Spring), platform 
+  independence via JVM, excellent performance at scale
   
   ---
   
-  These three languages represent different ecosystems: Python for data/science, 
-  JavaScript for web/mobile, and Java for enterprise/Android. Each has strong 
-  community support, extensive libraries, and good tooling available.
+  These three cover a broad range of modern development needs—from data and AI 
+  work to web platforms and enterprise infrastructure. Each has strong community 
+  support and extensive documentation for learning.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

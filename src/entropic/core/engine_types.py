@@ -153,6 +153,16 @@ class EngineCallbacks:
     on_delegation_complete: Callable[[str, str, str, bool], None] | None = None
     """(child_conv_id, tier, summary, success)"""
     error_sanitizer: Callable[[str], str] | None = None
+    repo_init: Callable[[Any], bool] | None = None
+    """Initialize a VCS repo at a Path for worktree isolation.
+
+    Called when the project directory has no ``.git``.  Receives the
+    project directory (Path).  Returns True if init succeeded and
+    worktrees should be enabled, False to skip worktree isolation.
+
+    Default (None): ``git init`` the directory.
+    Override to use a different VCS, add initial commits, or disable.
+    """
 
 
 @dataclass

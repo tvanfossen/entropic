@@ -22,51 +22,46 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller, similar sub-problems.
+  Recursion in programming is when a function calls itself to solve a problem. 
+  It's like breaking down a big task into smaller versions of the same task until 
+  you reach a simple case that doesn't need further breakdown.
   
-  ## Key Concepts
+  ## Key parts of recursion:
   
-  **How it works:**
-  - A recursive function has two parts:
-    - **Base case**: The condition that stops the recursion (prevents infinite 
-  loops)
-    - **Recursive case**: The function calls itself with modified input
+  1. **Base case** — The condition where the function stops calling itself 
+  (prevents infinite loops)
+  2. **Recursive case** — Where the function calls itself with modified input, 
+  moving toward the base case
   
-  **Simple example (factorial):**
+  ## Simple example (calculating factorial):
+  
   ```python
   def factorial(n):
-      if n == 0 or n == 1:  # Base case
+      # Base case: 0! = 1 and 1! = 1
+      if n &lt;= 1:
           return 1
-      else:                   # Recursive case
-          return n * factorial(n - 1)
+      
+      # Recursive case: n! = n × (n-1)!
+      return n * factorial(n - 1)
+  
+  print(factorial(5))  # Output: 120
   ```
   
-  ## When to use recursion
+  ## When to use recursion:
+  - **Good for**: Tree structures, graph traversal, divide-and-conquer algorithms 
+  (like quicksort), mathematical sequences (Fibonacci)
+  - **Not ideal for**: Simple iterative tasks where loops work fine, deep 
+  recursion can cause stack overflow errors
   
-  **Good for:**
-  - Problems with natural recursive structure (trees, graphs, divide-and-conquer 
-  algorithms)
-  - Clean, readable code when the problem naturally breaks into sub-problems
+  ## Tradeoffs:
+  | Pros | Cons |
+  |------|------|
+  | Clean, elegant code | Can be slower than iteration |
+  | Natural fit for recursive problems | Risk of stack overflow |
+  | Easier to reason about certain algorithms | More memory usage per call |
   
-  **Not ideal for:**
-  - Simple iterative loops that are easier to understand
-  - Deep recursion that risks stack overflow errors
-  - Performance-critical code where iteration is faster
-  
-  ## Common examples
-  - **Factorial**, Fibonacci sequences
-  - **Tree traversal** (pre-order, in-order, post-order)
-  - **Sorting algorithms** (quicksort, mergesort)
-  - **Graph search** (DFS - depth-first search)
-  
-  ## Caveats
-  - Each recursive call uses stack memory
-  - Deep recursion can cause `StackOverflowError` or crash your program
-  - Sometimes iteration is more efficient than recursion
-  
-  The key to writing correct recursion: ensure every path eventually reaches the 
-  base case!
+  The key is always having a base case — without it, your function will keep 
+  calling itself forever until the program crashes.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

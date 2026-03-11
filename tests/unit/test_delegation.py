@@ -500,25 +500,76 @@ class TestDelegationDepthEnforcement:
 
 
 class TestRepoRootCaching:
-    def test_repo_dir_cached_on_first_call(self):
+    def test_repo_dir_cached_on_first_call(self, tmp_path: Path):
         """_get_repo_dir caches the filesystem root on first call."""
+        (tmp_path / ".git").mkdir()
+
         engine = _make_engine()
         fs_server = MagicMock()
-        fs_server.root_dir = Path("/original/project")
+        fs_server.root_dir = tmp_path
 
         with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
             result1 = engine._get_repo_dir()
-            assert result1 == Path("/original/project")
+            assert result1 == tmp_path
 
             # Simulate worktree swap changing root_dir
             fs_server.root_dir = Path("/worktree/path")
             result2 = engine._get_repo_dir()
 
             # Should still return original, not swapped path
-            assert result2 == Path("/original/project")
+            assert result2 == tmp_path
 
     def test_repo_dir_returns_none_when_no_server(self):
         """_get_repo_dir returns None when no filesystem server exists."""
         engine = _make_engine()
         with patch("entropic.core.worktree._get_server_instance", return_value=None):
             assert engine._get_repo_dir() is None
+
+    def test_auto_inits_git_when_no_dotgit(self, tmp_path: Path):
+        """_get_repo_dir auto-initializes git repo when .git is missing."""
+        engine = _make_engine()
+        fs_server = MagicMock()
+        fs_server.root_dir = tmp_path
+
+        def fake_git_init(*_args, **_kwargs):
+            """Simulate git init creating .git directory."""
+            (tmp_path / ".git").mkdir()
+            return MagicMock(returncode=0)
+
+        with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
+            with patch(
+                "entropic.core.engine.subprocess.run", side_effect=fake_git_init
+            ) as mock_run:
+                result = engine._get_repo_dir()
+
+        assert result == tmp_path
+        mock_run.assert_called_once()
+        assert mock_run.call_args[0][0] == ["git", "init"]
+
+    def test_custom_repo_init_hook(self, tmp_path: Path):
+        """Consumer-provided repo_init hook overrides default git init."""
+        engine = _make_engine()
+        fs_server = MagicMock()
+        fs_server.root_dir = tmp_path
+
+        custom_init = MagicMock(return_value=True)
+        engine._callbacks.repo_init = custom_init
+
+        with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
+            result = engine._get_repo_dir()
+
+        custom_init.assert_called_once_with(tmp_path)
+        assert result == tmp_path
+
+    def test_repo_init_hook_false_disables_worktrees(self, tmp_path: Path):
+        """repo_init returning False disables worktree isolation."""
+        engine = _make_engine()
+        fs_server = MagicMock()
+        fs_server.root_dir = tmp_path
+
+        engine._callbacks.repo_init = MagicMock(return_value=False)
+
+        with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
+            result = engine._get_repo_dir()
+
+        assert result is None

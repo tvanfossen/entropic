@@ -22,59 +22,54 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller, similar sub-problems. Think of it like
-  a set of Russian nesting dolls — each doll contains another smaller one inside.
+  Recursion in programming is when a function calls itself to solve a problem by 
+  breaking it down into smaller instances of the same problem. It's like solving a
+  puzzle by repeatedly applying the same solution to progressively simpler 
+  versions until you reach a base case that can be solved directly.
   
-  ## How It Works
+  ## Key Concepts
   
-  A recursive function has two key parts:
+  **Base Case**: The condition where recursion stops (prevents infinite loops). 
+  This is usually when the problem becomes simple enough to solve directly.
   
-  1. **Base case** — The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case** — The part where the function calls itself with modified 
-  input
+  **Recursive Case**: Where the function calls itself with modified parameters, 
+  moving toward the base case.
   
   ## Simple Example (Factorial)
   
-  ```python
-  def factorial(n):
-      # Base case: stop when we reach 0 or 1
-      if n &lt;= 1:
-          return 1
-      
-      # Recursive case: multiply n by factorial of (n-1)
-      return n * factorial(n - 1)
+  ```javascript
+  function factorial(n) {
+    // Base case: stop recursion
+    if (n === 0 || n === 1) return 1;
+    
+    // Recursive case: call self with smaller input
+    return n * factorial(n - 1);
+  }
   
-  # Usage
-  factorial(5)  # Returns 120 (5 × 4 × 3 × 2 × 1)
+  factorial(5); // Returns 120 (5×4×3×2×1)
   ```
   
-  ## Visualizing the Call Stack
+  ## Another Example (Fibonacci)
   
-  When you call `factorial(3)`:
-  - `factorial(3)` calls `factorial(2)`
-  - `factorial(2)` calls `factorial(1)`
-  - `factorial(1)` returns `1` (base case!)
-  - Then it unwinds: `2 × 1 = 2`, then `3 × 2 = 6`
+  ```javascript
+  function fibonacci(n) {
+    if (n &lt;= 1) return n;
+    
+    return fibonacci(n - 1) + fibonacci(n - 2);
+  }
   
-  ## Common Uses
+  fibonacci(5); // Returns 5 (0,1,1,2,3,5...)
+  ```
   
-  - **Tree traversal** — navigating file systems, DOM trees
-  - **Divide and conquer algorithms** — quicksort, merge sort
-  - **Mathematical sequences** — Fibonacci numbers, factorials
-  - **Backtracking problems** — maze solving, puzzles like N-Queens
+  ## When to Use Recursion
   
-  ## When to Use (and Not)
+  ✅ **Good for**: Tree structures, divide-and-conquer algorithms, problems with 
+  natural recursive structure  
+  ⚠️ **Caution**: Can cause stack overflow if not properly bounded; iterative 
+  solutions sometimes more efficient
   
-  ✅ Good for: Problems with natural recursive structure  
-  ❌ Avoid when: Simple iteration works better (recursion uses more memory)
-  
-  ⚠️ **Warning**: Always ensure your base case is reachable! Infinite recursion 
-  causes stack overflow errors.
-  
-  Would you like me to show a specific example, or explain how to debug common 
-  recursion issues?
+  The key is ensuring every recursive path eventually reaches the base case. 
+  Without that, you get infinite recursion and a crash.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

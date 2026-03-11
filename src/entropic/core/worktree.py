@@ -119,13 +119,19 @@ class WorktreeManager:
         )
 
     async def _auto_commit_if_dirty(self, info: WorktreeInfo) -> None:
-        """Auto-commit uncommitted changes in worktree before merge."""
+        """Auto-commit uncommitted changes in worktree before merge.
+
+        Uses ``git status --porcelain`` so that both modified tracked files
+        AND new untracked files are detected.  The previous ``git diff HEAD``
+        approach silently missed untracked files, causing child work products
+        to be lost on merge.
+        """
         if not info.path.exists():
             logger.warning("[WORKTREE] Worktree path missing: %s", info.path)
             return
 
-        success, diff = await _run_git(info.path, ["diff", "HEAD", "--stat"])
-        if not success or not diff.strip():
+        success, status = await _run_git(info.path, ["status", "--porcelain"])
+        if not success or not status.strip():
             return
 
         logger.info("[WORKTREE] Auto-committing dirty worktree: %s", info.path.name)

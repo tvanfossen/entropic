@@ -25,21 +25,21 @@ note right of Mdl
   Here are three programming languages and their main use cases:
   
   1. **Python** — Data science, machine learning, scripting, web development 
-  (Django/Flask), automation, and scientific computing. Known for its readable 
-  syntax and extensive libraries like NumPy, Pandas, and TensorFlow.
+  (Django/Flask), automation, and scientific computing. Known for its readability 
+  and extensive libraries like NumPy, Pandas, and TensorFlow.
   
   2. **JavaScript** — Web development (frontend with frameworks like React/Vue, 
-  backend with Node.js), browser automation, mobile apps (React Native), and 
-  serverless functions. The only language that runs natively in web browsers.
+  backend with Node.js), browser-based applications, and cross-platform mobile 
+  apps (via React Native). The only language that runs natively in web browsers.
   
-  3. **Java** — Enterprise applications, Android development, large-scale 
-  distributed systems, banking/financial software, and big data technologies 
-  (Hadoop). Known for strong typing, JVM performance, and platform independence 
-  via bytecode.
+  3. **Java** — Enterprise applications, Android app development, large-scale 
+  distributed systems, and backend services. Popular for its strong typing, JVM 
+  performance, and extensive ecosystem of frameworks like Spring.
   
-  Each language has strengths suited to different domains—Python excels in rapid 
-  prototyping and AI workloads, JavaScript dominates web ecosystems, while Java 
-  powers robust backend infrastructure.
+  Each language excels in different domains based on their design goals: Python 
+  prioritizes developer productivity, JavaScript bridges frontend/backend with 
+  unified syntax, and Java emphasizes robustness and scalability for enterprise 
+  environments.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -97,13 +97,48 @@ class TestWorktreeManager:
     async def test_merge_auto_commits_dirty_worktree(
         self, manager: WorktreeManager, tmp_path: Path
     ) -> None:
-        """Uncommitted changes auto-committed before merge."""
+        """Modified tracked files trigger auto-commit before merge."""
         info = _make_info(tmp_path)
         info.path.mkdir(parents=True)
 
         calls: list[tuple[str, list[str]]] = []
 
-        responses = {("diff", "HEAD"): (True, " file.py | 5 +++++")}
+        responses = {("status", "--porcelain"): (True, " M file.py")}
+
+        async def fake_git(cwd, args):
+            calls.append((str(cwd), args))
+            key = (args[0], args[1]) if len(args) > 1 else (args[0],)
+            return responses.get(key, (True, ""))
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            await manager.merge_worktree(info)
+
+        git_cmds = [c[1] for c in calls]
+        assert ["add", "-A"] in git_cmds
+        assert any(c[0] == "commit" for c in git_cmds)
+
+    @pytest.mark.asyncio
+    async def test_merge_auto_commits_untracked_files(
+        self, manager: WorktreeManager, tmp_path: Path
+    ) -> None:
+        """Untracked (new) files trigger auto-commit before merge.
+
+        This was the root cause of #89: eng created new files in a worktree,
+        but ``git diff HEAD`` didn't see untracked files. The merge was a
+        no-op and the files were lost.
+        """
+        info = _make_info(tmp_path)
+        info.path.mkdir(parents=True)
+
+        calls: list[tuple[str, list[str]]] = []
+
+        # git status --porcelain shows untracked files with "??" prefix
+        responses = {
+            ("status", "--porcelain"): (
+                True,
+                "?? index.html\n?? styles.css\n?? game.js",
+            ),
+        }
 
         async def fake_git(cwd, args):
             calls.append((str(cwd), args))

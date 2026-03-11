@@ -7,6 +7,7 @@ proper state management and termination conditions.
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 from collections.abc import AsyncIterator
@@ -90,6 +91,7 @@ class AgentEngine:
         self.loop_config = loop_config or LoopConfig()
         self._storage: Any = None  # Optional StorageBackend for delegation persistence
         self._repo_root: Any = None  # Original repo root for worktree creation
+        self._repo_root_checked: bool = False  # Whether we've checked for .git
 
         # Use threading.Event for thread-safe cross-loop signaling
         # (Textual runs on a different event loop than the generation worker)
@@ -383,25 +385,60 @@ class AgentEngine:
         return 16384
 
     def _get_repo_dir(self) -> Any:
-        """Get original repo directory for worktree creation.
+        """Get the project's own repo root for worktree creation.
 
-        Caches the filesystem server's root_dir on first call so that
-        nested delegations (which swap root_dir to a worktree) still
-        create worktrees from the real repo root — not from inside
-        another worktree.
+        On first call, checks for ``.git`` at the project directory.
+        If missing, invokes the ``repo_init`` callback hook (default:
+        ``git init``) to create one.  This ensures worktrees always
+        check out the project's own repo — never a parent/enclosing
+        repo that happens to contain the project directory.
 
-        Returns a Path or None. Typed as Any to avoid import at module level.
+        Caches the result so nested delegations that swap ``root_dir``
+        still use the original answer.
+
+        Returns a Path or None.  Typed as Any to avoid import cycles.
         """
-        if self._repo_root is not None:
+        if self._repo_root_checked:
             return self._repo_root
 
         from entropic.core.worktree import _get_server_instance
 
         server = _get_server_instance(self, "filesystem")
-        root = getattr(server, "root_dir", None) if server else None
-        if root is not None:
-            self._repo_root = root
-        return root
+        project_dir = getattr(server, "root_dir", None) if server else None
+        self._repo_root_checked = True
+
+        has_git = project_dir is not None and (project_dir / ".git").exists()
+        if project_dir is not None and not has_git:
+            has_git = self._init_project_repo(project_dir)
+
+        self._repo_root = project_dir if has_git else None
+        return self._repo_root
+
+    def _init_project_repo(self, project_dir: Any) -> bool:
+        """Initialize a VCS repo at project_dir for worktree support.
+
+        Uses the ``repo_init`` callback if set, otherwise defaults to
+        ``git init``.  Returns True if init succeeded.
+        """
+        if self._callbacks.repo_init is not None:
+            return self._callbacks.repo_init(project_dir)
+
+        # Default: git init
+        try:
+            subprocess.run(
+                ["git", "init"],
+                cwd=project_dir,
+                capture_output=True,
+                check=True,
+            )
+            logger.info("[WORKTREE] Auto-initialized git repo at %s", project_dir)
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.warning(
+                "[WORKTREE] git init failed at %s — worktree isolation disabled",
+                project_dir,
+            )
+            return False
 
     def set_callbacks(self, callbacks: EngineCallbacks) -> None:
         """Set callback functions for loop events.

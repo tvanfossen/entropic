@@ -22,24 +22,25 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three programming languages and their main use cases:
+  Here are three popular programming languages and their main use cases:
   
-  1. **Python** — Data science, machine learning, scripting, web development 
-  (Django/Flask), automation, and scientific computing. Known for its readability 
-  and extensive libraries like NumPy, Pandas, and TensorFlow.
+  1. **Python** — Data science, machine learning, automation scripts, web backends
+  (Django/Flask), scientific computing. Known for readability and extensive 
+  libraries like NumPy, Pandas, TensorFlow.
   
-  2. **JavaScript** — Web development (frontend with frameworks like React/Vue, 
-  backend with Node.js), browser-based applications, and cross-platform mobile 
-  apps (via React Native). The only language that runs natively in web browsers.
+  2. **JavaScript** — Frontend web development, browser scripting, Node.js backend
+  services, cross-platform mobile apps (React Native). The only language that runs
+  natively in browsers.
   
-  3. **Java** — Enterprise applications, Android app development, large-scale 
-  distributed systems, and backend services. Popular for its strong typing, JVM 
-  performance, and extensive ecosystem of frameworks like Spring.
+  3. **Rust** — Systems programming, embedded devices, performance-critical 
+  applications where memory safety is crucial. Used for tooling, game engines, and
+  infrastructure where C/C++ alternatives are too unsafe or slow.
   
-  Each language excels in different domains based on their design goals: Python 
-  prioritizes developer productivity, JavaScript bridges frontend/backend with 
-  unified syntax, and Java emphasizes robustness and scalability for enterprise 
-  environments.
+  ---
+  
+  These three cover a wide range of modern development needs: Python for 
+  data/automation, JavaScript for web/mobile, and Rust for systems work. Each has 
+  strong ecosystems and community support.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

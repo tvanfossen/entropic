@@ -22,9 +22,9 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! 👋 I'm the Team Lead here. How can I help you today? Whether it's planning
-  a new feature, reviewing code, or just answering a quick question — I'm here to 
-  assist.
+  Hello! I'm the Technical Team Lead. How can I help you today? Whether it's 
+  planning a new feature, fixing a bug, or just answering a quick question, I'm 
+  here to get things done efficiently and safely.
 end note
 note over T #palegreen
   **PASSED** (< 38s)

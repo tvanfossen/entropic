@@ -22,25 +22,34 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three popular programming languages and their main use cases:
+  Here are three programming languages and their main use cases:
   
-  1. **Python** — Data science, machine learning, automation scripts, web backends
-  (Django/Flask), scientific computing. Known for readability and extensive 
-  libraries like NumPy, Pandas, TensorFlow.
+  ## 1. Python
+  **Main Use Cases:**
+  - Data science and machine learning (libraries like NumPy, pandas, scikit-learn)
+  - Web development (Django, Flask frameworks)
+  - Scripting and automation
+  - Scientific computing and research
   
-  2. **JavaScript** — Frontend web development, browser scripting, Node.js backend
-  services, cross-platform mobile apps (React Native). The only language that runs
-  natively in browsers.
+  ## 2. JavaScript
+  **Main Use Cases:**
+  - Frontend web development (browser-based interactivity)
+  - Backend development with Node.js
+  - Cross-platform mobile apps (React Native, Ionic)
+  - Real-time applications (chat, streaming)
   
-  3. **Rust** — Systems programming, embedded devices, performance-critical 
-  applications where memory safety is crucial. Used for tooling, game engines, and
-  infrastructure where C/C++ alternatives are too unsafe or slow.
+  ## 3. Java
+  **Main Use Cases:**
+  - Enterprise backend systems and microservices
+  - Android app development
+  - Large-scale distributed systems
+  - Financial and banking applications
   
   ---
   
-  These three cover a wide range of modern development needs: Python for 
-  data/automation, JavaScript for web/mobile, and Rust for systems work. Each has 
-  strong ecosystems and community support.
+  These three languages represent different ecosystems: Python for data/science, 
+  JavaScript for web/mobile, and Java for enterprise/Android. Each has strong 
+  community support, extensive libraries, and good tooling available.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

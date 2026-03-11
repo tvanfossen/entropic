@@ -182,43 +182,6 @@ def _swap_git_repo_dir(server: Any, new_dir: Path) -> None:
             tool._repo_dir = new_dir
 
 
-def _resolve_worktree_subdir(original_dir: Path, worktree_path: Path) -> Path:
-    """Compute the equivalent subdirectory inside a worktree.
-
-    When a consumer launches entropic from a repo subdirectory (e.g.
-    ``repo/test-manual/test1/``), tools must operate in that same
-    subdirectory within the worktree — not the worktree root, which
-    is a full repo checkout.
-
-    Uses ``git rev-parse --show-toplevel`` (synchronous, fast) to find
-    the repo root, then re-applies the relative offset inside the worktree.
-    Falls back to ``worktree_path`` if the offset cannot be computed.
-    """
-    import subprocess
-
-    try:
-        toplevel = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=original_dir,
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-        repo_root = Path(toplevel).resolve()
-        resolved_original = original_dir.resolve()
-        relative = resolved_original.relative_to(repo_root)
-        target = worktree_path / relative
-        target.mkdir(parents=True, exist_ok=True)
-        logger.info(
-            "[WORKTREE] Subdir offset: %s -> %s",
-            relative,
-            target,
-        )
-        return target
-    except (subprocess.CalledProcessError, ValueError):
-        return worktree_path
-
-
 @asynccontextmanager
 async def scoped_worktree(
     engine: AgentEngine,
@@ -227,21 +190,21 @@ async def scoped_worktree(
     """Swap server directories to worktree, restore on exit.
 
     Swaps filesystem root_dir, bash working_dir, and git repo_dir
-    to point at the worktree.  For filesystem and bash, preserves the
-    subdirectory offset from repo root so that tools see the project
-    directory — not the bare repo root.  Restores all on exit.
+    to the worktree root.  Worktrees are full repo checkouts, so the
+    worktree root is the correct working directory — it contains all
+    tracked content.  Restores all on exit (success or failure).
     """
     saved: dict[str, Any] = {}
 
     fs_server = _get_server_instance(engine, "filesystem")
     if fs_server is not None:
         saved["fs_root"] = fs_server.root_dir
-        fs_server.root_dir = _resolve_worktree_subdir(saved["fs_root"], worktree_path)
+        fs_server.root_dir = worktree_path
 
     bash_server = _get_server_instance(engine, "bash")
     if bash_server is not None:
         saved["bash_dir"] = bash_server.working_dir
-        bash_server.working_dir = _resolve_worktree_subdir(saved["bash_dir"], worktree_path)
+        bash_server.working_dir = worktree_path
 
     git_server = _get_server_instance(engine, "git")
     if git_server is not None:

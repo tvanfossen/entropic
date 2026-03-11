@@ -14,7 +14,6 @@ allowed_tools:
   - filesystem.glob
   - filesystem.grep
   - bash.execute
-  - entropic.delegate
   - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.5
@@ -65,4 +64,4 @@ Review the code and present findings by category. For each issue:
 - Who it affects (all users, screen reader users, mobile users, etc.)
 - What the fix looks like
 
-Hand off implementation work to `eng` via `entropic.delegate`.
+Describe implementation requirements clearly — lead will delegate to `eng`.

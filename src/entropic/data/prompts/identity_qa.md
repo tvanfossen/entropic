@@ -15,7 +15,6 @@ allowed_tools:
   - filesystem.glob
   - filesystem.grep
   - bash.execute
-  - entropic.delegate
   - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.4
@@ -68,4 +67,4 @@ Think like an attacker, not a user:
 
 ## Output
 
-Present a clear verdict: **PASS** or **FAIL** with findings listed by severity. If FAIL, hand off to `eng` via `entropic.delegate` with specific details of what needs fixing.
+Present a clear verdict: **PASS** or **FAIL** with findings listed by severity. If FAIL, include specific details of what needs fixing — lead will route rework to the appropriate role.

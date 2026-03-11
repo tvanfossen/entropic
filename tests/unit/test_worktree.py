@@ -10,6 +10,7 @@ from entropic.core.worktree import (
     WorktreeInfo,
     WorktreeManager,
     _get_server_instance,
+    _resolve_worktree_subdir,
     _swap_git_repo_dir,
     scoped_worktree,
 )
@@ -257,12 +258,60 @@ class TestGetServerInstance:
         assert _get_server_instance(engine, "filesystem") is None
 
 
+class TestResolveWorktreeSubdir:
+    """_resolve_worktree_subdir computes subdirectory offset in worktree."""
+
+    def test_subdir_offset_applied(self, tmp_path: Path) -> None:
+        """Relative offset from repo root to original dir is applied in worktree."""
+        # Simulate: repo root = /repo, original dir = /repo/sub/project
+        # worktree = /wt -> expected = /wt/sub/project
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        original = repo_root / "sub" / "project"
+        original.mkdir(parents=True)
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+
+        # Mock git rev-parse to return our fake repo root
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout=str(repo_root))
+            result = _resolve_worktree_subdir(original, worktree)
+
+        assert result == worktree / "sub" / "project"
+        assert result.exists()  # mkdir(parents=True) was called
+
+    def test_repo_root_returns_worktree_root(self, tmp_path: Path) -> None:
+        """When original dir IS the repo root, returns worktree root unchanged."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(stdout=str(repo_root))
+            result = _resolve_worktree_subdir(repo_root, worktree)
+
+        assert result == worktree
+
+    def test_fallback_on_git_failure(self, tmp_path: Path) -> None:
+        """Falls back to worktree_path if git rev-parse fails."""
+        import subprocess
+
+        worktree = tmp_path / "wt"
+        worktree.mkdir()
+
+        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "git")):
+            result = _resolve_worktree_subdir(tmp_path, worktree)
+
+        assert result == worktree
+
+
 class TestScopedWorktree:
     """scoped_worktree context manager swaps and restores server dirs."""
 
     @pytest.mark.asyncio
     async def test_swaps_and_restores_filesystem(self) -> None:
-        """Filesystem root_dir is swapped and restored."""
+        """Filesystem root_dir is swapped to worktree subdir and restored."""
         engine = MagicMock()
         fs_server = MagicMock()
         fs_server.root_dir = Path("/original")
@@ -272,14 +321,19 @@ class TestScopedWorktree:
         engine.server_manager._clients = {"filesystem": fs_client}
 
         worktree = Path("/worktree")
-        async with scoped_worktree(engine, worktree):
-            assert fs_server.root_dir == worktree
+        resolved = Path("/worktree/sub")
+        with patch(
+            "entropic.core.worktree._resolve_worktree_subdir",
+            return_value=resolved,
+        ):
+            async with scoped_worktree(engine, worktree):
+                assert fs_server.root_dir == resolved
 
         assert fs_server.root_dir == Path("/original")
 
     @pytest.mark.asyncio
     async def test_swaps_and_restores_bash(self) -> None:
-        """Bash working_dir is swapped and restored."""
+        """Bash working_dir is swapped to worktree subdir and restored."""
         engine = MagicMock()
         bash_server = MagicMock()
         bash_server.working_dir = Path("/original")
@@ -289,8 +343,13 @@ class TestScopedWorktree:
         engine.server_manager._clients = {"bash": bash_client}
 
         worktree = Path("/worktree")
-        async with scoped_worktree(engine, worktree):
-            assert bash_server.working_dir == worktree
+        resolved = Path("/worktree/sub")
+        with patch(
+            "entropic.core.worktree._resolve_worktree_subdir",
+            return_value=resolved,
+        ):
+            async with scoped_worktree(engine, worktree):
+                assert bash_server.working_dir == resolved
 
         assert bash_server.working_dir == Path("/original")
 
@@ -306,9 +365,13 @@ class TestScopedWorktree:
         engine.server_manager._clients = {"filesystem": fs_client}
 
         worktree = Path("/worktree")
-        with pytest.raises(RuntimeError):
-            async with scoped_worktree(engine, worktree):
-                raise RuntimeError("child failed")
+        with patch(
+            "entropic.core.worktree._resolve_worktree_subdir",
+            return_value=worktree,
+        ):
+            with pytest.raises(RuntimeError):
+                async with scoped_worktree(engine, worktree):
+                    raise RuntimeError("child failed")
 
         assert fs_server.root_dir == Path("/original")
 

@@ -23,53 +23,53 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion in programming is when a function calls itself to solve a problem by 
-  breaking it down into smaller instances of the same problem. It's like solving a
-  puzzle by repeatedly applying the same solution to progressively simpler 
-  versions until you reach a base case that can be solved directly.
+  breaking it down into smaller instances of the same problem.
   
-  ## Key Concepts
+  ## Key concepts:
   
-  **Base Case**: The condition where recursion stops (prevents infinite loops). 
-  This is usually when the problem becomes simple enough to solve directly.
+  1. **Self-reference**: A recursive function includes a call to itself within its
+  own definition.
   
-  **Recursive Case**: Where the function calls itself with modified parameters, 
-  moving toward the base case.
+  2. **Base case**: Every recursion needs at least one condition where the 
+  function stops calling itself (the "stopping point"). Without this, you get 
+  infinite recursion and stack overflow errors.
   
-  ## Simple Example (Factorial)
+  3. **Recursive case**: The part of the function that calls itself with modified 
+  parameters, moving toward the base case.
   
-  ```javascript
-  function factorial(n) {
-    // Base case: stop recursion
-    if (n === 0 || n === 1) return 1;
-    
-    // Recursive case: call self with smaller input
-    return n * factorial(n - 1);
-  }
+  ## Simple example:
   
-  factorial(5); // Returns 120 (5×4×3×2×1)
+  ```python
+  def factorial(n):
+      # Base case: stop when n is 0 or 1
+      if n &lt;= 1:
+          return 1
+      
+      # Recursive case: multiply n by factorial of (n-1)
+      return n * factorial(n - 1)
   ```
   
-  ## Another Example (Fibonacci)
+  ## When to use recursion:
   
-  ```javascript
-  function fibonacci(n) {
-    if (n &lt;= 1) return n;
-    
-    return fibonacci(n - 1) + fibonacci(n - 2);
-  }
+  **Good for:**
+  - Problems with natural recursive structure (trees, graphs, divide-and-conquer 
+  algorithms)
+  - Clean, readable solutions for certain problems
+  - Mathematical definitions like Fibonacci sequences
   
-  fibonacci(5); // Returns 5 (0,1,1,2,3,5...)
-  ```
+  **Not ideal when:**
+  - Simple iteration works better (loops are often more efficient)
+   - Memory is limited (each call uses stack space)
+   - Performance matters significantly (recursion can be slower than loops)
   
-  ## When to Use Recursion
+  ## Common pitfalls:
   
-  ✅ **Good for**: Tree structures, divide-and-conquer algorithms, problems with 
-  natural recursive structure  
-  ⚠️ **Caution**: Can cause stack overflow if not properly bounded; iterative 
-  solutions sometimes more efficient
+  - Forgetting the base case → infinite recursion
+  - Not making progress toward the base case → never terminates
+  - Stack overflow errors on deep recursions
   
-  The key is ensuring every recursive path eventually reaches the base case. 
-  Without that, you get infinite recursion and a crash.
+  The tradeoff: recursion often produces elegant, readable code but trades off 
+  against performance and memory usage compared to iterative approaches.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

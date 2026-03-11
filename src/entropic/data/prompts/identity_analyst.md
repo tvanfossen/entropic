@@ -15,7 +15,6 @@ allowed_tools:
   - filesystem.grep
   - web.web_search
   - web.web_fetch
-  - entropic.delegate
   - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.4

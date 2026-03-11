@@ -14,7 +14,6 @@ allowed_tools:
   - filesystem.write_file
   - filesystem.glob
   - filesystem.grep
-  - entropic.delegate
   - entropic.todo_write
 max_output_tokens: 4096
 temperature: 0.5

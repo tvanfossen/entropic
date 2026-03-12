@@ -5,13 +5,10 @@ skinparam noteBackgroundColor #FFFFEE
 title test_route_to_non_default_model_tier\n<size:11>[FAILED] < 1s</size>
 
 participant "Test" as T
-participant "Orchestrator" as Orch
-participant "Router Model" as Rtr
+participant "Application" as App
 
-T -> Orch: classify prompt
-Orch -> Rtr: route
-Rtr --> Orch: tier result
-Orch --> T: result
-note right #salmon: < 1s
+T -> App: (internal test)
+App --> T: FAILED
+note right #salmon
 
 @enduml

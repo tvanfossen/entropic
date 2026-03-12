@@ -39,6 +39,7 @@ from entropic.mcp.manager import ServerManager
 if TYPE_CHECKING:
     from entropic.core.directives import (
         ClearSelfTodos,
+        Complete,
         ContextAnchor,
         Delegate,
         InjectContext,
@@ -148,6 +149,7 @@ class AgentEngine:
         """Register handlers for all known directive types."""
         from entropic.core.directives import (
             ClearSelfTodos,
+            Complete,
             ContextAnchor,
             Delegate,
             InjectContext,
@@ -162,6 +164,7 @@ class AgentEngine:
         self._directive_processor.register(TierChange, self._directive_tier_change)
         self._directive_processor.register(Delegate, self._directive_delegate)
         self._directive_processor.register(Pipeline, self._directive_pipeline)
+        self._directive_processor.register(Complete, self._directive_complete)
         self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
@@ -221,6 +224,31 @@ class AgentEngine:
             "stages": directive.stages,
             "task": directive.task,
         }
+        result.stop_processing = True
+
+    def _directive_complete(
+        self,
+        ctx: LoopContext,
+        directive: Complete,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle explicit completion signal from child delegation.
+
+        Only valid at delegation depth > 0. At root depth, the tool
+        is a no-op (model shouldn't have access, but defense in depth).
+        """
+        if ctx.delegation_depth == 0:
+            logger.warning("[DIRECTIVE] complete ignored at root depth")
+            return
+
+        logger.info(
+            "[DIRECTIVE] complete at depth=%d summary=%s",
+            ctx.delegation_depth,
+            directive.summary[:80],
+        )
+        # Store summary for extraction by _extract_final_summary
+        ctx.metadata["explicit_completion_summary"] = directive.summary
+        self._set_state(ctx, AgentState.COMPLETE)
         result.stop_processing = True
 
     def _directive_tier_change(
@@ -602,11 +630,14 @@ class AgentEngine:
                     yield msg
 
                 # Execute pending delegation/pipeline if directive was processed
+                # Delegation turns are free — don't count against parent budget
                 if "pending_delegation" in ctx.metadata:
+                    ctx.metrics.iterations -= 1
                     async for msg in self._execute_pending_delegation(ctx):
                         yield msg
                     return
                 if "pending_pipeline" in ctx.metadata:
+                    ctx.metrics.iterations -= 1
                     async for msg in self._execute_pending_pipeline(ctx):
                         yield msg
                     return

@@ -22,46 +22,60 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion in programming is when a function calls itself to solve a problem. 
-  It's like breaking down a big task into smaller versions of the same task until 
-  you reach a simple case that doesn't need further breakdown.
+  Recursion is when a function calls itself to solve a problem by breaking it down
+  into smaller, similar sub-problems. It's like looking at yourself in two mirrors
+  facing each other — you see infinite reflections of yourself.
   
-  ## Key parts of recursion:
+  ## Key Concepts
   
-  1. **Base case** — The condition where the function stops calling itself 
-  (prevents infinite loops)
-  2. **Recursive case** — Where the function calls itself with modified input, 
-  moving toward the base case
+  **Base case**: The condition that stops the recursion (prevents infinite loops).
+  **Recursive case**: Where the function calls itself with a simpler input.
   
-  ## Simple example (calculating factorial):
+  ### Simple Example: Factorial
   
   ```python
   def factorial(n):
-      # Base case: 0! = 1 and 1! = 1
+      # Base case: stop when n is 0 or 1
       if n &lt;= 1:
           return 1
       
-      # Recursive case: n! = n × (n-1)!
+      # Recursive case: multiply n by factorial of (n-1)
       return n * factorial(n - 1)
   
-  print(factorial(5))  # Output: 120
+  print(factorial(5))  # Output: 120 (5×4×3×2×1)
   ```
   
-  ## When to use recursion:
-  - **Good for**: Tree structures, graph traversal, divide-and-conquer algorithms 
-  (like quicksort), mathematical sequences (Fibonacci)
-  - **Not ideal for**: Simple iterative tasks where loops work fine, deep 
-  recursion can cause stack overflow errors
+  ### Another Example: Fibonacci Sequence
   
-  ## Tradeoffs:
-  | Pros | Cons |
-  |------|------|
-  | Clean, elegant code | Can be slower than iteration |
-  | Natural fit for recursive problems | Risk of stack overflow |
-  | Easier to reason about certain algorithms | More memory usage per call |
+  ```python
+  def fibonacci(n):
+      if n &lt;= 1:
+          return n
+      
+      return fibonacci(n-1) + fibonacci(n-2)
   
-  The key is always having a base case — without it, your function will keep 
-  calling itself forever until the program crashes.
+  print(fibonacci(6))  # Output: 8 (0,1,1,2,3,5,8...)
+  ```
+  
+  ## When to Use Recursion
+  
+  **Good for:**
+  - Tree/graph traversals (file systems, DOM trees)
+  - Divide-and-conquer algorithms (sorting, searching)
+  - Problems with natural recursive structure (math sequences)
+  
+  **Not always ideal:**
+  - Simple iterative loops work better for basic tasks
+  - Deep recursion can cause stack overflow errors
+  - Sometimes less readable than iteration
+  
+  ## Important Notes
+  
+  ⚠️ **Always have a base case** — otherwise you get infinite recursion  
+  ⚠️ **Each recursive call should move toward the base case** — ensure progress  
+  ⚠️ **Consider memory usage** — each call uses stack space
+  
+  Recursion is powerful but use it when it makes sense for your problem structure!
 end note
 note over T #palegreen
   **PASSED** (< 75s)

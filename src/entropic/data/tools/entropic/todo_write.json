@@ -1,13 +1,13 @@
 {
   "name": "todo_write",
-  "description": "Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'remove' to delete an item, 'replace' to overwrite the full list.\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nRules:\n- Only mark an item 'completed' when the described work is actually done (files written, investigation performed, etc.). Do not mark items completed as a formality.\n- Batch multiple status updates in a single response when possible. Do not use one turn per update.\n- Use 'add' to build the list incrementally\n- Use 'update' with an index to change status\n- Indices are shown in [CURRENT TODO STATE] context",
+  "description": "Manage your task list. Use 'add' to append new items, 'update' to change an item's status or content, 'bulk_update' to change multiple items at once, 'remove' to delete an item, 'replace' to overwrite the full list.\n\nTask states:\n- pending: Not started yet\n- in_progress: Currently working on (only ONE at a time)\n- completed: Finished successfully\n\nRules:\n- Only mark an item 'completed' when the described work is actually done (files written, investigation performed, etc.). Do not mark items completed as a formality.\n- Use 'bulk_update' to update multiple items in a single call instead of calling update repeatedly.\n- Use 'add' to build the list incrementally\n- Use 'update' with an index to change a single item's status\n- Indices are shown in [CURRENT TODO STATE] context",
   "inputSchema": {
     "type": "object",
     "properties": {
       "action": {
         "type": "string",
-        "enum": ["add", "update", "remove", "replace"],
-        "description": "Operation: 'add' appends items, 'update' changes an item by index, 'remove' deletes an item by index, 'replace' overwrites the full list"
+        "enum": ["add", "update", "bulk_update", "remove", "replace"],
+        "description": "Operation: 'add' appends items, 'update' changes one item by index, 'bulk_update' changes multiple items, 'remove' deletes by index, 'replace' overwrites the full list"
       },
       "todos": {
         "type": "array",
@@ -34,6 +34,30 @@
             }
           },
           "required": ["content", "status", "active_form"]
+        }
+      },
+      "updates": {
+        "type": "array",
+        "description": "Array of updates for 'bulk_update' action. Each entry has 'index' and optional 'status', 'content', 'active_form'.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "index": {
+              "type": "integer",
+              "description": "Item index to update"
+            },
+            "status": {
+              "type": "string",
+              "enum": ["pending", "in_progress", "completed"]
+            },
+            "content": {
+              "type": "string"
+            },
+            "active_form": {
+              "type": "string"
+            }
+          },
+          "required": ["index"]
         }
       },
       "index": {

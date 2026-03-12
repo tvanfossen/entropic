@@ -7,7 +7,12 @@ focus:
   - color systems, typography, and spacing
   - responsive design and viewport adaptation
   - design system compliance
-examples: []
+examples:
+  - "Style the login page to match the design system"
+  - "Fix the responsive layout on mobile viewports"
+  - "Create a color palette for the dark theme"
+  - "Implement the card component with proper spacing"
+  - "Review the typography hierarchy for consistency"
 auto_chain: lead
 allowed_tools:
   - filesystem.read_file
@@ -15,6 +20,7 @@ allowed_tools:
   - filesystem.glob
   - filesystem.grep
   - entropic.todo_write
+  - entropic.complete
 max_output_tokens: 4096
 temperature: 0.5
 enable_thinking: true
@@ -22,6 +28,7 @@ model_preference: primary
 interstitial: false
 routable: false
 role_type: front_office
+explicit_completion: true
 phases:
   default:
     temperature: 0.5
@@ -74,4 +81,8 @@ You operate in two modes depending on context:
 
 ## Output
 
-Write your visual spec or review findings directly in your response. Be precise — specify exact values (colors, sizes, spacing) not vague direction ("make it bigger"). An engineer should be able to implement your spec without design judgment calls.
+**Design mode:** Write your visual spec to `specs/ui-spec.md` using `filesystem.write_file`. This file persists in the worktree and is readable by downstream pipeline stages (eng, QA). Do NOT produce specs as text-only responses — write the file so other roles can reference it.
+
+**Review mode:** Write your review findings directly in your response.
+
+Be precise — specify exact values (colors, sizes, spacing) not vague direction ("make it bigger"). An engineer should be able to implement your spec without design judgment calls.

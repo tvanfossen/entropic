@@ -87,6 +87,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     interstitial: bool = False
     routable: bool = True
     role_type: Literal["front_office", "back_office", "utility"] = "front_office"
+    explicit_completion: bool = False
     phases: dict[str, PhaseConfig] | None = None
     benchmark: BenchmarkSpec | None = None
 

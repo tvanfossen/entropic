@@ -7,7 +7,12 @@ focus:
   - search and understand codebases
   - implement designs and specifications
   - write documentation alongside code
-examples: []
+examples:
+  - "Write a function that parses CSV files"
+  - "Fix the bug in the authentication handler"
+  - "Add unit tests for the config loader"
+  - "Implement the REST endpoint from the spec"
+  - "Refactor this class to use dependency injection"
 auto_chain: lead
 allowed_tools:
   - filesystem.read_file
@@ -17,6 +22,7 @@ allowed_tools:
   - filesystem.grep
   - bash.execute
   - entropic.todo_write
+  - entropic.complete
 max_output_tokens: 8192
 temperature: 0.15
 enable_thinking: true
@@ -24,6 +30,7 @@ model_preference: primary
 interstitial: false
 routable: false
 role_type: front_office
+explicit_completion: true
 phases:
   default:
     temperature: 0.15
@@ -64,6 +71,12 @@ Read the target file and surrounding code. Understand:
 - Write unit tests for new functionality
 - Run existing tests after changes: `bash.execute`
 - If tests fail, fix the code — don't skip or modify tests to pass
+
+## Process safety
+
+- Never kill processes you did not start
+- If a port is occupied, use a different port
+- Do not start long-running background processes without cleanup
 
 ## Output
 

@@ -22,11 +22,9 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! 👋 How can I help you today? 
-  
-  Whether you need assistance with your project, want to discuss architecture 
-  decisions, or have any other technical questions - I'm here to help as your team
-  lead. What would you like to work on?
+  Hello! I'm here as your technical team lead. How can I help you today? Whether 
+  it's planning a feature, reviewing architecture, or tackling a specific problem,
+  I'm ready to assist.
 end note
 note right of Eng
   **Follow-up message:**
@@ -36,10 +34,7 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" 👋 - you greeted me at the start of our conversation, and then 
-  followed up with "What did I just say?" to test my memory/attention.
-  
-  It's a simple greeting followed by a verification question!
+  You said "Hello"! It was your initial greeting to start our conversation.
 end note
 note over T #palegreen
   **PASSED** (< 112s)

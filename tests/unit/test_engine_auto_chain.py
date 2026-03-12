@@ -302,8 +302,12 @@ class TestAutoChainBlockedTools:
     """Tests for auto-chain fallback when all tool calls are blocked."""
 
     @pytest.mark.asyncio
-    async def test_fires_when_all_tools_blocked(self) -> None:
-        """All tool calls blocked → effective_tool_calls=0 → auto-chain fires."""
+    async def test_auto_chain_mechanism_works(self) -> None:
+        """_try_auto_chain fires when auto_chain configured + stop reason.
+
+        Note: in the integrated flow, _evaluate_no_tool_decision guards
+        against this when tools_were_attempted=True. This tests the mechanism.
+        """
         engine = _make_engine(
             tiers={
                 "thinker": _tier_config(auto_chain=True, grammar=Path("/test.gbnf")),
@@ -400,8 +404,10 @@ class TestEvaluateNoToolDecision:
         assert ctx.state != AgentState.COMPLETE
 
     @pytest.mark.asyncio
-    async def test_tools_attempted_auto_chain_still_fires(self) -> None:
-        """Tools blocked + auto_chain configured → auto_chain fires (before guard)."""
+    async def test_tools_attempted_blocks_auto_chain(self) -> None:
+        """Tools blocked + auto_chain → guard prevents auto_chain, model retries."""
+        from entropic.core.engine_types import AgentState
+
         engine = _make_engine(
             tiers={
                 "eng": _tier_config(auto_chain=True),
@@ -411,19 +417,17 @@ class TestEvaluateNoToolDecision:
             default="eng",
         )
         ctx = _make_ctx("eng")
-        _setup_handoff_mocks(engine)
+        ctx.state = AgentState.EXECUTING
         engine.orchestrator.last_finish_reason = "stop"
-        engine.orchestrator.get_adapter.return_value = MagicMock(
-            is_response_complete=MagicMock(return_value=True),
-        )
 
-        # Even with tools_were_attempted, auto_chain should fire first
+        # tools_were_attempted=True blocks both auto_chain and completion
         await engine._evaluate_no_tool_decision(
-            ctx, "Done with implementation.", tools_were_attempted=True
+            ctx, "Let me check the files.", tools_were_attempted=True
         )
 
-        # auto_chain fired — tier changed
-        assert ctx.locked_tier.name != "eng"
+        # Neither auto_chain nor COMPLETE — model gets another turn
+        assert ctx.locked_tier.name == "eng"
+        assert ctx.state != AgentState.COMPLETE
 
 
 # ===========================================================================

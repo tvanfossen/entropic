@@ -22,22 +22,36 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three widely-used programming languages and their primary applications:
+  Here are three programming languages with their main use cases:
   
-  1. **Python** — Data science, machine learning, automation scripts, web backends
-  (Django/Flask), scientific computing. Known for readability and extensive 
-  libraries like NumPy, Pandas, TensorFlow.
+  ## 1. **Python**
+  - **Primary uses**: Data science, machine learning, artificial intelligence, 
+  scripting, automation, web backend (Django/Flask)
+  - **Why popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
+  TensorFlow), easy to learn
+  - **Common in**: Research labs, startups, data engineering
   
-  2. **JavaScript** — Frontend web development, Node.js backend services, browser 
-  extensions, serverless functions. Essential for interactive websites and modern 
-  full-stack applications.
+  ## 2. **JavaScript**
+  - **Primary uses**: Web development (frontend + backend with Node.js), mobile 
+  apps (React Native), browser automation
+  - **Why popular**: Runs everywhere browsers support it, massive ecosystem (npm 
+  packages)
+  - **Common in**: Modern web applications, progressive web apps, real-time 
+  dashboards
   
-  3. **Go (Golang)** — Cloud infrastructure, microservices, CLI tools, concurrent 
-  network servers. Designed for performance, simplicity, and efficient concurrency
-  handling by Google.
+  ## 3. **Java**
+  - **Primary uses**: Enterprise software, Android development, large-scale 
+  distributed systems, banking/financial systems
+  - **Why popular**: Strong typing, mature frameworks (Spring), excellent 
+  performance at scale
+  - **Common in**: Corporate backends, Android apps, big data platforms (Hadoop)
   
-  Each language excels in its domain: Python for data-heavy work, JavaScript for 
-  web ecosystems, and Go for backend systems requiring reliability and speed.
+  ---
+  
+  These three cover most modern software needs. Python excels for analytics/AI 
+  work, JavaScript dominates web interfaces, and Java handles heavy enterprise 
+  infrastructure. Each has tradeoffs: Python prioritizes developer productivity, 
+  JavaScript offers ubiquity, and Java emphasizes stability at scale.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

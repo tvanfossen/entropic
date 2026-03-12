@@ -24,29 +24,17 @@ note right of Mdl
   **Model Output:**
   Here are three programming languages and their main use cases:
   
-  ### 1. **Python**
-  - **Main Use Cases**: Data science, machine learning/artificial intelligence, 
-  web development (Django/Flask), scripting/automation, scientific computing
-  - **Why Popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), beginner-friendly
+  1. **Python** — Data science, machine learning, scripting, web development 
+  (Django/Flask), automation, and scientific computing. Known for readability and 
+  extensive libraries like NumPy, Pandas, TensorFlow.
   
-  ### 2. **JavaScript**
-  - **Main Use Cases**: Frontend web development (browser-based UIs), backend 
-  development with Node.js, mobile apps (React Native), serverless functions
-  - **Why Popular**: Runs natively in browsers, massive ecosystem (npm packages), 
-  full-stack capabilities
+  2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
+  backend services, full-stack applications, and increasingly desktop/mobile apps 
+  via frameworks like React Native or Electron.
   
-  ### 3. **Java**
-  - **Main Use Cases**: Enterprise applications, Android app development, 
-  large-scale distributed systems, banking/financial software
-  - **Why Popular**: Strong typing, mature frameworks (Spring), platform 
-  independence via JVM, excellent performance at scale
-  
-  ---
-  
-  These three cover a broad range of modern development needs—from data and AI 
-  work to web platforms and enterprise infrastructure. Each has strong community 
-  support and extensive documentation for learning.
+  3. **Go (Golang)** — Backend microservices, cloud infrastructure tools, CLI 
+  utilities, concurrent systems, and high-performance network servers. Designed 
+  for simplicity, fast compilation, and efficient concurrency with goroutines.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

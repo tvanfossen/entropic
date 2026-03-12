@@ -195,6 +195,7 @@ class TodoList:
         handlers = {
             "add": self._handle_add,
             "update": self._handle_update,
+            "bulk_update": self._handle_bulk_update,
             "remove": self._handle_remove,
             "replace": self._handle_replace,
         }
@@ -283,6 +284,22 @@ class TodoList:
                 setattr(item, attr, args[attr])
 
         return f"Updated item {index}: {item.content[:50]}"
+
+    def _handle_bulk_update(self, args: dict[str, Any]) -> str:
+        """Update multiple items by index in a single call."""
+        updates = args.get("updates", [])
+        if not updates or not isinstance(updates, list):
+            return "Error: 'bulk_update' requires 'updates' array"
+
+        results = []
+        for entry in updates:
+            if not isinstance(entry, dict) or "index" not in entry:
+                results.append("Error: each update needs 'index'")
+                continue
+            result = self._handle_update(entry)
+            results.append(result)
+
+        return " | ".join(results)
 
     def _handle_remove(self, args: dict[str, Any]) -> str:
         """Remove an item by index."""

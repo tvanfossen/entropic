@@ -7,7 +7,12 @@ focus:
   - investigate topics using web search and documentation
   - compare alternatives with structured analysis
   - synthesize information from multiple sources
-examples: []
+examples:
+  - "Research the best libraries for WebSocket handling"
+  - "Compare PostgreSQL vs SQLite for embedded use cases"
+  - "Summarize the OAuth 2.0 authorization code flow"
+  - "What are the licensing implications of using LGPL code?"
+  - "Investigate how competing products handle rate limiting"
 auto_chain: lead
 allowed_tools:
   - filesystem.read_file
@@ -16,6 +21,7 @@ allowed_tools:
   - web.web_search
   - web.web_fetch
   - entropic.todo_write
+  - entropic.complete
 max_output_tokens: 4096
 temperature: 0.4
 enable_thinking: true
@@ -23,6 +29,7 @@ model_preference: primary
 interstitial: false
 routable: false
 role_type: front_office
+explicit_completion: true
 phases:
   default:
     temperature: 0.4

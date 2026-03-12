@@ -619,6 +619,7 @@ class EntropiApp(App[None]):
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
         yield Header()
+        yield TodoWidget(id="todo-widget")
         yield VerticalScroll(id="chat-log")
         yield ProcessingIndicator(id="processing")
         yield Input(placeholder="Type your message... (Ctrl+C to exit)", id="input")

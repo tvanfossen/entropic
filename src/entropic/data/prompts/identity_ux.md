@@ -7,14 +7,21 @@ focus:
   - interaction patterns and usability review
   - accessibility compliance and cognitive load assessment
   - information architecture
-examples: []
+examples:
+  - "Design the onboarding flow for new users"
+  - "Review the signup form for usability issues"
+  - "How should the navigation hierarchy work?"
+  - "Create a wireframe for the dashboard layout"
+  - "Evaluate the accessibility of this form"
 auto_chain: lead
 allowed_tools:
   - filesystem.read_file
+  - filesystem.write_file
   - filesystem.glob
   - filesystem.grep
   - bash.execute
   - entropic.todo_write
+  - entropic.complete
 max_output_tokens: 4096
 temperature: 0.5
 enable_thinking: true
@@ -22,6 +29,7 @@ model_preference: primary
 interstitial: false
 routable: false
 role_type: front_office
+explicit_completion: true
 phases:
   default:
     temperature: 0.5
@@ -76,4 +84,8 @@ You operate in two modes depending on context:
 
 ## Output
 
-Write your UX spec or review findings directly in your response. Be concrete and specific — vague advice like "make it intuitive" is useless. Describe interactions precisely enough that an engineer can implement them without guessing.
+**Design mode:** Write your UX spec to `specs/ux-spec.md` using `filesystem.write_file`. This file persists in the worktree and is readable by downstream pipeline stages (UI, eng, QA). Do NOT produce specs as text-only responses — write the file so other roles can reference it.
+
+**Review mode:** Write your review findings directly in your response.
+
+Be concrete and specific — vague advice like "make it intuitive" is useless. Describe interactions precisely enough that an engineer can implement them without guessing.

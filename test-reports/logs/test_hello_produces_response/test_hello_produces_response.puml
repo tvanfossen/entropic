@@ -22,7 +22,11 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I help you today?
+  Hello! I'm here to help you with your technical projects. As the team lead, I 
+  can coordinate tasks across different roles (architecture, engineering, QA, 
+  UX/UI, etc.) or handle simple questions directly.
+  
+  What would you like to work on today?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

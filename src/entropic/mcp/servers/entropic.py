@@ -16,6 +16,7 @@ from mcp.types import Tool
 
 from entropic.core.directives import (
     ClearSelfTodos,
+    Complete,
     ContextAnchor,
     Delegate,
     InjectContext,
@@ -254,6 +255,21 @@ class PipelineTool(BaseTool):
         )
 
 
+class CompleteTool(BaseTool):
+    """Signal explicit completion of a delegated task."""
+
+    def __init__(self) -> None:
+        super().__init__("complete", "entropic")
+
+    async def execute(self, arguments: dict[str, Any]) -> ServerResponse:
+        """Emit Complete directive with summary."""
+        summary = arguments.get("summary", "(no summary provided)")
+        return ServerResponse(
+            result=f"Completion signaled: {summary}",
+            directives=[Complete(summary=summary), StopProcessing()],
+        )
+
+
 class PruneContextTool(BaseTool):
     """Request context pruning to reduce message history."""
 
@@ -294,6 +310,7 @@ class EntropicServer(BaseMCPServer):
         if not tier_names or len(tier_names) > 1:
             self.register_tool(DelegateTool(self._todo_list, tier_names))
             self.register_tool(PipelineTool(tier_names))
+        self.register_tool(CompleteTool())
         self.register_tool(PruneContextTool())
 
     @staticmethod

@@ -10,6 +10,7 @@ from entropic.core.base import Message
 from entropic.core.directives import (
     _DIRECTIVE_REGISTRY,
     ClearSelfTodos,
+    Complete,
     ContextAnchor,
     Delegate,
     Directive,
@@ -325,6 +326,7 @@ class TestDirectiveRegistry:
             "tier_change": TierChange,
             "delegate": Delegate,
             "pipeline": Pipeline,
+            "complete": Complete,
             "clear_self_todos": ClearSelfTodos,
             "inject_context": InjectContext,
             "prune_messages": PruneMessages,

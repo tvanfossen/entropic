@@ -22,19 +22,26 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three programming languages and their main use cases:
+  Here are three popular programming languages and their main use cases:
   
-  1. **Python** — Data science, machine learning, scripting, web development 
-  (Django/Flask), automation, and scientific computing. Known for readability and 
-  extensive libraries like NumPy, Pandas, TensorFlow.
+  1. **Python** — Data science, machine learning, automation scripts, web backends
+  (Django/Flask), scientific computing, and rapid prototyping. Known for 
+  readability and extensive libraries like NumPy, Pandas, TensorFlow.
   
   2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
-  backend services, full-stack applications, and increasingly desktop/mobile apps 
-  via frameworks like React Native or Electron.
+  server-side applications, full-stack development with frameworks like 
+  React/Vue/Angular. Also used in mobile apps via React Native and desktop apps 
+  via Electron.
   
-  3. **Go (Golang)** — Backend microservices, cloud infrastructure tools, CLI 
-  utilities, concurrent systems, and high-performance network servers. Designed 
-  for simplicity, fast compilation, and efficient concurrency with goroutines.
+  3. **Rust** — Systems programming where performance and memory safety matter: 
+  operating systems, embedded devices, game engines, high-performance libraries, 
+  blockchain infrastructure. Known for compile-time guarantees against common bugs
+  (null pointer, buffer overflow).
+  
+  Each language has tradeoffs: Python prioritizes developer productivity over raw 
+  speed; JavaScript excels at web interactivity but can be inconsistent across 
+  environments; Rust offers strong safety guarantees with a steeper learning curve
+  than the others.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

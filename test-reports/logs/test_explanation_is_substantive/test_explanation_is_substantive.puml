@@ -22,16 +22,18 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is when a function calls itself to solve a problem by breaking it down
-  into smaller, similar sub-problems. It's like looking at yourself in two mirrors
-  facing each other — you see infinite reflections of yourself.
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem by breaking it down into smaller, similar sub-problems.
   
-  ## Key Concepts
+  ## How It Works
   
-  **Base case**: The condition that stops the recursion (prevents infinite loops).
-  **Recursive case**: Where the function calls itself with a simpler input.
+  A recursive function has two key parts:
   
-  ### Simple Example: Factorial
+  1. **Base case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive case**: The function calling itself with modified input
+  
+  ## Simple Example
   
   ```python
   def factorial(n):
@@ -39,43 +41,49 @@ note right of Mdl
       if n &lt;= 1:
           return 1
       
-      # Recursive case: multiply n by factorial of (n-1)
+      # Recursive case: call itself with smaller value
       return n * factorial(n - 1)
   
-  print(factorial(5))  # Output: 120 (5×4×3×2×1)
+  # Usage
+  factorial(5)  # Returns 120 (5×4×3×2×1)
   ```
   
-  ### Another Example: Fibonacci Sequence
+  ## Visualizing the Call Stack
   
-  ```python
-  def fibonacci(n):
-      if n &lt;= 1:
-          return n
-      
-      return fibonacci(n-1) + fibonacci(n-2)
+  When `factorial(5)` runs, it looks like this:
   
-  print(fibonacci(6))  # Output: 8 (0,1,1,2,3,5,8...)
+  ```
+  factorial(5) = 5 × factorial(4)
+                 = 5 × (4 × factorial(3))
+                     = 5 × (4 × (3 × factorial(2)))
+                         = 5 × (4 × (3 × (2 × factorial(1))))
+                             = 5 × (4 × (3 × (2 × 1)))
+                                 = 5 × (4 × (3 × 2))
+                                     = 5 × (4 × 6)
+                                         = 5 × 24
+                                             = 120
   ```
   
-  ## When to Use Recursion
+  ## Common Use Cases
   
-  **Good for:**
-  - Tree/graph traversals (file systems, DOM trees)
-  - Divide-and-conquer algorithms (sorting, searching)
-  - Problems with natural recursive structure (math sequences)
+  - **Tree traversal**: Walking through file systems, DOM trees
+  - **Divide and conquer algorithms**: Merge sort, quicksort
+  - **Mathematical sequences**: Fibonacci numbers, factorial
+  - **Backtracking problems**: Sudoku solvers, maze navigation
   
-  **Not always ideal:**
-  - Simple iterative loops work better for basic tasks
-  - Deep recursion can cause stack overflow errors
-  - Sometimes less readable than iteration
+  ## Important Considerations
   
-  ## Important Notes
+  **Pros:**
+  - Elegant solutions for naturally recursive problems
+  - Can simplify complex logic
   
-  ⚠️ **Always have a base case** — otherwise you get infinite recursion  
-  ⚠️ **Each recursive call should move toward the base case** — ensure progress  
-  ⚠️ **Consider memory usage** — each call uses stack space
+  **Cons:**
+  - Risk of stack overflow (too many nested calls)
+  - Generally slower than iterative approaches due to function call overhead
+  - Harder to debug
   
-  Recursion is powerful but use it when it makes sense for your problem structure!
+  **Tip**: Always ensure your base case is reachable! A missing or unreachable 
+  base case causes infinite recursion.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -98,18 +98,16 @@ async def routing_orchestrator(routing_config, tmp_path_factory):
     await orch.shutdown()
 
 
-def _tiers_on_non_default_model(config: EntropyConfig) -> list[str]:
-    """Return tier names that use a different model file than the default."""
-    default_config = config.models.tiers.get(config.models.default)
-    if not default_config:
-        return []
-    default_path = str(default_config.path)
-    result = []
-    for name in _IDENTITY_NAMES:
-        tier_config = config.models.tiers.get(name)
-        if tier_config and str(tier_config.path) != default_path:
-            result.append(name)
-    return result
+@pytest.fixture(autouse=True)
+def _redirect_routing_logs(routing_config, test_log_dir):
+    """Redirect engine logging to per-test log dir before each test.
+
+    The orchestrator is module-scoped (model loaded once), but logging
+    is redirected per-test so each test's session.log is captured
+    independently in test-reports/logs/<test_name>/.
+    """
+    setup_logging(routing_config, project_dir=test_log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=test_log_dir, app_dir_name=".")
 
 
 # ---------------------------------------------------------------------------
@@ -248,26 +246,25 @@ class TestClassificationSpeed:
 
 
 @pytest.mark.model
-class TestCrossModelSwap:
-    """Test that routing to a tier on a different model file works.
+class TestRoutingLifecycle:
+    """Test route → get_model lifecycle for non-default tiers.
 
-    Validates the full route() → deactivate → load lifecycle for cross-model
-    transitions. Only runs if the test config has tiers on different models.
+    Validates that routing to a non-default tier and obtaining its model
+    completes without error, regardless of whether tiers share a backend.
     """
 
     @pytest.mark.asyncio
-    async def test_route_to_non_default_model_tier(
+    async def test_route_to_non_default_tier(
         self, routing_config: EntropyConfig, routing_orchestrator: ModelOrchestrator
     ):
-        """Routing to a tier on a different model file completes without error."""
-        non_default = _tiers_on_non_default_model(routing_config)
-        if not non_default:
-            pytest.skip("All tiers use the same model file")
+        """Routing to a non-default tier and getting its model succeeds."""
+        default_name = routing_config.models.default
+        non_default = [n for n in _IDENTITY_NAMES if n != default_name]
+        assert non_default, "Config must have at least one non-default tier"
 
         target_name = random.choice(non_default)
         target_tier = routing_orchestrator._find_tier(target_name)
         assert target_tier is not None, f"Tier '{target_name}' not found in orchestrator"
 
         model = await routing_orchestrator._get_model(target_tier)
-
-        assert model.is_loaded, f"Model for {target_name} not loaded after swap"
+        assert model.is_loaded, f"Model for {target_name} not loaded after route"

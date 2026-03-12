@@ -93,6 +93,11 @@ class TestInteraction:
 
 _report_entries: list[TestInteraction] = []
 
+# Map test node ID → log directory path.  Populated by the test_log_dir
+# fixture so the pytest hook can reliably find logs regardless of fixture
+# dependency depth.
+_test_log_dirs: dict[str, Path] = {}
+
 
 # =============================================================================
 # Fixtures
@@ -114,14 +119,18 @@ async def shared_orchestrator(config: EntropyConfig, models_available: dict[str,
 
 
 @pytest.fixture
-def test_log_dir(tmp_path: Path) -> Path:
+def test_log_dir(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
     """Per-test log directory, independent of any app convention.
 
     Engine/model logs are directed here. ``_stash_test_logs`` copies them
     to ``test-reports/logs/<test_name>/`` after each test completes.
+
+    Registers itself in ``_test_log_dirs`` so the pytest hook can find it
+    regardless of fixture dependency depth.
     """
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
+    _test_log_dirs[request.node.nodeid] = log_dir
     return log_dir
 
 
@@ -297,32 +306,17 @@ def _stash_test_logs(item: pytest.Item, entry: TestInteraction) -> None:
     Must run during call phase (before fixture teardown cleans temp dirs).
     Writes metadata.json alongside logs for training data labeling.
     """
-    # test_log_dir may be consumed indirectly (via headless_app or pychess_engine),
-    # so it won't appear in item.funcargs unless the test requests it directly.
-    # Walk all resolved funcargs to find it.
-    log_src = item.funcargs.get("test_log_dir")
-    if log_src is None:
-        # Resolve from fixture dependency chain
-        request = getattr(item, "_request", None)
-        if request is not None:
-            try:
-                log_src = request.getfixturevalue("test_log_dir")  # type: ignore[union-attr]
-            except pytest.FixtureLookupError:
-                return
-        else:
-            return
-    log_src = Path(log_src)
-    if not log_src.exists():
+    log_src = _test_log_dirs.get(item.nodeid)
+    if log_src is None or not log_src.exists():
         return
 
     log_dest = REPORT_DIR / "logs" / entry.test_name
     log_dest.mkdir(parents=True, exist_ok=True)
 
-    # Copy log files
-    for log_file in ("session.log", "session_model.log"):
-        src = log_src / log_file
-        if src.exists() and src.stat().st_size > 0:
-            shutil.copy2(src, log_dest / log_file)
+    # Copy all log files (session.log, session_model.log, etc.)
+    for log_file in log_src.iterdir():
+        if log_file.is_file() and log_file.stat().st_size > 0:
+            shutil.copy2(log_file, log_dest / log_file.name)
 
     # Write metadata (actual timing preserved here for analysis)
     metadata = {

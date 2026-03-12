@@ -2,13 +2,13 @@
 skinparam backgroundColor #FEFEFE
 skinparam noteBorderColor #999999
 skinparam noteBackgroundColor #FFFFEE
-title test_route_to_non_default_model_tier\n<size:11>[FAILED] < 1s</size>
+title test_route_to_non_default_tier\n<size:11>[PASSED] < 1s</size>
 
 participant "Test" as T
 participant "Application" as App
 
 T -> App: (internal test)
-App --> T: FAILED
-note right #salmon
+App --> T: PASSED
+note right #palegreen
 
 @enduml

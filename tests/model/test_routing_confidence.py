@@ -95,6 +95,13 @@ async def confidence_orchestrator(confidence_config, tmp_path_factory):
     await orch.shutdown()
 
 
+@pytest.fixture(autouse=True)
+def _redirect_confidence_logs(confidence_config, test_log_dir):
+    """Redirect engine logging to per-test log dir for stashing."""
+    setup_logging(confidence_config, project_dir=test_log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=test_log_dir, app_dir_name=".")
+
+
 # ---------------------------------------------------------------------------
 # Confidence tests — per-tier, 85% threshold
 # ---------------------------------------------------------------------------

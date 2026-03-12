@@ -352,6 +352,81 @@ class TestAutoChainBlockedTools:
 
 
 # ===========================================================================
+# _evaluate_no_tool_decision: blocked tools vs no tools
+# ===========================================================================
+
+
+class TestEvaluateNoToolDecision:
+    """Tests for loop decision when no effective tool calls occurred."""
+
+    @pytest.mark.asyncio
+    async def test_no_tools_attempted_completes(self) -> None:
+        """No tool calls at all + complete content → COMPLETE."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        engine.orchestrator.last_finish_reason = "stop"
+
+        adapter = MagicMock()
+        adapter.is_response_complete.return_value = True
+        engine.orchestrator.get_adapter.return_value = adapter
+
+        await engine._evaluate_no_tool_decision(ctx, "Here is my response.")
+
+        assert ctx.state == AgentState.COMPLETE
+
+    @pytest.mark.asyncio
+    async def test_tools_attempted_but_blocked_continues(self) -> None:
+        """Tools attempted but all blocked → do NOT complete, let model retry."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        ctx.state = AgentState.EXECUTING
+        engine.orchestrator.last_finish_reason = "stop"
+
+        await engine._evaluate_no_tool_decision(
+            ctx, "Let me update the todo list.", tools_were_attempted=True
+        )
+
+        # State should NOT be COMPLETE — model gets another turn
+        assert ctx.state != AgentState.COMPLETE
+
+    @pytest.mark.asyncio
+    async def test_tools_attempted_auto_chain_still_fires(self) -> None:
+        """Tools blocked + auto_chain configured → auto_chain fires (before guard)."""
+        engine = _make_engine(
+            tiers={
+                "eng": _tier_config(auto_chain=True),
+                "lead": _tier_config(),
+            },
+            handoff_rules={"eng": ["lead"]},
+            default="eng",
+        )
+        ctx = _make_ctx("eng")
+        _setup_handoff_mocks(engine)
+        engine.orchestrator.last_finish_reason = "stop"
+        engine.orchestrator.get_adapter.return_value = MagicMock(
+            is_response_complete=MagicMock(return_value=True),
+        )
+
+        # Even with tools_were_attempted, auto_chain should fire first
+        await engine._evaluate_no_tool_decision(
+            ctx, "Done with implementation.", tools_were_attempted=True
+        )
+
+        # auto_chain fired — tier changed
+        assert ctx.locked_tier.name != "eng"
+
+
+# ===========================================================================
 # Config validation: auto_chain without targets
 # ===========================================================================
 

@@ -28,6 +28,37 @@ from entropic.prompts.manager import PromptManager
 TOOL_RESULT_SUFFIX = "Continue. Batch multiple tool calls in one response when possible."
 
 
+def _find_matching_brace(text: str, start: int) -> int:
+    """Find the position of the matching ``}`` for a ``{`` at *start*.
+
+    Walks forward counting brace depth while respecting JSON string
+    escaping.  Returns -1 if no match is found.
+    """
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
 class ChatAdapter(ABC):
     """Abstract base class for chat format adapters.
 
@@ -224,32 +255,79 @@ class ChatAdapter(ABC):
         ]
 
     def _parse_tagged_tool_calls(self, content: str) -> list[ToolCall]:
-        """Parse tool calls from <tool_call> tags."""
-        tool_calls = []
+        """Parse tool calls from <tool_call> tags.
+
+        Handles both single and multiple JSON objects within one tag
+        (model sometimes emits ``{...}, {...}`` without array wrapper).
+        """
+        tool_calls: list[ToolCall] = []
         pattern = re.compile(
             rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
             re.DOTALL,
         )
         for match in pattern.findall(content):
-            tool_call = self._parse_single_tool_call(match.strip())
-            if tool_call:
-                tool_calls.append(tool_call)
-                self._logger.info(f"Parsed {type(self).__name__} tool call: {tool_call.name}")
+            parsed = self._parse_tool_call_block(match.strip())
+            for tc in parsed:
+                self._logger.info("Parsed %s tool call: %s", type(self).__name__, tc.name)
+            tool_calls.extend(parsed)
         return tool_calls
+
+    def _parse_tool_call_block(self, json_str: str) -> list[ToolCall]:
+        """Parse one or more tool calls from a single tagged block."""
+        # Try as single call first (common case)
+        single = self._parse_single_tool_call(json_str)
+        if single:
+            return [single]
+        # Try wrapping in array (model emitted {}, {} without [])
+        try:
+            data = json.loads(f"[{json_str}]")
+            if isinstance(data, list):
+                results = []
+                for item in data:
+                    if isinstance(item, dict) and "name" in item:
+                        args = item.get("arguments", item.get("parameters", {}))
+                        results.append(
+                            ToolCall(id=str(uuid.uuid4()), name=item["name"], arguments=args)
+                        )
+                if results:
+                    return results
+        except json.JSONDecodeError:
+            pass
+        return []
 
     def _parse_single_tool_call(self, json_str: str) -> ToolCall | None:
         """Parse a single tool call JSON string."""
-        try:
-            data = json.loads(json_str)
-            if "name" in data:
-                arguments = data.get("arguments", data.get("parameters", {}))
-                return ToolCall(id=str(uuid.uuid4()), name=data["name"], arguments=arguments)
-        except json.JSONDecodeError:
-            recovered = self._try_recover_json(json_str)
-            if not recovered:
-                self._logger.warning(f"Failed to parse tool call: {json_str}")
-            return recovered
-        return None
+        for candidate in self._json_candidates(json_str):
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, list) and len(data) == 1:
+                    data = data[0]
+                if isinstance(data, dict) and "name" in data:
+                    arguments = data.get("arguments", data.get("parameters", {}))
+                    return ToolCall(id=str(uuid.uuid4()), name=data["name"], arguments=arguments)
+            except json.JSONDecodeError:
+                continue
+        recovered = self._try_recover_json(json_str)
+        if not recovered:
+            self._logger.warning("Failed to parse tool call: %s", json_str[:200])
+        return recovered
+
+    @staticmethod
+    def _json_candidates(json_str: str) -> list[str]:
+        """Generate candidate strings for JSON parsing.
+
+        Models sometimes wrap tool calls in array brackets or append
+        stray ``]}`` suffixes.  This yields the original string plus
+        variants with those artifacts stripped so ``json.loads`` can
+        succeed without regex fallback.
+        """
+        candidates = [json_str]
+        stripped = json_str.rstrip()
+        if stripped.endswith("]}"):
+            candidates.append(stripped[:-1])
+        if stripped.startswith("[") and stripped.endswith("]"):
+            candidates.append(stripped[1:-1].strip())
+        return candidates
 
     def _parse_bare_json_tool_calls(self, content: str) -> list[ToolCall]:
         """Parse bare JSON tool calls from lines."""
@@ -292,20 +370,35 @@ class ChatAdapter(ABC):
         except json.JSONDecodeError:
             pass
 
-        # Last resort: regex extraction
+        # Last resort: extract name and arguments via targeted parsing
         name_match = re.search(r'"name"\s*:\s*"([^"]+)"', json_str)
         if name_match:
             name = name_match.group(1)
-            arguments: dict[str, Any] = {}
-            args_match = re.search(r'"arguments"\s*:\s*(\{[^}]+\})', json_str)
-            if args_match:
-                try:
-                    arguments = json.loads(args_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+            arguments = self._extract_arguments_block(json_str)
             return ToolCall(id=str(uuid.uuid4()), name=name, arguments=arguments)
 
         return None
+
+    @staticmethod
+    def _extract_arguments_block(json_str: str) -> dict[str, Any]:
+        """Extract the arguments object using bracket-depth counting.
+
+        The previous ``[^}]+`` regex failed on nested JSON (e.g. HTML
+        content containing ``}`` characters).  This finds the matching
+        close brace by counting bracket depth, respecting string
+        escaping.
+        """
+        marker = re.search(r'"arguments"\s*:\s*\{', json_str)
+        if not marker:
+            return {}
+        start = marker.end() - 1  # include the opening {
+        end = _find_matching_brace(json_str, start)
+        if end >= 0:
+            try:
+                return json.loads(json_str[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+        return {}
 
     # --- Content cleaning ---
 

@@ -642,9 +642,10 @@ class AgentEngine:
                         yield msg
                     return
 
-                # All tool calls blocked/denied — fall through to standard decision
+                # All tool calls blocked/denied — let model retry with feedback.
+                # 3-consecutive-duplicate circuit breaker prevents infinite loops.
                 if ctx.effective_tool_calls == 0:
-                    await self._evaluate_no_tool_decision(ctx, content)
+                    await self._evaluate_no_tool_decision(ctx, content, tools_were_attempted=True)
             else:
                 await self._evaluate_no_tool_decision(ctx, content)
 
@@ -653,12 +654,22 @@ class AgentEngine:
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
-    async def _evaluate_no_tool_decision(self, ctx: LoopContext, content: str) -> None:
+    async def _evaluate_no_tool_decision(
+        self,
+        ctx: LoopContext,
+        content: str,
+        *,
+        tools_were_attempted: bool = False,
+    ) -> None:
         """Evaluate loop decision when no tool calls were effective.
 
         Called when either:
-          - Model produced no tool calls
-          - Model produced tool calls but ALL were blocked/denied
+          - Model produced no tool calls (tools_were_attempted=False)
+          - Model produced tool calls but ALL were blocked/denied (True)
+
+        When tools were attempted but blocked, skip the completion check
+        so the model gets another turn to respond to the feedback.
+        The 3-consecutive-duplicate circuit breaker prevents infinite loops.
         """
         finish_reason = self.orchestrator.last_finish_reason
 
@@ -668,6 +679,10 @@ class AgentEngine:
 
         if finish_reason == "length":
             logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
+            return
+
+        if tools_were_attempted:
+            logger.info("[LOOP DECISION] tools attempted but blocked, continuing")
             return
 
         adapter = self.orchestrator.get_adapter()

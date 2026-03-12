@@ -22,45 +22,66 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
+  I'll write a Python function to check if a number is even:
+end note
+Mdl --> Eng: tool_call(entropic.todo_write)
+Eng -> MCP: entropic.todo_write
+note right of MCP
+  action: add
+  todos: [{"content": "Write Python function to check if number is even", "active_form": "Writing Python function to check if number is even", "status": "in_progress"}]
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Added 1 item(s). Total: 1
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  Added 1 item(s). Total: 1
+  &lt;/tool_response&gt;
+  
+  Continue. Batch multiple tool calls in one response when possible.
+end note
+== Turn 2 ==
+Orch -> Mdl: generate_stream
+note right of Mdl
+  **Model Output:**
   Here's a Python function to check if a number is even:
   
   ```python
-  def is_even(number):
+  def is_even(n):
       """Check if a number is even.
       
       Args:
-          number (int or float): The number to check
+          n: An integer
           
       Returns:
-          bool: True if the number is even, False otherwise
-          
-      Examples:
-          &gt;&gt;&gt; is_even(4)
-          True
-          &gt;&gt;&gt; is_even(7)
-          False
-          &gt;&gt;&gt; is_even(-2)
-          True
+          True if the number is even, False otherwise
       """
-      return number % 2 == 0
+      return n % 2 == 0
   ```
   
   **Usage examples:**
-  
   ```python
-  print(is_even(10))   # True
-  print(is_even(15))   # False
-  print(is_even(0))    # True (zero is even)
-  print(is_even(-4))   # True
+  print(is_even(4))   # True
+  print(is_even(7))   # False
+  print(is_even(-2))  # True (negative numbers work too)
   ```
   
-  The function uses the modulo operator (`%`) to check if dividing by 2 leaves no 
-  remainder. Note that this works with both positive and negative integers, as 
-  well as floats (though you may want to add type checking if you need strict 
-  integer validation).
+  **Alternative implementation using bitwise operator:**
+  ```python
+  def is_even(n):
+      """Check if a number is even using bitwise AND."""
+      return not (n &amp; 1)
+  ```
+  
+  The first version with modulo (`%`) is more readable and Pythonic. The second 
+  version with bitwise AND (`&amp;`) is slightly faster for large-scale operations
+  since it avoids division.
 end note
 note over T #palegreen
-  **PASSED** (< 262s)
+  **PASSED** (< 262s, 1 tool calls)
 end note
 
 @enduml

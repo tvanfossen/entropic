@@ -23,8 +23,8 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Hello! 👋 I'm the team lead here. How can I help you today? Whether it's planning
-  a new feature, fixing an issue, or just answering a quick question — I'm here to
-  make sure we get quality results efficiently.
+  a feature, debugging an issue, or just answering a quick question — I've got you
+  covered.
 end note
 note over T #palegreen
   **PASSED** (< 38s)

@@ -240,22 +240,51 @@ Do NOT call this tool again. Use the previous result above."""
     def _check_tier_allowed(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
         """Reject tool calls not in the current tier's allowed_tools.
 
+        Also enforces bash_commands allowlist for bash.execute calls.
+
         Returns a feedback message if rejected, None if allowed.
         """
         if ctx.locked_tier is None:
             return None
         allowed = self._orchestrator.get_allowed_tools(ctx.locked_tier)
-        if allowed is None or tool_call.name in allowed:
+        if allowed is not None and tool_call.name not in allowed:
+            tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
+            logger.warning(
+                "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
+            )
+            reason = (
+                f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
+                f"Available tools: {sorted(allowed)}"
+            )
+            return self._create_denied_message(tool_call, reason)
+
+        return self._check_bash_commands(ctx, tool_call)
+
+    def _check_bash_commands(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
+        """Enforce bash_commands allowlist on bash.execute calls.
+
+        If the identity defines ``bash_commands``, only commands matching
+        an allowed prefix are permitted.  ``None`` means unrestricted
+        (backward compat for roles without the field).
+
+        Returns a denial message if blocked, None if allowed.
+        """
+        bash_commands = self._orchestrator.get_tier_param(ctx.locked_tier, "bash_commands")
+        if tool_call.name != "bash.execute" or bash_commands is None:
+            return None
+        stripped = tool_call.arguments.get("command", "").strip()
+        if any(stripped.startswith(prefix) for prefix in bash_commands):
             return None
         tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
         logger.warning(
-            "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
+            "[BASH BLOCKED] Command not in %s's allowed commands: %s",
+            tier_name,
+            stripped[:80],
         )
-        reason = (
-            f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
-            f"Available tools: {sorted(allowed)}"
+        return self._create_denied_message(
+            tool_call,
+            f"Command not permitted for {tier_name}. Allowed command prefixes: {bash_commands}",
         )
-        return self._create_denied_message(tool_call, reason)
 
     async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
         """Check tool approval. Returns denial message if not approved, None if approved."""

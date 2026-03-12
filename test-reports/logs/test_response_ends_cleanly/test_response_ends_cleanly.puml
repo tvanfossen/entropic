@@ -22,26 +22,22 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three popular programming languages and their main use cases:
+  Here are three widely-used programming languages and their primary applications:
   
   1. **Python** — Data science, machine learning, automation scripts, web backends
-  (Django/Flask), scientific computing, and rapid prototyping. Known for 
-  readability and extensive libraries like NumPy, Pandas, TensorFlow.
+  (Django/Flask), scientific computing. Known for readability and extensive 
+  libraries like NumPy, Pandas, TensorFlow.
   
-  2. **JavaScript** — Frontend web development (browser-based UIs), Node.js 
-  server-side applications, full-stack development with frameworks like 
-  React/Vue/Angular. Also used in mobile apps via React Native and desktop apps 
-  via Electron.
+  2. **JavaScript** — Frontend web development, Node.js backend services, browser 
+  extensions, serverless functions. Essential for interactive websites and modern 
+  full-stack applications.
   
-  3. **Rust** — Systems programming where performance and memory safety matter: 
-  operating systems, embedded devices, game engines, high-performance libraries, 
-  blockchain infrastructure. Known for compile-time guarantees against common bugs
-  (null pointer, buffer overflow).
+  3. **Go (Golang)** — Cloud infrastructure, microservices, CLI tools, concurrent 
+  network servers. Designed for performance, simplicity, and efficient concurrency
+  handling by Google.
   
-  Each language has tradeoffs: Python prioritizes developer productivity over raw 
-  speed; JavaScript excels at web interactivity but can be inconsistent across 
-  environments; Rust offers strong safety guarantees with a steeper learning curve
-  than the others.
+  Each language excels in its domain: Python for data-heavy work, JavaScript for 
+  web ecosystems, and Go for backend systems requiring reliability and speed.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

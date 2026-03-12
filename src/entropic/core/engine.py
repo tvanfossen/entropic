@@ -451,10 +451,13 @@ class AgentEngine:
         if self._callbacks.repo_init is not None:
             return self._callbacks.repo_init(project_dir)
 
-        # Default: git init
+        # Default: git init + initial commit (worktrees need a valid HEAD)
         try:
-            subprocess.run(
-                ["git", "init"],
+            run = subprocess.run
+            run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
+            run(["git", "add", "-A"], cwd=project_dir, capture_output=True, check=True)
+            run(
+                ["git", "commit", "--allow-empty", "-m", "init"],
                 cwd=project_dir,
                 capture_output=True,
                 check=True,
@@ -667,15 +670,12 @@ class AgentEngine:
           - Model produced no tool calls (tools_were_attempted=False)
           - Model produced tool calls but ALL were blocked/denied (True)
 
-        When tools were attempted but blocked, skip the completion check
-        so the model gets another turn to respond to the feedback.
+        When tools were attempted but blocked, skip completion and
+        auto_chain so the model gets another turn to respond to feedback.
         The 3-consecutive-duplicate circuit breaker prevents infinite loops.
+        Length-triggered continuation always applies (token budget exhausted).
         """
         finish_reason = self.orchestrator.last_finish_reason
-
-        if await self._try_auto_chain(ctx, finish_reason, content):
-            logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
-            return
 
         if finish_reason == "length":
             logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
@@ -683,6 +683,10 @@ class AgentEngine:
 
         if tools_were_attempted:
             logger.info("[LOOP DECISION] tools attempted but blocked, continuing")
+            return
+
+        if await self._try_auto_chain(ctx, finish_reason, content):
+            logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
             return
 
         adapter = self.orchestrator.get_adapter()

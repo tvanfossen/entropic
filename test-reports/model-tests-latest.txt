@@ -1,34 +1,34 @@
 === Model Test Report ===
-Date: 2026-03-12 14:06:36
+Date: 2026-03-12 15:43:53
 
-Results: 42 passed, 0 failed (333.6s)
+Results: 42 passed, 0 failed (393.0s)
 
-  [PASS] test_grammar_constrains_output (78.6s)
-  [PASS] test_grammar_auto_chain_fires (49.7s)
-  [PASS] test_multi_tier_pipeline_completes (62.2s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (12.7s)
-  [PASS] test_code_request_produces_code [lead] (1 tools) (23.4s)
+  [PASS] test_grammar_constrains_output (75.2s)
+  [PASS] test_grammar_auto_chain_fires (71.4s)
+  [PASS] test_multi_tier_pipeline_completes (67.7s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (34.4s)
+  [PASS] test_code_request_produces_code [lead] (1 tools) (25.0s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [lead] (2 tools) (34.1s)
+  [PASS] test_code_response_has_python_syntax [lead] (2 tools) (42.1s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [lead] (12.9s)
+  [PASS] test_response_ends_cleanly [lead] (18.9s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [lead] (6.6s)
+  [PASS] test_no_special_tokens_in_response [lead] (6.3s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [lead] (7.2s)
+  [PASS] test_generation_starts_and_ends [lead] (6.3s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [lead] (15.0s)
+  [PASS] test_multiple_messages_accumulate_history [lead] (13.1s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [lead] (15.9s)
+  [PASS] test_explanation_is_substantive [lead] (16.7s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [lead] (5.2s)
+  [PASS] test_hello_produces_response [lead] (8.2s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [lead] (9.1s)
+  [PASS] test_thanks_produces_acknowledgment [lead] (6.9s)
          Prompt: Thanks!
   [PASS] test_example_classifies_to_own_tier[analyst] (0.1s)
-  [PASS] test_example_classifies_to_own_tier[arch] (0.1s)
+  [PASS] test_example_classifies_to_own_tier[arch] (0.0s)
   [PASS] test_example_classifies_to_own_tier[devops] (0.0s)
   [PASS] test_example_classifies_to_own_tier[eng] (0.0s)
   [PASS] test_example_classifies_to_own_tier[lead] (0.0s)
@@ -46,7 +46,7 @@ Results: 42 passed, 0 failed (333.6s)
   [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.0s)
   [PASS] test_route_to_non_default_tier (0.0s)
-  [PASS] test_confidence_above_threshold[analyst] (0.4s)
+  [PASS] test_confidence_above_threshold[analyst] (0.3s)
   [PASS] test_confidence_above_threshold[arch] (0.0s)
   [PASS] test_confidence_above_threshold[devops] (0.0s)
   [PASS] test_confidence_above_threshold[eng] (0.0s)
@@ -59,14 +59,12 @@ Per-test artifacts: test-reports/logs/<test_name>/
 
 =============================== warnings summary ===============================
 tests/model/test_headless_code.py::TestCodeResponses::test_code_request_produces_code
-  <string>:8: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
-
 tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
 tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_python_syntax
   /home/tvanfossen/Projects/entropic/src/entropic/mcp/servers/file_tracker.py:61: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
     read_at=datetime.utcnow(),
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-================== 42 passed, 3 warnings in 393.81s (0:06:33) ==================
+================== 42 passed, 3 warnings in 453.70s (0:07:33) ==================
 
 Result: PASSED

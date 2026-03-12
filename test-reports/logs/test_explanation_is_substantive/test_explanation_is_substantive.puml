@@ -23,45 +23,57 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is when a function calls itself to solve a problem by breaking it down
-  into smaller versions of the same problem. Think of it like looking at yourself 
-  in two mirrors facing each other — you see infinite reflections, but eventually 
-  they fade out (that's your "base case").
+  into smaller versions of the same problem. It's like solving a puzzle by 
+  repeatedly applying the same solution pattern until you reach a simple case that
+  doesn't need further division.
   
-  ## Key concepts:
+  ## Key Concepts
   
-  1. **Base case** — The condition that stops recursion. Without this, you'd get 
-  infinite loops.
-  2. **Recursive case** — Where the function calls itself with a simpler input.
+  **Base Case**: The condition where recursion stops (prevents infinite loops). 
+  Without this, the function would call itself forever.
   
-  ### Simple example (factorial):
+  **Recursive Case**: Where the function calls itself with modified parameters, 
+  moving toward the base case.
+  
+  ## Simple Example: Factorial
   
   ```python
   def factorial(n):
-      if n == 0:           # Base case
+      # Base case: 0! = 1
+      if n == 0:
           return 1
-      else:                  # Recursive case
-          return n * factorial(n - 1)
+      
+      # Recursive case: n! = n × (n-1)!
+      return n * factorial(n - 1)
+  
+  # factorial(3) = 3 × factorial(2)
+  #              = 3 × (2 × factorial(1))
+  #              = 3 × (2 × (1 × factorial(0)))
+  #              = 3 × (2 × (1 × 1))
+  #              = 6
   ```
   
-  `factorial(4)` = `4 × factorial(3)` = `4 × (3 × factorial(2))` = ... = `4 × 3 × 
-  2 × 1 × 1` = **24**
+  ## Another Example: Fibonacci
   
-  ## When to use it:
-  - **Good**: Tree traversals, divide-and-conquer algorithms (merge sort), 
-  mathematical sequences (Fibonacci)
-  - **Not ideal**: Simple iteration where a loop works fine — recursion adds 
-  overhead and can hit stack limits
+  ```python
+  def fibonacci(n):
+      # Base cases
+      if n &lt;= 1:
+          return n
+      
+      # Recursive case: sum of previous two numbers
+      return fibonacci(n-1) + fibonacci(n-2)
+  ```
   
-  ## Tradeoffs:
-  | Pros | Cons |
-  |------|------|
-  | Elegant for recursive data structures | Stack overflow risk if base case fails
-  |
-  | Can simplify complex problems | Performance overhead vs. loops |
-  | Natural fit for certain algorithms | Harder to debug sometimes |
+  ## When to Use Recursion
   
-  The key is ensuring your recursive calls **always** move toward the base case, 
-  or you'll get infinite recursion and a crash.
+  ✅ **Good for**: Problems with natural recursive structure (trees, graphs, 
+  divide-and-conquer algorithms)  
+  ❌ **Avoid when**: Simple iteration works better or recursion depth could cause 
+  stack overflow
+  
+  Recursion is powerful but requires careful design of base cases and progress 
+  toward them.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

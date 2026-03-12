@@ -22,68 +22,46 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller, similar sub-problems.
+  Recursion is when a function calls itself to solve a problem by breaking it down
+  into smaller versions of the same problem. Think of it like looking at yourself 
+  in two mirrors facing each other — you see infinite reflections, but eventually 
+  they fade out (that's your "base case").
   
-  ## How It Works
+  ## Key concepts:
   
-  A recursive function has two key parts:
+  1. **Base case** — The condition that stops recursion. Without this, you'd get 
+  infinite loops.
+  2. **Recursive case** — Where the function calls itself with a simpler input.
   
-  1. **Base case**: The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive case**: The function calling itself with modified input
-  
-  ## Simple Example
+  ### Simple example (factorial):
   
   ```python
   def factorial(n):
-      # Base case: stop when n is 0 or 1
-      if n &lt;= 1:
+      if n == 0:           # Base case
           return 1
-      
-      # Recursive case: call itself with smaller value
-      return n * factorial(n - 1)
-  
-  # Usage
-  factorial(5)  # Returns 120 (5×4×3×2×1)
+      else:                  # Recursive case
+          return n * factorial(n - 1)
   ```
   
-  ## Visualizing the Call Stack
+  `factorial(4)` = `4 × factorial(3)` = `4 × (3 × factorial(2))` = ... = `4 × 3 × 
+  2 × 1 × 1` = **24**
   
-  When `factorial(5)` runs, it looks like this:
+  ## When to use it:
+  - **Good**: Tree traversals, divide-and-conquer algorithms (merge sort), 
+  mathematical sequences (Fibonacci)
+  - **Not ideal**: Simple iteration where a loop works fine — recursion adds 
+  overhead and can hit stack limits
   
-  ```
-  factorial(5) = 5 × factorial(4)
-                 = 5 × (4 × factorial(3))
-                     = 5 × (4 × (3 × factorial(2)))
-                         = 5 × (4 × (3 × (2 × factorial(1))))
-                             = 5 × (4 × (3 × (2 × 1)))
-                                 = 5 × (4 × (3 × 2))
-                                     = 5 × (4 × 6)
-                                         = 5 × 24
-                                             = 120
-  ```
+  ## Tradeoffs:
+  | Pros | Cons |
+  |------|------|
+  | Elegant for recursive data structures | Stack overflow risk if base case fails
+  |
+  | Can simplify complex problems | Performance overhead vs. loops |
+  | Natural fit for certain algorithms | Harder to debug sometimes |
   
-  ## Common Use Cases
-  
-  - **Tree traversal**: Walking through file systems, DOM trees
-  - **Divide and conquer algorithms**: Merge sort, quicksort
-  - **Mathematical sequences**: Fibonacci numbers, factorial
-  - **Backtracking problems**: Sudoku solvers, maze navigation
-  
-  ## Important Considerations
-  
-  **Pros:**
-  - Elegant solutions for naturally recursive problems
-  - Can simplify complex logic
-  
-  **Cons:**
-  - Risk of stack overflow (too many nested calls)
-  - Generally slower than iterative approaches due to function call overhead
-  - Harder to debug
-  
-  **Tip**: Always ensure your base case is reachable! A missing or unreachable 
-  base case causes infinite recursion.
+  The key is ensuring your recursive calls **always** move toward the base case, 
+  or you'll get infinite recursion and a crash.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

@@ -79,6 +79,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     grammar: str | None = None
     auto_chain: str | None = None
     allowed_tools: list[str] | None = None
+    bash_commands: list[str] | None = None
     max_output_tokens: int = 1024
     temperature: float = 0.7
     repeat_penalty: float = 1.1

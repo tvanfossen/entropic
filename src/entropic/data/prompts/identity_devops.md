@@ -19,6 +19,7 @@ allowed_tools:
   - filesystem.edit_file
   - filesystem.glob
   - filesystem.grep
+  - filesystem.list_directory
   - bash.execute
   - entropic.todo_write
   - entropic.complete

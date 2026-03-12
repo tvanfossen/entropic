@@ -22,8 +22,17 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You're welcome! If you need any help with your project, just let me know what 
-  you'd like to work on.
+  You're welcome! 👋
+  
+  Is there anything specific you'd like help with today? Whether it's:
+  
+  - **Planning** a new feature or project
+  - **Designing** architecture or workflows  
+  - **Implementing** code or fixing bugs
+  - **Reviewing** security, testing, or quality
+  - **Researching** options or best practices
+  
+  Just let me know what you need and I'll get started!
 end note
 note over T #palegreen
   **PASSED** (< 38s)

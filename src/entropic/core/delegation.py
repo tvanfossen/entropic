@@ -52,6 +52,7 @@ class DelegationManager:
         self._storage = storage
         self._repo_dir = repo_dir
         self._worktree_mgr: WorktreeManager | None = None
+        self._shared_worktree: WorktreeInfo | None = None
         if repo_dir is not None:
             self._worktree_mgr = WorktreeManager(repo_dir)
 
@@ -113,33 +114,60 @@ class DelegationManager:
     ) -> DelegationResult:
         """Run a multi-stage delegation pipeline sequentially.
 
-        Each stage receives the original task plus the previous stage's output.
-        Returns the final stage's DelegationResult.
+        Each stage gets the original task (unchanged) plus a pipeline context
+        line showing its position.  Artifacts pass between stages via the
+        shared worktree — not via text accumulation in the task prompt.
+
+        A single worktree is created for the entire pipeline. All stages
+        share it so files written by stage N are visible to stage N+1.
+        Merged on pipeline success, discarded on failure.
         """
-        stage_input = task
-        last_result: DelegationResult | None = None
+        pipeline_id = str(uuid.uuid4())
+        wt_info = await self._create_worktree(pipeline_id, f"pipeline-{stages[0]}")
+        self._shared_worktree = wt_info
+        pipeline_result: DelegationResult | None = None
+        stage_labels = " → ".join(stages)
 
-        for stage in stages:
-            result = await self.execute_delegation(
-                parent_ctx,
-                stage,
-                stage_input,
-                parent_conversation_id=parent_conversation_id,
-            )
+        try:
+            for i, stage in enumerate(stages):
+                context_line = (
+                    f"[PIPELINE CONTEXT] Stage {i + 1} of {len(stages)}: {stage_labels}\n"
+                    f"You are: {stage}. Stay within your role's scope — do NOT do work "
+                    f"that belongs to a later stage in the pipeline. Your output is the "
+                    f"input for the next stage.\n\n"
+                )
+                stage_task = f"{context_line}{task}"
 
-            if not result.success:
-                logger.warning("[PIPELINE] Stage '%s' failed: %s", stage, result.summary[:100])
-                return result
+                result = await self.execute_delegation(
+                    parent_ctx,
+                    stage,
+                    stage_task,
+                    parent_conversation_id=parent_conversation_id,
+                )
 
-            last_result = result
-            # Feed this stage's output into the next stage
-            stage_input = (
-                f"Original task: {task}\n\n" f"Previous stage ({stage}) output:\n{result.summary}"
-            )
+                if not result.success:
+                    logger.warning("[PIPELINE] Stage '%s' failed: %s", stage, result.summary[:100])
+                    pipeline_result = result
+                    return result
+
+                pipeline_result = result
+        finally:
+            self._shared_worktree = None
+            # Always merge partial work — completed stages produce valuable
+            # artifacts (specs, configs) that shouldn't be discarded because
+            # a later stage failed or was interrupted.
+            if wt_info is not None and self._worktree_mgr is not None:
+                merged = await self._worktree_mgr.merge_worktree(wt_info)
+                if not merged:
+                    logger.error(
+                        "[PIPELINE] Worktree merge FAILED — partial work may be lost. "
+                        "Branch %s preserved for manual recovery.",
+                        wt_info.branch,
+                    )
 
         # Should always have at least one result (stages has minItems=2)
-        assert last_result is not None
-        return last_result
+        assert pipeline_result is not None
+        return pipeline_result
 
     async def _run_child_loop(
         self,
@@ -148,10 +176,15 @@ class DelegationManager:
         task: str,
         max_turns: int | None,
     ) -> DelegationResult:
-        """Run the child loop with engine state save/restore."""
+        """Run the child loop with engine state save/restore.
+
+        Uses ``_shared_worktree`` (set by pipeline) when available.
+        Otherwise creates a per-delegation worktree.
+        """
         saved_anchors = dict(self._engine._context_anchors)
         saved_loop_config = self._engine.loop_config
         saved_todo_list = self._save_todo_list()
+        self._install_fresh_todo_list()
 
         if max_turns is not None:
             self._engine.loop_config = LoopConfig(
@@ -162,9 +195,14 @@ class DelegationManager:
                 auto_approve_tools=saved_loop_config.auto_approve_tools,
             )
 
-        # Create worktree for filesystem isolation (if enabled)
-        delegation_id = child_ctx.parent_conversation_id or str(uuid.uuid4())
-        wt_info = await self._create_worktree(delegation_id, target_tier)
+        # Use shared worktree (pipeline) or create per-delegation worktree
+        owns_worktree = self._shared_worktree is None
+        if owns_worktree:
+            delegation_id = child_ctx.parent_conversation_id or str(uuid.uuid4())
+            wt_info = await self._create_worktree(delegation_id, target_tier)
+        else:
+            wt_info = self._shared_worktree
+
         result: DelegationResult | None = None
 
         try:
@@ -173,10 +211,12 @@ class DelegationManager:
             self._engine._context_anchors = saved_anchors
             self._engine.loop_config = saved_loop_config
             self._restore_todo_list(saved_todo_list)
-            if result is not None:
-                await self._finalize_worktree(wt_info, result)
-            elif wt_info is not None and self._worktree_mgr is not None:
-                await self._worktree_mgr.discard_worktree(wt_info)
+            # Only manage worktree lifecycle if we own it (not shared)
+            if owns_worktree:
+                if result is not None:
+                    await self._finalize_worktree(wt_info, result)
+                elif wt_info is not None and self._worktree_mgr is not None:
+                    await self._worktree_mgr.discard_worktree(wt_info)
 
         assert result is not None  # _execute_child_in_context always returns
         return result
@@ -315,6 +355,7 @@ class DelegationManager:
 
         # Build system prompt for target tier
         system_prompt = rg._build_formatted_system_prompt(tier, child_ctx)
+        system_prompt += self._completion_instructions(tier)
         child_ctx.messages = [
             Message(role="system", content=system_prompt),
             Message(role="user", content=task),
@@ -322,8 +363,38 @@ class DelegationManager:
 
         return child_ctx
 
+    def _completion_instructions(self, tier: Any) -> str:
+        """Build completion instructions for child delegation contexts.
+
+        Checks the tier's identity frontmatter for explicit_completion flag.
+        When enabled, instructs the child to use entropic.complete when done.
+        When disabled, relies on auto-chain (finish_reason detection).
+        """
+        fm = self._engine.orchestrator._prompt_manager.get_identity_frontmatter(
+            tier.name if hasattr(tier, "name") else str(tier)
+        )
+        use_explicit = getattr(fm, "explicit_completion", False) if fm else False
+
+        if use_explicit:
+            return (
+                "\n\n## Delegation Completion\n"
+                "You are operating as a delegated child context. When you have "
+                "finished the assigned task, call `entropic.complete` with a "
+                "summary of what was accomplished. This signals completion to "
+                "the parent context.\n"
+                "Do NOT simply stop responding — use the tool to signal you are done."
+            )
+        return ""
+
     def _extract_final_summary(self, child_ctx: LoopContext) -> str:
-        """Extract the final assistant message from the child context."""
+        """Extract the delegation summary from the child context.
+
+        Prefers explicit completion summary (from entropic.complete tool)
+        over the last assistant message.
+        """
+        explicit = child_ctx.metadata.get("explicit_completion_summary")
+        if explicit:
+            return explicit
         for msg in reversed(child_ctx.messages):
             if msg.role == "assistant" and msg.content.strip():
                 return msg.content
@@ -336,6 +407,24 @@ class DelegationManager:
             return None
         return server._todo_list.to_dict()
 
+    def _install_fresh_todo_list(self) -> None:
+        """Install a fresh empty TodoList for the child delegation.
+
+        Updates both the server's reference and all tool references
+        that hold a pointer to the TodoList.
+        """
+        server = self._get_entropic_server()
+        if server is None:
+            return
+        from entropic.core.todos import TodoList
+
+        fresh = TodoList()
+        server._todo_list = fresh
+        # Update tool references that hold a pointer to the TodoList
+        for tool in server._tool_registry._tools.values():
+            if hasattr(tool, "_todo_list"):
+                tool._todo_list = fresh
+
     def _restore_todo_list(self, saved: Any) -> None:
         """Restore TodoList state to EntropicServer."""
         if saved is None:
@@ -345,7 +434,11 @@ class DelegationManager:
             return
         from entropic.core.todos import TodoList
 
-        server._todo_list = TodoList.from_dict(saved)
+        restored = TodoList.from_dict(saved)
+        server._todo_list = restored
+        for tool in server._tool_registry._tools.values():
+            if hasattr(tool, "_todo_list"):
+                tool._todo_list = restored
 
     def _get_entropic_server(self) -> Any:
         """Get the EntropicServer from ServerManager (if available)."""

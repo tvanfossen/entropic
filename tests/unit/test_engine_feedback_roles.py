@@ -46,6 +46,22 @@ class TestFeedbackMessageRoles:
         assert "filesystem.read_file" in msg.content
         assert previous_result in msg.content
 
+    def test_duplicate_of_denied_gives_directive_feedback(self, engine, tool_call):
+        """Duplicate of a denied tool call gives stronger 'not available' feedback."""
+        te = engine._ensure_tool_executor()
+        # Simulate the previous result being a denial message
+        denial_result = (
+            "Tool `filesystem.read_file` was denied: "
+            "Command not permitted for qa. Allowed command prefixes: ['pytest']"
+        )
+        msg = te._create_duplicate_message(tool_call, denial_result)
+
+        assert msg.role == "user"
+        assert "not available" in msg.content.lower()
+        assert "different approach" in msg.content.lower()
+        # Should NOT include the previous denial text (not useful to repeat)
+        assert denial_result not in msg.content
+
     def test_denied_message_uses_user_role(self, engine, tool_call):
         """Verify _create_denied_message returns role='user'."""
         te = engine._ensure_tool_executor()

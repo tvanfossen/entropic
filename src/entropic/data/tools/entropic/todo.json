@@ -1,0 +1,28 @@
+{
+  "name": "todo",
+  "description": "Track your subtasks. Use delegate/pipeline tools to assign work to other roles.\n\nadd: append items. update: change status/content by index. remove: delete by index.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string",
+        "enum": ["add", "update", "remove"],
+        "description": "add, update (by index), or remove (by index)"
+      },
+      "content": {
+        "type": "string",
+        "description": "Task description (for add/update)"
+      },
+      "index": {
+        "type": "integer",
+        "description": "Item index (for update/remove)"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "in_progress", "completed"],
+        "description": "Task status (for add/update)"
+      }
+    },
+    "required": ["action"]
+  }
+}

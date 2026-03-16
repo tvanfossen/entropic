@@ -6,6 +6,9 @@ on the router config, which is a construction-time Llama param. Two
 orchestrators can't coexist on the same GPU, so this runs in its own module
 with its own module-scoped orchestrator.
 
+Uses a test-owned config (routing_config.yaml) with router enabled —
+independent of the user's global config.
+
 The bundled router ships with logits_all=False for speed. This test
 overrides that to validate confidence thresholds.
 
@@ -21,16 +24,18 @@ import pytest
 import yaml
 from entropic.config.schema import EntropyConfig
 from entropic.core.base import Message
+from entropic.core.logging import setup_logging, setup_model_logger
 from entropic.inference.orchestrator import ModelOrchestrator
 
 # ---------------------------------------------------------------------------
 # Identity discovery (same as test_routing.py — no hardcoded tier names)
 # ---------------------------------------------------------------------------
 _PROMPTS_DIR = Path(entropic.__file__).parent / "data" / "prompts"
+_CONFIG_PATH = Path(__file__).parent / "routing_config.yaml"
 
 
-def _routable_identities() -> list[tuple[str, list[str], list[str]]]:
-    """Return (name, focus, examples) for all routable identities."""
+def _classifiable_identities() -> list[tuple[str, list[str], list[str]]]:
+    """Return (name, focus, examples) for all identities with examples."""
     result = []
     for path in sorted(_PROMPTS_DIR.glob("identity_*.md")):
         name = path.stem.removeprefix("identity_")
@@ -39,15 +44,14 @@ def _routable_identities() -> list[tuple[str, list[str], list[str]]]:
             continue
         end = text.index("---", 3)
         fm = yaml.safe_load(text[3:end])
-        if fm.get("routable", True):
-            result.append((name, fm.get("focus", []), fm.get("examples", [])))
+        examples = fm.get("examples", [])
+        if examples:
+            result.append((name, fm.get("focus", []), examples))
     return result
 
 
-_ROUTABLE = _routable_identities()
-_IDENTITY_NAMES = [name for name, _, _ in _ROUTABLE]
-
-_SKIP_ROUTING = len(_IDENTITY_NAMES) < 2
+_CLASSIFIABLE = _classifiable_identities()
+_IDENTITY_NAMES = [name for name, _, _ in _CLASSIFIABLE]
 
 
 # ---------------------------------------------------------------------------
@@ -56,21 +60,46 @@ _SKIP_ROUTING = len(_IDENTITY_NAMES) < 2
 
 
 @pytest.fixture(scope="module")
-async def confidence_orchestrator(config: EntropyConfig, models_available: dict[str, bool]):
-    """Orchestrator with logits_all=True on router for confidence measurement."""
-    if not any(models_available.values()):
-        pytest.skip("No models available for testing")
+def confidence_config() -> EntropyConfig:
+    """Load test-owned routing config with logits_all override."""
+    raw = yaml.safe_load(_CONFIG_PATH.read_text())
+    config = EntropyConfig(**raw)
 
-    assert config.models.router is not None, "No router configured"
+    if config.models.router is None:
+        pytest.skip("routing_config.yaml has no router configured")
+    if not config.models.router.path.expanduser().exists():
+        pytest.skip(f"Router model not available: {config.models.router.path}")
+
+    for name, tier in config.models.tiers.items():
+        if not tier.path.expanduser().exists():
+            pytest.skip(f"Model not available: {tier.path} (tier: {name})")
+
+    # Enable logprobs for confidence measurement
     config.models.router.logits_all = True
 
-    orch = ModelOrchestrator(config)
+    return config
+
+
+@pytest.fixture(scope="module")
+async def confidence_orchestrator(confidence_config, tmp_path_factory):
+    """Orchestrator with logits_all=True on router for confidence measurement."""
+    log_dir = tmp_path_factory.mktemp("confidence_logs")
+    setup_logging(confidence_config, project_dir=log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=log_dir, app_dir_name=".")
+
+    orch = ModelOrchestrator(confidence_config)
     await orch.initialize()
 
     yield orch
 
     await orch.shutdown()
-    config.models.router.logits_all = False  # restore for other modules
+
+
+@pytest.fixture(autouse=True)
+def _redirect_confidence_logs(confidence_config, test_log_dir):
+    """Redirect engine logging to per-test log dir for stashing."""
+    setup_logging(confidence_config, project_dir=test_log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=test_log_dir, app_dir_name=".")
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +108,6 @@ async def confidence_orchestrator(config: EntropyConfig, models_available: dict[
 
 
 @pytest.mark.model
-@pytest.mark.skipif(_SKIP_ROUTING, reason="<2 routable identities — routing disabled")
 class TestClassificationConfidence:
     """Test that classification achieves sufficient confidence per tier.
 
@@ -97,7 +125,7 @@ class TestClassificationConfidence:
         extraction) so the confidence measurement matches the actual routing
         decision.
         """
-        examples = next(e for n, _, e in _ROUTABLE if n == identity_name)
+        examples = next(e for n, _, e in _CLASSIFIABLE if n == identity_name)
         assert confidence_orchestrator._router is not None
 
         prompt = random.choice(examples)

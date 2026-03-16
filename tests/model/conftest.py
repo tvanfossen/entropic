@@ -93,6 +93,11 @@ class TestInteraction:
 
 _report_entries: list[TestInteraction] = []
 
+# Map test node ID → log directory path.  Populated by the test_log_dir
+# fixture so the pytest hook can reliably find logs regardless of fixture
+# dependency depth.
+_test_log_dirs: dict[str, Path] = {}
+
 
 # =============================================================================
 # Fixtures
@@ -114,6 +119,22 @@ async def shared_orchestrator(config: EntropyConfig, models_available: dict[str,
 
 
 @pytest.fixture
+def test_log_dir(tmp_path: Path, request: pytest.FixtureRequest) -> Path:
+    """Per-test log directory, independent of any app convention.
+
+    Engine/model logs are directed here. ``_stash_test_logs`` copies them
+    to ``test-reports/logs/<test_name>/`` after each test completes.
+
+    Registers itself in ``_test_log_dirs`` so the pytest hook can find it
+    regardless of fixture dependency depth.
+    """
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    _test_log_dirs[request.node.nodeid] = log_dir
+    return log_dir
+
+
+@pytest.fixture
 def headless_presenter() -> HeadlessPresenter:
     """Create a headless presenter for testing."""
     return HeadlessPresenter(auto_approve=True)
@@ -125,15 +146,16 @@ async def headless_app(
     shared_orchestrator: ModelOrchestrator,
     headless_presenter: HeadlessPresenter,
     tmp_project_dir: Path,
+    test_log_dir: Path,
 ) -> AsyncGenerator[Application, None]:
     """Create an Application with fresh session state, reusing loaded model.
 
     - Orchestrator (model) is shared across tests in the module
     - Session state (messages, conversation) is fresh per test
-    - Logging wired to tmp_project_dir for per-test log capture
+    - Logging directed to test_log_dir (test harness owned)
     """
-    setup_logging(config, project_dir=tmp_project_dir)
-    setup_model_logger(project_dir=tmp_project_dir)
+    setup_logging(config, project_dir=test_log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=test_log_dir, app_dir_name=".")
 
     app = Application(
         config=config,
@@ -191,11 +213,17 @@ async def pychess_orchestrator(pychess_config, tmp_path_factory):
 
 
 @pytest.fixture
-async def pychess_engine(pychess_config, pychess_orchestrator):
-    """Per-test engine with fresh chess board and server manager."""
+async def pychess_engine(pychess_config, pychess_orchestrator, test_log_dir):
+    """Per-test engine with fresh chess board and server manager.
 
+    Logging directed to test_log_dir (test harness owned, stashed by
+    pytest hook for post-mortem analysis).
+    """
     from chess_server import ChessServer
     from entropic import AgentEngine, LoopConfig, ServerManager
+
+    setup_logging(pychess_config, project_dir=test_log_dir, app_dir_name=".")
+    setup_model_logger(project_dir=test_log_dir, app_dir_name=".")
 
     chess_server = ChessServer()
     server_manager = ServerManager(pychess_config, tier_names=pychess_orchestrator.tier_names)
@@ -273,27 +301,22 @@ def pytest_runtest_makereport(item, call):  # noqa: ARG001
 
 
 def _stash_test_logs(item: pytest.Item, entry: TestInteraction) -> None:
-    """Copy session logs from tmp_project_dir to test-reports/logs/<test_name>/.
+    """Copy session logs from test_log_dir to test-reports/logs/<test_name>/.
 
-    Must run during call phase (before fixture teardown cleans tmp_project_dir).
+    Must run during call phase (before fixture teardown cleans temp dirs).
     Writes metadata.json alongside logs for training data labeling.
     """
-    tmp_dir = item.funcargs.get("tmp_project_dir")
-    if not tmp_dir:
-        return
-
-    log_src = Path(tmp_dir) / ".entropic"
-    if not log_src.exists():
+    log_src = _test_log_dirs.get(item.nodeid)
+    if log_src is None or not log_src.exists():
         return
 
     log_dest = REPORT_DIR / "logs" / entry.test_name
     log_dest.mkdir(parents=True, exist_ok=True)
 
-    # Copy log files
-    for log_file in ("session.log", "session_model.log"):
-        src = log_src / log_file
-        if src.exists() and src.stat().st_size > 0:
-            shutil.copy2(src, log_dest / log_file)
+    # Copy all log files (session.log, session_model.log, etc.)
+    for log_file in log_src.iterdir():
+        if log_file.is_file() and log_file.stat().st_size > 0:
+            shutil.copy2(log_file, log_dest / log_file.name)
 
     # Write metadata (actual timing preserved here for analysis)
     metadata = {

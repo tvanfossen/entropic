@@ -189,23 +189,40 @@ class ToolExecutor:
         return ctx.recent_tool_calls.get(key)
 
     def _record_tool_call(self, ctx: LoopContext, tool_call: ToolCall, result_msg: Message) -> None:
-        """Record a tool call for duplicate detection."""
+        """Record a tool call for duplicate detection.
+
+        Skips recording when the tool returned an error — the model should
+        be able to retry failed calls (possibly with different context or
+        after fixing the underlying issue).
+        """
+        content = result_msg.content
+        if content.startswith("Error:") or content.startswith("error:"):
+            return
         key = self._get_tool_call_key(tool_call)
-        # Store the result content for reuse
-        ctx.recent_tool_calls[key] = result_msg.content
+        ctx.recent_tool_calls[key] = content
 
     def _create_duplicate_message(self, tool_call: ToolCall, previous_result: str) -> Message:
         """Create a message indicating a duplicate tool call was skipped.
 
         Uses role="user" because llama-cpp doesn't render role="tool" properly,
         which would cause the model to never see the feedback and loop forever.
+
+        When the previous result was a denial, the feedback is more directive —
+        tells the model the tool is unavailable and to use a different approach.
         """
-        content = f"""Tool `{tool_call.name}` was already called with the same arguments.
-
-Previous result:
-{previous_result}
-
-Do NOT call this tool again. Use the previous result above."""
+        was_denied = "was denied" in previous_result or "not available" in previous_result
+        if was_denied:
+            content = (
+                f"Tool `{tool_call.name}` is not available to you and retrying will not help. "
+                f"You MUST use a different approach to accomplish your task. "
+                f"Do NOT call `{tool_call.name}` again."
+            )
+        else:
+            content = (
+                f"Tool `{tool_call.name}` was already called with the same arguments.\n\n"
+                f"Previous result:\n{previous_result}\n\n"
+                f"Do NOT call this tool again. Use the previous result above."
+            )
 
         return Message(role="user", content=content)
 
@@ -240,22 +257,63 @@ Do NOT call this tool again. Use the previous result above."""
     def _check_tier_allowed(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
         """Reject tool calls not in the current tier's allowed_tools.
 
+        Also enforces bash_commands allowlist for bash.execute calls.
+
         Returns a feedback message if rejected, None if allowed.
         """
         if ctx.locked_tier is None:
             return None
         allowed = self._orchestrator.get_allowed_tools(ctx.locked_tier)
-        if allowed is None or tool_call.name in allowed:
+        if allowed is not None and tool_call.name not in allowed:
+            tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
+            logger.warning(
+                "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
+            )
+            reason = (
+                f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
+                f"Available tools: {sorted(allowed)}"
+            )
+            return self._create_denied_message(tool_call, reason)
+
+        return self._check_bash_commands(ctx, tool_call)
+
+    def _check_bash_commands(self, ctx: LoopContext, tool_call: ToolCall) -> Message | None:
+        """Enforce bash_commands allowlist on bash.execute calls.
+
+        Checks the active phase's ``bash_commands`` first (if set),
+        then falls back to the identity-level ``bash_commands``.
+        ``None`` at both levels means unrestricted.
+
+        Returns a denial message if blocked, None if allowed.
+        """
+        bash_commands = self._resolve_bash_commands(ctx)
+        if tool_call.name != "bash.execute" or bash_commands is None:
+            return None
+        stripped = tool_call.arguments.get("command", "").strip()
+        if any(stripped.startswith(prefix) for prefix in bash_commands):
             return None
         tier_name = getattr(ctx.locked_tier, "name", str(ctx.locked_tier))
         logger.warning(
-            "[TOOL BLOCKED] %s not in %s tier's allowed_tools", tool_call.name, tier_name
+            "[BASH BLOCKED] Command not in %s's allowed commands: %s",
+            tier_name,
+            stripped[:80],
         )
-        reason = (
-            f"Tool `{tool_call.name}` is not available in the {tier_name} tier. "
-            f"Available tools: {sorted(allowed)}"
+        return self._create_denied_message(
+            tool_call,
+            f"Command not permitted for {tier_name}. Allowed command prefixes: {bash_commands}",
         )
-        return self._create_denied_message(tool_call, reason)
+
+    def _resolve_bash_commands(self, ctx: LoopContext) -> list[str] | None:
+        """Resolve bash_commands from active phase or identity-level fallback."""
+        if ctx.active_phase != "default" and ctx.locked_tier:
+            fm = self._orchestrator._prompt_manager.get_identity_frontmatter(
+                ctx.locked_tier.name if hasattr(ctx.locked_tier, "name") else ""
+            )
+            if fm and fm.phases and ctx.active_phase in fm.phases:
+                phase_cmds = fm.phases[ctx.active_phase].bash_commands
+                if phase_cmds is not None:
+                    return phase_cmds
+        return self._orchestrator.get_tier_param(ctx.locked_tier, "bash_commands")
 
     async def _check_tool_approval(self, tool_call: ToolCall) -> Message | None:
         """Check tool approval. Returns denial message if not approved, None if approved."""
@@ -439,9 +497,11 @@ Do NOT call this tool again. Use the previous result above."""
         Uses role="user" because llama-cpp doesn't render role="tool" properly,
         which would cause the model to never see the feedback and loop forever.
         """
-        content = f"""Tool `{tool_call.name}` was denied: {reason}
-
-Try a different approach or ask the user for clarification."""
+        content = (
+            f"Tool `{tool_call.name}` was denied: {reason}\n\n"
+            f"This tool is not available to you. Do NOT retry it. "
+            f"Use a different approach to accomplish your task."
+        )
 
         return Message(role="user", content=content)
 

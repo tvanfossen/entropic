@@ -302,8 +302,12 @@ class TestAutoChainBlockedTools:
     """Tests for auto-chain fallback when all tool calls are blocked."""
 
     @pytest.mark.asyncio
-    async def test_fires_when_all_tools_blocked(self) -> None:
-        """All tool calls blocked → effective_tool_calls=0 → auto-chain fires."""
+    async def test_auto_chain_mechanism_works(self) -> None:
+        """_try_auto_chain fires when auto_chain configured + stop reason.
+
+        Note: in the integrated flow, _evaluate_no_tool_decision guards
+        against this when tools_were_attempted=True. This tests the mechanism.
+        """
         engine = _make_engine(
             tiers={
                 "thinker": _tier_config(auto_chain=True, grammar=Path("/test.gbnf")),
@@ -349,6 +353,148 @@ class TestAutoChainBlockedTools:
         result = await engine._try_auto_chain(ctx, finish_reason="stop")
 
         assert result is False
+
+
+# ===========================================================================
+# _evaluate_no_tool_decision: blocked tools vs no tools
+# ===========================================================================
+
+
+class TestEvaluateNoToolDecision:
+    """Tests for loop decision when no effective tool calls occurred."""
+
+    @pytest.mark.asyncio
+    async def test_no_tools_attempted_completes(self) -> None:
+        """No tool calls at all + complete content → COMPLETE."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        engine.orchestrator.last_finish_reason = "stop"
+
+        adapter = MagicMock()
+        adapter.is_response_complete.return_value = True
+        engine.orchestrator.get_adapter.return_value = adapter
+
+        await engine._evaluate_no_tool_decision(ctx, "Here is my response.")
+
+        assert ctx.state == AgentState.COMPLETE
+
+    @pytest.mark.asyncio
+    async def test_tools_attempted_but_blocked_continues(self) -> None:
+        """Tools attempted but all blocked → do NOT complete, let model retry."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        ctx.state = AgentState.EXECUTING
+        engine.orchestrator.last_finish_reason = "stop"
+
+        await engine._evaluate_no_tool_decision(
+            ctx, "Let me update the todo list.", tools_were_attempted=True
+        )
+
+        # State should NOT be COMPLETE — model gets another turn
+        assert ctx.state != AgentState.COMPLETE
+
+    @pytest.mark.asyncio
+    async def test_explicit_completion_prevents_heuristic(self) -> None:
+        """explicit_completion=True + prior tool use → skip heuristic, wait for entropic.complete."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        ctx.state = AgentState.EXECUTING
+        ctx.metrics.tool_calls = 3  # Simulate prior tool usage (multi-step work)
+        engine.orchestrator.last_finish_reason = "stop"
+
+        # Make get_tier_param return True for explicit_completion
+        original_side_effect = engine.orchestrator.get_tier_param.side_effect
+
+        def _with_explicit(tier: ModelTier, attr: str, dflt: object = None) -> object:
+            if attr == "explicit_completion":
+                return True
+            return original_side_effect(tier, attr, dflt)
+
+        engine.orchestrator.get_tier_param.side_effect = _with_explicit
+
+        # Adapter would say "complete" — but explicit_completion overrides
+        adapter = MagicMock()
+        adapter.is_response_complete.return_value = True
+        engine.orchestrator.get_adapter.return_value = adapter
+
+        await engine._evaluate_no_tool_decision(ctx, "Here is my response.")
+
+        # Should NOT complete — explicit_completion requires entropic.complete
+        assert ctx.state != AgentState.COMPLETE
+        # Adapter should never be consulted
+        adapter.is_response_complete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_explicit_completion_allows_simple_qa(self) -> None:
+        """explicit_completion=True but no prior tool use → heuristic applies (simple Q&A)."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={"lead": _tier_config(auto_chain=False)},
+            default="lead",
+        )
+        ctx = _make_ctx("lead")
+        ctx.metrics.tool_calls = 0  # No tools used — simple response
+        engine.orchestrator.last_finish_reason = "stop"
+
+        original_side_effect = engine.orchestrator.get_tier_param.side_effect
+
+        def _with_explicit(tier: ModelTier, attr: str, dflt: object = None) -> object:
+            if attr == "explicit_completion":
+                return True
+            return original_side_effect(tier, attr, dflt)
+
+        engine.orchestrator.get_tier_param.side_effect = _with_explicit
+
+        adapter = MagicMock()
+        adapter.is_response_complete.return_value = True
+        engine.orchestrator.get_adapter.return_value = adapter
+
+        await engine._evaluate_no_tool_decision(ctx, "Hello! How can I help?")
+
+        # Should complete normally — no tools used, so explicit_completion doesn't apply
+        assert ctx.state == AgentState.COMPLETE
+
+    @pytest.mark.asyncio
+    async def test_tools_attempted_blocks_auto_chain(self) -> None:
+        """Tools blocked + auto_chain → guard prevents auto_chain, model retries."""
+        from entropic.core.engine_types import AgentState
+
+        engine = _make_engine(
+            tiers={
+                "eng": _tier_config(auto_chain=True),
+                "lead": _tier_config(),
+            },
+            handoff_rules={"eng": ["lead"]},
+            default="eng",
+        )
+        ctx = _make_ctx("eng")
+        ctx.state = AgentState.EXECUTING
+        engine.orchestrator.last_finish_reason = "stop"
+
+        # tools_were_attempted=True blocks both auto_chain and completion
+        await engine._evaluate_no_tool_decision(
+            ctx, "Let me check the files.", tools_were_attempted=True
+        )
+
+        # Neither auto_chain nor COMPLETE — model gets another turn
+        assert ctx.locked_tier.name == "eng"
+        assert ctx.state != AgentState.COMPLETE
 
 
 # ===========================================================================

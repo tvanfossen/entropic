@@ -42,7 +42,82 @@ class TestWorktreeManager:
         assert isinstance(result, WorktreeInfo)
         assert result.branch == "delegation/eng-abc12345"
         assert "delegation-abc12345" in str(result.path)
-        mock_git.assert_called_once()
+        # Last call should be worktree add with develop as start-point
+        last_call_args = mock_git.call_args_list[-1][0][1]
+        assert last_call_args[0] == "worktree"
+        assert "develop" in last_call_args
+
+    @pytest.mark.asyncio
+    async def test_ensure_develop_idempotent_when_already_on_develop(
+        self, manager: WorktreeManager
+    ) -> None:
+        """If already on develop, ensure_develop is a no-op after first check."""
+        with patch("entropic.core.worktree._run_git", new_callable=AsyncMock) as mock_git:
+            mock_git.return_value = (True, "develop")
+            assert await manager.ensure_develop() is True
+            # Second call should not hit git at all (cached)
+            mock_git.reset_mock()
+            assert await manager.ensure_develop() is True
+            mock_git.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ensure_develop_creates_branch_when_missing(
+        self, manager: WorktreeManager
+    ) -> None:
+        """Creates develop branch from HEAD when it doesn't exist."""
+        call_log: list[list[str]] = []
+
+        async def fake_git(cwd, args):
+            call_log.append(args)
+            if args == ["rev-parse", "--abbrev-ref", "HEAD"]:
+                return (True, "main")
+            if args[:2] == ["rev-parse", "--verify"]:
+                return (False, "")  # develop doesn't exist
+            return (True, "")
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            assert await manager.ensure_develop() is True
+
+        cmds = [c[0] for c in call_log]
+        assert "branch" in cmds  # created develop
+        assert "checkout" in cmds  # checked out develop
+
+    @pytest.mark.asyncio
+    async def test_accept_to_main_merges_develop(self, manager: WorktreeManager) -> None:
+        """accept_to_main merges develop into main and returns to develop."""
+        call_log: list[list[str]] = []
+
+        async def fake_git(cwd, args):
+            call_log.append(args)
+            if args[:2] == ["rev-parse", "--verify"] and args[2] == "main":
+                return (True, "")
+            return (True, "")
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            assert await manager.accept_to_main() is True
+
+        cmds = call_log
+        # Should checkout main, merge develop, checkout develop
+        assert ["checkout", "main"] in cmds
+        assert ["merge", "develop", "--no-edit"] in cmds
+        assert ["checkout", "develop"] in cmds
+
+    @pytest.mark.asyncio
+    async def test_discard_develop_deletes_branch(self, manager: WorktreeManager) -> None:
+        """discard_develop switches to main and deletes develop."""
+        call_log: list[list[str]] = []
+
+        async def fake_git(cwd, args):
+            call_log.append(args)
+            if args[:2] == ["rev-parse", "--verify"] and args[2] == "main":
+                return (True, "")
+            return (True, "")
+
+        with patch("entropic.core.worktree._run_git", side_effect=fake_git):
+            assert await manager.discard_develop() is True
+
+        assert ["checkout", "main"] in call_log
+        assert ["branch", "-D", "develop"] in call_log
 
     @pytest.mark.asyncio
     async def test_create_worktree_branch_includes_tier(self, manager: WorktreeManager) -> None:

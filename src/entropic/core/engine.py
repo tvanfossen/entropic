@@ -39,10 +39,12 @@ from entropic.mcp.manager import ServerManager
 if TYPE_CHECKING:
     from entropic.core.directives import (
         ClearSelfTodos,
+        Complete,
         ContextAnchor,
         Delegate,
         InjectContext,
         NotifyPresenter,
+        PhaseChange,
         Pipeline,
         PruneMessages,
         StopProcessing,
@@ -148,10 +150,12 @@ class AgentEngine:
         """Register handlers for all known directive types."""
         from entropic.core.directives import (
             ClearSelfTodos,
+            Complete,
             ContextAnchor,
             Delegate,
             InjectContext,
             NotifyPresenter,
+            PhaseChange,
             Pipeline,
             PruneMessages,
             StopProcessing,
@@ -162,10 +166,12 @@ class AgentEngine:
         self._directive_processor.register(TierChange, self._directive_tier_change)
         self._directive_processor.register(Delegate, self._directive_delegate)
         self._directive_processor.register(Pipeline, self._directive_pipeline)
+        self._directive_processor.register(Complete, self._directive_complete)
         self._directive_processor.register(ClearSelfTodos, self._directive_clear_self_todos)
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
         self._directive_processor.register(ContextAnchor, self._directive_context_anchor)
+        self._directive_processor.register(PhaseChange, self._directive_phase_change)
         self._directive_processor.register(NotifyPresenter, self._directive_notify_presenter)
 
     def _directive_stop_processing(
@@ -221,6 +227,28 @@ class AgentEngine:
             "stages": directive.stages,
             "task": directive.task,
         }
+        result.stop_processing = True
+
+    def _directive_complete(
+        self,
+        ctx: LoopContext,
+        directive: Complete,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle explicit completion signal.
+
+        Valid at any depth:
+        - Root (depth 0): terminates the main loop (for roles with explicit_completion)
+        - Child (depth > 0): returns to parent delegation
+        """
+        logger.info(
+            "[DIRECTIVE] complete at depth=%d summary=%s",
+            ctx.delegation_depth,
+            directive.summary[:80],
+        )
+        # Store summary for extraction by _extract_final_summary
+        ctx.metadata["explicit_completion_summary"] = directive.summary
+        self._set_state(ctx, AgentState.COMPLETE)
         result.stop_processing = True
 
     def _directive_tier_change(
@@ -366,6 +394,31 @@ class AgentEngine:
         ctx.messages.append(anchor)
         logger.info(f"Updated context anchor: {directive.key}")
 
+    def _directive_phase_change(
+        self,
+        ctx: LoopContext,
+        directive: PhaseChange,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle phase_change directive — switch active phase.
+
+        Validates the phase exists in the current tier's identity
+        frontmatter, then updates ctx.active_phase.
+        """
+        fm = self.orchestrator._prompt_manager.get_identity_frontmatter(
+            ctx.locked_tier.name if ctx.locked_tier else ""
+        )
+        if fm and fm.phases and directive.phase in fm.phases:
+            ctx.active_phase = directive.phase
+            logger.info("[DIRECTIVE] phase_change: %s", directive.phase)
+        else:
+            available = list(fm.phases.keys()) if fm and fm.phases else []
+            logger.warning(
+                "[DIRECTIVE] phase_change rejected: '%s' not in %s",
+                directive.phase,
+                available,
+            )
+
     def _directive_notify_presenter(
         self,
         ctx: LoopContext,
@@ -423,10 +476,13 @@ class AgentEngine:
         if self._callbacks.repo_init is not None:
             return self._callbacks.repo_init(project_dir)
 
-        # Default: git init
+        # Default: git init + initial commit (worktrees need a valid HEAD)
         try:
-            subprocess.run(
-                ["git", "init"],
+            run = subprocess.run
+            run(["git", "init"], cwd=project_dir, capture_output=True, check=True)
+            run(["git", "add", "-A"], cwd=project_dir, capture_output=True, check=True)
+            run(
+                ["git", "commit", "--allow-empty", "-m", "init"],
                 cwd=project_dir,
                 capture_output=True,
                 check=True,
@@ -504,6 +560,9 @@ class AgentEngine:
         # Build initial messages and get tools for system prompt
         tools = await self.server_manager.list_tools()
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
+
+        # Validate identity allowed_tools against registered tools
+        self._validate_identity_tools(tools)
 
         system = system_prompt or ""
 
@@ -602,18 +661,22 @@ class AgentEngine:
                     yield msg
 
                 # Execute pending delegation/pipeline if directive was processed
+                # Delegation turns are free — don't count against parent budget
                 if "pending_delegation" in ctx.metadata:
+                    ctx.metrics.iterations -= 1
                     async for msg in self._execute_pending_delegation(ctx):
                         yield msg
                     return
                 if "pending_pipeline" in ctx.metadata:
+                    ctx.metrics.iterations -= 1
                     async for msg in self._execute_pending_pipeline(ctx):
                         yield msg
                     return
 
-                # All tool calls blocked/denied — fall through to standard decision
+                # All tool calls blocked/denied — let model retry with feedback.
+                # 3-consecutive-duplicate circuit breaker prevents infinite loops.
                 if ctx.effective_tool_calls == 0:
-                    await self._evaluate_no_tool_decision(ctx, content)
+                    await self._evaluate_no_tool_decision(ctx, content, tools_were_attempted=True)
             else:
                 await self._evaluate_no_tool_decision(ctx, content)
 
@@ -622,28 +685,56 @@ class AgentEngine:
             async for msg in self._handle_error(ctx, e):
                 yield msg
 
-    async def _evaluate_no_tool_decision(self, ctx: LoopContext, content: str) -> None:
+    async def _evaluate_no_tool_decision(
+        self,
+        ctx: LoopContext,
+        content: str,
+        *,
+        tools_were_attempted: bool = False,
+    ) -> None:
         """Evaluate loop decision when no tool calls were effective.
 
         Called when either:
-          - Model produced no tool calls
-          - Model produced tool calls but ALL were blocked/denied
+          - Model produced no tool calls (tools_were_attempted=False)
+          - Model produced tool calls but ALL were blocked/denied (True)
+
+        When tools were attempted but blocked, skip completion and
+        auto_chain so the model gets another turn to respond to feedback.
+        The 3-consecutive-duplicate circuit breaker prevents infinite loops.
+        Length-triggered continuation always applies (token budget exhausted).
         """
         finish_reason = self.orchestrator.last_finish_reason
 
-        if await self._try_auto_chain(ctx, finish_reason, content):
-            logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
+        if finish_reason == "interrupted":
+            logger.info("[LOOP DECISION] finish_reason=interrupted, stopping")
+            self._set_state(ctx, AgentState.INTERRUPTED)
             return
 
         if finish_reason == "length":
             logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
             return
 
-        adapter = self.orchestrator.get_adapter()
-        is_complete = adapter.is_response_complete(content, [])
-        logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
-        if is_complete:
-            self._set_state(ctx, AgentState.COMPLETE)
+        if tools_were_attempted:
+            logger.info("[LOOP DECISION] tools attempted but blocked, continuing")
+            return
+
+        if await self._try_auto_chain(ctx, finish_reason, content):
+            logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
+        elif (
+            self.orchestrator.get_tier_param(ctx.locked_tier, "explicit_completion")
+            and ctx.metrics.tool_calls > 0
+        ):
+            # Only entropic.complete can end the loop — prevents premature
+            # completion when the model emits text but no tool call after
+            # having already used tools (multi-step work in progress).
+            # Skipped when no tools have been called (simple Q&A responses).
+            logger.info("[LOOP DECISION] explicit_completion=True, waiting for entropic.complete")
+        else:
+            adapter = self.orchestrator.get_adapter()
+            is_complete = adapter.is_response_complete(content, [])
+            logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
+            if is_complete:
+                self._set_state(ctx, AgentState.COMPLETE)
 
     async def _execute_pending_delegation(self, ctx: LoopContext) -> AsyncIterator[Message]:
         """Execute a pending delegation request stored by _directive_delegate."""
@@ -920,6 +1011,28 @@ class AgentEngine:
                 role="assistant",
                 content=f"I encountered repeated errors and cannot continue: {error}",
             )
+
+    def _validate_identity_tools(self, tools: list[dict[str, Any]]) -> None:
+        """Validate that all identity allowed_tools reference registered tools.
+
+        Logs warnings for any identity that references tools not in the
+        registry. Catches configuration drift at startup rather than at
+        inference time.
+        """
+        registered = {t["name"] for t in tools}
+        pm = self.orchestrator._prompt_manager
+        for tier_name in self.config.models.tiers:
+            fm = pm.get_identity_frontmatter(tier_name)
+            if fm is None or fm.allowed_tools is None:
+                continue
+            invalid = [t for t in fm.allowed_tools if t not in registered]
+            if invalid:
+                logger.error(
+                    "Identity '%s' references unregistered tools: %s. " "Registered: %s",
+                    tier_name,
+                    invalid,
+                    sorted(registered),
+                )
 
     def _should_stop(self, ctx: LoopContext) -> bool:
         """Check if loop should stop."""

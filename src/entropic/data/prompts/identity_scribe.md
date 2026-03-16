@@ -22,6 +22,14 @@ phases:
     max_output_tokens: 512
     enable_thinking: false
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Record: User requested login page. Eng created auth.py with /login route. QA found missing CSRF token. Eng added CSRF protection. QA approved."
+      checks:
+        - type: regex
+          pattern: "(?i)(login|auth|CSRF)"
+        - type: regex
+          pattern: "(?i)(decision|action|result|created|added|approved)"
 ---
 
 # Scribe

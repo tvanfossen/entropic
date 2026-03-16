@@ -22,46 +22,46 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion in programming is when a function calls itself to solve a problem. 
-  It's like breaking down a big task into smaller versions of the same task until 
-  you reach a simple case that doesn't need further breakdown.
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem. It's based on the idea that you can break down a complex problem into 
+  smaller versions of itself until you reach a simple base case.
   
-  ## Key parts of recursion:
+  ## Key Components
   
-  1. **Base case** — The condition where the function stops calling itself 
-  (prevents infinite loops)
-  2. **Recursive case** — Where the function calls itself with modified input, 
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive Case**: The function calls itself with modified parameters, 
   moving toward the base case
   
-  ## Simple example (calculating factorial):
+  ## Simple Example (Factorial)
   
   ```python
   def factorial(n):
-      # Base case: 0! = 1 and 1! = 1
-      if n &lt;= 1:
+      if n == 0:  # Base case
           return 1
-      
-      # Recursive case: n! = n × (n-1)!
-      return n * factorial(n - 1)
-  
-  print(factorial(5))  # Output: 120
+      else:       # Recursive case
+          return n * factorial(n - 1)
   ```
   
-  ## When to use recursion:
-  - **Good for**: Tree structures, graph traversal, divide-and-conquer algorithms 
-  (like quicksort), mathematical sequences (Fibonacci)
-  - **Not ideal for**: Simple iterative tasks where loops work fine, deep 
-  recursion can cause stack overflow errors
+  ## When to Use Recursion
   
-  ## Tradeoffs:
-  | Pros | Cons |
-  |------|------|
-  | Clean, elegant code | Can be slower than iteration |
-  | Natural fit for recursive problems | Risk of stack overflow |
-  | Easier to reason about certain algorithms | More memory usage per call |
+  - **Natural fit**: Problems that can be divided into smaller subproblems (tree 
+  traversal, sorting algorithms like quicksort/mergesort)
+  - **Cleaner code**: Sometimes recursive solutions are more elegant than 
+  iterative ones
+  - **Complexity tradeoff**: Recursive solutions may use more memory due to call 
+  stack overhead
   
-  The key is always having a base case — without it, your function will keep 
-  calling itself forever until the program crashes.
+  ## When NOT to Use Recursion
+  
+  - **Performance matters**: Iterative approaches often run faster and use less 
+  memory
+  - **Deep recursion risk**: Can cause stack overflow errors on very deep 
+  recursions
+  - **Simple problems**: Sometimes a loop is clearer than recursion
+  
+  The key principle: ensure your recursive calls always move toward the base case,
+  or you'll get infinite recursion.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

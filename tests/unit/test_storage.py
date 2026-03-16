@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from entropic.core.base import Message
 from entropic.storage.backend import SQLiteStorage
-from entropic.storage.models import ConversationRecord, MessageRecord
+from entropic.storage.models import ConversationRecord, DelegationRecord, MessageRecord
 
 
 class TestConversationRecord:
@@ -149,3 +149,164 @@ class TestSQLiteStorage:
         assert "total_conversations" in stats
         assert "total_messages" in stats
         assert "total_tokens" in stats
+
+
+class TestDelegationRecord:
+    """Tests for DelegationRecord."""
+
+    def test_create(self) -> None:
+        record = DelegationRecord.create(
+            parent_conversation_id="parent-1",
+            child_conversation_id="child-1",
+            delegating_tier="lead",
+            target_tier="eng",
+            task="implement feature",
+        )
+        record.max_turns = 10
+        assert record.delegating_tier == "lead"
+        assert record.target_tier == "eng"
+        assert record.status == "pending"
+        assert record.max_turns == 10
+
+    def test_to_row_roundtrip(self) -> None:
+        record = DelegationRecord.create(
+            parent_conversation_id="p1",
+            child_conversation_id="c1",
+            delegating_tier="lead",
+            target_tier="eng",
+            task="do stuff",
+        )
+        row_dict = {
+            "id": record.id,
+            "parent_conversation_id": record.parent_conversation_id,
+            "child_conversation_id": record.child_conversation_id,
+            "delegating_tier": record.delegating_tier,
+            "target_tier": record.target_tier,
+            "task": record.task,
+            "max_turns": record.max_turns,
+            "status": record.status,
+            "result_summary": record.result_summary,
+            "created_at": record.created_at.isoformat(),
+            "completed_at": None,
+        }
+        restored = DelegationRecord.from_row(row_dict)
+        assert restored.id == record.id
+        assert restored.target_tier == "eng"
+        assert restored.completed_at is None
+
+
+class TestMessageRecordIdentityTier:
+    """Tests for identity_tier on MessageRecord."""
+
+    def test_from_message_with_identity_tier(self) -> None:
+        msg = Message(
+            role="assistant",
+            content="done",
+            metadata={"identity_tier": "eng"},
+        )
+        record = MessageRecord.from_message(msg, "conv-1")
+        assert record.identity_tier == "eng"
+
+    def test_to_message_includes_identity_tier(self) -> None:
+        record = MessageRecord(
+            id="m1",
+            conversation_id="c1",
+            role="assistant",
+            content="done",
+            identity_tier="qa",
+        )
+        msg = record.to_message()
+        assert msg.metadata["identity_tier"] == "qa"
+
+    def test_to_message_no_identity_tier(self) -> None:
+        record = MessageRecord(
+            id="m1",
+            conversation_id="c1",
+            role="user",
+            content="hello",
+        )
+        msg = record.to_message()
+        assert "identity_tier" not in msg.metadata
+
+
+@pytest.mark.asyncio
+class TestDelegationStorage:
+    """Tests for delegation storage in SQLiteStorage."""
+
+    @pytest.fixture
+    async def storage(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            storage = SQLiteStorage(db_path)
+            await storage.initialize()
+            yield storage
+            await storage.close()
+
+    async def test_create_delegation(self, storage: SQLiteStorage) -> None:
+        parent_id = await storage.create_conversation(title="Parent")
+        delegation_id, child_id = await storage.create_delegation(
+            parent_conversation_id=parent_id,
+            delegating_tier="lead",
+            target_tier="eng",
+            task="implement login",
+        )
+        assert delegation_id is not None
+        assert child_id is not None
+
+        delegations = await storage.get_delegations(parent_id)
+        assert len(delegations) == 1
+        assert delegations[0]["target_tier"] == "eng"
+        assert delegations[0]["status"] == "running"
+
+    async def test_complete_delegation(self, storage: SQLiteStorage) -> None:
+        parent_id = await storage.create_conversation(title="Parent")
+        delegation_id, child_id = await storage.create_delegation(
+            parent_conversation_id=parent_id,
+            delegating_tier="lead",
+            target_tier="qa",
+            task="review code",
+            max_turns=5,
+        )
+        await storage.complete_delegation(delegation_id, "completed", "All tests pass.")
+
+        delegations = await storage.get_delegations(parent_id)
+        assert delegations[0]["status"] == "completed"
+        assert delegations[0]["result_summary"] == "All tests pass."
+        assert delegations[0]["completed_at"] is not None
+
+    async def test_failed_delegation(self, storage: SQLiteStorage) -> None:
+        parent_id = await storage.create_conversation(title="Parent")
+        delegation_id, _ = await storage.create_delegation(
+            parent_conversation_id=parent_id,
+            delegating_tier="lead",
+            target_tier="eng",
+            task="break things",
+        )
+        await storage.complete_delegation(delegation_id, "failed", "Child loop error")
+
+        delegations = await storage.get_delegations(parent_id)
+        assert delegations[0]["status"] == "failed"
+
+    async def test_child_conversation_has_messages(self, storage: SQLiteStorage) -> None:
+        parent_id = await storage.create_conversation(title="Parent")
+        _, child_id = await storage.create_delegation(
+            parent_conversation_id=parent_id,
+            delegating_tier="lead",
+            target_tier="eng",
+            task="write code",
+        )
+        child_messages = [
+            Message(role="system", content="You are eng."),
+            Message(role="user", content="Write code."),
+            Message(role="assistant", content="Done."),
+        ]
+        await storage.save_conversation(child_id, child_messages)
+
+        loaded, _ = await storage.load_conversation(child_id)
+        assert len(loaded) == 3
+        assert loaded[2].content == "Done."
+
+    async def test_no_delegations_for_new_conversation(self, storage: SQLiteStorage) -> None:
+        conv_id = await storage.create_conversation(title="Fresh")
+        delegations = await storage.get_delegations(conv_id)
+        assert delegations == []

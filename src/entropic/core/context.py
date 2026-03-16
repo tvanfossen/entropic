@@ -204,10 +204,9 @@ class ContextBuilder:
     Builds and manages conversation context.
 
     Responsibilities:
-    - System prompt assembly
+    - System prompt pass-through (adapter handles assembly via PromptManager)
     - Token budgeting
     - History truncation
-    - ENTROPIC.md loading
     """
 
     def __init__(self, config: EntropyConfig) -> None:
@@ -218,44 +217,6 @@ class ContextBuilder:
             config: Application configuration
         """
         self.config = config
-        self._project_context: str | None = None
-
-    def load_project_context(self, project_dir: Path) -> None:
-        """
-        Load ENTROPIC.md from project's .entropic/ directory.
-
-        Args:
-            project_dir: Project directory path
-        """
-        entropic_md = project_dir / ".entropic" / "ENTROPIC.md"
-
-        if entropic_md.exists():
-            self._project_context = entropic_md.read_text()
-            logger.info(f"Loaded project context from {entropic_md}")
-        else:
-            self._project_context = None
-
-    def build_system_prompt(
-        self,
-        base_prompt: str,
-    ) -> str:
-        """
-        Build complete system prompt.
-
-        Args:
-            base_prompt: Base prompt (identity + tool usage assembled by adapter)
-
-        Returns:
-            Complete system prompt with project context appended
-        """
-        parts = [base_prompt]
-
-        # Project context
-        if self._project_context:
-            parts.append("\n# Project Context\n")
-            parts.append(self._project_context)
-
-        return "\n".join(parts)
 
     def truncate_history(
         self,

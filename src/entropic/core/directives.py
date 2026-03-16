@@ -46,10 +46,48 @@ class StopProcessing(Directive):
 
 @dataclass
 class TierChange(Directive):
-    """Request a tier handoff."""
+    """Request a tier change (internal auto_chain use)."""
 
     tier: str
     reason: str = ""
+
+
+@dataclass
+class Delegate(Directive):
+    """Delegate a task to a child inference loop.
+
+    The engine spawns a fresh context for the target tier,
+    runs it to completion, and injects the result back into
+    the parent context.
+    """
+
+    target: str
+    task: str
+    max_turns: int | None = None
+
+
+@dataclass
+class Pipeline(Directive):
+    """Execute a multi-stage delegation pipeline.
+
+    The engine runs each stage sequentially, passing the previous
+    stage's output as additional context to the next.
+    """
+
+    stages: list[str]
+    task: str
+
+
+@dataclass
+class Complete(Directive):
+    """Signal explicit completion of a delegated task.
+
+    Used by child contexts to tell the engine they are done.
+    The summary is injected into the parent context as the
+    delegation result.
+    """
+
+    summary: str
 
 
 @dataclass
@@ -89,6 +127,17 @@ class ContextAnchor(Directive):
 
 
 @dataclass
+class PhaseChange(Directive):
+    """Switch the active phase within the current role.
+
+    Updates ctx.active_phase, which changes inference params
+    and bash_commands for subsequent turns.
+    """
+
+    phase: str
+
+
+@dataclass
 class NotifyPresenter(Directive):
     """Generic UI notification — engine passes through, doesn't inspect.
 
@@ -107,10 +156,14 @@ class NotifyPresenter(Directive):
 
 STOP_PROCESSING = "stop_processing"
 TIER_CHANGE = "tier_change"
+DELEGATE = "delegate"
+PIPELINE = "pipeline"
+COMPLETE = "complete"
 CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
 CONTEXT_ANCHOR = "context_anchor"
+PHASE_CHANGE = "phase_change"
 NOTIFY_PRESENTER = "notify_presenter"
 
 
@@ -121,10 +174,14 @@ NOTIFY_PRESENTER = "notify_presenter"
 _DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
     "stop_processing": StopProcessing,
     "tier_change": TierChange,
+    "delegate": Delegate,
+    "pipeline": Pipeline,
+    "complete": Complete,
     "clear_self_todos": ClearSelfTodos,
     "inject_context": InjectContext,
     "prune_messages": PruneMessages,
     "context_anchor": ContextAnchor,
+    "phase_change": PhaseChange,
     "notify_presenter": NotifyPresenter,
 }
 

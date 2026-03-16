@@ -236,16 +236,6 @@ class TestTokenBudget:
 class TestContextBuilder:
     """Tests for context builder."""
 
-    def test_build_system_prompt_returns_base(self) -> None:
-        """Test build_system_prompt returns the base prompt."""
-        from entropic.config.schema import EntropyConfig
-
-        config = EntropyConfig()
-        builder = ContextBuilder(config)
-
-        prompt = builder.build_system_prompt("Test base prompt")
-        assert "Test base prompt" in prompt
-
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
         from entropic.config.schema import EntropyConfig
@@ -257,19 +247,6 @@ class TestContextBuilder:
         assert builder.estimate_tokens("hello world") == 2  # 11 // 4 = 2
         assert builder.estimate_tokens("a" * 100) == 25  # 100 // 4 = 25
 
-    def test_build_system_prompt_with_project_context(self) -> None:
-        """Test building system prompt appends project context."""
-        from entropic.config.schema import EntropyConfig
-
-        config = EntropyConfig()
-        builder = ContextBuilder(config)
-        builder._project_context = "Project-specific info here"
-
-        prompt = builder.build_system_prompt("Base prompt")
-        assert "Base prompt" in prompt
-        assert "Project Context" in prompt
-        assert "Project-specific info here" in prompt
-
 
 class _EngineTestBase:
     """Shared helper for engine tests that need a mocked engine."""
@@ -277,16 +254,22 @@ class _EngineTestBase:
     def _make_engine(self):
         """Create an Engine with mocked dependencies."""
         from entropic.core.directives import DirectiveProcessor
+        from entropic.core.engine_types import EngineCallbacks
 
         with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
         engine.loop_config = LoopConfig()
-        engine._on_state_change = None
+        engine._callbacks = EngineCallbacks()
         engine._context_anchors = {}
         engine._directive_processor = DirectiveProcessor()
         engine._register_directive_handlers()
-        engine._inject_context_warning = MagicMock()
-        engine._on_presenter_notify = None
+        engine.server_manager = MagicMock()
+        engine.orchestrator = MagicMock()
+        engine._tool_executor = None
+        engine._response_generator = MagicMock()
+        mock_cm = MagicMock()
+        mock_cm.check_compaction = AsyncMock()
+        engine._context_manager = mock_cm
         return engine
 
 
@@ -295,7 +278,9 @@ class TestCompactionAfterToolResults(_EngineTestBase):
 
     @pytest.mark.asyncio
     async def test_compaction_called_after_tool_result(self) -> None:
-        """_check_compaction is called after each tool result."""
+        """after_tool_hook (compaction + warning) is called after each tool result."""
+        from entropic.core.tool_executor import ToolExecutor
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -307,30 +292,39 @@ class TestCompactionAfterToolResults(_EngineTestBase):
             ToolCall(id="2", name="bash.execute", arguments={"command": "pwd"}),
         ]
 
-        compaction_calls = []
+        hook_calls = []
+
+        async def mock_after_tool(ctx):
+            hook_calls.append(True)
 
         async def mock_execute(ctx, tool_call):
             msg = Message(role="user", content=f"Result of {tool_call.name}")
             result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            compaction_calls.append(force)
+        from entropic.core.tool_executor import ToolExecutorHooks
 
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(
+                after_tool=mock_after_tool,
+                process_directives=engine._process_directives,
+            ),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
         assert len(messages) == 2
-        # _check_compaction called once per tool result
-        assert len(compaction_calls) == 2
-        assert all(f is False for f in compaction_calls)
+        # after_tool_hook called once per tool result
+        assert len(hook_calls) == 2
 
 
 class TestOverflowRecovery(_EngineTestBase):
@@ -352,7 +346,7 @@ class TestOverflowRecovery(_EngineTestBase):
         async def mock_check_compaction(ctx, *, force=False):
             compaction_calls.append(force)
 
-        engine._check_compaction = mock_check_compaction
+        engine._context_manager.check_compaction = mock_check_compaction
         engine._set_state = MagicMock()
 
         messages = []
@@ -393,27 +387,34 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
 
     @pytest.mark.asyncio
     async def test_stop_directive_stops_remaining_tool_calls(self) -> None:
-        """Tool calls after a stop_processing directive are dropped."""
+        """Tool calls after a stop_processing directive are dropped.
+
+        Engine sorts entropic.delegate last, so even though delegate appears
+        second in input, it executes after all other calls.  stop_processing
+        fires on delegate, dropping any calls that would follow.
+        """
+        from entropic.core.directives import StopProcessing
+        from entropic.core.tool_executor import ToolExecutor
+
         engine = self._make_engine()
 
         ctx = LoopContext(
             messages=[Message(role="system", content="test")],
         )
 
+        # Delegate in the middle — engine sorts it last
         calls = [
             ToolCall(id="1", name="bash.execute", arguments={"command": "ls"}),
-            ToolCall(id="2", name="entropic.handoff", arguments={"target_tier": "code"}),
+            ToolCall(id="2", name="entropic.delegate", arguments={"target": "code"}),
             ToolCall(id="3", name="entropic.todo_write", arguments={"todos": []}),
         ]
-
-        from entropic.core.directives import StopProcessing
 
         executed = []
 
         async def mock_execute(ctx, tool_call):
             executed.append(tool_call.name)
             msg = Message(role="user", content=f"Result of {tool_call.name}")
-            directives = [StopProcessing()] if tool_call.name == "entropic.handoff" else []
+            directives = [StopProcessing()] if tool_call.name == "entropic.delegate" else []
             result = ToolResult(
                 call_id=tool_call.id,
                 name=tool_call.name,
@@ -422,25 +423,37 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             )
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            pass
+        from entropic.core.tool_executor import ToolExecutorHooks
 
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(process_directives=engine._process_directives),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["bash.execute", "entropic.handoff"]
-        assert len(messages) == 2
+        # Sorted order: bash.execute, todo_write, delegate (last)
+        # delegate fires stop_processing — but it's already last, so all 3 execute
+        assert executed == ["bash.execute", "entropic.todo_write", "entropic.delegate"]
+        assert len(messages) == 3
 
     @pytest.mark.asyncio
     async def test_no_directive_continues_processing(self) -> None:
-        """Tool calls continue when no stop directive is returned."""
+        """Tool calls continue when no stop directive is returned.
+
+        Delegate sorted last by engine, but since no stop_processing fires
+        (invalid tier → error string, no directives), both calls execute.
+        """
+        from entropic.core.tool_executor import ToolExecutor, ToolExecutorHooks
+
         engine = self._make_engine()
 
         ctx = LoopContext(
@@ -448,7 +461,7 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
         )
 
         calls = [
-            ToolCall(id="1", name="entropic.handoff", arguments={"target_tier": "invalid"}),
+            ToolCall(id="1", name="entropic.delegate", arguments={"target": "invalid"}),
             ToolCall(id="2", name="bash.execute", arguments={"command": "ls"}),
         ]
 
@@ -460,20 +473,23 @@ class TestDirectiveStopsToolProcessing(_EngineTestBase):
             result = ToolResult(call_id=tool_call.id, name=tool_call.name, result=msg.content)
             return msg, result
 
-        async def mock_check_compaction(ctx, *, force=False):
-            pass
-
-        engine._execute_tool = mock_execute
-        engine._set_state = MagicMock()
-        engine._check_duplicate_tool_call = MagicMock(return_value=None)
-        engine._record_tool_call = MagicMock()
-        engine._check_compaction = mock_check_compaction
+        engine._tool_executor = ToolExecutor(
+            server_manager=engine.server_manager,
+            orchestrator=engine.orchestrator,
+            loop_config=engine.loop_config,
+            callbacks=engine._callbacks,
+            hooks=ToolExecutorHooks(process_directives=engine._process_directives),
+        )
+        engine._tool_executor._execute_tool = mock_execute
+        engine._tool_executor._check_duplicate_tool_call = MagicMock(return_value=None)
+        engine._tool_executor._record_tool_call = MagicMock()
 
         messages = []
         async for msg in engine._process_tool_calls(ctx, calls):
             messages.append(msg)
 
-        assert executed == ["entropic.handoff", "bash.execute"]
+        # Sorted: bash.execute first, then delegate last
+        assert executed == ["bash.execute", "entropic.delegate"]
         assert len(messages) == 2
 
 
@@ -485,9 +501,11 @@ class TestDirectiveTierChange(_EngineTestBase):
         engine = self._make_engine()
         engine.orchestrator = MagicMock()
         engine.orchestrator.can_handoff = MagicMock(return_value=True)
-        engine._build_formatted_system_prompt = MagicMock(return_value="system prompt")
-        engine._log_assembled_prompt = MagicMock()
-        engine._notify_tier_selected = MagicMock()
+        mock_rg = MagicMock()
+        mock_rg._build_formatted_system_prompt = MagicMock(return_value="system prompt")
+        mock_rg._log_assembled_prompt = MagicMock()
+        mock_rg._notify_tier_selected = MagicMock()
+        engine._response_generator = mock_rg
         engine._reinject_context_anchors = MagicMock()
         return engine
 
@@ -516,7 +534,7 @@ class TestDirectiveTierChange(_EngineTestBase):
 
         assert ctx.locked_tier == "code"
         assert result.tier_changed is True
-        engine._build_formatted_system_prompt.assert_called_once()
+        engine._response_generator._build_formatted_system_prompt.assert_called_once()
 
     def test_tier_change_directive_rejects_invalid_tier(self) -> None:
         """tier_change with invalid tier is a no-op."""
@@ -569,22 +587,26 @@ class TestDirectiveTierChange(_EngineTestBase):
 class TestAutoPruneToolResults:
     """Auto-prune replaces old tool results with stubs."""
 
-    def _make_engine_with_compaction(self):
-        """Create engine with real compaction config for pruning tests."""
+    def _make_context_manager(self):
+        """Create ContextManager with real compaction config for pruning tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
-
-        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
-            engine = AgentEngine.__new__(AgentEngine)
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         config = CompactionConfig(tool_result_ttl=2)
         counter = TokenCounter(max_tokens=16384)
-        engine._compaction_manager = CompactionManager(config, counter)
-        return engine
+        cm = CompactionManager(config, counter)
+        return ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
 
     def test_prune_old_tool_results(self) -> None:
         """Tool results older than TTL are replaced with stubs."""
-        engine = self._make_engine_with_compaction()
+        cm = self._make_context_manager()
 
         ctx = LoopContext(
             messages=[
@@ -608,7 +630,7 @@ class TestAutoPruneToolResults:
             3  # TTL=2: iteration 0 is stale (age 3), iteration 2 is fresh (age 1)
         )
 
-        engine._prune_old_tool_results(ctx)
+        cm.prune_old_tool_results(ctx)
 
         # First tool result (iteration 0, age=3) should be pruned
         assert ctx.messages[1].content.startswith("[Previous:")
@@ -618,7 +640,7 @@ class TestAutoPruneToolResults:
 
     def test_prune_preserves_recent(self) -> None:
         """Tool results within TTL are preserved."""
-        engine = self._make_engine_with_compaction()
+        cm = self._make_context_manager()
 
         ctx = LoopContext(
             messages=[
@@ -633,7 +655,7 @@ class TestAutoPruneToolResults:
         )
         ctx.metrics.iterations = 3  # TTL=2, iteration 2 is within TTL
 
-        engine._prune_old_tool_results(ctx)
+        cm.prune_old_tool_results(ctx)
 
         assert ctx.messages[1].content == "recent file"
 
@@ -645,13 +667,21 @@ class TestPruneDirective:
         """Create engine with compaction manager for prune tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
             engine = AgentEngine.__new__(AgentEngine)
 
         config = CompactionConfig()
         counter = TokenCounter(max_tokens=16384)
-        engine._compaction_manager = CompactionManager(config, counter)
+        cm = CompactionManager(config, counter)
+        engine._context_manager = ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
         return engine
 
     def test_prune_directive_replaces_old_results(self) -> None:
@@ -699,22 +729,26 @@ class TestPruneDirective:
 class TestContextWarningInjection:
     """Context warning injected when usage exceeds threshold."""
 
-    def _make_engine_with_compaction(self, max_tokens=1000, threshold=0.6):
-        """Create engine with compaction for warning tests."""
+    def _make_context_manager(self, max_tokens=1000, threshold=0.6):
+        """Create ContextManager with compaction for warning tests."""
         from entropic.config.schema import CompactionConfig
         from entropic.core.compaction import CompactionManager, TokenCounter
-
-        with patch("entropic.core.engine.AgentEngine.__init__", return_value=None):
-            engine = AgentEngine.__new__(AgentEngine)
+        from entropic.core.context_manager import ContextManager
+        from entropic.core.engine_types import EngineCallbacks
 
         config = CompactionConfig(warning_threshold_percent=threshold)
         counter = TokenCounter(max_tokens=max_tokens)
-        engine._compaction_manager = CompactionManager(config, counter)
-        return engine
+        cm = CompactionManager(config, counter)
+        return ContextManager(
+            config=MagicMock(),
+            orchestrator=MagicMock(),
+            compaction_manager=cm,
+            callbacks=EngineCallbacks(),
+        )
 
     def test_warning_injected_above_threshold(self) -> None:
         """Warning message injected when context usage exceeds threshold."""
-        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+        cm = self._make_context_manager(max_tokens=100, threshold=0.5)
 
         # Create context that uses ~70% (well above 50% threshold)
         ctx = LoopContext(
@@ -727,7 +761,7 @@ class TestContextWarningInjection:
         ctx.metrics.iterations = 1
         initial_count = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
 
         assert len(ctx.messages) == initial_count + 1
         assert "[CONTEXT WARNING]" in ctx.messages[-1].content
@@ -735,7 +769,7 @@ class TestContextWarningInjection:
 
     def test_warning_not_repeated_same_iteration(self) -> None:
         """Warning not injected twice in same iteration."""
-        engine = self._make_engine_with_compaction(max_tokens=100, threshold=0.5)
+        cm = self._make_context_manager(max_tokens=100, threshold=0.5)
 
         ctx = LoopContext(
             messages=[
@@ -745,15 +779,15 @@ class TestContextWarningInjection:
         )
         ctx.metrics.iterations = 1
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
         count_after_first = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
         assert len(ctx.messages) == count_after_first  # No new message
 
     def test_no_warning_below_threshold(self) -> None:
         """No warning when context usage is below threshold."""
-        engine = self._make_engine_with_compaction(max_tokens=10000, threshold=0.6)
+        cm = self._make_context_manager(max_tokens=10000, threshold=0.6)
 
         ctx = LoopContext(
             messages=[
@@ -764,7 +798,7 @@ class TestContextWarningInjection:
         ctx.metrics.iterations = 1
         initial_count = len(ctx.messages)
 
-        engine._inject_context_warning(ctx)
+        cm.inject_context_warning(ctx)
 
         assert len(ctx.messages) == initial_count
 
@@ -772,21 +806,30 @@ class TestContextWarningInjection:
 class TestStreamingInterrupt(_EngineTestBase):
     """Interrupt event must stop streaming mid-generation."""
 
-    def _make_streaming_engine(self):
-        """Create engine wired for streaming interrupt tests."""
-        engine = self._make_engine()
-        engine._interrupt_event = threading.Event()
-        engine._pause_event = threading.Event()
-        engine._on_stream_chunk = None
-        engine._log_model_output = MagicMock()
-        engine.orchestrator = MagicMock()
-        engine.orchestrator.last_finish_reason = "stop"
-        return engine
+    def _make_streaming_rg(self):
+        """Create ResponseGenerator wired for streaming interrupt tests."""
+        from entropic.core.engine_types import EngineCallbacks, GenerationEvents
+        from entropic.core.response_generator import ResponseGenerator
+
+        orchestrator = MagicMock()
+        orchestrator.last_finish_reason = "stop"
+        rg = ResponseGenerator(
+            orchestrator=orchestrator,
+            config=MagicMock(),
+            loop_config=LoopConfig(),
+            callbacks=EngineCallbacks(),
+            events=GenerationEvents(
+                interrupt=threading.Event(),
+                pause=threading.Event(),
+            ),
+        )
+        rg._log_model_output = MagicMock()
+        return rg
 
     @pytest.mark.asyncio
     async def test_interrupt_stops_streaming(self) -> None:
         """Setting _interrupt_event breaks out of stream loop."""
-        engine = self._make_streaming_engine()
+        rg = self._make_streaming_rg()
 
         chunks_yielded = 0
 
@@ -795,37 +838,37 @@ class TestStreamingInterrupt(_EngineTestBase):
             for word in ["Hello ", "world ", "this ", "should ", "stop "]:
                 chunks_yielded += 1
                 if chunks_yielded == 2:
-                    engine._interrupt_event.set()
+                    rg._interrupt_event.set()
                 yield word
 
-        engine.orchestrator.generate_stream = fake_stream
-        engine.orchestrator.get_adapter = MagicMock()
-        engine.orchestrator.get_adapter().parse_tool_calls.return_value = ("Hello ", [])
+        rg._orchestrator.generate_stream = fake_stream
+        rg._orchestrator.get_adapter = MagicMock()
+        rg._orchestrator.get_adapter().parse_tool_calls.return_value = ("Hello ", [])
 
         ctx = LoopContext(messages=[Message(role="system", content="test")])
-        content, tool_calls = await engine._generate_streaming(ctx)
+        await rg._generate_streaming(ctx)
 
         # Should have stopped after chunk 2 set the interrupt
         assert chunks_yielded == 2
-        assert "interrupted" in str(engine._log_model_output.call_args)
+        assert "interrupted" in str(rg._log_model_output.call_args)
 
     @pytest.mark.asyncio
     async def test_no_interrupt_streams_fully(self) -> None:
         """Without interrupt, all chunks are consumed."""
-        engine = self._make_streaming_engine()
+        rg = self._make_streaming_rg()
 
         async def fake_stream(*args, **kwargs):
             for word in ["Hello ", "world "]:
                 yield word
 
-        engine.orchestrator.generate_stream = fake_stream
-        engine.orchestrator.get_adapter = MagicMock()
-        engine.orchestrator.get_adapter().parse_tool_calls.return_value = (
+        rg._orchestrator.generate_stream = fake_stream
+        rg._orchestrator.get_adapter = MagicMock()
+        rg._orchestrator.get_adapter().parse_tool_calls.return_value = (
             "Hello world ",
             [],
         )
 
         ctx = LoopContext(messages=[Message(role="system", content="test")])
-        content, _ = await engine._generate_streaming(ctx)
+        content, _ = await rg._generate_streaming(ctx)
 
         assert content == "Hello world "

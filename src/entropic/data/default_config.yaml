@@ -1,56 +1,74 @@
-# Entropic Configuration
-# This file is copied to ~/.entropic/config.yaml during installation
-# and to .entropic/config.yaml on first run in each project
+# Entropic Default Configuration
+# This file ships with entropic-engine as a bundled default.
+# Hardware params only — inference behavior lives in identity frontmatter.
 
 models:
-  # Deep reasoning tier - Falcon for complex analysis and planning
-  thinking:
-    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-    adapter: falcon
-    context_length: 16384  # Constrained to prevent runaway thinking
-    gpu_layers: -1
-    temperature: 0.5
-    repeat_penalty: 1.2
-  # General assistant tier - Qwen3 for balanced reasoning/execution
-  normal:
-    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 32768
-    gpu_layers: -1
-    temperature: 0.4
-    repeat_penalty: 1.1
-  # Code implementation tier - Qwen3 for precise code work
-  code:
-    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 32768
-    gpu_layers: -1
-    temperature: 0.3  # More deterministic for code
-    repeat_penalty: 1.1
-  # Quick response tier - shares Qwen3-8B with normal/code for efficient model reuse
-  simple:
-    path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 32768
-    gpu_layers: -1
-    temperature: 0.4
-    repeat_penalty: 1.1
-  # Classification router - small model always loaded
-  router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: qwen3
-    context_length: 4096
-    gpu_layers: -1
-    temperature: 0.0  # Deterministic classification
-    repeat_penalty: 1.0
-  default: normal
+  # Single model serves all roles — maximize VRAM for KV cache
+  lead:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
 
-thinking:
-  enabled: false
+  arch:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  eng:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  qa:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  ux:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  ui:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  analyst:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  compactor:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  scribe:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  benchmark_judge:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  default: lead
 
 routing:
-  enabled: true
-  fallback_model: normal
+  enabled: false
+  fallback_tier: lead
 
 log_level: INFO
 
@@ -60,14 +78,15 @@ mcp:
   enable_bash: true
   enable_git: true
   enable_diagnostics: true
-  enable_system: true  # System operations (handoff, etc.)
+  enable_web: true
+
+  filesystem:
+    allow_outside_root: true
 
   # External MCP server for Claude Code integration
   external:
-    enabled: false  # Set to true to enable Claude Code delegation
-    # Socket in project dir for portability
-    socket_path: .entropic/mcp.sock
-    rate_limit: 10  # requests per minute
+    enabled: false
+    rate_limit: 10
 
 # Voice interface configuration (NVIDIA PersonaPlex)
 voice:
@@ -79,7 +98,7 @@ voice:
   runtime:
     device: "cuda"
     quantization: "int8"
-    context_window: 500  # LM context in tokens
+    context_window: 500
 
   sampling:
     text_temperature: 0.8
@@ -88,7 +107,6 @@ voice:
 
   voice_prompt:
     prompt_dir: "~/.entropic/voices"
-    # Available voices: NATF0-3, NATM0-3 (natural), VARF0-4, VARM0-4 (variety)
     voice_name: "NATF2"
     thinking_audio: "thinking_moment.wav"
 
@@ -97,7 +115,7 @@ voice:
     initial_prompt: "You are a helpful coding assistant."
 
   secondary_model:
-    model_path: "~/models/gguf/Qwen3-0.6B-Q8_0.gguf"
+    model_path: ~/models/gguf/Qwen3.5-0.8B-Q8_0.gguf
     max_tokens: 300
     temperature: 0.3
 
@@ -105,4 +123,4 @@ voice:
     host: "127.0.0.1"
     port: 8765
     auto_start: true
-    startup_timeout_seconds: 600  # 10 minutes for model loading
+    startup_timeout_seconds: 600

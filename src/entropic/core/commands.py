@@ -144,7 +144,6 @@ class CommandRegistry:
         self.register_builtin(StatusCommand())
         self.register_builtin(ConfigCommand())
         self.register_builtin(ModelCommand())
-        self.register_builtin(ThinkCommand())
         self.register_builtin(SaveCommand())
         self.register_builtin(LoadCommand())
         # Session commands
@@ -416,7 +415,7 @@ class ModelCommand(Command):
 
     @property
     def usage(self) -> str:
-        return "/model [thinking|normal|code|micro]"
+        return "/model <tier_name>"
 
     async def execute(self, args: str, context: CommandContext) -> CommandResult:
         if not args:
@@ -426,63 +425,17 @@ class ModelCommand(Command):
             )
 
         model = args.lower().strip()
-        valid = {"thinking", "normal", "code", "micro"}
+        valid = set(context.config.models.tiers.keys())
         if model not in valid:
             return CommandResult(
                 success=False,
-                message=f"Invalid model. Choose from: {', '.join(valid)}",
+                message=f"Invalid model. Choose from: {', '.join(sorted(valid))}",
             )
 
         return CommandResult(
             success=True,
             message=f"Switched to {model} model",
             data={"action": "switch_model", "model": model},
-        )
-
-
-class ThinkCommand(Command):
-    """Control thinking model usage."""
-
-    @property
-    def name(self) -> str:
-        return "think"
-
-    @property
-    def description(self) -> str:
-        return "Control when the thinking model is used"
-
-    @property
-    def usage(self) -> str:
-        return "/think [on|off|status] - on=force for all, off=auto (complex tasks only)"
-
-    async def execute(self, args: str, context: CommandContext) -> CommandResult:
-        arg = args.lower().strip()
-
-        results = {
-            "": CommandResult(success=True, data={"action": "show_thinking_status"}),
-            "status": CommandResult(success=True, data={"action": "show_thinking_status"}),
-            "on": CommandResult(
-                success=True,
-                message="Thinking model forced ON for all reasoning tasks",
-                data={"action": "set_thinking_mode", "enabled": True},
-            ),
-            "off": CommandResult(
-                success=True,
-                message="Thinking model AUTO - used only for complex tasks",
-                data={"action": "set_thinking_mode", "enabled": False},
-            ),
-            "auto": CommandResult(
-                success=True,
-                message="Thinking model AUTO - used only for complex tasks",
-                data={"action": "set_thinking_mode", "enabled": False},
-            ),
-        }
-
-        return results.get(
-            arg,
-            CommandResult(
-                success=False, message=f"Unknown argument: {arg}. Use: on, off/auto, or status"
-            ),
         )
 
 

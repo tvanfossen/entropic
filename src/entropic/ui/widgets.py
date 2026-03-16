@@ -115,10 +115,16 @@ class AssistantMessage(Static):
     """
 
     TIER_STYLES: dict[str, str] = {
-        "code": "cyan",
-        "thinking": "magenta",
-        "normal": "green",
-        "simple": "dim",
+        "lead": "green",
+        "arch": "magenta",
+        "eng": "cyan",
+        "qa": "yellow",
+        "ux": "magenta",
+        "ui": "cyan",
+        "analyst": "yellow",
+        "compactor": "dim",
+        "scribe": "dim",
+        "benchmark_judge": "dim",
     }
 
     def __init__(self, content: str = "", **kwargs: Any) -> None:
@@ -149,7 +155,7 @@ class AssistantMessage(Static):
         """Set the model tier and update display.
 
         Args:
-            tier: Tier name (e.g., 'code', 'thinking', 'normal', 'simple')
+            tier: Tier name (e.g., 'lead', 'eng', 'arch')
         """
         self._tier = tier
         self._update_display()
@@ -671,7 +677,6 @@ class StatusFooter(Static):
     def __init__(
         self,
         model: str = "",
-        thinking_mode: bool = False,
         **kwargs: Any,
     ) -> None:
         """
@@ -679,12 +684,10 @@ class StatusFooter(Static):
 
         Args:
             model: Current model name
-            thinking_mode: Whether thinking mode is active
             **kwargs: Additional widget arguments
         """
         super().__init__(**kwargs)
         self._model = model
-        self._thinking_mode = thinking_mode
         self._is_generating = False
         self._gpu_stats: dict[str, Any] = {}
         self._gpu_timer: Any = None
@@ -697,11 +700,6 @@ class StatusFooter(Static):
     def set_model(self, model: str) -> None:
         """Set current model."""
         self._model = model
-        self._update_display()
-
-    def set_thinking_mode(self, enabled: bool) -> None:
-        """Set thinking mode."""
-        self._thinking_mode = enabled
         self._update_display()
 
     def _get_gpu_stats(self) -> dict[str, Any]:
@@ -756,9 +754,6 @@ class StatusFooter(Static):
 
         if self._model:
             parts.append(f"[bold]{self._model}[/]")
-
-        if self._thinking_mode:
-            parts.append("[magenta]Think[/]")
 
         if self._is_generating:
             parts.append("[cyan bold]Esc[/]=Pause")

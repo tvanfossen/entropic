@@ -18,11 +18,12 @@ ALL_TOOLS = [
     ("checkout", "git"),
     ("add", "git"),
     ("reset", "git"),
-    ("handoff", "entropic"),
+    ("delegate", "entropic"),
     ("prune_context", "entropic"),
     ("diagnostics", "diagnostics"),
     ("check_errors", "diagnostics"),
     ("todo_write", "entropic"),
+    ("pipeline", "entropic"),
 ]
 
 

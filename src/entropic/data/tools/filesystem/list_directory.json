@@ -1,0 +1,21 @@
+{
+  "name": "list_directory",
+  "description": "List files and subdirectories at a given path.\n\nReturns structured output with file/directory indicators and sizes.\nOptionally recursive with configurable depth limit.\n\n**Response format:**\n```json\n{\"path\": \"src/\", \"entries\": [{\"name\": \"main.py\", \"type\": \"file\", \"size\": 1234}, {\"name\": \"utils/\", \"type\": \"dir\"}]}\n```",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Directory path relative to project root (default: '.')"
+      },
+      "recursive": {
+        "type": "boolean",
+        "description": "List recursively (default: false)"
+      },
+      "max_depth": {
+        "type": "integer",
+        "description": "Maximum recursion depth (default: 3, only used with recursive=true)"
+      }
+    }
+  }
+}

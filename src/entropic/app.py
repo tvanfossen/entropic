@@ -24,7 +24,6 @@ from entropic.core.tasks import TaskManager
 from entropic.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropic.mcp.manager import ServerManager
 from entropic.mcp.servers.external import ExternalMCPServer
-from entropic.prompts import load_prompt
 from entropic.storage.backend import SQLiteStorage
 from entropic.ui.presenter import Presenter, StatusInfo
 
@@ -70,13 +69,9 @@ class Application:
         self._external_mcp: ExternalMCPServer | None = None
         self._external_mcp_task: asyncio.Task[None] | None = None
 
-        # App context prompt (loaded during initialize)
-        self._app_context: str = ""
-
         # Session state
         self._conversation_id: str | None = None
         self._messages: list[Message] = []
-        self._thinking_mode: bool = config.thinking.enabled
 
     async def initialize(self) -> None:
         """Initialize all components with loading feedback."""
@@ -93,7 +88,11 @@ class Application:
 
             # Initialize MCP server manager
             status.update("[bold blue]Starting tool servers...")
-            self._mcp_manager = ServerManager(self.config, project_dir=self.project_dir)
+            self._mcp_manager = ServerManager(
+                self.config,
+                project_dir=self.project_dir,
+                tier_names=self._orchestrator.tier_names,
+            )
             await self._mcp_manager.initialize()
 
             # Initialize storage
@@ -114,12 +113,6 @@ class Application:
                 self.config.config_dir / "commands",
             )
             await self._command_registry.discover()
-
-            # Load app context prompt (entropic-specific personality)
-            try:
-                self._app_context = load_prompt("app_context")
-            except FileNotFoundError:
-                self.logger.warning("app_context.md not found, proceeding without")
 
             # Initialize agent engine
             status.update("[bold blue]Initializing agent...")
@@ -161,6 +154,7 @@ class Application:
             message_queue=self._message_queue,
             task_manager=self._task_manager,
             session_manager=self._session_manager,
+            project_dir=self.project_dir,
         )
 
         # Provide live conversation history to MCP get_history
@@ -237,6 +231,12 @@ class Application:
                 on_routing_complete=lambda r: presenter.show_routing_info(
                     self._format_routing_info(r)
                 ),
+                on_delegation_start=lambda cid, t, task: presenter.on_delegation_start(
+                    cid, t, task
+                ),
+                on_delegation_complete=lambda cid, t, s, ok: presenter.on_delegation_complete(
+                    cid, t, s, ok
+                ),
             )
         )
 
@@ -249,7 +249,6 @@ class Application:
             async for msg in self._engine.run(
                 queued_msg.content,
                 history=self._messages,
-                system_prompt=self._app_context or None,
                 task_id=queued_msg.task_id,
                 source=queued_msg.source,
             ):
@@ -294,8 +293,7 @@ class Application:
 
         # Show context usage after each response
         if self._engine:
-            context_used = self._engine._token_counter.count_messages(self._messages)
-            context_max = self._engine._token_counter.max_tokens
+            context_used, context_max = self._engine.context_usage(self._messages)
             presenter.print_context_usage(context_used, context_max)
 
         # Invoke callback with result
@@ -448,8 +446,6 @@ class Application:
         handlers: dict[str, Any] = {
             "clear_history": self._action_clear_history,
             "show_status": self._show_status,
-            "set_thinking_mode": self._action_set_thinking_mode,
-            "show_thinking_status": self._action_show_thinking_status,
             "switch_model": self._action_switch_model,
             "save_conversation": lambda d: self._save_conversation(d.get("name")),
             "load_conversation": self._action_load_conversation,
@@ -474,32 +470,6 @@ class Application:
                 project_path=str(self.project_dir),
             )
 
-    async def _action_set_thinking_mode(self, data: dict[str, Any]) -> None:
-        """Set thinking mode enabled/disabled."""
-        enabled = data.get("enabled", False)
-        if not self._orchestrator:
-            if self._presenter:
-                self._presenter.print_error("Orchestrator not available")
-            return
-        success = await self._orchestrator.set_thinking_mode(enabled)
-        if not self._presenter:
-            return
-        if success:
-            self._thinking_mode = enabled
-            mode = "enabled" if enabled else "disabled"
-            self._presenter.print_info(f"Thinking mode {mode}")
-        else:
-            self._presenter.print_error("Thinking model not configured")
-
-    def _action_show_thinking_status(self, _data: dict[str, Any]) -> None:
-        """Show current thinking mode status."""
-        if not self._presenter:
-            return
-        if self._thinking_mode:
-            self._presenter.print_info("Thinking: ON (forced for all reasoning)")
-        else:
-            self._presenter.print_info("Thinking: AUTO (complex tasks only)")
-
     def _action_switch_model(self, data: dict[str, Any]) -> None:
         """Switch the default model."""
         model = data.get("model")
@@ -521,13 +491,11 @@ class Application:
         # Capture presenter in local variable for closures
         presenter = self._presenter
 
-        # Build system prompt: app context + project context
-        parts = []
-        if self._app_context:
-            parts.append(self._app_context)
+        # Build system prompt from project context (ENTROPIC.md)
+        # Constitution + identity + app_context are handled by PromptManager
+        system_prompt = None
         if self._project_context and self._project_context.has_context:
-            parts.append(self._project_context.get_system_prompt_addition())
-        system_prompt = "\n\n".join(parts) if parts else None
+            system_prompt = self._project_context.get_system_prompt_addition()
 
         def on_chunk(chunk: str) -> None:
             """Handle streaming chunk - pass directly to presenter."""
@@ -569,6 +537,12 @@ class Application:
                 on_routing_complete=lambda r: presenter.show_routing_info(
                     self._format_routing_info(r)
                 ),
+                on_delegation_start=lambda cid, t, task: presenter.on_delegation_start(
+                    cid, t, task
+                ),
+                on_delegation_complete=lambda cid, t, s, ok: presenter.on_delegation_complete(
+                    cid, t, s, ok
+                ),
             )
         )
 
@@ -594,8 +568,7 @@ class Application:
 
             # Show context usage after each response
             if self._engine:
-                context_used = self._engine._token_counter.count_messages(self._messages)
-                context_max = self._engine._token_counter.max_tokens
+                context_used, context_max = self._engine.context_usage(self._messages)
                 self._presenter.print_context_usage(context_used, context_max)
 
             # Save to storage
@@ -639,8 +612,7 @@ class Application:
     def _emit_context_update(self) -> None:
         """Push current context usage to the presenter."""
         if self._engine and self._presenter:
-            used = self._engine._token_counter.count_messages(self._messages)
-            max_t = self._engine._token_counter.max_tokens
+            used, max_t = self._engine.context_usage(self._messages)
             self._presenter.print_context_usage(used, max_t)
 
     def _format_routing_info(self, result: RoutingResult) -> str:
@@ -706,8 +678,6 @@ class Application:
 
         # Get model info
         model = self.config.models.default
-        if self._thinking_mode:
-            model = "thinking"
 
         # Get token count from current conversation
         tokens = sum(len(m.content) // 4 for m in self._messages)
@@ -716,8 +686,7 @@ class Application:
         context_used = 0
         context_max = 16384
         if self._engine:
-            context_used = self._engine._token_counter.count_messages(self._messages)
-            context_max = self._engine._token_counter.max_tokens
+            context_used, context_max = self._engine.context_usage(self._messages)
 
         self._presenter.print_status(
             StatusInfo(
@@ -725,7 +694,6 @@ class Application:
                 vram_used=vram_used,
                 vram_total=vram_total,
                 tokens=tokens,
-                thinking_mode=self._thinking_mode,
                 context_used=context_used,
                 context_max=context_max,
             )
@@ -971,10 +939,7 @@ class Application:
             )
 
             # Run agent loop (tool results are shown via on_tool_complete callback)
-            async for _ in self._engine.run(
-                message,
-                system_prompt=self._app_context or None,
-            ):
+            async for _ in self._engine.run(message):
                 pass
 
             self.console.print()  # Newline after response

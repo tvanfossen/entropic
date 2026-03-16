@@ -1,6 +1,6 @@
 [project]
 name = "entropic-engine"
-version = "1.0.0"
+version = "1.7.0"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -51,6 +51,7 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
     "types-pyyaml>=6.0.0",
+    "python-chess>=1.10.0",  # For grammar pipeline model tests (pychess example)
 ]
 voice = [
     # From PersonaPlex requirements
@@ -108,7 +109,7 @@ disallow_untyped_calls = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["entropic.cli", "entropic.cli_download"]
+module = ["entropic.cli", "entropic.cli_download", "entropic.cli_setup_cuda"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]

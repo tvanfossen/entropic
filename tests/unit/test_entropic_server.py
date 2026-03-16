@@ -1,23 +1,21 @@
-"""Tests for EntropicServer — unified todo/handoff/prune server."""
+"""Tests for EntropicServer — todo, delegate, pipeline, complete, prune."""
 
 import json
 
 import pytest
 from entropic.core.directives import (
-    ClearSelfTodos,
     ContextAnchor,
-    InjectContext,
+    Delegate,
     NotifyPresenter,
     PruneMessages,
     StopProcessing,
-    TierChange,
 )
 from entropic.mcp.servers.base import ServerResponse
 from entropic.mcp.servers.entropic import EntropicServer
 
 
-class TestEntropicServerTodoWrite:
-    """todo_write returns context_anchor + notify_presenter directives."""
+class TestEntropicServerTodo:
+    """entropic.todo returns context_anchor + notify_presenter directives."""
 
     @pytest.fixture
     def server(self) -> EntropicServer:
@@ -27,14 +25,11 @@ class TestEntropicServerTodoWrite:
     async def test_add_returns_directives(self, server: EntropicServer) -> None:
         """Adding a todo returns context_anchor and notify_presenter directives."""
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
-            },
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
         )
         assert isinstance(result, ServerResponse)
-        assert "Added 1" in result.result
+        assert "Added" in result.result
         assert len(result.directives) == 2
 
         anchor = result.directives[0]
@@ -51,19 +46,12 @@ class TestEntropicServerTodoWrite:
     async def test_update_returns_directives(self, server: EntropicServer) -> None:
         """Updating a todo returns context_anchor and notify_presenter directives."""
         await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
-            },
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
         )
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "update",
-                "index": 0,
-                "status": "in_progress",
-            },
+            "todo",
+            {"action": "update", "index": 0, "status": "in_progress"},
         )
         assert isinstance(result, ServerResponse)
         assert "Updated" in result.result
@@ -71,170 +59,77 @@ class TestEntropicServerTodoWrite:
         assert isinstance(result.directives[1], NotifyPresenter)
 
     @pytest.mark.asyncio
-    async def test_empty_list_returns_usage_reminder(self, server: EntropicServer) -> None:
-        """Empty todo list returns context_anchor with usage reminder."""
+    async def test_remove_returns_directives(self, server: EntropicServer) -> None:
+        """Removing a todo returns directives."""
+        await server.execute_tool(
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
+        )
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "replace",
-                "todos": [],
-            },
+            "todo",
+            {"action": "remove", "index": 0},
         )
         assert isinstance(result, ServerResponse)
-        anchor = result.directives[0]
-        assert isinstance(anchor, ContextAnchor)
-        assert "No active todos" in anchor.content
-        assert "todo_write" in anchor.content
+        assert "Removed" in result.result
 
-        notify = result.directives[1]
-        assert isinstance(notify, NotifyPresenter)
-        assert notify.data["count"] == 0
+    @pytest.mark.asyncio
+    async def test_add_without_content_returns_error(self, server: EntropicServer) -> None:
+        """Add without content returns actionable error."""
+        result = await server.execute_tool(
+            "todo",
+            {"action": "add"},
+        )
+        assert isinstance(result, ServerResponse)
+        assert "Error" in result.result
+        assert "content" in result.result
+
+    @pytest.mark.asyncio
+    async def test_unknown_action_returns_error(self, server: EntropicServer) -> None:
+        """Unknown action returns error with valid actions listed."""
+        result = await server.execute_tool(
+            "todo",
+            {"action": "bulk_update"},
+        )
+        assert isinstance(result, ServerResponse)
+        assert "Error" in result.result
+        assert "add" in result.result
 
 
-class TestEntropicServerHandoff:
-    """handoff returns directives for engine-level side effects."""
+class TestEntropicServerDelegate:
+    """delegate returns directives for engine-level side effects."""
 
     @pytest.fixture
     def server(self) -> EntropicServer:
         return EntropicServer()
 
     @pytest.mark.asyncio
-    async def test_handoff_with_execution_todos(self, server: EntropicServer) -> None:
-        """Handoff succeeds when execution todos exist."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {
-                        "content": "Fix bug",
-                        "active_form": "Fixing",
-                        "status": "pending",
-                        "target_tier": "code",
-                    }
-                ],
-            },
-        )
+    async def test_delegate_succeeds(self, server: EntropicServer) -> None:
+        """Delegate succeeds without requiring prior todos."""
         result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "code",
-                "reason": "Implementation ready",
-                "task_state": "plan_ready",
-            },
+            "delegate",
+            {"target": "code", "task": "Implement feature"},
         )
         assert isinstance(result, ServerResponse)
-        assert "Handoff requested" in result.result
+        assert "Delegation requested" in result.result
 
         directive_types = [type(d) for d in result.directives]
-        assert ClearSelfTodos in directive_types
-        assert TierChange in directive_types
+        assert Delegate in directive_types
         assert StopProcessing in directive_types
 
-        tier_d = next(d for d in result.directives if isinstance(d, TierChange))
-        assert tier_d.tier == "code"
+        delegate_d = next(d for d in result.directives if isinstance(d, Delegate))
+        assert delegate_d.target == "code"
+        assert delegate_d.task == "Implement feature"
 
     @pytest.mark.asyncio
-    async def test_handoff_empty_list_succeeds(self, server: EntropicServer) -> None:
-        """Handoff with empty todo list succeeds (no gate)."""
+    async def test_delegate_with_max_turns(self, server: EntropicServer) -> None:
+        """Delegate passes max_turns to directive."""
         result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "normal",
-                "reason": "Quick handoff",
-                "task_state": "in_progress",
-            },
+            "delegate",
+            {"target": "code", "task": "Quick fix", "max_turns": 5},
         )
         assert isinstance(result, ServerResponse)
-        assert "Handoff requested" in result.result
-        assert len(result.directives) > 0
-
-    @pytest.mark.asyncio
-    async def test_handoff_blocked_without_execution_todos(self, server: EntropicServer) -> None:
-        """Handoff blocked when todos exist but none have target_tier."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Self task", "active_form": "Working", "status": "pending"}],
-            },
-        )
-        result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "code",
-                "reason": "test",
-                "task_state": "in_progress",
-            },
-        )
-        # Error case returns plain string
-        assert isinstance(result, str)
-        data = json.loads(result)
-        assert "error" in data
-        assert "No execution todos" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_handoff_warns_incomplete_self_todos(self, server: EntropicServer) -> None:
-        """Handoff warns about incomplete self-directed todos."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {"content": "Self task", "active_form": "Self", "status": "pending"},
-                    {
-                        "content": "Code task",
-                        "active_form": "Coding",
-                        "status": "pending",
-                        "target_tier": "code",
-                    },
-                ],
-            },
-        )
-        result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "code",
-                "reason": "test",
-                "task_state": "in_progress",
-            },
-        )
-        assert isinstance(result, ServerResponse)
-        inject = next((d for d in result.directives if isinstance(d, InjectContext)), None)
-        assert inject is not None
-        assert "1 self-directed" in inject.content
-
-    @pytest.mark.asyncio
-    async def test_handoff_no_warning_when_self_todos_complete(
-        self, server: EntropicServer
-    ) -> None:
-        """No warning when all self-directed todos are completed."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {"content": "Self done", "active_form": "Done", "status": "completed"},
-                    {
-                        "content": "Code task",
-                        "active_form": "Coding",
-                        "status": "pending",
-                        "target_tier": "code",
-                    },
-                ],
-            },
-        )
-        result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "code",
-                "reason": "test",
-                "task_state": "in_progress",
-            },
-        )
-        assert isinstance(result, ServerResponse)
-        inject = [d for d in result.directives if isinstance(d, InjectContext)]
-        assert len(inject) == 0
+        delegate_d = next(d for d in result.directives if isinstance(d, Delegate))
+        assert delegate_d.max_turns == 5
 
 
 class TestEntropicServerPrune:
@@ -263,46 +158,41 @@ class TestEntropicServerPrune:
 
 
 class TestEntropicServerDynamicTiers:
-    """Custom tier_names patch handoff tool schema and validate at runtime."""
+    """Custom tier_names patch delegate tool schema and validate at runtime."""
 
     @pytest.fixture
     def server(self) -> EntropicServer:
         return EntropicServer(tier_names=["suggest", "validate", "execute"])
 
-    def test_handoff_enum_patched(self, server: EntropicServer) -> None:
-        """Handoff tool's target_tier enum reflects custom tier names."""
+    def test_delegate_enum_patched(self, server: EntropicServer) -> None:
+        """Delegate tool's target enum reflects custom tier names."""
         tools = server.get_tools()
-        handoff = next(t for t in tools if t.name == "handoff")
-        enum = handoff.inputSchema["properties"]["target_tier"]["enum"]
+        delegate = next(t for t in tools if t.name == "delegate")
+        enum = delegate.inputSchema["properties"]["target"]["enum"]
         assert enum == ["suggest", "validate", "execute"]
 
-    def test_handoff_description_updated(self, server: EntropicServer) -> None:
-        """Handoff description mentions custom tier names, not defaults."""
+    def test_delegate_description_updated(self, server: EntropicServer) -> None:
+        """Delegate description mentions custom tier names."""
         tools = server.get_tools()
-        handoff = next(t for t in tools if t.name == "handoff")
-        assert "`suggest`" in handoff.description
-        assert "`validate`" in handoff.description
-        assert "`execute`" in handoff.description
-        assert "simple" not in handoff.description
+        delegate = next(t for t in tools if t.name == "delegate")
+        assert "`suggest`" in delegate.description
+        assert "`validate`" in delegate.description
+        assert "`execute`" in delegate.description
 
-    def test_default_server_uses_static_tiers(self) -> None:
-        """Server without tier_names uses the static handoff.json enum."""
+    def test_default_server_uses_empty_enum(self) -> None:
+        """Server without tier_names uses delegate.json with empty enum."""
         server = EntropicServer()
         tools = server.get_tools()
-        handoff = next(t for t in tools if t.name == "handoff")
-        enum = handoff.inputSchema["properties"]["target_tier"]["enum"]
-        assert enum == ["simple", "normal", "code", "thinking"]
+        delegate = next(t for t in tools if t.name == "delegate")
+        enum = delegate.inputSchema["properties"]["target"]["enum"]
+        assert enum == []
 
     @pytest.mark.asyncio
-    async def test_handoff_rejects_invalid_tier(self, server: EntropicServer) -> None:
-        """Handoff rejects a tier name not in the custom set."""
+    async def test_delegate_rejects_invalid_tier(self, server: EntropicServer) -> None:
+        """Delegate rejects a tier name not in the custom set."""
         result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "thinking",
-                "reason": "deep analysis",
-                "task_state": "in_progress",
-            },
+            "delegate",
+            {"target": "thinking", "task": "deep analysis"},
         )
         assert isinstance(result, str)
         data = json.loads(result)
@@ -310,38 +200,34 @@ class TestEntropicServerDynamicTiers:
         assert "Unknown tier" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_handoff_accepts_valid_custom_tier(self, server: EntropicServer) -> None:
-        """Handoff succeeds with a valid custom tier name."""
+    async def test_delegate_accepts_valid_custom_tier(self, server: EntropicServer) -> None:
+        """Delegate succeeds with a valid custom tier name."""
         result = await server.execute_tool(
-            "handoff",
-            {
-                "target_tier": "validate",
-                "reason": "check the move",
-                "task_state": "in_progress",
-            },
+            "delegate",
+            {"target": "validate", "task": "check the move"},
         )
         assert isinstance(result, ServerResponse)
-        assert "Handoff requested" in result.result
-        tier_d = next(d for d in result.directives if isinstance(d, TierChange))
-        assert tier_d.tier == "validate"
+        assert "Delegation requested" in result.result
+        delegate_d = next(d for d in result.directives if isinstance(d, Delegate))
+        assert delegate_d.target == "validate"
 
 
-class TestSingleTierSkipsHandoff:
-    """Single-tier server omits handoff tool (handoff to yourself is meaningless)."""
+class TestSingleTierSkipsDelegate:
+    """Single-tier server omits delegate tool (delegate to yourself is meaningless)."""
 
-    def test_single_tier_no_handoff(self) -> None:
-        """Server with one tier does not register handoff."""
+    def test_single_tier_no_delegate(self) -> None:
+        """Server with one tier does not register delegate."""
         server = EntropicServer(tier_names=["normal"])
         tool_names = [t.name for t in server.get_tools()]
-        assert "handoff" not in tool_names
-        assert "todo_write" in tool_names
+        assert "delegate" not in tool_names
+        assert "todo" in tool_names
         assert "prune_context" in tool_names
 
-    def test_multi_tier_has_handoff(self) -> None:
-        """Server with multiple tiers registers handoff."""
+    def test_multi_tier_has_delegate(self) -> None:
+        """Server with multiple tiers registers delegate."""
         server = EntropicServer(tier_names=["normal", "thinking"])
         tool_names = [t.name for t in server.get_tools()]
-        assert "handoff" in tool_names
+        assert "delegate" in tool_names
 
 
 class TestEntropicServerUnknownTool:

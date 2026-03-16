@@ -61,6 +61,16 @@ class TestFilesystemServer:
         with pytest.raises(ValueError, match="outside root"):
             server._resolve_path("/etc/passwd")
 
+    def test_path_outside_root_allowed_with_config(self, tmp_path: Path) -> None:
+        """Test allow_outside_root config permits path traversal."""
+        from entropic.config.schema import FilesystemConfig
+
+        config = FilesystemConfig(allow_outside_root=True)
+        server = FilesystemServer(tmp_path, config=config)
+        # Should not raise — path traversal is allowed
+        resolved = server._resolve_path("/etc/hostname")
+        assert resolved == Path("/etc/hostname")
+
     @pytest.mark.asyncio
     async def test_str_replace_edit(self, server: FilesystemServer, tmp_path: Path) -> None:
         """Test edit_file with str_replace mode."""

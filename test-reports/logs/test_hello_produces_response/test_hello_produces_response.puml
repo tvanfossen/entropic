@@ -17,12 +17,20 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **SIMPLE** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I assist you today?
+  Hello! 👋 
+  
+  I'm here to help you with your development tasks. As the team lead, I can 
+  coordinate between architecture, engineering, QA, UX, UI, and other specialized 
+  roles to get your work done efficiently.
+  
+  What would you like to tackle today? Whether it's building a new feature, fixing
+  bugs, reviewing code, or planning an architecture — just let me know what you 
+  need!
 end note
 note over T #palegreen
   **PASSED** (< 38s)

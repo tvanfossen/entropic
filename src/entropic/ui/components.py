@@ -28,7 +28,6 @@ class StatusBar:
     vram_total: float
     tokens: int
     theme: Theme
-    thinking_mode: bool = False
     context_used: int = 0
     context_max: int = 16384
 
@@ -55,24 +54,16 @@ class StatusBar:
         else:
             context_color = self.theme.success_color
 
-        # Thinking mode indicator
-        if self.thinking_mode:
-            mode_indicator = "[bold magenta]Thinking[/]"
-        else:
-            mode_indicator = "[bold yellow]Fast[/]"
-
         # Context bar visual
         context_bar = self._render_context_bar(context_percent, context_color)
 
         table = Table.grid(padding=1)
         table.add_column(justify="left")
         table.add_column(justify="center")
-        table.add_column(justify="center")
         table.add_column(justify="right")
 
         table.add_row(
             f"[bold]Model:[/] {self.model}",
-            f"[bold]Mode:[/] {mode_indicator}",
             f"[{vram_color}]VRAM: {self.vram_used:.1f}/{self.vram_total:.1f} GB[/]",
             f"[{context_color}]Context: {context_bar} {context_percent:.0f}%[/]",
         )

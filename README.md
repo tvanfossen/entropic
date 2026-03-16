@@ -67,7 +67,9 @@ orchestrator handles dynamic swapping with lock-protected state transitions.
 
 The engine runs an autonomous tool-calling loop: generate -> parse tool calls ->
 execute tools -> feed results back -> generate again. The loop continues until
-the model produces a complete response or hits the iteration limit.
+the model produces a complete response or hits the iteration limit. Tiers can
+auto-chain — when a tier exhausts its token budget without acting, the engine
+hands off to the next tier via configurable handoff rules.
 
 Tools communicate back to the engine via **directives** — structured signals
 embedded in tool results that can trigger tier handoffs, context anchoring, and
@@ -78,10 +80,15 @@ state management without the model needing to orchestrate these concerns.
 - **Fully Local** — All inference on your hardware via llama-cpp-python. No API keys.
 - **Library API** — Embed the engine in your own application with `LibraryConfig`
 - **Intelligent Routing** — Sub-second prompt classification routes to the right model tier
+- **Auto-Chain** — Automatic tier handoff on token exhaustion or grammar completion
+- **GBNF Grammar** — Per-tier output constraints via GBNF grammars (streaming and non-streaming)
 - **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
+- **VRAM Lifecycle** — Three-state model lifecycle (COLD→WARM→ACTIVE): warm models pin to CPU RAM via mlock, activate to GPU on demand — no reload from disk on tier swap
 - **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
 - **Auto-Compaction** — Context summarization for long conversations
 - **MCP Tools** — Filesystem, bash, diagnostics, git, and extensible tool servers
+- **Runtime MCP** — Register and unregister MCP servers at runtime via `connect_server()` / `disconnect_server()`; `.mcp.json` auto-discovered at startup
+- **Benchmark CLI** — Layer 1 benchmarks (load time, tok/s, VRAM, tier swap latency) via `entropic benchmark run`
 - **Headless Mode** — Full engine without TUI for automation and testing
 - **TUI** — Terminal interface built on Textual with streaming, tool approval, voice input
 
@@ -92,18 +99,19 @@ state management without the model needing to orchestrate these concerns.
 - CUDA 12.4+
 - Python 3.10+
 
-## Quick Start
+## Installation
 
-### From source (development)
+### From source (recommended for GPU users)
 
 ```bash
 git clone https://github.com/tvanfossen/entropic.git
 cd entropic
-./install.sh app
+./install.sh          # auto-detects GPU, builds CUDA support
 ```
 
-The install script creates a virtual environment, detects CUDA, and installs
-with the `[app]` extras (TUI + storage dependencies).
+The install script creates a virtual environment, clones and builds
+llama-cpp-python with CUDA support (if a GPU is detected), and installs
+entropic with the `[app]` extras.
 
 ```bash
 # Place GGUF models in ~/models/gguf/ (or configure paths in .entropic/config.local.yaml)
@@ -115,19 +123,28 @@ with the `[app]` extras (TUI + storage dependencies).
 .venv/bin/entropic --headless
 ```
 
-### With pipx (isolated install)
+### From PyPI
 
 ```bash
-pipx install entropic-engine[app]
+pip install entropic-engine
+entropic setup-cuda   # build llama-cpp-python with CUDA + latest model support
 ```
 
-If you have an NVIDIA GPU, rebuild `llama-cpp-python` with CUDA support:
+### What `setup-cuda` does
+
+- Clones llama-cpp-python v0.3.25 (JamePeng fork — upstream is abandoned)
+- Includes llama.cpp with Qwen3.5-MoE and other recent architectures
+- Builds with CUDA support (requires nvidia-smi, cmake, CUDA toolkit)
+- Installs into the current Python environment
+- Cached at ~/.entropic/.build/ — re-run is fast, use `--force` to rebuild
+
+### CPU-only (no GPU)
 
 ```bash
-PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="-DGGML_CUDA=on" \
-  pipx runpip entropic-engine install llama-cpp-python \
-  --force-reinstall --no-cache-dir
+pip install entropic-engine
 ```
+
+Models will run on CPU. Significantly slower but functional.
 
 ## CLI
 
@@ -138,6 +155,9 @@ entropic status             # Show model and system status
 entropic ask "question"     # Single-shot question
 entropic init               # Initialize .entropic/ in current directory
 entropic download <model>   # Download model files
+entropic setup-cuda         # Build llama-cpp-python with CUDA
+entropic mcp-bridge         # Stdio→socket bridge for Claude Code integration
+entropic benchmark run <model.gguf> --layer1-only   # Raw inference benchmarks
 ```
 
 ## Configuration
@@ -154,26 +174,20 @@ describing the project that gets included in the system prompt.
 
 ## Library Usage
 
-```python
-from entropic import LibraryConfig, Orchestrator, Engine, ServerManager
+See `examples/` for complete integrations (`hello-world/`, `pychess/`).
 
-config = LibraryConfig(
-    config_dir=Path("~/.myapp").expanduser(),
-    tiers={"normal": {"path": "model.gguf", "adapter": "qwen3"}},
-)
+## Privacy
 
-orchestrator = Orchestrator(config.to_app_config())
-await orchestrator.initialize()
+Entropic runs entirely on your local hardware. No data is sent to external
+servers. No telemetry is collected. Your prompts, conversations, and model
+outputs never leave your machine.
 
-server_manager = ServerManager(config.to_app_config())
-await server_manager.initialize()
+## Disclaimer
 
-engine = Engine(orchestrator=orchestrator, server_manager=server_manager)
-async for message in engine.run("Hello"):
-    print(message.content)
-```
-
-See `examples/hello-world/` and `examples/pychess/` for complete integrations.
+Entropic runs AI models locally on your hardware. AI-generated outputs may be
+inaccurate, biased, or inappropriate. Users are solely responsible for
+evaluating and using any generated content. This software does not provide
+professional, legal, medical, or financial advice.
 
 ## License
 

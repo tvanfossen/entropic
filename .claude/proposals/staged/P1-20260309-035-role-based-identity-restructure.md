@@ -9,7 +9,7 @@ component: identities
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-03-09
-updated: 2026-03-09
+updated: 2026-03-16
 tags: [identities, roles, architecture, constitutional-ai]
 completed_date: null
 scoped_files:

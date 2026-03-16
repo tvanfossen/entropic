@@ -16,6 +16,8 @@ pip install entropic-engine[tui]     # Terminal UI (not needed for library use)
 my-app/
 ├── data/
 │   ├── default_config.yaml          # App defaults (seeded to .myapp/)
+│   ├── grammars/                    # GBNF grammar files
+│   │   └── {tier_name}.gbnf
 │   └── tools/
 │       └── {server_name}/
 │           └── {tool_name}.json     # MCP tool definitions
@@ -61,6 +63,11 @@ config = loader.load(cli_overrides={
 | `models.tiers` | Yes | Dict of tier_name -> model config |
 | `models.default` | Yes | Must reference a defined tier |
 | `models.router` | If routing enabled | Small model for classification |
+| `tiers.*.grammar` | No | Path to `.gbnf` file for output constraints |
+| `tiers.*.auto_chain` | No | Chain to next tier on completion (default: false) |
+| `tiers.*.enable_thinking` | No | Default true; false adds `/no-think` (Qwen3) |
+| `tiers.*.identity` | No | Per-tier system prompt (None=bundled, False=disabled) |
+| `tiers.*.allowed_tools` | No | Tool visibility filter (`server.tool` format) |
 | `routing.fallback_tier` | If tiers defined | Must reference a defined tier |
 | `routing.tier_map` | No | Auto-derived from tier order |
 | `routing.handoff_rules` | No | Default: all-to-all |
@@ -184,7 +191,7 @@ server_manager.register_server(my_server)   # BEFORE initialize()
 await server_manager.initialize()
 ```
 
-`tier_names` is passed so the `entropic.handoff` tool knows which tiers exist.
+`tier_names` is passed so the `entropic.delegate` tool knows which tiers exist.
 
 ### 8. Agent Engine
 
@@ -210,7 +217,7 @@ async for msg in engine.run(prompt, system_prompt=context):
     pass  # Messages yielded as conversation progresses
 ```
 
-The engine handles routing, generation, tool execution, and tier handoffs
+The engine handles routing, generation, tool execution, and delegation
 automatically. Returns when the model stops or max iterations reached.
 
 ### 10. Shutdown
@@ -261,7 +268,18 @@ chunks — use `on_stream_chunk` callback for streaming).
 - `LoopConfig.max_consecutive_errors` consecutive tool errors occur
 
 **Re-entrant calls:** `engine.run()` can be called multiple times on the same
-engine instance. Conversation history carries forward between runs.
+engine instance. History is **not** stored internally — the consumer must capture
+yielded messages and pass them back via the `history` parameter:
+
+```python
+history: list[Message] = []
+async for msg in engine.run("Hello", history=history):
+    history.append(msg)
+
+# Next turn — pass accumulated history
+async for msg in engine.run("Follow up", history=history):
+    history.append(msg)
+```
 
 **Callback exceptions:** If a callback raises an exception, it propagates up
 through the engine and terminates the current run. Wrap callback logic in
@@ -299,10 +317,92 @@ tiers:
   suggest:
     allowed_tools:
       - chess.get_board       # server_name.tool_name
-      - entropic.handoff       # built-in handoff tool
+      - entropic.delegate       # built-in delegation tool
 ```
 
 `None` (default) means all tools are visible to the tier.
+
+## Delegation System
+
+Tiers delegate work to other tiers using `entropic.delegate` (single role) or
+`entropic.pipeline` (multi-stage chain). Delegation spawns an isolated child
+inference loop — the child runs to completion with fresh context, then returns
+its final message to the parent.
+
+### Delegation Tools
+
+| Tool | Purpose | Example |
+|------|---------|---------|
+| `entropic.delegate` | Single-role delegation | `delegate(target="eng", task="Fix the login bug")` |
+| `entropic.pipeline` | Multi-stage chain | `pipeline(stages=["eng", "qa"], task="Implement and test feature")` |
+| `entropic.todo_write` | Planning (required before delegation) | Create work plan with `target_tier` per item |
+
+The delegate tool **rejects calls when no todos exist** — the delegating tier
+must plan first using `todo_write`, then delegate.
+
+### Child Loop Isolation
+
+Each delegation creates:
+- **Fresh context**: system prompt + task only — no parent conversation history
+- **Git worktree** (if git repo): isolated filesystem for child modifications
+- **Scoped state**: TodoList and context anchors saved/restored around child loop
+
+On success, the worktree is merged back. On failure, it's discarded.
+
+### Auto-Chain (Return to Parent)
+
+Front-office tiers (eng, qa, arch, etc.) have `auto_chain: lead` in their
+identity frontmatter. When a child loop completes (stop + no tool calls),
+auto_chain fires — but in a delegation child, it signals `COMPLETE` instead
+of performing a tier change. The child's final message returns to the parent.
+
+### Grammar + Auto-Chain Interaction
+
+Grammar and auto_chain compose with delegation:
+
+| Config Combination | Behavior |
+|---|---|
+| `grammar` only | Structured output, tier is terminal |
+| `auto_chain` only | Returns to parent on completion (delegation) or chains (root) |
+| `grammar` + `auto_chain` | Chains on grammar completion (`stop`) |
+| `auto_chain` at depth 0 | In-place tier change to `auto_chain` target |
+| `auto_chain` at depth > 0 | Signals `COMPLETE`, returns to parent |
+
+### Delegation Rules
+
+```yaml
+routing:
+  handoff_rules:
+    lead: [eng, qa, arch, ux, ui, analyst]  # Lead can delegate to these
+    eng: [qa]                                # Eng can only delegate to QA
+    qa: []                                   # QA is terminal
+```
+
+Empty rules (default) means all-to-all delegation is allowed.
+
+### Delegation Callbacks
+
+```python
+callbacks = EngineCallbacks(
+    on_delegation_start=lambda conv_id, tier, task: ...,
+    on_delegation_complete=lambda conv_id, tier, summary, success: ...,
+)
+```
+
+### Pipeline Pattern
+
+Lead uses `entropic.pipeline` for multi-stage work. Each stage receives
+the original task plus the previous stage's output:
+
+```
+pipeline(stages=["arch", "eng", "qa"], task="Design and implement login")
+
+  arch receives: "Design and implement login"
+  eng receives:  "Original task: ... Previous stage (arch) output: ..."
+  qa receives:   "Original task: ... Previous stage (eng) output: ..."
+```
+
+If any stage fails, the pipeline stops and returns the failure to the parent.
 
 ## Security Considerations
 
@@ -340,12 +440,12 @@ tiers:
   reader:
     allowed_tools:
       - myserver.get_data
-      - entropic.handoff
+      - entropic.delegate
   writer:
     allowed_tools:
       - myserver.get_data
       - myserver.write_data
-      - entropic.handoff
+      - entropic.delegate
 ```
 
 ### Error Sanitization
@@ -402,6 +502,182 @@ except Exception:
 If `orchestrator.initialize()` succeeds but later steps fail, you must still call
 `orchestrator.shutdown()` to release GPU memory.
 
+## VRAM Model Lifecycle (P1-022)
+
+Models transition through three states:
+
+```
+COLD → WARM → ACTIVE
+         ↑       ↓
+         └─ deactivate
+```
+
+| State | RAM | VRAM | Notes |
+|-------|-----|------|-------|
+| COLD | ✗ | ✗ | Not loaded |
+| WARM | ✅ | ✗ | mlock pages in CPU RAM, fast GPU promotion |
+| ACTIVE | ✅ | ✅ | Generating |
+
+**`keep_warm`** enables the WARM state for a tier's model. At startup, the model is pre-loaded to CPU RAM. On swap-out, it deactivates to WARM (not fully unloaded), so GPU promotion (WARM→ACTIVE) takes ~1–3s instead of a full cold load from disk. Models without `keep_warm` go COLD on swap-out, freeing all VRAM and RAM.
+
+```yaml
+models:
+  tiers:
+    lead:
+      path: ~/models/Qwen3.5-35B-A3B-Q2_K.gguf
+      keep_warm: true    # Stay in WARM state when swapped out
+      use_mlock: true    # Lock pages (default). Prevents OS swap.
+```
+
+**`vram_reserve_mb`** keeps headroom free to avoid OOM during swaps:
+
+```yaml
+library:
+  vram_reserve_mb: 512   # Keep 512MB free (default)
+```
+
+`ModelState` is exported from `entropic.core` for consumers that need to inspect tier state:
+
+```python
+from entropic.core import ModelState
+
+state = orchestrator.get_tier("thinking").backend.state
+if state == ModelState.WARM:
+    print("Thinking tier is pre-loaded, next request will be fast")
+```
+
+## Subsystem Injection (P2-019)
+
+The engine's internal subsystems (`ToolExecutor`, `ResponseGenerator`, `ContextManager`) are constructed eagerly but can be replaced via post-construction assignment for testing or custom behavior:
+
+```python
+from entropic import AgentEngine
+from entropic.core.tool_executor import ToolExecutor
+
+engine = AgentEngine(orchestrator, server_manager, config, loop_config)
+
+# Replace with a custom subclass after construction
+engine._tool_executor = MyToolExecutor(
+    server_manager=server_manager,
+    orchestrator=orchestrator,
+    config=config,
+    callbacks=engine._callbacks,
+)
+```
+
+This pattern is used in tests to inject mock subsystems:
+
+```python
+from unittest.mock import AsyncMock
+from entropic.core.context_manager import ContextManager
+
+engine._context_manager = AsyncMock(spec=ContextManager)
+engine._context_manager.check_compaction.return_value = False
+```
+
+`EngineCallbacks` is a shared mutable dataclass — all subsystems hold a reference to the same instance. Call `engine.set_callbacks()` to update callbacks in place; all subsystems see the change immediately.
+
+## Runtime MCP Registration (P2-026)
+
+### `.mcp.json` Auto-Discovery
+
+Entropic reads `.mcp.json` at `ServerManager.initialize()` time and connects any listed MCP servers automatically. This is the same file Claude Code uses, so third-party tool servers can be declared once:
+
+```json
+{
+  "mcpServers": {
+    "my-tool-server": {
+      "type": "sse",
+      "url": "http://127.0.0.1:9000/sse"
+    },
+    "my-stdio-server": {
+      "type": "stdio",
+      "command": "my-mcp-server",
+      "args": ["--verbose"]
+    }
+  }
+}
+```
+
+Supported transports: `sse`, `stdio`. YAML `mcp.external_servers` takes priority on name collision.
+
+**Self-detection:** If an entry's socket path matches Entropic's own socket (derived from `project_dir`), it is skipped. This prevents circular connections when Entropic is listed in its own `.mcp.json`.
+
+### Runtime connect/disconnect
+
+Connect an external MCP server after the engine is running:
+
+```python
+# SSE server (HTTP)
+tool_names = await engine.connect_server(
+    name="pycommander",
+    sse_url="http://127.0.0.1:6277/sse",
+)
+print(f"Connected: {tool_names}")
+
+# stdio server (subprocess)
+tool_names = await engine.connect_server(
+    name="my-cli-tool",
+    command="my-mcp-server",
+    args=["--verbose"],
+)
+
+# Disconnect
+await engine.disconnect_server("pycommander")
+```
+
+Runtime-connected tools appear in `list_tools()` immediately and follow per-tier `allowed_tools` filtering on the next turn.
+
+```python
+# Inspect all connected servers
+servers = engine.server_manager.list_servers()
+for name, info in servers.items():
+    print(f"{name}: {info.transport} {info.status} ({info.source})")
+```
+
+`ServerInfo.source` is one of `"config"`, `"mcp_json"`, or `"runtime"`.
+
+### Tool namespacing
+
+All external MCP server tools are prefixed with the server name: `{server}.{tool}`. Add them explicitly to `allowed_tools` for tiers that need them:
+
+```yaml
+tiers:
+  eng:
+    allowed_tools:
+      - filesystem.write_file
+      - pycommander.device_info.query   # Runtime server tool, explicitly permitted
+```
+
+## Benchmark CLI (P1-029)
+
+Layer 1 benchmarks measure raw model performance: load times, token/s, swap latency, and GPU sweep.
+
+```bash
+# Full Layer 1 benchmark
+entropic benchmark run /path/to/model.gguf --layer1-only
+
+# GPU layer sweep only
+entropic benchmark sweep /path/to/model.gguf --max-layers 40
+
+# Save results to JSON
+entropic benchmark run /path/to/model.gguf --layer1-only --output results.json
+```
+
+**Layer 1 measures:**
+
+| Metric | Description |
+|--------|-------------|
+| Cold load time | COLD → ACTIVE (disk read + GPU transfer) |
+| Warm load time | WARM → ACTIVE (RAM → GPU only, validates `keep_warm`) |
+| Token/s | Inference throughput at target GPU layers |
+| Swap latency | ACTIVE → WARM → ACTIVE round-trip (validates <3s target) |
+| GPU sweep | Token/s vs layers curve, OOM detection |
+
+Results are printed as tables and optionally exported as JSON for comparison across model versions.
+
+The benchmark bypasses the engine identity system — it uses `LlamaCppBackend` directly with no routing, tool execution, or context management. This gives clean baseline measurements unaffected by engine overhead.
+
 ## Public API Surface
 
 Exported from `entropic`:
@@ -426,6 +702,7 @@ Exported from `entropic`:
 | `Message` | Core | Chat message |
 | `GenerationResult` | Core | Model output |
 | `ModelBackend` | Core | Backend ABC |
+| `ModelState` | Core | COLD/WARM/ACTIVE enum |
 | `ModelTier` | Core | Tier metadata |
 | `ToolCall` | Core | Tool invocation |
 | `ToolProvider` | Core | Tool provider ABC |
@@ -444,4 +721,4 @@ Exported from `entropic`:
 | `TierIdentity` | Prompts | Identity file schema |
 | `load_tier_identity` | Prompts | Parse identity frontmatter |
 | `setup_logging` | Logging | Session logging |
-| `setup_model_logger` | Logging | Model logging |
+| `setup_model_logger` | Logging | Model logging |\n| `setup_display_logger` | Logging | Display mirror logging |

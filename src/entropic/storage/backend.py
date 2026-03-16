@@ -11,7 +11,7 @@ from typing import Any
 from entropic.core.base import Message, StorageBackend
 from entropic.core.logging import get_logger
 from entropic.storage.database import Database
-from entropic.storage.models import ConversationRecord, MessageRecord
+from entropic.storage.models import ConversationRecord, DelegationRecord, MessageRecord
 
 logger = get_logger("storage.backend")
 
@@ -86,8 +86,9 @@ class SQLiteStorage(StorageBackend):
                 """
                 INSERT INTO messages
                     (id, conversation_id, role, content, tool_calls,
-                     tool_results, token_count, created_at, is_compacted)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     tool_results, token_count, created_at, is_compacted,
+                     identity_tier)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 record.to_row(),
             )
@@ -203,3 +204,86 @@ class SQLiteStorage(StorageBackend):
             "total_messages": messages["count"] if messages else 0,
             "total_tokens": tokens["total"] or 0 if tokens else 0,
         }
+
+    # ------------------------------------------------------------------
+    # Delegation storage
+    # ------------------------------------------------------------------
+
+    async def create_delegation(
+        self,
+        parent_conversation_id: str,
+        delegating_tier: str,
+        target_tier: str,
+        task: str,
+        max_turns: int | None = None,
+    ) -> tuple[str, str]:
+        """Create a delegation record with a child conversation.
+
+        Returns:
+            (delegation_id, child_conversation_id)
+        """
+        child_conv_id = await self.create_conversation(
+            title=f"Delegation: {target_tier} — {task[:60]}",
+            project_path=None,
+            model_id=target_tier,
+        )
+
+        record = DelegationRecord.create(
+            parent_conversation_id=parent_conversation_id,
+            child_conversation_id=child_conv_id,
+            delegating_tier=delegating_tier,
+            target_tier=target_tier,
+            task=task,
+        )
+        record.max_turns = max_turns
+        record.status = "running"
+
+        await self._db.execute(
+            """
+            INSERT INTO delegations
+                (id, parent_conversation_id, child_conversation_id,
+                 delegating_tier, target_tier, task, max_turns,
+                 status, result_summary, created_at, completed_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            record.to_row(),
+        )
+
+        logger.info(
+            "Created delegation %s: %s → %s",
+            record.id,
+            delegating_tier,
+            target_tier,
+        )
+        return record.id, child_conv_id
+
+    async def complete_delegation(
+        self,
+        delegation_id: str,
+        status: str,
+        result_summary: str | None = None,
+    ) -> None:
+        """Mark a delegation as completed or failed."""
+        await self._db.execute(
+            """
+            UPDATE delegations
+            SET status = ?, result_summary = ?, completed_at = ?
+            WHERE id = ?
+            """,
+            (status, result_summary, datetime.utcnow().isoformat(), delegation_id),
+        )
+
+    async def get_delegations(
+        self,
+        conversation_id: str,
+    ) -> list[dict[str, Any]]:
+        """Get delegations for a conversation (as parent)."""
+        rows = await self._db.fetchall(
+            """
+            SELECT * FROM delegations
+            WHERE parent_conversation_id = ?
+            ORDER BY created_at ASC
+            """,
+            (conversation_id,),
+        )
+        return [dict(row) for row in rows]

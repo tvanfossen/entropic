@@ -5,6 +5,7 @@ Handles command-line arguments and initializes the application.
 """
 
 import asyncio
+import logging
 import sys
 import warnings
 from pathlib import Path
@@ -19,8 +20,13 @@ warnings.filterwarnings("ignore", message=".*pkg_resources.*")
 import click  # noqa: E402
 
 from entropic import __version__  # noqa: E402
+from entropic.benchmark.cli import benchmark  # noqa: E402
 from entropic.config.loader import reload_config  # noqa: E402
-from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E402
+from entropic.core.logging import (  # noqa: E402
+    setup_display_logger,
+    setup_logging,
+    setup_model_logger,
+)
 
 
 @click.group(invoke_without_command=True)
@@ -35,7 +41,7 @@ from entropic.core.logging import setup_logging, setup_model_logger  # noqa: E40
     "--model",
     "-m",
     type=str,
-    help="Model tier to use (e.g., thinking, normal, code)",
+    help="Model tier to use (e.g., lead, eng, arch)",
 )
 @click.option(
     "--log-level",
@@ -84,8 +90,14 @@ def main(
     project_dir = project or Path.cwd()
 
     # Setup logging (writes to .entropic/session.log and session_model.log)
-    logger = setup_logging(app_config, project_dir=project_dir)
-    setup_model_logger(project_dir=project_dir)
+    # mcp-bridge is a relay subprocess — skip session log setup so it doesn't
+    # truncate the main process's session.log with mode='w'.
+    if ctx.invoked_subcommand != "mcp-bridge":
+        logger = setup_logging(app_config, project_dir=project_dir)
+        setup_model_logger(project_dir=project_dir)
+        setup_display_logger(project_dir=project_dir)
+    else:
+        logger = logging.getLogger("entropic")
 
     # Store in context for subcommands
     ctx.ensure_object(dict)
@@ -106,6 +118,10 @@ def main(
             from entropic.ui.headless import HeadlessPresenter
 
             presenter = HeadlessPresenter()
+
+        # TUI uses bundled app_context_tui.md unless consumer overrides
+        if app_config.app_context is None:
+            app_config.app_context = Path("app_context_tui.md")
 
         app = Application(
             config=app_config,
@@ -137,9 +153,6 @@ def status(ctx: click.Context) -> None:
         table.add_row("Router Model", str(config.models.router.path))
     else:
         table.add_row("Router Model", "[dim]Not configured[/dim]")
-
-    # Thinking mode
-    table.add_row("Thinking Mode Default", str(config.thinking.enabled))
 
     # Settings
     table.add_row("Routing Enabled", str(config.routing.enabled))
@@ -254,11 +267,30 @@ def download(model: str, output_dir: Path, force: bool) -> None:
     download_models(model, output_dir, force)
 
 
+@main.command("setup-cuda")
+@click.option("--force", "-f", is_flag=True, help="Remove cached clone and rebuild from scratch")
+@click.option("--cpu", is_flag=True, help="Build CPU-only (skip CUDA)")
+def setup_cuda(force: bool, cpu: bool) -> None:
+    """Build llama-cpp-python with CUDA support for GPU acceleration.
+
+    Clones llama-cpp-python (pinned to a known release), pins the nested
+    llama.cpp to a commit with latest model architecture support, and
+    installs into the current Python environment.
+
+    \b
+    Cache:         ~/.entropic/.build/
+    Prerequisites: git, cmake, CUDA toolkit (unless --cpu)
+    """
+    from entropic.cli_setup_cuda import setup_cuda_command
+
+    setup_cuda_command(force=force, cpu=cpu)
+
+
 @main.command("mcp-bridge")
 @click.option(
     "--socket",
     type=click.Path(path_type=Path),
-    help="Path to Unix socket (default: ~/.entropic/mcp.sock)",
+    help="Path to Unix socket (default: ~/.entropic/socks/{hash(cwd)}.sock)",
 )
 @click.pass_context
 def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
@@ -286,6 +318,9 @@ def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
     socket_path = str(socket) if socket else None
     exit_code = bridge_main(socket_path)
     sys.exit(exit_code)
+
+
+main.add_command(benchmark)
 
 
 if __name__ == "__main__":

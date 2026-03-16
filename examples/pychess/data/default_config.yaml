@@ -2,52 +2,39 @@
 # This file seeds .pychess/config.local.yaml on first run.
 # Edit the model paths below if needed, then re-run main.py.
 
+constitution: prompts/constitution.md
+
 models:
   tiers:
-    # Suggest tier: analyzes the position, proposes a candidate move
-    suggest:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+    # Thinker tier: fast analysis + strategic planning
+    thinker:
+      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+      adapter: qwen35
+      identity: prompts/identity_thinker.md
+      grammar: data/grammars/chess_thinker.gbnf
       context_length: 8192
-      max_output_tokens: 384
+      auto_chain: true
       allowed_tools:
-        - chess.get_board
         - entropic.handoff
 
-    # Validate tier: reviews the suggestion for soundness
-    validate:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+    # Executor tier: action-only with small token budget
+    executor:
+      path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
+      adapter: qwen35
+      identity: prompts/identity_executor.md
+      grammar: data/grammars/chess_executor.gbnf
       context_length: 8192
-      max_output_tokens: 256
       allowed_tools:
-        - chess.get_board
-        - entropic.handoff
-
-    # Execute tier: plays the validated move
-    execute:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
-      context_length: 8192
-      max_output_tokens: 192
-      allowed_tools:
-        - chess.get_board
         - chess.make_move
 
-  # Router model: classifies incoming messages to pick the right tier.
-  # A small model (e.g. Qwen3-0.6B) is sufficient.
-  router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: qwen3
-    context_length: 2048
-    temperature: 0.0
+  default: thinker
 
-  default: suggest
-
-# Routing: enabled so the router classifies each incoming message.
+# Routing disabled — auto_chain handles thinker→executor handoff.
 routing:
-  enabled: true
-  fallback_tier: suggest
+  enabled: false
+  fallback_tier: thinker
+  handoff_rules:
+    thinker: [executor]
 
 # MCP: disable all built-in servers.
 # Only the ChessServer is registered programmatically.

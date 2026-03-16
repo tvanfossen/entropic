@@ -1,0 +1,3 @@
+Build an educational HTML game designed for an 8" tablet, that teaches planting, plant growth, and life cycle in an interactive and fun way for 3-5 year olds
+
+Build a Python CLI static site generator that converts a directory of markdown files into a complete HTML website. Requirements: frontmatter parsing (title, date, tags, template), nested directory support that mirrors to output structure, a simple Jinja2-style template engine with layout inheritance, automatic cross-page link resolution, tag index generation, and a configurable build pipeline. Include a sample content directory with at least 5 pages across 2 subdirectories to verify against. All output must be deterministic — same input always produces identical output.

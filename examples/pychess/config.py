@@ -16,7 +16,6 @@ from pathlib import Path
 from entropic import ConfigLoader, EntropyConfig
 
 EXAMPLE_ROOT = Path(__file__).parent
-PROMPTS_DIR = EXAMPLE_ROOT / "prompts"
 DEFAULT_CONFIG = EXAMPLE_ROOT / "data" / "default_config.yaml"
 
 
@@ -32,9 +31,5 @@ def load_config() -> EntropyConfig:
         default_config_path=DEFAULT_CONFIG,
         global_config_dir=None,
     )
-    return loader.load(
-        cli_overrides={
-            "prompts_dir": str(PROMPTS_DIR),
-            "use_bundled_prompts": False,
-        }
-    )
+
+    return loader.load()

@@ -18,15 +18,45 @@ import json
 import re
 import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import Any
 
 from entropic.core.base import Message, ToolCall
 from entropic.core.logging import get_logger
-from entropic.prompts import get_identity_prompt
+from entropic.prompts.manager import PromptManager
 
 # Shared continuation text for tool results — used by all adapters
 TOOL_RESULT_SUFFIX = "Continue. Batch multiple tool calls in one response when possible."
+
+
+def _find_matching_brace(text: str, start: int) -> int:
+    """Find the position of the matching ``}`` for a ``{`` at *start*.
+
+    Walks forward counting brace depth while respecting JSON string
+    escaping.  Returns -1 if no match is found.
+    """
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
 
 
 class ChatAdapter(ABC):
@@ -47,30 +77,28 @@ class ChatAdapter(ABC):
     def __init__(
         self,
         tier: str,
-        prompts_dir: Path | None = None,
-        use_bundled_prompts: bool = True,
+        prompt_manager: PromptManager | None = None,
     ) -> None:
         """
         Initialize adapter.
 
         Args:
-            tier: Model tier (thinking, normal, code, simple)
-            prompts_dir: Optional directory for user prompt overrides
-            use_bundled_prompts: If False, skip bundled prompt fallback
+            tier: Model tier (lead, eng, arch, qa, etc.)
+            prompt_manager: Central prompt loader (constitution + identity + app_context)
         """
         self._tier = tier
-        self._prompts_dir = prompts_dir
-        self._use_bundled_prompts = use_bundled_prompts
+        self._prompt_manager = prompt_manager
         self._identity_prompt: str | None = None
         self._tool_prefixes: frozenset[str] = frozenset()
         self._logger = get_logger(f"adapter.{type(self).__name__}")
 
     def _get_identity_prompt(self) -> str:
-        """Get the identity prompt (constitution + tier identity), loading and caching it."""
+        """Get the assembled prompt (constitution + identity + app_context), cached."""
         if self._identity_prompt is None:
-            self._identity_prompt = get_identity_prompt(
-                self._tier, self._prompts_dir, use_bundled=self._use_bundled_prompts
-            )
+            if self._prompt_manager:
+                self._identity_prompt = self._prompt_manager.get_assembled_prompt(self._tier)
+            else:
+                self._identity_prompt = ""
         return self._identity_prompt
 
     def _extract_tool_prefixes(self, tools: list[dict[str, Any]]) -> None:
@@ -107,14 +135,20 @@ class ChatAdapter(ABC):
 
     @property
     @abstractmethod
-    def chat_format(self) -> str:
-        """Get llama-cpp chat format name."""
+    def chat_format(self) -> str | None:
+        """Get llama-cpp chat format name.
+
+        Return None to use the GGUF model's embedded jinja template
+        (auto-detected by llama-cpp-python).
+        """
         pass
 
     def format_system_prompt(
         self,
         base_prompt: str,
         tools: list[dict[str, Any]] | None = None,
+        *,
+        enable_thinking: bool = True,
     ) -> str:
         """Format system prompt with identity and tool definitions.
 
@@ -129,6 +163,13 @@ class ChatAdapter(ABC):
         Subclasses should NOT override this — tool isolation depends on
         this assembly order. Override _format_tools() if tool formatting
         needs to differ.
+
+        Args:
+            base_prompt: Base system prompt (todo state, project context)
+            tools: Tool definitions to include
+            enable_thinking: Whether thinking mode is enabled for this tier.
+                Base class ignores this; model-specific adapters (e.g. Qwen3)
+                may append control tokens like /no-think.
         """
         identity = self._get_identity_prompt()
         prompt_parts = [identity]
@@ -214,32 +255,79 @@ class ChatAdapter(ABC):
         ]
 
     def _parse_tagged_tool_calls(self, content: str) -> list[ToolCall]:
-        """Parse tool calls from <tool_call> tags."""
-        tool_calls = []
+        """Parse tool calls from <tool_call> tags.
+
+        Handles both single and multiple JSON objects within one tag
+        (model sometimes emits ``{...}, {...}`` without array wrapper).
+        """
+        tool_calls: list[ToolCall] = []
         pattern = re.compile(
             rf"{re.escape(self.TOOL_CALL_START)}\s*(.*?)\s*{re.escape(self.TOOL_CALL_END)}",
             re.DOTALL,
         )
         for match in pattern.findall(content):
-            tool_call = self._parse_single_tool_call(match.strip())
-            if tool_call:
-                tool_calls.append(tool_call)
-                self._logger.info(f"Parsed {type(self).__name__} tool call: {tool_call.name}")
+            parsed = self._parse_tool_call_block(match.strip())
+            for tc in parsed:
+                self._logger.info("Parsed %s tool call: %s", type(self).__name__, tc.name)
+            tool_calls.extend(parsed)
         return tool_calls
+
+    def _parse_tool_call_block(self, json_str: str) -> list[ToolCall]:
+        """Parse one or more tool calls from a single tagged block."""
+        # Try as single call first (common case)
+        single = self._parse_single_tool_call(json_str)
+        if single:
+            return [single]
+        # Try wrapping in array (model emitted {}, {} without [])
+        try:
+            data = json.loads(f"[{json_str}]")
+            if isinstance(data, list):
+                results = []
+                for item in data:
+                    if isinstance(item, dict) and "name" in item:
+                        args = item.get("arguments", item.get("parameters", {}))
+                        results.append(
+                            ToolCall(id=str(uuid.uuid4()), name=item["name"], arguments=args)
+                        )
+                if results:
+                    return results
+        except json.JSONDecodeError:
+            pass
+        return []
 
     def _parse_single_tool_call(self, json_str: str) -> ToolCall | None:
         """Parse a single tool call JSON string."""
-        try:
-            data = json.loads(json_str)
-            if "name" in data:
-                arguments = data.get("arguments", data.get("parameters", {}))
-                return ToolCall(id=str(uuid.uuid4()), name=data["name"], arguments=arguments)
-        except json.JSONDecodeError:
-            recovered = self._try_recover_json(json_str)
-            if not recovered:
-                self._logger.warning(f"Failed to parse tool call: {json_str}")
-            return recovered
-        return None
+        for candidate in self._json_candidates(json_str):
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, list) and len(data) == 1:
+                    data = data[0]
+                if isinstance(data, dict) and "name" in data:
+                    arguments = data.get("arguments", data.get("parameters", {}))
+                    return ToolCall(id=str(uuid.uuid4()), name=data["name"], arguments=arguments)
+            except json.JSONDecodeError:
+                continue
+        recovered = self._try_recover_json(json_str)
+        if not recovered:
+            self._logger.warning("Failed to parse tool call: %s", json_str[:200])
+        return recovered
+
+    @staticmethod
+    def _json_candidates(json_str: str) -> list[str]:
+        """Generate candidate strings for JSON parsing.
+
+        Models sometimes wrap tool calls in array brackets or append
+        stray ``]}`` suffixes.  This yields the original string plus
+        variants with those artifacts stripped so ``json.loads`` can
+        succeed without regex fallback.
+        """
+        candidates = [json_str]
+        stripped = json_str.rstrip()
+        if stripped.endswith("]}"):
+            candidates.append(stripped[:-1])
+        if stripped.startswith("[") and stripped.endswith("]"):
+            candidates.append(stripped[1:-1].strip())
+        return candidates
 
     def _parse_bare_json_tool_calls(self, content: str) -> list[ToolCall]:
         """Parse bare JSON tool calls from lines."""
@@ -282,20 +370,35 @@ class ChatAdapter(ABC):
         except json.JSONDecodeError:
             pass
 
-        # Last resort: regex extraction
+        # Last resort: extract name and arguments via targeted parsing
         name_match = re.search(r'"name"\s*:\s*"([^"]+)"', json_str)
         if name_match:
             name = name_match.group(1)
-            arguments: dict[str, Any] = {}
-            args_match = re.search(r'"arguments"\s*:\s*(\{[^}]+\})', json_str)
-            if args_match:
-                try:
-                    arguments = json.loads(args_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+            arguments = self._extract_arguments_block(json_str)
             return ToolCall(id=str(uuid.uuid4()), name=name, arguments=arguments)
 
         return None
+
+    @staticmethod
+    def _extract_arguments_block(json_str: str) -> dict[str, Any]:
+        """Extract the arguments object using bracket-depth counting.
+
+        The previous ``[^}]+`` regex failed on nested JSON (e.g. HTML
+        content containing ``}`` characters).  This finds the matching
+        close brace by counting bracket depth, respecting string
+        escaping.
+        """
+        marker = re.search(r'"arguments"\s*:\s*\{', json_str)
+        if not marker:
+            return {}
+        start = marker.end() - 1  # include the opening {
+        end = _find_matching_brace(json_str, start)
+        if end >= 0:
+            try:
+                return json.loads(json_str[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+        return {}
 
     # --- Content cleaning ---
 
@@ -375,11 +478,24 @@ class ChatAdapter(ABC):
         return arguments if arguments else None
 
     def _convert_typed_value(self, value: str) -> Any:
-        """Convert string value to appropriate Python type."""
+        """Convert string value to appropriate Python type.
+
+        Handles booleans, nulls, numbers, and JSON structures (arrays/objects).
+        Falls back to raw string if no conversion matches.
+        """
         lower = value.lower()
         literal_map = {"true": True, "false": False, "none": None, "null": None}
         if lower in literal_map:
             return literal_map[lower]
+
+        # Try JSON array/object before numeric (catches '[...]' and '{...}')
+        stripped = value.strip()
+        if stripped and stripped[0] in ("[", "{"):
+            try:
+                return json.loads(stripped)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         return self._try_numeric_conversion(value)
 
     def _try_numeric_conversion(self, value: str) -> int | float | str:
@@ -503,8 +619,7 @@ def register_adapter(name: str, adapter_class: type[ChatAdapter]) -> None:
 def get_adapter(
     name: str,
     tier: str,
-    prompts_dir: Path | None = None,
-    use_bundled_prompts: bool = True,
+    prompt_manager: PromptManager | None = None,
 ) -> ChatAdapter:
     """
     Get an adapter instance by name.
@@ -514,8 +629,7 @@ def get_adapter(
     Args:
         name: Adapter name
         tier: Model tier (thinking, normal, code, simple)
-        prompts_dir: Optional directory for user prompt overrides
-        use_bundled_prompts: If False, skip bundled prompt fallback
+        prompt_manager: Central prompt loader
 
     Returns:
         Adapter instance
@@ -524,7 +638,7 @@ def get_adapter(
 
     logger = get_logger("adapters.base")
     name_lower = name.lower()
-    kwargs = {"tier": tier, "prompts_dir": prompts_dir, "use_bundled_prompts": use_bundled_prompts}
+    kwargs = {"tier": tier, "prompt_manager": prompt_manager}
 
     if name_lower not in _ADAPTERS:
         logger.warning(f"Unknown adapter '{name}', falling back to generic")

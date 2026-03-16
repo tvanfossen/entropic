@@ -28,7 +28,7 @@ from entropic.core.base import (
     ToolResult,
 )
 from entropic.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
-from entropic.core.logging import setup_logging, setup_model_logger
+from entropic.core.logging import setup_display_logger, setup_logging, setup_model_logger
 from entropic.core.tool_validation import ToolValidationError
 from entropic.inference.adapters import ChatAdapter, get_adapter, register_adapter
 from entropic.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
@@ -36,9 +36,23 @@ from entropic.mcp.manager import ServerManager
 from entropic.mcp.provider import InProcessProvider
 from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
 from entropic.mcp.tools import BaseTool, ToolRegistry
-from entropic.prompts import TierIdentity, load_prompt, load_tier_identity
+from entropic.prompts import (
+    AppContextFrontmatter,
+    ConstitutionFrontmatter,
+    IdentityFrontmatter,
+    PromptFrontmatter,
+    TierIdentity,
+    load_tier_identity,
+    parse_prompt_file,
+)
+from entropic.prompts.manager import PromptManager
 
-__version__ = "1.0.0"
+try:
+    from importlib.metadata import version as _get_version
+
+    __version__ = _get_version("entropic-engine")
+except Exception:
+    __version__ = "0.0.0"  # fallback for editable installs without metadata
 __author__ = "Tristan VanFossen"
 
 __all__ = [
@@ -56,6 +70,7 @@ __all__ = [
     "EngineCallbacks",
     "LoopConfig",
     # Logging
+    "setup_display_logger",
     "setup_logging",
     "setup_model_logger",
     # Config
@@ -88,7 +103,12 @@ __all__ = [
     "ToolValidationError",
     "load_tool_definition",
     # Prompts
+    "AppContextFrontmatter",
+    "ConstitutionFrontmatter",
+    "IdentityFrontmatter",
+    "PromptFrontmatter",
     "TierIdentity",
-    "load_prompt",
     "load_tier_identity",
+    "parse_prompt_file",
+    "PromptManager",
 ]

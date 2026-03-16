@@ -9,6 +9,7 @@ Qwen 3 models use:
 
 import re
 import uuid
+from typing import Any
 
 from entropic.core.base import ToolCall
 from entropic.inference.adapters.base import ChatAdapter, register_adapter
@@ -26,6 +27,21 @@ class Qwen3Adapter(ChatAdapter):
     def chat_format(self) -> str:
         """Get llama-cpp chat format name."""
         return "chatml"
+
+    def format_system_prompt(
+        self,
+        base_prompt: str,
+        tools: list[dict[str, Any]] | None = None,
+        *,
+        enable_thinking: bool = True,
+    ) -> str:
+        """Format system prompt, appending /no-think when thinking is disabled."""
+        formatted = super().format_system_prompt(
+            base_prompt, tools, enable_thinking=enable_thinking
+        )
+        if not enable_thinking:
+            formatted += "\n\n/no-think"
+        return formatted
 
     def parse_tool_calls(self, content: str) -> tuple[str, list[ToolCall]]:
         """Parse tool calls from Qwen 3 output.

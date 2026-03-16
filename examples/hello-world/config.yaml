@@ -1,33 +1,34 @@
-# Hello World — two-tier entropic config with routing.
+# Hello World — minimal entropic consumer config.
 #
-# Demonstrates the core entropic value: automatic model routing
-# and tier handoff between a fast model and a thinking model.
+# Single-tier example using the bundled lead identity.
+# No routing — just one model, one identity, streaming output.
 #
-# Edit `path` values to point to your GGUF model files.
+# Uses Qwen3.5-35B-A3B MoE (Q2_K) — full GPU offload at 16GB VRAM,
+# 30-41 tok/s. MoE architecture: 35B total params, ~3B active per token.
+#
+# Edit `path` to point to your GGUF model file.
 # See docs/library-consumer-guide.md for full config reference.
+
+# App context: consumer-specific personality injected into every prompt
+app_context: prompts/app_context.md
 
 models:
   tiers:
-    normal:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
+    lead:
+      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+      adapter: qwen35
       context_length: 16384
-    thinking:
-      path: ~/models/gguf/Qwen3-14B-Q4_K_M.gguf
-      adapter: qwen3
-      context_length: 16384
-  router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: router
-    context_length: 2048
-  default: normal
+  default: lead
 
 routing:
-  enabled: true
-  fallback_tier: normal
+  enabled: false
+  fallback_tier: lead
 
 mcp:
   enable_filesystem: false
   enable_bash: false
   enable_git: false
   enable_diagnostics: false
+
+lsp:
+  enabled: false

@@ -156,12 +156,10 @@ class TestProgrammaticConfig:
                 "default": "math",
             },
             routing={"enabled": False, "fallback_tier": "math"},
-            use_bundled_prompts=False,
         )
         assert "math" in config.models.tiers
         assert "science" in config.models.tiers
         assert config.models.default == "math"
-        assert config.use_bundled_prompts is False
 
     def test_config_with_router(self) -> None:
         """Config with router model for classification."""
@@ -190,7 +188,6 @@ class TestOrchestratorWithCustomFactory:
                 "default": "math",
             },
             routing={"enabled": False, "fallback_tier": "math"},
-            use_bundled_prompts=False,
         )
 
     def test_custom_factory_creates_backends(self) -> None:

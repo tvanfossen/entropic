@@ -588,6 +588,7 @@ class EntropiApp(App[None]):
         self._in_think_block = False
         self._in_tool_call_block = False  # Filter tool_call XML from display
         self._current_tier: str | None = None  # Active model tier for display
+        self._tier_stack: list[str] = []  # Tracks parent tiers during delegation
         self._auto_approve_all = False
         self._input_history: list[str] = []
         self._history_index = -1
@@ -619,6 +620,7 @@ class EntropiApp(App[None]):
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
         yield Header()
+        yield TodoWidget(id="todo-widget")
         yield VerticalScroll(id="chat-log")
         yield ProcessingIndicator(id="processing")
         yield Input(placeholder="Type your message... (Ctrl+C to exit)", id="input")
@@ -638,14 +640,18 @@ class EntropiApp(App[None]):
             self._run_queue_consumer_worker()
 
     def _show_welcome(self) -> None:
-        """Show welcome message."""
+        """Show welcome message with signal-decay banner."""
         models_str = ", ".join(self._models) if self._models else "None loaded"
+        banner = (
+            "[cyan]\u2588\u2588\u2588\u2588[/][bold cyan]\u2593\u2593[/][cyan]\u2592\u2592\u2591\u2591\u2591\u2591[/][dim]\u00b7\u00b7[/]\n"
+            "[bold cyan]E N T R O P I C[/]\n"
+            "[cyan]\u2588\u2588\u2588\u2588[/][bold cyan]\u2593\u2593[/][cyan]\u2592\u2592\u2591\u2591\u2591\u2591[/][dim]\u00b7\u00b7[/]\n"
+        )
         welcome = Panel(
-            f"[bold cyan]Entropic[/] v{self._version}\n"
-            f"[dim]Local AI Coding Assistant[/]\n\n"
+            f"{banner}\n"
+            f"v{self._version} [dim]\u00b7 local-first \u00b7 every handoff decays[/]\n\n"
             f"Models: {models_str}\n"
             f"Type [bold]/help[/] for commands, [bold]/exit[/] to quit",
-            title="Welcome",
             border_style="cyan",
         )
         chat_log = self.query_one("#chat-log", VerticalScroll)
@@ -889,6 +895,23 @@ class EntropiApp(App[None]):
         chat_log.mount(RouterInfoWidget(info_text))
         chat_log.scroll_end(animate=False)
 
+    # === Delegation Display ===
+
+    def on_delegation_start(self, target_tier: str, _task: str) -> None:
+        """Push current tier and switch display to delegated tier."""
+        if self._current_tier:
+            self._tier_stack.append(self._current_tier)
+        self._current_tier = target_tier
+        if self._current_message:
+            self._current_message.set_tier(target_tier)
+
+    def on_delegation_complete(self, _tier: str, _success: bool) -> None:
+        """Pop tier stack to restore parent tier display."""
+        if self._tier_stack:
+            self._current_tier = self._tier_stack.pop()
+        if self._current_tier and self._current_message:
+            self._current_message.set_tier(self._current_tier)
+
     # === Generation State ===
 
     def start_generation(self) -> None:
@@ -903,6 +926,7 @@ class EntropiApp(App[None]):
         self._in_think_block = False
         self._in_tool_call_block = False
         self._current_tier = None  # Reset tier - will be set by on_tier_selected callback
+        self._tier_stack.clear()  # Reset delegation stack
         self._current_thinking = None
         self._current_message = None  # Don't create yet - wait for non-thinking content
 
@@ -1283,7 +1307,6 @@ class EntropiApp(App[None]):
         """Print status information."""
         footer = self.query_one("#status-footer", StatusFooter)
         footer.set_model(status.model)
-        footer.set_thinking_mode(status.thinking_mode)
 
         if status.context_max > 0:
             context_bar = self.query_one("#context-bar", ContextBar)

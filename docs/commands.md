@@ -27,8 +27,8 @@
 
 | Command | Description |
 |---------|-------------|
-| `/think on` | Enable deep reasoning mode (14B model) |
-| `/think off` | Disable deep reasoning mode (7B model) |
+| `/think on` | Enable thinking mode (`<think>` blocks) |
+| `/think off` | Disable thinking mode |
 | `/think status` | Show current thinking mode |
 | `/status` | Show model and VRAM status |
 
@@ -100,7 +100,7 @@ Download models:
 
 ```bash
 entropic download --all
-entropic download --model normal
+entropic download --model lead
 ```
 
 ### CLI Options
@@ -108,8 +108,42 @@ entropic download --model normal
 | Option | Description |
 |--------|-------------|
 | `--config, -c` | Path to configuration file |
-| `--model, -m` | Model to use: thinking, normal, code, micro |
+| `--model, -m` | Model tier to use |
 | `--log-level, -l` | Log level: DEBUG, INFO, WARNING, ERROR |
 | `--project, -p` | Project directory |
 | `--version` | Show version |
 | `--help` | Show help |
+
+## Entropic Internal Tools
+
+These tools are available to identity roles during agentic loops:
+
+| Tool | Description |
+|------|-------------|
+| `entropic.todo_write` | Manage the internal todo list (plan work) |
+| `entropic.delegate` | Delegate a task to a different identity tier |
+| `entropic.pipeline` | Execute a multi-stage delegation pipeline |
+| `entropic.complete` | Signal explicit completion of delegated task |
+| `entropic.phase_change` | Switch active phase within current role |
+| `entropic.prune_context` | Request context pruning |
+
+### Delegation Example
+
+Lead delegates to eng, which auto-chains back:
+
+```
+lead → entropic.delegate(target="eng", task="implement login form")
+  eng works... → auto_chain back to lead
+lead processes result
+```
+
+### Pipeline Example
+
+Lead chains eng → qa:
+
+```
+lead → entropic.pipeline(stages=["eng", "qa"], task="implement and test login")
+  eng works... → result feeds to qa
+  qa reviews eng's output...
+lead gets qa's verdict
+```

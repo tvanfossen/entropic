@@ -5,13 +5,10 @@ skinparam noteBackgroundColor #FFFFEE
 title test_classification_under_500ms\n<size:11>[PASSED] < 1s</size>
 
 participant "Test" as T
-participant "Orchestrator" as Orch
-participant "Router Model" as Rtr
+participant "Application" as App
 
-T -> Orch: classify prompt
-Orch -> Rtr: route
-Rtr --> Orch: tier result
-Orch --> T: result
-note right #palegreen: < 1s
+T -> App: (internal test)
+App --> T: PASSED
+note right #palegreen
 
 @enduml

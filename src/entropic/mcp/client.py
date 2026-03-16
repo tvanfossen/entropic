@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
+from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 
 from entropic.core.base import ToolResult
@@ -22,54 +23,56 @@ DEFAULT_TOOL_TIMEOUT = 30.0
 
 
 class MCPClient:
-    """Client for communicating with a single MCP server."""
+    """Client for communicating with a single MCP server.
+
+    Supports two transports via MCP SDK:
+    - stdio: subprocess via stdin/stdout (when command is provided)
+    - sse: HTTP Server-Sent Events endpoint (when sse_url is provided)
+
+    Transport is inferred: sse_url → SSE, command → stdio.
+    """
 
     def __init__(
         self,
         name: str,
-        command: str,
+        command: str | None = None,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        sse_url: str | None = None,
     ) -> None:
         """
         Initialize MCP client.
 
         Args:
             name: Server name
-            command: Command to start server
-            args: Command arguments
-            env: Environment variables
+            command: Command to start server (stdio transport)
+            args: Command arguments (stdio transport)
+            env: Environment variables (stdio transport)
+            sse_url: SSE endpoint URL (SSE transport, inferred when set)
         """
         self.name = name
-        self.command = command
+        self.command = command or ""
         self.args = args or []
         self.env = env or {}
+        self.sse_url = sse_url or ""
+        # Transport inferred: sse_url present → SSE, otherwise → stdio
+        self.transport = "sse" if sse_url else "stdio"
 
         self._session: ClientSession | None = None
-        self._stdio_context: Any = None
+        self._transport_context: Any = None
         self._tools: list[dict[str, Any]] = []
 
     async def connect(self) -> None:
-        """Connect to the MCP server."""
-        logger.info(f"Connecting to MCP server: {self.name}")
+        """Connect to the MCP server using the configured transport."""
+        logger.info(f"Connecting to MCP server: {self.name} (transport={self.transport})")
 
-        server_params = StdioServerParameters(
-            command=self.command,
-            args=self.args,
-            env=self.env if self.env else None,
-        )
-
-        # Create stdio client context
-        self._stdio_context = stdio_client(server_params)
-        read_stream, write_stream = await self._stdio_context.__aenter__()
-
-        # Create and initialize session
-        self._session = ClientSession(read_stream, write_stream)
-        await self._session.__aenter__()
-        await self._session.initialize()
+        if self.transport == "sse":
+            await self._connect_url()
+        else:
+            await self._connect_stdio()
 
         # Cache available tools
-        tools_response = await self._session.list_tools()
+        tools_response = await self._session.list_tools()  # type: ignore[union-attr]
         self._tools = [
             {
                 "name": f"{self.name}.{tool.name}",
@@ -81,6 +84,27 @@ class MCPClient:
 
         logger.info(f"Connected to {self.name}, {len(self._tools)} tools available")
 
+    async def _connect_stdio(self) -> None:
+        """Connect via stdio subprocess."""
+        server_params = StdioServerParameters(
+            command=self.command,
+            args=self.args,
+            env=self.env if self.env else None,
+        )
+        self._transport_context = stdio_client(server_params)
+        read_stream, write_stream = await self._transport_context.__aenter__()
+        self._session = ClientSession(read_stream, write_stream)
+        await self._session.__aenter__()
+        await self._session.initialize()
+
+    async def _connect_url(self) -> None:
+        """Connect via SSE."""
+        self._transport_context = sse_client(self.sse_url)
+        read_stream, write_stream = await self._transport_context.__aenter__()
+        self._session = ClientSession(read_stream, write_stream)
+        await self._session.__aenter__()
+        await self._session.initialize()
+
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
         # Close session first
@@ -91,14 +115,14 @@ class MCPClient:
                 logger.debug(f"Session cleanup error (non-critical): {e}")
             self._session = None
 
-        # Close stdio context - may fail if called from different task
-        if self._stdio_context:
+        # Close transport context - may fail if called from different task
+        if self._transport_context:
             try:
-                await self._stdio_context.__aexit__(None, None, None)
+                await self._transport_context.__aexit__(None, None, None)
             except Exception as e:
                 # This is expected when closing from a different task than opened
-                logger.debug(f"Stdio cleanup error (non-critical): {e}")
-            self._stdio_context = None
+                logger.debug(f"Transport cleanup error (non-critical): {e}")
+            self._transport_context = None
 
         self._tools = []
         logger.info(f"Disconnected from {self.name}")

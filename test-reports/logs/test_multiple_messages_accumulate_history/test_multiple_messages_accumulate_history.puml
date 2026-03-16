@@ -17,12 +17,14 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **NORMAL** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I assist you today?
+  Hello! 👋 How can I help you today? Whether it's planning a new feature, 
+  reviewing code, designing a UI component, or just answering a quick question — 
+  I'm here to assist. What would you like to work on?
 end note
 note right of Eng
   **Follow-up message:**
@@ -32,8 +34,12 @@ end note
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  You said "Hello" and then asked "What did I just say?" to confirm your message. 
-  How can I assist you further?
+  You said "Hello" — which was my greeting back to you! Then you asked "What did I
+  just say?" 
+  
+  This is a bit of an odd question — are you testing whether I'm paying attention,
+  or is there something else on your mind? Either way, I'm here and ready to help 
+  with whatever you need. 😊
 end note
 note over T #palegreen
   **PASSED** (< 112s)

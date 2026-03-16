@@ -16,11 +16,14 @@ import threading
 from pathlib import Path
 
 from entropic.core.logging import get_logger
+from entropic.mcp.servers.external import compute_socket_path
 
 logger = get_logger("mcp.bridge")
 
-# Default socket path (project-relative for Docker compatibility)
-DEFAULT_SOCKET_PATH = Path.cwd() / ".entropic" / "mcp.sock"
+
+def _default_socket_path() -> Path:
+    """Return the project-derived socket path for the current working directory."""
+    return compute_socket_path(Path.cwd())
 
 
 async def run_bridge(socket_path: Path | None = None) -> int:
@@ -48,8 +51,12 @@ async def run_bridge(socket_path: Path | None = None) -> int:
 
 
 def _resolve_socket_path(socket_path: Path | None) -> Path:
-    """Resolve socket path to absolute path."""
-    path = socket_path or DEFAULT_SOCKET_PATH
+    """Resolve socket path to absolute path.
+
+    When None, uses the project-derived hash path computed from cwd().
+    This matches what ExternalMCPServer computes when project_dir is cwd.
+    """
+    path = socket_path or _default_socket_path()
     if not path.is_absolute():
         path = Path.cwd() / path
     return path.resolve()

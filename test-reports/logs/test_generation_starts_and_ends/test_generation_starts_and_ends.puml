@@ -17,12 +17,14 @@ note right of T
   Hello
 end note
 App -> Orch: route
-note right: **SIMPLE** tier
+note right: **LEAD** tier
 == Turn 1 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! How can I assist you today?
+  Hello! 👋 How can I help you today? Whether it's planning a new feature, 
+  reviewing code, or just answering a quick question—I'm here to assist. What 
+  would you like to work on?
 end note
 note over T #palegreen
   **PASSED** (< 38s)

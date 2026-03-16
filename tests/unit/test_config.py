@@ -5,7 +5,13 @@ from pathlib import Path
 
 import pytest
 import yaml
-from entropic.config.loader import ConfigLoader, deep_merge, load_yaml_config, validate_config
+from entropic.config.loader import (
+    ConfigLoader,
+    _normalize_config,
+    deep_merge,
+    load_yaml_config,
+    validate_config,
+)
 from entropic.config.schema import (
     CompactionConfig,
     EntropyConfig,
@@ -86,9 +92,8 @@ class TestLibraryConfig:
         """LibraryConfig constructs with sensible defaults."""
         config = LibraryConfig()
         assert config.log_level == "INFO"
-        assert config.routing.enabled is True
-        assert config.use_bundled_prompts is True
-        assert config.models.default == "normal"
+        assert config.routing.enabled is False
+        assert config.models.default == "lead"
 
     def test_excludes_tui_fields(self) -> None:
         """LibraryConfig does not expose TUI-specific fields."""
@@ -110,6 +115,16 @@ class TestLibraryConfig:
         # Also has TUI fields
         assert config.quality.enabled is True
 
+    def test_inject_model_context_default_true(self) -> None:
+        """inject_model_context defaults to True."""
+        config = LibraryConfig()
+        assert config.inject_model_context is True
+
+    def test_inject_model_context_disabled(self) -> None:
+        """inject_model_context can be set to False."""
+        config = LibraryConfig(inject_model_context=False)
+        assert config.inject_model_context is False
+
     def test_routing_validator_runs(self) -> None:
         """Cross-validation runs on LibraryConfig, not just EntropyConfig."""
         with pytest.raises(ValueError, match="fallback_tier"):
@@ -126,7 +141,7 @@ class TestEntropyConfig:
         """Test default configuration values."""
         config = EntropyConfig()
         assert config.log_level == "INFO"
-        assert config.routing.enabled is True
+        assert config.routing.enabled is False
         assert config.quality.enabled is True
 
     def test_model_config_path_expansion(self) -> None:
@@ -144,15 +159,10 @@ class TestEntropyConfig:
         with pytest.raises(ValueError):
             ModelConfig(path=Path("/test"), context_length=200000)  # Above maximum
 
-    def test_validation_temperature(self) -> None:
-        """Test temperature validation."""
-        with pytest.raises(ValueError):
-            ModelConfig(path=Path("/test"), temperature=3.0)  # Above maximum of 2.0
-
     def test_allowed_tools_valid_format(self) -> None:
         """Test allowed_tools accepts fully-qualified names."""
-        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.handoff"])
-        assert config.allowed_tools == ["server.tool", "entropic.handoff"]
+        config = ModelConfig(path=Path("/test"), allowed_tools=["server.tool", "entropic.delegate"])
+        assert config.allowed_tools == ["server.tool", "entropic.delegate"]
 
     def test_allowed_tools_none_default(self) -> None:
         """Test allowed_tools defaults to None (all tools visible)."""
@@ -167,8 +177,8 @@ class TestEntropyConfig:
     def test_default_routing_config(self) -> None:
         """Test default routing configuration."""
         config = EntropyConfig()
-        assert config.routing.enabled is True
-        assert config.routing.fallback_tier == "normal"
+        assert config.routing.enabled is False
+        assert config.routing.fallback_tier == "lead"
 
     def test_default_quality_rules(self) -> None:
         """Test default quality rules."""
@@ -181,6 +191,61 @@ class TestEntropyConfig:
 def _tier(path: str = "/test.gguf") -> TierConfig:
     """Create a minimal TierConfig for testing."""
     return TierConfig(path=Path(path))
+
+
+class TestTierConfigFields:
+    """Tests for TierConfig auto_chain and enable_thinking fields."""
+
+    def test_auto_chain_defaults_none(self) -> None:
+        """auto_chain defaults to None (defer to identity frontmatter)."""
+        tc = _tier()
+        assert tc.auto_chain is None
+
+    def test_auto_chain_true(self) -> None:
+        """auto_chain=True round-trips through config."""
+        tc = TierConfig(path=Path("/test.gguf"), auto_chain=True)
+        assert tc.auto_chain is True
+
+    def test_full_config_with_auto_chain(self) -> None:
+        """EntropyConfig with auto_chain tier parses correctly."""
+        config = EntropyConfig(
+            models={
+                "tiers": {
+                    "thinker": {
+                        "path": "/test.gguf",
+                        "auto_chain": True,
+                    },
+                    "executor": {
+                        "path": "/test.gguf",
+                    },
+                },
+                "default": "thinker",
+            },
+            routing={"enabled": False, "fallback_tier": "thinker"},
+        )
+        assert config.models.tiers["thinker"].auto_chain is True
+        assert config.models.tiers["executor"].auto_chain is None
+
+
+class TestTierConfigGrammar:
+    """Tests for TierConfig grammar field."""
+
+    def test_grammar_none_default(self) -> None:
+        """TierConfig without grammar defaults to None."""
+        tc = _tier()
+        assert tc.grammar is None
+
+    def test_grammar_path_coercion(self) -> None:
+        """String grammar path is coerced to Path."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="data/grammars/chess.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert tc.grammar == Path("data/grammars/chess.gbnf")
+
+    def test_grammar_expanduser(self) -> None:
+        """Grammar path with ~ is expanded."""
+        tc = TierConfig(path=Path("/test.gguf"), grammar="~/grammars/foo.gbnf")
+        assert isinstance(tc.grammar, Path)
+        assert "~" not in str(tc.grammar)
 
 
 class TestRoutingCrossValidation:
@@ -288,6 +353,24 @@ class TestRoutingCrossValidation:
         )
         assert config.routing.enabled is True
         assert config.models.router is not None
+
+
+class TestRoutingConfigNoGrammar:
+    """Tests confirming use_grammar was removed from RoutingConfig."""
+
+    def test_use_grammar_not_a_field(self) -> None:
+        """RoutingConfig no longer has use_grammar as a model field."""
+        from entropic.config.schema import RoutingConfig
+
+        config = RoutingConfig()
+        assert "use_grammar" not in config.model_fields
+
+    def test_use_grammar_not_in_schema(self) -> None:
+        """use_grammar does not appear in RoutingConfig JSON schema."""
+        from entropic.config.schema import RoutingConfig
+
+        schema = RoutingConfig.model_json_schema()
+        assert "use_grammar" not in schema.get("properties", {})
 
 
 class TestCompactionThresholdValidation:
@@ -423,10 +506,26 @@ class TestValidateConfig:
         missing = tmp_path / "nope.yaml"
         assert validate_config(missing) == []
 
-    def test_legacy_format_migrated(self) -> None:
-        """Legacy config format is migrated before validation."""
+    def test_flat_tiers_normalized(self) -> None:
+        """Flat tier config (tiers as top-level keys) is normalized before validation."""
         data = {
-            "models": {"primary": _tier(), "default": "primary"},
-            "routing": {"enabled": False, "fallback_model": "primary"},
+            "models": {"mytier": {"path": "/m.gguf"}, "default": "mytier"},
+            "routing": {"enabled": False, "fallback_tier": "mytier"},
         }
         assert validate_config(data) == []
+
+    def test_normalize_config_flat_to_nested(self) -> None:
+        """_normalize_config moves flat tiers into models.tiers dict."""
+        data = {
+            "models": {
+                "fast": {"path": "/fast.gguf"},
+                "slow": {"path": "/slow.gguf"},
+                "default": "fast",
+            },
+        }
+        result = _normalize_config(data)
+        assert "tiers" in result["models"]
+        assert "fast" in result["models"]["tiers"]
+        assert "slow" in result["models"]["tiers"]
+        # Reserved keys stay at top level
+        assert result["models"]["default"] == "fast"

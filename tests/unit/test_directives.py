@@ -10,12 +10,16 @@ from entropic.core.base import Message
 from entropic.core.directives import (
     _DIRECTIVE_REGISTRY,
     ClearSelfTodos,
+    Complete,
     ContextAnchor,
+    Delegate,
     Directive,
     DirectiveProcessor,
     DirectiveResult,
     InjectContext,
     NotifyPresenter,
+    PhaseChange,
+    Pipeline,
     PruneMessages,
     StopProcessing,
     TierChange,
@@ -317,10 +321,14 @@ class TestDirectiveResult:
 class TestDirectiveRegistry:
     """Directive registry maps string type names to dataclass types."""
 
-    def test_all_seven_types_registered(self) -> None:
+    def test_all_registered_types_present(self) -> None:
         expected = {
             "stop_processing": StopProcessing,
             "tier_change": TierChange,
+            "delegate": Delegate,
+            "pipeline": Pipeline,
+            "complete": Complete,
+            "phase_change": PhaseChange,
             "clear_self_todos": ClearSelfTodos,
             "inject_context": InjectContext,
             "prune_messages": PruneMessages,

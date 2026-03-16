@@ -4,6 +4,10 @@
       "type": "stdio",
       "command": "entropic",
       "args": ["mcp-bridge"]
+    },
+    "pycommander": {
+      "type": "sse",
+      "url": "http://127.0.0.1:6277/sse"
     }
   }
 }

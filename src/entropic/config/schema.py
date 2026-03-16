@@ -8,14 +8,41 @@ Principles:
 """
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _expand_path(v: Any) -> Path:
+    """Expand ~ in path values."""
+    return Path(v).expanduser()
+
+
+def _expand_optional_path(v: Any) -> Path | None:
+    """Expand ~ in optional path values (None passes through)."""
+    if v is None:
+        return None
+    return Path(v).expanduser()
+
+
+def _expand_tri_state_path(v: Any) -> Path | Literal[False] | None:
+    """Expand ~ in tri-state path values (None and False pass through)."""
+    if v is None or v is False:
+        return v
+    return Path(v).expanduser()
+
+
+ExpandedPath = Annotated[Path, BeforeValidator(_expand_path)]
+OptionalExpandedPath = Annotated[Path | None, BeforeValidator(_expand_optional_path)]
+TriStatePath = Annotated[Path | Literal[False] | None, BeforeValidator(_expand_tri_state_path)]
 
 
 class ModelConfig(BaseModel):
     """Configuration for a single model.
+
+    Load-time hardware params only. Inference behavior (temperature,
+    max_output_tokens, etc.) belongs in identity frontmatter.
 
     Attributes:
         allowed_tools: Tool visibility filter using fully-qualified names
@@ -23,15 +50,13 @@ class ModelConfig(BaseModel):
             means all registered tools are visible to this model/tier.
     """
 
-    path: Path
-    adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, generic
+    path: ExpandedPath
+    adapter: str = "qwen2"  # Adapter name: qwen2, qwen3, qwen35, falcon, generic
     context_length: int = Field(default=16384, ge=512, le=131072)
-    max_output_tokens: int = Field(default=4096, ge=1, le=32768)
     gpu_layers: int = Field(default=-1)  # -1 = all layers
-    temperature: float = Field(default=0.7, ge=0.0, le=2.0)
-    top_p: float = Field(default=0.9, ge=0.0, le=1.0)
-    top_k: int = Field(default=40, ge=0)
-    repeat_penalty: float = Field(default=1.1, ge=1.0, le=2.0)
+    keep_warm: bool = False  # Use WARM state: pre-warm at startup, deactivate (not unload) on swap
+    use_mlock: bool = True  # Lock model pages in RAM (prevents OS swap; reduces activate latency)
+    logits_all: bool = False  # Compute logits for all positions (required for logprobs)
     allowed_tools: list[str] | None = None
 
     @field_validator("allowed_tools")
@@ -47,22 +72,23 @@ class ModelConfig(BaseModel):
                 )
         return v
 
-    @field_validator("path")
-    @classmethod
-    def validate_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
-
 
 class TierConfig(ModelConfig):
     """Model configuration for a specific tier.
 
-    Extends ModelConfig with optional focus points. Focus can also come
-    from ModelTier instances or identity file frontmatter — config is
-    one of three resolution paths.
+    Extends ModelConfig with identity resolution. Inference behavior
+    (temperature, max_output_tokens, etc.) lives in identity frontmatter.
+
+    Identity prompt resolution:
+        absent/None  → bundled default (ships with entropic-engine)
+        False        → disabled entirely
+        path string  → custom file (must exist, validated at load)
     """
 
-    focus: list[str] = Field(default_factory=list)
+    identity: TriStatePath = None
+    grammar: OptionalExpandedPath = None
+    auto_chain: bool | None = None  # None = defer to identity frontmatter
+    routable: bool | None = None  # None = defer to identity frontmatter
 
 
 class ModelsConfig(BaseModel):
@@ -74,7 +100,7 @@ class ModelsConfig(BaseModel):
 
     tiers: dict[str, TierConfig] = Field(default_factory=dict)
     router: ModelConfig | None = None
-    default: str = "normal"
+    default: str = "lead"
 
     @model_validator(mode="after")
     def validate_default_tier(self) -> "ModelsConfig":
@@ -88,32 +114,14 @@ class RoutingConfig(BaseModel):
     """Configuration for model routing.
 
     Task classification is handled by the ROUTER model. The classification
-    prompt and grammar can be auto-generated from tier definitions or
-    explicitly configured.
+    prompt is auto-generated from tier definitions or explicitly configured.
     """
 
-    enabled: bool = True
-    fallback_tier: str = "normal"
+    enabled: bool = False
+    fallback_tier: str = "lead"
     classification_prompt: str | None = None  # None = auto-generate from tier focus
     tier_map: dict[str, str] = Field(default_factory=dict)  # Empty = auto-derive
     handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all
-    use_grammar: bool = False  # Opt-in GBNF constraint
-
-
-class ThinkingConfig(BaseModel):
-    """Configuration for thinking mode."""
-
-    enabled: bool = False  # Default to OFF (use normal reasoning model)
-    auto_enable_keywords: list[str] = Field(
-        default_factory=lambda: [
-            "architect",
-            "design",
-            "think through",
-            "complex",
-            "deeply",
-        ]
-    )
-    swap_timeout_seconds: int = Field(default=10, ge=1, le=60)
 
 
 class QualityRulesConfig(BaseModel):
@@ -185,30 +193,23 @@ class UIConfig(BaseModel):
 class StorageConfig(BaseModel):
     """Storage configuration."""
 
-    database_path: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "history.db")
+    database_path: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / ".entropic" / "history.db"
+    )
     max_conversations: int = Field(default=1000, ge=10)
     auto_save: bool = True
-
-    @field_validator("database_path")
-    @classmethod
-    def validate_database_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class ExternalMCPConfig(BaseModel):
     """Configuration for external MCP server (Claude Code integration)."""
 
     enabled: bool = False
-    socket_path: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "mcp.sock")
+    # When None, socket path is derived from project_dir at runtime:
+    #   ~/.entropic/socks/{first8(sha256(abs(project_dir)))}.sock
+    # Set explicitly to override with a fixed path.
+    socket_path: OptionalExpandedPath = None
     # Rate limiting: requests per minute
     rate_limit: int = Field(default=10, ge=1, le=100)
-
-    @field_validator("socket_path")
-    @classmethod
-    def validate_socket_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class FilesystemConfig(BaseModel):
@@ -218,6 +219,10 @@ class FilesystemConfig(BaseModel):
     diagnostics_on_edit: bool = True
     fail_on_errors: bool = True  # Rollback edit if it introduces errors
     diagnostics_timeout: float = Field(default=1.0, ge=0.1, le=5.0)
+    # Allow file operations outside workspace root (../../ references)
+    # The permissions system still governs approval — this only lifts the
+    # path containment check.
+    allow_outside_root: bool = False
     # Max file size for read_file (bytes). None = derive from model context.
     # Explicit value overrides dynamic calculation.
     max_read_bytes: int | None = Field(default=None, ge=1_000, le=500_000)
@@ -233,6 +238,7 @@ class MCPConfig(BaseModel):
     enable_bash: bool = True
     enable_git: bool = True
     enable_diagnostics: bool = True  # LSP diagnostics tool
+    enable_web: bool = True
 
     # Filesystem server config
     filesystem: FilesystemConfig = Field(default_factory=FilesystemConfig)
@@ -331,16 +337,10 @@ class PersonaPlexSamplingConfig(BaseModel):
 class VoicePromptConfig(BaseModel):
     """Voice prompt file configuration."""
 
-    prompt_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "voices")
+    prompt_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic" / "voices")
     # Voice name from PersonaPlex (NATF0-3, NATM0-3, VARF0-4, VARM0-4)
     voice_name: str = "NATF2"
     thinking_audio: str = "thinking_moment.wav"
-
-    @field_validator("prompt_dir")
-    @classmethod
-    def validate_prompt_dir(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class VoiceConversationConfig(BaseModel):
@@ -364,17 +364,11 @@ class VoiceServerConfig(BaseModel):
 class SecondaryModelConfig(BaseModel):
     """Configuration for secondary LLM used in context compaction."""
 
-    model_path: Path = Field(
-        default_factory=lambda: Path.home() / "models" / "gguf" / "Qwen3-0.6B-Q8_0.gguf"
+    model_path: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / "models" / "gguf" / "router.gguf"
     )
     max_tokens: int = Field(default=300, ge=50, le=1000)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
-
-    @field_validator("model_path")
-    @classmethod
-    def validate_model_path(cls, v: Path) -> Path:
-        """Expand user path."""
-        return Path(v).expanduser()
 
 
 class VoiceConfig(BaseModel):
@@ -424,6 +418,21 @@ def _validate_handoff_rules(rules: dict[str, list[str]], tier_names: set[str]) -
                 )
 
 
+def _warn_auto_chain_without_targets(
+    tiers: dict[str, TierConfig], handoff_rules: dict[str, list[str]]
+) -> None:
+    """Warn if a tier has auto_chain=True but no handoff_rules entry."""
+    import warnings
+
+    for name, tier_cfg in tiers.items():
+        if tier_cfg.auto_chain and name not in handoff_rules:
+            warnings.warn(
+                f"Tier '{name}' has auto_chain=true but no handoff_rules entry. "
+                f"Auto-chain will have no targets at runtime.",
+                stacklevel=3,
+            )
+
+
 class LibraryConfig(BaseSettings):
     """Minimal configuration for embedding entropic as a library.
 
@@ -433,7 +442,7 @@ class LibraryConfig(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="ENTROPI_",
+        env_prefix="ENTROPIC_",
         env_nested_delimiter="__",
         extra="ignore",
     )
@@ -441,7 +450,6 @@ class LibraryConfig(BaseSettings):
     # Core inference configuration
     models: ModelsConfig = Field(default_factory=ModelsConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
-    thinking: ThinkingConfig = Field(default_factory=ThinkingConfig)
     generation: GenerationConfig = Field(default_factory=GenerationConfig)
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
@@ -450,18 +458,20 @@ class LibraryConfig(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
-    # Prompt handling
-    use_bundled_prompts: bool = True  # False = raise on missing prompt, no bundled fallback
+    # Prompt handling — new per-type fields (Phase 2)
+    # constitution: None = bundled, False = disabled, Path = custom
+    constitution: TriStatePath = None
+    # app_context: None = disabled, False = disabled, Path = custom
+    app_context: TriStatePath = None
+
+    # Auto-inject model config (tier, model file, adapter) into system prompt
+    inject_model_context: bool = True
+
+    # VRAM management
+    vram_reserve_mb: int = Field(default=512, ge=0, le=65536)  # Reserved VRAM headroom (MB)
 
     # Paths
-    config_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic")
-    prompts_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "prompts")
-
-    @field_validator("config_dir", "prompts_dir")
-    @classmethod
-    def validate_library_paths(cls, v: Path) -> Path:
-        """Expand user paths if ~ is used."""
-        return Path(v).expanduser()
+    config_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic")
 
     @model_validator(mode="after")
     def validate_routing_references(self) -> "LibraryConfig":
@@ -476,6 +486,7 @@ class LibraryConfig(BaseSettings):
         _validate_fallback_tier(self.routing.fallback_tier, tier_names)
         _validate_tier_map(self.routing.tier_map, tier_names)
         _validate_handoff_rules(self.routing.handoff_rules, tier_names)
+        _warn_auto_chain_without_targets(self.models.tiers, self.routing.handoff_rules)
         return self
 
 
@@ -499,10 +510,6 @@ class EntropyConfig(LibraryConfig):
 
     # TUI-specific fields
     log_file: Path | None = None
-    commands_dir: Path = Field(default_factory=lambda: Path.home() / ".entropic" / "commands")
-
-    @field_validator("commands_dir")
-    @classmethod
-    def validate_tui_paths(cls, v: Path) -> Path:
-        """Expand user paths if ~ is used."""
-        return Path(v).expanduser()
+    commands_dir: ExpandedPath = Field(
+        default_factory=lambda: Path.home() / ".entropic" / "commands"
+    )

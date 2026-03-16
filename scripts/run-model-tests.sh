@@ -53,9 +53,13 @@ if .venv/bin/pytest tests/model/ -v --tb=short 2>&1 | tee -a "$REPORT_FILE"; the
     echo "$current_hash" > "$HASH_FILE"
     echo "" >> "$REPORT_FILE"
     echo "Result: PASSED" >> "$REPORT_FILE"
+
+    # Auto-stage report and sequence diagrams so they're included in the commit
+    git add "$REPORT_FILE" 2>/dev/null || true
+    git add test-reports/logs/**/*.puml 2>/dev/null || true
+
     echo ""
     echo "Model tests: PASSED (hash cached for next run)"
-    echo "Test reports updated — re-run 'git commit' to include them."
     exit 0
 else
     echo "" >> "$REPORT_FILE"

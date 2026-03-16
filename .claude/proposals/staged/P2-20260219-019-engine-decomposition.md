@@ -9,7 +9,7 @@ component: core
 author: tvanfossen
 author_email: vanfosst@gmail.com
 created: 2026-02-19
-updated: 2026-03-02
+updated: 2026-03-16
 tags: [refactoring, engine, separation-of-concerns, architecture]
 completed_date: null
 scoped_files:

@@ -136,11 +136,7 @@ class TodoList:
     def format_for_context(self) -> str:
         """Format todo list for injection into conversation context."""
         if self.is_empty:
-            return (
-                "[CURRENT TODO STATE]\n"
-                "No active todos. Use entropic.todo_write to track your work.\n"
-                "[END TODO STATE]"
-            )
+            return "[CURRENT TODO STATE]\n" "No active todos.\n" "[END TODO STATE]"
         status_icons = {"pending": "[ ]", "in_progress": "[>]", "completed": "[x]"}
         lines = ["[CURRENT TODO STATE]"]
 
@@ -201,8 +197,87 @@ class TodoList:
         }
         handler = handlers.get(action)
         if not handler:
-            return f"Error: Unknown action '{action}'. Use: add, update, remove, replace"
+            return (
+                f"Error: Unknown action '{action}'. "
+                f"Valid actions: add, update, bulk_update, remove, replace. "
+                f'Example: entropic.todo_write(action="add", todos=[{{"content": "...", '
+                f'"active_form": "...", "status": "pending"}}])'
+            )
         return handler(arguments)
+
+    def handle_simple_call(self, arguments: dict[str, Any]) -> str:
+        """Handle a simplified todo call (for entropic.todo tool).
+
+        Supports add, update, remove only. No target_tier, no bulk_update,
+        no replace, no active_form (computed from content).
+        """
+        action = arguments.get("action", "")
+        handlers = {
+            "add": self._simple_add,
+            "update": self._simple_update,
+            "remove": self._simple_remove,
+        }
+        handler = handlers.get(action)
+        if not handler:
+            return (
+                f"Error: Unknown action '{action}'. Valid: add, update, remove. "
+                'Example: entropic.todo(action="add", content="Write tests", status="pending")'
+            )
+        return handler(arguments)
+
+    def _simple_add(self, args: dict[str, Any]) -> str:
+        """Add a todo item via simplified interface."""
+        content = args.get("content", "")
+        status = args.get("status", "pending")
+
+        error = self._validate_simple_add(content, status)
+        if error:
+            return error
+
+        active_form = f"Working on: {content}" if " " in content else content
+        self.items.append(
+            TodoItem(content=content, active_form=active_form, status=TodoStatus(status))
+        )
+        return f"Added: {content}. Total: {len(self.items)}"
+
+    def _validate_simple_add(self, content: str, status: str) -> str | None:
+        """Validate simple add arguments. Returns error string or None."""
+        if not content:
+            return (
+                "Error: 'add' requires 'content' (task description). "
+                'Example: entropic.todo(action="add", content="Write tests", status="pending")'
+            )
+        valid_statuses = ("pending", "in_progress", "completed")
+        if status not in valid_statuses:
+            return f"Error: Invalid status '{status}'. Valid: pending, in_progress, completed."
+        return (
+            "Error: Only one task can be in_progress at a time."
+            if status == "in_progress" and self.get_current() is not None
+            else None
+        )
+
+    def _simple_update(self, args: dict[str, Any]) -> str:
+        """Update a todo item by index via simplified interface."""
+        index, error = self._resolve_index(args, "update")
+        if error:
+            return error
+        item = self.items[index]
+        if "status" in args:
+            status_error = self._apply_status(item, args["status"])
+            if status_error:
+                return status_error
+        if "content" in args:
+            item.content = args["content"]
+            item.active_form = f"Working on: {args['content']}"
+        return f"Updated [{index}]: {item.content[:50]}"
+
+    def _simple_remove(self, args: dict[str, Any]) -> str:
+        """Remove a todo item by index via simplified interface."""
+        index, error = self._resolve_index(args, "remove")
+        if error:
+            return error
+        removed = self.items.pop(index)
+        return f"Removed [{index}]: {removed.content[:50]}"
 
     @staticmethod
     def _normalize_arguments(args: dict[str, Any]) -> dict[str, Any]:
@@ -225,11 +300,21 @@ class TodoList:
         """Append new items to the todo list."""
         todos = args.get("todos", [])
         if not todos:
-            return "Error: 'add' action requires 'todos' array"
+            return (
+                "Error: 'add' action requires a 'todos' array with at least one item. "
+                "Each item needs: content (string), active_form (string), status (pending|in_progress|completed). "
+                'Example: entropic.todo_write(action="add", todos=[{"content": "Implement login", '
+                '"active_form": "Implementing login", "status": "pending", "target_tier": "eng"}])'
+            )
 
         errors = self._validate_items(todos)
         if errors:
-            return "Error: Invalid todo format.\n" + "\n".join(errors)
+            return (
+                "Error: Invalid todo format. Each item requires: content, active_form, status.\n"
+                + "\n".join(errors)
+                + '\nExample valid item: {"content": "Do X", "active_form": "Doing X", '
+                '"status": "pending", "target_tier": "eng"}'
+            )
 
         for t in todos:
             self.items.append(
@@ -246,16 +331,28 @@ class TodoList:
     def _resolve_index(self, args: dict[str, Any], action: str) -> tuple[int, str | None]:
         """Validate and return index from args. Returns (index, error_or_None)."""
         if "index" not in args:
-            return -1, f"Error: '{action}' action requires 'index'"
+            return -1, (
+                f"Error: '{action}' action requires an 'index' field (integer) "
+                f"identifying which todo item to {action}. "
+                f"Current items: {len(self.items)} (indices 0-{max(0, len(self.items) - 1)}). "
+                f'Example: entropic.todo_write(action="{action}", index=0, status="completed")'
+            )
         index = args["index"]
         if not 0 <= index < len(self.items):
-            return -1, f"Error: Index {index} out of range (0-{len(self.items) - 1})"
+            return -1, (
+                f"Error: Index {index} out of range. "
+                f"Valid indices: 0-{max(0, len(self.items) - 1)} ({len(self.items)} items exist). "
+                f'Use entropic.todo_write(action="add", ...) to create items first.'
+            )
         return index, None
 
     def _apply_status(self, item: TodoItem, status_str: str) -> str | None:
         """Apply status change to item. Returns error string or None on success."""
         if status_str not in ("pending", "in_progress", "completed"):
-            return f"Error: Invalid status '{status_str}'"
+            return (
+                f"Error: Invalid status '{status_str}'. "
+                f"Valid values: 'pending', 'in_progress', 'completed'."
+            )
         new_status = TodoStatus(status_str)
         if new_status == TodoStatus.IN_PROGRESS:
             current = self.get_current()
@@ -288,13 +385,32 @@ class TodoList:
     def _handle_bulk_update(self, args: dict[str, Any]) -> str:
         """Update multiple items by index in a single call."""
         updates = args.get("updates", [])
+
+        # Recover stringified JSON — model sometimes emits "[{...}]" as string
+        if isinstance(updates, str):
+            try:
+                updates = json.loads(updates)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         if not updates or not isinstance(updates, list):
-            return "Error: 'bulk_update' requires 'updates' array"
+            got_type = type(updates).__name__
+            return (
+                f"Error: 'bulk_update' requires an 'updates' array of objects, got {got_type}. "
+                f"Each object needs at minimum an 'index' field. "
+                f'Example: entropic.todo_write(action="bulk_update", updates=['
+                f'{{"index": 0, "status": "completed"}}, '
+                f'{{"index": 1, "status": "in_progress"}}])'
+            )
 
         results = []
         for entry in updates:
             if not isinstance(entry, dict) or "index" not in entry:
-                results.append("Error: each update needs 'index'")
+                results.append(
+                    f"Error: each update must be an object with 'index' (integer). "
+                    f"Got: {type(entry).__name__}. "
+                    f'Example: {{"index": 0, "status": "completed"}}'
+                )
                 continue
             result = self._handle_update(entry)
             results.append(result)
@@ -315,12 +431,21 @@ class TodoList:
         todos = args.get("todos", [])
         errors = self._validate_items(todos)
         if errors:
-            return "Error: Invalid todo format.\n" + "\n".join(errors)
+            return (
+                "Error: Invalid todo format. Each item requires: content, active_form, status.\n"
+                + "\n".join(errors)
+                + '\nExample valid item: {"content": "Do X", "active_form": "Doing X", '
+                '"status": "pending", "target_tier": "eng"}'
+            )
 
         # Validate: only one in_progress
         in_progress = [t for t in todos if t["status"] == "in_progress"]
         if len(in_progress) > 1:
-            return "Error: Only one task can be in_progress at a time"
+            return (
+                f"Error: Only one task can be in_progress at a time. "
+                f"Found {len(in_progress)} items with status 'in_progress'. "
+                f"Set all but one to 'pending' or 'completed'."
+            )
 
         self.items = [
             TodoItem(

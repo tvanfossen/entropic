@@ -21,6 +21,12 @@ phases:
     max_output_tokens: 256
     enable_thinking: false
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Grade this response to 'Write a hello world in Python': The response was 'print(\"Hello, World!\")'"
+      checks:
+        - type: regex
+          pattern: "(?i)(score|grade|pass|fail|correct|accurate)"
 ---
 
 # Benchmark Judge

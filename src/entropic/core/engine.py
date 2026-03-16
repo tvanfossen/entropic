@@ -44,6 +44,7 @@ if TYPE_CHECKING:
         Delegate,
         InjectContext,
         NotifyPresenter,
+        PhaseChange,
         Pipeline,
         PruneMessages,
         StopProcessing,
@@ -154,6 +155,7 @@ class AgentEngine:
             Delegate,
             InjectContext,
             NotifyPresenter,
+            PhaseChange,
             Pipeline,
             PruneMessages,
             StopProcessing,
@@ -169,6 +171,7 @@ class AgentEngine:
         self._directive_processor.register(InjectContext, self._directive_inject_context)
         self._directive_processor.register(PruneMessages, self._directive_prune_messages)
         self._directive_processor.register(ContextAnchor, self._directive_context_anchor)
+        self._directive_processor.register(PhaseChange, self._directive_phase_change)
         self._directive_processor.register(NotifyPresenter, self._directive_notify_presenter)
 
     def _directive_stop_processing(
@@ -232,15 +235,12 @@ class AgentEngine:
         directive: Complete,
         result: DirectiveResult,
     ) -> None:
-        """Handle explicit completion signal from child delegation.
+        """Handle explicit completion signal.
 
-        Only valid at delegation depth > 0. At root depth, the tool
-        is a no-op (model shouldn't have access, but defense in depth).
+        Valid at any depth:
+        - Root (depth 0): terminates the main loop (for roles with explicit_completion)
+        - Child (depth > 0): returns to parent delegation
         """
-        if ctx.delegation_depth == 0:
-            logger.warning("[DIRECTIVE] complete ignored at root depth")
-            return
-
         logger.info(
             "[DIRECTIVE] complete at depth=%d summary=%s",
             ctx.delegation_depth,
@@ -394,6 +394,31 @@ class AgentEngine:
         ctx.messages.append(anchor)
         logger.info(f"Updated context anchor: {directive.key}")
 
+    def _directive_phase_change(
+        self,
+        ctx: LoopContext,
+        directive: PhaseChange,
+        result: DirectiveResult,
+    ) -> None:
+        """Handle phase_change directive — switch active phase.
+
+        Validates the phase exists in the current tier's identity
+        frontmatter, then updates ctx.active_phase.
+        """
+        fm = self.orchestrator._prompt_manager.get_identity_frontmatter(
+            ctx.locked_tier.name if ctx.locked_tier else ""
+        )
+        if fm and fm.phases and directive.phase in fm.phases:
+            ctx.active_phase = directive.phase
+            logger.info("[DIRECTIVE] phase_change: %s", directive.phase)
+        else:
+            available = list(fm.phases.keys()) if fm and fm.phases else []
+            logger.warning(
+                "[DIRECTIVE] phase_change rejected: '%s' not in %s",
+                directive.phase,
+                available,
+            )
+
     def _directive_notify_presenter(
         self,
         ctx: LoopContext,
@@ -536,6 +561,9 @@ class AgentEngine:
         tools = await self.server_manager.list_tools()
         logger.info(f"Tools available ({len(tools)}): {[t['name'] for t in tools]}")
 
+        # Validate identity allowed_tools against registered tools
+        self._validate_identity_tools(tools)
+
         system = system_prompt or ""
 
         # Store on ctx for system prompt rebuild on tier change
@@ -677,6 +705,11 @@ class AgentEngine:
         """
         finish_reason = self.orchestrator.last_finish_reason
 
+        if finish_reason == "interrupted":
+            logger.info("[LOOP DECISION] finish_reason=interrupted, stopping")
+            self._set_state(ctx, AgentState.INTERRUPTED)
+            return
+
         if finish_reason == "length":
             logger.info("[LOOP DECISION] finish_reason=length, continuing loop")
             return
@@ -687,13 +720,21 @@ class AgentEngine:
 
         if await self._try_auto_chain(ctx, finish_reason, content):
             logger.info("[LOOP DECISION] auto_chain fired, continuing with new tier")
-            return
-
-        adapter = self.orchestrator.get_adapter()
-        is_complete = adapter.is_response_complete(content, [])
-        logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
-        if is_complete:
-            self._set_state(ctx, AgentState.COMPLETE)
+        elif (
+            self.orchestrator.get_tier_param(ctx.locked_tier, "explicit_completion")
+            and ctx.metrics.tool_calls > 0
+        ):
+            # Only entropic.complete can end the loop — prevents premature
+            # completion when the model emits text but no tool call after
+            # having already used tools (multi-step work in progress).
+            # Skipped when no tools have been called (simple Q&A responses).
+            logger.info("[LOOP DECISION] explicit_completion=True, waiting for entropic.complete")
+        else:
+            adapter = self.orchestrator.get_adapter()
+            is_complete = adapter.is_response_complete(content, [])
+            logger.info(f"[LOOP DECISION] tool_calls=0, is_response_complete={is_complete}")
+            if is_complete:
+                self._set_state(ctx, AgentState.COMPLETE)
 
     async def _execute_pending_delegation(self, ctx: LoopContext) -> AsyncIterator[Message]:
         """Execute a pending delegation request stored by _directive_delegate."""
@@ -970,6 +1011,28 @@ class AgentEngine:
                 role="assistant",
                 content=f"I encountered repeated errors and cannot continue: {error}",
             )
+
+    def _validate_identity_tools(self, tools: list[dict[str, Any]]) -> None:
+        """Validate that all identity allowed_tools reference registered tools.
+
+        Logs warnings for any identity that references tools not in the
+        registry. Catches configuration drift at startup rather than at
+        inference time.
+        """
+        registered = {t["name"] for t in tools}
+        pm = self.orchestrator._prompt_manager
+        for tier_name in self.config.models.tiers:
+            fm = pm.get_identity_frontmatter(tier_name)
+            if fm is None or fm.allowed_tools is None:
+                continue
+            invalid = [t for t in fm.allowed_tools if t not in registered]
+            if invalid:
+                logger.error(
+                    "Identity '%s' references unregistered tools: %s. " "Registered: %s",
+                    tier_name,
+                    invalid,
+                    sorted(registered),
+                )
 
     def _should_stop(self, ctx: LoopContext) -> bool:
         """Check if loop should stop."""

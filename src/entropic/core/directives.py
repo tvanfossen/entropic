@@ -127,6 +127,17 @@ class ContextAnchor(Directive):
 
 
 @dataclass
+class PhaseChange(Directive):
+    """Switch the active phase within the current role.
+
+    Updates ctx.active_phase, which changes inference params
+    and bash_commands for subsequent turns.
+    """
+
+    phase: str
+
+
+@dataclass
 class NotifyPresenter(Directive):
     """Generic UI notification — engine passes through, doesn't inspect.
 
@@ -152,6 +163,7 @@ CLEAR_SELF_TODOS = "clear_self_todos"
 INJECT_CONTEXT = "inject_context"
 PRUNE_MESSAGES = "prune_messages"
 CONTEXT_ANCHOR = "context_anchor"
+PHASE_CHANGE = "phase_change"
 NOTIFY_PRESENTER = "notify_presenter"
 
 
@@ -169,6 +181,7 @@ _DIRECTIVE_REGISTRY: dict[str, type[Directive]] = {
     "inject_context": InjectContext,
     "prune_messages": PruneMessages,
     "context_anchor": ContextAnchor,
+    "phase_change": PhaseChange,
     "notify_presenter": NotifyPresenter,
 }
 

@@ -22,7 +22,7 @@ allowed_tools:
   - filesystem.grep
   - filesystem.list_directory
   - bash.execute
-  - entropic.todo_write
+  - entropic.todo
   - entropic.complete
 max_output_tokens: 8192
 temperature: 0.15
@@ -38,6 +38,16 @@ phases:
     max_output_tokens: 8192
     enable_thinking: true
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Write a Python function that checks if a string is a palindrome"
+      checks:
+        - type: regex
+          pattern: "(?i)(palindrome|def\\s+\\w+|write_file|read_file)"
+    - prompt: "Fix this code: def add(a, b): return a - b"
+      checks:
+        - type: regex
+          pattern: "(?i)(\\+|add|subtract|minus|bug|fix|read_file)"
 ---
 
 # Engineer

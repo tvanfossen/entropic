@@ -506,6 +506,7 @@ class FilesystemServer(BaseMCPServer):
 
         if errors and self._config and self._config.fail_on_errors:
             # Rollback: restore original content or delete new file
+            is_new_file = not original_content
             if original_content:
                 resolved.write_text(original_content)
                 self._tracker.record_read(resolved, original_content)
@@ -513,12 +514,27 @@ class FilesystemServer(BaseMCPServer):
                 # New file - delete it
                 resolved.unlink(missing_ok=True)
 
+            error_details = "; ".join(f"line {d.line}: {d.message}" for d in errors)
+
+            if is_new_file:
+                rollback_msg = (
+                    f"File was NOT created — rolled back due to {len(errors)} error(s). "
+                    f"The file does NOT exist on disk. "
+                    f"Fix the errors below and call write_file again (not edit_file)."
+                )
+            else:
+                rollback_msg = (
+                    f"Edit rolled back due to {len(errors)} error(s). "
+                    f"File reverted to its previous state. "
+                    f"Fix the errors below and try your edit again."
+                )
+
             return json.dumps(
                 {
                     "error": "diagnostics_failed",
-                    "message": f"Edit introduced {len(errors)} error(s) - rolled back",
+                    "message": rollback_msg,
+                    "errors": error_details,
                     "diagnostics": diag_list,
-                    "tip": "Fix the errors in your edit and try again",
                 }
             )
 

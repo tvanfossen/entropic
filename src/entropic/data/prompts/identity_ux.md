@@ -20,7 +20,7 @@ allowed_tools:
   - filesystem.glob
   - filesystem.grep
   - filesystem.list_directory
-  - entropic.todo_write
+  - entropic.todo
   - entropic.complete
 max_output_tokens: 8192
 temperature: 0.5
@@ -36,6 +36,12 @@ phases:
     max_output_tokens: 8192
     enable_thinking: true
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Design the onboarding flow for a mobile banking app targeting elderly users"
+      checks:
+        - type: regex
+          pattern: "(?i)(flow|screen|step|user|onboard|banking|write_file|glob)"
 ---
 
 # UX Designer

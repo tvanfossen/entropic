@@ -261,7 +261,6 @@ class TestTodoCompactionPersistence:
         todo_list = TodoList()
         result = todo_list.format_for_context()
         assert "No active todos" in result
-        assert "todo_write" in result
 
     def test_context_anchor_created(self) -> None:
         """Context anchor is appended with correct metadata."""

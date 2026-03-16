@@ -117,6 +117,8 @@ class LoopContext:
     parent_conversation_id: str | None = None
     # Delegation: child conversation IDs spawned from this context
     child_conversation_ids: list[str] = field(default_factory=list)
+    # Active phase name (resolves inference params from PhaseConfig)
+    active_phase: str = "default"
 
 
 @dataclass

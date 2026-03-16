@@ -237,14 +237,35 @@ class ResponseGenerator:
             return None
         return self._orchestrator._prompt_manager.get_identity_frontmatter(ctx.locked_tier.name)
 
+    @staticmethod
+    def _resolve_phase_kwargs(identity_fm: Any, active_phase: str) -> dict[str, Any]:
+        """Build generation kwargs overrides from the active phase config.
+
+        Returns an empty dict for the "default" phase or when the phase
+        has no overrides, letting identity-level defaults apply.
+        """
+        if active_phase == "default" or identity_fm is None:
+            return {}
+        phases = getattr(identity_fm, "phases", None)
+        if not phases or active_phase not in phases:
+            return {}
+        phase: Any = phases[active_phase]
+        return {
+            "temperature": phase.temperature,
+            "max_tokens": phase.max_output_tokens,
+            "repeat_penalty": phase.repeat_penalty,
+            "chat_template_kwargs": {"enable_thinking": phase.enable_thinking},
+        }
+
     async def _generate_streaming(self, ctx: LoopContext) -> tuple[str, list[ToolCall]]:
         """Generate response via streaming."""
         content = ""
         identity_fm = self._get_identity_fm(ctx)
+        phase_kwargs = self._resolve_phase_kwargs(identity_fm, ctx.active_phase)
 
         interrupted = False
         async for chunk in self._orchestrator.generate_stream(
-            ctx.messages, tier=ctx.locked_tier, identity_fm=identity_fm
+            ctx.messages, tier=ctx.locked_tier, identity_fm=identity_fm, **phase_kwargs
         ):
             if self._interrupt_event.is_set():
                 interrupted = True

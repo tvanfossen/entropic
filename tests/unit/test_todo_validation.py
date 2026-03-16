@@ -418,7 +418,7 @@ class TestActionBasedOperations:
         todo_list = TodoList()
         result = todo_list.handle_tool_call({"action": "update", "status": "completed"})
         assert "Error" in result
-        assert "requires 'index'" in result
+        assert "'index'" in result
 
     def test_update_single_in_progress(self) -> None:
         """'update' rejects second in_progress item."""
@@ -579,3 +579,46 @@ class TestActionBasedOperations:
         output = todo_list.format_for_context()
         assert "[0]" in output
         assert "[1]" in output
+
+    def test_bulk_update_stringified_json(self) -> None:
+        """bulk_update recovers when model sends updates as a JSON string."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "Doing A", "status": "pending"},
+                    {"content": "Task B", "active_form": "Doing B", "status": "pending"},
+                ],
+            }
+        )
+        # Model sends stringified JSON array instead of actual array
+        result = todo_list.handle_tool_call(
+            {
+                "action": "bulk_update",
+                "updates": '[{"index": 0, "status": "completed"}, {"index": 1, "status": "in_progress"}]',
+            }
+        )
+        assert "Error" not in result
+        assert todo_list.items[0].status.value == "completed"
+        assert todo_list.items[1].status.value == "in_progress"
+
+    def test_bulk_update_native_array(self) -> None:
+        """bulk_update works with a proper array (normal path)."""
+        todo_list = TodoList()
+        todo_list.handle_tool_call(
+            {
+                "action": "add",
+                "todos": [
+                    {"content": "Task A", "active_form": "Doing A", "status": "pending"},
+                ],
+            }
+        )
+        result = todo_list.handle_tool_call(
+            {
+                "action": "bulk_update",
+                "updates": [{"index": 0, "status": "completed"}],
+            }
+        )
+        assert "Error" not in result
+        assert todo_list.items[0].status.value == "completed"

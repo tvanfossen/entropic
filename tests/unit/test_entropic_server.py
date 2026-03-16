@@ -1,13 +1,11 @@
-"""Tests for EntropicServer — unified todo/delegate/prune server."""
+"""Tests for EntropicServer — todo, delegate, pipeline, complete, prune."""
 
 import json
 
 import pytest
 from entropic.core.directives import (
-    ClearSelfTodos,
     ContextAnchor,
     Delegate,
-    InjectContext,
     NotifyPresenter,
     PruneMessages,
     StopProcessing,
@@ -16,8 +14,8 @@ from entropic.mcp.servers.base import ServerResponse
 from entropic.mcp.servers.entropic import EntropicServer
 
 
-class TestEntropicServerTodoWrite:
-    """todo_write returns context_anchor + notify_presenter directives."""
+class TestEntropicServerTodo:
+    """entropic.todo returns context_anchor + notify_presenter directives."""
 
     @pytest.fixture
     def server(self) -> EntropicServer:
@@ -27,14 +25,11 @@ class TestEntropicServerTodoWrite:
     async def test_add_returns_directives(self, server: EntropicServer) -> None:
         """Adding a todo returns context_anchor and notify_presenter directives."""
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
-            },
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
         )
         assert isinstance(result, ServerResponse)
-        assert "Added 1" in result.result
+        assert "Added" in result.result
         assert len(result.directives) == 2
 
         anchor = result.directives[0]
@@ -51,19 +46,12 @@ class TestEntropicServerTodoWrite:
     async def test_update_returns_directives(self, server: EntropicServer) -> None:
         """Updating a todo returns context_anchor and notify_presenter directives."""
         await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Task A", "active_form": "Doing A", "status": "pending"}],
-            },
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
         )
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "update",
-                "index": 0,
-                "status": "in_progress",
-            },
+            "todo",
+            {"action": "update", "index": 0, "status": "in_progress"},
         )
         assert isinstance(result, ServerResponse)
         assert "Updated" in result.result
@@ -71,24 +59,40 @@ class TestEntropicServerTodoWrite:
         assert isinstance(result.directives[1], NotifyPresenter)
 
     @pytest.mark.asyncio
-    async def test_empty_list_returns_usage_reminder(self, server: EntropicServer) -> None:
-        """Empty todo list returns context_anchor with usage reminder."""
+    async def test_remove_returns_directives(self, server: EntropicServer) -> None:
+        """Removing a todo returns directives."""
+        await server.execute_tool(
+            "todo",
+            {"action": "add", "content": "Task A", "status": "pending"},
+        )
         result = await server.execute_tool(
-            "todo_write",
-            {
-                "action": "replace",
-                "todos": [],
-            },
+            "todo",
+            {"action": "remove", "index": 0},
         )
         assert isinstance(result, ServerResponse)
-        anchor = result.directives[0]
-        assert isinstance(anchor, ContextAnchor)
-        assert "No active todos" in anchor.content
-        assert "todo_write" in anchor.content
+        assert "Removed" in result.result
 
-        notify = result.directives[1]
-        assert isinstance(notify, NotifyPresenter)
-        assert notify.data["count"] == 0
+    @pytest.mark.asyncio
+    async def test_add_without_content_returns_error(self, server: EntropicServer) -> None:
+        """Add without content returns actionable error."""
+        result = await server.execute_tool(
+            "todo",
+            {"action": "add"},
+        )
+        assert isinstance(result, ServerResponse)
+        assert "Error" in result.result
+        assert "content" in result.result
+
+    @pytest.mark.asyncio
+    async def test_unknown_action_returns_error(self, server: EntropicServer) -> None:
+        """Unknown action returns error with valid actions listed."""
+        result = await server.execute_tool(
+            "todo",
+            {"action": "bulk_update"},
+        )
+        assert isinstance(result, ServerResponse)
+        assert "Error" in result.result
+        assert "add" in result.result
 
 
 class TestEntropicServerDelegate:
@@ -99,137 +103,33 @@ class TestEntropicServerDelegate:
         return EntropicServer()
 
     @pytest.mark.asyncio
-    async def test_delegate_with_execution_todos(self, server: EntropicServer) -> None:
-        """Delegate succeeds when execution todos exist."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {
-                        "content": "Fix bug",
-                        "active_form": "Fixing",
-                        "status": "pending",
-                        "target_tier": "code",
-                    }
-                ],
-            },
-        )
+    async def test_delegate_succeeds(self, server: EntropicServer) -> None:
+        """Delegate succeeds without requiring prior todos."""
         result = await server.execute_tool(
             "delegate",
-            {
-                "target": "code",
-                "task": "Implementation ready",
-            },
+            {"target": "code", "task": "Implement feature"},
         )
         assert isinstance(result, ServerResponse)
         assert "Delegation requested" in result.result
 
         directive_types = [type(d) for d in result.directives]
-        assert ClearSelfTodos in directive_types
         assert Delegate in directive_types
         assert StopProcessing in directive_types
 
         delegate_d = next(d for d in result.directives if isinstance(d, Delegate))
         assert delegate_d.target == "code"
-        assert delegate_d.task == "Implementation ready"
+        assert delegate_d.task == "Implement feature"
 
     @pytest.mark.asyncio
-    async def test_delegate_empty_list_rejected(self, server: EntropicServer) -> None:
-        """Delegate with empty todo list is rejected — must plan first."""
+    async def test_delegate_with_max_turns(self, server: EntropicServer) -> None:
+        """Delegate passes max_turns to directive."""
         result = await server.execute_tool(
             "delegate",
-            {
-                "target": "normal",
-                "task": "Quick delegation",
-            },
-        )
-        assert isinstance(result, str)
-        data = json.loads(result)
-        assert "error" in data
-        assert "todo_write" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_delegate_succeeds_without_execution_todos(self, server: EntropicServer) -> None:
-        """Delegate succeeds with warning when todos exist but none have target_tier."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [{"content": "Self task", "active_form": "Working", "status": "pending"}],
-            },
-        )
-        result = await server.execute_tool(
-            "delegate",
-            {
-                "target": "code",
-                "task": "test",
-            },
-        )
-        # Now succeeds (warning logged, not rejected)
-        assert isinstance(result, ServerResponse)
-        assert any(isinstance(d, Delegate) and d.target == "code" for d in result.directives)
-
-    @pytest.mark.asyncio
-    async def test_delegate_warns_incomplete_self_todos(self, server: EntropicServer) -> None:
-        """Delegate warns about incomplete self-directed todos."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {"content": "Self task", "active_form": "Self", "status": "pending"},
-                    {
-                        "content": "Code task",
-                        "active_form": "Coding",
-                        "status": "pending",
-                        "target_tier": "code",
-                    },
-                ],
-            },
-        )
-        result = await server.execute_tool(
-            "delegate",
-            {
-                "target": "code",
-                "task": "test",
-            },
+            {"target": "code", "task": "Quick fix", "max_turns": 5},
         )
         assert isinstance(result, ServerResponse)
-        inject = next((d for d in result.directives if isinstance(d, InjectContext)), None)
-        assert inject is not None
-        assert "1 self-directed" in inject.content
-
-    @pytest.mark.asyncio
-    async def test_delegate_no_warning_when_self_todos_complete(
-        self, server: EntropicServer
-    ) -> None:
-        """No warning when all self-directed todos are completed."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {"content": "Self done", "active_form": "Done", "status": "completed"},
-                    {
-                        "content": "Code task",
-                        "active_form": "Coding",
-                        "status": "pending",
-                        "target_tier": "code",
-                    },
-                ],
-            },
-        )
-        result = await server.execute_tool(
-            "delegate",
-            {
-                "target": "code",
-                "task": "test",
-            },
-        )
-        assert isinstance(result, ServerResponse)
-        inject = [d for d in result.directives if isinstance(d, InjectContext)]
-        assert len(inject) == 0
+        delegate_d = next(d for d in result.directives if isinstance(d, Delegate))
+        assert delegate_d.max_turns == 5
 
 
 class TestEntropicServerPrune:
@@ -272,13 +172,12 @@ class TestEntropicServerDynamicTiers:
         assert enum == ["suggest", "validate", "execute"]
 
     def test_delegate_description_updated(self, server: EntropicServer) -> None:
-        """Delegate description mentions custom tier names, not defaults."""
+        """Delegate description mentions custom tier names."""
         tools = server.get_tools()
         delegate = next(t for t in tools if t.name == "delegate")
         assert "`suggest`" in delegate.description
         assert "`validate`" in delegate.description
         assert "`execute`" in delegate.description
-        assert "simple" not in delegate.description
 
     def test_default_server_uses_empty_enum(self) -> None:
         """Server without tier_names uses delegate.json with empty enum."""
@@ -293,10 +192,7 @@ class TestEntropicServerDynamicTiers:
         """Delegate rejects a tier name not in the custom set."""
         result = await server.execute_tool(
             "delegate",
-            {
-                "target": "thinking",
-                "task": "deep analysis",
-            },
+            {"target": "thinking", "task": "deep analysis"},
         )
         assert isinstance(result, str)
         data = json.loads(result)
@@ -305,27 +201,10 @@ class TestEntropicServerDynamicTiers:
 
     @pytest.mark.asyncio
     async def test_delegate_accepts_valid_custom_tier(self, server: EntropicServer) -> None:
-        """Delegate succeeds with a valid custom tier name (after planning)."""
-        await server.execute_tool(
-            "todo_write",
-            {
-                "action": "add",
-                "todos": [
-                    {
-                        "content": "Validate move",
-                        "active_form": "Validating",
-                        "status": "pending",
-                        "target_tier": "validate",
-                    }
-                ],
-            },
-        )
+        """Delegate succeeds with a valid custom tier name."""
         result = await server.execute_tool(
             "delegate",
-            {
-                "target": "validate",
-                "task": "check the move",
-            },
+            {"target": "validate", "task": "check the move"},
         )
         assert isinstance(result, ServerResponse)
         assert "Delegation requested" in result.result
@@ -341,7 +220,7 @@ class TestSingleTierSkipsDelegate:
         server = EntropicServer(tier_names=["normal"])
         tool_names = [t.name for t in server.get_tools()]
         assert "delegate" not in tool_names
-        assert "todo_write" in tool_names
+        assert "todo" in tool_names
         assert "prune_context" in tool_names
 
     def test_multi_tier_has_delegate(self) -> None:

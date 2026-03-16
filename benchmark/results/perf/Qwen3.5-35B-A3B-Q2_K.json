@@ -6,29 +6,25 @@
     "driver_version": "580.126.09"
   },
   "runs": {
-    "2026-03-06": [
+    "2026-03-16": [
       {
-        "timestamp": "2026-03-06T17:14:23.040379+00:00",
-        "engine_version": "1.5.0",
-        "cold_start_ms": 29795.0,
-        "cold_start_swap_ms": 2730.5,
-        "cold_start_vram_mb": 14013,
-        "inference_tok_s": 30.0,
+        "timestamp": "2026-03-16T15:12:06.972502+00:00",
+        "engine_version": "1.7.0",
+        "cold_start_ms": 26953.4,
+        "cold_start_swap_ms": 3327.6,
+        "cold_start_vram_mb": 15277,
+        "inference_tok_s": 37.1,
         "inference_tokens": 1024,
-        "inference_ms": 34172,
+        "inference_ms": 27586,
         "gpu_layers": 40,
-        "inference_vram_mb": 14013,
-        "swap_away_ms": 2465.7,
-        "swap_back_ms": 3075.3
+        "inference_vram_mb": 15277
       }
     ]
   },
   "average": {
     "run_count": 1,
-    "cold_start_ms": 29795.0,
-    "inference_tok_s": 30.0,
-    "inference_ms": 34172.0,
-    "swap_away_ms": 2465.7,
-    "swap_back_ms": 3075.3
+    "cold_start_ms": 26953.4,
+    "inference_tok_s": 37.1,
+    "inference_ms": 27586.0
   }
 }

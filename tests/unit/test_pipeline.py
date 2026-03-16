@@ -136,10 +136,13 @@ class TestPipelineExecution:
 
         assert len(call_args) == 2
         assert call_args[0][0] == "eng"
-        assert call_args[0][1] == "build feature"
+        assert "[PIPELINE CONTEXT] Stage 1 of 2" in call_args[0][1]
+        assert "You are: eng" in call_args[0][1]
+        assert "build feature" in call_args[0][1]
         assert call_args[1][0] == "qa"
-        assert "Previous stage (eng) output:" in call_args[1][1]
-        assert "Output from eng" in call_args[1][1]
+        assert "[PIPELINE CONTEXT] Stage 2 of 2" in call_args[1][1]
+        assert "You are: qa" in call_args[1][1]
+        assert "build feature" in call_args[1][1]
 
     @pytest.mark.asyncio
     async def test_failed_stage_short_circuits(self) -> None:

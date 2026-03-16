@@ -533,7 +533,7 @@ class TestRepoRootCaching:
 
         def fake_git_init(*_args, **_kwargs):
             """Simulate git init creating .git directory."""
-            (tmp_path / ".git").mkdir()
+            (tmp_path / ".git").mkdir(exist_ok=True)
             return MagicMock(returncode=0)
 
         with patch("entropic.core.worktree._get_server_instance", return_value=fs_server):
@@ -543,8 +543,9 @@ class TestRepoRootCaching:
                 result = engine._get_repo_dir()
 
         assert result == tmp_path
-        mock_run.assert_called_once()
-        assert mock_run.call_args[0][0] == ["git", "init"]
+        # git init + git add -A + git commit --allow-empty
+        assert mock_run.call_count == 3
+        assert mock_run.call_args_list[0][0][0] == ["git", "init"]
 
     def test_custom_repo_init_hook(self, tmp_path: Path):
         """Consumer-provided repo_init hook overrides default git init."""

@@ -22,31 +22,20 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three programming languages and their main use cases:
+  Here are three common programming languages and their main use cases:
   
-  ### 1. **Python**
-  - **Main Use Cases**: Data science, machine learning/artificial intelligence, 
-  web development (Django/Flask), scripting/automation, scientific computing
-  - **Why Popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), beginner-friendly
+  1. **Python** — Data science, machine learning, scripting, automation, web 
+  development (Django/Flask), scientific computing
   
-  ### 2. **JavaScript**
-  - **Main Use Cases**: Frontend web development (browser-based UIs), backend 
-  development with Node.js, mobile apps (React Native), serverless functions
-  - **Why Popular**: Runs natively in browsers, massive ecosystem (npm packages), 
-  full-stack capabilities
+  2. **JavaScript** — Web frontend development, browser-based applications, 
+  Node.js backend services, full-stack JavaScript applications
   
-  ### 3. **Java**
-  - **Main Use Cases**: Enterprise applications, Android app development, 
-  large-scale distributed systems, banking/financial software
-  - **Why Popular**: Strong typing, mature frameworks (Spring), platform 
-  independence via JVM, excellent performance at scale
+  3. **Rust** — Systems programming, performance-critical applications, embedded 
+  systems, memory-safe low-level code where safety and speed are priorities
   
-  ---
-  
-  These three cover a broad range of modern development needs—from data and AI 
-  work to web platforms and enterprise infrastructure. Each has strong community 
-  support and extensive documentation for learning.
+  These languages represent different paradigms: Python for rapid development and 
+  data work, JavaScript for web-centric applications, and Rust for 
+  high-performance systems programming with strong memory guarantees.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

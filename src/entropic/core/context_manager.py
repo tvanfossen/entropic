@@ -175,7 +175,7 @@ class ContextManager:
 
         warning = (
             f"[CONTEXT WARNING] Context at {pct}% capacity ({current_tokens}/{max_tokens} tokens). "
-            f"Capture findings with entropic.todo_write if needed, "
+            f"Capture findings with entropic.todo if needed, "
             f"then call entropic.prune_context."
         )
         ctx.messages.append(Message(role="user", content=warning))

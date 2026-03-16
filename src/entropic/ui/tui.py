@@ -588,6 +588,7 @@ class EntropiApp(App[None]):
         self._in_think_block = False
         self._in_tool_call_block = False  # Filter tool_call XML from display
         self._current_tier: str | None = None  # Active model tier for display
+        self._tier_stack: list[str] = []  # Tracks parent tiers during delegation
         self._auto_approve_all = False
         self._input_history: list[str] = []
         self._history_index = -1
@@ -619,6 +620,7 @@ class EntropiApp(App[None]):
     def compose(self) -> ComposeResult:
         """Compose the application layout."""
         yield Header()
+        yield TodoWidget(id="todo-widget")
         yield VerticalScroll(id="chat-log")
         yield ProcessingIndicator(id="processing")
         yield Input(placeholder="Type your message... (Ctrl+C to exit)", id="input")
@@ -893,6 +895,23 @@ class EntropiApp(App[None]):
         chat_log.mount(RouterInfoWidget(info_text))
         chat_log.scroll_end(animate=False)
 
+    # === Delegation Display ===
+
+    def on_delegation_start(self, target_tier: str, _task: str) -> None:
+        """Push current tier and switch display to delegated tier."""
+        if self._current_tier:
+            self._tier_stack.append(self._current_tier)
+        self._current_tier = target_tier
+        if self._current_message:
+            self._current_message.set_tier(target_tier)
+
+    def on_delegation_complete(self, _tier: str, _success: bool) -> None:
+        """Pop tier stack to restore parent tier display."""
+        if self._tier_stack:
+            self._current_tier = self._tier_stack.pop()
+        if self._current_tier and self._current_message:
+            self._current_message.set_tier(self._current_tier)
+
     # === Generation State ===
 
     def start_generation(self) -> None:
@@ -907,6 +926,7 @@ class EntropiApp(App[None]):
         self._in_think_block = False
         self._in_tool_call_block = False
         self._current_tier = None  # Reset tier - will be set by on_tier_selected callback
+        self._tier_stack.clear()  # Reset delegation stack
         self._current_thinking = None
         self._current_message = None  # Don't create yet - wait for non-thinking content
 

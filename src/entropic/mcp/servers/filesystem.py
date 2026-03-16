@@ -11,6 +11,7 @@ import asyncio
 import difflib
 import json
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -18,9 +19,83 @@ from entropic.mcp.servers.base import BaseMCPServer
 from entropic.mcp.servers.file_tracker import FileAccessTracker
 from entropic.mcp.tools import BaseTool
 
+# Directories to skip during glob/grep/list_directory traversal
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".worktrees",
+    }
+)
+
+# Max results to prevent context bloat
+_MAX_GLOB_RESULTS = 500
+_MAX_GREP_MATCHES = 100
+
+# Regex to find a single brace group like {a,b,c}
+_BRACE_RE = re.compile(r"\{([^{}]+)\}")
+
+
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand brace groups in a glob pattern.
+
+    ``pathlib.glob()`` does not support ``{a,b,c}`` syntax.  This
+    expands the *first* brace group found, then recurses to handle
+    nested/multiple groups.  Returns ``[pattern]`` unchanged when no
+    braces are present.
+
+    Example::
+
+        _expand_braces("**/*.{html,js}") → ["**/*.html", "**/*.js"]
+    """
+    m = _BRACE_RE.search(pattern)
+    if not m:
+        return [pattern]
+    prefix, suffix = pattern[: m.start()], pattern[m.end() :]
+    alternatives = m.group(1).split(",")
+    expanded: list[str] = []
+    for alt in alternatives:
+        expanded.extend(_expand_braces(prefix + alt + suffix))
+    return expanded
+
+
 if TYPE_CHECKING:
     from entropic.config.schema import FilesystemConfig
     from entropic.lsp.manager import LSPManager
+
+
+def _is_searchable_file(filepath: Path, root: Path) -> bool:
+    """Check if a file should be included in grep results."""
+    parts = filepath.relative_to(root).parts
+    if any(p in _SKIP_DIRS for p in parts):
+        return False
+    return filepath.is_file()
+
+
+def _grep_single_file(
+    filepath: Path,
+    root: Path,
+    compiled: re.Pattern[str],
+    results: list[dict[str, Any]],
+) -> None:
+    """Search a single file for regex matches, appending to results."""
+    try:
+        content = filepath.read_text(errors="strict")
+    except (UnicodeDecodeError, PermissionError):
+        return
+    rel_path = str(filepath.relative_to(root))
+    for line_num, line in enumerate(content.splitlines(), 1):
+        if compiled.search(line):
+            results.append({"path": rel_path, "line": line_num, "content": line.rstrip()})
+            if len(results) >= _MAX_GREP_MATCHES:
+                return
 
 
 class ReadFileTool(BaseTool):
@@ -62,6 +137,41 @@ class EditFileTool(BaseTool):
         )
 
 
+class GlobTool(BaseTool):
+    """Find files matching a glob pattern within root_dir."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("glob", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(self._server._handle_glob, arguments)
+
+
+class GrepTool(BaseTool):
+    """Search file contents by regex pattern within root_dir."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("grep", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(self._server._handle_grep, arguments)
+
+
+class ListDirectoryTool(BaseTool):
+    """List directory contents, optionally recursive."""
+
+    def __init__(self, server: FilesystemServer) -> None:
+        super().__init__("list_directory", "filesystem")
+        self._server = server
+
+    async def execute(self, arguments: dict[str, Any]) -> str:
+        return await self._server._execute_with_error_handling(
+            self._server._handle_list_directory, arguments
+        )
+
+
 class FilesystemServer(BaseMCPServer):
     """Filesystem operations MCP server with read-before-write enforcement."""
 
@@ -90,6 +200,9 @@ class FilesystemServer(BaseMCPServer):
         self.register_tool(ReadFileTool(self))
         self.register_tool(WriteFileTool(self))
         self.register_tool(EditFileTool(self))
+        self.register_tool(GlobTool(self))
+        self.register_tool(GrepTool(self))
+        self.register_tool(ListDirectoryTool(self))
 
     @staticmethod
     def _compute_max_read_bytes(
@@ -166,6 +279,161 @@ class FilesystemServer(BaseMCPServer):
             args.get("replace_all", False),
         )
 
+    async def _handle_glob(self, args: dict[str, Any]) -> str:
+        """Find files matching a glob pattern within root_dir."""
+        pattern = args["pattern"]
+        root = self.root_dir.resolve()
+
+        loop = asyncio.get_event_loop()
+        matches = await loop.run_in_executor(None, lambda: self._glob_walk(root, pattern))
+
+        return json.dumps(
+            {
+                "pattern": pattern,
+                "matches": matches[:_MAX_GLOB_RESULTS],
+                "total": len(matches),
+                "truncated": len(matches) > _MAX_GLOB_RESULTS,
+            }
+        )
+
+    @staticmethod
+    def _glob_walk(root: Path, pattern: str) -> list[str]:
+        """Run glob and filter results, skipping ignored directories.
+
+        Supports brace expansion (e.g. ``**/*.{html,js,css}``) which
+        ``pathlib.glob()`` does not handle natively.  Braces are expanded
+        into multiple patterns that are each globbed separately.
+        """
+        seen: set[str] = set()
+        results: list[str] = []
+        for expanded in _expand_braces(pattern):
+            for match in root.glob(expanded):
+                parts = match.relative_to(root).parts
+                if any(p in _SKIP_DIRS for p in parts):
+                    continue
+                if match.is_file():
+                    rel = str(match.relative_to(root))
+                    if rel not in seen:
+                        seen.add(rel)
+                        results.append(rel)
+        results.sort()
+        return results
+
+    async def _handle_grep(self, args: dict[str, Any]) -> str:
+        """Search file contents for a regex pattern."""
+        pattern = args["pattern"]
+        file_glob = args.get("glob", "**/*")
+
+        try:
+            compiled = re.compile(pattern)
+        except re.error as e:
+            return self._error_response("invalid_regex", f"Invalid regex: {e}")
+
+        root = self.root_dir.resolve()
+
+        loop = asyncio.get_event_loop()
+        matches = await loop.run_in_executor(
+            None, lambda: self._grep_walk(root, compiled, file_glob)
+        )
+
+        return json.dumps(
+            {
+                "pattern": pattern,
+                "matches": matches[:_MAX_GREP_MATCHES],
+                "total": len(matches),
+                "truncated": len(matches) > _MAX_GREP_MATCHES,
+            }
+        )
+
+    @staticmethod
+    def _grep_walk(root: Path, compiled: re.Pattern[str], file_glob: str) -> list[dict[str, Any]]:
+        """Walk files matching glob and search for regex matches."""
+        results: list[dict[str, Any]] = []
+        for filepath in sorted(root.glob(file_glob)):
+            if not _is_searchable_file(filepath, root):
+                continue
+            _grep_single_file(filepath, root, compiled, results)
+            if len(results) >= _MAX_GREP_MATCHES:
+                break
+        return results
+
+    async def _handle_list_directory(self, args: dict[str, Any]) -> str:
+        """List directory contents, optionally recursive."""
+        path_str = args.get("path", ".")
+        recursive = args.get("recursive", False)
+        max_depth = args.get("max_depth", 3)
+
+        resolved = self._resolve_path(path_str)
+        if not resolved.is_dir():
+            return self._error_response("not_a_directory", f"Not a directory: {path_str}")
+
+        loop = asyncio.get_event_loop()
+        entries = await loop.run_in_executor(
+            None,
+            lambda: self._list_entries(resolved, recursive, max_depth),
+        )
+
+        return json.dumps(
+            {
+                "path": path_str,
+                "entries": entries,
+                "total": len(entries),
+            }
+        )
+
+    def _list_entries(
+        self, directory: Path, recursive: bool, max_depth: int
+    ) -> list[dict[str, Any]]:
+        """List directory entries, optionally recursive with depth limit."""
+        root = self.root_dir.resolve()
+        entries: list[dict[str, Any]] = []
+
+        if recursive:
+            self._walk_recursive(directory, root, entries, 0, max_depth)
+        else:
+            self._walk_flat(directory, root, entries)
+
+        return entries
+
+    def _walk_flat(self, directory: Path, root: Path, entries: list[dict[str, Any]]) -> None:
+        """List immediate children of a directory."""
+        for entry in sorted(directory.iterdir()):
+            if entry.name in _SKIP_DIRS:
+                continue
+            info = self._entry_info(entry, root)
+            entries.append(info)
+
+    def _walk_recursive(
+        self,
+        directory: Path,
+        root: Path,
+        entries: list[dict[str, Any]],
+        depth: int,
+        max_depth: int,
+    ) -> None:
+        """Recursively list directory contents with depth limit."""
+        if depth > max_depth:
+            return
+        for entry in sorted(directory.iterdir()):
+            if entry.name in _SKIP_DIRS:
+                continue
+            info = self._entry_info(entry, root)
+            entries.append(info)
+            if entry.is_dir():
+                self._walk_recursive(entry, root, entries, depth + 1, max_depth)
+
+    @staticmethod
+    def _entry_info(entry: Path, root: Path) -> dict[str, Any]:
+        """Build entry info dict for a single path."""
+        rel = str(entry.relative_to(root))
+        if entry.is_dir():
+            return {"name": rel + "/", "type": "dir"}
+        try:
+            size = entry.stat().st_size
+        except OSError:
+            size = 0
+        return {"name": rel, "type": "file", "size": size}
+
     def _resolve_path(self, path: str) -> Path:
         """Resolve path relative to root directory, expanding ~ to home."""
         # Expand tilde to home directory
@@ -238,6 +506,7 @@ class FilesystemServer(BaseMCPServer):
 
         if errors and self._config and self._config.fail_on_errors:
             # Rollback: restore original content or delete new file
+            is_new_file = not original_content
             if original_content:
                 resolved.write_text(original_content)
                 self._tracker.record_read(resolved, original_content)
@@ -245,12 +514,27 @@ class FilesystemServer(BaseMCPServer):
                 # New file - delete it
                 resolved.unlink(missing_ok=True)
 
+            error_details = "; ".join(f"line {d.line}: {d.message}" for d in errors)
+
+            if is_new_file:
+                rollback_msg = (
+                    f"File was NOT created — rolled back due to {len(errors)} error(s). "
+                    f"The file does NOT exist on disk. "
+                    f"Fix the errors below and call write_file again (not edit_file)."
+                )
+            else:
+                rollback_msg = (
+                    f"Edit rolled back due to {len(errors)} error(s). "
+                    f"File reverted to its previous state. "
+                    f"Fix the errors below and try your edit again."
+                )
+
             return json.dumps(
                 {
                     "error": "diagnostics_failed",
-                    "message": f"Edit introduced {len(errors)} error(s) - rolled back",
+                    "message": rollback_msg,
+                    "errors": error_details,
                     "diagnostics": diag_list,
-                    "tip": "Fix the errors in your edit and try again",
                 }
             )
 

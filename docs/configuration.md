@@ -15,52 +15,28 @@ Configuration is loaded from multiple sources, with later sources overriding ear
 
 ## Configuration File
 
-### Full Example
+### Bundled Default
+
+The bundled default config ships at
+[`src/entropic/data/default_config.yaml`](../src/entropic/data/default_config.yaml)
+and is loaded automatically. It defines all 10 tiers pointing to the same model
+file with 131072 context length.
+
+To customize, create an override file — only set what differs from the default:
+
+### Local Override Example
 
 ```yaml
-# ~/.entropic/config.yaml
-
+# .entropic/config.local.yaml — only override model paths
 models:
-  tiers:
-    thinking:
-      path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
-      adapter: qwen3
-      context_length: 16384
-      gpu_layers: -1
-    normal:
-      path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-      adapter: falcon
-      context_length: 32768
-      gpu_layers: -1
-    analyzer:
-      path: ~/models/gguf/Qwen3-8B-Q4_K_M.gguf
-      adapter: qwen3
-      identity: prompts/identity_analyzer.md    # Per-tier system prompt
-      grammar: data/grammars/analysis.gbnf      # GBNF output constraint
-      auto_chain: true                          # Chain to next tier on completion
-      enable_thinking: false                    # Suppress think blocks
-      max_output_tokens: 256
-      allowed_tools:
-        - entropic.todo_write
-    micro:
-      path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-      adapter: qwen3
-      context_length: 4096
-      gpu_layers: -1
-  default: normal
+  lead:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q4_K_M.gguf
+```
 
-thinking:
-  enabled: false  # Start in normal mode
+### Project Permission Example
 
-routing:
-  enabled: true
-  fallback_tier: normal
-
-generation:
-  max_tokens: 4096
-  default_temperature: 0.7
-  default_top_p: 0.9
-
+```yaml
+# .entropic/config.yaml — project-specific permissions
 permissions:
   allow:
     - "filesystem.*"
@@ -68,92 +44,109 @@ permissions:
   deny:
     - "bash.execute:rm -rf *"
     - "bash.execute:sudo *"
-
-log_level: INFO
 ```
+
+**Note:** Multiple tiers can share the same model file. Identity swaps are
+free (prompt changes only). Model swaps (different GGUF files) cost VRAM
+load/unload time.
 
 ## Configuration Options
 
-### Models
+### Models — Hardware Config (`ModelConfig`)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `models.tiers.*.path` | Path | - | Path to GGUF model file |
-| `models.tiers.*.adapter` | String | `qwen2` | Adapter type: `qwen3`, `qwen2`, `falcon`, `generic` |
-| `models.tiers.*.context_length` | Integer | 16384 | Maximum context window |
-| `models.tiers.*.max_output_tokens` | Integer | 4096 | Max tokens per generation |
-| `models.tiers.*.gpu_layers` | Integer | -1 | GPU layers (-1 = all) |
-| `models.tiers.*.keep_warm` | Boolean | false | Use WARM state: pre-warm at startup, deactivate (not unload) on swap |
-| `models.tiers.*.use_mlock` | Boolean | true | Lock model pages in RAM (prevents swap, faster GPU promotion) |
-| `models.tiers.*.identity` | Path/False/None | None | Per-tier system prompt file. None=bundled, False=disabled |
-| `models.tiers.*.grammar` | Path/None | None | Path to `.gbnf` grammar file for output constraints |
-| `models.tiers.*.auto_chain` | Boolean | false | Chain to next tier on completion |
-| `models.tiers.*.enable_thinking` | Boolean | true | Allow think blocks. False adds `/no-think` (Qwen3) |
-| `models.tiers.*.allowed_tools` | List/None | None | Tool visibility filter (`server.tool` format). None=all |
-| `models.tiers.*.temperature` | Float | 0.7 | Sampling temperature |
-| `models.tiers.*.top_p` | Float | 0.9 | Top-p sampling |
-| `models.default` | String | normal | Default model tier |
-| `models.router` | Object | None | Router model config (not a tier) |
+| `models.tiers.*.path` | Path | required | Path to GGUF model file |
+| `models.tiers.*.adapter` | str | `qwen2` | Adapter: qwen35, qwen3, qwen2, falcon, smollm3, router, generic |
+| `models.tiers.*.context_length` | int | 16384 | Maximum context window (512–131072) |
+| `models.tiers.*.gpu_layers` | int | -1 | GPU layers (-1 = all) |
+| `models.tiers.*.keep_warm` | bool | false | Pre-warm at startup, deactivate (not unload) on swap |
+| `models.tiers.*.use_mlock` | bool | true | Lock model pages in RAM (prevents swap, faster activation) |
+| `models.tiers.*.logits_all` | bool | false | Compute logits for all positions (needed for logprobs) |
+| `models.tiers.*.allowed_tools` | list/null | null | Tool visibility filter (`server.tool` format). null = all |
+| `models.default` | str | `lead` | Default model tier |
+| `models.router` | object/null | null | Router model config (optional, not a tier) |
+
+### Models — Tier Overrides (`TierConfig`)
+
+These override identity frontmatter defaults when set in config:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `models.tiers.*.identity` | path/false/null | null | Custom identity file. null = bundled, false = disabled |
+| `models.tiers.*.grammar` | path/null | null | Path to `.gbnf` grammar file for output constraints |
+| `models.tiers.*.auto_chain` | bool/null | null | Override identity `auto_chain`. null = defer to frontmatter |
+| `models.tiers.*.routable` | bool/null | null | Override identity `routable` flag |
+
+### Identity Frontmatter — Inference Config
+
+Inference parameters live in identity frontmatter (`data/prompts/identity_*.md`),
+not in config. This keeps config focused on hardware and identity on behavior.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `temperature` | float | 0.7 | Sampling temperature |
+| `max_output_tokens` | int | 1024 | Max tokens per generation |
+| `repeat_penalty` | float | 1.1 | Repetition penalty |
+| `enable_thinking` | bool | false | Allow `<think>` blocks |
+| `bash_commands` | list/null | null | Bash command allowlist (null = all, [] = none) |
+| `explicit_completion` | bool | false | Require `entropic.complete` to terminate (vs heuristic) |
+| `phases` | dict/null | null | Named phase configurations with per-phase overrides |
+
+See [Models](models.md) for the full frontmatter schema.
 
 ### Routing
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `routing.enabled` | Boolean | true | Enable automatic task routing |
-| `routing.fallback_tier` | String | normal | Fallback when routing fails |
+| `routing.enabled` | bool | false | Enable automatic task routing (requires router model) |
+| `routing.fallback_tier` | str | `lead` | Fallback when routing fails |
 
 ### Generation
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `generation.max_tokens` | Integer | 4096 | Max tokens per response |
-| `generation.default_temperature` | Float | 0.7 | Sampling temperature |
-| `generation.default_top_p` | Float | 0.9 | Top-p sampling |
+| `generation.max_tokens` | int | 4096 | Max tokens per response |
+| `generation.default_temperature` | float | 0.7 | Sampling temperature |
+| `generation.default_top_p` | float | 0.9 | Top-p sampling |
 
 ### VRAM
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `library.vram_reserve_mb` | Integer | 512 | VRAM headroom to keep free (MB). Informs load decisions. |
+| `library.vram_reserve_mb` | int | 512 | VRAM headroom to keep free (MB) |
 
 ### MCP
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `mcp.external.socket_path` | Path/None | None | Unix socket path for the external MCP server. None = auto-derived from project directory (`~/.entropic/socks/{hash(cwd)}.sock`). |
+| `mcp.external.socket_path` | path/null | null | Unix socket for external MCP. null = auto |
 
-External MCP servers (from `.mcp.json` or `mcp.external_servers`) are connected at `initialize()` time. See [Runtime MCP Registration](#runtime-mcp-registration) in the library consumer guide for the `connect_server()` API.
+External MCP servers (`.mcp.json` or `mcp.external_servers`) connect at `initialize()` time.
 
 ### Logging
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `log_level` | String | INFO | Log level: DEBUG, INFO, WARNING, ERROR |
+| `log_level` | str | INFO | Log level: DEBUG, INFO, WARNING, ERROR |
 
 ## Environment Variables
 
-All configuration options can be set via environment variables with the `ENTROPIC_` prefix:
+All options can be set via environment variables with the `ENTROPIC_` prefix:
 
 ```bash
 export ENTROPIC_LOG_LEVEL=DEBUG
-export ENTROPIC_MODELS__NORMAL__CONTEXT_LENGTH=16384
+export ENTROPIC_MODELS__TIERS__LEAD__CONTEXT_LENGTH=16384
 ```
 
 Use double underscores (`__`) for nested options.
 
 ## Project-Specific Configuration
 
-Create `.entropic/config.yaml` in your project root for project-specific settings:
+Create `.entropic/config.yaml` in your project root:
 
 ```yaml
 # .entropic/config.yaml
-
-# Override context length for this project
-models:
-  normal:
-    context_length: 8192
-
-# Project-specific permissions
 permissions:
   allow:
     - "filesystem.*"
@@ -164,22 +157,24 @@ permissions:
 
 ## Local Overrides
 
-For settings you don't want to commit (like local paths), use `.entropic/config.local.yaml`:
+For settings you don't want to commit, use `.entropic/config.local.yaml`:
 
 ```yaml
 # .entropic/config.local.yaml (gitignored)
-
 models:
-  normal:
-    path: /custom/path/to/model.gguf
+  tiers:
+    lead:
+      path: /custom/path/to/model.gguf
 ```
 
 ## Adapters
 
-Adapters handle model-specific chat formats and tool calling:
-
 | Adapter | Models | Format |
 |---------|--------|--------|
-| `qwen3` | Qwen3-*, Qwen2.5-* | ChatML with `<tool_call>` tags |
-| `falcon` | Falcon-H1R-* | ChatML with `<tool_call>` tags |
+| `qwen35` | Qwen3.5-35B-A3B MoE | ChatML with `<tool_call>` tags, `<think>` blocks |
+| `qwen3` | Qwen3-* | ChatML with `<tool_call>` tags, `<think>` blocks |
+| `qwen2` | Qwen2.5-* | ChatML with `<tool_call>` tags |
+| `falcon` | Falcon-H1R-* | ChatML with `<tool_call>` tags, `<think>` blocks |
+| `smollm3` | SmolLM3-* | ChatML with `<tool_call>` tags |
+| `router` | Classification | Raw text continuation |
 | `generic` | Any | Basic ChatML |

@@ -15,16 +15,16 @@ from typing import Any
 from mcp.types import Tool
 
 from entropic.core.directives import (
-    ClearSelfTodos,
+    Complete,
     ContextAnchor,
     Delegate,
-    InjectContext,
     NotifyPresenter,
+    PhaseChange,
     Pipeline,
     PruneMessages,
     StopProcessing,
 )
-from entropic.core.todos import TodoList, TodoStatus
+from entropic.core.todos import TodoList
 from entropic.mcp.servers.base import BaseMCPServer, ServerResponse, load_tool_definition
 from entropic.mcp.tools import BaseTool
 
@@ -48,46 +48,20 @@ def _parse_json_string(value: Any, expected_type: type) -> Any:
     return value
 
 
-class TodoWriteTool(BaseTool):
-    """Manage the internal todo list."""
+class TodoTool(BaseTool):
+    """Minimal todo tracking for child roles.
 
-    def __init__(self, todo_list: TodoList, tier_names: list[str] | None = None) -> None:
-        definition = self._build_definition(tier_names) if tier_names else None
-        if definition:
-            super().__init__(definition=definition)
-        else:
-            super().__init__("todo_write", "entropic")
+    Simplified interface: add, update, remove. No target_tier,
+    no bulk_update, no replace. Active_form computed from content.
+    """
+
+    def __init__(self, todo_list: TodoList) -> None:
+        super().__init__("todo", "entropic")
         self._todo_list = todo_list
 
-    @staticmethod
-    def _build_definition(tier_names: list[str]) -> Tool:
-        """Build todo_write definition with patched target_tier enums."""
-        tool = load_tool_definition("todo_write", "entropic")
-        schema = dict(tool.inputSchema)
-        props = dict(schema["properties"])
-
-        # Patch target_tier enum in todos[].items.properties
-        todos_prop = dict(props["todos"])
-        items = dict(todos_prop["items"])
-        item_props = dict(items["properties"])
-        tt = dict(item_props["target_tier"])
-        tt["enum"] = list(tier_names)
-        item_props["target_tier"] = tt
-        items["properties"] = item_props
-        todos_prop["items"] = items
-        props["todos"] = todos_prop
-
-        # Patch top-level target_tier enum (for 'update' action)
-        top_tt = dict(props["target_tier"])
-        top_tt["enum"] = list(tier_names)
-        props["target_tier"] = top_tt
-
-        schema["properties"] = props
-        return Tool(name=tool.name, description=tool.description, inputSchema=schema)
-
     async def execute(self, arguments: dict[str, Any]) -> ServerResponse:
-        """Update todo list, return context anchor + presenter notification."""
-        result = self._todo_list.handle_tool_call(arguments)
+        """Update todo list via simplified interface."""
+        result = self._todo_list.handle_simple_call(arguments)
         state = self._todo_list.format_for_context()
         return ServerResponse(
             result=result,
@@ -107,13 +81,12 @@ class TodoWriteTool(BaseTool):
 class DelegateTool(BaseTool):
     """Delegate a task to a different identity tier."""
 
-    def __init__(self, todo_list: TodoList, tier_names: list[str] | None) -> None:
+    def __init__(self, tier_names: list[str] | None) -> None:
         definition = self._build_definition(tier_names) if tier_names else None
         if definition:
             super().__init__(definition=definition)
         else:
             super().__init__("delegate", "entropic")
-        self._todo_list = todo_list
         self._tier_names = tier_names
 
     @staticmethod
@@ -129,10 +102,10 @@ class DelegateTool(BaseTool):
 
         tier_list = ", ".join(f"`{t}`" for t in tier_names)
         description = (
-            "Delegate a task to a different identity tier.\n\n"
-            f"Available tiers: {tier_list}\n\n"
-            "Use this tool to assign work to a tier whose specialty "
-            "matches the task."
+            "This is your PRIMARY tool. Use it to assign ALL implementation "
+            "work to the appropriate role. You do not write code, files, or "
+            "artifacts yourself — you delegate.\n\n"
+            f"Available tiers: {tier_list}"
         )
         return Tool(name=tool.name, description=description, inputSchema=schema)
 
@@ -142,70 +115,18 @@ class DelegateTool(BaseTool):
         task = arguments.get("task", "")
         max_turns = arguments.get("max_turns")
 
-        error = self._validate_delegate(target)
-        if error:
-            return error
-
-        directives = self._build_directives(target, task, max_turns)
-        return ServerResponse(
-            result=f"Delegation requested to {target}. Task: {task}",
-            directives=directives,
-        )
-
-    def _validate_delegate(self, target: str) -> str | None:
-        """Check tier validity and planning requirements. Returns error JSON or None."""
         if self._tier_names and target not in self._tier_names:
             return json.dumps(
                 {"error": f"Unknown tier: '{target}'. Available tiers: {self._tier_names}"}
             )
 
-        if self._todo_list.is_empty:
-            return json.dumps(
-                {
-                    "error": (
-                        "Cannot delegate without a plan. Use entropic.todo_write first "
-                        "to create todos describing the work, then delegate. "
-                        "Each todo should have a target_tier matching the role that will do it."
-                    )
-                }
-            )
-
-        execution_todos = [t for t in self._todo_list.items if t.target_tier is not None]
-        if not execution_todos:
-            logger.warning(
-                "[DELEGATE] %d todo(s) exist but none have target_tier set. "
-                "Proceeding with delegation — todos are self-directed.",
-                len(self._todo_list.items),
-            )
-        return None
-
-    def _build_directives(self, target: str, task: str, max_turns: int | None) -> list:
-        """Build delegation directives including optional warning."""
-        directives = []
-
-        incomplete_self = [
-            t
-            for t in self._todo_list.items
-            if t.target_tier is None and t.status != TodoStatus.COMPLETED
-        ]
-        if incomplete_self:
-            directives.append(
-                InjectContext(
-                    content=(
-                        f"[SYSTEM] Warning: {len(incomplete_self)} self-directed "
-                        f"todo(s) not yet completed. Proceeding with delegation."
-                    ),
-                )
-            )
-
-        directives.extend(
-            [
-                ClearSelfTodos(),
+        return ServerResponse(
+            result=f"Delegation requested to {target}. Task: {task}",
+            directives=[
                 Delegate(target=target, task=task, max_turns=max_turns),
                 StopProcessing(),
-            ]
+            ],
         )
-        return directives
 
 
 class PipelineTool(BaseTool):
@@ -254,6 +175,54 @@ class PipelineTool(BaseTool):
         )
 
 
+class CompleteTool(BaseTool):
+    """Signal explicit completion of a delegated task."""
+
+    def __init__(self) -> None:
+        super().__init__("complete", "entropic")
+
+    async def execute(self, arguments: dict[str, Any]) -> ServerResponse:
+        """Emit Complete directive with summary."""
+        summary = arguments.get("summary", "(no summary provided)")
+        return ServerResponse(
+            result=f"Completion signaled: {summary}",
+            directives=[Complete(summary=summary), StopProcessing()],
+        )
+
+
+class PhaseChangeTool(BaseTool):
+    """Switch the active phase within the current role."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            definition=Tool(
+                name="phase_change",
+                description="Switch to a different phase within your current role. "
+                "Phases change inference parameters and available bash commands.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "phase": {
+                            "type": "string",
+                            "description": "Target phase name (e.g., 'execute')",
+                        },
+                    },
+                    "required": ["phase"],
+                },
+            )
+        )
+
+    async def execute(self, arguments: dict[str, Any]) -> ServerResponse:
+        """Emit PhaseChange directive."""
+        phase = arguments.get("phase", "")
+        if not phase:
+            return ServerResponse(result="Error: phase name is required.")
+        return ServerResponse(
+            result=f"Phase changed to: {phase}",
+            directives=[PhaseChange(phase=phase)],
+        )
+
+
 class PruneContextTool(BaseTool):
     """Request context pruning to reduce message history."""
 
@@ -273,7 +242,7 @@ class EntropicServer(BaseMCPServer):
     """Entropic internal tools MCP server.
 
     Owns the TodoList instance and provides delegate, prune_context,
-    and todo_write tools. Returns ``ServerResponse`` with native typed
+    and todo tools. Returns ``ServerResponse`` with native typed
     directives for engine-level side effects (delegation, context pruning, etc.).
     """
 
@@ -290,10 +259,12 @@ class EntropicServer(BaseMCPServer):
         super().__init__("entropic")
         self._todo_list = TodoList()
         self._tier_names = tier_names
-        self.register_tool(TodoWriteTool(self._todo_list, tier_names))
+        self.register_tool(TodoTool(self._todo_list))
         if not tier_names or len(tier_names) > 1:
-            self.register_tool(DelegateTool(self._todo_list, tier_names))
+            self.register_tool(DelegateTool(tier_names))
             self.register_tool(PipelineTool(tier_names))
+        self.register_tool(CompleteTool())
+        self.register_tool(PhaseChangeTool())
         self.register_tool(PruneContextTool())
 
     @staticmethod

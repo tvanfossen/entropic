@@ -54,15 +54,17 @@ class BenchmarkSpec(BaseModel):
 class PhaseConfig(BaseModel):
     """Inference parameters for a single identity phase.
 
-    Each role has one or more named phases. V1 ships with one phase
-    ("default") per role. The engine resolves inference params from
-    the active phase at generation time.
+    Each role has one or more named phases. The engine resolves
+    inference params from the active phase at generation time.
+    Phase-specific bash_commands override the identity-level list
+    when set (None = inherit from identity).
     """
 
     temperature: float = 0.7
     max_output_tokens: int = 4096
     enable_thinking: bool = False
     repeat_penalty: float = 1.1
+    bash_commands: list[str] | None = None
 
 
 class IdentityFrontmatter(PromptFrontmatter):
@@ -79,6 +81,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     grammar: str | None = None
     auto_chain: str | None = None
     allowed_tools: list[str] | None = None
+    bash_commands: list[str] | None = None
     max_output_tokens: int = 1024
     temperature: float = 0.7
     repeat_penalty: float = 1.1
@@ -87,6 +90,7 @@ class IdentityFrontmatter(PromptFrontmatter):
     interstitial: bool = False
     routable: bool = True
     role_type: Literal["front_office", "back_office", "utility"] = "front_office"
+    explicit_completion: bool = False
     phases: dict[str, PhaseConfig] | None = None
     benchmark: BenchmarkSpec | None = None
 

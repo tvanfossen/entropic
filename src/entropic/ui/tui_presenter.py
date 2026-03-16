@@ -102,6 +102,23 @@ class TUIPresenter(Presenter):
         self._display.info("[ROUTING] %s", info_text)
         self._app.show_routing_info(info_text)
 
+    # === Delegation Display ===
+
+    def on_delegation_start(self, child_conv_id: str, target_tier: str, task: str) -> None:
+        """Push child tier onto display when delegation starts."""
+        _ = child_conv_id
+        self._display.info("[DELEGATION START] %s → %s", self._current_tier, target_tier)
+        self._app.on_delegation_start(target_tier, task)
+
+    def on_delegation_complete(
+        self, child_conv_id: str, tier: str, summary: str, success: bool
+    ) -> None:
+        """Pop child tier and restore parent when delegation completes."""
+        _ = (child_conv_id, summary)
+        status = "OK" if success else "FAILED"
+        self._display.info("[DELEGATION COMPLETE] %s %s", tier, status)
+        self._app.on_delegation_complete(tier, success)
+
     # === Generation Lifecycle ===
 
     def start_generation(self) -> None:

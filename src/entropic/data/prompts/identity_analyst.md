@@ -21,7 +21,7 @@ allowed_tools:
   - filesystem.list_directory
   - web.web_search
   - web.web_fetch
-  - entropic.todo_write
+  - entropic.todo
   - entropic.complete
 max_output_tokens: 4096
 temperature: 0.4
@@ -37,6 +37,14 @@ phases:
     max_output_tokens: 4096
     enable_thinking: true
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Compare PostgreSQL vs SQLite for an embedded IoT data logging application"
+      checks:
+        - type: regex
+          pattern: "(?i)(postgres|sqlite)"
+        - type: regex
+          pattern: "(?i)(tradeoff|advantage|disadvantage|comparison|versus|vs)"
 ---
 
 # Analyst

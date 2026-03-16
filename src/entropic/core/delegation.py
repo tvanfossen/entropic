@@ -132,7 +132,9 @@ class DelegationManager:
             for i, stage in enumerate(stages):
                 context_line = (
                     f"[PIPELINE CONTEXT] Stage {i + 1} of {len(stages)}: {stage_labels}\n"
-                    f"You are: {stage}\n\n"
+                    f"You are: {stage}. Stay within your role's scope — do NOT do work "
+                    f"that belongs to a later stage in the pipeline. Your output is the "
+                    f"input for the next stage.\n\n"
                 )
                 stage_task = f"{context_line}{task}"
 

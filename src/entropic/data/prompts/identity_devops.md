@@ -21,7 +21,7 @@ allowed_tools:
   - filesystem.grep
   - filesystem.list_directory
   - bash.execute
-  - entropic.todo_write
+  - entropic.todo
   - entropic.complete
 max_output_tokens: 4096
 temperature: 0.2
@@ -37,6 +37,14 @@ phases:
     max_output_tokens: 4096
     enable_thinking: true
     repeat_penalty: 1.1
+benchmark:
+  prompts:
+    - prompt: "Set up a pre-commit configuration with ruff linting and black formatting for a Python project"
+      checks:
+        - type: regex
+          pattern: "(?i)(pre.?commit|ruff|black|lint|format)"
+        - type: regex
+          pattern: "(?i)(yaml|config|hook)"
 ---
 
 # DevOps — Quality Infrastructure

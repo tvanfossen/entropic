@@ -7,6 +7,7 @@ and evaluates output against check primitives from ``checks.py``.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -213,11 +214,25 @@ async def _run_prompt(
     prompt: str,
     check_specs: list[dict[str, Any]],
 ) -> PromptResult:
-    """Run a single prompt through the orchestrator and evaluate checks."""
-    messages = [Message(role="user", content=prompt)]
+    """Run a single prompt through the orchestrator and evaluate checks.
+
+    Builds the system prompt with identity + filtered tools, matching
+    what the engine produces at runtime. This ensures benchmarks test
+    model behavior with the same prompt the model sees in production.
+    """
+    tools = _load_tools_for_identity(fm)
+    adapter = orchestrator.get_adapter(tier)
+    enable_thinking = fm.enable_thinking if fm is not None else False
+    system_prompt = adapter.format_system_prompt("", tools, enable_thinking=enable_thinking)
+
+    messages = [
+        Message(role="system", content=system_prompt),
+        Message(role="user", content=prompt),
+    ]
     gen_result = await orchestrator.generate(messages, tier=tier, identity_fm=fm)
 
-    output = gen_result.content
+    # Use raw_content (pre-parsing) so checks can match tool calls and text
+    output = gen_result.raw_content or gen_result.content
     check_results = run_checks(output, check_specs)
     all_passed = all(c.passed for c in check_results)
 
@@ -239,6 +254,41 @@ async def _run_prompt(
         inference_ms=gen_result.generation_time_ms,
         token_count=gen_result.token_count,
     )
+
+
+# ---------------------------------------------------------------------------
+# Tool loading
+# ---------------------------------------------------------------------------
+
+_TOOLS_DIR = Path(entropic.__file__).parent / "data" / "tools"
+
+
+def _load_tools_for_identity(fm: IdentityFrontmatter) -> list[dict[str, Any]]:
+    """Load tool JSON definitions filtered by identity's allowed_tools.
+
+    Reads tool definitions from the bundled data/tools/ directory,
+    matching the server.tool_name format used in allowed_tools.
+    Returns empty list if allowed_tools is None or empty.
+    """
+    if not fm.allowed_tools:
+        return []
+
+    tools = []
+    for qualified_name in fm.allowed_tools:
+        parts = qualified_name.split(".", 1)
+        if len(parts) != 2:
+            continue
+        server, tool_name = parts
+        tool_path = _TOOLS_DIR / server / f"{tool_name}.json"
+        if not tool_path.exists():
+            logger.warning("[quality] Tool definition not found: %s", tool_path)
+            continue
+        tool_def = json.loads(tool_path.read_text())
+        # Prefix name with server for consistency with MCP naming
+        tool_def["name"] = qualified_name
+        tools.append(tool_def)
+
+    return tools
 
 
 # ---------------------------------------------------------------------------

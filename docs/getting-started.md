@@ -5,88 +5,88 @@
 ## Prerequisites
 
 - Ubuntu 24.04 (or compatible Linux)
-- NVIDIA GPU with 16GB+ VRAM
+- NVIDIA GPU with 16GB+ VRAM (or CPU-only with reduced models)
 - CUDA 12.4+ with nvcc
 - Python 3.11+
 
 ## Installation
 
-### 1. Clone and Install
+### From PyPI
+
+```bash
+# TUI application
+pipx install entropic-engine[app]
+
+# CUDA support (after install)
+PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="-DGGML_CUDA=on" \
+  pipx runpip entropic-engine install llama-cpp-python \
+  --force-reinstall --no-cache-dir
+```
+
+### From Source (Development)
 
 ```bash
 git clone https://github.com/user/entropic.git
 cd entropic
 
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install with CUDA support
 export CUDACXX=/usr/local/cuda/bin/nvcc
 CMAKE_ARGS="-DGGML_CUDA=on" pip install -e ".[dev]"
 ```
 
-### 2. Download Models
+## Download Models
 
-Entropic uses a multi-model architecture. Download the required models:
+### Recommended: Qwen3.5-35B-A3B (MoE)
+
+Single model for all roles. MoE architecture keeps only 3B parameters active,
+fitting comfortably in 16GB VRAM.
 
 ```bash
 mkdir -p ~/models/gguf
 cd ~/models/gguf
 
-# THINKING model (Qwen3-14B) - Deep reasoning
-huggingface-cli download bartowski/Qwen_Qwen3-14B-GGUF \
-  --include "Qwen_Qwen3-14B-Q4_K_M.gguf" \
+# Primary model — all identity roles use this
+huggingface-cli download unsloth/Qwen3.5-35B-A3B-GGUF \
+  --include "Qwen3.5-35B-A3B-Q4_K_M.gguf" \
   --local-dir ~/models/gguf
+```
 
-# NORMAL/CODE model (Falcon H1R 7B) - General and code tasks
-huggingface-cli download brittlewis12/Falcon-H1R-7B-GGUF \
-  --include "Falcon-H1R-7B-Q8_0.gguf" \
-  --local-dir ~/models/gguf
+### Optional: Router Model
 
-# MICRO model (Qwen3-0.6B) - Task classification
+Only needed if you enable automatic routing (`routing.enabled: true`):
+
+```bash
 huggingface-cli download bartowski/Qwen3-0.6B-GGUF \
   --include "Qwen3-0.6B-Q8_0.gguf" \
   --local-dir ~/models/gguf
 ```
 
-### 3. Configure
+## Configure
 
-Create your global configuration:
+The bundled default config lives at
+[`src/entropic/data/default_config.yaml`](../src/entropic/data/default_config.yaml)
+and is loaded automatically. To customize, copy it to your global config:
+
+```bash
+mkdir -p ~/.entropic
+cp src/entropic/data/default_config.yaml ~/.entropic/config.yaml
+# Edit paths to match your model download locations
+```
+
+Or create a minimal override (only set what differs from the default):
 
 ```bash
 mkdir -p ~/.entropic
 cat > ~/.entropic/config.yaml << 'EOF'
 models:
-  thinking:
-    path: ~/models/gguf/Qwen_Qwen3-14B-Q4_K_M.gguf
-    adapter: qwen3
-    context_length: 16384
-    gpu_layers: -1
-  normal:
-    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-    adapter: falcon
-    context_length: 32768
-    gpu_layers: -1
-  code:
-    path: ~/models/gguf/Falcon-H1R-7B-Q8_0.gguf
-    adapter: falcon
-    context_length: 32768
-    gpu_layers: -1
-  micro:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: qwen3
-    context_length: 4096
-    gpu_layers: -1
-  default: normal
-
-routing:
-  enabled: true
-  fallback_model: normal
-
-log_level: INFO
+  lead:
+    path: ~/models/gguf/Qwen3.5-35B-A3B-Q4_K_M.gguf
 EOF
 ```
+
+See [Configuration](configuration.md) for full options and hierarchy.
 
 ## First Run
 
@@ -96,7 +96,7 @@ EOF
 entropic
 ```
 
-This starts the interactive terminal UI. Type your questions and Entropic will respond.
+Starts the TUI. Type your questions and Entropic responds with the lead identity.
 
 ### Single Query
 
@@ -111,7 +111,7 @@ cd /path/to/your/project
 entropic init
 ```
 
-This creates a `.entropic/` directory with project-specific configuration.
+Creates `.entropic/` with project-specific configuration.
 
 ## Basic Commands
 
@@ -120,20 +120,24 @@ This creates a `.entropic/` directory with project-specific configuration.
 | `/help` | Show available commands |
 | `/clear` | Clear conversation history |
 | `/status` | Show model and VRAM status |
-| `/think on` | Enable deep reasoning mode (uses 14B model) |
-| `/think off` | Disable deep reasoning mode |
+| `/think on` | Enable thinking mode (`<think>` blocks) |
+| `/think off` | Disable thinking mode |
 | `/exit` | Exit Entropic |
 
 ## What Entropic Can Do
 
-- **Read and understand code** - Navigate your codebase, explain functions
-- **Write and edit code** - Generate new code, refactor existing code
-- **Execute commands** - Run bash commands, tests, build scripts
-- **Git operations** - Status, diff, log, commit
-- **Search files** - Find files by pattern, search content
+- **Read and understand code** — Navigate codebases, explain functions
+- **Write and edit code** — Generate, refactor, debug
+- **Execute commands** — Run tests, build scripts (scoped by role)
+- **Git operations** — Status, diff, log, commit
+- **Delegate work** — Lead orchestrates eng, qa, arch roles
+- **Multi-stage pipelines** — Chain roles (eng → qa) for implementation + review
+- **Search files** — Find files by pattern, search content
 
 ## Next Steps
 
-- [Configuration](configuration.md) - Customize Entropic for your workflow
-- [Commands](commands.md) - Full command reference
-- [Models](models.md) - Understand the model tiers
+- [Configuration](configuration.md) — Customize for your workflow
+- [Commands](commands.md) — Full command reference
+- [Models](models.md) — Identity system and model tiers
+- [Architecture](architecture.md) — System design overview
+- [Library Consumer Guide](library-consumer-guide.md) — Embed Entropic as a library

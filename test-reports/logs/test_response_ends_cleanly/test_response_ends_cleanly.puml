@@ -22,36 +22,20 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three programming languages with their main use cases:
+  Here are three common programming languages and their main use cases:
   
-  ## 1. **Python**
-  - **Primary uses**: Data science, machine learning, artificial intelligence, 
-  scripting, automation, web backend (Django/Flask)
-  - **Why popular**: Clean syntax, extensive libraries (NumPy, Pandas, 
-  TensorFlow), easy to learn
-  - **Common in**: Research labs, startups, data engineering
+  1. **Python** — Data science, machine learning, scripting, automation, web 
+  development (Django/Flask), scientific computing
   
-  ## 2. **JavaScript**
-  - **Primary uses**: Web development (frontend + backend with Node.js), mobile 
-  apps (React Native), browser automation
-  - **Why popular**: Runs everywhere browsers support it, massive ecosystem (npm 
-  packages)
-  - **Common in**: Modern web applications, progressive web apps, real-time 
-  dashboards
+  2. **JavaScript** — Web frontend development, browser-based applications, 
+  Node.js backend services, full-stack JavaScript applications
   
-  ## 3. **Java**
-  - **Primary uses**: Enterprise software, Android development, large-scale 
-  distributed systems, banking/financial systems
-  - **Why popular**: Strong typing, mature frameworks (Spring), excellent 
-  performance at scale
-  - **Common in**: Corporate backends, Android apps, big data platforms (Hadoop)
+  3. **Rust** — Systems programming, performance-critical applications, embedded 
+  systems, memory-safe low-level code where safety and speed are priorities
   
-  ---
-  
-  These three cover most modern software needs. Python excels for analytics/AI 
-  work, JavaScript dominates web interfaces, and Java handles heavy enterprise 
-  infrastructure. Each has tradeoffs: Python prioritizes developer productivity, 
-  JavaScript offers ubiquity, and Java emphasizes stability at scale.
+  These languages represent different paradigms: Python for rapid development and 
+  data work, JavaScript for web-centric applications, and Rust for 
+  high-performance systems programming with strong memory guarantees.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

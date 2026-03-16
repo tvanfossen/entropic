@@ -231,6 +231,12 @@ class Application:
                 on_routing_complete=lambda r: presenter.show_routing_info(
                     self._format_routing_info(r)
                 ),
+                on_delegation_start=lambda cid, t, task: presenter.on_delegation_start(
+                    cid, t, task
+                ),
+                on_delegation_complete=lambda cid, t, s, ok: presenter.on_delegation_complete(
+                    cid, t, s, ok
+                ),
             )
         )
 
@@ -530,6 +536,12 @@ class Application:
                 on_tier_selected=lambda t: presenter.set_tier(t),
                 on_routing_complete=lambda r: presenter.show_routing_info(
                     self._format_routing_info(r)
+                ),
+                on_delegation_start=lambda cid, t, task: presenter.on_delegation_start(
+                    cid, t, task
+                ),
+                on_delegation_complete=lambda cid, t, s, ok: presenter.on_delegation_complete(
+                    cid, t, s, ok
                 ),
             )
         )

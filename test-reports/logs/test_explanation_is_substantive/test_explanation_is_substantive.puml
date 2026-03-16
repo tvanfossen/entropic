@@ -22,58 +22,46 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Recursion is when a function calls itself to solve a problem by breaking it down
-  into smaller versions of the same problem. It's like solving a puzzle by 
-  repeatedly applying the same solution pattern until you reach a simple case that
-  doesn't need further division.
+  Recursion is a programming technique where a function calls itself to solve a 
+  problem. It's based on the idea that you can break down a complex problem into 
+  smaller versions of itself until you reach a simple base case.
   
-  ## Key Concepts
+  ## Key Components
   
-  **Base Case**: The condition where recursion stops (prevents infinite loops). 
-  Without this, the function would call itself forever.
+  1. **Base Case**: The condition that stops the recursion (prevents infinite 
+  loops)
+  2. **Recursive Case**: The function calls itself with modified parameters, 
+  moving toward the base case
   
-  **Recursive Case**: Where the function calls itself with modified parameters, 
-  moving toward the base case.
-  
-  ## Simple Example: Factorial
+  ## Simple Example (Factorial)
   
   ```python
   def factorial(n):
-      # Base case: 0! = 1
-      if n == 0:
+      if n == 0:  # Base case
           return 1
-      
-      # Recursive case: n! = n × (n-1)!
-      return n * factorial(n - 1)
-  
-  # factorial(3) = 3 × factorial(2)
-  #              = 3 × (2 × factorial(1))
-  #              = 3 × (2 × (1 × factorial(0)))
-  #              = 3 × (2 × (1 × 1))
-  #              = 6
-  ```
-  
-  ## Another Example: Fibonacci
-  
-  ```python
-  def fibonacci(n):
-      # Base cases
-      if n &lt;= 1:
-          return n
-      
-      # Recursive case: sum of previous two numbers
-      return fibonacci(n-1) + fibonacci(n-2)
+      else:       # Recursive case
+          return n * factorial(n - 1)
   ```
   
   ## When to Use Recursion
   
-  ✅ **Good for**: Problems with natural recursive structure (trees, graphs, 
-  divide-and-conquer algorithms)  
-  ❌ **Avoid when**: Simple iteration works better or recursion depth could cause 
-  stack overflow
+  - **Natural fit**: Problems that can be divided into smaller subproblems (tree 
+  traversal, sorting algorithms like quicksort/mergesort)
+  - **Cleaner code**: Sometimes recursive solutions are more elegant than 
+  iterative ones
+  - **Complexity tradeoff**: Recursive solutions may use more memory due to call 
+  stack overhead
   
-  Recursion is powerful but requires careful design of base cases and progress 
-  toward them.
+  ## When NOT to Use Recursion
+  
+  - **Performance matters**: Iterative approaches often run faster and use less 
+  memory
+  - **Deep recursion risk**: Can cause stack overflow errors on very deep 
+  recursions
+  - **Simple problems**: Sometimes a loop is clearer than recursion
+  
+  The key principle: ensure your recursive calls always move toward the base case,
+  or you'll get infinite recursion.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

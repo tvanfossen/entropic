@@ -54,15 +54,17 @@ class BenchmarkSpec(BaseModel):
 class PhaseConfig(BaseModel):
     """Inference parameters for a single identity phase.
 
-    Each role has one or more named phases. V1 ships with one phase
-    ("default") per role. The engine resolves inference params from
-    the active phase at generation time.
+    Each role has one or more named phases. The engine resolves
+    inference params from the active phase at generation time.
+    Phase-specific bash_commands override the identity-level list
+    when set (None = inherit from identity).
     """
 
     temperature: float = 0.7
     max_output_tokens: int = 4096
     enable_thinking: bool = False
     repeat_penalty: float = 1.1
+    bash_commands: list[str] | None = None
 
 
 class IdentityFrontmatter(PromptFrontmatter):

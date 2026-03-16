@@ -22,57 +22,112 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  I'll write a Python function to check if a number is even:
+  &lt;tool_call&gt;{"name": "entropic.delegate", "arguments": {"target": "eng", 
+  "task": "Write a Python function to check if a number is 
+  even"}}&lt;/tool_call&gt;
+end note
+Mdl --> Eng: tool_call(entropic.delegate)
+Eng -> MCP: entropic.delegate
+note right of MCP
+  target: eng
+  task: Write a Python function to check if a number is even
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Delegation requested to eng. Task: Write a Python function to check if a number 
+  is even
 end note
 Mdl --> Eng: tool_call(filesystem.write_file)
 Eng -> MCP: filesystem.write_file
 note right of MCP
   path: check_even.py
-  content: def is_even(n):
+  content: def is_even(n: int) -&gt; bool:
     """Check if a number is even.
     
     Args:
-        n (int): The number to check
+        n: The integer to check
         
     Returns:
-        bool: True if the number is even, False otherwise
-        
-    Examp
+        True if n is divisible by 2, False otherwise
+    """
+    ret
 end note
 MCP --> Eng: result
 note right of MCP
   **Tool Result:**
-  {"success": true, "bytes_written": 587, "path": "check_even.py"}
+  {"success": true, "bytes_written": 214, "path": "check_even.py"}
+end note
+Mdl --> Eng: tool_call(entropic.complete)
+Eng -> MCP: entropic.complete
+note right of MCP
+  summary: Created check_even.py with an is_even() function that uses n % 2 == 0 to determine if a number is even. Function includes docstring with Args/Returns sections following Python conventions.
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Completion signaled: Created check_even.py with an is_even() function that uses 
+  n % 2 == 0 to determine if a number is even. Function includes docstring with 
+  Args/Returns sections following Python conventions.
+end note
+Mdl --> Eng: tool_call(entropic.complete)
+Eng -> MCP: entropic.complete
+note right of MCP
+  summary: Delegated task to eng tier. Engineer created check_even.py with an is_even() function that uses n % 2 == 0 to check if a number is even, including proper Python docstring conventions. Task completed s
+end note
+MCP --> Eng: result
+note right of MCP
+  **Tool Result:**
+  Completion signaled: Delegated task to eng tier. Engineer created check_even.py 
+  with an is_even() function that uses n % 2 == 0 to check if a number is even, 
+  including proper Python docstring conventions. Task completed successfully.
 end note
 note right of Eng
   **Follow-up message:**
   &lt;tool_response&gt;
-  {"success": true, "bytes_written": 587, "path": "check_even.py"}
+  Delegation requested to eng. Task: Write a Python function to check if a number 
+  is even
   &lt;/tool_response&gt;
   
   Continue. Batch multiple tool calls in one response when possible.
+end note
+note right of Eng
+  **Follow-up message:**
+  [DELEGATION COMPLETE: eng] Created check_even.py with an is_even() function that
+  uses n % 2 == 0 to determine if a number is even. Function includes docstring 
+  with Args/Returns sections following Python conventions.
+  (turns used: 2)
 end note
 == Turn 2 ==
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Done! I've created `check_even.py` with a Python function that checks if a 
-  number is even. The function:
+  The engineering team has completed the task. Here's what was delivered:
   
-  - Takes a single parameter `number` (the integer to check)
-  - Returns `True` if the number is even, `False` otherwise
-  - Uses the modulo operator (`%`) to perform the check
+  **File Created**: `check_even.py`
   
-  You can use it like this:
-  ```python
-  from check_even import is_even
+  **Function**: `is_even()`
   
-  if is_even(4):  # Returns True
-      print("It's even!")
-  ```
+  **Implementation Details**:
+  - Uses the modulo operator (`n % 2 == 0`) to check if a number is even
+  - Includes proper docstring with Args/Returns sections following Python 
+  conventions
+  
+  The function checks whether a given integer is divisible by 2 without remainder,
+  which is the standard way to determine if a number is even.
+end note
+note right of Eng
+  **Follow-up message:**
+  &lt;tool_response&gt;
+  Completion signaled: Delegated task to eng tier. Engineer created check_even.py 
+  with an is_even() function that uses n % 2 == 0 to check if a number is even, 
+  including proper Python docstring conventions. Task completed successfully.
+  &lt;/tool_response&gt;
+  
+  Continue. Batch multiple tool ca
 end note
 note over T #palegreen
-  **PASSED** (< 262s, 1 tool calls)
+  **PASSED** (< 262s, 4 tool calls)
 end note
 
 @enduml

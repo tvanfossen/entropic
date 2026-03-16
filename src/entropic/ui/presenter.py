@@ -132,6 +132,33 @@ class Presenter(ABC):
         """
         _ = info_text
 
+    def on_delegation_start(self, child_conv_id: str, target_tier: str, task: str) -> None:
+        """Notify that a delegation has started.
+
+        Optional - implementations may no-op if delegation display not supported.
+
+        Args:
+            child_conv_id: Child conversation ID
+            target_tier: Tier being delegated to
+            task: Task description
+        """
+        _ = (child_conv_id, target_tier, task)
+
+    def on_delegation_complete(
+        self, child_conv_id: str, tier: str, summary: str, success: bool
+    ) -> None:
+        """Notify that a delegation has completed.
+
+        Optional - implementations may no-op if delegation display not supported.
+
+        Args:
+            child_conv_id: Child conversation ID
+            tier: Tier that completed
+            summary: Result summary
+            success: Whether delegation succeeded
+        """
+        _ = (child_conv_id, tier, summary, success)
+
     # === Generation Lifecycle ===
 
     @abstractmethod

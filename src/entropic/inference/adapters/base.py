@@ -478,11 +478,24 @@ class ChatAdapter(ABC):
         return arguments if arguments else None
 
     def _convert_typed_value(self, value: str) -> Any:
-        """Convert string value to appropriate Python type."""
+        """Convert string value to appropriate Python type.
+
+        Handles booleans, nulls, numbers, and JSON structures (arrays/objects).
+        Falls back to raw string if no conversion matches.
+        """
         lower = value.lower()
         literal_map = {"true": True, "false": False, "none": None, "null": None}
         if lower in literal_map:
             return literal_map[lower]
+
+        # Try JSON array/object before numeric (catches '[...]' and '{...}')
+        stripped = value.strip()
+        if stripped and stripped[0] in ("[", "{"):
+            try:
+                return json.loads(stripped)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
         return self._try_numeric_conversion(value)
 
     def _try_numeric_conversion(self, value: str) -> int | float | str:

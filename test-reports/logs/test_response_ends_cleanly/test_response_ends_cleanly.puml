@@ -22,23 +22,17 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Here are three widely-used programming languages and their primary applications:
+  Here are three common programming languages and their main use cases:
   
-  1. **Python** - Data science, machine learning, web development (Django/Flask), 
-  automation scripts, scientific computing, and education. Known for its 
-  readability and extensive libraries like NumPy, Pandas, and TensorFlow.
+  1. **Python** — Data science, machine learning, scripting, web backends 
+  (Django/Flask), automation
+  2. **JavaScript** — Frontend web development, Node.js server-side applications, 
+  browser extensions
+  3. **Rust** — Systems programming, performance-critical applications, embedded 
+  systems, memory-safe low-level code
   
-  2. **JavaScript** - Web front-end development (alongside HTML/CSS), back-end 
-  with Node.js, mobile apps via React Native, browser extensions, and increasingly
-  server-side applications. Essential for modern web development.
-  
-  3. **Java** - Enterprise applications, Android app development, large-scale 
-  backend systems, banking/financial software, and big data technologies like 
-  Hadoop. Valued for its portability (JVM) and strong typing.
-  
-  Each language has strengths suited to different domains—Python excels in data 
-  work, JavaScript dominates web interfaces, and Java powers robust enterprise 
-  infrastructure.
+  These three cover a broad range of modern software development needs—from 
+  high-level scripting to performance-focused systems work.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

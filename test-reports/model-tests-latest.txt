@@ -1,31 +1,31 @@
 === Model Test Report ===
-Date: 2026-03-17 09:06:15
+Date: 2026-03-17 11:57:13
 
-Results: 42 passed, 0 failed (344.2s)
+Results: 42 passed, 0 failed (370.5s)
 
-  [PASS] test_grammar_constrains_output (62.8s)
-  [PASS] test_grammar_auto_chain_fires (64.8s)
-  [PASS] test_multi_tier_pipeline_completes (62.4s)
-  [PASS] test_grammar_without_auto_chain_is_terminal (33.8s)
-  [PASS] test_code_request_produces_code [lead] (3 tools) (27.9s)
+  [PASS] test_grammar_constrains_output (63.9s)
+  [PASS] test_grammar_auto_chain_fires (65.7s)
+  [PASS] test_multi_tier_pipeline_completes (74.7s)
+  [PASS] test_grammar_without_auto_chain_is_terminal (37.3s)
+  [PASS] test_code_request_produces_code [lead] (6 tools) (54.7s)
          Prompt: Write a Python function to check if a number is even
-  [PASS] test_code_response_has_python_syntax [lead] (7 tools) (50.0s)
+  [PASS] test_code_response_has_python_syntax [lead] (3 tools) (26.4s)
          Prompt: Write a function that returns the sum of a list
-  [PASS] test_response_ends_cleanly [lead] (9.6s)
+  [PASS] test_response_ends_cleanly [lead] (7.9s)
          Prompt: List three programming languages and their main use cases
-  [PASS] test_no_special_tokens_in_response [lead] (4.2s)
+  [PASS] test_no_special_tokens_in_response [lead] (6.2s)
          Prompt: Hello, how are you?
   [PASS] test_status_command_works (0.0s)
   [PASS] test_generation_error_captured (0.0s)
-  [PASS] test_generation_starts_and_ends [lead] (3.8s)
+  [PASS] test_generation_starts_and_ends [lead] (3.7s)
          Prompt: Hello
-  [PASS] test_multiple_messages_accumulate_history [lead] (7.5s)
+  [PASS] test_multiple_messages_accumulate_history [lead] (8.9s)
          Prompt: Hello
-  [PASS] test_explanation_is_substantive [lead] (11.1s)
+  [PASS] test_explanation_is_substantive [lead] (11.3s)
          Prompt: What is recursion in programming?
-  [PASS] test_hello_produces_response [lead] (2.2s)
+  [PASS] test_hello_produces_response [lead] (4.8s)
          Prompt: Hello
-  [PASS] test_thanks_produces_acknowledgment [lead] (3.2s)
+  [PASS] test_thanks_produces_acknowledgment [lead] (4.2s)
          Prompt: Thanks!
   [PASS] test_example_classifies_to_own_tier[analyst] (0.1s)
   [PASS] test_example_classifies_to_own_tier[arch] (0.0s)
@@ -46,7 +46,7 @@ Results: 42 passed, 0 failed (344.2s)
   [PASS] test_classification_under_500ms (0.0s)
   [PASS] test_multiple_classifications_consistent (0.0s)
   [PASS] test_route_to_non_default_tier (0.0s)
-  [PASS] test_confidence_above_threshold[analyst] (0.3s)
+  [PASS] test_confidence_above_threshold[analyst] (0.2s)
   [PASS] test_confidence_above_threshold[arch] (0.0s)
   [PASS] test_confidence_above_threshold[devops] (0.0s)
   [PASS] test_confidence_above_threshold[eng] (0.0s)
@@ -64,6 +64,6 @@ tests/model/test_headless_code.py::TestCodeResponses::test_code_response_has_pyt
     read_at=datetime.utcnow(),
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-================== 42 passed, 2 warnings in 401.48s (0:06:41) ==================
+================== 42 passed, 2 warnings in 428.96s (0:07:08) ==================
 
 Result: PASSED

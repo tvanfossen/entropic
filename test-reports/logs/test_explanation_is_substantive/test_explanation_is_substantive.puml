@@ -23,44 +23,48 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is a programming technique where a function calls itself to solve a 
-  problem by breaking it down into smaller instances of the same problem.
+  problem by breaking it down into smaller, similar sub-problems.
   
-  ## Key Concepts:
+  ## Key Concepts
   
-  1. **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops). Without this, the function would keep calling itself forever.
+  **How it works:**
+  1. A function defines a **base case** (when to stop)
+  2. It performs some work, then calls itself with modified parameters
+  3. Each call creates a new stack frame until the base case is reached
   
-  2. **Recursive Case**: The part where the function calls itself with modified 
-  parameters, moving toward the base case.
-  
-  3. **Self-Reference**: Each recursive call works on a smaller or simpler version
-  of the original problem.
-  
-  ## Simple Example (Factorial):
+  **Example in Python:**
   ```python
   def factorial(n):
-      if n == 0:          # Base case
+      if n == 0:  # Base case
           return 1
-      else:                 # Recursive case
-          return n * factorial(n - 1)
+      return n * factorial(n - 1)  # Recursive call
   ```
   
-  ## When to Use Recursion:
-  - **Natural fit**: Problems that can be divided into similar subproblems (tree 
-  traversal, sorting algorithms like quicksort/mergesort)
+  ## When to use recursion
+  
+  - **Natural fit**: Problems that can be divided into identical sub-problems 
+  (tree traversal, Fibonacci sequence, sorting algorithms like 
+  quicksort/mergesort)
   - **Cleaner code**: Sometimes recursive solutions are more elegant than 
-  iterative ones
-  - **Complexity tradeoff**: Recursive solutions may use more memory due to call 
-  stack overhead
+  iterative ones for certain problems
   
-  ## When NOT to Use Recursion:
-  - Simple loops work better for basic iteration
-  - Deep recursion can cause stack overflow errors
-  - Performance-critical code often benefits from iteration instead
+  ## Important considerations
   
-  The key to writing correct recursive functions is ensuring that each recursive 
-  step moves closer to the base case, and that you handle all possible paths 
-  through your logic.
+  **Pros:**
+  - Elegant and readable for appropriate problems
+  - Natural mapping to mathematical definitions
+  
+  **Cons:**
+  - Can be memory-intensive (each call uses stack space)
+  - Risk of infinite recursion if base case isn't reached
+  - Generally slower than iteration due to function call overhead
+  
+  **When NOT to use it:**
+  - Simple loops work better for basic counting or array processing
+  - When performance is critical and the problem doesn't naturally fit recursion
+  
+  The key to safe recursion: **always have a clear base case that will eventually 
+  be reached**, and ensure each recursive step moves toward that base case.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

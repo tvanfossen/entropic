@@ -1,6 +1,6 @@
 # Entropic
 
-> Local-first agentic inference engine with tier-based model routing
+> Local-first agentic inference engine with identity-based delegation
 
 This started as "I want to build a local-first Claude Code" — which turned out
 to be quite the undertaking. The initial build was a tightly coupled TUI, but it
@@ -8,31 +8,88 @@ became clear pretty quickly that I was duplicating the same core inference engin
 across other local projects wrapping llama-cpp-python. So it evolved into a
 library: the inference engine, model orchestration, agentic loop, and tool
 framework are all importable and reusable without dragging in a UI. The TUI ships
-alongside it as one consumer, and doubles as a testbed for new ideas. There's also
-a very broken voice interface via PersonaPlex that I'll get to eventually.
+alongside it as one consumer, and doubles as a testbed for new ideas.
 
 The name is a nod to how this actually works. Every handoff — human intent to
 prompt, prompt to model, model to model across tiers — is a lossy translation.
 Information decays at each boundary. That's the entropic process this engine tries
 to manage: structured routing, context management, and tool-augmented reasoning to
-lose as little as possible along the way. A bit of a nihilistic naming convention,
-but the tier routing and model management do earn their keep in practice. There's
-optimization work ahead, but the foundation is solid and I'm always open to new
-directions.
+lose as little as possible along the way.
 
-## Architecture
+## Quick Start
 
-Entropic is a **library first, application second**. The inference engine
-(orchestrator, agentic loop, adapters, tool providers) is fully separable from
-any UI. The bundled TUI is one consumer; headless automation, CI/CD agents, and
-custom applications are equally supported.
+### Prerequisites
 
+- Linux (tested on Ubuntu 24.04)
+- NVIDIA GPU with 16GB+ VRAM
+- Python 3.11+
+
+### NVIDIA Driver & CUDA Toolkit
+
+```bash
+# Driver (if not already installed)
+sudo apt update
+sudo apt install -y nvidia-driver-580
+sudo reboot
+
+# CUDA Toolkit 12.8
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt update
+sudo apt install -y cuda-toolkit-12-8
+echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
+echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify
+nvidia-smi        # GPU visible, driver 580+
+nvcc --version    # CUDA 12.8
 ```
+
+### System Dependencies
+
+```bash
+sudo apt install -y python3-venv python3-pip git cmake build-essential
+```
+
+### Install & Run
+
+```bash
+# Create project
+mkdir ~/Projects/my-project && cd ~/Projects/my-project
+python3 -m venv .venv
+git init
+
+# Install from PyPI (use PIP_CONFIG_FILE=/dev/null if corporate pip config interferes)
+PIP_CONFIG_FILE=/dev/null .venv/bin/pip install entropic-engine[app]
+
+# Build llama.cpp with CUDA support
+.venv/bin/entropic setup-cuda
+
+# Download the primary model (~13.1 GB)
+.venv/bin/entropic download primary
+
+# Initialize project config
+.venv/bin/entropic init
+
+# Run
+.venv/bin/entropic
+```
+
+### Install Extras
+
+```bash
 pip install entropic-engine          # Core library (inference, engine, tools)
 pip install entropic-engine[app]     # TUI application (includes tui + storage deps)
 pip install entropic-engine[voice]   # Voice interface (PersonaPlex)
 pip install entropic-engine[all]     # Everything
 ```
+
+## Architecture
+
+Entropic is a **library first, application second**. The inference engine
+(orchestrator, agentic loop, adapters, tool providers) is fully separable from
+any UI.
 
 ```
 +-----------------------------------------------------+
@@ -41,133 +98,86 @@ pip install entropic-engine[all]     # Everything
 |  Engine          |  Orchestrator    |  Tools         |
 |  - Agentic loop  |  - Tier routing  |  - Filesystem  |
 |  - Directives    |  - Model swap    |  - Bash        |
-|  - Compaction    |  - VRAM mgmt     |  - Diagnostics |
-|  - Context mgmt  |  - Adapters      |  - Git / Todo  |
+|  - Delegation    |  - VRAM mgmt     |  - Diagnostics |
+|  - Context mgmt  |  - Adapters      |  - Git / Web   |
 +-----------------------------------------------------+
 |  Inference Backend (llama-cpp-python)                |
 |  - GGUF models, single-GPU, in-process              |
 +-----------------------------------------------------+
 ```
 
-### Tier-Based Routing
+### Identity-Based Architecture
 
-A lightweight router model classifies each prompt and routes to the appropriate
-tier. Only one main model is loaded at a time (VRAM constraint) — the
-orchestrator handles dynamic swapping with lock-protected state transitions.
+A single model serves all roles. Each role (lead, eng, qa, arch, ux, ui, analyst)
+has an identity prompt that defines its behavior, allowed tools, and inference
+parameters. The lead identity delegates work to other roles via pipeline and
+delegation tools.
 
-| Tier | Purpose | Typical Model |
-|------|---------|---------------|
-| **Thinking** | Complex reasoning, architecture, multi-step analysis | Qwen3-14B Q4_K_M |
-| **Normal** | General conversation and tasks | Falcon-H1R-7B Q8_0 |
-| **Code** | Code generation, editing, refactoring | Falcon-H1R-7B Q8_0 |
-| **Simple** | Greetings, acknowledgments, short responses | (shares normal model) |
-| **Router** | Prompt classification only | Qwen3-0.6B Q8_0 |
+### Bundled Models
+
+Models are defined in `bundled_models.yaml` and downloaded via the CLI.
+Default configuration resolves model keys automatically.
+
+| Key | Model | Size | Purpose |
+|-----|-------|------|---------|
+| **primary** | Qwen3.5-35B-A3B-UD-IQ3_XXS | 13.1 GB | All roles (single model) |
+| **mid** | Qwen3.5-9B-Q8_0 | 9.5 GB | Alternative (12GB+ VRAM) |
+| **lightweight** | Qwen3.5-4B-Q8_0 | 4.5 GB | Alternative (8GB+ VRAM) |
+| **router** | Qwen3-0.6B-Q8_0 | 0.6 GB | Prompt classification |
 
 ### Agentic Loop
 
-The engine runs an autonomous tool-calling loop: generate -> parse tool calls ->
-execute tools -> feed results back -> generate again. The loop continues until
-the model produces a complete response or hits the iteration limit. Tiers can
-auto-chain — when a tier exhausts its token budget without acting, the engine
-hands off to the next tier via configurable handoff rules.
+The engine runs an autonomous tool-calling loop: generate → parse tool calls →
+execute tools → feed results back → generate again. The lead identity delegates
+implementation tasks to specialized roles (eng, qa, arch) via pipeline or
+single-role delegation.
 
 Tools communicate back to the engine via **directives** — structured signals
-embedded in tool results that can trigger tier handoffs, context anchoring, and
-state management without the model needing to orchestrate these concerns.
+embedded in tool results that trigger delegation, context anchoring, and
+state management.
 
 ## Features
 
 - **Fully Local** — All inference on your hardware via llama-cpp-python. No API keys.
 - **Library API** — Embed the engine in your own application with `LibraryConfig`
-- **Intelligent Routing** — Sub-second prompt classification routes to the right model tier
-- **Auto-Chain** — Automatic tier handoff on token exhaustion or grammar completion
-- **GBNF Grammar** — Per-tier output constraints via GBNF grammars (streaming and non-streaming)
+- **Identity System** — 11 bundled identities with role-specific tools and behavior
+- **Delegation** — Lead delegates to specialized roles via pipeline or direct delegation
 - **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
-- **VRAM Lifecycle** — Three-state model lifecycle (COLD→WARM→ACTIVE): warm models pin to CPU RAM via mlock, activate to GPU on demand — no reload from disk on tier swap
+- **VRAM Lifecycle** — Three-state model lifecycle (COLD→WARM→ACTIVE)
 - **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
 - **Auto-Compaction** — Context summarization for long conversations
-- **MCP Tools** — Filesystem, bash, diagnostics, git, and extensible tool servers
-- **Runtime MCP** — Register and unregister MCP servers at runtime via `connect_server()` / `disconnect_server()`; `.mcp.json` auto-discovered at startup
-- **Benchmark CLI** — Layer 1 benchmarks (load time, tok/s, VRAM, tier swap latency) via `entropic benchmark run`
+- **MCP Tools** — Filesystem, bash, diagnostics, git, web, and extensible tool servers
+- **Runtime MCP** — `.mcp.json` auto-discovered at startup
+- **Benchmark CLI** — Performance and quality benchmarks via `entropic benchmark run`
 - **Headless Mode** — Full engine without TUI for automation and testing
-- **TUI** — Terminal interface built on Textual with streaming, tool approval, voice input
-
-## Requirements
-
-- Linux (tested on Ubuntu 22.04, 24.04)
-- NVIDIA GPU with 16GB+ VRAM
-- CUDA 12.4+
-- Python 3.10+
-
-## Installation
-
-### From source (recommended for GPU users)
-
-```bash
-git clone https://github.com/tvanfossen/entropic.git
-cd entropic
-./install.sh          # auto-detects GPU, builds CUDA support
-```
-
-The install script creates a virtual environment, clones and builds
-llama-cpp-python with CUDA support (if a GPU is detected), and installs
-entropic with the `[app]` extras.
-
-```bash
-# Place GGUF models in ~/models/gguf/ (or configure paths in .entropic/config.local.yaml)
-
-# Run interactive TUI
-.venv/bin/entropic
-
-# Or headless
-.venv/bin/entropic --headless
-```
-
-### From PyPI
-
-```bash
-pip install entropic-engine
-entropic setup-cuda   # build llama-cpp-python with CUDA + latest model support
-```
-
-### What `setup-cuda` does
-
-- Clones llama-cpp-python v0.3.25 (JamePeng fork — upstream is abandoned)
-- Includes llama.cpp with Qwen3.5-MoE and other recent architectures
-- Builds with CUDA support (requires nvidia-smi, cmake, CUDA toolkit)
-- Installs into the current Python environment
-- Cached at ~/.entropic/.build/ — re-run is fast, use `--force` to rebuild
-
-### CPU-only (no GPU)
-
-```bash
-pip install entropic-engine
-```
-
-Models will run on CPU. Significantly slower but functional.
+- **TUI** — Terminal interface built on Textual with streaming and tool approval
 
 ## CLI
 
 ```bash
-entropic                    # Interactive TUI
+entropic                # Interactive TUI
 entropic --headless         # Headless mode (automation/testing)
 entropic status             # Show model and system status
 entropic ask "question"     # Single-shot question
 entropic init               # Initialize .entropic/ in current directory
-entropic download <model>   # Download model files
+entropic download <model>   # Download model (primary, mid, lightweight, router, all)
 entropic setup-cuda         # Build llama-cpp-python with CUDA
+entropic benchmark run      # Run performance + quality benchmarks
+entropic benchmark list     # List identities with benchmark definitions
 entropic mcp-bridge         # Stdio→socket bridge for Claude Code integration
-entropic benchmark run <model.gguf> --layer1-only   # Raw inference benchmarks
 ```
 
 ## Configuration
 
 Configuration loads in priority order (highest wins):
 
-1. Built-in defaults
+1. Built-in defaults (references `bundled_models.yaml` keys)
 2. Global config (`~/.entropic/config.yaml`)
 3. Project config (`.entropic/config.local.yaml`)
 4. CLI arguments
+
+The `path` field in tier config accepts either a `bundled_models.yaml` key
+(e.g., `primary`) or a direct path to a GGUF file.
 
 Project context is provided via `.entropic/ENTROPIC.md` — a markdown file
 describing the project that gets included in the system prompt.

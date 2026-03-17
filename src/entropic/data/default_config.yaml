@@ -5,61 +5,61 @@
 models:
   # Single model serves all roles — maximize VRAM for KV cache
   lead:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   arch:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   eng:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   qa:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   ux:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   ui:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   analyst:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   compactor:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   scribe:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
 
   benchmark_judge:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
+    path: primary
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40

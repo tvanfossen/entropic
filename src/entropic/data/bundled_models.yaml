@@ -1,0 +1,31 @@
+# Bundled model registry — single source of truth for download URLs and default paths.
+# Referenced by cli_download.py and default_config.yaml.
+# Update this file when switching models or quantizations.
+
+primary:
+  name: Qwen3.5-35B-A3B-UD-IQ3_XXS
+  url: https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf
+  size_gb: 13.1
+  adapter: qwen35
+  description: Primary workhorse — all roles (single model architecture)
+
+mid:
+  name: Qwen3.5-9B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q8_0.gguf
+  size_gb: 9.5
+  adapter: qwen35
+  description: Mid-tier alternative (12GB+ VRAM)
+
+lightweight:
+  name: Qwen3.5-4B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf
+  size_gb: 4.5
+  adapter: qwen35
+  description: Lightweight alternative (8GB+ VRAM)
+
+router:
+  name: Qwen3-0.6B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf
+  size_gb: 0.6
+  adapter: qwen3
+  description: Classification router

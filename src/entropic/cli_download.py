@@ -1,7 +1,8 @@
 """
 Model download helper.
 
-Provides convenient model downloading and verification.
+Loads the model registry from data/models.yaml and provides
+download + verification for bundled models.
 """
 
 import hashlib
@@ -11,44 +12,18 @@ from typing import Any
 
 import click
 import httpx
+import yaml
 from rich.console import Console
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
 
 console = Console()
 
-# Model registry — bundled defaults reference these by role, not model name.
-# URLs and model names will change as the ecosystem evolves; keep this registry
-# in sync with default_config.yaml tier assignments.
-MODELS: dict[str, dict[str, Any]] = {
-    "primary": {
-        "name": "Qwen3.5-35B-A3B-Q2_K",
-        "url": "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-Q2_K.gguf",
-        "size_gb": 13.0,
-        "sha256": None,
-        "description": "Primary workhorse — all roles (single model architecture)",
-    },
-    "mid": {
-        "name": "Qwen3.5-9B-Q8_0",
-        "url": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q8_0.gguf",
-        "size_gb": 9.5,
-        "sha256": None,
-        "description": "Mid-tier — analysis and tooling roles",
-    },
-    "lightweight": {
-        "name": "Qwen3.5-4B-Q8_0",
-        "url": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf",
-        "size_gb": 4.2,
-        "sha256": None,
-        "description": "Lightweight — alternative for smaller VRAM budgets",
-    },
-    "router": {
-        "name": "Qwen3.5-0.8B-Q8_0",
-        "url": "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf",
-        "size_gb": 0.8,
-        "sha256": None,
-        "description": "Classification router — always loaded",
-    },
-}
+_MODELS_FILE = Path(__file__).parent / "data" / "bundled_models.yaml"
+
+
+def _load_models() -> dict[str, dict[str, Any]]:
+    """Load model registry from bundled YAML."""
+    return yaml.safe_load(_MODELS_FILE.read_text())
 
 
 def download_models(
@@ -56,21 +31,21 @@ def download_models(
     output_dir: Path,
     force: bool = False,
 ) -> None:
-    """
-    Download Entropic models.
+    """Download Entropic models.
 
     Args:
-        model: Model key (tier name from config, or 'all')
+        model: Model key (from models.yaml, or 'all')
         output_dir: Output directory for models
         force: Overwrite existing files
     """
+    models = _load_models()
     output_dir = output_dir.expanduser()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    models_to_download: Sequence[str] = list(MODELS.keys()) if model == "all" else [model]
+    keys: Sequence[str] = list(models.keys()) if model == "all" else [model]
 
-    for model_key in models_to_download:
-        model_info = MODELS[model_key]
+    for model_key in keys:
+        model_info = models[model_key]
         filename = f"{model_info['name']}.gguf"
         output_path = output_dir / filename
 
@@ -121,7 +96,7 @@ def verify_file(file_path: Path, expected_hash: str | None) -> bool:
 
 
 @click.command()
-@click.argument("model", type=click.Choice(list(MODELS.keys()) + ["all"]))
+@click.argument("model", type=click.STRING)
 @click.option(
     "--output-dir",
     "-o",
@@ -131,7 +106,14 @@ def verify_file(file_path: Path, expected_hash: str | None) -> bool:
 )
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
 def download(model: str, output_dir: Path, force: bool) -> None:
-    """Download Entropic models."""
+    """Download Entropic models.
+
+    MODEL can be a key from models.yaml (primary, mid, lightweight, router) or 'all'.
+    """
+    models = _load_models()
+    valid_keys = list(models.keys()) + ["all"]
+    if model not in valid_keys:
+        raise click.BadParameter(f"Unknown model '{model}'. Valid: {', '.join(valid_keys)}")
     download_models(model, output_dir, force)
 
 

@@ -37,12 +37,42 @@ ExpandedPath = Annotated[Path, BeforeValidator(_expand_path)]
 OptionalExpandedPath = Annotated[Path | None, BeforeValidator(_expand_optional_path)]
 TriStatePath = Annotated[Path | Literal[False] | None, BeforeValidator(_expand_tri_state_path)]
 
+_BUNDLED_MODELS_FILE = Path(__file__).parent.parent / "data" / "bundled_models.yaml"
+_bundled_models: dict[str, Any] | None = None
+
+
+def _load_bundled_models() -> dict[str, Any]:
+    """Load bundled model registry (cached)."""
+    global _bundled_models  # noqa: PLW0603
+    if _bundled_models is None:
+        import yaml
+
+        _bundled_models = yaml.safe_load(_BUNDLED_MODELS_FILE.read_text())
+    return _bundled_models
+
+
+def resolve_model_path(model: str) -> Path:
+    """Resolve a model field to a file path.
+
+    If ``model`` matches a key in bundled_models.yaml, resolves to
+    ``~/models/gguf/{name}.gguf``. Otherwise treats it as a direct path.
+    """
+    bundled = _load_bundled_models()
+    if model in bundled:
+        name = bundled[model]["name"]
+        return Path(f"~/models/gguf/{name}.gguf").expanduser()
+    return Path(model).expanduser()
+
 
 class ModelConfig(BaseModel):
     """Configuration for a single model.
 
     Load-time hardware params only. Inference behavior (temperature,
     max_output_tokens, etc.) belongs in identity frontmatter.
+
+    The ``path`` field accepts either a direct path to a GGUF file OR
+    a key from ``bundled_models.yaml`` (e.g. ``primary``). Keys are
+    resolved to ``~/models/gguf/{name}.gguf`` at load time.
 
     Attributes:
         allowed_tools: Tool visibility filter using fully-qualified names
@@ -58,6 +88,21 @@ class ModelConfig(BaseModel):
     use_mlock: bool = True  # Lock model pages in RAM (prevents OS swap; reduces activate latency)
     logits_all: bool = False  # Compute logits for all positions (required for logprobs)
     allowed_tools: list[str] | None = None
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def resolve_bundled_model(cls, v: Any) -> Any:
+        """Resolve bundled model keys to paths before expansion.
+
+        If the value matches a key in bundled_models.yaml, replaces it
+        with ~/models/gguf/{name}.gguf. Otherwise passes through for
+        normal path expansion.
+        """
+        if isinstance(v, str):
+            bundled = _load_bundled_models()
+            if v in bundled:
+                return f"~/models/gguf/{bundled[v]['name']}.gguf"
+        return v
 
     @field_validator("allowed_tools")
     @classmethod

@@ -22,14 +22,13 @@ note right: **LEAD** tier
 Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
-  Hello! I'm doing well, thank you for asking. 👋
+  I'm doing well, thank you for asking! As the team lead in this system, I'm ready
+  to help coordinate tasks and ensure quality results across our engineering, 
+  architecture, testing, and design roles.
   
-  As your Team Lead, I'm here to help coordinate our development efforts. Whether 
-  you need to implement a feature, review code, design an architecture, or just 
-  have a quick question—I can delegate the work to the appropriate specialists 
-  (architects, engineers, QA, UX/UI) and ensure you get quality results.
-  
-  What would you like to work on today?
+  How can I assist you today? Whether it's planning a new feature, reviewing code,
+  or addressing a specific technical challenge, I'm here to make sure we get it 
+  done right.
 end note
 note over T #palegreen
   **PASSED** (< 38s)

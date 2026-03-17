@@ -98,3 +98,6 @@ examples/hello-world/.hello-world/
 
 # Git worktrees for delegation isolation
 .worktrees/
+
+# Archived legacy files
+.old/

@@ -2,7 +2,14 @@
 
 Project-specific guidelines. See global `~/.claude/CLAUDE.md` for universal standards.
 
-## Git Branching Strategy
+## Source of Truth
+
+- **Roadmap**: `docs/roadmap.md` — versioned feature plan, version targeting
+- **Architecture**: `docs/architecture-cpp.md` — library decomposition, design rules
+- **Proposals**: `.claude/proposals/ACTIVE/` — per-version implementation plans
+- **Archived**: `.old/proposals/` (gitignored) — absorbed into roadmap, local reference only
+
+## Git Branching
 
 ```
 main          <- User handles merges from develop (stable releases)
@@ -10,55 +17,84 @@ main          <- User handles merges from develop (stable releases)
         └── feature/xyz <- Claude creates branches for each task
 ```
 
-### Workflow
-1. **Create feature branch**: `git checkout develop && git checkout -b feature/name`
-2. **Commit with hooks**: Pre-commit runs full test suite
-3. **Merge to develop**: `git checkout develop && git merge feature/name`
-4. **Delete feature branch**: `git branch -d feature/name`
-5. **Never push**: User reviews and pushes
+- Claude merges to develop, user merges develop → main
+- Never push — user reviews and pushes
+- Version bumps per `docs/roadmap.md` — each feature has an assigned version
 
-### Versioning (`pyproject.toml`)
+## Current State (v1.7.x — Python)
 
-Bump version in `pyproject.toml` once per merge to develop — not on feature branch commits.
+The Python codebase is the behavioral specification for the C++ rewrite.
+v1.7.1 on PyPI is the fallback — frozen, tagged, known working.
+Python coding standards apply to any Python that remains (wrapper, CLI).
 
-| Change type | Bump | Example |
-|-------------|------|---------|
-| Bug fix, refactor, docs | **Patch** | 1.0.0 → 1.0.1 |
-| New feature, new config field, new API | **Minor** | 1.0.1 → 1.1.0 |
-| Breaking change (user explicitly says so) | **Major** | 1.1.0 → 2.0.0 |
+## Target State (2.0.0 — C++)
 
-Claude bumps patch or minor based on the change. Major is user-initiated only.
-Consumer venvs (e.g. `examples/pychess/.venv`) need reinstall after version bumps
-unless using editable installs (`pip install -e`).
+### Design Rules (from `docs/architecture-cpp.md`)
 
-## Test Structure
+1. Pure C at all `.so` boundaries — opaque handles, no C++ ABI crossing
+2. Three-layer hierarchy: C interface → concrete base (80%) → implementation (20%)
+3. Plugin `.so` for MCP servers — `dlopen`, `entropic_create_server()` factory
+4. Inference backends as compile-time variants (CUDA, Vulkan, CPU)
+5. Doxygen comments ARE documentation — heavy commenting standard
+6. Exceptions do not cross `.so` boundaries — error codes + callbacks
+7. Auto-generated Python wrapper from `entropic.h`
+8. Config via generated `entropic_config.h` — frontend-swappable (CMake → Kconfig)
 
-```
-tests/
-├── unit/           # Mocked dependencies, fast, isolated
-├── integration/    # Real components, may need setup
-└── model/          # Real model inference tests (require GPU)
-```
+### C++ Coding Standards
 
-### Model Tests
-- Located in `tests/model/`
-- Test actual model loading, routing, and inference
-- Run as part of pre-commit verification
-- Require models to be downloaded and configured
+- Concrete base classes with 80%+ logic (same principle as Python ABCs)
+- Every public symbol gets a Doxygen block
+- `ENTROPIC_EXPORT` macro on all exported symbols
+- No third-party headers in interface contracts
+- `std::atomic` for state queries, mutex for transitions only
 
-## Project Architecture
+### Pre-commit Quality Gates (LOCKED — do not modify without explicit user permission)
 
-### Model Orchestrator (`src/entropic/inference/orchestrator.py`)
-- Manages multiple LLM tiers (thinking, normal, code, simple, router)
-- Only ONE main tier model loaded at a time (VRAM constraint)
-- Dynamic model swapping with lock to prevent TOCTOU races
+**C/C++ (knots):**
+- Cognitive complexity ≤ 15
+- McCabe cyclomatic ≤ 15
+- Nesting depth ≤ 4
+- SLOC ≤ 50
+- ABC magnitude ≤ 10.0
+- Returns ≤ 3
+- Excludes: `extern/`, vendor code
 
-### MCP Servers (`src/entropic/mcp/servers/`)
-- Filesystem, bash, diagnostics servers
-- All tools require approval unless explicitly in allow list
-- Engine handles user prompting; "Always Allow/Deny" persists to config
+**Python (flake8):**
+- Cognitive complexity ≤ 15 (CCR001)
+- Max returns ≤ 3 (CFQ004)
 
-### Configuration
-- Global defaults: `~/.entropic/config.yaml`
-- Project (source of truth): `.entropic/config.local.yaml`
-- Project context: `.entropic/ENTROPIC.md`
+### Test Gating
+
+| Gate | When | What runs |
+|------|------|-----------|
+| Pre-commit | Every commit | Unit tests (fast, CPU, no GPU) |
+| Minor version | Each x.y.0 bump | Full model/benchmark suite (developer-run, GPU, results checked in) |
+| Patch version | Each x.y.z bump | Unit tests only |
+
+Model tests and benchmarks are merged into one suite at v1.10.0.
+No model tests in pre-commit — too slow, GPU-dependent.
+
+## Configuration
+
+- Global: `~/.entropic/config.yaml`
+- Project: `.entropic/config.local.yaml`
+- Context: `.entropic/ENTROPIC.md`
+- Model registry: `src/entropic/data/bundled_models.yaml`
+- `path:` resolves bundled model keys (e.g., `primary` → IQ3_XXS path)
+
+## Legacy Cleanup
+
+v1.7.1 on PyPI is the fallback. No legacy code maintained.
+User moves stale files to root-level `.old/` (gitignored) as replacements land.
+Claude does not manage `.old/`.
+
+Files to be cleaned up (by user, when replaced):
+- `docs/` — all except `roadmap.md` and `architecture-cpp.md`
+- `install.sh` — Python-specific, replaced by CMake
+- `.dockerignore` — no Docker in roadmap
+- `vendor/personaplex/` — moves with TUI at v1.7.2
+- `test-manual/` — session artifacts
+- `scripts/` — Python-specific (except model test scripts while Python engine lives)
+- `src/entropic/` — entire Python engine at v1.9.15
+- `benchmark/results/` — re-run on C++ engine
+- `examples/` — rewritten for C API at v1.9.15

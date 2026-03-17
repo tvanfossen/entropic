@@ -23,45 +23,44 @@ Orch -> Mdl: generate_stream
 note right of Mdl
   **Model Output:**
   Recursion is a programming technique where a function calls itself to solve a 
-  problem. It's based on the idea that you can break down a complex problem into 
-  smaller versions of itself until you reach a simple base case.
+  problem by breaking it down into smaller instances of the same problem.
   
-  ## Key Components
+  ## Key Concepts:
   
   1. **Base Case**: The condition that stops the recursion (prevents infinite 
-  loops)
-  2. **Recursive Case**: The function calls itself with modified parameters, 
-  moving toward the base case
+  loops). Without this, the function would keep calling itself forever.
   
-  ## Simple Example (Factorial)
+  2. **Recursive Case**: The part where the function calls itself with modified 
+  parameters, moving toward the base case.
   
+  3. **Self-Reference**: Each recursive call works on a smaller or simpler version
+  of the original problem.
+  
+  ## Simple Example (Factorial):
   ```python
   def factorial(n):
-      if n == 0:  # Base case
+      if n == 0:          # Base case
           return 1
-      else:       # Recursive case
+      else:                 # Recursive case
           return n * factorial(n - 1)
   ```
   
-  ## When to Use Recursion
-  
-  - **Natural fit**: Problems that can be divided into smaller subproblems (tree 
+  ## When to Use Recursion:
+  - **Natural fit**: Problems that can be divided into similar subproblems (tree 
   traversal, sorting algorithms like quicksort/mergesort)
   - **Cleaner code**: Sometimes recursive solutions are more elegant than 
   iterative ones
   - **Complexity tradeoff**: Recursive solutions may use more memory due to call 
   stack overhead
   
-  ## When NOT to Use Recursion
+  ## When NOT to Use Recursion:
+  - Simple loops work better for basic iteration
+  - Deep recursion can cause stack overflow errors
+  - Performance-critical code often benefits from iteration instead
   
-  - **Performance matters**: Iterative approaches often run faster and use less 
-  memory
-  - **Deep recursion risk**: Can cause stack overflow errors on very deep 
-  recursions
-  - **Simple problems**: Sometimes a loop is clearer than recursion
-  
-  The key principle: ensure your recursive calls always move toward the base case,
-  or you'll get infinite recursion.
+  The key to writing correct recursive functions is ensuring that each recursive 
+  step moves closer to the base case, and that you handle all possible paths 
+  through your logic.
 end note
 note over T #palegreen
   **PASSED** (< 75s)

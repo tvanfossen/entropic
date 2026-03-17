@@ -1,0 +1,48 @@
+{
+  "model": "/home/tvanfossen/models/gguf/Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf",
+  "gpu_info": {
+    "gpu_name": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+    "vram_total_mb": 16303,
+    "driver_version": "580.126.09"
+  },
+  "runs": {
+    "2026-03-16": [
+      {
+        "timestamp": "2026-03-16T17:36:51.707572+00:00",
+        "engine_version": "1.7.0",
+        "cold_start_ms": 6742.2,
+        "cold_start_swap_ms": 3999.8,
+        "cold_start_vram_mb": 14357,
+        "inference_tok_s": 33.5,
+        "inference_tokens": 1024,
+        "inference_ms": 30580,
+        "gpu_layers": 40,
+        "inference_vram_mb": 14357,
+        "swap_away_ms": 5763.9,
+        "swap_back_ms": 3954.5
+      },
+      {
+        "timestamp": "2026-03-16T17:38:46.595029+00:00",
+        "engine_version": "1.7.0",
+        "cold_start_ms": 32496.4,
+        "cold_start_swap_ms": 4089.4,
+        "cold_start_vram_mb": 14357,
+        "inference_tok_s": 35.7,
+        "inference_tokens": 1024,
+        "inference_ms": 28722,
+        "gpu_layers": 40,
+        "inference_vram_mb": 14357,
+        "swap_away_ms": 3647.8,
+        "swap_back_ms": 3716.9
+      }
+    ]
+  },
+  "average": {
+    "run_count": 2,
+    "cold_start_ms": 19619.3,
+    "inference_tok_s": 34.6,
+    "inference_ms": 29651.0,
+    "swap_away_ms": 4705.9,
+    "swap_back_ms": 3835.7
+  }
+}

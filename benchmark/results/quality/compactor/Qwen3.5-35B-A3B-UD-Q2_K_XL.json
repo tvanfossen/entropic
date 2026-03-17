@@ -1,0 +1,52 @@
+{
+  "identity": "compactor",
+  "model": "/home/tvanfossen/models/gguf/Qwen3.5-35B-A3B-UD-Q2_K_XL.gguf",
+  "gpu_info": {
+    "gpu_name": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+    "vram_total_mb": 16303,
+    "driver_version": "580.126.09"
+  },
+  "runs": {
+    "2026-03-16": [
+      {
+        "timestamp": "2026-03-16T17:40:29.553611+00:00",
+        "engine_version": "1.7.0",
+        "passed": 1,
+        "failed": 0,
+        "prompts": [
+          {
+            "prompt": "Summarize this conversation: User asked to add a login page. Assistant read auth.py and views.py. Assistant found the login route was missing. Assistant wrote a new login view. User confirmed it works. Assistant then fixed a typo in the template. User said thanks.",
+            "output": "{\n  \"key_facts\": [\n    \"User requested adding a login page\",\n    \"Assistant read auth.py and views.py to check existing routes\",\n    \"Login route was missing in views.py\",\n    \"New login view function added to views.py\",\n    \"Typo fixed in the login template file\"\n  ],\n  \"preserved_tool_results\": [],\n  \"dropped\": [\n    \"Initial code review of auth.py and views.py (no state change)\",\n    \"Confirmation that login works (user feedback, no technical action)\",\n    \"User said thanks (conversational filler)\"\n  ]\n}",
+            "all_passed": true,
+            "total_ms": 7600.8,
+            "routing_ms": 0.0,
+            "swap_ms": 0.0,
+            "inference_ms": 7600,
+            "token_count": 137,
+            "checks": [
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 48"
+              },
+              {
+                "type": "regex",
+                "passed": true,
+                "detail": "matched at 5"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "average": {
+    "run_count": 1,
+    "pass_rate": 1.0,
+    "total_passed": 1,
+    "total_failed": 0,
+    "avg_total_ms": 7600.8,
+    "avg_inference_ms": 7600.0,
+    "avg_swap_ms": 0.0
+  }
+}

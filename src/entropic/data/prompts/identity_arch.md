@@ -43,7 +43,7 @@ benchmark:
         - type: regex
           pattern: "(?i)(tenant|role|permission|table|schema|model)"
         - type: regex
-          pattern: "(?i)(table|relationship|constraint|security|scalab|write_file|glob|grep)"
+          pattern: "(?i)(table|relationship|constraint|security|scalab|write_file|glob|grep|list_directory)"
 ---
 
 # Architect

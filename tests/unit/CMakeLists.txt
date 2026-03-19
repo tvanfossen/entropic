@@ -34,12 +34,14 @@ target_compile_definitions(entropic-config-tests PRIVATE
 )
 
 # v1.8.2: Inference tests
+# v1.8.3: Added test_prompt_cache.cpp
 add_executable(entropic-inference-tests
     inference/test_backend_lifecycle.cpp
     inference/test_adapter_base.cpp
     inference/test_qwen35_adapter.cpp
     inference/test_orchestrator.cpp
     inference/test_generation_params.cpp
+    inference/test_prompt_cache.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE

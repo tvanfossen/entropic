@@ -70,6 +70,17 @@ ENTROPIC_EXPORT std::string validate_routing(
     const ModelsConfig& models);
 
 /**
+ * @brief Validate PromptCacheConfig.
+ *
+ * Checks: max_bytes > 0 when enabled.
+ *
+ * @param config Prompt cache config to validate.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.3
+ */
+ENTROPIC_EXPORT std::string validate(const PromptCacheConfig& config);
+
+/**
  * @brief Validate the full ParsedConfig.
  *
  * Runs all section validators + cross-section checks.

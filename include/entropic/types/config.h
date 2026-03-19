@@ -69,6 +69,21 @@ struct ModelConfig {
 };
 
 /**
+ * @brief Prompt caching configuration.
+ *
+ * Controls host-memory KV cache prefix storage for system prompts.
+ * Setting enabled=false or max_bytes=0 both disable caching.
+ *
+ * @par YAML key: inference.prompt_cache
+ * @version 1.8.3
+ */
+struct PromptCacheConfig {
+    size_t max_bytes = 536870912;  ///< Maximum cache RAM (512 MB default)
+    bool enabled = true;           ///< Master switch (false = no caching)
+    bool log_hits = true;          ///< Log cache hit/miss at INFO level
+};
+
+/**
  * @brief Generation parameters for a single inference call.
  * @version 1.8.2
  */
@@ -236,6 +251,7 @@ struct ParsedConfig {
     MCPConfig mcp;                    ///< MCP server settings
     CompactionConfig compaction;      ///< Auto-compaction settings
     LSPConfig lsp;                    ///< LSP integration
+    PromptCacheConfig prompt_cache;   ///< Prompt KV cache settings
     std::string log_level = "INFO";   ///< Log level string
 
     /// Constitution: nullopt = bundled default, disabled = explicit false

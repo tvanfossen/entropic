@@ -18,15 +18,18 @@
  *
  * Internal to inference .so — not exposed across boundaries.
  *
- * @version 1.8.2
+ * @version 1.8.3
  */
 
 #pragma once
 
 #include <entropic/inference/backend.h>
 
+#include "prompt_cache.h"
+
 #include <llama.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -39,9 +42,23 @@ namespace entropic {
  * Pinned-version subclass overrides do_load/do_activate with
  * version-specific API calls.
  *
- * @version 1.8.2
+ * @version 1.8.3
  */
 class LlamaCppBackend : public InferenceBackend {
+public:
+    /**
+     * @brief Set prompt cache configuration.
+     *
+     * Must be called before activate(). The config is consumed when
+     * the cache is constructed during do_activate().
+     *
+     * @param config Prompt cache configuration.
+     * @version 1.8.3
+     */
+    void set_prompt_cache_config(const PromptCacheConfig& config) {
+        prompt_cache_config_ = config;
+    }
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 
@@ -73,6 +90,11 @@ protected:
     llama_model* model_ = nullptr;             ///< Loaded model (WARM+)
     llama_context* ctx_ = nullptr;             ///< Inference context (ACTIVE)
     const llama_vocab* vocab_ = nullptr;       ///< Vocabulary (from model_)
+
+    /* ── Prompt cache ───────────────────────────────────── */
+
+    PromptCacheConfig prompt_cache_config_;      ///< Cache config (v1.8.3)
+    std::unique_ptr<PromptCache> prompt_cache_;  ///< KV prefix cache (v1.8.3)
 
     /* ── Internal helpers ────────────────────────────────── */
 
@@ -150,6 +172,60 @@ protected:
      * @version 1.8.2
      */
     llama_sampler* create_sampler(const GenerationParams& params) const;
+
+    /**
+     * @brief Extract the system prompt from messages.
+     * @param messages Conversation history.
+     * @return System prompt text, empty if no system message.
+     * @version 1.8.3
+     */
+    static std::string extract_system_prompt(
+        const std::vector<Message>& messages);
+
+    /**
+     * @brief Run prefill with prompt cache integration.
+     * @param tokens Full token sequence.
+     * @param system_prompt System prompt text for cache key.
+     * @param messages Original messages (for prefix boundary).
+     * @param params Generation parameters.
+     * @return true on success.
+     * @version 1.8.3
+     */
+    bool run_prefill_cached(
+        const std::vector<llama_token>& tokens,
+        const std::string& system_prompt,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Restore KV state from cache and decode remaining tokens.
+     * @param cached Cache entry to restore.
+     * @param tokens Full token sequence.
+     * @return true on success, false to fall back to full prefill.
+     * @version 1.8.3
+     */
+    bool restore_cached_prefix(
+        const CacheEntry* cached,
+        const std::vector<llama_token>& tokens);
+
+    /**
+     * @brief Save system prefix KV state to cache after full prefill.
+     * @param key Cache key.
+     * @param prefix_tokens System prefix token count.
+     * @version 1.8.3
+     */
+    void save_prefix_to_cache(const CacheKey& key, int prefix_tokens);
+
+    /**
+     * @brief Compute token count of system messages only.
+     * @param messages Message list.
+     * @param params Generation params (for template).
+     * @return Token count, 0 if no system messages.
+     * @version 1.8.3
+     */
+    int compute_prefix_token_count(
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
 };
 
 } // namespace entropic

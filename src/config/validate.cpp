@@ -223,20 +223,31 @@ std::string warn_auto_chain_without_targets(
 }
 
 /**
- * @brief Validate the full ParsedConfig.
- * @param config Full config to validate.
- * @param[out] warnings Non-fatal warnings.
+ * @brief Validate PromptCacheConfig.
+ * @param config Prompt cache config to validate.
  * @return Empty string on success, error message on failure.
- * @version 1.8.2
+ * @version 1.8.3
  */
-std::string validate_config(
-    const ParsedConfig& config,
-    std::vector<std::string>& warnings)
+std::string validate(const PromptCacheConfig& config)
 {
-    std::string err = validate(config.models);
+    if (config.enabled && config.max_bytes == 0) {
+        return "inference.prompt_cache: enabled=true but max_bytes=0";
+    }
+    return "";
+}
+
+/**
+ * @brief Validate model tiers and router.
+ * @param models Models config.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.3
+ */
+static std::string validate_model_tiers(const ModelsConfig& models)
+{
+    std::string err = validate(models);
 
     if (err.empty()) {
-        for (const auto& [name, tier] : config.models.tiers) {
+        for (const auto& [name, tier] : models.tiers) {
             err = validate(static_cast<const ModelConfig&>(tier));
             if (!err.empty()) {
                 err = "models." + name + ": " + err;
@@ -245,21 +256,38 @@ std::string validate_config(
         }
     }
 
-    if (err.empty() && config.models.router.has_value()) {
-        err = validate(*config.models.router);
+    if (err.empty() && models.router.has_value()) {
+        err = validate(*models.router);
         if (!err.empty()) {
             err = "models.router: " + err;
         }
     }
 
+    return err;
+}
+
+/**
+ * @brief Validate the full ParsedConfig.
+ * @param config Full config to validate.
+ * @param[out] warnings Non-fatal warnings.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.3
+ */
+std::string validate_config(
+    const ParsedConfig& config,
+    std::vector<std::string>& warnings)
+{
+    std::string err = validate_model_tiers(config.models);
+
     if (err.empty()) {
         err = validate_routing(config.routing, config.models);
     }
-
     if (err.empty()) {
         err = validate(config.compaction);
     }
-
+    if (err.empty()) {
+        err = validate(config.prompt_cache);
+    }
     if (err.empty()) {
         auto w = warn_auto_chain_without_targets(
             config.models.tiers, config.routing.handoff_rules);

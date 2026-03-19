@@ -67,13 +67,49 @@ std::vector<std::string> interleave_examples(
 }
 
 /**
+ * @brief Join strings with a separator.
+ * @param items Strings to join.
+ * @param sep Separator between items.
+ * @return Joined string.
+ * @version 1.8.2
+ */
+static std::string join(
+    const std::vector<std::string>& items, const std::string& sep)
+{
+    std::string result;
+    for (size_t i = 0; i < items.size(); ++i) {
+        if (i > 0) result += sep;
+        result += items[i];
+    }
+    return result;
+}
+
+/**
+ * @brief Build tier definition lines for classification prompt.
+ * @param tiers Ordered tiers.
+ * @return Formatted tier definitions.
+ * @version 1.8.2
+ */
+static std::string format_tier_definitions(
+    const std::vector<TierDescriptor>& tiers)
+{
+    std::string result;
+    for (size_t i = 0; i < tiers.size(); ++i) {
+        result += std::to_string(i + 1) + " = "
+                  + to_upper(tiers[i].name) + ": "
+                  + join(tiers[i].focus, ", ") + "\n";
+    }
+    return result;
+}
+
+/**
  * @brief Auto-generate classification prompt from tier focus + examples.
  * @param tiers Ordered tiers (index+1 = classification digit).
  * @param message User message to classify.
  * @param history Recent user messages for context.
  * @param recent_tiers Recent tier activations for continuity.
  * @return Classification prompt string.
- * @version 1.8.1
+ * @version 1.8.2
  */
 std::string build_classification_prompt(
     const std::vector<TierDescriptor>& tiers,
@@ -81,52 +117,24 @@ std::string build_classification_prompt(
     const std::vector<std::string>& history,
     const std::vector<std::string>& recent_tiers)
 {
-    std::string result;
-    result += "Classify the message. Reply with the number only.\n\n";
-
-    for (size_t i = 0; i < tiers.size(); ++i) {
-        result += std::to_string(i + 1) + " = "
-                  + to_upper(tiers[i].name) + ": ";
-        for (size_t j = 0; j < tiers[i].focus.size(); ++j) {
-            if (j > 0) {
-                result += ", ";
-            }
-            result += tiers[i].focus[j];
-        }
-        result += "\n";
-    }
-    result += "\n";
+    std::string result = "Classify the message. Reply with the number only.\n\n";
+    result += format_tier_definitions(tiers) + "\n";
 
     if (!recent_tiers.empty()) {
-        result += "Recent tiers: ";
-        for (size_t i = 0; i < recent_tiers.size(); ++i) {
-            if (i > 0) {
-                result += " -> ";
-            }
-            result += recent_tiers[i];
-        }
-        result += "\n\n";
+        result += "Recent tiers: " + join(recent_tiers, " -> ") + "\n\n";
     }
 
     if (!history.empty()) {
-        result += "Recent messages: ";
         size_t start = history.size() > 5 ? history.size() - 5 : 0;
-        for (size_t i = start; i < history.size(); ++i) {
-            if (i > start) {
-                result += " | ";
-            }
-            result += history[i];
-        }
-        result += "\n\n";
+        std::vector<std::string> recent(history.begin() + static_cast<long>(start), history.end());
+        result += "Recent messages: " + join(recent, " | ") + "\n\n";
     }
 
-    auto example_lines = interleave_examples(tiers);
-    for (const auto& line : example_lines) {
+    for (const auto& line : interleave_examples(tiers)) {
         result += line + "\n";
     }
 
     result += "\"" + message + "\" -> ";
-
     return result;
 }
 

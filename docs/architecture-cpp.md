@@ -909,3 +909,5 @@ It owns all subsystems and controls their creation/destruction order.
 16. **Directive wire format.** MCP server `execute()` returns JSON with `{"result": "...", "directives": [...]}` envelope. Directives are typed JSON objects dispatched by the engine's DirectiveProcessor.
 17. **Bundled data discovery.** Compile-time `ENTROPIC_DATA_DIR`, overridable at runtime via config. Used for prompts, tool schemas, grammars, model registry.
 18. **Messages are JSON at boundaries.** `const char* messages_json` at C API, C++ structs internally. Metadata is arbitrary JSON.
+19. **WARM→ACTIVE reloads the model.** llama.cpp ties GPU layer offloading to `llama_model_load_from_file()`, not context creation. WARM→ACTIVE frees the CPU-only model and reloads with `n_gpu_layers` from config. mlock ensures pages stay resident, so the reload is fast (~1-3s PCIe transfer, no disk I/O). This matches the Python `_swap_model()` behavior. (v1.8.2)
+20. **`log` variable renamed to `logger`.** All inference `.cpp` files use `logger` for the spdlog instance to avoid ambiguity with `entropic::log` namespace and `::log` from `<cmath>`. (v1.8.2)

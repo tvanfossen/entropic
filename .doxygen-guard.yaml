@@ -21,32 +21,8 @@ impact:
   requirements:
     file: docs/requirements.yaml
     format: yaml
-
-  test_mapping:
-    - match: "REQ-LOOP-.*"
-      suite: "Engine Loop"
-      command: "ctest --test-dir build --tests-regex 'agent_engine|context_manager|directive'"
-    - match: "REQ-DELEG-.*"
-      suite: "Delegation"
-      command: "ctest --test-dir build --tests-regex 'delegation'"
-    - match: "REQ-TOOL-.*"
-      suite: "Tool System"
-      command: "ctest --test-dir build --tests-regex 'tool|mcp|permission'"
-    - match: "REQ-IDEN-.*"
-      suite: "Identity"
-      command: "ctest --test-dir build --tests-regex 'identity|prompt'"
-    - match: "REQ-INFER-.*"
-      suite: "Inference"
-      command: "ctest --test-dir build --tests-regex 'inference|backend|adapter'"
-    - match: "REQ-CFG-.*"
-      suite: "Config"
-      command: "ctest --test-dir build --tests-regex 'config|loader|validator'"
-    - match: "REQ-STOR-.*"
-      suite: "Storage"
-      command: "ctest --test-dir build --tests-regex 'storage|session'"
-    - match: ".*"
-      suite: "Full Regression"
-      command: "ctest --test-dir build"
+    id_column: id
+    name_column: name
 
   output:
     format: markdown

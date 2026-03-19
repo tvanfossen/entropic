@@ -1,7 +1,7 @@
 /**
  * @file data_dir.cpp
  * @brief Bundled data directory resolution.
- * @version 1.8.1
+ * @version 1.8.2
  */
 
 #include <entropic/config/loader.h>
@@ -22,42 +22,48 @@ namespace entropic::config {
  *
  * @param config Parsed config.
  * @return Resolved data directory path.
- * @version 1.8.1
+ * @version 1.8.2
  */
 std::filesystem::path resolve_data_dir(const ParsedConfig& config)
 {
+    struct Candidate {
+        std::filesystem::path path;
+        const char* label;
+    };
+
+    std::filesystem::path result;
+
+    // Priority 1: config_dir/data
     if (!config.config_dir.empty()) {
         auto dir = config.config_dir / "data";
         if (std::filesystem::is_directory(dir)) {
             s_log->info("Data dir from config: {}", dir.string());
-            return dir;
+            result = dir;
         }
     }
 
-    std::filesystem::path compile_time(CONFIG_ENTROPIC_DATA_DIR);
-    if (std::filesystem::is_directory(compile_time)) {
-        s_log->info("Data dir from compile-time path: {}",
-                  compile_time.string());
-        return compile_time;
+    // Priority 2-4: compile-time, source tree, local
+    if (result.empty()) {
+        const Candidate candidates[] = {
+            {CONFIG_ENTROPIC_DATA_DIR, "compile-time path"},
+            {"src/entropic/data",      "source tree"},
+            {"data",                   "local"},
+        };
+
+        for (const auto& [path, label] : candidates) {
+            if (std::filesystem::is_directory(path)) {
+                s_log->info("Data dir from {}: {}", label, path.string());
+                result = path;
+                break;
+            }
+        }
     }
 
-    // Development fallback: look relative to source tree.
-    // This works when running from the build directory during development.
-    std::filesystem::path src_data("src/entropic/data");
-    if (std::filesystem::is_directory(src_data)) {
-        s_log->info("Data dir from source tree: {}", src_data.string());
-        return src_data;
+    if (result.empty()) {
+        s_log->warn("No data directory found — bundled files unavailable");
     }
 
-    // Last resort: data/ in current directory
-    std::filesystem::path local_data("data");
-    if (std::filesystem::is_directory(local_data)) {
-        s_log->info("Data dir from local: {}", local_data.string());
-        return local_data;
-    }
-
-    s_log->warn("No data directory found — bundled files unavailable");
-    return "";
+    return result;
 }
 
 } // namespace entropic::config

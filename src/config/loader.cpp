@@ -1,7 +1,7 @@
 /**
  * @file loader.cpp
  * @brief Config loader implementation — YAML parsing + layered merge.
- * @version 1.8.1
+ * @version 1.8.2
  */
 
 #include <entropic/config/loader.h>
@@ -19,7 +19,7 @@ namespace entropic::config {
  * @param registry Bundled models for path resolution.
  * @param[out] config Output model config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_model_config(
     ryml::ConstNodeRef node,
@@ -54,7 +54,7 @@ static std::string parse_model_config(
  * @param registry Bundled models for path resolution.
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -93,7 +93,7 @@ static std::string parse_tier_config(
  * @param registry Bundled models for path resolution.
  * @param[out] config Output models config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_models_config(
     ryml::ConstNodeRef node,
@@ -139,7 +139,7 @@ static std::string parse_models_config(
  * @param node YAML node for "routing" section.
  * @param[out] config Output routing config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_routing_config(
     ryml::ConstNodeRef node,
@@ -164,7 +164,7 @@ static std::string parse_routing_config(
  * @param node YAML node for "compaction" section.
  * @param[out] config Output compaction config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_compaction_config(
     ryml::ConstNodeRef node,
@@ -187,7 +187,7 @@ static std::string parse_compaction_config(
  * @param node YAML node for "permissions" section.
  * @param[out] config Output permissions config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_permissions_config(
     ryml::ConstNodeRef node,
@@ -204,7 +204,7 @@ static std::string parse_permissions_config(
  * @param node YAML node for "filesystem" section.
  * @param[out] config Output filesystem config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_filesystem_config(
     ryml::ConstNodeRef node,
@@ -229,7 +229,7 @@ static std::string parse_filesystem_config(
  * @param node YAML node for "external" section.
  * @param[out] config Output external MCP config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_external_mcp_config(
     ryml::ConstNodeRef node,
@@ -253,7 +253,7 @@ static std::string parse_external_mcp_config(
  * @param node YAML node for "mcp" section.
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -281,7 +281,7 @@ static std::string parse_mcp_config(
  * @param node YAML node for "generation" section.
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_generation_config(
     ryml::ConstNodeRef node,
@@ -298,7 +298,7 @@ static std::string parse_generation_config(
  * @param node YAML node for "lsp" section.
  * @param[out] config Output LSP config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 static std::string parse_lsp_config(
     ryml::ConstNodeRef node,
@@ -311,66 +311,25 @@ static std::string parse_lsp_config(
 }
 
 /**
- * @brief Parse a config YAML file and overlay onto existing config.
- * @param path Path to YAML file.
- * @param registry Bundled models for path resolution.
- * @param[in,out] config Config to overlay onto.
- * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @brief Parse optional config sections that don't return errors.
+ * @param root YAML root node.
+ * @param config Config to populate.
+ * @internal
+ * @version 1.8.2
  */
-std::string parse_config_file(
-    const std::filesystem::path& path,
-    const BundledModels& registry,
-    ParsedConfig& config)
+static void parse_optional_sections(
+    ryml::ConstNodeRef root, ParsedConfig& config)
 {
-    auto content = read_file(path);
-    if (content.empty()) {
-        return "cannot read config file: " + path.string();
-    }
-
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(content));
-    ryml::ConstNodeRef root = tree.rootref();
-
-    if (!root.is_map()) {
-        return "config file root is not a YAML mapping: " + path.string();
-    }
-
-    if (root.has_child("models")) {
-        auto err = parse_models_config(root["models"], registry,
-                                       config.models);
-        if (!err.empty()) {
-            return err;
-        }
-    }
-
-    if (root.has_child("routing")) {
-        auto err = parse_routing_config(root["routing"], config.routing);
-        if (!err.empty()) {
-            return err;
-        }
-    }
-
-    if (root.has_child("generation")) {
+    if (root.has_child("generation"))
         parse_generation_config(root["generation"], config.generation);
-    }
-
-    if (root.has_child("permissions")) {
+    if (root.has_child("permissions"))
         parse_permissions_config(root["permissions"], config.permissions);
-    }
-
-    if (root.has_child("mcp")) {
+    if (root.has_child("mcp"))
         parse_mcp_config(root["mcp"], config.mcp);
-    }
-
-    if (root.has_child("compaction")) {
+    if (root.has_child("compaction"))
         parse_compaction_config(root["compaction"], config.compaction);
-    }
-
-    if (root.has_child("lsp")) {
+    if (root.has_child("lsp"))
         parse_lsp_config(root["lsp"], config.lsp);
-    }
 
     extract(root, "log_level", config.log_level);
     extract(root, "inject_model_context", config.inject_model_context);
@@ -378,13 +337,55 @@ std::string parse_config_file(
     extract_path(root, "config_dir", config.config_dir);
 
     extract_tri_state_path(root, "constitution",
-                           config.constitution,
-                           config.constitution_disabled);
+                           config.constitution, config.constitution_disabled);
     extract_tri_state_path(root, "app_context",
-                           config.app_context,
-                           config.app_context_disabled);
+                           config.app_context, config.app_context_disabled);
+}
 
-    return "";
+/**
+ * @brief Parse a config YAML file and overlay onto existing config.
+ * @param path Path to YAML file.
+ * @param registry Bundled models for path resolution.
+ * @param[in,out] config Config to overlay onto.
+ * @return Empty string on success, error message on failure.
+ * @req REQ-CFG-001
+ * @version 1.8.2
+ */
+std::string parse_config_file(
+    const std::filesystem::path& path,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    std::string err;
+
+    auto content = read_file(path);
+    if (content.empty()) {
+        err = "cannot read config file: " + path.string();
+    }
+
+    ryml::Tree tree;
+    ryml::ConstNodeRef root;
+    if (err.empty()) {
+        tree = ryml::parse_in_arena(
+            ryml::to_csubstr(path.string()),
+            ryml::to_csubstr(content));
+        root = tree.rootref();
+        if (!root.is_map()) {
+            err = "config file root is not a YAML mapping: " + path.string();
+        }
+    }
+
+    if (err.empty() && root.has_child("models")) {
+        err = parse_models_config(root["models"], registry, config.models);
+    }
+    if (err.empty() && root.has_child("routing")) {
+        err = parse_routing_config(root["routing"], config.routing);
+    }
+    if (err.empty()) {
+        parse_optional_sections(root, config);
+    }
+
+    return err;
 }
 
 /**
@@ -394,7 +395,7 @@ std::string parse_config_file(
  * @param registry Bundled models registry.
  * @param[out] config Output parsed config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 std::string load_config(
     const std::filesystem::path& global_path,
@@ -434,7 +435,7 @@ std::string load_config(
  * @param registry Bundled models registry.
  * @param[out] config Output parsed config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.1
+ * @version 1.8.2
  */
 std::string load_config_from_file(
     const std::filesystem::path& path,

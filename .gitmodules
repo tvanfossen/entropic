@@ -1,3 +1,0 @@
-[submodule "vendor/personaplex"]
-	path = vendor/personaplex
-	url = https://github.com/NVIDIA/personaplex.git

@@ -6,6 +6,7 @@ download + verification for bundled models.
 """
 
 import hashlib
+import sys
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -13,10 +14,6 @@ from typing import Any
 import click
 import httpx
 import yaml
-from rich.console import Console
-from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn
-
-console = Console()
 
 _MODELS_FILE = Path(__file__).parent / "data" / "bundled_models.yaml"
 
@@ -32,6 +29,9 @@ def download_models(
     force: bool = False,
 ) -> None:
     """Download Entropic models.
+
+    @brief Download one or all bundled models to a local directory.
+    @version 2
 
     Args:
         model: Model key (from models.yaml, or 'all')
@@ -50,40 +50,52 @@ def download_models(
         output_path = output_dir / filename
 
         if output_path.exists() and not force:
-            console.print(f"[yellow]Skipping {model_key} (already exists)[/yellow]")
+            click.echo(f"Skipping {model_key} (already exists)")
             continue
 
-        console.print(f"\n[bold]Downloading {model_key}[/bold] ({model_info['size_gb']} GB)")
+        click.echo(f"\nDownloading {model_key} ({model_info['size_gb']} GB)")
 
         try:
             download_file(str(model_info["url"]), output_path)
-            console.print(f"[green]✓ Downloaded to {output_path}[/green]")
+            click.echo(f"Downloaded to {output_path}")
         except Exception as e:
-            console.print(f"[red]✗ Failed to download {model_key}: {e}[/red]")
+            click.echo(f"Failed to download {model_key}: {e}", err=True)
 
 
 def download_file(url: str, output_path: Path) -> None:
-    """Download file with progress bar."""
+    """Download file with plain-text progress.
+
+    @brief Stream a URL to disk with percentage updates on stderr.
+    @version 2
+    """
     with httpx.stream("GET", url, follow_redirects=True) as response:
         response.raise_for_status()
         total = int(response.headers.get("content-length", 0))
+        downloaded = 0
+        last_pct = -1
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        ) as progress:
-            task = progress.add_task("Downloading...", total=total)
+        with open(output_path, "wb") as f:
+            for chunk in response.iter_bytes(chunk_size=8192):
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = downloaded * 100 // total
+                    if pct != last_pct:
+                        last_pct = pct
+                        sys.stderr.write(f"\r  {pct}%")
+                        sys.stderr.flush()
 
-            with open(output_path, "wb") as f:
-                for chunk in response.iter_bytes(chunk_size=8192):
-                    f.write(chunk)
-                    progress.update(task, advance=len(chunk))
+        if total > 0:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
 
 
 def verify_file(file_path: Path, expected_hash: str | None) -> bool:
-    """Verify file integrity using SHA256."""
+    """Verify file integrity using SHA256.
+
+    @brief Compare file SHA-256 against expected digest.
+    @version 1
+    """
     if expected_hash is None:
         return True
 

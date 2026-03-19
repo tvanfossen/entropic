@@ -45,6 +45,7 @@ double elapsed_ms(
  * @brief Extract latest user message from conversation.
  * @param messages Conversation history.
  * @return Latest user message content.
+ * @internal
  * @version 1.8.2
  */
 std::string extract_latest_user_message(const std::vector<Message>& messages) {
@@ -68,6 +69,7 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  *
  * @param config Full engine config.
  * @return true on success.
+ * @internal
  * @version 1.8.2
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
@@ -135,6 +137,7 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
 
 /**
  * @brief Shutdown — unload all models.
+ * @internal
  * @version 1.8.2
  */
 void ModelOrchestrator::shutdown() {
@@ -159,6 +162,7 @@ void ModelOrchestrator::shutdown() {
  * @param params Generation parameters.
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult ModelOrchestrator::generate(
@@ -210,6 +214,7 @@ GenerationResult ModelOrchestrator::generate(
 
 /**
  * @brief Streaming generation.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult ModelOrchestrator::generate_streaming(
@@ -239,6 +244,7 @@ GenerationResult ModelOrchestrator::generate_streaming(
  * @brief Route to appropriate tier using router model.
  * @param messages Current conversation.
  * @return Selected tier name.
+ * @internal
  * @version 1.8.2
  */
 std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
@@ -264,6 +270,7 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  * @brief Classify task using router model (raw completion).
  * @param messages Conversation history.
  * @return Pair of (tier_name, raw_digit).
+ * @internal
  * @version 1.8.2
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
@@ -303,6 +310,7 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
  * @brief Get model for tier, loading/swapping as needed.
  * @param tier_name Tier name.
  * @return Backend pointer, or nullptr if unavailable.
+ * @internal
  * @version 1.8.2
  */
 InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
@@ -346,6 +354,7 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
  * keep_warm=true → WARM. keep_warm=false → COLD.
  *
  * @param incoming The backend about to be activated.
+ * @internal
  * @version 1.8.2
  */
 void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming) {
@@ -377,6 +386,7 @@ void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming)
 
 /**
  * @brief Last routing result.
+ * @internal
  * @version 1.8.2
  */
 RoutingResult ModelOrchestrator::last_routing_result() const {
@@ -385,6 +395,7 @@ RoutingResult ModelOrchestrator::last_routing_result() const {
 
 /**
  * @brief Last used tier name.
+ * @internal
  * @version 1.8.2
  */
 std::string ModelOrchestrator::last_used_tier() const {
@@ -393,6 +404,7 @@ std::string ModelOrchestrator::last_used_tier() const {
 
 /**
  * @brief Currently loaded model tier names.
+ * @internal
  * @version 1.8.2
  */
 std::vector<std::string> ModelOrchestrator::loaded_models() const {
@@ -410,6 +422,7 @@ std::vector<std::string> ModelOrchestrator::loaded_models() const {
 
 /**
  * @brief All configured tier names.
+ * @internal
  * @version 1.8.2
  */
 std::vector<std::string> ModelOrchestrator::available_models() const {
@@ -425,6 +438,7 @@ std::vector<std::string> ModelOrchestrator::available_models() const {
 
 /**
  * @brief Check if handoff is permitted.
+ * @internal
  * @version 1.8.2
  */
 bool ModelOrchestrator::can_handoff(
@@ -439,6 +453,7 @@ bool ModelOrchestrator::can_handoff(
 
 /**
  * @brief Get adapter for a tier.
+ * @internal
  * @version 1.8.2
  */
 ChatAdapter* ModelOrchestrator::get_adapter(const std::string& tier_name) const {

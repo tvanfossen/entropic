@@ -68,6 +68,7 @@ double elapsed_ms(
  *
  * @param config Validated model config.
  * @return true on success, false on failure.
+ * @internal
  * @version 1.8.2
  */
 bool InferenceBackend::load(const ModelConfig& config) {
@@ -95,6 +96,7 @@ bool InferenceBackend::load(const ModelConfig& config) {
 /**
  * @brief Promote to GPU (WARM → ACTIVE). Loads first if COLD.
  * @return true on success, false on failure.
+ * @internal
  * @version 1.8.2
  */
 bool InferenceBackend::activate() {
@@ -123,6 +125,7 @@ bool InferenceBackend::activate() {
 
 /**
  * @brief Release GPU layers (ACTIVE → WARM). No-op if not ACTIVE.
+ * @internal
  * @version 1.8.2
  */
 void InferenceBackend::deactivate() {
@@ -144,6 +147,7 @@ void InferenceBackend::deactivate() {
 
 /**
  * @brief Full unload (→ COLD). Idempotent.
+ * @internal
  * @version 1.8.2
  */
 void InferenceBackend::unload() {
@@ -161,6 +165,7 @@ void InferenceBackend::unload() {
  * @brief Convenience: load() + activate().
  * @param config Model config.
  * @return true on success.
+ * @internal
  * @version 1.8.2
  */
 bool InferenceBackend::load_and_activate(const ModelConfig& config) {
@@ -177,6 +182,7 @@ bool InferenceBackend::load_and_activate(const ModelConfig& config) {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult (error result if not ACTIVE).
+ * @internal
  * @version 1.8.2
  */
 GenerationResult InferenceBackend::generate(
@@ -205,6 +211,7 @@ GenerationResult InferenceBackend::generate(
  * @param on_token Per-token callback.
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult InferenceBackend::generate_streaming(
@@ -233,6 +240,7 @@ GenerationResult InferenceBackend::generate_streaming(
  * @param prompt Raw prompt string.
  * @param params Generation parameters.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult InferenceBackend::complete(
@@ -260,6 +268,7 @@ GenerationResult InferenceBackend::complete(
  * @brief Count tokens. Exact if loaded, estimate if COLD.
  * @param text Text to tokenize.
  * @return Token count.
+ * @internal
  * @version 1.8.2
  */
 int InferenceBackend::count_tokens(const std::string& text) const {

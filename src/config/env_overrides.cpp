@@ -16,6 +16,7 @@ namespace entropic::config {
  * @brief Get environment variable value or empty string.
  * @param name Variable name.
  * @return Value string, or empty if not set.
+ * @internal
  * @version 1.8.1
  */
 static std::string get_env(const char* name)

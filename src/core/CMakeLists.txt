@@ -1,0 +1,29 @@
+add_library(entropic-core)
+
+target_sources(entropic-core PRIVATE
+    engine_types.cpp
+    compaction.cpp
+    directives.cpp
+    context_manager.cpp
+    response_generator.cpp
+    engine.cpp
+)
+
+target_include_directories(entropic-core PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/../../include
+)
+
+target_link_libraries(entropic-core PUBLIC
+    entropic-types
+    spdlog::spdlog
+)
+
+target_compile_definitions(entropic-core PRIVATE ENTROPIC_BUILDING_DLL)
+
+set_target_properties(entropic-core PROPERTIES
+    OUTPUT_NAME "rentropic-core"
+    VERSION ${PROJECT_VERSION}
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET default
+)

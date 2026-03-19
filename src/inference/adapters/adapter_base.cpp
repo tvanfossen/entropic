@@ -31,6 +31,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a UUID v4 string.
  * @return UUID string.
+ * @internal
  * @version 1.8.2
  */
 std::string generate_uuid() {
@@ -62,6 +63,7 @@ ChatAdapter::ChatAdapter(std::string tier_name, std::string identity_prompt)
  * @param base_prompt Application context.
  * @param tool_jsons Tool definitions as JSON strings.
  * @return Assembled system prompt string.
+ * @internal
  * @version 1.8.2
  */
 std::string ChatAdapter::format_system_prompt(
@@ -101,6 +103,7 @@ std::string ChatAdapter::format_system_prompt(
  * @param tool_call The executed tool call.
  * @param result Execution result text.
  * @return Formatted user message.
+ * @internal
  * @version 1.8.2
  */
 Message ChatAdapter::format_tool_result(
@@ -124,6 +127,7 @@ Message ChatAdapter::format_tool_result(
  * @param content Response content.
  * @param tool_calls Parsed tool calls.
  * @return true if complete.
+ * @internal
  * @version 1.8.2
  */
 bool ChatAdapter::is_response_complete(
@@ -153,6 +157,7 @@ bool ChatAdapter::is_response_complete(
  * @brief Parse <tool_call>JSON</tool_call> tagged blocks.
  * @param content Model output content.
  * @return Vector of parsed tool calls.
+ * @internal
  * @version 1.8.2
  */
 std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
@@ -181,7 +186,8 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
  * @brief Parse bare JSON tool calls from lines.
  * @param content Model output.
  * @return Vector of tool calls from bare JSON lines.
- * @version 1.8.2
+ * @internal
+ * @version 1.8.3
  */
 std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
     const std::string& content) const
@@ -225,6 +231,7 @@ std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
  * @brief Extract content from <think>...</think> blocks.
  * @param content Model output.
  * @return Concatenated thinking content, or empty string.
+ * @internal
  * @version 1.8.2
  */
 std::string ChatAdapter::extract_thinking(const std::string& content) const {
@@ -245,6 +252,7 @@ std::string ChatAdapter::extract_thinking(const std::string& content) const {
  * @brief Strip all <think>...</think> blocks from content.
  * @param content Model output.
  * @return Content with think blocks removed.
+ * @internal
  * @version 1.8.2
  */
 std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
@@ -267,6 +275,7 @@ std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
  *
  * @param json_str Potentially malformed JSON.
  * @return Recovered ToolCall if successful.
+ * @internal
  * @version 1.8.2
  */
 std::optional<ToolCall> ChatAdapter::try_recover_json(
@@ -309,6 +318,7 @@ std::optional<ToolCall> ChatAdapter::try_recover_json(
  * @brief Default tool formatting: markdown headings + JSON schema.
  * @param tool_jsons Tool definitions as JSON strings.
  * @return Formatted tool section string.
+ * @internal
  * @version 1.8.2
  */
 std::string ChatAdapter::format_tools(
@@ -340,6 +350,7 @@ std::string ChatAdapter::format_tools(
  * @brief Parse a single JSON tool call string.
  * @param json_str JSON string from tagged block.
  * @return Parsed ToolCall or nullopt.
+ * @internal
  * @version 1.8.2
  */
 std::optional<ToolCall> ChatAdapter::parse_single_tool_call(

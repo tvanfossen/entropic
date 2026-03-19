@@ -15,6 +15,7 @@ namespace {
 /**
  * @brief Build a minimal config for orchestrator tests.
  * @version 1.8.2
+ * @internal
  */
 entropic::ParsedConfig make_test_config() {
     entropic::ParsedConfig config;

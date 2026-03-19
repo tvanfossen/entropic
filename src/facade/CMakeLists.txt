@@ -8,6 +8,7 @@ target_link_libraries(entropic-facade PUBLIC
     entropic-types
     entropic-config
     entropic-prompts
+    entropic-core
 )
 
 target_compile_definitions(entropic-facade PRIVATE ENTROPIC_BUILDING_DLL)

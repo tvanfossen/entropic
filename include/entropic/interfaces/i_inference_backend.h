@@ -2,11 +2,213 @@
  * @file i_inference_backend.h
  * @brief Pure C interface contract for inference backends.
  *
- * Reserved stub — full interface defined in v1.8.2 when the inference
- * backend is implemented. See docs/architecture-cpp.md for the planned
- * interface.
+ * This is the .so boundary for inference. All types are C-safe: opaque
+ * handles, error codes, function pointers, const char* JSON strings.
+ * No C++ types cross this boundary.
  *
- * @version 1.8.0
+ * @par Memory ownership
+ * - Strings returned by generate/complete (via result_json) are allocated
+ *   by the backend. Caller must free with entropic_inference_free().
+ * - Strings passed IN (messages_json, params_json, prompt) are borrowed
+ *   for the duration of the call only.
+ * - The on_token callback receives a pointer valid only for the callback
+ *   duration. Caller must copy if they need to retain the token.
+ *
+ * @par Thread safety
+ * - State queries (entropic_inference_state) are lock-free.
+ * - Lifecycle transitions (load/activate/deactivate/unload) are serialized.
+ * - Generation calls require ACTIVE state and do not acquire the
+ *   transition lock — concurrent generation is allowed.
+ *
+ * @version 1.8.2
  */
 
 #pragma once
+
+#include <entropic/types/error.h>
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief Opaque handle to an inference backend instance.
+ * @version 1.8.2
+ */
+typedef struct entropic_inference_backend* entropic_inference_backend_t;
+
+/* ── Lifecycle ─────────────────────────────────────────── */
+
+/**
+ * @brief Load a model from config (COLD → WARM).
+ *
+ * @param backend Backend handle.
+ * @param config_json JSON string of ModelConfig fields.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_LOAD_FAILED on failure.
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_load(
+    entropic_inference_backend_t backend,
+    const char* config_json);
+
+/**
+ * @brief Activate model on GPU (WARM → ACTIVE).
+ *
+ * If COLD, loads first (convenience path).
+ *
+ * @param backend Backend handle.
+ * @return ENTROPIC_OK on success.
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_activate(
+    entropic_inference_backend_t backend);
+
+/**
+ * @brief Deactivate model (ACTIVE → WARM). No-op if not ACTIVE.
+ *
+ * @param backend Backend handle.
+ * @return ENTROPIC_OK.
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_deactivate(
+    entropic_inference_backend_t backend);
+
+/**
+ * @brief Unload model completely (→ COLD). Releases all RAM + VRAM.
+ *
+ * @param backend Backend handle.
+ * @return ENTROPIC_OK.
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_unload(
+    entropic_inference_backend_t backend);
+
+/**
+ * @brief Query model state (lock-free).
+ *
+ * @param backend Backend handle.
+ * @return State as int: 0=COLD, 1=WARM, 2=ACTIVE.
+ *         Maps to entropic_model_state_t values.
+ * @version 1.8.2
+ */
+int entropic_inference_state(entropic_inference_backend_t backend);
+
+/* ── Generation ────────────────────────────────────────── */
+
+/**
+ * @brief Generate a response from messages (batch mode).
+ *
+ * Requires ACTIVE state. Returns ENTROPIC_ERROR_INVALID_STATE otherwise.
+ *
+ * @param backend Backend handle.
+ * @param messages_json JSON array of message objects.
+ * @param params_json JSON object of GenerationParams fields.
+ * @param[out] result_json Output: JSON result string. Caller frees
+ *             with entropic_inference_free().
+ * @return ENTROPIC_OK on success.
+ * @req REQ-INFER-001
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_generate(
+    entropic_inference_backend_t backend,
+    const char* messages_json,
+    const char* params_json,
+    char** result_json);
+
+/**
+ * @brief Generate with streaming token callback.
+ *
+ * Requires ACTIVE state. The on_token callback is invoked for each
+ * generated token. The token pointer is valid only for the duration
+ * of the callback — caller must copy if retention is needed.
+ *
+ * @param backend Backend handle.
+ * @param messages_json JSON array of message objects.
+ * @param params_json JSON object of GenerationParams fields.
+ * @param on_token Callback for each token. Must not call back into API.
+ * @param user_data Opaque pointer forwarded to on_token.
+ * @param cancel_flag Pointer to int flag. Caller sets to 1 to cancel.
+ *        Checked between tokens — cancellation latency is one token.
+ *        May be NULL if cancellation is not needed.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_CANCELLED if cancelled.
+ * @req REQ-INFER-003
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_generate_streaming(
+    entropic_inference_backend_t backend,
+    const char* messages_json,
+    const char* params_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
+ * @brief Raw text completion without chat template.
+ *
+ * Used by the router for digit-based classification. The prompt is
+ * passed directly to the model without any chat template formatting.
+ *
+ * @param backend Backend handle.
+ * @param prompt Raw prompt string.
+ * @param params_json Generation parameters as JSON.
+ * @param[out] result_json Output: JSON result string. Caller frees.
+ * @return ENTROPIC_OK on success.
+ * @req REQ-INFER-004
+ * @version 1.8.2
+ */
+entropic_error_t entropic_inference_complete(
+    entropic_inference_backend_t backend,
+    const char* prompt,
+    const char* params_json,
+    char** result_json);
+
+/* ── Utility ───────────────────────────────────────────── */
+
+/**
+ * @brief Count tokens in text using model's tokenizer.
+ *
+ * Returns exact count when model is loaded (WARM or ACTIVE).
+ * Returns len/4 estimate when model is COLD.
+ *
+ * @param backend Backend handle.
+ * @param text Text to tokenize.
+ * @param text_len Length of text in bytes.
+ * @return Token count (exact or estimated).
+ * @utility
+ * @version 1.8.2
+ */
+int entropic_inference_count_tokens(
+    entropic_inference_backend_t backend,
+    const char* text,
+    size_t text_len);
+
+/**
+ * @brief Destroy backend instance and free all resources.
+ *
+ * @param backend Backend handle. NULL is a safe no-op.
+ * @version 1.8.2
+ */
+void entropic_inference_destroy(entropic_inference_backend_t backend);
+
+/**
+ * @brief Free a string allocated by the inference backend.
+ *
+ * @param ptr Pointer returned by generate, complete, or similar.
+ *        NULL is a safe no-op.
+ * @version 1.8.2
+ */
+void entropic_inference_free(void* ptr);
+
+#ifdef __cplusplus
+}
+#endif
+
+/*
+ * Plugin export requirements:
+ *
+ *   extern "C" ENTROPIC_EXPORT int entropic_plugin_api_version();
+ *   extern "C" ENTROPIC_EXPORT entropic_inference_backend_t
+ *       entropic_create_inference_backend();
+ */

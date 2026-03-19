@@ -33,7 +33,29 @@ target_compile_definitions(entropic-config-tests PRIVATE
     TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
 )
 
+# v1.8.2: Inference tests
+add_executable(entropic-inference-tests
+    inference/test_backend_lifecycle.cpp
+    inference/test_adapter_base.cpp
+    inference/test_qwen35_adapter.cpp
+    inference/test_orchestrator.cpp
+    inference/test_generation_params.cpp
+)
+
+target_include_directories(entropic-inference-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-inference-tests PRIVATE
+    entropic::inference
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
+catch_discover_tests(entropic-inference-tests)

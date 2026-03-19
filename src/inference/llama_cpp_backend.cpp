@@ -1,0 +1,547 @@
+/**
+ * @file llama_cpp_backend.cpp
+ * @brief LlamaCppBackend implementation — direct llama.cpp C API.
+ *
+ * Pinned against llama.cpp submodule b8420. Uses:
+ * - llama_model_load_from_file() for model loading
+ * - llama_init_from_model() for context creation
+ * - llama_decode() + llama_batch for token processing
+ * - llama_sampler_chain for sampling
+ * - llama_chat_apply_template() for chat formatting
+ *
+ * @version 1.8.2
+ */
+
+#include "llama_cpp_backend.h"
+
+#include <entropic/types/logging.h>
+
+#include <chrono>
+#include <cstring>
+#include <sstream>
+
+namespace entropic {
+
+namespace {
+
+auto logger = entropic::log::get("inference.llama_cpp");
+
+/**
+ * @brief Check if generated text ends with any stop sequence.
+ * @param text Generated text so far.
+ * @param stop_sequences Stop sequence list.
+ * @return true if any stop sequence found at end of text.
+ * @utility
+ * @version 1.8.2
+ */
+bool ends_with(const std::string& text, const std::string& suffix) {
+    return text.size() >= suffix.size()
+        && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+/**
+ * @brief Check if generated text ends with any stop sequence.
+ * @param text Generated text so far.
+ * @param stop_sequences List of stop sequences to check.
+ * @return true if any stop sequence found at end of text.
+ * @utility
+ * @version 1.8.2
+ */
+bool check_stop_sequences(
+    const std::string& text,
+    const std::vector<std::string>& stop_sequences)
+{
+    for (const auto& stop : stop_sequences) {
+        if (!stop.empty() && ends_with(text, stop)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // anonymous namespace
+
+// ── Lifecycle ──────────────────────────────────────────────
+
+/**
+ * @brief Load model into CPU RAM (COLD → WARM).
+ *
+ * Uses llama_model_load_from_file with n_gpu_layers=0 for CPU-only
+ * mmap+mlock loading. Model stays in page cache for fast reactivation.
+ *
+ * @param config Validated model config.
+ * @return true on success.
+ * @version 1.8.2
+ */
+bool LlamaCppBackend::do_load(const ModelConfig& config) {
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.use_mmap = true;
+    mparams.use_mlock = config.use_mlock;
+
+    model_ = llama_model_load_from_file(config.path.c_str(), mparams);
+    if (!model_) {
+        last_error_ = "llama_model_load_from_file failed: " + config.path.string();
+        return false;
+    }
+
+    vocab_ = llama_model_get_vocab(model_);
+    logger->info("Model loaded (CPU): {} tokens in vocab",
+              llama_vocab_n_tokens(vocab_));
+    return true;
+}
+
+/**
+ * @brief Activate model on GPU (WARM → ACTIVE).
+ *
+ * Reloads model with n_gpu_layers from config, then creates
+ * inference context with KV cache.
+ *
+ * @return true on success.
+ * @version 1.8.2
+ */
+bool LlamaCppBackend::do_activate() {
+    // Reload model with GPU layers
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = config().gpu_layers;
+    mparams.use_mmap = true;
+    mparams.use_mlock = config().use_mlock;
+
+    if (!config().tensor_split.empty()) {
+        // TODO: parse tensor_split string into float array for multi-GPU
+        logger->warn("tensor_split not yet implemented, ignoring");
+    }
+
+    llama_model* new_model = llama_model_load_from_file(
+        config().path.c_str(), mparams);
+    if (!new_model) {
+        last_error_ = "Failed to reload model with GPU layers";
+        return false;
+    }
+
+    // Free old CPU-only model, replace with GPU model
+    if (model_) {
+        llama_model_free(model_);
+    }
+    model_ = new_model;
+    vocab_ = llama_model_get_vocab(model_);
+
+    // Create inference context
+    llama_context_params cparams = llama_context_default_params();
+    cparams.n_ctx = static_cast<uint32_t>(config().context_length);
+    cparams.n_batch = static_cast<uint32_t>(config().n_batch);
+    cparams.n_threads = config().n_threads > 0
+        ? static_cast<uint32_t>(config().n_threads)
+        : std::thread::hardware_concurrency();
+    cparams.flash_attn_type = config().flash_attn
+        ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+        : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+
+    ctx_ = llama_init_from_model(model_, cparams);
+    if (!ctx_) {
+        last_error_ = "llama_init_from_model failed";
+        return false;
+    }
+
+    logger->info("Context created: n_ctx={}, n_batch={}, flash_attn={}",
+              config().context_length, config().n_batch, config().flash_attn);
+    return true;
+}
+
+/**
+ * @brief Deactivate: free context, reload model CPU-only.
+ * @version 1.8.2
+ */
+void LlamaCppBackend::do_deactivate() {
+    if (ctx_) {
+        llama_free(ctx_);
+        ctx_ = nullptr;
+    }
+
+    // Reload model CPU-only for WARM state
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = 0;
+    mparams.use_mmap = true;
+    mparams.use_mlock = config().use_mlock;
+
+    llama_model* cpu_model = llama_model_load_from_file(
+        config().path.c_str(), mparams);
+    if (cpu_model) {
+        llama_model_free(model_);
+        model_ = cpu_model;
+        vocab_ = llama_model_get_vocab(model_);
+    } else {
+        logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
+    }
+}
+
+/**
+ * @brief Full unload — free all resources.
+ * @version 1.8.2
+ */
+void LlamaCppBackend::do_unload() {
+    if (ctx_) {
+        llama_free(ctx_);
+        ctx_ = nullptr;
+    }
+    if (model_) {
+        llama_model_free(model_);
+        model_ = nullptr;
+    }
+    vocab_ = nullptr;
+}
+
+// ── Tokenization ───────────────────────────────────────────
+
+/**
+ * @brief Tokenize text using model vocabulary.
+ * @param text Input text.
+ * @param add_special Add BOS/EOS special tokens.
+ * @return Vector of token IDs.
+ * @version 1.8.2
+ */
+std::vector<llama_token> LlamaCppBackend::tokenize(
+    const std::string& text, bool add_special) const
+{
+    // First call: get required size
+    int n = llama_tokenize(vocab_, text.c_str(),
+                           static_cast<int32_t>(text.size()),
+                           nullptr, 0, add_special, true);
+    if (n < 0) {
+        n = -n;
+    }
+
+    std::vector<llama_token> tokens(static_cast<size_t>(n));
+    int actual = llama_tokenize(vocab_, text.c_str(),
+                                static_cast<int32_t>(text.size()),
+                                tokens.data(), n, add_special, true);
+    if (actual < 0) {
+        logger->error("Tokenization failed for text of length {}", text.size());
+        return {};
+    }
+    tokens.resize(static_cast<size_t>(actual));
+    return tokens;
+}
+
+/**
+ * @brief Detokenize a single token to string.
+ * @param token Token ID.
+ * @return String representation.
+ * @version 1.8.2
+ */
+std::string LlamaCppBackend::detokenize(llama_token token) const {
+    char buf[256];
+    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, true);
+    if (n < 0) {
+        // Buffer too small — retry with exact size
+        std::vector<char> large(static_cast<size_t>(-n));
+        n = llama_token_to_piece(vocab_, token, large.data(),
+                                 static_cast<int32_t>(large.size()), 0, true);
+        if (n > 0) {
+            return std::string(large.data(), static_cast<size_t>(n));
+        }
+        return "";
+    }
+    return std::string(buf, static_cast<size_t>(n));
+}
+
+/**
+ * @brief Count tokens in text.
+ * @param text Input text.
+ * @return Token count.
+ * @version 1.8.2
+ */
+int LlamaCppBackend::do_count_tokens(const std::string& text) const {
+    auto tokens = tokenize(text, false);
+    return static_cast<int>(tokens.size());
+}
+
+// ── Chat template ──────────────────────────────────────────
+
+/**
+ * @brief Apply GGUF-embedded chat template to messages.
+ *
+ * Uses llama_chat_apply_template() which reads the template from
+ * GGUF metadata. Passes enable_thinking as a template variable
+ * via the add_generation_prompt parameter.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return Formatted prompt string.
+ * @version 1.8.2
+ */
+std::string LlamaCppBackend::apply_chat_template(
+    const std::vector<Message>& messages,
+    const GenerationParams& params) const
+{
+    // Convert to llama_chat_message array
+    std::vector<llama_chat_message> chat_msgs;
+    chat_msgs.reserve(messages.size());
+    for (const auto& msg : messages) {
+        chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
+    }
+
+    // First call: measure required buffer size
+    int n = llama_chat_apply_template(
+        nullptr, chat_msgs.data(), chat_msgs.size(),
+        true, nullptr, 0);
+    if (n < 0) {
+        logger->error("llama_chat_apply_template failed (size query)");
+        // Fallback: concatenate messages directly
+        std::string fallback;
+        for (const auto& msg : messages) {
+            fallback += msg.role + ": " + msg.content + "\n";
+        }
+        return fallback;
+    }
+
+    std::vector<char> buf(static_cast<size_t>(n + 1));
+    int written = llama_chat_apply_template(
+        nullptr, chat_msgs.data(), chat_msgs.size(),
+        true, buf.data(), static_cast<int32_t>(buf.size()));
+    if (written < 0) {
+        logger->error("llama_chat_apply_template failed (render)");
+        return "";
+    }
+
+    return std::string(buf.data(), static_cast<size_t>(written));
+}
+
+// ── Sampler ────────────────────────────────────────────────
+
+/**
+ * @brief Create sampler chain from generation params.
+ *
+ * Chain order per llama.cpp convention:
+ * grammar → penalties → temperature → top-k → top-p → dist
+ *
+ * @param params Generation parameters.
+ * @return Sampler chain (caller frees).
+ * @version 1.8.2
+ */
+llama_sampler* LlamaCppBackend::create_sampler(
+    const GenerationParams& params) const
+{
+    llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
+    llama_sampler* chain = llama_sampler_chain_init(chain_params);
+
+    // Grammar constraint (applied first)
+    if (!params.grammar.empty()) {
+        llama_sampler* grammar = llama_sampler_init_grammar(
+            vocab_, params.grammar.c_str(), "root");
+        if (grammar) {
+            llama_sampler_chain_add(chain, grammar);
+        }
+    }
+
+    // Repetition penalty
+    if (params.repeat_penalty != 1.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_penalties(
+                64, params.repeat_penalty, 0.0f, 0.0f));
+    }
+
+    // Temperature
+    if (params.temperature > 0.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_temp(params.temperature));
+    }
+
+    // Top-K
+    if (params.top_k > 0) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_k(params.top_k));
+    }
+
+    // Top-P (nucleus sampling)
+    if (params.top_p < 1.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_p(params.top_p, 1));
+    }
+
+    // Final distribution sampler
+    llama_sampler_chain_add(chain, llama_sampler_init_dist(0));
+
+    return chain;
+}
+
+// ── Decode loop ────────────────────────────────────────────
+
+/**
+ * @brief Run batched prefill on input tokens.
+ * @param tokens Input token sequence.
+ * @return true on success.
+ * @version 1.8.2
+ */
+bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
+    llama_memory_clear(llama_get_memory(ctx_), true);
+
+    std::vector<llama_token> input(tokens);
+    llama_batch batch = llama_batch_get_one(
+        input.data(), static_cast<int32_t>(input.size()));
+
+    bool ok = (llama_decode(ctx_, batch) == 0);
+    if (!ok) {
+        logger->error("Prefill decode failed");
+    }
+    return ok;
+}
+
+/**
+ * @brief Generate one token and append to output.
+ * @param sampler Sampler chain.
+ * @param generated Accumulated output string (mutated).
+ * @param on_token Streaming callback (may be nullptr).
+ * @param stop Stop sequences.
+ * @return "continue", "stop", "eos", or "error".
+ * @version 1.8.2
+ */
+std::string LlamaCppBackend::step_token(
+    llama_sampler* sampler,
+    std::string& generated,
+    std::function<void(std::string_view)>& on_token,
+    const std::vector<std::string>& stop)
+{
+    llama_token new_token = llama_sampler_sample(sampler, ctx_, -1);
+
+    if (new_token == llama_vocab_eos(vocab_)
+        || llama_vocab_is_eog(vocab_, new_token)) {
+        return "eos";
+    }
+
+    std::string piece = detokenize(new_token);
+    generated += piece;
+    if (on_token) {
+        on_token(std::string_view(piece));
+    }
+    if (check_stop_sequences(generated, stop)) {
+        return "stop";
+    }
+
+    llama_token tok = new_token;
+    llama_batch single = llama_batch_get_one(&tok, 1);
+    return (llama_decode(ctx_, single) == 0) ? "continue" : "error";
+}
+
+/**
+ * @brief Core decode loop shared by generate, streaming, and complete.
+ * @param tokens Input token sequence.
+ * @param params Generation parameters.
+ * @param on_token Per-token callback (nullptr for batch).
+ * @param cancel Cancel flag (nullptr for batch).
+ * @return GenerationResult.
+ * @version 1.8.2
+ */
+GenerationResult LlamaCppBackend::decode_loop(
+    const std::vector<llama_token>& tokens,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>* cancel)
+{
+    GenerationResult result;
+    llama_sampler* sampler = create_sampler(params);
+
+    if (!run_prefill(tokens)) {
+        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        result.error_message = "Prefill decode failed";
+        result.finish_reason = "error";
+        llama_sampler_free(sampler);
+        return result;
+    }
+
+    std::string generated;
+    int n_generated = 0;
+
+    while (n_generated < params.max_tokens) {
+        bool cancelled = cancel && cancel->load(std::memory_order_acquire);
+        if (cancelled) {
+            result.finish_reason = "cancelled";
+            result.error_code = ENTROPIC_ERROR_CANCELLED;
+            break;
+        }
+
+        auto status = step_token(sampler, generated, on_token, params.stop);
+        if (status == "continue") {
+            ++n_generated;
+        } else {
+            result.finish_reason = (status == "error") ? "error" : "stop";
+            if (status == "error") {
+                result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+            }
+            break;
+        }
+    }
+
+    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+
+    llama_sampler_free(sampler);
+    result.content = generated;
+    result.token_count = n_generated;
+    return result;
+}
+
+// ── Generation entry points ────────────────────────────────
+
+/**
+ * @brief Generate a complete response using chat template.
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return GenerationResult.
+ * @version 1.8.2
+ */
+GenerationResult LlamaCppBackend::do_generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    std::string prompt = apply_chat_template(messages, params);
+    auto tokens = tokenize(prompt, true);
+
+    logger->info("Generate: {} input tokens, max_tokens={}",
+              tokens.size(), params.max_tokens);
+    return decode_loop(tokens, params, nullptr, nullptr);
+}
+
+/**
+ * @brief Streaming generation with per-token callback.
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @param on_token Per-token callback.
+ * @param cancel Atomic cancel flag.
+ * @return GenerationResult.
+ * @version 1.8.2
+ */
+GenerationResult LlamaCppBackend::do_generate_streaming(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>& cancel)
+{
+    std::string prompt = apply_chat_template(messages, params);
+    auto tokens = tokenize(prompt, true);
+
+    logger->info("Stream: {} input tokens, max_tokens={}",
+              tokens.size(), params.max_tokens);
+    return decode_loop(tokens, params, on_token, &cancel);
+}
+
+/**
+ * @brief Raw text completion without chat template.
+ * @param prompt Raw prompt string.
+ * @param params Generation parameters.
+ * @return GenerationResult.
+ * @version 1.8.2
+ */
+GenerationResult LlamaCppBackend::do_complete(
+    const std::string& prompt,
+    const GenerationParams& params)
+{
+    auto tokens = tokenize(prompt, false);
+
+    logger->info("Complete: {} input tokens, max_tokens={}",
+              tokens.size(), params.max_tokens);
+    return decode_loop(tokens, params, nullptr, nullptr);
+}
+
+} // namespace entropic

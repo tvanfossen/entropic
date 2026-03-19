@@ -28,26 +28,32 @@ extern "C" const char* entropic_last_error(entropic_handle_t handle) {
  * @return Static string. Never NULL.
  * @version 1.8.0
  */
+/// @brief Lookup table: error code → name string.
+static const char* const s_error_names[] = {
+    "ENTROPIC_OK",                             // 0
+    "ENTROPIC_ERROR_INVALID_ARGUMENT",         // 1
+    "ENTROPIC_ERROR_INVALID_CONFIG",           // 2
+    "ENTROPIC_ERROR_INVALID_STATE",            // 3
+    "ENTROPIC_ERROR_MODEL_NOT_FOUND",          // 4
+    "ENTROPIC_ERROR_LOAD_FAILED",              // 5
+    "ENTROPIC_ERROR_GENERATE_FAILED",          // 6
+    "ENTROPIC_ERROR_TOOL_NOT_FOUND",           // 7
+    "ENTROPIC_ERROR_PERMISSION_DENIED",        // 8
+    "ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH",  // 9
+    "ENTROPIC_ERROR_PLUGIN_LOAD_FAILED",       // 10
+    "ENTROPIC_ERROR_TIMEOUT",                  // 11
+    "ENTROPIC_ERROR_CANCELLED",                // 12
+    "ENTROPIC_ERROR_OUT_OF_MEMORY",            // 13
+    "ENTROPIC_ERROR_IO",                       // 14
+    "ENTROPIC_ERROR_INTERNAL",                 // 15
+};
+
+static constexpr int s_error_count =
+    static_cast<int>(sizeof(s_error_names) / sizeof(s_error_names[0]));
+
 extern "C" const char* entropic_error_name(entropic_error_t code) {
-    switch (code) {
-        case ENTROPIC_OK:                            return "ENTROPIC_OK";
-        case ENTROPIC_ERROR_INVALID_ARGUMENT:        return "ENTROPIC_ERROR_INVALID_ARGUMENT";
-        case ENTROPIC_ERROR_INVALID_CONFIG:          return "ENTROPIC_ERROR_INVALID_CONFIG";
-        case ENTROPIC_ERROR_INVALID_STATE:           return "ENTROPIC_ERROR_INVALID_STATE";
-        case ENTROPIC_ERROR_MODEL_NOT_FOUND:         return "ENTROPIC_ERROR_MODEL_NOT_FOUND";
-        case ENTROPIC_ERROR_LOAD_FAILED:             return "ENTROPIC_ERROR_LOAD_FAILED";
-        case ENTROPIC_ERROR_GENERATE_FAILED:         return "ENTROPIC_ERROR_GENERATE_FAILED";
-        case ENTROPIC_ERROR_TOOL_NOT_FOUND:          return "ENTROPIC_ERROR_TOOL_NOT_FOUND";
-        case ENTROPIC_ERROR_PERMISSION_DENIED:       return "ENTROPIC_ERROR_PERMISSION_DENIED";
-        case ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH: return "ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH";
-        case ENTROPIC_ERROR_PLUGIN_LOAD_FAILED:      return "ENTROPIC_ERROR_PLUGIN_LOAD_FAILED";
-        case ENTROPIC_ERROR_TIMEOUT:                 return "ENTROPIC_ERROR_TIMEOUT";
-        case ENTROPIC_ERROR_CANCELLED:               return "ENTROPIC_ERROR_CANCELLED";
-        case ENTROPIC_ERROR_OUT_OF_MEMORY:           return "ENTROPIC_ERROR_OUT_OF_MEMORY";
-        case ENTROPIC_ERROR_IO:                      return "ENTROPIC_ERROR_IO";
-        case ENTROPIC_ERROR_INTERNAL:                return "ENTROPIC_ERROR_INTERNAL";
-    }
-    return "ENTROPIC_ERROR_UNKNOWN";
+    int idx = static_cast<int>(code);
+    return (idx >= 0 && idx < s_error_count) ? s_error_names[idx] : "ENTROPIC_ERROR_UNKNOWN";
 }
 
 /**

@@ -12,13 +12,6 @@ from entropic.core.base import (
     ToolProvider,
     ToolResult,
 )
-from entropic.core.commands import (
-    Command,
-    CommandContext,
-    CommandDefinition,
-    CommandRegistry,
-    CommandResult,
-)
 from entropic.core.context import (
     ContextBuilder,
     ContextCompactor,
@@ -61,11 +54,6 @@ def __getattr__(name: str) -> Any:
 __all__ = [
     "AgentEngine",
     "AgentState",
-    "Command",
-    "CommandContext",
-    "CommandDefinition",
-    "CommandRegistry",
-    "CommandResult",
     "ContextBuilder",
     "ContextCompactor",
     "GenerationResult",

@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Any
 
 from entropic.core.base import Message
+from entropic.core.engine_types import MessageSource
 from entropic.core.logging import get_logger
-from entropic.core.queue import MessageSource
 
 logger = get_logger("core.session")
 

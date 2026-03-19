@@ -18,8 +18,9 @@ from typing import TYPE_CHECKING, Any
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
+from entropic.core.engine_types import MessageSource
 from entropic.core.logging import get_logger
-from entropic.core.queue import MessagePriority, MessageQueue, MessageRequest, MessageSource
+from entropic.core.queue import MessagePriority, MessageQueue, MessageRequest
 from entropic.core.session import SessionManager
 from entropic.core.tasks import Task, TaskManager
 

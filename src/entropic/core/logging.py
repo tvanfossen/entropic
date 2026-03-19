@@ -40,20 +40,8 @@ def setup_logging(
     logger.handlers.clear()
 
     # Console handler - only show WARNING and above to keep CLI clean
-    try:
-        from rich.console import Console
-        from rich.logging import RichHandler
-
-        console_handler: logging.Handler = RichHandler(
-            console=Console(stderr=True),
-            show_time=True,
-            show_path=False,
-            rich_tracebacks=True,
-        )
-        console_handler.setFormatter(logging.Formatter("%(message)s"))
-    except ImportError:
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     console_handler.setLevel(logging.WARNING)
     logger.addHandler(console_handler)
 

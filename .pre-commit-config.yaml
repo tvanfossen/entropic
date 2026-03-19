@@ -43,11 +43,13 @@ repos:
         args: [--cognitive-threshold=15]
         exclude: ^extern/
 
-  - repo: https://github.com/tvanfossen/doxygen-guard
-    rev: main
-    hooks:
-      - id: doxygen-guard
-        exclude: ^extern/
+  # doxygen-guard disabled — Python codebase is dead code heading into C++ rewrite.
+  # Re-enable for C/C++ sources at v1.8.0.
+  # - repo: https://github.com/tvanfossen/doxygen-guard
+  #   rev: main
+  #   hooks:
+  #     - id: doxygen-guard
+  #       exclude: ^extern/
 
   # pytest removed from pre-commit at v1.8.0 transition.
   # Python engine tests go away with the TUI separation.

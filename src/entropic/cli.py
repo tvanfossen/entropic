@@ -1,7 +1,7 @@
 """
 CLI entry point for Entropic.
 
-Handles command-line arguments and initializes the application.
+Handles command-line arguments and initializes the engine.
 """
 
 import asyncio
@@ -63,11 +63,14 @@ def main(
     log_level: str | None,
     project: Path | None,
 ) -> None:
-    """
-    Entropic - Local AI Inference Engine
+    """Entropic - Local AI Inference Engine.
 
-    Run without arguments to start headless interactive mode.
-    Install entropic-tui for the full terminal UI.
+    \b
+    Use 'entropic ask "prompt"' for single-turn inference.
+    Install entropic-tui for the interactive terminal UI.
+
+    @brief Root CLI group: load config, setup logging, store context for subcommands.
+    @version 1
     """
     # Build CLI overrides
     cli_overrides: dict[str, Any] = {}
@@ -100,60 +103,49 @@ def main(
     ctx.obj["logger"] = logger
     ctx.obj["project"] = project_dir
 
-    # If no subcommand, start headless interactive mode
+    # No subcommand → print help (engine is a library, not an app)
     if ctx.invoked_subcommand is None:
-        from entropic.app import Application
-        from entropic.core.headless_presenter import HeadlessPresenter
-
-        app = Application(
-            config=app_config,
-            project_dir=project_dir,
-            presenter=HeadlessPresenter(),
-        )
-        asyncio.run(app.run())
+        click.echo(ctx.get_help())
 
 
 @main.command()
 @click.pass_context
 def status(ctx: click.Context) -> None:
-    """Show system and model status."""
-    from rich.console import Console
-    from rich.table import Table
+    """Show system and model status.
 
-    console = Console()
+    @brief Print configured model tiers, router, routing state, and log level.
+    @version 1
+    """
     config = ctx.obj["config"]
 
-    table = Table(title="Entropic Status")
-    table.add_column("Component", style="cyan")
-    table.add_column("Status", style="green")
+    click.echo("Entropic Status")
+    click.echo("=" * 40)
 
-    # Models (from dict-based tiers)
+    # Models
     for name, tier_config in config.models.tiers.items():
-        table.add_row(f"{name.capitalize()} Model", str(tier_config.path))
+        click.echo(f"  {name.capitalize()} Model: {tier_config.path}")
 
     if config.models.router:
-        table.add_row("Router Model", str(config.models.router.path))
+        click.echo(f"  Router Model:   {config.models.router.path}")
     else:
-        table.add_row("Router Model", "[dim]Not configured[/dim]")
+        click.echo("  Router Model:   Not configured")
 
-    # Settings
-    table.add_row("Routing Enabled", str(config.routing.enabled))
-    quality = getattr(config, "quality", None)
-    table.add_row("Quality Enforcement", str(quality.enabled) if quality else "N/A")
-    table.add_row("Log Level", config.log_level)
-
-    console.print(table)
+    click.echo()
+    click.echo(f"  Routing:   {'enabled' if config.routing.enabled else 'disabled'}")
+    click.echo(f"  Log Level: {config.log_level}")
 
 
 @main.command()
 @click.argument("message", required=False)
-@click.option("--no-stream", is_flag=True, help="Disable streaming output")
+@click.option("--no-stream", is_flag=True, help="Disable streaming output")  # noqa: ARG001
 @click.pass_context
-def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:
-    """
-    Send a single message and get a response.
+def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:  # noqa: ARG001
+    """Send a single message and get a response.
 
     If MESSAGE is not provided, reads from stdin.
+
+    @brief Single-turn inference: read message from arg or stdin, run engine, print response.
+    @version 1
     """
     if message is None:
         if sys.stdin.isatty():
@@ -161,18 +153,110 @@ def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:
             sys.exit(1)
         message = sys.stdin.read().strip()
 
-    from entropic.app import Application
-
+    assert message is not None  # guaranteed by stdin read above
     config = ctx.obj["config"]
-    app = Application(config=config, project_dir=ctx.obj["project"])
+    project_dir = ctx.obj["project"]
+    asyncio.run(_run_ask(config, project_dir, message))
 
-    asyncio.run(app.single_turn(message, stream=not no_stream))
+
+async def _run_ask(config: Any, project_dir: Path, message: str) -> None:
+    """Run a single-turn ask through AgentEngine.
+
+    @brief Initialize orchestrator + engine, stream response to stdout.
+    @version 1
+    """
+    from entropic.core.engine import AgentEngine, EngineCallbacks, LoopConfig
+    from entropic.inference.orchestrator import ModelOrchestrator
+    from entropic.mcp.manager import ServerManager
+
+    orchestrator = ModelOrchestrator(config)
+    await orchestrator.initialize()
+
+    if not orchestrator.get_available_models():
+        click.echo("No models configured.", err=True)
+        click.echo(
+            "Configure models in ~/.entropic/config.yaml or .entropic/config.yaml",
+            err=True,
+        )
+        await orchestrator.shutdown()
+        return
+
+    server_manager = ServerManager(
+        config,
+        project_dir=project_dir,
+        tier_names=orchestrator.tier_names,
+    )
+    await server_manager.initialize()
+
+    loop_config = LoopConfig(
+        max_iterations=15,
+        max_consecutive_errors=3,
+        stream_output=True,
+        auto_approve_tools=config.permissions.auto_approve,
+    )
+    engine = AgentEngine(
+        orchestrator=orchestrator,
+        server_manager=server_manager,
+        config=config,
+        loop_config=loop_config,
+    )
+
+    def on_chunk(chunk: str) -> None:
+        """Handle streaming chunk.
+
+        @brief Write a streamed text chunk to stdout immediately.
+        @version 1
+        """
+        sys.stdout.write(chunk)
+        sys.stdout.flush()
+
+    def on_tool_start(tool_call: Any) -> None:
+        """Handle tool execution start.
+
+        @brief Print tool name and truncated arguments to stderr.
+        @version 1
+        """
+        args_str = ", ".join(f"{k}={repr(v)[:30]}" for k, v in tool_call.arguments.items())
+        if len(args_str) > 60:
+            args_str = args_str[:57] + "..."
+        click.echo(f"\n[Executing {tool_call.name}({args_str})...]", err=True)
+
+    def on_tool_complete(tool_call: Any, result: str, duration_ms: float) -> None:
+        """Handle tool execution completion.
+
+        @brief Print tool name, duration, and result summary to stderr.
+        @version 1
+        """
+        result_len = len(result)
+        summary = f"{result_len} chars" if result_len > 100 else result[:50].replace("\n", " ")
+        click.echo(f"[Done {tool_call.name} ({duration_ms:.0f}ms, {summary})]", err=True)
+
+    engine.set_callbacks(
+        EngineCallbacks(
+            on_stream_chunk=on_chunk,
+            on_tool_start=on_tool_start,
+            on_tool_complete=on_tool_complete,
+        )
+    )
+
+    try:
+        async for _ in engine.run(message):
+            pass
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+    finally:
+        await server_manager.shutdown()
+        await orchestrator.shutdown()
 
 
 @main.command()
 @click.pass_context
 def init(ctx: click.Context) -> None:
-    """Initialize Entropic in the current directory."""
+    """Initialize Entropic in the current directory.
+
+    @brief Create .entropic/ directory with default config.yaml and ENTROPIC.md.
+    @version 1
+    """
     project_dir = ctx.obj["project"]
     entropic_dir = project_dir / ".entropic"
 
@@ -182,9 +266,8 @@ def init(ctx: click.Context) -> None:
 
     # Create directories
     entropic_dir.mkdir(parents=True)
-    (entropic_dir / "commands").mkdir()
 
-    # Create default config
+    # Create default config (LibraryConfig-shaped, no TUI fields)
     default_config = """# Entropic Project Configuration
 # See ~/.entropic/config.yaml for global settings
 
@@ -223,7 +306,6 @@ This file provides context to Entropic. Edit it to describe your project.
     click.echo(f"Initialized Entropic in {project_dir}")
     click.echo("Created:")
     click.echo(f"  - {entropic_dir}/config.yaml")
-    click.echo(f"  - {entropic_dir}/commands/")
     click.echo(f"  - {entropic_dir}/ENTROPIC.md")
 
 
@@ -238,7 +320,11 @@ This file provides context to Entropic. Edit it to describe your project.
 )
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing files")
 def download(model: str, output_dir: Path, force: bool) -> None:
-    """Download Entropic models from HuggingFace."""
+    """Download Entropic models from HuggingFace.
+
+    @brief Delegate to cli_download module to fetch model files.
+    @version 1
+    """
     from entropic.cli_download import download_models
 
     download_models(model, output_dir, force)
@@ -257,6 +343,9 @@ def setup_cuda(force: bool, cpu: bool) -> None:
     \b
     Cache:         ~/.entropic/.build/
     Prerequisites: git, cmake, CUDA toolkit (unless --cpu)
+
+    @brief Clone, pin, and build llama-cpp-python with CUDA or CPU backend.
+    @version 1
     """
     from entropic.cli_setup_cuda import setup_cuda_command
 
@@ -270,16 +359,14 @@ def setup_cuda(force: bool, cpu: bool) -> None:
     help="Path to Unix socket (default: ~/.entropic/socks/{hash(cwd)}.sock)",
 )
 @click.pass_context
-def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
-    """
-    Run as MCP bridge for Claude Code integration.
+def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:  # noqa: ARG001
+    """Run as MCP bridge for Claude Code integration.
 
     This bridges stdio (used by Claude Code) to Entropic's Unix socket.
     Entropic must already be running for the bridge to connect.
 
-    Configure Claude Code's .mcp.json:
-
     \b
+    Configure Claude Code's .mcp.json:
     {
       "mcpServers": {
         "entropic": {
@@ -289,6 +376,9 @@ def mcp_bridge(ctx: click.Context, socket: Path | None) -> None:
         }
       }
     }
+
+    @brief Bridge stdio to Entropic's Unix socket for Claude Code MCP integration.
+    @version 1
     """
     from entropic.mcp.bridge import main as bridge_main
 

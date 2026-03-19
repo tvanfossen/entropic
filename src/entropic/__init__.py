@@ -1,16 +1,14 @@
 """
 Entropic - Local AI inference engine with multi-tier model orchestration.
 
-Public API for library consumers. Install extras for additional features:
+Public API for library consumers:
   pip install entropic-engine          # Core inference engine
-  pip install entropic-engine[tui]     # Terminal UI application
-  pip install entropic-engine[voice]   # Voice interface
+  pip install entropic-tui             # Terminal UI (separate package)
 """
 
 from entropic.config.loader import ConfigLoader, save_permission, validate_config
 from entropic.config.schema import (
     CompactionConfig,
-    EntropyConfig,
     GenerationConfig,
     LibraryConfig,
     ModelConfig,
@@ -28,7 +26,9 @@ from entropic.core.base import (
     ToolResult,
 )
 from entropic.core.engine import AgentEngine, AgentState, EngineCallbacks, LoopConfig
+from entropic.core.headless_presenter import HeadlessPresenter
 from entropic.core.logging import setup_display_logger, setup_logging, setup_model_logger
+from entropic.core.presenter import Presenter, StatusInfo
 from entropic.core.tool_validation import ToolValidationError
 from entropic.inference.adapters import ChatAdapter, get_adapter, register_adapter
 from entropic.inference.orchestrator import BackendFactory, ModelOrchestrator, RoutingResult
@@ -78,7 +78,9 @@ __all__ = [
     "save_permission",
     "validate_config",
     "CompactionConfig",
-    "EntropyConfig",
+    "HeadlessPresenter",
+    "Presenter",
+    "StatusInfo",
     "GenerationConfig",
     "LibraryConfig",
     "ModelConfig",

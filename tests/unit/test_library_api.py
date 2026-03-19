@@ -97,7 +97,7 @@ class MockTierConfig:
         self.focus: list[str] = []
 
 
-class MockEntropyConfig:
+class MockLibraryConfig:
     """Mock config for orchestrator tests."""
 
     def __init__(self, tier_names: list[str] | None = None) -> None:
@@ -140,7 +140,7 @@ class TestConfigTierValidation:
         """A ModelTier with no config entry raises ValueError."""
         from entropic.inference.orchestrator import ModelOrchestrator
 
-        config = MockEntropyConfig(["normal"])
+        config = MockLibraryConfig(["normal"])
 
         # Provide a tier that has no config entry
         extra_tier = ModelTier("extra", focus=["extra stuff"])
@@ -163,7 +163,7 @@ class TestConfigTierValidation:
         """All tiers with config entries initializes successfully."""
         from entropic.inference.orchestrator import ModelOrchestrator
 
-        config = MockEntropyConfig(["normal", "code"])
+        config = MockLibraryConfig(["normal", "code"])
         normal_tier = ModelTier("normal", focus=["general"])
         code_tier = ModelTier("code", focus=["coding"])
 

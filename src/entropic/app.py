@@ -9,15 +9,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-from rich.console import Console
-
-from entropic import __version__
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.commands import CommandContext, CommandRegistry
+from entropic.core.console import EngineConsole
 from entropic.core.context import ProjectContext
 from entropic.core.engine import AgentEngine, EngineCallbacks, LoopConfig
 from entropic.core.logging import get_logger
+from entropic.core.presenter import Presenter, StatusInfo
 from entropic.core.queue import MessageQueue, MessageSource, QueuedMessage
 from entropic.core.session import SessionManager
 from entropic.core.tasks import TaskManager
@@ -25,7 +24,6 @@ from entropic.inference.orchestrator import ModelOrchestrator, RoutingResult
 from entropic.mcp.manager import ServerManager
 from entropic.mcp.servers.external import ExternalMCPServer
 from entropic.storage.backend import SQLiteStorage
-from entropic.ui.presenter import Presenter, StatusInfo
 
 
 class Application:
@@ -33,7 +31,7 @@ class Application:
 
     def __init__(
         self,
-        config: EntropyConfig,
+        config: LibraryConfig,
         project_dir: Path | None = None,
         presenter: Presenter | None = None,
         orchestrator: ModelOrchestrator | None = None,
@@ -50,7 +48,7 @@ class Application:
         self.config = config
         self.project_dir = project_dir or Path.cwd()
         self.logger = get_logger("app")
-        self.console = Console()
+        self.console = EngineConsole()
 
         # Components (initialized lazily)
         self._orchestrator: ModelOrchestrator | None = orchestrator
@@ -74,12 +72,14 @@ class Application:
         self._messages: list[Message] = []
 
     async def initialize(self) -> None:
-        """Initialize all components with loading feedback."""
-        from rich.status import Status
+        """Initialize all components with loading feedback.
 
+        @brief Set up orchestrator, MCP, storage, engine.
+        @version 2
+        """
         self.logger.info("Initializing Entropic...")
 
-        with Status("[bold blue]Starting Entropic...", console=self.console) as status:
+        with self.console.status("[bold blue]Starting Entropic...") as status:
             # Initialize model orchestrator (skip if injected)
             if self._orchestrator is None:
                 status.update("[bold blue]Loading models...")
@@ -333,9 +333,6 @@ class Application:
         try:
             await self.initialize()
 
-            # Get available models
-            models = self._orchestrator.get_available_models() if self._orchestrator else []
-
             # Create new conversation
             if self._storage:
                 self._conversation_id = await self._storage.create_conversation(
@@ -343,14 +340,11 @@ class Application:
                     project_path=str(self.project_dir),
                 )
 
-            # Create default TUI presenter if none provided
+            # Presenter must be provided — engine has no built-in UI
             if self._presenter is None:
-                from entropic.ui.tui_presenter import TUIPresenter
-
-                self._presenter = TUIPresenter(
-                    config=self.config,
-                    version=__version__,
-                    models=models,
+                raise RuntimeError(
+                    "No presenter provided. Install entropic-tui for the TUI, "
+                    "or pass a HeadlessPresenter/custom Presenter instance."
                 )
 
             # Wire up callbacks (presenter is guaranteed non-None after above block)

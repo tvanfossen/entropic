@@ -36,30 +36,21 @@ repos:
           - '--max-line-length=100'
           - '--ignore=E501,W503,E203,E704'
 
-  # Local hooks for pytest - runs full test suite including model tests
-  - repo: local
+  - repo: https://github.com/brandon-arrendondo/knots
+    rev: 1.0.0
     hooks:
-      - id: pytest-unit
-        name: pytest unit tests
-        entry: .venv/bin/pytest tests/unit/ -v --tb=short
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
+      - id: knots
+        args: [--cognitive-threshold=15]
+        exclude: ^extern/
 
-      - id: model-test-cache
-        name: model test cache check
-        entry: bash scripts/model-test-cache-check.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-        verbose: true
+  - repo: https://github.com/tvanfossen/doxygen-guard
+    rev: main
+    hooks:
+      - id: doxygen-guard
+        exclude: ^extern/
 
-      - id: pytest-model
-        name: pytest model tests
-        entry: bash scripts/run-model-tests.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
+  # pytest removed from pre-commit at v1.8.0 transition.
+  # Python engine tests go away with the TUI separation.
+  # C/C++ tests come back with Catch2 at v1.8.0.
+  # Quality gates for now: knots (C complexity) + flake8 (Python complexity)
+  #   + doxygen-guard (@req traceability, @version staleness)

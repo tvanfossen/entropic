@@ -22,7 +22,7 @@ from pathlib import Path
 import entropic
 import pytest
 import yaml
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.logging import setup_logging, setup_model_logger
 from entropic.inference.orchestrator import ModelOrchestrator
@@ -60,10 +60,10 @@ _IDENTITY_NAMES = [name for name, _, _ in _CLASSIFIABLE]
 
 
 @pytest.fixture(scope="module")
-def confidence_config() -> EntropyConfig:
+def confidence_config() -> LibraryConfig:
     """Load test-owned routing config with logits_all override."""
     raw = yaml.safe_load(_CONFIG_PATH.read_text())
-    config = EntropyConfig(**raw)
+    config = LibraryConfig(**raw)
 
     if config.models.router is None:
         pytest.skip("routing_config.yaml has no router configured")

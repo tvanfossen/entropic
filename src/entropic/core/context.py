@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.logging import get_logger
 
@@ -209,7 +209,7 @@ class ContextBuilder:
     - History truncation
     """
 
-    def __init__(self, config: EntropyConfig) -> None:
+    def __init__(self, config: LibraryConfig) -> None:
         """
         Initialize context builder.
 

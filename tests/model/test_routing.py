@@ -21,7 +21,7 @@ from pathlib import Path
 import entropic
 import pytest
 import yaml
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.logging import setup_logging, setup_model_logger
 from entropic.inference.orchestrator import ModelOrchestrator
@@ -64,10 +64,10 @@ _IDENTITY_NAMES = [name for name, _, _ in _CLASSIFIABLE]
 
 
 @pytest.fixture(scope="module")
-def routing_config() -> EntropyConfig:
+def routing_config() -> LibraryConfig:
     """Load the test-owned routing config. Skips if models unavailable."""
     raw = yaml.safe_load(_CONFIG_PATH.read_text())
-    config = EntropyConfig(**raw)
+    config = LibraryConfig(**raw)
 
     # Verify router model exists
     if config.models.router is None:
@@ -255,7 +255,7 @@ class TestRoutingLifecycle:
 
     @pytest.mark.asyncio
     async def test_route_to_non_default_tier(
-        self, routing_config: EntropyConfig, routing_orchestrator: ModelOrchestrator
+        self, routing_config: LibraryConfig, routing_orchestrator: ModelOrchestrator
     ):
         """Routing to a non-default tier and getting its model succeeds."""
         default_name = routing_config.models.default

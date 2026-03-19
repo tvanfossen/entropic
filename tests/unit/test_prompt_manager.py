@@ -214,17 +214,17 @@ class TestFromConfig:
     """Test PromptManager.from_config factory."""
 
     def test_from_entropy_config_defaults(self) -> None:
-        from entropic.config.schema import EntropyConfig
+        from entropic.config.schema import LibraryConfig
 
-        config = EntropyConfig()
+        config = LibraryConfig()
         pm = PromptManager.from_config(config, quiet=True)
         assert pm.has_constitution
         assert not pm.has_app_context
 
     def test_from_config_with_tiers(self) -> None:
-        from entropic.config.schema import EntropyConfig
+        from entropic.config.schema import LibraryConfig
 
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {
                     "lead": {"path": "/tmp/model.gguf"},
@@ -239,8 +239,8 @@ class TestFromConfig:
         assert pm.get_identity("arch") is not None
 
     def test_from_config_constitution_disabled(self) -> None:
-        from entropic.config.schema import EntropyConfig
+        from entropic.config.schema import LibraryConfig
 
-        config = EntropyConfig(constitution=False)
+        config = LibraryConfig(constitution=False)
         pm = PromptManager.from_config(config, quiet=True)
         assert not pm.has_constitution

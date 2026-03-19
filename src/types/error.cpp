@@ -14,6 +14,7 @@ static thread_local char s_global_error[512] = "";
  * @param handle Engine handle (may be NULL for pre-creation errors).
  * @return Null-terminated error message, or "" if no error.
  * @version 1.8.0
+ * @internal
  */
 extern "C" const char* entropic_last_error(entropic_handle_t handle) {
     // TODO(v1.8.4): Look up per-handle error state.
@@ -22,12 +23,6 @@ extern "C" const char* entropic_last_error(entropic_handle_t handle) {
     return s_global_error;
 }
 
-/**
- * @brief Get the human-readable name for an error code.
- * @param code Error code.
- * @return Static string. Never NULL.
- * @version 1.8.0
- */
 /// @brief Lookup table: error code → name string.
 static const char* const s_error_names[] = {
     "ENTROPIC_OK",                             // 0
@@ -51,6 +46,13 @@ static const char* const s_error_names[] = {
 static constexpr int s_error_count =
     static_cast<int>(sizeof(s_error_names) / sizeof(s_error_names[0]));
 
+/**
+ * @brief Get the human-readable name for an error code.
+ * @param code Error code to look up.
+ * @return Static string naming the error code. Never NULL.
+ * @version 1.8.0
+ * @utility
+ */
 extern "C" const char* entropic_error_name(entropic_error_t code) {
     int idx = static_cast<int>(code);
     return (idx >= 0 && idx < s_error_count) ? s_error_names[idx] : "ENTROPIC_ERROR_UNKNOWN";
@@ -63,6 +65,7 @@ extern "C" const char* entropic_error_name(entropic_error_t code) {
  * @param user_data Opaque pointer forwarded to callback.
  * @return ENTROPIC_OK on success, ENTROPIC_ERROR_INVALID_ARGUMENT if handle is NULL.
  * @version 1.8.0
+ * @internal
  */
 extern "C" entropic_error_t entropic_set_error_callback(
     entropic_handle_t handle,

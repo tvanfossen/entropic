@@ -18,6 +18,7 @@ namespace entropic {
  *
  * @param content Raw model output.
  * @return ParseResult.
+ * @internal
  * @version 1.8.2
  */
 ParseResult GenericAdapter::parse_tool_calls(const std::string& content) const {

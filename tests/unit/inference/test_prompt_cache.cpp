@@ -26,6 +26,7 @@ namespace {
  * @param fill Fill byte value.
  * @return Vector of fill bytes.
  * @version 1.8.3
+ * @internal
  */
 std::vector<uint8_t> make_data(size_t size, uint8_t fill = 0xAB) {
     return std::vector<uint8_t>(size, fill);

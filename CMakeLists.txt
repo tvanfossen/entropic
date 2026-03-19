@@ -84,6 +84,7 @@ add_subdirectory(src/types)
 add_subdirectory(src/config)
 add_subdirectory(src/prompts)
 add_subdirectory(src/inference)
+add_subdirectory(src/core)
 add_subdirectory(src/facade)
 
 if(ENTROPIC_BUILD_TESTS)

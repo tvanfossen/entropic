@@ -11,11 +11,23 @@
 #include <cstdlib>
 #include <filesystem>
 
+/**
+ * @brief Return the path to the test data directory.
+ * @return Filesystem path defined by TEST_DATA_DIR compile definition.
+ * @version 1.8.1
+ * @internal
+ */
 static std::filesystem::path test_data()
 {
     return std::filesystem::path(TEST_DATA_DIR);
 }
 
+/**
+ * @brief Load the test bundled models registry from test data.
+ * @return Populated BundledModels registry.
+ * @version 1.8.1
+ * @internal
+ */
 static entropic::config::BundledModels load_test_registry()
 {
     entropic::config::BundledModels registry;

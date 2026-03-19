@@ -1,0 +1,80 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {"major": 3, "minor": 21, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "full",
+      "displayName": "Full (CUDA shared)",
+      "description": "Full featured CUDA build for TUI developer workstation",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENTROPIC_CUDA": "ON",
+        "ENTROPIC_SHARED": "ON",
+        "ENTROPIC_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "minimal-static",
+      "displayName": "Minimal static (CPU embedded)",
+      "description": "Minimal static build for embedded consumer",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "MinSizeRel",
+        "ENTROPIC_STATIC": "ON",
+        "ENTROPIC_CPU_ONLY": "ON",
+        "ENTROPIC_SHARED": "OFF",
+        "ENTROPIC_MCP_BASH": "OFF",
+        "ENTROPIC_MCP_GIT": "OFF",
+        "ENTROPIC_MCP_WEB": "OFF",
+        "ENTROPIC_MCP_DIAGNOSTICS": "OFF",
+        "ENTROPIC_STORAGE_SQLITE": "OFF",
+        "ENTROPIC_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "game",
+      "displayName": "Game engine (CUDA minimal servers)",
+      "description": "Game engine integration with CUDA and minimal MCP servers",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ENTROPIC_CUDA": "ON",
+        "ENTROPIC_SHARED": "ON",
+        "ENTROPIC_MCP_BASH": "OFF",
+        "ENTROPIC_MCP_GIT": "OFF",
+        "ENTROPIC_MCP_WEB": "OFF",
+        "ENTROPIC_BUILD_TESTS": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development (CPU debug)",
+      "description": "Fast iteration: CPU-only, debug, tests, docs",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENTROPIC_CPU_ONLY": "ON",
+        "ENTROPIC_BUILD_TESTS": "ON",
+        "ENTROPIC_BUILD_DOCS": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    {"name": "full",           "configurePreset": "full"},
+    {"name": "minimal-static", "configurePreset": "minimal-static"},
+    {"name": "game",           "configurePreset": "game"},
+    {"name": "dev",            "configurePreset": "dev"}
+  ],
+  "testPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev",
+      "output": {"outputOnFailure": true}
+    }
+  ]
+}

@@ -27,10 +27,10 @@ from entropic.core.engine_types import (  # noqa: F401 — re-exported for consu
     LoopConfig,
     LoopContext,
     LoopMetrics,
+    MessageSource,
     ToolApproval,
 )
 from entropic.core.logging import get_logger, get_model_logger
-from entropic.core.queue import MessageSource
 from entropic.core.response_generator import ResponseGenerator
 from entropic.core.tool_executor import ToolExecutor, ToolExecutorHooks
 from entropic.inference.orchestrator import ModelOrchestrator

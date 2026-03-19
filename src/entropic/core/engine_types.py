@@ -13,8 +13,6 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import TYPE_CHECKING, Any
 
-from entropic.core.queue import MessageSource
-
 if TYPE_CHECKING:
     from entropic.core.base import ToolCall
     from entropic.core.compaction import CompactionResult
@@ -53,6 +51,18 @@ class ToolApproval(Enum):
     ALWAYS_ALLOW = "always_allow"  # Allow and save to config
 
 
+class MessageSource(str):
+    """Message source identifiers.
+
+    @brief Constants identifying the origin of a message in the engine loop.
+    @version 1
+    """
+
+    HUMAN = "human"
+    CLAUDE_CODE = "claude-code"
+    SYSTEM = "system"
+
+
 @dataclass
 class LoopConfig:
     """Configuration for the agentic loop."""
@@ -79,7 +89,11 @@ class LoopMetrics:
 
     @property
     def duration_ms(self) -> int:
-        """Get duration in milliseconds."""
+        """Get duration in milliseconds.
+
+        @brief Compute elapsed time from start_time to end_time in ms.
+        @version 1
+        """
         return int((self.end_time - self.start_time) * 1000)
 
 

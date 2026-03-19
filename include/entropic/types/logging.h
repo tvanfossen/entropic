@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <entropic/entropic_export.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <memory>
@@ -37,7 +38,7 @@ namespace entropic::log {
  * @param level spdlog level (trace, debug, info, warn, error, critical).
  * @version 1.8.0
  */
-void init(spdlog::level::level_enum level = spdlog::level::info);
+ENTROPIC_EXPORT void init(spdlog::level::level_enum level = spdlog::level::info);
 
 /**
  * @brief Get or create a named logger.
@@ -56,6 +57,6 @@ void init(spdlog::level::level_enum level = spdlog::level::info);
  * @endcode
  * @version 1.8.0
  */
-std::shared_ptr<spdlog::logger> get(const std::string& name);
+ENTROPIC_EXPORT std::shared_ptr<spdlog::logger> get(const std::string& name);
 
 } // namespace entropic::log

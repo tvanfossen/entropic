@@ -12,9 +12,13 @@ target_include_directories(entropic-prompts
         $<INSTALL_INTERFACE:include>
 )
 
+target_include_directories(entropic-prompts PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/config
+)
+
 target_link_libraries(entropic-prompts
-    PUBLIC entropic-types ryml::ryml
-    PRIVATE spdlog::spdlog
+    PUBLIC entropic-types
+    PRIVATE entropic-config ryml::ryml spdlog::spdlog
 )
 
 target_compile_definitions(entropic-prompts PRIVATE ENTROPIC_BUILDING_DLL)

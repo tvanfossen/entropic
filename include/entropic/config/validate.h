@@ -93,6 +93,39 @@ ENTROPIC_EXPORT std::string validate_allowed_tools(
     const std::vector<std::string>& tools);
 
 /**
+ * @brief Check fallback_tier exists in tiers.
+ * @param fallback Fallback tier name.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+ENTROPIC_EXPORT std::string validate_fallback_tier(
+    const std::string& fallback,
+    const std::unordered_map<std::string, TierConfig>& tiers);
+
+/**
+ * @brief Check all tier_map values exist in tiers.
+ * @param tier_map Classification to tier mapping.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+ENTROPIC_EXPORT std::string validate_tier_map(
+    const std::unordered_map<std::string, std::string>& tier_map,
+    const std::unordered_map<std::string, TierConfig>& tiers);
+
+/**
+ * @brief Check all handoff_rules keys and values exist in tiers.
+ * @param rules Handoff rules.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+ENTROPIC_EXPORT std::string validate_handoff_rules(
+    const std::unordered_map<std::string, std::vector<std::string>>& rules,
+    const std::unordered_map<std::string, TierConfig>& tiers);
+
+/**
  * @brief Warn if tier has auto_chain but no handoff_rules entry.
  * @param tiers Tier configs.
  * @param handoff_rules Handoff rules from routing config.

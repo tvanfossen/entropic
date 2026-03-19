@@ -74,9 +74,9 @@ static std::string parse_tier_config(
         config.grammar = expand_home(std::filesystem::path(grammar_str));
     }
 
-    bool auto_chain_val = false;
-    if (extract(node, "auto_chain", auto_chain_val)) {
-        config.auto_chain = auto_chain_val;
+    std::string auto_chain_str;
+    if (extract(node, "auto_chain", auto_chain_str)) {
+        config.auto_chain = auto_chain_str;
     }
 
     bool routable_val = false;

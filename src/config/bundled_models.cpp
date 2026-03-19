@@ -16,6 +16,7 @@ namespace entropic::config {
  * @brief Load registry from YAML file.
  * @param path Path to bundled_models.yaml.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string BundledModels::load(const std::filesystem::path& path)
@@ -68,6 +69,7 @@ std::string BundledModels::load(const std::filesystem::path& path)
  * @brief Check if a key exists in the registry.
  * @param key Registry key.
  * @return true if key exists.
+ * @internal
  * @version 1.8.2
  */
 bool BundledModels::contains(const std::string& key) const
@@ -79,6 +81,7 @@ bool BundledModels::contains(const std::string& key) const
  * @brief Get entry by key.
  * @param key Registry key.
  * @return Pointer to entry, or nullptr if not found.
+ * @internal
  * @version 1.8.2
  */
 const BundledModelEntry* BundledModels::get(const std::string& key) const
@@ -94,6 +97,7 @@ const BundledModelEntry* BundledModels::get(const std::string& key) const
  * @brief Resolve a model reference to a filesystem path.
  * @param value Registry key or direct path string.
  * @return Resolved filesystem path.
+ * @internal
  * @version 1.8.2
  */
 std::filesystem::path BundledModels::resolve(const std::string& value) const

@@ -15,6 +15,7 @@ namespace entropic::config {
  * @brief Validate allowed_tools entries use "server.tool" format.
  * @param tools Tool name list to validate.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string validate_allowed_tools(const std::vector<std::string>& tools)
@@ -32,6 +33,7 @@ std::string validate_allowed_tools(const std::vector<std::string>& tools)
  * @brief Validate a ModelConfig.
  * @param config Model config to validate.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string validate(const ModelConfig& config)
@@ -57,6 +59,7 @@ std::string validate(const ModelConfig& config)
  * @brief Validate ModelsConfig.
  * @param config Models config to validate.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string validate(const ModelsConfig& config)
@@ -73,6 +76,7 @@ std::string validate(const ModelsConfig& config)
  * @brief Validate CompactionConfig.
  * @param config Compaction config to validate.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string validate(const CompactionConfig& config)
@@ -201,6 +205,7 @@ std::string validate_routing(
  * @param tiers Tier configs.
  * @param handoff_rules Handoff rules.
  * @return Warning message (empty if no issues).
+ * @internal
  * @version 1.8.2
  */
 std::string warn_auto_chain_without_targets(
@@ -226,6 +231,7 @@ std::string warn_auto_chain_without_targets(
  * @brief Validate PromptCacheConfig.
  * @param config Prompt cache config to validate.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.3
  */
 std::string validate(const PromptCacheConfig& config)
@@ -240,6 +246,7 @@ std::string validate(const PromptCacheConfig& config)
  * @brief Validate model tiers and router.
  * @param models Models config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.3
  */
 static std::string validate_model_tiers(const ModelsConfig& models)
@@ -271,6 +278,7 @@ static std::string validate_model_tiers(const ModelsConfig& models)
  * @param config Full config to validate.
  * @param[out] warnings Non-fatal warnings.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.3
  */
 std::string validate_config(

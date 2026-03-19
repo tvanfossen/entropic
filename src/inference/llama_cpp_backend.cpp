@@ -69,6 +69,7 @@ bool check_stop_sequences(
  *
  * @param config Validated model config.
  * @return true on success.
+ * @internal
  * @version 1.8.2
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
@@ -96,6 +97,7 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
  * inference context with KV cache.
  *
  * @return true on success.
+ * @internal
  * @version 1.8.2
  */
 bool LlamaCppBackend::do_activate() {
@@ -157,6 +159,7 @@ bool LlamaCppBackend::do_activate() {
 
 /**
  * @brief Deactivate: free context, reload model CPU-only.
+ * @internal
  * @version 1.8.2
  */
 void LlamaCppBackend::do_deactivate() {
@@ -184,6 +187,7 @@ void LlamaCppBackend::do_deactivate() {
 
 /**
  * @brief Full unload — free all resources, clear prompt cache.
+ * @internal
  * @version 1.8.3
  */
 void LlamaCppBackend::do_unload() {
@@ -208,6 +212,7 @@ void LlamaCppBackend::do_unload() {
  * @param text Input text.
  * @param add_special Add BOS/EOS special tokens.
  * @return Vector of token IDs.
+ * @internal
  * @version 1.8.2
  */
 std::vector<llama_token> LlamaCppBackend::tokenize(
@@ -237,6 +242,7 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @brief Detokenize a single token to string.
  * @param token Token ID.
  * @return String representation.
+ * @internal
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
@@ -259,6 +265,7 @@ std::string LlamaCppBackend::detokenize(llama_token token) const {
  * @brief Count tokens in text.
  * @param text Input text.
  * @return Token count.
+ * @internal
  * @version 1.8.2
  */
 int LlamaCppBackend::do_count_tokens(const std::string& text) const {
@@ -278,6 +285,7 @@ int LlamaCppBackend::do_count_tokens(const std::string& text) const {
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return Formatted prompt string.
+ * @internal
  * @version 1.8.2
  */
 std::string LlamaCppBackend::apply_chat_template(
@@ -327,6 +335,7 @@ std::string LlamaCppBackend::apply_chat_template(
  *
  * @param params Generation parameters.
  * @return Sampler chain (caller frees).
+ * @internal
  * @version 1.8.2
  */
 llama_sampler* LlamaCppBackend::create_sampler(
@@ -381,6 +390,7 @@ llama_sampler* LlamaCppBackend::create_sampler(
  * @brief Run batched prefill on input tokens.
  * @param tokens Input token sequence.
  * @return true on success.
+ * @internal
  * @version 1.8.2
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
@@ -404,6 +414,7 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
  * @param on_token Streaming callback (may be nullptr).
  * @param stop Stop sequences.
  * @return "continue", "stop", "eos", or "error".
+ * @internal
  * @version 1.8.2
  */
 std::string LlamaCppBackend::step_token(
@@ -440,6 +451,7 @@ std::string LlamaCppBackend::step_token(
  * @param on_token Per-token callback (nullptr for batch).
  * @param cancel Cancel flag (nullptr for batch).
  * @return GenerationResult.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult LlamaCppBackend::decode_loop(
@@ -498,6 +510,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  * @brief Extract system prompt text from message list.
  * @param messages Conversation history.
  * @return System message content, empty if none found.
+ * @internal
  * @version 1.8.3
  */
 std::string LlamaCppBackend::extract_system_prompt(
@@ -516,6 +529,7 @@ std::string LlamaCppBackend::extract_system_prompt(
  * @param cached Cache entry to restore from.
  * @param tokens Full token sequence.
  * @return true on success, false to fall back to full prefill.
+ * @internal
  * @version 1.8.3
  */
 bool LlamaCppBackend::restore_cached_prefix(
@@ -552,6 +566,7 @@ bool LlamaCppBackend::restore_cached_prefix(
  * @brief Save system prefix KV state to the prompt cache.
  * @param key Cache key for the prefix.
  * @param prefix_tokens Number of system prefix tokens.
+ * @internal
  * @version 1.8.3
  */
 void LlamaCppBackend::save_prefix_to_cache(
@@ -576,6 +591,7 @@ void LlamaCppBackend::save_prefix_to_cache(
  * @param messages Original message list.
  * @param params Generation params (for template).
  * @return Token count of the system prefix, 0 if no system message.
+ * @internal
  * @version 1.8.3
  */
 int LlamaCppBackend::compute_prefix_token_count(
@@ -608,6 +624,7 @@ int LlamaCppBackend::compute_prefix_token_count(
  * @param messages Original messages (for prefix boundary).
  * @param params Generation parameters.
  * @return true on success.
+ * @internal
  * @version 1.8.3
  */
 bool LlamaCppBackend::run_prefill_cached(
@@ -662,6 +679,7 @@ bool LlamaCppBackend::run_prefill_cached(
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.3
  */
 GenerationResult LlamaCppBackend::do_generate(
@@ -720,6 +738,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * @param on_token Per-token callback.
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.3
  */
 GenerationResult LlamaCppBackend::do_generate_streaming(
@@ -784,6 +803,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
  * @param prompt Raw prompt string.
  * @param params Generation parameters.
  * @return GenerationResult.
+ * @internal
  * @version 1.8.2
  */
 GenerationResult LlamaCppBackend::do_complete(

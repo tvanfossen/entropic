@@ -29,6 +29,7 @@ constexpr const char* TOOL_RESULT_SUFFIX =
 /**
  * @brief Generate a simple counter-based ID.
  * @return ID string.
+ * @internal
  * @version 1.8.2
  */
 std::string generate_uuid() {
@@ -47,6 +48,7 @@ std::string generate_uuid() {
  *
  * @param content Raw model output.
  * @return ParseResult.
+ * @internal
  * @version 1.8.2
  */
 ParseResult Qwen35Adapter::parse_tool_calls(const std::string& content) const {
@@ -72,6 +74,7 @@ ParseResult Qwen35Adapter::parse_tool_calls(const std::string& content) const {
  *
  * @param content Model output.
  * @return Vector of parsed tool calls.
+ * @internal
  * @version 1.8.2
  */
 std::vector<ToolCall> Qwen35Adapter::parse_xml_function_calls(
@@ -114,6 +117,7 @@ std::vector<ToolCall> Qwen35Adapter::parse_xml_function_calls(
  *
  * @param func_body Function body text.
  * @return Map of parameter key → value.
+ * @internal
  * @version 1.8.2
  */
 std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_parameters(
@@ -163,6 +167,7 @@ std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_paramete
  * @param tool_call Executed tool call.
  * @param result Execution result.
  * @return Formatted user message.
+ * @internal
  * @version 1.8.2
  */
 Message Qwen35Adapter::format_tool_result(
@@ -182,6 +187,7 @@ Message Qwen35Adapter::format_tool_result(
  * @brief Format tools in <tools> tags with OpenAI function JSON.
  * @param tool_jsons Tool definition JSON strings.
  * @return Formatted tools section.
+ * @internal
  * @version 1.8.2
  */
 std::string Qwen35Adapter::format_tools(
@@ -229,6 +235,7 @@ std::string Qwen35Adapter::format_tools(
  * @brief Remove tool calls and think blocks from content.
  * @param content Raw model output.
  * @return Cleaned content.
+ * @internal
  * @version 1.8.2
  */
 std::string Qwen35Adapter::clean_content(const std::string& content) const {

@@ -35,6 +35,7 @@ void init(spdlog::level::level_enum level) {
  * @param name Logger name.
  * @return Shared pointer to the logger.
  * @version 1.8.0
+ * @internal
  */
 std::shared_ptr<spdlog::logger> get(const std::string& name) {
     auto logger = spdlog::get(name);

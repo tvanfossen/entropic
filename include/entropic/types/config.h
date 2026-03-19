@@ -81,7 +81,7 @@ struct TierConfig : ModelConfig {
     std::optional<std::filesystem::path> identity;  ///< Identity prompt path (nullopt = bundled)
     bool identity_disabled = false;                 ///< true if identity explicitly disabled
     std::optional<std::filesystem::path> grammar;   ///< Grammar file path
-    std::optional<bool> auto_chain;                 ///< None = defer to identity frontmatter
+    std::optional<std::string> auto_chain;           ///< Target tier name (nullopt = defer to identity)
     std::optional<bool> routable;                   ///< None = defer to identity frontmatter
 };
 

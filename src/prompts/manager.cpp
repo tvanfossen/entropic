@@ -2,199 +2,25 @@
  * @file manager.cpp
  * @brief Prompt manager implementation — frontmatter parsing, identity loading.
  * @version 1.8.1
- * @utility
  */
 
 #include <entropic/prompts/manager.h>
 #include <entropic/types/logging.h>
+#include "yaml_util.h"
 
 #include <ryml.hpp>
 #include <c4/std/string.hpp>
-#include <fstream>
-#include <sstream>
 
 static auto s_log = entropic::log::get("prompts");
 
+// Pull yaml_util helpers into this TU to avoid qualifying every call.
+using entropic::config::extract;
+using entropic::config::extract_string_list;
+using entropic::config::extract_string_list_opt;
+using entropic::config::read_file;
+using entropic::config::to_string;
+
 namespace entropic::prompts {
-
-/**
- * @brief Read a file into a string.
- * @param path File path.
- * @return File contents, or empty string on failure.
- * @version 1.8.1
- * @utility
- */
-static std::string read_file(const std::filesystem::path& path)
-{
-    std::ifstream ifs(path);
-    if (!ifs.is_open()) {
-        return "";
-    }
-    std::ostringstream ss;
-    ss << ifs.rdbuf();
-    return ss.str();
-}
-
-/**
- * @brief Convert ryml csubstr to std::string.
- * @param s ryml substring.
- * @return Equivalent std::string.
- * @version 1.8.1
- * @utility
- */
-static std::string to_str(c4::csubstr s)
-{
-    return std::string(s.str, s.len);
-}
-
-/**
- * @brief Extract a string value from a YAML node.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract(ryml::ConstNodeRef node, c4::csubstr key,
-                    std::string& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (!child.has_val() || child.val_is_null()) {
-        return false;
-    }
-    out = to_str(child.val());
-    return true;
-}
-
-/**
- * @brief Extract an int value from a YAML node.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract(ryml::ConstNodeRef node, c4::csubstr key, int& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (!child.has_val() || child.val_is_null()) {
-        return false;
-    }
-    out = std::stoi(to_str(child.val()));
-    return true;
-}
-
-/**
- * @brief Extract a float value from a YAML node.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract(ryml::ConstNodeRef node, c4::csubstr key, float& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (!child.has_val() || child.val_is_null()) {
-        return false;
-    }
-    out = std::stof(to_str(child.val()));
-    return true;
-}
-
-/**
- * @brief Extract a bool value from a YAML node.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract(ryml::ConstNodeRef node, c4::csubstr key, bool& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (!child.has_val() || child.val_is_null()) {
-        return false;
-    }
-    auto val = to_str(child.val());
-    out = (val == "true" || val == "True" || val == "TRUE"
-           || val == "yes" || val == "1");
-    return true;
-}
-
-/**
- * @brief Extract a string list from a YAML sequence.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output vector.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract_list(ryml::ConstNodeRef node, c4::csubstr key,
-                         std::vector<std::string>& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (!child.is_seq()) {
-        return false;
-    }
-    out.clear();
-    for (auto item : child) {
-        out.push_back(to_str(item.val()));
-    }
-    return true;
-}
-
-/**
- * @brief Extract an optional string list.
- * @param node YAML node.
- * @param key Key to look up.
- * @param[out] out Output optional vector.
- * @return true if found.
- * @version 1.8.1
- * @utility
- */
-static bool extract_list_opt(ryml::ConstNodeRef node, c4::csubstr key,
-                             std::optional<std::vector<std::string>>& out)
-{
-    if (!node.is_map() || !node.has_child(key)) {
-        return false;
-    }
-    auto child = node[key];
-    if (child.is_seq()) {
-        // Fall through to parse the sequence below
-    } else if (!child.has_val() || child.val_is_null()) {
-        out = std::nullopt;
-        return true;
-    } else {
-        return false;
-    }
-    std::vector<std::string> vec;
-    for (auto item : child) {
-        vec.push_back(to_str(item.val()));
-    }
-    out = std::move(vec);
-    return true;
-}
 
 /**
  * @brief Trim leading and trailing whitespace from a string.
@@ -211,6 +37,48 @@ static std::string trim(const std::string& s)
     }
     auto end = s.find_last_not_of(" \t\n\r");
     return s.substr(start, end - start + 1);
+}
+
+/**
+ * @brief Parse YAML frontmatter from file content into a ryml tree.
+ *
+ * Splits content on "---" delimiters, validates structure, and returns
+ * the parsed YAML tree plus the markdown body. Shared between
+ * parse_prompt_file() and load_identity() to avoid double file reads.
+ *
+ * @param content Full file content.
+ * @param path File path (for error messages).
+ * @param[out] tree Output ryml tree of frontmatter.
+ * @param[out] body Output markdown body after frontmatter.
+ * @return Empty string on success, error on failure.
+ * @version 1.8.1
+ * @internal
+ */
+static std::string parse_frontmatter(
+    const std::string& content,
+    const std::filesystem::path& path,
+    ryml::Tree& tree,
+    std::string& body)
+{
+    if (content.substr(0, 3) != "---") {
+        return "prompt file " + path.string()
+               + " missing YAML frontmatter";
+    }
+
+    auto second_delim = content.find("---", 3);
+    if (second_delim == std::string::npos) {
+        return "prompt file " + path.string()
+               + " has malformed frontmatter";
+    }
+
+    std::string yaml_block = content.substr(3, second_delim - 3);
+    body = trim(content.substr(second_delim + 3));
+
+    tree = ryml::parse_in_arena(
+        ryml::to_csubstr(path.string()),
+        ryml::to_csubstr(yaml_block));
+
+    return "";
 }
 
 /**
@@ -252,23 +120,12 @@ std::string parse_prompt_file(
         return "cannot read prompt file: " + path.string();
     }
 
-    if (content.substr(0, 3) != "---") {
-        return "prompt file " + path.string()
-               + " missing YAML frontmatter";
+    ryml::Tree tree;
+    auto err = parse_frontmatter(content, path, tree, result.body);
+    if (!err.empty()) {
+        return err;
     }
 
-    auto second_delim = content.find("---", 3);
-    if (second_delim == std::string::npos) {
-        return "prompt file " + path.string()
-               + " has malformed frontmatter";
-    }
-
-    std::string yaml_block = content.substr(3, second_delim - 3);
-    std::string body = content.substr(second_delim + 3);
-
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(yaml_block));
     ryml::ConstNodeRef root = tree.rootref();
 
     std::string type_str;
@@ -297,46 +154,25 @@ std::string parse_prompt_file(
 
     result.type = actual_type;
     extract(root, "version", result.version);
-    result.body = trim(body);
 
     return "";
 }
 
 /**
- * @brief Load an identity file: parse frontmatter + body.
- * @param path Path to identity .md file.
- * @param[out] identity Output parsed identity.
- * @return Empty string on success, error on failure.
- * @version 1.8.1
- * @utility
+ * @brief Extract identity-specific fields from a pre-parsed ryml tree.
+ * @param root ryml root node of the frontmatter.
+ * @param[out] fm Output identity frontmatter.
+ * @version 2
+ * @internal
  */
-std::string load_identity(
-    const std::filesystem::path& path,
-    ParsedIdentity& identity)
+static void extract_identity_fields(
+    ryml::ConstNodeRef root, IdentityFrontmatter& fm)
 {
-    ParsedPrompt base;
-    auto err = parse_prompt_file(path, PromptType::IDENTITY, base);
-    if (!err.empty()) {
-        return err;
-    }
-
-    identity.body = std::move(base.body);
-
-    // Re-parse YAML for identity-specific fields
-    auto content = read_file(path);
-    auto second_delim = content.find("---", 3);
-    std::string yaml_block = content.substr(3, second_delim - 3);
-    ryml::Tree tree = ryml::parse_in_arena(
-        ryml::to_csubstr(path.string()),
-        ryml::to_csubstr(yaml_block));
-    ryml::ConstNodeRef root = tree.rootref();
-
-    auto& fm = identity.frontmatter;
     fm.type = PromptType::IDENTITY;
     extract(root, "version", fm.version);
     extract(root, "name", fm.name);
-    extract_list(root, "focus", fm.focus);
-    extract_list(root, "examples", fm.examples);
+    extract_string_list(root, "focus", fm.focus);
+    extract_string_list(root, "examples", fm.examples);
 
     std::string grammar_str;
     if (extract(root, "grammar", grammar_str)) {
@@ -347,8 +183,8 @@ std::string load_identity(
         fm.auto_chain = auto_chain_str;
     }
 
-    extract_list_opt(root, "allowed_tools", fm.allowed_tools);
-    extract_list_opt(root, "bash_commands", fm.bash_commands);
+    extract_string_list_opt(root, "allowed_tools", fm.allowed_tools);
+    extract_string_list_opt(root, "bash_commands", fm.bash_commands);
 
     extract(root, "max_output_tokens", fm.max_output_tokens);
     extract(root, "temperature", fm.temperature);
@@ -365,12 +201,13 @@ std::string load_identity(
         fm.phases.emplace();
         for (auto child : root["phases"]) {
             PhaseConfig phase;
-            std::string phase_name = to_str(child.key());
+            std::string phase_name = to_string(child.key());
             extract(child, "temperature", phase.temperature);
             extract(child, "max_output_tokens", phase.max_output_tokens);
             extract(child, "enable_thinking", phase.enable_thinking);
             extract(child, "repeat_penalty", phase.repeat_penalty);
-            extract_list_opt(child, "bash_commands", phase.bash_commands);
+            extract_string_list_opt(
+                child, "bash_commands", phase.bash_commands);
             (*fm.phases)[phase_name] = std::move(phase);
         }
     }
@@ -379,27 +216,66 @@ std::string load_identity(
     if (root.has_child("benchmark") && root["benchmark"].is_map()) {
         fm.benchmark.emplace();
         auto bench_node = root["benchmark"];
-        if (bench_node.has_child("prompts") && bench_node["prompts"].is_seq()) {
+        if (bench_node.has_child("prompts")
+            && bench_node["prompts"].is_seq()) {
             for (auto p_node : bench_node["prompts"]) {
                 BenchmarkPrompt bp;
                 extract(p_node, "prompt", bp.prompt);
-                if (p_node.has_child("checks") && p_node["checks"].is_seq()) {
+                if (p_node.has_child("checks")
+                    && p_node["checks"].is_seq()) {
                     for (auto c_node : p_node["checks"]) {
                         std::string check_yaml;
                         ryml::emitrs_yaml(c_node, &check_yaml);
-                        bp.checks_yaml.push_back(std::move(check_yaml));
+                        bp.checks_yaml.push_back(
+                            std::move(check_yaml));
                     }
                 }
                 fm.benchmark->prompts.push_back(std::move(bp));
             }
         }
     }
+}
 
-    if (fm.focus.empty()) {
+/**
+ * @brief Load an identity file: parse frontmatter + body.
+ * @param path Path to identity .md file.
+ * @param[out] identity Output parsed identity.
+ * @return Empty string on success, error on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string load_identity(
+    const std::filesystem::path& path,
+    ParsedIdentity& identity)
+{
+    auto content = read_file(path);
+    if (content.empty()) {
+        return "cannot read identity file: " + path.string();
+    }
+
+    ryml::Tree tree;
+    auto err = parse_frontmatter(content, path, tree, identity.body);
+    if (!err.empty()) {
+        return err;
+    }
+
+    ryml::ConstNodeRef root = tree.rootref();
+
+    // Validate type field
+    std::string type_str;
+    if (!extract(root, "type", type_str) || type_str != "identity") {
+        return "prompt file " + path.string()
+               + " is not an identity file (type='"
+               + type_str + "')";
+    }
+
+    extract_identity_fields(root, identity.frontmatter);
+
+    if (identity.frontmatter.focus.empty()) {
         return "identity " + path.string()
                + ": focus must have at least one entry";
     }
-    if (fm.name.empty()) {
+    if (identity.frontmatter.name.empty()) {
         return "identity " + path.string()
                + ": name must not be empty";
     }

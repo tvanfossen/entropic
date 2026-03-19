@@ -103,11 +103,78 @@ std::string validate(const CompactionConfig& config)
 }
 
 /**
+ * @brief Check fallback_tier exists in tiers.
+ * @param fallback Fallback tier name.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_fallback_tier(
+    const std::string& fallback,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    if (tiers.count(fallback) == 0) {
+        return "routing.fallback_tier '" + fallback + "' not in tiers";
+    }
+    return "";
+}
+
+/**
+ * @brief Check all tier_map values exist in tiers.
+ * @param tier_map Classification to tier mapping.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_tier_map(
+    const std::unordered_map<std::string, std::string>& tier_map,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    for (const auto& [key, tier] : tier_map) {
+        if (tiers.count(tier) == 0) {
+            return "routing.tier_map['" + key + "'] = '" + tier
+                   + "' not in tiers";
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Check all handoff_rules keys and values exist in tiers.
+ * @param rules Handoff rules.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_handoff_rules(
+    const std::unordered_map<std::string, std::vector<std::string>>& rules,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    for (const auto& [source, targets] : rules) {
+        if (tiers.count(source) == 0) {
+            return "routing.handoff_rules key '" + source
+                   + "' not in tiers";
+        }
+        for (const auto& target : targets) {
+            if (tiers.count(target) == 0) {
+                return "routing.handoff_rules['" + source
+                       + "'] contains '" + target + "' not in tiers";
+            }
+        }
+    }
+    return "";
+}
+
+/**
  * @brief Validate RoutingConfig against defined tiers.
  * @param routing Routing config.
  * @param models Models config.
  * @return Empty string on success, error message on failure.
  * @version 1.8.1
+ * @utility
  */
 std::string validate_routing(
     const RoutingConfig& routing,
@@ -121,29 +188,19 @@ std::string validate_routing(
         return "routing.enabled is true but models.router is not configured";
     }
 
-    if (models.tiers.count(routing.fallback_tier) == 0) {
-        return "routing.fallback_tier '" + routing.fallback_tier
-               + "' not in tiers";
+    auto err = validate_fallback_tier(routing.fallback_tier, models.tiers);
+    if (!err.empty()) {
+        return err;
     }
 
-    for (const auto& [key, tier] : routing.tier_map) {
-        if (models.tiers.count(tier) == 0) {
-            return "routing.tier_map['" + key + "'] = '" + tier
-                   + "' not in tiers";
-        }
+    err = validate_tier_map(routing.tier_map, models.tiers);
+    if (!err.empty()) {
+        return err;
     }
 
-    for (const auto& [source, targets] : routing.handoff_rules) {
-        if (models.tiers.count(source) == 0) {
-            return "routing.handoff_rules key '" + source
-                   + "' not in tiers";
-        }
-        for (const auto& target : targets) {
-            if (models.tiers.count(target) == 0) {
-                return "routing.handoff_rules['" + source
-                       + "'] contains '" + target + "' not in tiers";
-            }
-        }
+    err = validate_handoff_rules(routing.handoff_rules, models.tiers);
+    if (!err.empty()) {
+        return err;
     }
 
     return "";
@@ -163,7 +220,7 @@ std::string warn_auto_chain_without_targets(
 {
     std::string warnings;
     for (const auto& [name, tier] : tiers) {
-        if (tier.auto_chain.has_value() && *tier.auto_chain
+        if (tier.auto_chain.has_value() && !tier.auto_chain->empty()
             && handoff_rules.count(name) == 0) {
             if (!warnings.empty()) {
                 warnings += "; ";

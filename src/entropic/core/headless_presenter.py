@@ -11,7 +11,7 @@ from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from entropic.core.engine import ToolApproval
-from entropic.ui.presenter import Presenter, StatusInfo
+from entropic.core.presenter import Presenter, StatusInfo
 
 if TYPE_CHECKING:
     from entropic.core.compaction import CompactionResult

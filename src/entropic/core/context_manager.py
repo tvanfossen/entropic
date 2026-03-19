@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.compaction import CompactionManager
 from entropic.core.engine_types import EngineCallbacks, LoopContext
@@ -36,7 +36,7 @@ class ContextManager:
 
     def __init__(
         self,
-        config: EntropyConfig,
+        config: LibraryConfig,
         orchestrator: ModelOrchestrator,
         compaction_manager: CompactionManager,
         callbacks: EngineCallbacks,

@@ -8,11 +8,11 @@ file-based logging to keep the CLI clean.
 import logging
 from pathlib import Path
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 
 
 def setup_logging(
-    config: EntropyConfig,
+    config: LibraryConfig,
     project_dir: Path | None = None,
     *,
     app_dir_name: str = ".entropic",

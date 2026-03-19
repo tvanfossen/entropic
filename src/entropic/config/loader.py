@@ -29,7 +29,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +165,7 @@ class ConfigLoader:
         *,
         app_dir_name: str = ".entropic",
         default_config_path: Path | None = None,
+        config_class: type[LibraryConfig] | None = None,
     ) -> None:
         """
         Initialize configuration loader.
@@ -180,6 +181,8 @@ class ConfigLoader:
             default_config_path: Path to a default config YAML to seed from
                 when no config exists. ``None`` uses the entropic package
                 default.
+            config_class: Pydantic model to instantiate. Defaults to
+                ``LibraryConfig``. TUI consumers pass their own subclass.
         """
         if global_config_dir is self._SENTINEL:
             self.global_config_dir: Path | None = Path.home() / ".entropic"
@@ -189,6 +192,7 @@ class ConfigLoader:
         self.project_root = project_root or find_project_root() or Path.cwd()
         self.app_dir_name = app_dir_name
         self.default_config_path = default_config_path
+        self._config_class: type[LibraryConfig] = config_class or LibraryConfig
 
     @property
     def _app_dir(self) -> Path:
@@ -300,7 +304,7 @@ class ConfigLoader:
         if default_config.exists():
             shutil.copy(default_config, target)
 
-    def load(self, cli_overrides: dict[str, Any] | None = None) -> EntropyConfig:
+    def load(self, cli_overrides: dict[str, Any] | None = None) -> LibraryConfig:
         """
         Load configuration with full hierarchy.
 
@@ -308,7 +312,7 @@ class ConfigLoader:
             cli_overrides: CLI argument overrides
 
         Returns:
-            Merged configuration
+            Merged configuration (type matches ``config_class``)
         """
         # Ensure global config exists (skipped when global_config_dir=None)
         try:
@@ -357,9 +361,9 @@ class ConfigLoader:
                 config[config_key] = os.environ[env_var]
 
         # Create config
-        return EntropyConfig(**config)
+        return self._config_class(**config)
 
-    def ensure_directories(self, config: EntropyConfig) -> None:
+    def ensure_directories(self, config: LibraryConfig) -> None:
         """
         Ensure all required directories exist.
 
@@ -406,10 +410,10 @@ class ConfigLoader:
 
 
 # Global config instance (lazy loaded)
-_config: EntropyConfig | None = None
+_config: LibraryConfig | None = None
 
 
-def get_config() -> EntropyConfig:
+def get_config() -> LibraryConfig:
     """Get global configuration instance."""
     global _config
     if _config is None:
@@ -419,7 +423,7 @@ def get_config() -> EntropyConfig:
     return _config
 
 
-def reload_config(cli_overrides: dict[str, Any] | None = None) -> EntropyConfig:
+def reload_config(cli_overrides: dict[str, Any] | None = None) -> LibraryConfig:
     """Reload configuration."""
     global _config
     loader = ConfigLoader()
@@ -446,7 +450,7 @@ def validate_config(data: dict[str, Any] | Path) -> list[str]:
     data = _normalize_config(data)
 
     try:
-        EntropyConfig(**data)
+        LibraryConfig(**data)
     except ValidationError as e:
         return [err["msg"] for err in e.errors()]
     return []
@@ -466,6 +470,6 @@ def save_permission(pattern: str, allow: bool) -> None:
     loader.save_permission(pattern, allow=allow)
 
     # Reload global config to pick up changes
-    global _config
+    global _config  # noqa: PLW0603
     if _config is not None:
         _config = loader.load()

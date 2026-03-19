@@ -82,6 +82,28 @@ No model tests in pre-commit — too slow, GPU-dependent.
 - Model registry: `src/entropic/data/bundled_models.yaml`
 - `path:` resolves bundled model keys (e.g., `primary` → IQ3_XXS path)
 
+## Session Protocol (MANDATORY — every session)
+
+### Before writing ANY code:
+1. Read `docs/architecture-cpp.md` — full document
+2. Read the proposal for the version being implemented
+3. Read ALL interface headers under `include/entropic/interfaces/`
+4. Read the design decision log at the bottom of `docs/architecture-cpp.md`
+5. If building on a prior version's work, read that version's proposal
+   AND validate the actual code matches its contract before building on it
+
+### Before closing any session:
+1. If any design decision was made not in the architecture doc,
+   append it to the design decision log
+2. If any interface header was modified, flag it explicitly in the commit message
+   — interface changes are design changes, not implementation details
+3. Update the relevant proposal's implementation log
+
+### Interface headers are immutable once written
+The `interfaces/i_*.h` files do not change without a new proposal.
+If a session discovers an interface needs modification, it stops and
+flags it — that is a design change requiring user approval.
+
 ## Legacy Cleanup
 
 v1.7.1 on PyPI is the fallback. No legacy code maintained.

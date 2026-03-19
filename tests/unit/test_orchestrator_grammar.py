@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
-from entropic.config.schema import EntropyConfig, TierConfig
+from entropic.config.schema import LibraryConfig, TierConfig
 from entropic.core.base import GenerationResult, ModelBackend
 from entropic.inference.orchestrator import ModelOrchestrator
 
@@ -13,7 +13,7 @@ from entropic.inference.orchestrator import ModelOrchestrator
 def _make_orchestrator(grammar_path: Path | None = None) -> ModelOrchestrator:
     """Build an orchestrator with a single tier and mock backend."""
     tier_cfg = TierConfig(path=Path("/fake.gguf"), grammar=grammar_path)
-    config = EntropyConfig(
+    config = LibraryConfig(
         models={"tiers": {"normal": tier_cfg}, "default": "normal"},
         routing={"enabled": False, "fallback_tier": "normal"},
     )

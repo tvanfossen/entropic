@@ -24,7 +24,7 @@ from entropic.core.session import SessionManager
 from entropic.core.tasks import Task, TaskManager
 
 if TYPE_CHECKING:
-    from entropic.config.schema import EntropyConfig
+    from entropic.config.schema import LibraryConfig
 
 logger = get_logger("mcp.external")
 
@@ -89,7 +89,7 @@ class ExternalMCPServer:
 
     def __init__(
         self,
-        config: EntropyConfig,
+        config: LibraryConfig,
         message_queue: MessageQueue,
         task_manager: TaskManager,
         session_manager: SessionManager,

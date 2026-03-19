@@ -41,12 +41,27 @@ Arrows in the dependency graph point down only — no circular dependencies.
 ### librentropic-types.so
 
 Pure types with zero logic. The universal dependency that every other
-library links against.
+library links against. Established in v1.8.0.
 
 - Message, ToolCall, Directive, GenerationResult
 - Config structs (ModelConfig, TierConfig, etc.)
 - Enums (ModelState, AgentState, DirectiveType)
-- Error types
+- Error types (`entropic_error_t`, `entropic_last_error()`,
+  `entropic_error_callback_t`)
+
+#### Message C Representation
+
+Messages are JSON strings at `.so` boundaries, C++ structs internally.
+The JSON wire format:
+
+```json
+{"role": "user", "content": "...", "metadata": {"source": "user"}, "tool_calls": []}
+```
+
+Within a single `.so`, messages use the C++ `Message` struct. Cross-boundary
+APIs accept and return `const char* messages_json` (JSON array of message
+objects). Metadata is an arbitrary JSON object — no fixed schema enforced
+at the type level.
 
 ### librentropic-core.so
 
@@ -96,11 +111,16 @@ Implements: `IConfigLoader` interface contract.
 
 ### librentropic-storage.so
 
-SQLite conversation persistence, structured logging, audit log.
+SQLite conversation persistence, session log files, audit log.
 
 Links: `librentropic-types`, `sqlite3`, `spdlog`
 
 Implements: `IStorageBackend` interface contract.
+
+**Note on spdlog:** All libraries use spdlog for structured logging (established
+in v1.8.0). spdlog is listed under storage in the dependency graph for
+simplicity, but it is a universal development dependency linked by every `.so`
+that needs logging.
 
 ### librentropic.so (Facade)
 
@@ -134,13 +154,21 @@ include/entropic/
 │   ├── i_mcp_server.h                 Pure C factory + handle interface
 │   ├── i_storage_backend.h            Pure C factory + handle interface
 │   ├── i_config_loader.h              Pure C factory + handle interface
-│   └── i_hook_handler.h               C function pointer callback types
+│   ├── i_hook_handler.h               C function pointer callback types
+│   └── i_inference_callbacks.h        Function pointer typedefs (core→inference)
 ├── types/                             Shared types (librentropic-types.so)
-│   ├── message.h
-│   ├── tool_call.h
-│   ├── directive.h
-│   ├── generation_result.h
-│   └── config.h
+│   ├── message.h                     Messages + metadata
+│   ├── tool_call.h                   Tool call + result types
+│   ├── directive.h                   Directive types + wire format
+│   ├── generation_result.h           Generation output + metrics
+│   ├── error.h                       Error enum + callback types
+│   ├── config.h                      Config structs (ModelConfig, TierConfig, etc.)
+│   ├── engine_types.h                LoopConfig, LoopContext, AgentState, Metrics
+│   ├── generation.h                  GenerationParams, ResourceProfile
+│   ├── identity.h                    IdentityConfig, PhaseConfig
+│   ├── hooks.h                       Hook point enum, callback types
+│   ├── audit.h                       AuditEntry, AuditLogConfig (v1.9.5)
+│   └── validation.h                  CritiqueResult, Violation (v1.9.8)
 ├── core/                              Engine internals (librentropic-core.so)
 ├── inference/                         Backend impl (inference .so internal)
 ├── mcp/                               MCP impl (mcp .so internal)
@@ -216,7 +244,23 @@ char* entropic_mcp_server_list_tools(entropic_mcp_server_t server);
 /// @param server Server handle.
 /// @param tool_name Tool name (without server prefix).
 /// @param args_json JSON string of arguments.
-/// @return JSON string of result. Caller must free with entropic_free().
+/// @return JSON string of ServerResponse. Caller must free with entropic_free().
+///
+/// Return format (ServerResponse JSON envelope):
+/// @code
+/// {
+///   "result": "Human-readable result text",
+///   "directives": [
+///     {"type": "delegate", "target": "eng", "task": "..."},
+///     {"type": "stop_processing"}
+///   ]
+/// }
+/// @endcode
+///
+/// If the tool has no directives, the "directives" array is empty.
+/// The engine parses directives from this JSON and dispatches them
+/// through the DirectiveProcessor. This is the wire format for
+/// tool-to-engine communication across .so boundaries.
 char* entropic_mcp_server_execute(
     entropic_mcp_server_t server,
     const char* tool_name,
@@ -328,6 +372,22 @@ entropic_error_t entropic_inference_generate_streaming(
     void (*on_token)(const char* token, size_t len, void* user_data),
     void* user_data,
     int* cancel_flag);
+
+/// @brief Raw text completion without chat template.
+/// @param backend Backend handle.
+/// @param prompt Raw prompt string (no chat formatting applied).
+/// @param params_json Generation parameters as JSON.
+/// @param result_json Output: JSON result string. Caller must free.
+/// @return ENTROPIC_OK on success.
+///
+/// Used by the router for digit-based classification. Distinct from
+/// generate() which applies chat templates. The prompt is passed
+/// directly to the model without any template formatting.
+entropic_error_t entropic_inference_complete(
+    entropic_inference_backend_t backend,
+    const char* prompt,
+    const char* params_json,
+    char** result_json);
 ```
 
 ### Internal C++ Implementation (within the .so)
@@ -355,6 +415,12 @@ public:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel);
 
+    /// @brief Raw text completion without chat template.
+    /// Used by the router for digit-based classification.
+    GenerationResult complete(
+        const std::string& prompt,
+        const GenerationParams& params);
+
     ModelState state() const { return state_.load(); }
 
 protected:
@@ -370,6 +436,9 @@ protected:
         const GenerationParams& params,
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel) = 0;
+    virtual GenerationResult do_complete(
+        const std::string& prompt,
+        const GenerationParams& params) = 0;
 
 private:
     std::atomic<ModelState> state_{ModelState::COLD};
@@ -613,6 +682,22 @@ each `.so` — they never appear in public headers or cross library boundaries.
 Structs with defaults + separate validation functions.
 No metaclass magic. Validation is explicit and testable.
 
+**YAML everywhere** — config files AND identity frontmatter use YAML,
+parsed by ryml (single-header amalgamation via `ryml_all.hpp`). The
+validation layer is built in-house, replacing Pydantic's cross-field
+validators with explicit `validate()` functions per config struct.
+
+**Config resolution order** (highest wins):
+1. Compiled defaults (struct initializers)
+2. Global config (`~/.entropic/config.yaml`)
+3. Project config (`.entropic/config.local.yaml`)
+4. Environment variables (`ENTROPIC_*`)
+
+**Bundled data file discovery:**
+- Compile-time `ENTROPIC_DATA_DIR` define (set by CMake to install path)
+- Overridable at runtime via `config_dir` field in config YAML
+- Used for: identity prompts, tool JSONs, grammars, `bundled_models.yaml`
+
 ```cpp
 /// @brief Model configuration for a single tier.
 struct ModelConfig {
@@ -636,6 +721,24 @@ struct ModelConfig {
 /// @return Empty string on success, error message on failure.
 std::string validate(ModelConfig& config, const BundledModels& registry);
 ```
+
+---
+
+## Test Infrastructure
+
+### Shared Mock Backend
+
+`tests/mocks/mock_inference.h` — a single `MockInferenceInterface` that
+grows with each version. Provides scripted responses for `generate()`,
+`complete()`, and `generate_streaming()`. Each version adds mock
+capabilities as needed (e.g., v1.8.5 adds tool call responses, v1.8.6
+adds delegation responses).
+
+**Rules:**
+- Each version owns its own test files — tests do not depend on each other
+- Mock infrastructure is shared — all tests use the same mock headers
+- Integration tests span subsystems but use mocks for inference
+- Model tests (GPU-required) are separate from unit/integration tests
 
 ---
 
@@ -663,11 +766,11 @@ and architecture visuals only. Every public symbol gets a Doxygen block.
 |---------|---------|------|----------------|-------|
 | llama.cpp | Inference | Submodule | Linux/Mac/Win | Direct C API |
 | nlohmann/json | JSON parse/emit | Header-only | Yes | MIT, de facto standard |
-| ryml | YAML config | Header-only | Yes | Replaces yaml-cpp, faster |
+| ryml | YAML config + frontmatter | Header-only (amalgamation) | Yes | `ryml_all.hpp`, replaces yaml-cpp |
 | sqlite3 | Conversation storage | System lib | Yes | Universal |
 | spdlog | Structured logging | Header-only | Yes | |
 | cpp-httplib | HTTP/SSE (ext MCP) | Header-only | Yes | |
-| Test framework | Unit/integration | Header-only | Yes | TBD (Catch2 or GoogleTest) |
+| Test framework | Unit/integration | Header-only | Yes | Selected in v1.8.0 (Catch2 or GoogleTest, BDD-style preferred) |
 
 No third-party headers appear in interface contracts or types headers.
 Dependencies are implementation details of their respective `.so` files.
@@ -732,7 +835,8 @@ entropic/
 │   ├── mcp/
 │   ├── config/
 │   ├── prompts/
-│   └── storage/
+│   ├── storage/
+│   └── facade/                         C API wrappers (entropic.h implementations)
 ├── data/                               Bundled assets (unchanged from Python)
 │   ├── prompts/identity_*.md
 │   ├── tools/**/*.json
@@ -756,6 +860,35 @@ entropic/
 
 ---
 
+## Handle Lifecycle
+
+`entropic_handle_t` is an opaque pointer to the engine's root state object.
+It owns all subsystems and controls their creation/destruction order.
+
+**Creation order** (in `entropic_create` + `entropic_configure`):
+1. Types/logging (spdlog init, error state)
+2. Config loader (parse YAML, validate)
+3. Inference backend (model load deferred until first generate)
+4. MCP server manager + built-in servers
+5. Engine core (AgentEngine, ResponseGenerator, ContextManager, DirectiveProcessor)
+6. Storage backend (optional — NULL if not configured)
+7. Hook registry (empty until hooks registered)
+
+**Destruction order** (in `entropic_destroy`, reverse of creation):
+7 → 1. Each subsystem's destroy is null-safe.
+
+**Optional subsystems:**
+- Storage (`IStorageBackend*`) — engine works without it (in-memory only)
+- External MCP servers — engine works with built-in servers only
+- Hooks — engine works with empty registry
+
+**Mandatory subsystems:**
+- Config (must parse successfully)
+- Inference backend (must have at least one loadable model)
+- Core engine (state machine, response generator)
+
+---
+
 ## Design Rules
 
 1. **Arrows point down.** No circular dependencies between libraries.
@@ -773,3 +906,6 @@ entropic/
 13. **Static build supported.** `ENTROPIC_STATIC=ON` produces `.a` with compile-time plugin registry.
 14. **Data files are shared.** Same identity prompts, tool JSONs, grammars as Python.
 15. **Auto-generated Python wrapper.** C API header → Python bindings, no manual sync.
+16. **Directive wire format.** MCP server `execute()` returns JSON with `{"result": "...", "directives": [...]}` envelope. Directives are typed JSON objects dispatched by the engine's DirectiveProcessor.
+17. **Bundled data discovery.** Compile-time `ENTROPIC_DATA_DIR`, overridable at runtime via config. Used for prompts, tool schemas, grammars, model registry.
+18. **Messages are JSON at boundaries.** `const char* messages_json` at C API, C++ structs internally. Metadata is arbitrary JSON.

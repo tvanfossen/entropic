@@ -78,15 +78,15 @@ class TestDefaultServerManager:
         assert engine.server_manager is None
 
     def test_engine_accepts_none_config(self) -> None:
-        """AgentEngine defaults config to EntropyConfig() when None."""
+        """AgentEngine defaults config to LibraryConfig() when None."""
         orchestrator = MagicMock()
         server_manager = MagicMock()
 
         with patch.object(AgentEngine, "_get_max_context_tokens", return_value=16384):
             engine = AgentEngine(orchestrator, server_manager)
-        from entropic.config.schema import EntropyConfig
+        from entropic.config.schema import LibraryConfig
 
-        assert isinstance(engine.config, EntropyConfig)
+        assert isinstance(engine.config, LibraryConfig)
 
     @pytest.mark.asyncio
     async def test_lazy_init_creates_server_manager(self) -> None:
@@ -238,9 +238,9 @@ class TestContextBuilder:
 
     def test_estimate_tokens(self) -> None:
         """Test token estimation."""
-        from entropic.config.schema import EntropyConfig
+        from entropic.config.schema import LibraryConfig
 
-        config = EntropyConfig()
+        config = LibraryConfig()
         builder = ContextBuilder(config)
 
         # ~4 chars per token

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from entropic.config.loader import ConfigLoader
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message, ModelTier
 from entropic.core.logging import get_logger
 from entropic.inference.orchestrator import ModelOrchestrator
@@ -115,7 +115,7 @@ class _JudgeContext:
 
 async def run_judge(
     *,
-    config: EntropyConfig | None = None,
+    config: LibraryConfig | None = None,
     results_dir: Path | None = None,
     identity_filter: str | None = None,
     model_filter: str | None = None,
@@ -350,7 +350,7 @@ def _parse_judge_response(content: str) -> tuple[str, str]:
         return "F", f"parse error: {e}"
 
 
-def _get_judge_model_path(config: EntropyConfig) -> str:
+def _get_judge_model_path(config: LibraryConfig) -> str:
     """Get the model path for the primary/judge tier."""
     default_tier = config.models.default
     tc = config.models.tiers.get(default_tier)
@@ -365,7 +365,7 @@ def _is_same_model(run_model: str, judge_model: str) -> bool:
 
 
 async def _create_judge_orchestrator(
-    config: EntropyConfig,
+    config: LibraryConfig,
 ) -> tuple[ModelTier, ModelOrchestrator, IdentityFrontmatter]:
     """Create an orchestrator with the judge identity loaded.
 

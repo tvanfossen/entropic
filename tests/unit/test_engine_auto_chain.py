@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from entropic.config.schema import EntropyConfig, TierConfig
+from entropic.config.schema import LibraryConfig, TierConfig
 from entropic.core.base import GenerationResult, ModelTier
 from entropic.core.directives import TierChange
 from entropic.core.engine import AgentEngine, LoopConfig, LoopContext
@@ -33,7 +33,7 @@ def _make_engine(
             "thinker": _tier_config(auto_chain=True),
             "executor": _tier_config(),
         }
-    config = EntropyConfig(
+    config = LibraryConfig(
         models={"tiers": tiers, "default": default},
         routing={
             "enabled": False,
@@ -509,7 +509,7 @@ class TestAutoChainConfigValidation:
         """auto_chain=True + no handoff_rules entry → warning at config load."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            EntropyConfig(
+            LibraryConfig(
                 models={
                     "tiers": {
                         "thinker": _tier_config(auto_chain=True),
@@ -531,7 +531,7 @@ class TestAutoChainConfigValidation:
         """auto_chain=True + matching handoff_rules entry → no warning."""
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
-            EntropyConfig(
+            LibraryConfig(
                 models={
                     "tiers": {
                         "thinker": _tier_config(auto_chain=True),

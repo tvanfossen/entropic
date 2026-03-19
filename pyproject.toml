@@ -1,6 +1,6 @@
 [project]
 name = "entropic-engine"
-version = "1.7.1"
+version = "1.7.2"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -26,21 +26,13 @@ dependencies = [
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "pyyaml>=6.0.0",
-]
-
-[project.optional-dependencies]
-tui = [
-    "textual>=0.47.0",
-    "rich>=13.0.0",
     "click>=8.0.0",
-    "pylspclient>=0.0.7",
-]
-app = [
-    "entropic-engine[tui]",
     "aiosqlite>=0.19.0",
     "httpx>=0.25.0",
 ]
-all = ["entropic-engine[app,voice]"]
+
+[project.optional-dependencies]
+app = ["entropic-tui>=1.7.2"]  # Legacy alias — install entropic-tui for the TUI
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -53,26 +45,9 @@ dev = [
     "types-pyyaml>=6.0.0",
     "python-chess>=1.10.0",  # For grammar pipeline model tests (pychess example)
 ]
-voice = [
-    # From PersonaPlex requirements
-    "numpy>=1.26,<2.2",
-    "safetensors>=0.4.0,<0.5",
-    "huggingface-hub>=0.24,<0.28",
-    "einops==0.7",
-    "sentencepiece==0.2",
-    "sounddevice==0.5",
-    "sphn>=0.1.4,<0.2",
-    "torch>=2.2.0",
-    "aiohttp>=3.10.5,<3.12",
-    "websockets>=12.0,<14.0",
-    # Optional for INT8 quantization
-    "accelerate>=0.30.0",
-    "torchao>=0.4.0",
-]
 
 [project.scripts]
 entropic = "entropic.cli:main"
-entropic-voice-server = "entropic.voice.server:main"
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -82,7 +57,7 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-entropic = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json", "ui/*.tcss"]
+entropic = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json"]
 
 [tool.black]
 line-length = 100
@@ -114,10 +89,6 @@ disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = "entropic.mcp.servers.base"
-disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
-module = "entropic.ui.tui"
 disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]

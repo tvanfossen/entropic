@@ -96,7 +96,7 @@ class MockTierConfig:
         self.routable = True
 
 
-class MockEntropyConfig:
+class MockLibraryConfig:
     """Config that samples two real identity names to avoid hardcoding tier names."""
 
     def __init__(self, warm_non_default: bool = False):
@@ -121,7 +121,7 @@ class MockEntropyConfig:
 
 
 def _make_orchestrator_with_mocks(
-    config: MockEntropyConfig,
+    config: MockLibraryConfig,
 ) -> tuple[ModelOrchestrator, dict[str, MockModelBackend]]:
     """Create orchestrator with injected mock backends."""
     orch = ModelOrchestrator(config)  # type: ignore[arg-type]
@@ -158,7 +158,7 @@ class TestSwapTargetState:
     @pytest.mark.asyncio
     async def test_swap_unloads_to_cold_when_keep_warm_false(self) -> None:
         """Default: keep_warm=False → full unload (ACTIVE → COLD)."""
-        config = MockEntropyConfig()
+        config = MockLibraryConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
 
         default_tier = orch._find_tier(config.default_tier)
@@ -179,7 +179,7 @@ class TestSwapTargetState:
     @pytest.mark.asyncio
     async def test_swap_deactivates_to_warm_when_keep_warm_true(self) -> None:
         """keep_warm=True → deactivate only (ACTIVE → WARM)."""
-        config = MockEntropyConfig()
+        config = MockLibraryConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
 
         # Override the default tier's config to have keep_warm=True
@@ -202,7 +202,7 @@ class TestSwapTargetState:
 
     @pytest.mark.asyncio
     async def test_swap_activates_new_model(self) -> None:
-        config = MockEntropyConfig()
+        config = MockLibraryConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
 
         default_tier = orch._find_tier(config.default_tier)
@@ -221,7 +221,7 @@ class TestSwapTargetState:
     @pytest.mark.asyncio
     async def test_cold_to_active_uses_load(self) -> None:
         """First load of a model goes COLD → ACTIVE via load()."""
-        config = MockEntropyConfig()
+        config = MockLibraryConfig()
         orch, mocks = _make_orchestrator_with_mocks(config)
 
         default_tier = orch._find_tier(config.default_tier)
@@ -243,7 +243,7 @@ class TestWarmOnStartup:
 
     @pytest.mark.asyncio
     async def test_keep_warm_calls_warm_for_non_default_tiers(self) -> None:
-        config = MockEntropyConfig(warm_non_default=True)
+        config = MockLibraryConfig(warm_non_default=True)
         warm_called: list[str] = []
 
         def mock_factory(model_config, tier_name):
@@ -264,7 +264,7 @@ class TestWarmOnStartup:
 
     @pytest.mark.asyncio
     async def test_keep_warm_false_does_not_warm(self) -> None:
-        config = MockEntropyConfig(warm_non_default=False)
+        config = MockLibraryConfig(warm_non_default=False)
         warm_called: list[str] = []
 
         def mock_factory(model_config, tier_name):

@@ -218,7 +218,7 @@ class PromptManager:
 
     @classmethod
     def from_config(cls, config: Any, *, quiet: bool = False) -> PromptManager:
-        """Create PromptManager from an EntropyConfig or LibraryConfig.
+        """Create PromptManager from a LibraryConfig (or subclass).
 
         Reads constitution, app_context from top-level config fields.
         Reads identity from each tier's config entry.

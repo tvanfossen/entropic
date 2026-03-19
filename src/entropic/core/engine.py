@@ -13,7 +13,7 @@ import time
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message, ModelTier, ToolCall
 from entropic.core.compaction import CompactionManager, TokenCounter
 from entropic.core.context_manager import ContextManager, ContextManagerHooks
@@ -74,7 +74,7 @@ class AgentEngine:
         self,
         orchestrator: ModelOrchestrator,
         server_manager: ServerManager | None = None,
-        config: EntropyConfig | None = None,
+        config: LibraryConfig | None = None,
         loop_config: LoopConfig | None = None,
     ) -> None:
         """
@@ -84,12 +84,12 @@ class AgentEngine:
             orchestrator: Model orchestrator
             server_manager: MCP server manager. If ``None``, a default
                 manager with built-in servers is created on first ``run()``.
-            config: Application configuration. Defaults to ``EntropyConfig()``.
+            config: Application configuration. Defaults to ``LibraryConfig()``.
             loop_config: Loop-specific configuration
         """
         self.orchestrator = orchestrator
         self.server_manager: ServerManager | None = server_manager
-        self.config = config or EntropyConfig()
+        self.config = config or LibraryConfig()
         self.loop_config = loop_config or LoopConfig()
         self._storage: Any = None  # Optional StorageBackend for delegation persistence
         self._repo_root: Any = None  # Original repo root for worktree creation

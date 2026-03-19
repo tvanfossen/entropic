@@ -19,6 +19,7 @@ namespace entropic::config {
  * @param registry Bundled models for path resolution.
  * @param[out] config Output model config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_model_config(
@@ -54,6 +55,7 @@ static std::string parse_model_config(
  * @param registry Bundled models for path resolution.
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_tier_config(
@@ -93,6 +95,7 @@ static std::string parse_tier_config(
  * @param registry Bundled models for path resolution.
  * @param[out] config Output models config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_models_config(
@@ -139,6 +142,7 @@ static std::string parse_models_config(
  * @param node YAML node for "routing" section.
  * @param[out] config Output routing config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_routing_config(
@@ -164,6 +168,7 @@ static std::string parse_routing_config(
  * @param node YAML node for "compaction" section.
  * @param[out] config Output compaction config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_compaction_config(
@@ -187,6 +192,7 @@ static std::string parse_compaction_config(
  * @param node YAML node for "permissions" section.
  * @param[out] config Output permissions config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_permissions_config(
@@ -204,6 +210,7 @@ static std::string parse_permissions_config(
  * @param node YAML node for "filesystem" section.
  * @param[out] config Output filesystem config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_filesystem_config(
@@ -229,6 +236,7 @@ static std::string parse_filesystem_config(
  * @param node YAML node for "external" section.
  * @param[out] config Output external MCP config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_external_mcp_config(
@@ -253,6 +261,7 @@ static std::string parse_external_mcp_config(
  * @param node YAML node for "mcp" section.
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_mcp_config(
@@ -281,6 +290,7 @@ static std::string parse_mcp_config(
  * @param node YAML node for "generation" section.
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_generation_config(
@@ -298,6 +308,7 @@ static std::string parse_generation_config(
  * @param node YAML node for "lsp" section.
  * @param[out] config Output LSP config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 static std::string parse_lsp_config(
@@ -315,6 +326,7 @@ static std::string parse_lsp_config(
  * @param node YAML node for "inference.prompt_cache" section.
  * @param[out] config Output prompt cache config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.3
  */
 static std::string parse_prompt_cache_config(
@@ -420,6 +432,7 @@ std::string parse_config_file(
  * @param registry Bundled models registry.
  * @param[out] config Output parsed config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string load_config(
@@ -460,6 +473,7 @@ std::string load_config(
  * @param registry Bundled models registry.
  * @param[out] config Output parsed config.
  * @return Empty string on success, error message on failure.
+ * @internal
  * @version 1.8.2
  */
 std::string load_config_from_file(

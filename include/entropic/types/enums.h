@@ -47,13 +47,20 @@ typedef enum {
 
 /**
  * @brief Directive types emitted by MCP tool results.
+ * @version 1.8.4
  */
 typedef enum {
-    ENTROPIC_DIRECTIVE_DELEGATE = 0,    ///< Route to another identity
-    ENTROPIC_DIRECTIVE_PIPELINE,        ///< Multi-stage sequential execution
-    ENTROPIC_DIRECTIVE_COMPLETE,        ///< Mark task complete
-    ENTROPIC_DIRECTIVE_STOP_PROCESSING, ///< Halt directive processing
-    ENTROPIC_DIRECTIVE_CONTEXT_ANCHOR,  ///< Replace context anchor
+    ENTROPIC_DIRECTIVE_STOP_PROCESSING = 0, ///< Halt directive processing
+    ENTROPIC_DIRECTIVE_TIER_CHANGE,         ///< Switch active tier
+    ENTROPIC_DIRECTIVE_DELEGATE,            ///< Route to another identity
+    ENTROPIC_DIRECTIVE_PIPELINE,            ///< Multi-stage sequential execution
+    ENTROPIC_DIRECTIVE_COMPLETE,            ///< Mark task complete
+    ENTROPIC_DIRECTIVE_CLEAR_SELF_TODOS,    ///< Clear self-directed todos (engine no-op)
+    ENTROPIC_DIRECTIVE_INJECT_CONTEXT,      ///< Inject message into context
+    ENTROPIC_DIRECTIVE_PRUNE_MESSAGES,      ///< Prune old tool results
+    ENTROPIC_DIRECTIVE_CONTEXT_ANCHOR,      ///< Replace context anchor
+    ENTROPIC_DIRECTIVE_PHASE_CHANGE,        ///< Switch active inference phase
+    ENTROPIC_DIRECTIVE_NOTIFY_PRESENTER,    ///< Generic UI notification passthrough
 } entropic_directive_type_t;
 
 /**

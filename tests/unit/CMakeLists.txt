@@ -56,8 +56,28 @@ target_link_libraries(entropic-inference-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.8.4: Core engine tests
+add_executable(entropic-core-tests
+    core/test_compaction.cpp
+    core/test_directives.cpp
+    core/test_context_manager.cpp
+    core/test_engine.cpp
+)
+
+target_include_directories(entropic-core-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/core
+)
+
+target_link_libraries(entropic-core-tests PRIVATE
+    entropic-core
+    entropic-types
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
+catch_discover_tests(entropic-core-tests)

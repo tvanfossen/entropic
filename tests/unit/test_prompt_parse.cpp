@@ -9,6 +9,12 @@
 #include <entropic/prompts/manager.h>
 #include <filesystem>
 
+/**
+ * @brief Return the path to the test data directory.
+ * @return Filesystem path defined by TEST_DATA_DIR compile definition.
+ * @version 1.8.1
+ * @internal
+ */
 static std::filesystem::path test_data()
 {
     return std::filesystem::path(TEST_DATA_DIR);

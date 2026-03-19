@@ -1,0 +1,197 @@
+/**
+ * @file compaction.h
+ * @brief Auto-compaction for context management.
+ *
+ * Deterministic structured extraction (no model inference) to produce
+ * predictable, compact briefings that preserve original task, tool call
+ * history, and files touched.
+ *
+ * @version 1.8.4
+ */
+
+#pragma once
+
+#include <entropic/types/message.h>
+
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+namespace entropic {
+
+/**
+ * @brief Track token usage across conversation.
+ *
+ * Uses simple heuristic (~4 chars per token) for estimation.
+ * More accurate counting requires the model's tokenizer.
+ *
+ * @version 1.8.4
+ */
+class TokenCounter {
+public:
+    /**
+     * @brief Construct a token counter.
+     * @param max_tokens Maximum context window size.
+     * @version 1.8.4
+     */
+    explicit TokenCounter(int max_tokens);
+
+    /**
+     * @brief Count tokens in a single message.
+     * @param msg Message to count.
+     * @return Estimated token count.
+     * @version 1.8.4
+     */
+    int count_message(const Message& msg) const;
+
+    /**
+     * @brief Count total tokens in a message list.
+     * @param messages Messages to count.
+     * @return Total estimated token count.
+     * @version 1.8.4
+     */
+    int count_messages(const std::vector<Message>& messages) const;
+
+    /**
+     * @brief Get usage as fraction of context window (0.0–1.0).
+     * @param messages Messages to measure.
+     * @return Usage fraction.
+     * @version 1.8.4
+     */
+    float usage_percent(const std::vector<Message>& messages) const;
+
+    /**
+     * @brief Clear the token count cache.
+     * @version 1.8.4
+     */
+    void clear_cache();
+
+    int max_tokens; ///< Maximum context window size
+
+private:
+    /**
+     * @brief Estimate token count for raw text.
+     * @param text Input text.
+     * @return Estimated token count.
+     * @version 1.8.4
+     */
+    static int count_text(const std::string& text);
+
+    mutable std::unordered_map<const void*, int> cache_; ///< Address-keyed cache
+};
+
+/**
+ * @brief Result of a compaction operation.
+ * @version 1.8.4
+ */
+struct CompactionResult {
+    bool compacted = false;        ///< Whether compaction occurred
+    int old_token_count = 0;       ///< Token count before compaction
+    int new_token_count = 0;       ///< Token count after compaction
+    std::string summary;           ///< Generated summary text
+    int preserved_messages = 0;    ///< Messages kept after compaction
+    int messages_summarized = 0;   ///< Messages stripped into summary
+};
+
+/**
+ * @brief Compaction configuration values (passed by value, no config dependency).
+ * @version 1.8.4
+ */
+struct CompactionConfig {
+    bool enabled = true;                    ///< Enable auto-compaction
+    float threshold_percent = 0.75f;        ///< Compaction trigger (0.5–0.99)
+    int preserve_recent_turns = 2;          ///< Turns to preserve (1–10)
+    int summary_max_tokens = 1500;          ///< Summary max tokens (500–4000)
+    bool notify_user = true;                ///< Notify user on compaction
+    bool save_full_history = true;          ///< Save full history before compaction
+    int tool_result_ttl = 10;               ///< Tool result TTL in turns (1–20)
+    float warning_threshold_percent = 0.6f; ///< Warning trigger (0.3–0.9)
+};
+
+/**
+ * @brief Manages automatic context compaction.
+ *
+ * Monitors token usage and triggers deterministic summarization when
+ * approaching the context limit. No model inference — uses structured
+ * extraction only.
+ *
+ * @version 1.8.4
+ */
+class CompactionManager {
+public:
+    /**
+     * @brief Construct a compaction manager.
+     * @param config Compaction config (copied by value).
+     * @param counter Token counter instance (shared reference).
+     * @version 1.8.4
+     */
+    CompactionManager(const CompactionConfig& config, TokenCounter& counter);
+
+    /**
+     * @brief Check if compaction is needed and perform if so.
+     * @param messages Current message list (modified in place if compacted).
+     * @param force Bypass threshold check and compact immediately.
+     * @return Compaction result.
+     * @version 1.8.4
+     */
+    CompactionResult check_and_compact(
+        std::vector<Message>& messages,
+        bool force = false);
+
+    CompactionConfig config; ///< Compaction configuration
+    TokenCounter& counter;   ///< Shared token counter
+
+private:
+    /**
+     * @brief Perform value-density compaction.
+     * @param messages Input messages.
+     * @param[out] summary Generated summary text.
+     * @param[out] stripped_count Number of messages stripped.
+     * @return Compacted message list.
+     * @version 1.8.4
+     */
+    std::vector<Message> compact(
+        const std::vector<Message>& messages,
+        std::string& summary,
+        int& stripped_count);
+
+    /**
+     * @brief Build structured summary from message history.
+     * @param messages Messages to summarize.
+     * @return Summary text.
+     * @version 1.8.4
+     */
+    static std::string structured_summary(
+        const std::vector<Message>& messages);
+
+    /**
+     * @brief Extract the original user task from messages.
+     * @param messages Messages to search.
+     * @return Task description string.
+     * @version 1.8.4
+     */
+    static std::string extract_original_task(
+        const std::vector<Message>& messages);
+
+    /**
+     * @brief Extract tool call log from messages.
+     * @param messages Messages to scan.
+     * @return Vector of (tool_name, brief_result) pairs.
+     * @version 1.8.4
+     */
+    static std::vector<std::pair<std::string, std::string>>
+    extract_tool_log(const std::vector<Message>& messages);
+
+    /**
+     * @brief Format summary as a compaction message.
+     * @param summary Raw summary text.
+     * @param message_count Number of original messages.
+     * @return Formatted summary string.
+     * @version 1.8.4
+     */
+    static std::string format_summary(
+        const std::string& summary,
+        int message_count);
+};
+
+} // namespace entropic

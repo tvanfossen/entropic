@@ -60,6 +60,7 @@ PromptCache::PromptCache(size_t max_bytes)
  * @param prompt_text Full system prompt string.
  * @param model_path Model file path string.
  * @return CacheKey with combined hash.
+ * @internal
  * @version 1.8.3
  */
 CacheKey PromptCache::make_key(std::string_view prompt_text,
@@ -83,6 +84,7 @@ CacheKey PromptCache::make_key(std::string_view prompt_text,
  * @param data Raw KV cache bytes (moved).
  * @param token_count Prompt tokens covered.
  * @return true if stored, false if too large.
+ * @internal
  * @version 1.8.3
  */
 bool PromptCache::store(const CacheKey& key,
@@ -145,6 +147,7 @@ bool PromptCache::store(const CacheKey& key,
  *
  * @param key Hash to look up.
  * @return Pointer to entry on hit, nullptr on miss.
+ * @internal
  * @version 1.8.3
  */
 const CacheEntry* PromptCache::lookup(const CacheKey& key) {
@@ -168,6 +171,7 @@ const CacheEntry* PromptCache::lookup(const CacheKey& key) {
 
 /**
  * @brief Evict all entries.
+ * @internal
  * @version 1.8.3
  */
 void PromptCache::clear() {
@@ -182,6 +186,7 @@ void PromptCache::clear() {
 /**
  * @brief Current total bytes consumed.
  * @return Byte count.
+ * @internal
  * @version 1.8.3
  */
 size_t PromptCache::bytes_used() const {
@@ -192,6 +197,7 @@ size_t PromptCache::bytes_used() const {
 /**
  * @brief Number of cached entries.
  * @return Entry count.
+ * @internal
  * @version 1.8.3
  */
 size_t PromptCache::entry_count() const {
@@ -202,6 +208,7 @@ size_t PromptCache::entry_count() const {
 /**
  * @brief Cache performance statistics.
  * @return Copy of current stats.
+ * @internal
  * @version 1.8.3
  */
 CacheStats PromptCache::stats() const {
@@ -216,6 +223,7 @@ CacheStats PromptCache::stats() const {
  * until bytes_used_ + needed_bytes <= max_bytes_.
  *
  * @param needed_bytes Space required for the incoming entry.
+ * @internal
  * @version 1.8.3
  */
 void PromptCache::evict_until(size_t needed_bytes) {

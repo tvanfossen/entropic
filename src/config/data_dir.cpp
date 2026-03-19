@@ -22,6 +22,7 @@ namespace entropic::config {
  *
  * @param config Parsed config.
  * @return Resolved data directory path.
+ * @internal
  * @version 1.8.2
  */
 std::filesystem::path resolve_data_dir(const ParsedConfig& config)

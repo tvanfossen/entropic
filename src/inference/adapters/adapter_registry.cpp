@@ -24,6 +24,7 @@ auto logger = entropic::log::get("inference.adapter.registry");
  * @param tier_name Identity tier name.
  * @param identity_prompt Assembled identity prompt.
  * @return Owned adapter instance.
+ * @internal
  * @version 1.8.2
  */
 std::unique_ptr<ChatAdapter> create_adapter(

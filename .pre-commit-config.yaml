@@ -50,7 +50,7 @@ repos:
         exclude: ^extern/
 
   - repo: https://github.com/tvanfossen/doxygen-guard
-    rev: main
+    rev: v0.2.0
     hooks:
       - id: doxygen-guard
         files: \.(h|hpp|c|cpp|cc|cxx)$

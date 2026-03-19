@@ -29,6 +29,7 @@ auto logger = entropic::log::get("inference.c_api");
  * @brief Cast opaque handle to C++ backend pointer.
  * @param h Opaque handle.
  * @return Backend pointer.
+ * @internal
  * @version 1.8.2
  */
 entropic::InferenceBackend* to_backend(entropic_inference_backend_t h) {
@@ -54,6 +55,7 @@ char* alloc_string(const std::string& s) {
  * @brief Parse ModelConfig from JSON string.
  * @param json_str JSON config string.
  * @return Parsed ModelConfig.
+ * @internal
  * @version 1.8.2
  */
 entropic::ModelConfig parse_config_json(const char* json_str) {
@@ -77,6 +79,7 @@ entropic::ModelConfig parse_config_json(const char* json_str) {
  * @brief Parse GenerationParams from JSON string.
  * @param json_str JSON params string.
  * @return Parsed GenerationParams.
+ * @internal
  * @version 1.8.2
  */
 entropic::GenerationParams parse_params_json(const char* json_str) {
@@ -97,6 +100,7 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
  * @brief Serialize GenerationResult to JSON string.
  * @param result Generation result.
  * @return JSON string.
+ * @internal
  * @version 1.8.2
  */
 std::string serialize_result_json(const entropic::GenerationResult& result) {
@@ -114,6 +118,7 @@ std::string serialize_result_json(const entropic::GenerationResult& result) {
  * @brief Parse messages from JSON array string.
  * @param json_str JSON array of message objects.
  * @return Vector of Message structs.
+ * @internal
  * @version 1.8.2
  */
 std::vector<entropic::Message> parse_messages_json(const char* json_str) {

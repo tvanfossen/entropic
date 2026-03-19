@@ -89,6 +89,12 @@ protected:
     }
 };
 
+/**
+ * @brief Create a minimal ModelConfig for backend lifecycle tests.
+ * @return Pre-filled ModelConfig with test defaults.
+ * @version 1.8.2
+ * @internal
+ */
 entropic::ModelConfig make_config() {
     entropic::ModelConfig cfg;
     cfg.path = "/tmp/test.gguf";

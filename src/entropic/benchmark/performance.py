@@ -13,7 +13,7 @@ from entropic import __version__
 from entropic.benchmark.gpu import get_gpu_info, get_vram_mb
 from entropic.benchmark.types import InferenceResult, LoadResult, PerfResults, SwapResult
 from entropic.config.loader import ConfigLoader
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message, ModelTier
 from entropic.core.logging import get_logger
 from entropic.inference.orchestrator import ModelOrchestrator
@@ -29,7 +29,7 @@ _INFERENCE_PROMPT = "Explain in two sentences why the sky appears blue."
 
 async def run_performance(
     *,
-    config: EntropyConfig | None = None,
+    config: LibraryConfig | None = None,
     candidate_model: Path | None = None,
     tier_name: str | None = None,
     on_phase: Callable[[str], None] | None = None,
@@ -145,7 +145,7 @@ async def run_performance(
 
 async def _measure_swap(
     orchestrator: ModelOrchestrator,
-    config: EntropyConfig,
+    config: LibraryConfig,
     home_tier_name: str,
     messages: list[Message],
 ) -> SwapResult | None:
@@ -180,7 +180,7 @@ async def _measure_swap(
 
 def _resolve_swap_tiers(
     orchestrator: ModelOrchestrator,
-    config: EntropyConfig,
+    config: LibraryConfig,
     home_tier_name: str,
 ) -> tuple[ModelTier, ModelTier] | None:
     """Find home and alternate tiers for swap measurement. Returns None if unavailable."""
@@ -200,7 +200,7 @@ def _resolve_swap_tiers(
 
 def _find_alternate_tier(
     orchestrator: ModelOrchestrator,
-    config: EntropyConfig,
+    config: LibraryConfig,
     home_name: str,
     home_path: Path,
 ) -> str | None:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from entropic.config.schema import EntropyConfig, ModelConfig
+from entropic.config.schema import LibraryConfig, ModelConfig
 from entropic.core.base import GenerationResult, Message, ModelBackend, ModelTier
 from entropic.core.logging import get_logger
 from entropic.inference.adapters import ChatAdapter
@@ -55,7 +55,7 @@ class ModelOrchestrator:
 
     def __init__(
         self,
-        config: EntropyConfig,
+        config: LibraryConfig,
         tiers: list[ModelTier] | None = None,
         backend_factory: BackendFactory | None = None,
     ) -> None:

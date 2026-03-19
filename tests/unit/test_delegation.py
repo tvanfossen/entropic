@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from entropic.config.schema import EntropyConfig, TierConfig
+from entropic.config.schema import LibraryConfig, TierConfig
 from entropic.core.base import Message, ModelTier
 from entropic.core.delegation import DelegationManager, DelegationResult
 from entropic.core.engine import MAX_DELEGATION_DEPTH, AgentEngine, LoopConfig, LoopContext
@@ -36,7 +36,7 @@ def _make_engine(
             "eng": _tier_config(auto_chain=True),
         }
     chain_map = auto_chain_map or {}
-    config = EntropyConfig(
+    config = LibraryConfig(
         models={"tiers": tiers, "default": default},
         routing={"enabled": False, "fallback_tier": default},
     )

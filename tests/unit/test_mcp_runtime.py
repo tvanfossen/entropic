@@ -72,7 +72,7 @@ class TestMCPClientTransport:
 
 
 def _make_manager(project_dir: Path, yaml_external: dict | None = None) -> ServerManager:
-    """Construct a minimal ServerManager without full EntropyConfig."""
+    """Construct a minimal ServerManager without full LibraryConfig."""
     from unittest.mock import MagicMock
 
     from entropic.config.schema import MCPConfig, PermissionsConfig

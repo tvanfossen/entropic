@@ -55,6 +55,10 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Public C API header design (`entropic.h`) — interface sketch
 - Build system: CUDA detection, platform support
 - CI pipeline: GitHub Actions for CPU builds, lint, static analysis
+- Test framework selected (Catch2 or GoogleTest — BDD-style preferred)
+- spdlog structured logging from day one (all subsequent versions use it)
+- Error types: `entropic_error_t` enum, `entropic_last_error()`,
+  `entropic_error_callback_t` — defined in `librentropic-types`
 - Doxygen setup with heavy commenting standard
 - Concrete base class patterns established (C++ equivalent of Python ABCs)
 - Expose llama.cpp config pass-through fields in schema:
@@ -63,17 +67,22 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ### v1.8.1 — Config + Prompts
 
-- YAML config loader (yaml-cpp or equivalent)
-- Config schema validation (mirrors current Pydantic schema)
+- YAML config loader (ryml — single-header amalgamation via `ryml_all.hpp`)
+- Config schema validation layer (replaces Pydantic validators, built in-house)
+  - Cross-field validation: routing references, default tier, threshold ordering
+  - Layered config merge: defaults → global YAML → project YAML → env vars
 - Prompt manager (YAML frontmatter parsing, identity loading)
 - Constitution and app_context loading
 - BundledModels registry (path resolution from keys)
-- Unit tests for config loading + prompt parsing
+- Bundled data file discovery: compile-time `DATA_DIR` define, overridable
+  at runtime via `config_dir` field
+- Unit tests for config loading + prompt parsing + validation
 
 ### v1.8.2 — Inference Backend
 
 - `InferenceBackend` concrete base class
-- `LlamaCppBackend` — model load, generate, stream (direct C API)
+- `LlamaCppBackend` — model load, generate, generate_streaming, complete (direct C API)
+- `complete()` — raw text completion without chat template (router needs this)
 - VRAM lifecycle state machine (COLD/WARM/ACTIVE)
 - Chat adapter base class + Qwen35 adapter
 - `reasoning_budget` exposed as PhaseConfig inference parameter
@@ -84,8 +93,9 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ### v1.8.3 — Host-Memory Prompt Caching
 
-- Expose llama.cpp `-cram` (host-memory prompt cache)
-- Cache identity/constitution/tool prefixes in RAM
+- KV cache prefix save/load caching layer built on
+  `llama_state_seq_get_data` / `llama_state_seq_set_data`
+- Cache identity/constitution/tool prefixes in host RAM
 - Hot-swap cached prefixes on role/identity change
 - Validates task #51 (KV cache prefix injection) via native mechanism
 - Configurable RAM limit for prompt cache
@@ -107,6 +117,15 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - `ToolRegistry` + `ToolExecutor`
 - `PermissionManager` (allow/deny, glob patterns)
 - Built-in servers: filesystem, bash, git, diagnostics, web, entropic
+- `MCPServerBase` / `ServerResponse` supports optional `ContextAnchor` on
+  tool results — base class infrastructure, not per-tool special case.
+  Tools that return replaceable content declare an anchor key strategy;
+  the base class emits the directive automatically. Tools with no anchor
+  strategy behave as before (append to context).
+- Filesystem `read_file` uses this: anchor keyed by file path
+  (e.g., `key="file:src/engine.cpp"`). Subsequent reads of the same file
+  REPLACE the anchor instead of appending. Other tools (git.status,
+  diagnostics) can adopt the same pattern later without new infrastructure.
 - LSP client embedded in diagnostics (diagnostic diffs in write/edit responses)
 - Duplicate detection + error feedback (circuit breaker)
 - Investigate llama.cpp autoparser for tool call parsing
@@ -133,12 +152,14 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Dynamic tool registration refresh (server declares new tools mid-session)
 - Tool call routing to disconnected servers returns structured error
 
-### v1.8.8 — Storage + Logging
+### v1.8.8 — Session Persistence
 
 - SQLite conversation persistence
-- Structured logger (session.log, model.log equivalents)
+- Session log files (session.log, model.log equivalents)
 - Delegation storage (parent/child conversation IDs)
 - Permission persistence (save_permission)
+- Note: spdlog structured logging established in v1.8.0 — this version
+  adds file-based session persistence and log rotation only
 
 ### v1.8.9 — C API Stabilization
 
@@ -147,7 +168,7 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Tool registration: register_tool, register_server
 - Identity management: load_identity, get_identity
 - Hook registration: register_hook
-- Error handling contract (error codes + callbacks)
+- Error handling contract finalized (error codes + callbacks, defined in v1.8.0)
 - Thread safety guarantees documented
 - API versioning scheme (semver on C API)
 - Compile + link from external project verified
@@ -300,7 +321,7 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ## v1.10.0 — Test Architecture Revamp
 
-- Test framework selection (GoogleTest, Catch2, or Ceedling — BDD-style preferred)
+- Test framework already selected in v1.8.0 (Catch2 or GoogleTest, BDD-style)
 - Conventional test mapping: test files mirror source structure
 - Doxygen-driven enhancement: parse annotations to map tests to API functions
 - Git diff integration: select relevant tests based on changed files

@@ -2,7 +2,7 @@
 
 import pytest
 from entropic.app import Application
-from entropic.ui.headless import HeadlessPresenter
+from entropic.core.headless_presenter import HeadlessPresenter
 
 
 @pytest.mark.model

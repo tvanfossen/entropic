@@ -21,11 +21,11 @@ from pathlib import Path
 
 import pytest
 from entropic.app import Application
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
+from entropic.core.headless_presenter import HeadlessPresenter
 from entropic.core.logging import setup_logging, setup_model_logger
 from entropic.inference.orchestrator import ModelOrchestrator
-from entropic.ui.headless import HeadlessPresenter
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ _test_log_dirs: dict[str, Path] = {}
 
 
 @pytest.fixture(scope="module")
-async def shared_orchestrator(config: EntropyConfig, models_available: dict[str, bool]):
+async def shared_orchestrator(config: LibraryConfig, models_available: dict[str, bool]):
     """Module-scoped orchestrator. Model loaded once, shared across tests in a file."""
     if not any(models_available.values()):
         pytest.skip("No models available for testing")
@@ -142,7 +142,7 @@ def headless_presenter() -> HeadlessPresenter:
 
 @pytest.fixture
 async def headless_app(
-    config: EntropyConfig,
+    config: LibraryConfig,
     shared_orchestrator: ModelOrchestrator,
     headless_presenter: HeadlessPresenter,
     tmp_project_dir: Path,

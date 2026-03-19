@@ -329,13 +329,13 @@ class TestEnableThinkingConsistency:
 
 
 class TestProgrammaticConfig:
-    """Tests that EntropyConfig works without ConfigLoader or files."""
+    """Tests that LibraryConfig works without ConfigLoader or files."""
 
     def test_entropy_config_constructs_without_files(self) -> None:
-        """EntropyConfig(...) works with just keyword args, no disk I/O."""
-        from entropic.config.schema import EntropyConfig
+        """LibraryConfig(...) works with just keyword args, no disk I/O."""
+        from entropic.config.schema import LibraryConfig
 
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={"tiers": {"custom": {"path": "/tmp/model.gguf"}}, "default": "custom"},
             routing={"enabled": False, "fallback_tier": "custom"},
         )

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 from entropic.config.loader import ConfigLoader
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.inference.orchestrator import ModelOrchestrator
 
 # =============================================================================
@@ -44,14 +44,14 @@ def _check_model_available(model_path: str) -> bool:
 
 
 @pytest.fixture(scope="session")
-def config() -> EntropyConfig:
+def config() -> LibraryConfig:
     """Load the entropic configuration from project config files."""
     loader = ConfigLoader()
     return loader.load()
 
 
 @pytest.fixture(scope="session")
-def models_available(config: EntropyConfig) -> dict[str, bool]:
+def models_available(config: LibraryConfig) -> dict[str, bool]:
     """Check which models are available on this system."""
     available = {}
 
@@ -71,7 +71,7 @@ def router_available(models_available: dict[str, bool]) -> bool:
 
 
 @pytest.fixture(scope="module")
-async def orchestrator(config: EntropyConfig, models_available: dict[str, bool]):
+async def orchestrator(config: LibraryConfig, models_available: dict[str, bool]):
     """
     Create and initialize a model orchestrator.
 

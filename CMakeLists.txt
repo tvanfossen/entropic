@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 1.8.0
+    VERSION 1.8.1
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )
@@ -81,6 +81,8 @@ configure_file(
 # ── Subdirectories ──────────────────────────────────────
 add_subdirectory(extern)
 add_subdirectory(src/types)
+add_subdirectory(src/config)
+add_subdirectory(src/prompts)
 add_subdirectory(src/facade)
 
 if(ENTROPIC_BUILD_TESTS)

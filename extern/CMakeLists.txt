@@ -27,6 +27,16 @@ if(ENTROPIC_BUILD_TESTS)
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} PARENT_SCOPE)
 endif()
 
+# ── ryml (YAML parsing — single-header amalgamation) ─────
+FetchContent_Declare(ryml
+    GIT_REPOSITORY https://github.com/biojppm/rapidyaml.git
+    GIT_TAG        v0.7.2
+    GIT_SHALLOW    TRUE
+)
+set(RYML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(RYML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ryml)
+
 # ── llama.cpp ────────────────────────────────────────────
 # Submodule added but NOT built in v1.8.0. Build integration deferred
 # to v1.8.2 when the inference backend is implemented.

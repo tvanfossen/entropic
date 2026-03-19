@@ -16,7 +16,6 @@ from entropic.core.presenter import Presenter, StatusInfo
 if TYPE_CHECKING:
     from entropic.core.compaction import CompactionResult
     from entropic.core.engine import AgentState
-    from entropic.core.queue import MessageQueue, QueuedMessage
     from entropic.core.todos import TodoList
 
 
@@ -49,10 +48,6 @@ class HeadlessPresenter(Presenter):
         self._input_queue: asyncio.Queue[str] = asyncio.Queue()
         self._exit_event = asyncio.Event()
 
-        # MCP queue consumer (set by set_queue_consumer)
-        self._mcp_queue: "MessageQueue | None" = None
-        self._queue_process_callback: "Callable[[QueuedMessage], Coroutine[Any, Any, None]] | None" = None
-
         # Captured output for testing
         self._stream_buffer: list[str] = []
         self._messages: list[tuple[str, str]] = []  # (role, content)
@@ -67,11 +62,6 @@ class HeadlessPresenter(Presenter):
         """Process input queue until exit."""
         self._running = True
         self._exit_event.clear()
-
-        # Start MCP queue consumer if configured
-        consumer_task: asyncio.Task[None] | None = None
-        if self._mcp_queue is not None and self._queue_process_callback is not None:
-            consumer_task = asyncio.create_task(self._run_queue_consumer())
 
         while self._running:
             try:
@@ -93,38 +83,10 @@ class HeadlessPresenter(Presenter):
 
         self._running = False
 
-        if consumer_task is not None:
-            consumer_task.cancel()
-            try:
-                await consumer_task
-            except asyncio.CancelledError:
-                pass
-
     def exit(self) -> None:
         """Signal the presenter to exit."""
         self._running = False
         self._exit_event.set()
-
-    async def _run_queue_consumer(self) -> None:
-        """Consume MCP message queue until cancelled."""
-        assert self._mcp_queue is not None
-        assert self._queue_process_callback is not None
-
-        self._logger.info("Queue consumer started")
-        try:
-            while True:
-                queued_msg = await self._mcp_queue.get()
-                self._logger.info(
-                    f"Processing queued message: {queued_msg.task_id} from {queued_msg.source}"
-                )
-                try:
-                    await self._queue_process_callback(queued_msg)
-                except Exception as e:
-                    self._logger.error(f"Error processing queued message: {e}")
-                finally:
-                    self._mcp_queue.mark_complete(queued_msg.id)
-        except asyncio.CancelledError:
-            self._logger.info("Queue consumer cancelled")
 
     # === Callback Registration ===
 
@@ -139,26 +101,6 @@ class HeadlessPresenter(Presenter):
     def set_pause_callback(self, callback: Callable[[], None]) -> None:
         """Set callback for pause signal."""
         self._pause_callback = callback
-
-    def set_queue_consumer(
-        self,
-        queue: "MessageQueue",
-        process_callback: Callable[["QueuedMessage"], Coroutine[Any, Any, None]],
-    ) -> None:
-        """Set up MCP message queue consumer.
-
-        Stored and started as a background asyncio task in run_async().
-        """
-        self._mcp_queue = queue
-        self._queue_process_callback = process_callback
-
-    def set_voice_callbacks(
-        self,
-        on_enter: Callable[[], Coroutine[Any, Any, None]],
-        on_exit: Callable[[], Coroutine[Any, Any, None]],
-    ) -> None:
-        """Set voice mode callbacks - no-op for headless."""
-        _ = (on_enter, on_exit)
 
     # === Tier Display ===
 

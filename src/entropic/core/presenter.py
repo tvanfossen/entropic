@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from entropic.core.compaction import CompactionResult
     from entropic.core.engine import AgentState, ToolApproval
-    from entropic.core.queue import MessageQueue, QueuedMessage
     from entropic.core.todos import TodoList
 
 
@@ -79,36 +78,6 @@ class Presenter(ABC):
             callback: Function called when user requests pause
         """
         ...
-
-    def set_queue_consumer(
-        self,
-        queue: "MessageQueue",
-        process_callback: Callable[["QueuedMessage"], Coroutine[Any, Any, None]],
-    ) -> None:
-        """Set up MCP message queue consumer.
-
-        Optional - implementations may no-op if MCP integration not needed.
-
-        Args:
-            queue: Message queue to consume from
-            process_callback: Callback to process each message
-        """
-        _ = (queue, process_callback)
-
-    def set_voice_callbacks(
-        self,
-        on_enter: Callable[[], Coroutine[Any, Any, None]],
-        on_exit: Callable[[], Coroutine[Any, Any, None]],
-    ) -> None:
-        """Set voice mode VRAM management callbacks.
-
-        Optional - implementations may no-op if voice mode not supported.
-
-        Args:
-            on_enter: Called when entering voice mode (unload models)
-            on_exit: Called when exiting voice mode (reload models)
-        """
-        _ = (on_enter, on_exit)
 
     # === Tier Display ===
 

@@ -32,12 +32,7 @@ class MessagePriority(IntEnum):
     CLAUDE_CODE = 2  # External agent (Claude Code)
 
 
-class MessageSource(str):
-    """Message source identifiers."""
-
-    HUMAN = "human"
-    CLAUDE_CODE = "claude-code"
-    SYSTEM = "system"
+from entropic.core.engine_types import MessageSource  # noqa: E402 — canonical home
 
 
 @dataclass

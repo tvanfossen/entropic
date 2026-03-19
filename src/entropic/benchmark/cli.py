@@ -1,47 +1,61 @@
 """CLI commands for benchmark: entropic benchmark run/sweep/list."""
 
 import asyncio
+import sys
 import time
 from collections.abc import Callable
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
 import click
 
 
-def _make_progress_callback():
-    """Return (on_phase callback, progress context manager).
+def _make_progress_callback() -> tuple[Callable[[str], None], Any]:
+    """Return (on_phase callback, context manager).
 
-    Uses Rich Progress if available, falls back to click.echo status lines.
+    @brief Plain-text progress callback for benchmark phases.
+    @version 2
     """
-    try:
-        from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+    phase_count = 0
 
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[bold cyan]{task.description}"),
-            BarColumn(bar_width=30),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeElapsedColumn(),
-        )
-        task_id = progress.add_task("Starting...", total=4)
+    def on_phase(description: str) -> None:
+        """Print phase progress.
 
-        def on_phase(description: str) -> None:
-            progress.update(task_id, advance=1, description=description)
+        @brief Increment phase counter and echo current phase description.
+        @version 1
+        """
+        nonlocal phase_count
+        phase_count += 1
+        click.echo(f"  [{phase_count}/4] {description}...")
 
-        return on_phase, progress
-    except ImportError:
+    class _NullCtx:
+        """No-op context manager for non-interactive progress."""
 
-        def on_phase_plain(description: str) -> None:
-            click.echo(f"  {description}...")
+        def __enter__(self) -> "_NullCtx":
+            """Enter context.
 
-        return on_phase_plain, nullcontext()
+            @brief Return self as no-op context.
+            @version 1
+            """
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            """Exit context.
+
+            @brief No-op teardown.
+            @version 1
+            """
+
+    return on_phase, _NullCtx()
 
 
 @click.group()
 def benchmark() -> None:
-    """Benchmark engine performance and identity quality."""
+    """Benchmark engine performance and identity quality.
+
+    @brief Click group for benchmark subcommands (run, sweep, judge, list).
+    @version 1
+    """
 
 
 @benchmark.command()
@@ -81,6 +95,9 @@ def run(
 
     By default runs both performance and quality. Use --perf-only or --quality-only
     to run just one.
+
+    @brief Dispatch performance and/or quality benchmarks based on CLI flags.
+    @version 1
     """
     default_dir = Path("benchmark") / "results"
     run_perf = not quality_only
@@ -94,7 +111,11 @@ def run(
 
 
 def _run_perf(candidate: Path | None, identity: str | None, default_dir: Path) -> None:
-    """Execute performance benchmark through the engine."""
+    """Execute performance benchmark through the engine.
+
+    @brief Run perf benchmarks, print report, and save results to disk.
+    @version 1
+    """
     from entropic.benchmark.performance import run_performance, save_results
     from entropic.benchmark.report import print_perf_report
 
@@ -110,7 +131,11 @@ def _run_perf(candidate: Path | None, identity: str | None, default_dir: Path) -
 
 
 def _run_quality(candidate: Path | None, identity_filter: str | None, default_dir: Path) -> None:
-    """Execute quality benchmark through the engine."""
+    """Execute quality benchmark through the engine.
+
+    @brief Run quality benchmarks, print report, and save per-identity results.
+    @version 1
+    """
     from entropic.benchmark.quality import run_quality, save_results
     from entropic.benchmark.report import print_quality_report
 
@@ -131,26 +156,44 @@ def _run_quality(candidate: Path | None, identity_filter: str | None, default_di
 
 
 def _make_quality_callback() -> tuple[Callable[[str], None], Any]:
-    """Create a Rich status callback for quality benchmarks."""
-    try:
-        from rich.console import Console
-        from rich.live import Live
+    """Create a plain-text callback for quality benchmarks.
 
-        console = Console()
-        start_time = time.perf_counter()
-        live = Live(console=console, refresh_per_second=2)
+    @brief Progress callback that prints identity names and elapsed time.
+    @version 2
+    """
+    start_time = time.perf_counter()
 
-        def on_identity(name: str) -> None:
-            elapsed = time.perf_counter() - start_time
-            live.update(f"  [bold cyan]Quality:[/bold cyan] {name}  [{elapsed:.0f}s]")
+    def on_identity(name: str) -> None:
+        """Print identity progress.
 
-        return on_identity, live
-    except ImportError:
+        @brief Write identity name and elapsed time to stderr.
+        @version 1
+        """
+        elapsed = time.perf_counter() - start_time
+        sys.stderr.write(f"\r  Quality: {name}  [{elapsed:.0f}s]")
+        sys.stderr.flush()
 
-        def on_identity_plain(name: str) -> None:
-            click.echo(f"  Quality: {name}...")
+    class _LiveCtx:
+        """Context manager that writes a trailing newline on exit."""
 
-        return on_identity_plain, nullcontext()
+        def __enter__(self) -> "_LiveCtx":
+            """Enter context.
+
+            @brief Return self for use in with-block.
+            @version 1
+            """
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            """Exit context.
+
+            @brief Flush a trailing newline to stderr on exit.
+            @version 1
+            """
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    return on_identity, _LiveCtx()
 
 
 @benchmark.command()
@@ -193,27 +236,20 @@ def sweep(
     Loads the engine's router (to occupy its VRAM), then sweeps the target
     model through GPU layer counts measuring tok/s and VRAM at each point.
     Finds the maximum layers that fit alongside the router.
+
+    @brief Sweep GPU layer counts for a model, reporting tok/s and VRAM at each point.
+    @version 1
     """
-    from entropic.benchmark.report import _print_plain, _print_rich_sweep
+    from entropic.benchmark.report import print_sweep_report
     from entropic.benchmark.runner import BenchmarkRunner, make_model_spec
+    from entropic.benchmark.types import PerfResults
 
     spec = make_model_spec(path=model_path, context_length=context_length)
     runner = BenchmarkRunner(spec)
     points = asyncio.run(runner.gpu_sweep(step=step, max_layers=max_layers))
 
-    try:
-        from rich.console import Console
-        from rich.table import Table
-
-        from entropic.benchmark.types import PerfResults
-
-        fake = PerfResults(model_path=model_path, timestamp="", engine_version="", sweep=points)
-        _print_rich_sweep(fake, Console(), Table)
-    except ImportError:
-        from entropic.benchmark.types import PerfResults
-
-        fake = PerfResults(model_path=model_path, timestamp="", engine_version="", sweep=points)
-        _print_plain(fake)
+    fake = PerfResults(model_path=model_path, timestamp="", engine_version="", sweep=points)
+    print_sweep_report(fake)
 
     if output:
         import json
@@ -261,6 +297,9 @@ def judge(
     Loads the judge model once, grades all unjudged runs in batch,
     and injects letter grades (A-F) into existing quality JSON files.
     Runs from the judge's own model are flagged for external review.
+
+    @brief Batch-grade unjudged quality runs and inject letter grades into results.
+    @version 1
     """
     from entropic.benchmark.judge import run_judge
 
@@ -291,29 +330,51 @@ def judge(
 
 
 def _make_judge_callback() -> tuple[Callable[[str, int, int], None], Any]:
-    """Create progress callback for judge."""
-    try:
-        from rich.console import Console
-        from rich.live import Live
+    """Create progress callback for judge.
 
-        console = Console()
-        live = Live(console=console, refresh_per_second=2)
+    @brief Plain-text callback that prints grading progress.
+    @version 2
+    """
 
-        def on_grading(identity: str, current: int, total: int) -> None:
-            live.update(f"  [bold cyan]Judging:[/bold cyan] {identity} ({current}/{total})")
+    def on_grading(identity: str, current: int, total: int) -> None:
+        """Print grading progress.
 
-        return on_grading, live
-    except ImportError:
+        @brief Write identity name and progress counter to stderr.
+        @version 1
+        """
+        sys.stderr.write(f"\r  Judging: {identity} ({current}/{total})")
+        sys.stderr.flush()
 
-        def on_grading_plain(identity: str, current: int, total: int) -> None:
-            click.echo(f"  Judging: {identity} ({current}/{total})...")
+    class _LiveCtx:
+        """Context manager that writes a trailing newline on exit."""
 
-        return on_grading_plain, nullcontext()
+        def __enter__(self) -> "_LiveCtx":
+            """Enter context.
+
+            @brief Return self for use in with-block.
+            @version 1
+            """
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            """Exit context.
+
+            @brief Flush a trailing newline to stderr on exit.
+            @version 1
+            """
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+    return on_grading, _LiveCtx()
 
 
 @benchmark.command("list")
 def list_benchmarks() -> None:
-    """List identities with benchmark definitions."""
+    """List identities with benchmark definitions.
+
+    @brief Discover and display all identities that have benchmark specs.
+    @version 1
+    """
     from entropic.benchmark.quality import discover_benchmarks
 
     benchmarks = discover_benchmarks()

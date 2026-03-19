@@ -1,0 +1,284 @@
+/**
+ * @file validate.cpp
+ * @brief Config validation implementation.
+ * @version 1.8.1
+ */
+
+#include <entropic/config/validate.h>
+#include <entropic/types/logging.h>
+
+static auto s_log = entropic::log::get("config");
+
+namespace entropic::config {
+
+/**
+ * @brief Validate allowed_tools entries use "server.tool" format.
+ * @param tools Tool name list to validate.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+std::string validate_allowed_tools(const std::vector<std::string>& tools)
+{
+    for (const auto& entry : tools) {
+        if (entry.find('.') == std::string::npos) {
+            return "allowed_tools entry '" + entry
+                   + "' must use '{server_name}.{tool_name}' format";
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Validate a ModelConfig.
+ * @param config Model config to validate.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+std::string validate(const ModelConfig& config)
+{
+    if (config.context_length < 512 || config.context_length > 131072) {
+        return "context_length must be in [512, 131072], got "
+               + std::to_string(config.context_length);
+    }
+    if (config.adapter.empty()) {
+        return "adapter must not be empty";
+    }
+    if (config.n_batch < 1) {
+        return "n_batch must be >= 1, got "
+               + std::to_string(config.n_batch);
+    }
+
+    if (config.allowed_tools.has_value()) {
+        auto err = validate_allowed_tools(*config.allowed_tools);
+        if (!err.empty()) {
+            return err;
+        }
+    }
+
+    return "";
+}
+
+/**
+ * @brief Validate ModelsConfig.
+ * @param config Models config to validate.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+std::string validate(const ModelsConfig& config)
+{
+    if (!config.tiers.empty()
+        && config.tiers.count(config.default_tier) == 0) {
+        return "default tier '" + config.default_tier
+               + "' not in tiers";
+    }
+    return "";
+}
+
+/**
+ * @brief Validate CompactionConfig.
+ * @param config Compaction config to validate.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+std::string validate(const CompactionConfig& config)
+{
+    if (config.threshold_percent < 0.5f
+        || config.threshold_percent > 0.99f) {
+        return "compaction.threshold_percent must be in [0.5, 0.99], got "
+               + std::to_string(config.threshold_percent);
+    }
+    if (config.warning_threshold_percent
+        >= config.threshold_percent) {
+        return "compaction.warning_threshold_percent ("
+               + std::to_string(config.warning_threshold_percent)
+               + ") must be less than threshold_percent ("
+               + std::to_string(config.threshold_percent) + ")";
+    }
+    if (config.preserve_recent_turns < 1
+        || config.preserve_recent_turns > 10) {
+        return "compaction.preserve_recent_turns must be in [1, 10], got "
+               + std::to_string(config.preserve_recent_turns);
+    }
+    return "";
+}
+
+/**
+ * @brief Check fallback_tier exists in tiers.
+ * @param fallback Fallback tier name.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_fallback_tier(
+    const std::string& fallback,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    if (tiers.count(fallback) == 0) {
+        return "routing.fallback_tier '" + fallback + "' not in tiers";
+    }
+    return "";
+}
+
+/**
+ * @brief Check all tier_map values exist in tiers.
+ * @param tier_map Classification to tier mapping.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_tier_map(
+    const std::unordered_map<std::string, std::string>& tier_map,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    for (const auto& [key, tier] : tier_map) {
+        if (tiers.count(tier) == 0) {
+            return "routing.tier_map['" + key + "'] = '" + tier
+                   + "' not in tiers";
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Check all handoff_rules keys and values exist in tiers.
+ * @param rules Handoff rules.
+ * @param tiers Defined tiers.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_handoff_rules(
+    const std::unordered_map<std::string, std::vector<std::string>>& rules,
+    const std::unordered_map<std::string, TierConfig>& tiers)
+{
+    for (const auto& [source, targets] : rules) {
+        if (tiers.count(source) == 0) {
+            return "routing.handoff_rules key '" + source
+                   + "' not in tiers";
+        }
+        for (const auto& target : targets) {
+            if (tiers.count(target) == 0) {
+                return "routing.handoff_rules['" + source
+                       + "'] contains '" + target + "' not in tiers";
+            }
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Validate RoutingConfig against defined tiers.
+ * @param routing Routing config.
+ * @param models Models config.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ * @utility
+ */
+std::string validate_routing(
+    const RoutingConfig& routing,
+    const ModelsConfig& models)
+{
+    if (models.tiers.empty()) {
+        return "";
+    }
+
+    if (routing.enabled && !models.router.has_value()) {
+        return "routing.enabled is true but models.router is not configured";
+    }
+
+    auto err = validate_fallback_tier(routing.fallback_tier, models.tiers);
+    if (!err.empty()) {
+        return err;
+    }
+
+    err = validate_tier_map(routing.tier_map, models.tiers);
+    if (!err.empty()) {
+        return err;
+    }
+
+    err = validate_handoff_rules(routing.handoff_rules, models.tiers);
+    if (!err.empty()) {
+        return err;
+    }
+
+    return "";
+}
+
+/**
+ * @brief Warn if tier has auto_chain but no handoff_rules entry.
+ * @param tiers Tier configs.
+ * @param handoff_rules Handoff rules.
+ * @return Warning message (empty if no issues).
+ * @version 1.8.1
+ */
+std::string warn_auto_chain_without_targets(
+    const std::unordered_map<std::string, TierConfig>& tiers,
+    const std::unordered_map<std::string, std::vector<std::string>>&
+        handoff_rules)
+{
+    std::string warnings;
+    for (const auto& [name, tier] : tiers) {
+        if (tier.auto_chain.has_value() && !tier.auto_chain->empty()
+            && handoff_rules.count(name) == 0) {
+            if (!warnings.empty()) {
+                warnings += "; ";
+            }
+            warnings += "tier '" + name
+                        + "' has auto_chain but no handoff_rules entry";
+        }
+    }
+    return warnings;
+}
+
+/**
+ * @brief Validate the full ParsedConfig.
+ * @param config Full config to validate.
+ * @param[out] warnings Non-fatal warnings.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.1
+ */
+std::string validate_config(
+    const ParsedConfig& config,
+    std::vector<std::string>& warnings)
+{
+    auto err = validate(config.models);
+    if (!err.empty()) {
+        return err;
+    }
+
+    for (const auto& [name, tier] : config.models.tiers) {
+        err = validate(static_cast<const ModelConfig&>(tier));
+        if (!err.empty()) {
+            return "models." + name + ": " + err;
+        }
+    }
+
+    if (config.models.router.has_value()) {
+        err = validate(*config.models.router);
+        if (!err.empty()) {
+            return "models.router: " + err;
+        }
+    }
+
+    err = validate_routing(config.routing, config.models);
+    if (!err.empty()) {
+        return err;
+    }
+
+    err = validate(config.compaction);
+    if (!err.empty()) {
+        return err;
+    }
+
+    auto w = warn_auto_chain_without_targets(
+        config.models.tiers, config.routing.handoff_rules);
+    if (!w.empty()) {
+        warnings.push_back(w);
+    }
+
+    return "";
+}
+
+} // namespace entropic::config

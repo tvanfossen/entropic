@@ -1,0 +1,3 @@
+models:
+  lead:
+    gpu_layers: 20

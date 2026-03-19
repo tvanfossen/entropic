@@ -4,8 +4,8 @@ import asyncio
 
 import pytest
 from entropic.core.engine import ToolApproval
-from entropic.ui.headless import HeadlessPresenter
-from entropic.ui.presenter import Presenter
+from entropic.core.headless_presenter import HeadlessPresenter
+from entropic.core.presenter import Presenter
 
 
 class TestHeadlessPresenter:
@@ -279,8 +279,8 @@ class TestHeadlessPresenter:
         """Test context feedback methods don't raise errors."""
         from entropic.core.compaction import CompactionResult
         from entropic.core.engine import AgentState
+        from entropic.core.presenter import StatusInfo
         from entropic.core.todos import TodoList
-        from entropic.ui.presenter import StatusInfo
 
         presenter = HeadlessPresenter()
 

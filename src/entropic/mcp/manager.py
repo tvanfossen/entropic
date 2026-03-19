@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import ToolCall, ToolProvider, ToolResult
 from entropic.core.logging import get_logger
 from entropic.mcp.client import MCPClient
@@ -63,7 +63,7 @@ class ServerManager:
 
     def __init__(
         self,
-        config: EntropyConfig,
+        config: LibraryConfig,
         project_dir: Path | None = None,
         tier_names: list[str] | None = None,
     ) -> None:

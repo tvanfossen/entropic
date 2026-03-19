@@ -14,7 +14,6 @@ from entropic.config.loader import (
 )
 from entropic.config.schema import (
     CompactionConfig,
-    EntropyConfig,
     LibraryConfig,
     ModelConfig,
     TierConfig,
@@ -101,19 +100,14 @@ class TestLibraryConfig:
         assert not hasattr(config, "quality")
         assert not hasattr(config, "ui")
         assert not hasattr(config, "storage")
-        assert not hasattr(config, "lsp")
         assert not hasattr(config, "voice")
         assert not hasattr(config, "commands_dir")
 
-    def test_entropy_config_inherits(self) -> None:
-        """EntropyConfig is a subclass of LibraryConfig."""
-        assert issubclass(EntropyConfig, LibraryConfig)
-        config = EntropyConfig()
-        assert isinstance(config, LibraryConfig)
-        # Has library fields
-        assert config.log_level == "INFO"
-        # Also has TUI fields
-        assert config.quality.enabled is True
+    def test_has_lsp_config(self) -> None:
+        """LSP config stays on LibraryConfig (used by diagnostics server)."""
+        config = LibraryConfig()
+        assert hasattr(config, "lsp")
+        assert config.lsp.enabled is True
 
     def test_inject_model_context_default_true(self) -> None:
         """inject_model_context defaults to True."""
@@ -126,7 +120,7 @@ class TestLibraryConfig:
         assert config.inject_model_context is False
 
     def test_routing_validator_runs(self) -> None:
-        """Cross-validation runs on LibraryConfig, not just EntropyConfig."""
+        """Cross-validation runs on LibraryConfig."""
         with pytest.raises(ValueError, match="fallback_tier"):
             LibraryConfig(
                 models={"tiers": {"fast": {"path": "/m"}}, "default": "fast"},
@@ -134,15 +128,8 @@ class TestLibraryConfig:
             )
 
 
-class TestEntropyConfig:
-    """Tests for EntropyConfig schema."""
-
-    def test_default_values(self) -> None:
-        """Test default configuration values."""
-        config = EntropyConfig()
-        assert config.log_level == "INFO"
-        assert config.routing.enabled is False
-        assert config.quality.enabled is True
+class TestModelConfig:
+    """Tests for ModelConfig schema."""
 
     def test_model_config_path_expansion(self) -> None:
         """Test that model paths are expanded."""
@@ -174,19 +161,6 @@ class TestEntropyConfig:
         with pytest.raises(ValueError, match="allowed_tools entry 'badname'"):
             ModelConfig(path=Path("/test"), allowed_tools=["badname"])
 
-    def test_default_routing_config(self) -> None:
-        """Test default routing configuration."""
-        config = EntropyConfig()
-        assert config.routing.enabled is False
-        assert config.routing.fallback_tier == "lead"
-
-    def test_default_quality_rules(self) -> None:
-        """Test default quality rules."""
-        config = EntropyConfig()
-        assert config.quality.rules.max_cognitive_complexity == 15
-        assert config.quality.rules.require_type_hints is True
-        assert config.quality.rules.docstring_style == "google"
-
 
 def _tier(path: str = "/test.gguf") -> TierConfig:
     """Create a minimal TierConfig for testing."""
@@ -207,8 +181,8 @@ class TestTierConfigFields:
         assert tc.auto_chain is True
 
     def test_full_config_with_auto_chain(self) -> None:
-        """EntropyConfig with auto_chain tier parses correctly."""
-        config = EntropyConfig(
+        """LibraryConfig with auto_chain tier parses correctly."""
+        config = LibraryConfig(
             models={
                 "tiers": {
                     "thinker": {
@@ -253,7 +227,7 @@ class TestRoutingCrossValidation:
 
     def test_valid_fallback_tier(self) -> None:
         """Config with fallback_tier matching a defined tier passes."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={"tiers": {"normal": _tier()}, "default": "normal"},
             routing={"enabled": False, "fallback_tier": "normal"},
         )
@@ -262,19 +236,19 @@ class TestRoutingCrossValidation:
     def test_invalid_fallback_tier(self) -> None:
         """Config with fallback_tier not in tiers raises."""
         with pytest.raises(ValueError, match="routing.fallback_tier 'missing'"):
-            EntropyConfig(
+            LibraryConfig(
                 models={"tiers": {"normal": _tier()}, "default": "normal"},
                 routing={"enabled": False, "fallback_tier": "missing"},
             )
 
     def test_no_tiers_skips_validation(self) -> None:
         """Config with no tiers defined skips routing validation."""
-        config = EntropyConfig(routing={"fallback_tier": "anything"})
+        config = LibraryConfig(routing={"fallback_tier": "anything"})
         assert config.routing.fallback_tier == "anything"
 
     def test_valid_tier_map(self) -> None:
         """Config with tier_map values matching defined tiers passes."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
             routing={"enabled": False, "fallback_tier": "a", "tier_map": {"1": "a", "2": "b"}},
         )
@@ -283,14 +257,14 @@ class TestRoutingCrossValidation:
     def test_invalid_tier_map_value(self) -> None:
         """Config with tier_map value not in tiers raises."""
         with pytest.raises(ValueError, match="routing.tier_map"):
-            EntropyConfig(
+            LibraryConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
                 routing={"enabled": False, "fallback_tier": "a", "tier_map": {"1": "bogus"}},
             )
 
     def test_valid_handoff_rules(self) -> None:
         """Config with handoff_rules referencing defined tiers passes."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={"tiers": {"a": _tier(), "b": _tier()}, "default": "a"},
             routing={
                 "enabled": False,
@@ -303,7 +277,7 @@ class TestRoutingCrossValidation:
     def test_invalid_handoff_rules_key(self) -> None:
         """Config with handoff_rules key not in tiers raises."""
         with pytest.raises(ValueError, match="routing.handoff_rules key 'bogus'"):
-            EntropyConfig(
+            LibraryConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
                 routing={
                     "enabled": False,
@@ -315,7 +289,7 @@ class TestRoutingCrossValidation:
     def test_invalid_handoff_rules_target(self) -> None:
         """Config with handoff_rules target not in tiers raises."""
         with pytest.raises(ValueError, match="contains 'bogus'"):
-            EntropyConfig(
+            LibraryConfig(
                 models={"tiers": {"a": _tier()}, "default": "a"},
                 routing={
                     "enabled": False,
@@ -326,7 +300,7 @@ class TestRoutingCrossValidation:
 
     def test_empty_tier_map_and_handoff_rules_valid(self) -> None:
         """Empty tier_map and handoff_rules are valid (auto-derived)."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={"tiers": {"normal": _tier()}, "default": "normal"},
             routing={"enabled": False, "fallback_tier": "normal"},
         )
@@ -336,14 +310,14 @@ class TestRoutingCrossValidation:
     def test_routing_enabled_without_router_raises(self) -> None:
         """Routing enabled but no router configured raises."""
         with pytest.raises(ValueError, match="models.router is not configured"):
-            EntropyConfig(
+            LibraryConfig(
                 models={"tiers": {"normal": _tier()}, "default": "normal"},
                 routing={"enabled": True, "fallback_tier": "normal"},
             )
 
     def test_routing_enabled_with_router_passes(self) -> None:
         """Routing enabled with router configured passes."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {"normal": _tier()},
                 "default": "normal",
@@ -402,7 +376,7 @@ class TestConfigLoader:
             project_root=None,
         )
         config = loader.load()
-        assert isinstance(config, EntropyConfig)
+        assert isinstance(config, LibraryConfig)
 
     def test_hierarchy(self) -> None:
         """Test configuration hierarchy."""
@@ -447,7 +421,7 @@ class TestConfigLoader:
         with tempfile.TemporaryDirectory() as tmpdir:
             tmpdir = Path(tmpdir)
 
-            config = EntropyConfig(
+            config = LibraryConfig(
                 config_dir=tmpdir / "config",
             )
 

@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message
 from entropic.core.commands import CommandContext, CommandRegistry
 from entropic.core.context import ContextCompactor, ProjectContext
@@ -87,7 +87,7 @@ class TestCommandRegistry:
     async def test_model_command_valid(self, registry: CommandRegistry) -> None:
         """Test model command with valid model."""
         await registry.discover()
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {"lead": {"path": "/m.gguf"}},
                 "default": "lead",
@@ -110,7 +110,7 @@ class TestCommandRegistry:
     async def test_model_command_invalid(self, registry: CommandRegistry) -> None:
         """Test model command with invalid model."""
         await registry.discover()
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {"lead": {"path": "/m.gguf"}},
                 "default": "lead",

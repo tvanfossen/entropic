@@ -55,24 +55,19 @@ from entropic.core.logging import (  # noqa: E402
     type=click.Path(exists=True, file_okay=False, path_type=Path),
     help="Project directory",
 )
-@click.option(
-    "--headless",
-    is_flag=True,
-    help="Run without TUI (for testing/automation)",
-)
 @click.pass_context
 def main(
     ctx: click.Context,
-    config: Path | None,
+    config: Path | None,  # noqa: ARG001
     model: str | None,
     log_level: str | None,
     project: Path | None,
-    headless: bool,
 ) -> None:
     """
-    Entropic - Local AI Coding Assistant
+    Entropic - Local AI Inference Engine
 
-    Run without arguments to start interactive mode.
+    Run without arguments to start headless interactive mode.
+    Install entropic-tui for the full terminal UI.
     """
     # Build CLI overrides
     cli_overrides: dict[str, Any] = {}
@@ -105,28 +100,15 @@ def main(
     ctx.obj["logger"] = logger
     ctx.obj["project"] = project_dir
 
-    # Store headless flag for subcommands
-    ctx.obj["headless"] = headless
-
-    # If no subcommand, start interactive mode
+    # If no subcommand, start headless interactive mode
     if ctx.invoked_subcommand is None:
         from entropic.app import Application
-
-        # Create presenter based on headless flag
-        presenter = None
-        if headless:
-            from entropic.ui.headless import HeadlessPresenter
-
-            presenter = HeadlessPresenter()
-
-        # TUI uses bundled app_context_tui.md unless consumer overrides
-        if app_config.app_context is None:
-            app_config.app_context = Path("app_context_tui.md")
+        from entropic.core.headless_presenter import HeadlessPresenter
 
         app = Application(
             config=app_config,
-            project_dir=ctx.obj["project"],
-            presenter=presenter,
+            project_dir=project_dir,
+            presenter=HeadlessPresenter(),
         )
         asyncio.run(app.run())
 
@@ -156,7 +138,8 @@ def status(ctx: click.Context) -> None:
 
     # Settings
     table.add_row("Routing Enabled", str(config.routing.enabled))
-    table.add_row("Quality Enforcement", str(config.quality.enabled))
+    quality = getattr(config, "quality", None)
+    table.add_row("Quality Enforcement", str(quality.enabled) if quality else "N/A")
     table.add_row("Log Level", config.log_level)
 
     console.print(table)
@@ -204,12 +187,6 @@ def init(ctx: click.Context) -> None:
     # Create default config
     default_config = """# Entropic Project Configuration
 # See ~/.entropic/config.yaml for global settings
-
-quality:
-  enabled: true
-  rules:
-    max_cognitive_complexity: 15
-    require_type_hints: true
 
 permissions:
   allow:

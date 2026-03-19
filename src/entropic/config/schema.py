@@ -169,41 +169,6 @@ class RoutingConfig(BaseModel):
     handoff_rules: dict[str, list[str]] = Field(default_factory=dict)  # Empty = all-to-all
 
 
-class QualityRulesConfig(BaseModel):
-    """Code quality enforcement rules."""
-
-    # Complexity
-    max_cognitive_complexity: int = Field(default=15, ge=1, le=50)
-    max_cyclomatic_complexity: int = Field(default=10, ge=1, le=30)
-
-    # Size
-    max_function_lines: int = Field(default=50, ge=10, le=200)
-    max_file_lines: int = Field(default=500, ge=100, le=2000)
-    max_parameters: int = Field(default=5, ge=2, le=10)
-    max_returns_per_function: int = Field(default=3, ge=1, le=10)
-
-    # Structure
-    require_type_hints: bool = True
-    require_docstrings: bool = True
-    require_return_type: bool = True
-
-    # Style
-    docstring_style: Literal["google", "numpy", "sphinx"] = "google"
-    enforce_snake_case_functions: bool = True
-    enforce_pascal_case_classes: bool = True
-
-
-class QualityConfig(BaseModel):
-    """Quality enforcement configuration."""
-
-    enabled: bool = True
-    max_regeneration_attempts: int = Field(default=3, ge=1, le=5)
-    rules: QualityRulesConfig = Field(default_factory=QualityRulesConfig)
-
-    # Per-language overrides
-    language_overrides: dict[str, QualityRulesConfig] = Field(default_factory=dict)
-
-
 class PermissionsConfig(BaseModel):
     """Tool permission configuration.
 
@@ -223,26 +188,6 @@ class PermissionsConfig(BaseModel):
 
     # Auto-approve all tool calls (skip confirmation prompts)
     auto_approve: bool = False
-
-
-class UIConfig(BaseModel):
-    """Terminal UI configuration."""
-
-    theme: Literal["dark", "light", "auto"] = "dark"
-    stream_output: bool = True
-    show_token_count: bool = True
-    show_timing: bool = True
-    max_output_lines: int = Field(default=100, ge=10, le=1000)
-
-
-class StorageConfig(BaseModel):
-    """Storage configuration."""
-
-    database_path: ExpandedPath = Field(
-        default_factory=lambda: Path.home() / ".entropic" / "history.db"
-    )
-    max_conversations: int = Field(default=1000, ge=10)
-    auto_save: bool = True
 
 
 class ExternalMCPConfig(BaseModel):
@@ -341,6 +286,7 @@ class LSPServerConfig(BaseModel):
 class LSPConfig(BaseModel):
     """LSP integration configuration.
 
+    Used by the diagnostics MCP server for proactive code analysis.
     Currently supports Python (pyright) and C (clangd).
     """
 
@@ -352,83 +298,6 @@ class LSPConfig(BaseModel):
 
     # Custom server overrides (optional)
     servers: dict[str, LSPServerConfig] = Field(default_factory=dict)
-
-
-# === Voice Interface Configuration ===
-
-
-class PersonaPlexModelConfig(BaseModel):
-    """Configuration for PersonaPlex model source."""
-
-    hf_repo: str = "nvidia/personaplex-7b-v1"
-
-
-class PersonaPlexRuntimeConfig(BaseModel):
-    """Runtime configuration for PersonaPlex."""
-
-    device: Literal["cuda", "cpu"] = "cuda"
-    quantization: Literal["int8", "fp16", "none"] = "int8"
-    context_window: int = Field(default=500, ge=50, le=3000)  # LM context in tokens
-
-
-class PersonaPlexSamplingConfig(BaseModel):
-    """Sampling parameters for PersonaPlex generation."""
-
-    text_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    audio_temperature: float = Field(default=0.8, ge=0.0, le=2.0)
-    top_k: int = Field(default=250, ge=1, le=1000)
-
-
-class VoicePromptConfig(BaseModel):
-    """Voice prompt file configuration."""
-
-    prompt_dir: ExpandedPath = Field(default_factory=lambda: Path.home() / ".entropic" / "voices")
-    # Voice name from PersonaPlex (NATF0-3, NATM0-3, VARF0-4, VARM0-4)
-    voice_name: str = "NATF2"
-    thinking_audio: str = "thinking_moment.wav"
-
-
-class VoiceConversationConfig(BaseModel):
-    """Voice conversation window configuration."""
-
-    window_duration: float = Field(default=15.0, ge=5.0, le=60.0)
-    initial_prompt: str = "You are a helpful coding assistant."
-
-
-class VoiceServerConfig(BaseModel):
-    """Configuration for voice server subprocess."""
-
-    host: str = "127.0.0.1"
-    port: int = Field(default=8765, ge=1024, le=65535)
-    auto_start: bool = True
-    startup_timeout_seconds: int = Field(
-        default=600, ge=10, le=1800
-    )  # 10 min default for model loading
-
-
-class SecondaryModelConfig(BaseModel):
-    """Configuration for secondary LLM used in context compaction."""
-
-    model_path: ExpandedPath = Field(
-        default_factory=lambda: Path.home() / "models" / "gguf" / "router.gguf"
-    )
-    max_tokens: int = Field(default=300, ge=50, le=1000)
-    temperature: float = Field(default=0.3, ge=0.0, le=2.0)
-
-
-class VoiceConfig(BaseModel):
-    """Root voice interface configuration."""
-
-    enabled: bool = False
-
-    # Sub-configurations
-    model: PersonaPlexModelConfig = Field(default_factory=PersonaPlexModelConfig)
-    runtime: PersonaPlexRuntimeConfig = Field(default_factory=PersonaPlexRuntimeConfig)
-    sampling: PersonaPlexSamplingConfig = Field(default_factory=PersonaPlexSamplingConfig)
-    voice_prompt: VoicePromptConfig = Field(default_factory=VoicePromptConfig)
-    conversation: VoiceConversationConfig = Field(default_factory=VoiceConversationConfig)
-    secondary_model: SecondaryModelConfig = Field(default_factory=SecondaryModelConfig)
-    server: VoiceServerConfig = Field(default_factory=VoiceServerConfig)
 
 
 def _validate_fallback_tier(fallback: str, tier_names: set[str]) -> None:
@@ -479,11 +348,11 @@ def _warn_auto_chain_without_targets(
 
 
 class LibraryConfig(BaseSettings):
-    """Minimal configuration for embedding entropic as a library.
+    """Configuration for the entropic inference engine.
 
-    Contains only the fields needed for inference: models, routing,
+    Contains all fields needed for inference: models, routing,
     generation, MCP, compaction, and prompts. TUI-specific fields
-    (quality, UI, storage, LSP, voice) live on ``EntropyConfig``.
+    live in the ``entropic-tui`` package.
     """
 
     model_config = SettingsConfigDict(
@@ -499,6 +368,7 @@ class LibraryConfig(BaseSettings):
     permissions: PermissionsConfig = Field(default_factory=PermissionsConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
+    lsp: LSPConfig = Field(default_factory=LSPConfig)
 
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
@@ -533,28 +403,3 @@ class LibraryConfig(BaseSettings):
         _validate_handoff_rules(self.routing.handoff_rules, tier_names)
         _warn_auto_chain_without_targets(self.models.tiers, self.routing.handoff_rules)
         return self
-
-
-class EntropyConfig(LibraryConfig):
-    """Full configuration for Entropic TUI application.
-
-    Extends ``LibraryConfig`` with TUI-specific fields: quality
-    enforcement, UI theming, conversation storage, LSP integration,
-    and voice interface.
-
-    Library consumers should use ``LibraryConfig`` for a cleaner type
-    that excludes TUI concerns.
-    """
-
-    # TUI-specific sub-configurations
-    quality: QualityConfig = Field(default_factory=QualityConfig)
-    ui: UIConfig = Field(default_factory=UIConfig)
-    storage: StorageConfig = Field(default_factory=StorageConfig)
-    lsp: LSPConfig = Field(default_factory=LSPConfig)
-    voice: VoiceConfig = Field(default_factory=VoiceConfig)
-
-    # TUI-specific fields
-    log_file: Path | None = None
-    commands_dir: ExpandedPath = Field(
-        default_factory=lambda: Path.home() / ".entropic" / "commands"
-    )

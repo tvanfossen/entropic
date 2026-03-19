@@ -19,7 +19,7 @@ from entropic import __version__
 from entropic.benchmark.checks import CheckResult, run_checks
 from entropic.benchmark.gpu import get_gpu_info
 from entropic.config.loader import ConfigLoader
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message, ModelTier
 from entropic.core.logging import get_logger
 from entropic.inference.orchestrator import ModelOrchestrator
@@ -112,7 +112,7 @@ def discover_benchmarks() -> list[tuple[str, IdentityFrontmatter, BenchmarkSpec]
 
 async def run_quality(
     *,
-    config: EntropyConfig | None = None,
+    config: LibraryConfig | None = None,
     candidate_model: Path | None = None,
     identity_filter: str | None = None,
     on_identity: Callable[[str], None] | None = None,
@@ -297,7 +297,7 @@ def _load_tools_for_identity(fm: IdentityFrontmatter) -> list[dict[str, Any]]:
 
 
 def _build_all_tiers(
-    config: EntropyConfig,
+    config: LibraryConfig,
     benchmarks: list[tuple[str, IdentityFrontmatter, BenchmarkSpec]],
 ) -> list[ModelTier]:
     """Build ModelTier objects for every identity being benchmarked.
@@ -337,14 +337,14 @@ def _load_identity_frontmatter(name: str) -> IdentityFrontmatter | None:
         return None
 
 
-def _override_model_paths(config: EntropyConfig, candidate: Path) -> None:
+def _override_model_paths(config: LibraryConfig, candidate: Path) -> None:
     """Override all tier model paths with the candidate model file."""
     resolved = candidate.expanduser().resolve()
     for tier_config in config.models.tiers.values():
         tier_config.path = resolved
 
 
-def _get_tier_model_path(config: EntropyConfig, tier_name: str) -> str:
+def _get_tier_model_path(config: LibraryConfig, tier_name: str) -> str:
     """Get the configured model path for a tier."""
     tier_config = config.models.tiers.get(tier_name)
     if tier_config:

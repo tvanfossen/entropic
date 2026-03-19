@@ -102,7 +102,7 @@ class MockTierConfig:
         self.routable = True
 
 
-class MockEntropyConfig:
+class MockLibraryConfig:
     """Config that samples four real identity names to avoid hardcoding tier names."""
 
     def __init__(self):
@@ -135,7 +135,7 @@ class TestModelOrchestratorLoading:
 
     def setup_method(self):
         """Set up test fixtures."""
-        self.config = MockEntropyConfig()
+        self.config = MockLibraryConfig()
 
     def _create_orchestrator_with_mocks(
         self,
@@ -346,7 +346,7 @@ class TestBackendFactory:
     """Tests for custom backend factory injection."""
 
     def setup_method(self):
-        self.config = MockEntropyConfig()
+        self.config = MockLibraryConfig()
 
     @pytest.mark.asyncio
     async def test_custom_factory_called_for_each_tier(self) -> None:
@@ -378,7 +378,7 @@ class TestIdentityFileValidation:
     """Tests for identity file validation via PromptManager."""
 
     def setup_method(self):
-        self.config = MockEntropyConfig()
+        self.config = MockLibraryConfig()
 
     def test_custom_identity_missing_raises(self, tmp_path: Path) -> None:
         """PromptManager raises when custom identity path doesn't exist."""

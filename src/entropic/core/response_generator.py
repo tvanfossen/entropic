@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any
 
-from entropic.config.schema import EntropyConfig
+from entropic.config.schema import LibraryConfig
 from entropic.core.base import Message, ToolCall
 from entropic.core.engine_types import (
     AgentState,
@@ -41,7 +41,7 @@ class ResponseGenerator:
     def __init__(
         self,
         orchestrator: ModelOrchestrator,
-        config: EntropyConfig,
+        config: LibraryConfig,
         loop_config: LoopConfig,
         callbacks: EngineCallbacks,
         events: GenerationEvents,

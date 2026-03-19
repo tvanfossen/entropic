@@ -15,8 +15,8 @@ import pytest
 # === Public API imports only ===
 from entropic import (
     BackendFactory,
-    EntropyConfig,
     GenerationResult,
+    LibraryConfig,
     Message,
     ModelBackend,
     ModelOrchestrator,
@@ -99,7 +99,7 @@ class TestPublicAPIImports:
 
     def test_config_types_available(self) -> None:
         """Config types are importable from top-level package."""
-        assert EntropyConfig is not None
+        assert LibraryConfig is not None
         assert TierConfig is not None
 
     def test_orchestrator_types_available(self) -> None:
@@ -143,11 +143,11 @@ class TestCustomTiers:
 
 
 class TestProgrammaticConfig:
-    """Verify EntropyConfig works without ConfigLoader or files on disk."""
+    """Verify LibraryConfig works without ConfigLoader or files on disk."""
 
     def test_minimal_config(self) -> None:
         """Construct config with just custom tiers and routing disabled."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {
                     "math": {"path": "/tmp/math.gguf"},
@@ -163,7 +163,7 @@ class TestProgrammaticConfig:
 
     def test_config_with_router(self) -> None:
         """Config with router model for classification."""
-        config = EntropyConfig(
+        config = LibraryConfig(
             models={
                 "tiers": {"fast": {"path": "/tmp/fast.gguf"}},
                 "router": {"path": "/tmp/router.gguf"},
@@ -178,8 +178,8 @@ class TestProgrammaticConfig:
 class TestOrchestratorWithCustomFactory:
     """Verify orchestrator works with consumer-injected backend factory."""
 
-    def _make_config(self) -> EntropyConfig:
-        return EntropyConfig(
+    def _make_config(self) -> LibraryConfig:
+        return LibraryConfig(
             models={
                 "tiers": {
                     "math": {"path": "/tmp/math.gguf", "focus": ["arithmetic", "algebra"]},

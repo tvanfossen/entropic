@@ -1,0 +1,84 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  build-cpu:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        build_type: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential doxygen
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DENTROPIC_CPU_ONLY=ON \
+            -DENTROPIC_BUILD_TESTS=ON \
+            -DENTROPIC_BUILD_DOCS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: cd build && ctest --output-on-failure --parallel 4
+
+      - name: Docs (Release only)
+        if: matrix.build_type == 'Release'
+        run: cmake --build build --target docs
+
+  static-analysis:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang-tidy-18 cppcheck
+
+      - name: Configure with clang-tidy
+        run: |
+          cmake -B build \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_CLANG_TIDY="clang-tidy-18" \
+            -DENTROPIC_CPU_ONLY=ON \
+            -DENTROPIC_BUILD_TESTS=OFF
+
+      - name: Build (clang-tidy runs during build)
+        run: cmake --build build --parallel
+
+      - name: cppcheck
+        run: |
+          cppcheck --enable=warning,style,performance \
+            --suppress=missingIncludeSystem \
+            --error-exitcode=1 \
+            -I include \
+            src/
+
+      - name: knots (C complexity checker)
+        run: |
+          pip install knots
+          knots check src/ \
+            --cognitive-complexity 15 \
+            --cyclomatic-complexity 15 \
+            --nesting-depth 4 \
+            --sloc 50 \
+            --abc-magnitude 10.0 \
+            --max-returns 3 \
+            --exclude "extern/*"

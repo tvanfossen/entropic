@@ -1,1 +1,35 @@
-[]
+[
+  {
+    "req_id": "REQ-INFER-001",
+    "req_name": "Three-state VRAM lifecycle",
+    "functions": [
+      {
+        "name": "entropic_inference_generate",
+        "file": "include/entropic/interfaces/i_inference_backend.h",
+        "version": "1.8.2"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-003",
+    "req_name": "Streaming generation with cancel",
+    "functions": [
+      {
+        "name": "entropic_inference_generate_streaming",
+        "file": "include/entropic/interfaces/i_inference_backend.h",
+        "version": "1.8.2"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-004",
+    "req_name": "Raw text completion",
+    "functions": [
+      {
+        "name": "entropic_inference_complete",
+        "file": "include/entropic/interfaces/i_inference_backend.h",
+        "version": "1.8.2"
+      }
+    ]
+  }
+]

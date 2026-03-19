@@ -83,6 +83,7 @@ add_subdirectory(extern)
 add_subdirectory(src/types)
 add_subdirectory(src/config)
 add_subdirectory(src/prompts)
+add_subdirectory(src/inference)
 add_subdirectory(src/facade)
 
 if(ENTROPIC_BUILD_TESTS)

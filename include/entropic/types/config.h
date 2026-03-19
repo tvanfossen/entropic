@@ -9,10 +9,12 @@
  * Structs use aggregate initialization with defaults. Validation is
  * separate — each struct has a standalone validate() function.
  *
- * @version 1.8.1
+ * @version 1.8.2
  */
 
 #pragma once
+
+#include <entropic/types/enums.h>
 
 #include <string>
 #include <vector>
@@ -21,6 +23,20 @@
 #include <unordered_map>
 
 namespace entropic {
+
+/**
+ * @brief C++ enum class for model VRAM lifecycle states.
+ *
+ * Maps 1:1 to C entropic_model_state_t for cross-boundary use.
+ * Internal C++ code uses this typed enum; C boundary uses the C enum.
+ *
+ * @version 1.8.2
+ */
+enum class ModelState : int {
+    COLD   = ENTROPIC_MODEL_STATE_COLD,    ///< On disk only, no RAM consumed
+    WARM   = ENTROPIC_MODEL_STATE_WARM,    ///< mmap'd + mlock'd in RAM
+    ACTIVE = ENTROPIC_MODEL_STATE_ACTIVE,  ///< GPU layers loaded, full speed
+};
 
 /**
  * @brief Model configuration for a single tier.
@@ -54,7 +70,7 @@ struct ModelConfig {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 1.8.0
+ * @version 1.8.2
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -62,8 +78,11 @@ struct GenerationParams {
     int top_k = 40;                          ///< Top-K sampling
     float repeat_penalty = 1.1f;             ///< Repetition penalty
     int max_tokens = 4096;                   ///< Maximum tokens to generate
-    int reasoning_budget = -1;               ///< Per-call think budget override (-1 = use model default)
+    int reasoning_budget = -1;               ///< Per-call think budget override (-1 = unlimited)
+    bool enable_thinking = true;             ///< Enable <think> blocks (false if reasoning_budget == 0)
     std::string grammar;                     ///< GBNF grammar string (empty = unconstrained)
+    std::vector<std::string> stop;           ///< Stop sequences
+    int logprobs = 0;                        ///< Top log-probs per token (0 = disabled)
 };
 
 /**

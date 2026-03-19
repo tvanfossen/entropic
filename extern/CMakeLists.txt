@@ -38,8 +38,24 @@ set(RYML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ryml)
 
 # ── llama.cpp ────────────────────────────────────────────
-# Submodule added but NOT built in v1.8.0. Build integration deferred
-# to v1.8.2 when the inference backend is implemented.
-# set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-# set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-# add_subdirectory(llama.cpp)
+# v1.8.2: Build llama.cpp as part of the inference backend.
+# Submodule pinned at b8420.
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE_SAVED ${CMAKE_POSITION_INDEPENDENT_CODE})
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+add_subdirectory(llama.cpp)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
+set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
+
+# ── nlohmann/json (header-only JSON) ────────────────────
+FetchContent_Declare(json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(json)

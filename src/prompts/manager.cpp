@@ -1,7 +1,7 @@
 /**
  * @file manager.cpp
  * @brief Prompt manager implementation — frontmatter parsing, identity loading.
- * @version 1.8.1
+ * @version 1.8.2
  */
 
 #include <entropic/prompts/manager.h>
@@ -26,7 +26,7 @@ namespace entropic::prompts {
  * @brief Trim leading and trailing whitespace from a string.
  * @param s Input string.
  * @return Trimmed string.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 static std::string trim(const std::string& s)
@@ -51,7 +51,7 @@ static std::string trim(const std::string& s)
  * @param[out] tree Output ryml tree of frontmatter.
  * @param[out] body Output markdown body after frontmatter.
  * @return Empty string on success, error on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @internal
  */
 static std::string parse_frontmatter(
@@ -85,20 +85,14 @@ static std::string parse_frontmatter(
  * @brief Convert PromptType to string.
  * @param type Prompt type.
  * @return String representation.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 const char* prompt_type_to_string(PromptType type)
 {
-    switch (type) {
-    case PromptType::CONSTITUTION:
-        return "constitution";
-    case PromptType::APP_CONTEXT:
-        return "app_context";
-    case PromptType::IDENTITY:
-        return "identity";
-    }
-    return "unknown";
+    static constexpr const char* names[] = {"constitution", "app_context", "identity"};
+    int idx = static_cast<int>(type);
+    return (idx >= 0 && idx <= 2) ? names[idx] : "unknown";
 }
 
 /**
@@ -107,7 +101,7 @@ const char* prompt_type_to_string(PromptType type)
  * @param expected_type Expected frontmatter type.
  * @param[out] result Output: type, version, body.
  * @return Empty string on success, error on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string parse_prompt_file(
@@ -115,54 +109,119 @@ std::string parse_prompt_file(
     PromptType expected_type,
     ParsedPrompt& result)
 {
+    std::string err;
+
     auto content = read_file(path);
     if (content.empty()) {
-        return "cannot read prompt file: " + path.string();
+        err = "cannot read prompt file: " + path.string();
     }
 
     ryml::Tree tree;
-    auto err = parse_frontmatter(content, path, tree, result.body);
-    if (!err.empty()) {
-        return err;
+    if (err.empty()) {
+        err = parse_frontmatter(content, path, tree, result.body);
     }
 
-    ryml::ConstNodeRef root = tree.rootref();
-
+    ryml::ConstNodeRef root;
     std::string type_str;
-    if (!extract(root, "type", type_str)) {
-        return "prompt file " + path.string()
-               + " missing 'type' field";
+    if (err.empty()) {
+        root = tree.rootref();
+        if (!extract(root, "type", type_str)) {
+            err = "prompt file " + path.string()
+                  + " missing 'type' field";
+        }
     }
 
-    PromptType actual_type;
-    if (type_str == "constitution") {
-        actual_type = PromptType::CONSTITUTION;
-    } else if (type_str == "app_context") {
-        actual_type = PromptType::APP_CONTEXT;
-    } else if (type_str == "identity") {
-        actual_type = PromptType::IDENTITY;
-    } else {
-        return "prompt file " + path.string()
-               + " has unknown type '" + type_str + "'";
+    PromptType actual_type{};
+    if (err.empty()) {
+        if (type_str == "constitution") {
+            actual_type = PromptType::CONSTITUTION;
+        } else if (type_str == "app_context") {
+            actual_type = PromptType::APP_CONTEXT;
+        } else if (type_str == "identity") {
+            actual_type = PromptType::IDENTITY;
+        } else {
+            err = "prompt file " + path.string()
+                  + " has unknown type '" + type_str + "'";
+        }
     }
 
-    if (actual_type != expected_type) {
-        return "prompt file " + path.string() + " has type '"
-               + type_str + "' but was loaded as '"
-               + prompt_type_to_string(expected_type) + "'";
+    if (err.empty() && actual_type != expected_type) {
+        err = "prompt file " + path.string() + " has type '"
+              + type_str + "' but was loaded as '"
+              + prompt_type_to_string(expected_type) + "'";
     }
 
-    result.type = actual_type;
-    extract(root, "version", result.version);
+    if (err.empty()) {
+        result.type = actual_type;
+        extract(root, "version", result.version);
+    }
 
-    return "";
+    return err;
+}
+
+/**
+ * @brief Extract phase configs from identity frontmatter.
+ * @param root ryml root node.
+ * @param[out] fm Output identity frontmatter.
+ * @version 1.8.2
+ * @internal
+ */
+static void extract_phases(
+    ryml::ConstNodeRef root, IdentityFrontmatter& fm)
+{
+    if (!root.has_child("phases") || !root["phases"].is_map()) {
+        return;
+    }
+    fm.phases.emplace();
+    for (auto child : root["phases"]) {
+        PhaseConfig phase;
+        std::string phase_name = to_string(child.key());
+        extract(child, "temperature", phase.temperature);
+        extract(child, "max_output_tokens", phase.max_output_tokens);
+        extract(child, "enable_thinking", phase.enable_thinking);
+        extract(child, "repeat_penalty", phase.repeat_penalty);
+        extract_string_list_opt(child, "bash_commands", phase.bash_commands);
+        (*fm.phases)[phase_name] = std::move(phase);
+    }
+}
+
+/**
+ * @brief Extract benchmark config from identity frontmatter.
+ * @param root ryml root node.
+ * @param[out] fm Output identity frontmatter.
+ * @version 1.8.2
+ * @internal
+ */
+static void extract_benchmark(
+    ryml::ConstNodeRef root, IdentityFrontmatter& fm)
+{
+    if (!root.has_child("benchmark") || !root["benchmark"].is_map()) {
+        return;
+    }
+    fm.benchmark.emplace();
+    auto bench = root["benchmark"];
+    if (!bench.has_child("prompts") || !bench["prompts"].is_seq()) {
+        return;
+    }
+    for (auto p_node : bench["prompts"]) {
+        BenchmarkPrompt bp;
+        extract(p_node, "prompt", bp.prompt);
+        if (p_node.has_child("checks") && p_node["checks"].is_seq()) {
+            for (auto c_node : p_node["checks"]) {
+                std::string check_yaml;
+                ryml::emitrs_yaml(c_node, &check_yaml);
+                bp.checks_yaml.push_back(std::move(check_yaml));
+            }
+        }
+        fm.benchmark->prompts.push_back(std::move(bp));
+    }
 }
 
 /**
  * @brief Extract identity-specific fields from a pre-parsed ryml tree.
  * @param root ryml root node of the frontmatter.
  * @param[out] fm Output identity frontmatter.
- * @version 2
+ * @version 3
  * @internal
  */
 static void extract_identity_fields(
@@ -196,44 +255,8 @@ static void extract_identity_fields(
     extract(root, "role_type", fm.role_type);
     extract(root, "explicit_completion", fm.explicit_completion);
 
-    // Phases
-    if (root.has_child("phases") && root["phases"].is_map()) {
-        fm.phases.emplace();
-        for (auto child : root["phases"]) {
-            PhaseConfig phase;
-            std::string phase_name = to_string(child.key());
-            extract(child, "temperature", phase.temperature);
-            extract(child, "max_output_tokens", phase.max_output_tokens);
-            extract(child, "enable_thinking", phase.enable_thinking);
-            extract(child, "repeat_penalty", phase.repeat_penalty);
-            extract_string_list_opt(
-                child, "bash_commands", phase.bash_commands);
-            (*fm.phases)[phase_name] = std::move(phase);
-        }
-    }
-
-    // Benchmark
-    if (root.has_child("benchmark") && root["benchmark"].is_map()) {
-        fm.benchmark.emplace();
-        auto bench_node = root["benchmark"];
-        if (bench_node.has_child("prompts")
-            && bench_node["prompts"].is_seq()) {
-            for (auto p_node : bench_node["prompts"]) {
-                BenchmarkPrompt bp;
-                extract(p_node, "prompt", bp.prompt);
-                if (p_node.has_child("checks")
-                    && p_node["checks"].is_seq()) {
-                    for (auto c_node : p_node["checks"]) {
-                        std::string check_yaml;
-                        ryml::emitrs_yaml(c_node, &check_yaml);
-                        bp.checks_yaml.push_back(
-                            std::move(check_yaml));
-                    }
-                }
-                fm.benchmark->prompts.push_back(std::move(bp));
-            }
-        }
-    }
+    extract_phases(root, fm);
+    extract_benchmark(root, fm);
 }
 
 /**
@@ -241,46 +264,51 @@ static void extract_identity_fields(
  * @param path Path to identity .md file.
  * @param[out] identity Output parsed identity.
  * @return Empty string on success, error on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string load_identity(
     const std::filesystem::path& path,
     ParsedIdentity& identity)
 {
+    std::string err;
+
     auto content = read_file(path);
     if (content.empty()) {
-        return "cannot read identity file: " + path.string();
+        err = "cannot read identity file: " + path.string();
     }
 
     ryml::Tree tree;
-    auto err = parse_frontmatter(content, path, tree, identity.body);
-    if (!err.empty()) {
-        return err;
+    if (err.empty()) {
+        err = parse_frontmatter(content, path, tree, identity.body);
     }
 
-    ryml::ConstNodeRef root = tree.rootref();
+    ryml::ConstNodeRef root;
+    if (err.empty()) {
+        root = tree.rootref();
 
-    // Validate type field
-    std::string type_str;
-    if (!extract(root, "type", type_str) || type_str != "identity") {
-        return "prompt file " + path.string()
-               + " is not an identity file (type='"
-               + type_str + "')";
+        // Validate type field
+        std::string type_str;
+        if (!extract(root, "type", type_str) || type_str != "identity") {
+            err = "prompt file " + path.string()
+                  + " is not an identity file (type='"
+                  + type_str + "')";
+        }
     }
 
-    extract_identity_fields(root, identity.frontmatter);
+    if (err.empty()) {
+        extract_identity_fields(root, identity.frontmatter);
 
-    if (identity.frontmatter.focus.empty()) {
-        return "identity " + path.string()
-               + ": focus must have at least one entry";
-    }
-    if (identity.frontmatter.name.empty()) {
-        return "identity " + path.string()
-               + ": name must not be empty";
+        if (identity.frontmatter.focus.empty()) {
+            err = "identity " + path.string()
+                  + ": focus must have at least one entry";
+        } else if (identity.frontmatter.name.empty()) {
+            err = "identity " + path.string()
+                  + ": name must not be empty";
+        }
     }
 
-    return "";
+    return err;
 }
 
 /**
@@ -290,7 +318,7 @@ std::string load_identity(
  * @param data_dir Bundled data directory.
  * @param[out] body Output constitution text.
  * @return Empty string on success, error on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string load_constitution(
@@ -299,32 +327,32 @@ std::string load_constitution(
     const std::filesystem::path& data_dir,
     std::string& body)
 {
+    std::string err;
+
     if (disabled) {
         s_log->info("Constitution disabled by config");
         body.clear();
-        return "";
-    }
-
-    std::filesystem::path path;
-    if (constitution_path.has_value()) {
-        path = *constitution_path;
     } else {
-        path = data_dir / "prompts" / "constitution.md";
+        std::filesystem::path path = constitution_path.has_value()
+            ? *constitution_path
+            : data_dir / "prompts" / "constitution.md";
+
+        if (!std::filesystem::exists(path)) {
+            err = "constitution file not found: " + path.string();
+        }
+
+        ParsedPrompt result;
+        if (err.empty()) {
+            err = parse_prompt_file(path, PromptType::CONSTITUTION, result);
+        }
+
+        if (err.empty()) {
+            body = std::move(result.body);
+            s_log->info("Constitution loaded from {}", path.string());
+        }
     }
 
-    if (!std::filesystem::exists(path)) {
-        return "constitution file not found: " + path.string();
-    }
-
-    ParsedPrompt result;
-    auto err = parse_prompt_file(path, PromptType::CONSTITUTION, result);
-    if (!err.empty()) {
-        return err;
-    }
-
-    body = std::move(result.body);
-    s_log->info("Constitution loaded from {}", path.string());
-    return "";
+    return err;
 }
 
 /**
@@ -334,7 +362,7 @@ std::string load_constitution(
  * @param data_dir Bundled data directory.
  * @param[out] body Output app_context text.
  * @return Empty string on success, error on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string load_app_context(
@@ -343,32 +371,35 @@ std::string load_app_context(
     const std::filesystem::path& data_dir,
     std::string& body)
 {
+    std::string err;
+
     if (disabled || !app_context_path.has_value()) {
         s_log->info("App context disabled (not configured)");
         body.clear();
-        return "";
+    } else {
+        auto path = *app_context_path;
+
+        // Bare filename resolves as bundled prompt
+        if (!path.has_parent_path() || path.parent_path().empty()) {
+            path = data_dir / "prompts" / path;
+        }
+
+        if (!std::filesystem::exists(path)) {
+            err = "app_context file not found: " + path.string();
+        }
+
+        ParsedPrompt result;
+        if (err.empty()) {
+            err = parse_prompt_file(path, PromptType::APP_CONTEXT, result);
+        }
+
+        if (err.empty()) {
+            body = std::move(result.body);
+            s_log->info("App context loaded from {}", path.string());
+        }
     }
 
-    auto path = *app_context_path;
-
-    // Bare filename resolves as bundled prompt
-    if (!path.has_parent_path() || path.parent_path().empty()) {
-        path = data_dir / "prompts" / path;
-    }
-
-    if (!std::filesystem::exists(path)) {
-        return "app_context file not found: " + path.string();
-    }
-
-    ParsedPrompt result;
-    auto err = parse_prompt_file(path, PromptType::APP_CONTEXT, result);
-    if (!err.empty()) {
-        return err;
-    }
-
-    body = std::move(result.body);
-    s_log->info("App context loaded from {}", path.string());
-    return "";
+    return err;
 }
 
 } // namespace entropic::prompts

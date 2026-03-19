@@ -40,19 +40,18 @@ repos:
     rev: 1.0.0
     hooks:
       - id: knots
-        args: [--cognitive-threshold=15]
+        args:
+          - --cognitive-threshold=15
+          - --mccabe-threshold=15
+          - --nesting-threshold=4
+          - --sloc-threshold=50
+          - --abc-threshold=10.0
+          - --return-threshold=3
         exclude: ^extern/
 
-  # doxygen-guard disabled — Python codebase is dead code heading into C++ rewrite.
-  # Re-enable for C/C++ sources at v1.8.0.
-  # - repo: https://github.com/tvanfossen/doxygen-guard
-  #   rev: main
-  #   hooks:
-  #     - id: doxygen-guard
-  #       exclude: ^extern/
-
-  # pytest removed from pre-commit at v1.8.0 transition.
-  # Python engine tests go away with the TUI separation.
-  # C/C++ tests come back with Catch2 at v1.8.0.
-  # Quality gates for now: knots (C complexity) + flake8 (Python complexity)
-  #   + doxygen-guard (@req traceability, @version staleness)
+  - repo: https://github.com/tvanfossen/doxygen-guard
+    rev: main
+    hooks:
+      - id: doxygen-guard
+        files: \.(h|hpp|c|cpp|cc|cxx)$
+        exclude: ^extern/

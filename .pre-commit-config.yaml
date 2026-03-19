@@ -37,7 +37,7 @@ repos:
           - '--ignore=E501,W503,E203,E704'
 
   - repo: https://github.com/brandon-arrendondo/knots
-    rev: 1.0.0
+    rev: v1.1.0
     hooks:
       - id: knots
         args:

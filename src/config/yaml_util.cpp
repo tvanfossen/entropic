@@ -1,7 +1,7 @@
 /**
  * @file yaml_util.cpp
  * @brief ryml extraction helper implementations.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 
@@ -20,7 +20,7 @@ namespace entropic::config {
  * @brief Convert ryml csubstr to std::string.
  * @param s ryml substring.
  * @return Equivalent std::string.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string to_string(c4::csubstr s)
@@ -32,7 +32,7 @@ std::string to_string(c4::csubstr s)
  * @brief Read a file into a string.
  * @param path File path.
  * @return File contents, or empty string on failure.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::string read_file(const std::filesystem::path& path)
@@ -51,24 +51,22 @@ std::string read_file(const std::filesystem::path& path)
  * @brief Expand ~ to home directory in a path.
  * @param p Input path (may start with ~).
  * @return Expanded path. If p doesn't start with ~, returns p unchanged.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 std::filesystem::path expand_home(const std::filesystem::path& p)
 {
     auto str = p.string();
-    if (str.empty() || str[0] != '~') {
-        return p;
-    }
     const char* home = std::getenv("HOME");
-    if (home == nullptr) {
+    bool needs_expansion = !str.empty() && str[0] == '~' && home != nullptr;
+
+    if (!needs_expansion) {
         return p;
     }
-    if (str.size() == 1) {
-        return std::filesystem::path(home);
-    }
-    // Skip "~/" prefix
-    return std::filesystem::path(home) / str.substr(2);
+
+    return (str.size() == 1)
+        ? std::filesystem::path(home)
+        : std::filesystem::path(home) / str.substr(2);
 }
 
 /**
@@ -77,7 +75,7 @@ std::filesystem::path expand_home(const std::filesystem::path& p)
  * @param key The key to look up.
  * @param[out] out Output string. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract(ryml::ConstNodeRef node, c4::csubstr key, std::string& out)
@@ -99,7 +97,7 @@ bool extract(ryml::ConstNodeRef node, c4::csubstr key, std::string& out)
  * @param key The key to look up.
  * @param[out] out Output int. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract(ryml::ConstNodeRef node, c4::csubstr key, int& out)
@@ -122,7 +120,7 @@ bool extract(ryml::ConstNodeRef node, c4::csubstr key, int& out)
  * @param key The key to look up.
  * @param[out] out Output float. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract(ryml::ConstNodeRef node, c4::csubstr key, float& out)
@@ -145,7 +143,7 @@ bool extract(ryml::ConstNodeRef node, c4::csubstr key, float& out)
  * @param key The key to look up.
  * @param[out] out Output double. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract(ryml::ConstNodeRef node, c4::csubstr key, double& out)
@@ -168,7 +166,7 @@ bool extract(ryml::ConstNodeRef node, c4::csubstr key, double& out)
  * @param key The key to look up.
  * @param[out] out Output bool. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract(ryml::ConstNodeRef node, c4::csubstr key, bool& out)
@@ -194,7 +192,7 @@ bool extract(ryml::ConstNodeRef node, c4::csubstr key, bool& out)
  * @param key The key to look up.
  * @param[out] out Output path with ~ expanded. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_path(ryml::ConstNodeRef node, c4::csubstr key,
@@ -215,7 +213,7 @@ bool extract_path(ryml::ConstNodeRef node, c4::csubstr key,
  * @param[out] out Output path. nullopt if absent/null/false.
  * @param[out] disabled Set to true if value is explicitly false.
  * @return true if key was found.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_tri_state_path(
@@ -226,19 +224,14 @@ bool extract_tri_state_path(
         return false;
     }
     auto child = node[key];
-    if (!child.has_val() || child.val_is_null()) {
-        out = std::nullopt;
-        disabled = false;
-        return true;
-    }
-    auto val = to_string(child.val());
-    if (val == "false" || val == "False" || val == "FALSE") {
-        out = std::nullopt;
-        disabled = true;
-        return true;
-    }
-    out = expand_home(std::filesystem::path(val));
-    disabled = false;
+    bool is_null = !child.has_val() || child.val_is_null();
+    auto val = is_null ? std::string{} : to_string(child.val());
+    bool is_false = (val == "false" || val == "False" || val == "FALSE");
+
+    disabled = is_false;
+    out = (is_null || is_false)
+        ? std::nullopt
+        : std::optional{expand_home(std::filesystem::path(val))};
     return true;
 }
 
@@ -248,7 +241,7 @@ bool extract_tri_state_path(
  * @param key The key to look up.
  * @param[out] out Output vector. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_string_list(ryml::ConstNodeRef node, c4::csubstr key,
@@ -274,7 +267,7 @@ bool extract_string_list(ryml::ConstNodeRef node, c4::csubstr key,
  * @param key The key to look up.
  * @param[out] out Output optional vector.
  * @return true if key was found.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_string_list_opt(ryml::ConstNodeRef node, c4::csubstr key,
@@ -284,13 +277,10 @@ bool extract_string_list_opt(ryml::ConstNodeRef node, c4::csubstr key,
         return false;
     }
     auto child = node[key];
-    if (child.is_seq()) {
-        // Fall through to parse the sequence below
-    } else if (!child.has_val() || child.val_is_null()) {
-        out = std::nullopt;
-        return true;
-    } else {
-        return false;
+    if (!child.is_seq()) {
+        bool is_null = !child.has_val() || child.val_is_null();
+        out = is_null ? std::nullopt : out;
+        return is_null;
     }
     std::vector<std::string> vec;
     for (auto item : child) {
@@ -306,7 +296,7 @@ bool extract_string_list_opt(ryml::ConstNodeRef node, c4::csubstr key,
  * @param key The key to look up.
  * @param[out] out Output map. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_string_map(ryml::ConstNodeRef node, c4::csubstr key,
@@ -332,7 +322,7 @@ bool extract_string_map(ryml::ConstNodeRef node, c4::csubstr key,
  * @param key The key to look up.
  * @param[out] out Output map. Unchanged if key is absent.
  * @return true if key was found and extracted.
- * @version 1.8.1
+ * @version 1.8.2
  * @utility
  */
 bool extract_string_list_map(

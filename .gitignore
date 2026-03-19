@@ -101,3 +101,7 @@ examples/hello-world/.hello-world/
 
 # Archived legacy files
 .old/
+
+
+# build cache
+.cache/

@@ -11,533 +11,472 @@
 #   acceptance_criteria: how to verify it works
 #   version: which version introduces this requirement
 
-# ═══════════════════════════════════════════════════════════════
-# REQ-LOOP: Agentic Loop (engine.py, engine_types.py)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-LOOP-001:
+- id: REQ-LOOP-001
   name: State machine lifecycle
-  description: >
-    AgentEngine transitions through defined states: IDLE, PLANNING,
-    EXECUTING, WAITING_TOOL, VERIFYING, DELEGATING, COMPLETE, ERROR,
-    INTERRUPTED, PAUSED. Only valid transitions are permitted.
-  acceptance_criteria: >
-    State machine rejects invalid transitions. Terminal states
-    (COMPLETE, ERROR, INTERRUPTED) cannot transition to non-terminal states.
-  version: v1.8.4
+  description: 'AgentEngine transitions through defined states: IDLE, PLANNING, EXECUTING, WAITING_TOOL, VERIFYING, DELEGATING,
+    COMPLETE, ERROR, INTERRUPTED, PAUSED. Only valid transitions are permitted.
 
-REQ-LOOP-002:
+    '
+  acceptance_criteria: 'State machine rejects invalid transitions. Terminal states (COMPLETE, ERROR, INTERRUPTED) cannot transition
+    to non-terminal states.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-002
   name: Iteration budget enforcement
-  description: >
-    The engine loop terminates after max_iterations (default 15).
-    Warns the user when budget is exhausted.
-  acceptance_criteria: >
-    Loop stops at max_iterations. A warning message is yielded.
-    Delegation turns do not count against parent budget.
-  version: v1.8.4
+  description: 'The engine loop terminates after max_iterations (default 15). Warns the user when budget is exhausted.
 
-REQ-LOOP-003:
+    '
+  acceptance_criteria: 'Loop stops at max_iterations. A warning message is yielded. Delegation turns do not count against
+    parent budget.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-003
   name: Consecutive error limit
-  description: >
-    The engine transitions to ERROR state after max_consecutive_errors
-    (default 3) consecutive failures.
-  acceptance_criteria: >
-    After 3 consecutive errors, state is ERROR and loop exits.
-    A successful iteration resets the counter.
-  version: v1.8.4
+  description: 'The engine transitions to ERROR state after max_consecutive_errors (default 3) consecutive failures.
 
-REQ-LOOP-004:
+    '
+  acceptance_criteria: 'After 3 consecutive errors, state is ERROR and loop exits. A successful iteration resets the counter.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-004
   name: Interrupt mid-generation
-  description: >
-    Consumer can interrupt generation via atomic cancel flag.
-    Engine transitions to INTERRUPTED state and stops cleanly.
-  acceptance_criteria: >
-    Setting cancel flag during streaming stops token output.
-    Engine state is INTERRUPTED. No crash or resource leak.
-  version: v1.8.4
+  description: 'Consumer can interrupt generation via atomic cancel flag. Engine transitions to INTERRUPTED state and stops
+    cleanly.
 
-REQ-LOOP-005:
+    '
+  acceptance_criteria: 'Setting cancel flag during streaming stops token output. Engine state is INTERRUPTED. No crash or
+    resource leak.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-005
   name: Context compaction
-  description: >
-    When context usage exceeds threshold (default 75%), the engine
-    compacts messages using value-density strategy. User messages
-    and original task are preserved.
-  acceptance_criteria: >
-    Token count drops after compaction. User messages survive.
-    Tool results older than TTL are pruned. Context anchors
-    are re-injected after compaction.
-  version: v1.8.4
+  description: 'When context usage exceeds threshold (default 75%), the engine compacts messages using value-density strategy.
+    User messages and original task are preserved.
 
-REQ-LOOP-006:
+    '
+  acceptance_criteria: 'Token count drops after compaction. User messages survive. Tool results older than TTL are pruned.
+    Context anchors are re-injected after compaction.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-006
   name: Directive processing
-  description: >
-    Tool results containing directives (JSON envelope) are dispatched
-    to registered handlers. 11 directive types supported.
-  acceptance_criteria: >
-    Each directive type triggers its handler. DirectiveResult
-    aggregates side effects (stop, tier change, injected messages).
-  version: v1.8.4
+  description: 'Tool results containing directives (JSON envelope) are dispatched to registered handlers. 11 directive types
+    supported.
 
-REQ-LOOP-007:
+    '
+  acceptance_criteria: 'Each directive type triggers its handler. DirectiveResult aggregates side effects (stop, tier change,
+    injected messages).
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-007
   name: Auto-chain on completion
-  description: >
-    When a tier with auto_chain completes (stop or length), the engine
-    chains to the configured target. At depth 0 chains to lead,
-    at depth > 0 signals complete to parent.
-  acceptance_criteria: >
-    Auto-chain fires on finish_reason=stop with complete response.
-    At root depth, tier changes to lead. At child depth, delegation
-    completes and returns to parent.
-  version: v1.8.6
+  description: 'When a tier with auto_chain completes (stop or length), the engine chains to the configured target. At depth
+    0 chains to lead, at depth > 0 signals complete to parent.
 
-REQ-LOOP-008:
+    '
+  acceptance_criteria: 'Auto-chain fires on finish_reason=stop with complete response. At root depth, tier changes to lead.
+    At child depth, delegation completes and returns to parent.
+
+    '
+  version: v1.8.6
+- id: REQ-LOOP-008
   name: Pause and inject
-  description: >
-    Consumer can pause generation mid-stream and inject context
-    (user-provided text) into the conversation. Engine resumes
-    generation with the injection in context.
-  acceptance_criteria: >
-    Pause flag stops streaming. Injection callback prompts consumer.
-    Injected text appears in context. Engine regenerates with
-    injection. Empty injection resumes without adding to context.
-  version: v1.8.4
+  description: 'Consumer can pause generation mid-stream and inject context (user-provided text) into the conversation. Engine
+    resumes generation with the injection in context.
 
-REQ-LOOP-009:
+    '
+  acceptance_criteria: 'Pause flag stops streaming. Injection callback prompts consumer. Injected text appears in context.
+    Engine regenerates with injection. Empty injection resumes without adding to context.
+
+    '
+  version: v1.8.4
+- id: REQ-LOOP-009
   name: Finish reason handling
-  description: >
-    Engine evaluates finish_reason after generation:
-    interrupted → INTERRUPTED state, length → continue loop,
+  description: 'Engine evaluates finish_reason after generation: interrupted → INTERRUPTED state, length → continue loop,
     stop → evaluate completion (auto-chain or complete).
-  acceptance_criteria: >
-    finish_reason=interrupted sets INTERRUPTED.
-    finish_reason=length continues to next iteration.
-    finish_reason=stop with no tool calls evaluates is_response_complete().
+
+    '
+  acceptance_criteria: 'finish_reason=interrupted sets INTERRUPTED. finish_reason=length continues to next iteration. finish_reason=stop
+    with no tool calls evaluates is_response_complete().
+
+    '
   version: v1.8.4
-
-REQ-LOOP-010:
+- id: REQ-LOOP-010
   name: Explicit completion mode
-  description: >
-    Identities with explicit_completion=true require entropic.complete
-    tool call to terminate the loop. Text-only responses do not end
-    the loop when tool calls have been made.
-  acceptance_criteria: >
-    Identity with explicit_completion=true generates text after
-    tool use → loop continues. entropic.complete called → loop ends.
-    Simple Q&A (no tools used) still terminates normally.
+  description: 'Identities with explicit_completion=true require entropic.complete tool call to terminate the loop. Text-only
+    responses do not end the loop when tool calls have been made.
+
+    '
+  acceptance_criteria: 'Identity with explicit_completion=true generates text after tool use → loop continues. entropic.complete
+    called → loop ends. Simple Q&A (no tools used) still terminates normally.
+
+    '
   version: v1.8.6
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-DELEG: Delegation (delegation.py, engine.py delegation handlers)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-DELEG-001:
+- id: REQ-DELEG-001
   name: Single delegation
-  description: >
-    Lead identity delegates a task to a child identity via
-    entropic.delegate tool. Child runs in its own loop context
-    with reduced iteration budget.
-  acceptance_criteria: >
-    Child loop executes with correct tier, delegation_depth+1.
-    Child result (summary) injected into parent context.
-    Parent loop resumes after child completes.
-  version: v1.8.6
+  description: 'Lead identity delegates a task to a child identity via entropic.delegate tool. Child runs in its own loop
+    context with reduced iteration budget.
 
-REQ-DELEG-002:
+    '
+  acceptance_criteria: 'Child loop executes with correct tier, delegation_depth+1. Child result (summary) injected into parent
+    context. Parent loop resumes after child completes.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-002
   name: Pipeline execution
-  description: >
-    Lead delegates a multi-stage sequential pipeline. Each stage
-    receives the previous stage's output. Stages share a worktree.
-  acceptance_criteria: >
-    Stages execute in order. Each stage sees prior stage's output.
-    Final result injected into parent context. Partial work
-    merged even on failure.
-  version: v1.8.6
+  description: 'Lead delegates a multi-stage sequential pipeline. Each stage receives the previous stage''s output. Stages
+    share a worktree.
 
-REQ-DELEG-003:
+    '
+  acceptance_criteria: 'Stages execute in order. Each stage sees prior stage''s output. Final result injected into parent
+    context. Partial work merged even on failure.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-003
   name: Depth limit enforcement
-  description: >
-    Delegation depth is capped at MAX_DELEGATION_DEPTH (2).
-    Attempts to delegate beyond the limit are rejected with
-    an actionable error message.
-  acceptance_criteria: >
-    Delegation at depth >= 2 returns rejection message.
-    Parent loop continues in EXECUTING state.
-  version: v1.8.6
+  description: 'Delegation depth is capped at MAX_DELEGATION_DEPTH (2). Attempts to delegate beyond the limit are rejected
+    with an actionable error message.
 
-REQ-DELEG-004:
+    '
+  acceptance_criteria: 'Delegation at depth >= 2 returns rejection message. Parent loop continues in EXECUTING state.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-004
   name: Worktree isolation
-  description: >
-    Child delegations operate in a git worktree to prevent
-    file conflicts with the parent. Worktree is created on
-    delegation start, merged/discarded on completion.
-  acceptance_criteria: >
-    Child file operations don't affect parent working directory.
-    Successful delegation merges worktree changes.
-    Failed delegation discards worktree.
-  version: v1.8.6
+  description: 'Child delegations operate in a git worktree to prevent file conflicts with the parent. Worktree is created
+    on delegation start, merged/discarded on completion.
 
-REQ-DELEG-005:
+    '
+  acceptance_criteria: 'Child file operations don''t affect parent working directory. Successful delegation merges worktree
+    changes. Failed delegation discards worktree.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-005
   name: Todo list save/restore
-  description: >
-    Parent's todo list is saved before delegation and restored
-    after child completes. Child gets a fresh todo list.
-  acceptance_criteria: >
-    Parent todo state unchanged after child delegation.
-    Child todo items do not leak into parent context.
-  version: v1.8.6
+  description: 'Parent''s todo list is saved before delegation and restored after child completes. Child gets a fresh todo
+    list.
 
-REQ-DELEG-006:
+    '
+  acceptance_criteria: 'Parent todo state unchanged after child delegation. Child todo items do not leak into parent context.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-006
   name: Pipeline scope enforcement
-  description: >
-    Each pipeline stage receives instruction to stay within
-    its role's scope. The system prompt for each stage includes
-    scope enforcement text.
-  acceptance_criteria: >
-    Each stage's system prompt includes "stay within your role"
-    instruction. Stage identity's allowed_tools are enforced.
-  version: v1.8.6
+  description: 'Each pipeline stage receives instruction to stay within its role''s scope. The system prompt for each stage
+    includes scope enforcement text.
 
-REQ-DELEG-007:
+    '
+  acceptance_criteria: 'Each stage''s system prompt includes "stay within your role" instruction. Stage identity''s allowed_tools
+    are enforced.
+
+    '
+  version: v1.8.6
+- id: REQ-DELEG-007
   name: Completion at any depth
-  description: >
-    entropic.complete works at root (depth 0) to terminate the
-    main loop and at child depths (depth > 0) to return to parent.
-    No depth-based rejection of the complete tool.
-  acceptance_criteria: >
-    complete at depth 0 → COMPLETE state, loop exits.
-    complete at depth 1 → child returns summary to parent.
+  description: 'entropic.complete works at root (depth 0) to terminate the main loop and at child depths (depth > 0) to return
+    to parent. No depth-based rejection of the complete tool.
+
+    '
+  acceptance_criteria: 'complete at depth 0 → COMPLETE state, loop exits. complete at depth 1 → child returns summary to parent.
     complete is never rejected based on depth.
+
+    '
   version: v1.8.6
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-TOOL: Tool System (tool_executor.py, servers/base.py, manager.py)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-TOOL-001:
+- id: REQ-TOOL-001
   name: Tool dispatch
-  description: >
-    Tool calls parsed from model output are routed to the correct
-    MCP server and executed. Results are formatted and returned
-    to the model context.
-  acceptance_criteria: >
-    Tool call with server.tool_name format routes to correct server.
-    Result is added to context as a message.
-  version: v1.8.5
+  description: 'Tool calls parsed from model output are routed to the correct MCP server and executed. Results are formatted
+    and returned to the model context.
 
-REQ-TOOL-002:
+    '
+  acceptance_criteria: 'Tool call with server.tool_name format routes to correct server. Result is added to context as a message.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-002
   name: Permission enforcement
-  description: >
-    Default-deny permission model. Tools require explicit allow
-    or user approval. Glob patterns for allow/deny lists.
-  acceptance_criteria: >
-    Unknown tools prompt for approval via callback.
-    Denied tools return permission error to model.
-    Allow/deny patterns match via fnmatch.
-  version: v1.8.5
+  description: 'Default-deny permission model. Tools require explicit allow or user approval. Glob patterns for allow/deny
+    lists.
 
-REQ-TOOL-003:
+    '
+  acceptance_criteria: 'Unknown tools prompt for approval via callback. Denied tools return permission error to model. Allow/deny
+    patterns match via fnmatch.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-003
   name: Duplicate detection with circuit breaker
-  description: >
-    Identical tool calls (same name + args hash) return cached
-    result instead of re-executing. Three consecutive duplicates
-    inject a "stuck in loop" message and break the tool loop.
-  acceptance_criteria: >
-    Second identical call returns cached result.
-    Third consecutive duplicate injects stuck message.
-    Side-effect tools (read_file) skip duplicate detection.
-  version: v1.8.5
+  description: 'Identical tool calls (same name + args hash) return cached result instead of re-executing. Three consecutive
+    duplicates inject a "stuck in loop" message and break the tool loop.
 
-REQ-TOOL-004:
+    '
+  acceptance_criteria: 'Second identical call returns cached result. Third consecutive duplicate injects stuck message. Side-effect
+    tools (read_file) skip duplicate detection.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-004
   name: Context anchor on tool results
-  description: >
-    Tools can declare an anchor key strategy. Results with an
-    anchor key replace previous results with the same key
-    instead of appending to context.
-  acceptance_criteria: >
-    read_file with anchor key="file:{path}" replaces previous
-    read of same file. Context does not grow on re-reads.
-    Tools without anchor_key() append normally.
-  version: v1.8.5
+  description: 'Tools can declare an anchor key strategy. Results with an anchor key replace previous results with the same
+    key instead of appending to context.
 
-REQ-TOOL-005:
+    '
+  acceptance_criteria: 'read_file with anchor key="file:{path}" replaces previous read of same file. Context does not grow
+    on re-reads. Tools without anchor_key() append normally.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-005
   name: Tier-based tool filtering
-  description: >
-    Each identity's allowed_tools list restricts which tools
-    are visible. Tools not in the allowlist are rejected.
-  acceptance_criteria: >
-    Identity with allowed_tools=["entropic.delegate"] cannot
-    call filesystem.write_file. Rejection message is actionable.
-  version: v1.8.5
+  description: 'Each identity''s allowed_tools list restricts which tools are visible. Tools not in the allowlist are rejected.
 
-REQ-TOOL-006:
+    '
+  acceptance_criteria: 'Identity with allowed_tools=["entropic.delegate"] cannot call filesystem.write_file. Rejection message
+    is actionable.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-006
   name: Filesystem diagnostics rollback
-  description: >
-    write_file and edit_file check LSP diagnostics after mutation.
-    If new errors are introduced and fail_on_errors is true,
-    original file content is restored.
-  acceptance_criteria: >
-    Edit introducing syntax error is rolled back.
-    Error message includes diagnostic details.
-    Original file content is restored exactly.
-  version: v1.8.5
+  description: 'write_file and edit_file check LSP diagnostics after mutation. If new errors are introduced and fail_on_errors
+    is true, original file content is restored.
 
-REQ-TOOL-007:
+    '
+  acceptance_criteria: 'Edit introducing syntax error is rolled back. Error message includes diagnostic details. Original
+    file content is restored exactly.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-007
   name: Error results not cached for duplicates
-  description: >
-    Failed tool calls are NOT recorded in the duplicate detection
-    cache. The model can retry a failed call without triggering
-    the circuit breaker.
-  acceptance_criteria: >
-    Tool call fails → not cached. Same call retried → executes
-    again (not returned from cache). Only successful results
-    are cached for duplicate detection.
-  version: v1.8.5
+  description: 'Failed tool calls are NOT recorded in the duplicate detection cache. The model can retry a failed call without
+    triggering the circuit breaker.
 
-REQ-TOOL-008:
+    '
+  acceptance_criteria: 'Tool call fails → not cached. Same call retried → executes again (not returned from cache). Only successful
+    results are cached for duplicate detection.
+
+    '
+  version: v1.8.5
+- id: REQ-TOOL-008
   name: Bash command allowlist
-  description: >
-    bash.execute tool calls are filtered against a per-identity
-    (or per-phase) bash_commands prefix list. Commands not matching
-    any allowed prefix are rejected.
-  acceptance_criteria: >
-    Identity with bash_commands=["git", "make"] allows "git status"
-    but rejects "rm -rf /". Phase-specific bash_commands override
-    identity-level list. No bash_commands → all commands allowed.
+  description: 'bash.execute tool calls are filtered against a per-identity (or per-phase) bash_commands prefix list. Commands
+    not matching any allowed prefix are rejected.
+
+    '
+  acceptance_criteria: 'Identity with bash_commands=["git", "make"] allows "git status" but rejects "rm -rf /". Phase-specific
+    bash_commands override identity-level list. No bash_commands → all commands allowed.
+
+    '
   version: v1.8.5
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-IDEN: Identity System (prompts/__init__.py, orchestrator.py)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-IDEN-001:
+- id: REQ-IDEN-001
   name: Identity frontmatter loading
-  description: >
-    Identity files (.md with YAML frontmatter) define role behavior:
-    name, focus, examples, grammar, auto_chain, allowed_tools,
-    phases, temperature, max_output_tokens, etc.
-  acceptance_criteria: >
-    Identity file loads and validates all frontmatter fields.
-    Missing required fields (focus) raise validation error.
-    Default values applied for optional fields.
-  version: v1.8.1
+  description: 'Identity files (.md with YAML frontmatter) define role behavior: name, focus, examples, grammar, auto_chain,
+    allowed_tools, phases, temperature, max_output_tokens, etc.
 
-REQ-IDEN-002:
+    '
+  acceptance_criteria: 'Identity file loads and validates all frontmatter fields. Missing required fields (focus) raise validation
+    error. Default values applied for optional fields.
+
+    '
+  version: v1.8.1
+- id: REQ-IDEN-002
   name: Tier routing via classification
-  description: >
-    Router model classifies user messages to determine which
-    identity tier should respond. Uses raw text completion
+  description: 'Router model classifies user messages to determine which identity tier should respond. Uses raw text completion
     with digit-based classification prompt.
-  acceptance_criteria: >
-    Router returns correct tier digit for known prompt types.
-    Unknown prompts fall back to default tier.
+
+    '
+  acceptance_criteria: 'Router returns correct tier digit for known prompt types. Unknown prompts fall back to default tier.
     Classification uses complete() not generate().
-  version: v1.8.2
 
-REQ-IDEN-003:
+    '
+  version: v1.8.2
+- id: REQ-IDEN-003
   name: Phase-aware inference params
-  description: >
-    Each identity can define named phases with per-phase inference
-    parameters (temperature, max_output_tokens, bash_commands).
-    Phase changes are triggered via PhaseChange directive.
-  acceptance_criteria: >
-    Phase change updates active inference params.
-    Phase-specific bash_commands override identity-level list.
-    Invalid phase name is rejected with available phases listed.
-  version: v1.8.6
+  description: 'Each identity can define named phases with per-phase inference parameters (temperature, max_output_tokens,
+    bash_commands). Phase changes are triggered via PhaseChange directive.
 
-REQ-IDEN-004:
+    '
+  acceptance_criteria: 'Phase change updates active inference params. Phase-specific bash_commands override identity-level
+    list. Invalid phase name is rejected with available phases listed.
+
+    '
+  version: v1.8.6
+- id: REQ-IDEN-004
   name: Classification prompt interleaving
-  description: >
-    Few-shot examples in the classification prompt are round-robin
-    interleaved across tiers to prevent recency bias.
-  acceptance_criteria: >
-    Examples from different tiers alternate in the prompt.
-    No single tier's examples dominate the tail.
-  version: v1.8.1
+  description: 'Few-shot examples in the classification prompt are round-robin interleaved across tiers to prevent recency
+    bias.
 
-REQ-IDEN-005:
+    '
+  acceptance_criteria: 'Examples from different tiers alternate in the prompt. No single tier''s examples dominate the tail.
+
+    '
+  version: v1.8.1
+- id: REQ-IDEN-005
   name: Lead identity tool restriction
-  description: >
-    Lead identity has exactly 3 tools: delegate, pipeline, complete.
-    No filesystem, no bash, no git, no todo. Lead delegates all
-    implementation work — it does not execute directly.
-  acceptance_criteria: >
-    Lead's tool list contains exactly entropic.delegate,
-    entropic.pipeline, entropic.complete. No other tools visible.
-    This is the v1.7.0 architectural decision.
+  description: 'Lead identity has exactly 3 tools: delegate, pipeline, complete. No filesystem, no bash, no git, no todo.
+    Lead delegates all implementation work — it does not execute directly.
+
+    '
+  acceptance_criteria: 'Lead''s tool list contains exactly entropic.delegate, entropic.pipeline, entropic.complete. No other
+    tools visible. This is the v1.7.0 architectural decision.
+
+    '
   version: v1.8.6
-
-REQ-IDEN-006:
+- id: REQ-IDEN-006
   name: Constitution injection
-  description: >
-    Constitution text is injected into every identity's system
-    prompt, positioned before the identity body. All identities
-    share the same constitution.
-  acceptance_criteria: >
-    System prompt for any tier includes constitution text.
-    Constitution appears before identity-specific instructions.
-    Disabling constitution (constitution: false) removes it.
+  description: 'Constitution text is injected into every identity''s system prompt, positioned before the identity body. All
+    identities share the same constitution.
+
+    '
+  acceptance_criteria: 'System prompt for any tier includes constitution text. Constitution appears before identity-specific
+    instructions. Disabling constitution (constitution: false) removes it.
+
+    '
   version: v1.8.1
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-INFER: Inference Backend (llama_cpp.py, orchestrator.py)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-INFER-001:
+- id: REQ-INFER-001
   name: Three-state VRAM lifecycle
-  description: >
-    Models transition through COLD (nothing loaded), WARM (CPU RAM,
-    mlock'd), ACTIVE (GPU loaded). State queries are lock-free.
-    Transitions are mutex-protected.
-  acceptance_criteria: >
-    State reads via atomic are instant. Transitions acquire mutex.
-    Invalid transitions (COLD→ACTIVE) are rejected.
-    WARM→ACTIVE loads onto GPU. ACTIVE→WARM releases GPU.
-  version: v1.8.2
+  description: 'Models transition through COLD (nothing loaded), WARM (CPU RAM, mlock''d), ACTIVE (GPU loaded). State queries
+    are lock-free. Transitions are mutex-protected.
 
-REQ-INFER-002:
+    '
+  acceptance_criteria: 'State reads via atomic are instant. Transitions acquire mutex. Invalid transitions (COLD→ACTIVE) are
+    rejected. WARM→ACTIVE loads onto GPU. ACTIVE→WARM releases GPU.
+
+    '
+  version: v1.8.2
+- id: REQ-INFER-002
   name: Model pool deduplication
-  description: >
-    Multiple tiers sharing the same GGUF file share one backend
-    instance. Avoids duplicate VRAM allocation.
-  acceptance_criteria: >
-    Two tiers with path=primary share one backend.
-    Loading tier A then tier B does not double VRAM usage.
+  description: 'Multiple tiers sharing the same GGUF file share one backend instance. Avoids duplicate VRAM allocation.
+
+    '
+  acceptance_criteria: 'Two tiers with path=primary share one backend. Loading tier A then tier B does not double VRAM usage.
     Each tier has its own adapter instance.
-  version: v1.8.2
 
-REQ-INFER-003:
+    '
+  version: v1.8.2
+- id: REQ-INFER-003
   name: Streaming generation with cancel
-  description: >
-    Token-by-token streaming with consumer-controlled cancel flag.
-    Cancel stops generation cleanly without resource leaks.
-  acceptance_criteria: >
-    Tokens stream via callback. Setting cancel flag stops output
-    within one token. No memory leak or GPU state corruption.
-  version: v1.8.2
+  description: 'Token-by-token streaming with consumer-controlled cancel flag. Cancel stops generation cleanly without resource
+    leaks.
 
-REQ-INFER-004:
+    '
+  acceptance_criteria: 'Tokens stream via callback. Setting cancel flag stops output within one token. No memory leak or GPU
+    state corruption.
+
+    '
+  version: v1.8.2
+- id: REQ-INFER-004
   name: Raw text completion
-  description: >
-    complete() generates without chat template. Used by the router
-    for digit-based classification.
-  acceptance_criteria: >
-    complete("classify: hello -> ") returns a digit without
-    chat template artifacts. Distinct from generate().
-  version: v1.8.2
+  description: 'complete() generates without chat template. Used by the router for digit-based classification.
 
-REQ-INFER-005:
+    '
+  acceptance_criteria: 'complete("classify: hello -> ") returns a digit without chat template artifacts. Distinct from generate().
+
+    '
+  version: v1.8.2
+- id: REQ-INFER-005
   name: Chat adapter tool parsing
-  description: >
-    Qwen35 adapter parses XML tool calls from model output:
-    <function=name><parameter=key>value</parameter></function>.
+  description: 'Qwen35 adapter parses XML tool calls from model output: <function=name><parameter=key>value</parameter></function>.
     Think blocks (<think>...</think>) are extracted and stripped.
-  acceptance_criteria: >
-    XML tool calls parsed to ToolCall objects with correct name/args.
-    Think blocks removed from displayed content.
-    Malformed calls recovered where possible.
+
+    '
+  acceptance_criteria: 'XML tool calls parsed to ToolCall objects with correct name/args. Think blocks removed from displayed
+    content. Malformed calls recovered where possible.
+
+    '
   version: v1.8.2
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-CFG: Configuration (schema.py, loader.py, default_config.yaml)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-CFG-001:
+- id: REQ-CFG-001
   name: Layered config merge
-  description: >
-    Configuration loads in priority order: compiled defaults,
-    global YAML (~/.entropic/config.yaml), project YAML
+  description: 'Configuration loads in priority order: compiled defaults, global YAML (~/.entropic/config.yaml), project YAML
     (.entropic/config.local.yaml), environment variables.
-  acceptance_criteria: >
-    Project config overrides global. Env vars override both.
-    Unset fields retain defaults. Deep merge on nested structs.
-  version: v1.8.1
 
-REQ-CFG-002:
+    '
+  acceptance_criteria: 'Project config overrides global. Env vars override both. Unset fields retain defaults. Deep merge
+    on nested structs.
+
+    '
+  version: v1.8.1
+- id: REQ-CFG-002
   name: Cross-field validation
-  description: >
-    Config validates cross-references: default tier exists in
-    tiers dict, fallback_tier exists, handoff_rules reference
-    valid tiers, compaction warning < compaction threshold.
-  acceptance_criteria: >
-    Invalid default tier raises error with available tiers.
-    Invalid handoff target raises error. Warning threshold
-    >= compaction threshold raises error.
-  version: v1.8.1
+  description: 'Config validates cross-references: default tier exists in tiers dict, fallback_tier exists, handoff_rules
+    reference valid tiers, compaction warning < compaction threshold.
 
-REQ-CFG-003:
+    '
+  acceptance_criteria: 'Invalid default tier raises error with available tiers. Invalid handoff target raises error. Warning
+    threshold >= compaction threshold raises error.
+
+    '
+  version: v1.8.1
+- id: REQ-CFG-003
   name: Bundled model path resolution
-  description: >
-    Model path field accepts bundled_models.yaml keys (e.g.,
-    "primary") and resolves to ~/models/gguf/{name}.gguf.
-  acceptance_criteria: >
-    path="primary" resolves to Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf.
-    Direct file paths pass through unchanged.
+  description: 'Model path field accepts bundled_models.yaml keys (e.g., "primary") and resolves to ~/models/gguf/{name}.gguf.
+
+    '
+  acceptance_criteria: 'path="primary" resolves to Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf. Direct file paths pass through unchanged.
     Unknown keys treated as file paths.
+
+    '
   version: v1.8.1
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-STOR: Storage (storage backend, session persistence)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-STOR-001:
+- id: REQ-STOR-001
   name: Conversation persistence
-  description: >
-    Conversations (messages, metadata) are stored in SQLite.
-    Retrievable by conversation ID.
-  acceptance_criteria: >
-    Messages saved to SQLite survive engine restart.
-    Retrieved conversation matches saved content.
-    Storage is optional — engine works without it.
-  version: v1.8.8
+  description: 'Conversations (messages, metadata) are stored in SQLite. Retrievable by conversation ID.
 
-REQ-STOR-002:
+    '
+  acceptance_criteria: 'Messages saved to SQLite survive engine restart. Retrieved conversation matches saved content. Storage
+    is optional — engine works without it.
+
+    '
+  version: v1.8.8
+- id: REQ-STOR-002
   name: Delegation record storage
-  description: >
-    Parent/child delegation relationships are stored with
-    conversation IDs linking parent to child.
-  acceptance_criteria: >
-    Delegation creates linked records. Parent conversation
-    references child conversation IDs. Query by parent
-    returns all child records.
-  version: v1.8.8
+  description: 'Parent/child delegation relationships are stored with conversation IDs linking parent to child.
 
-REQ-STOR-003:
+    '
+  acceptance_criteria: 'Delegation creates linked records. Parent conversation references child conversation IDs. Query by
+    parent returns all child records.
+
+    '
+  version: v1.8.8
+- id: REQ-STOR-003
   name: Permission persistence
-  description: >
-    Allow/deny permission decisions are persisted to the
-    project's config.local.yaml file.
-  acceptance_criteria: >
-    "Always allow" saves pattern to config file.
-    Pattern survives engine restart. Existing config
-    keys are not disturbed (read-modify-write).
+  description: 'Allow/deny permission decisions are persisted to the project''s config.local.yaml file.
+
+    '
+  acceptance_criteria: '"Always allow" saves pattern to config file. Pattern survives engine restart. Existing config keys
+    are not disturbed (read-modify-write).
+
+    '
   version: v1.8.8
-
-# ═══════════════════════════════════════════════════════════════
-# REQ-CACHE: Prompt Caching (v1.8.3)
-# ═══════════════════════════════════════════════════════════════
-
-REQ-CACHE-001:
+- id: REQ-CACHE-001
   name: KV cache prefix save/load
-  description: >
-    After processing a tier's system prompt, save the KV cache
-    state to host RAM. On subsequent activations of the same tier,
-    restore the saved state instead of reprocessing.
-  acceptance_criteria: >
-    First activation processes full prompt (cache miss).
-    Second activation restores from cache (cache hit).
-    First-token latency drops measurably on cache hit.
-    Cache key is content-addressed (prompt change = miss).
-  version: v1.8.3
+  description: 'After processing a tier''s system prompt, save the KV cache state to host RAM. On subsequent activations of
+    the same tier, restore the saved state instead of reprocessing.
 
-REQ-CACHE-002:
+    '
+  acceptance_criteria: 'First activation processes full prompt (cache miss). Second activation restores from cache (cache
+    hit). First-token latency drops measurably on cache hit. Cache key is content-addressed (prompt change = miss).
+
+    '
+  version: v1.8.3
+- id: REQ-CACHE-002
   name: Cache eviction and RAM limit
-  description: >
-    Prompt cache has a configurable RAM limit. When exceeded,
-    least-recently-used entries are evicted. Cache is cleared
-    on model unload.
-  acceptance_criteria: >
-    Adding entries beyond RAM limit evicts oldest.
-    Model unload clears all entries.
-    Setting enabled=false disables caching entirely.
+  description: 'Prompt cache has a configurable RAM limit. When exceeded, least-recently-used entries are evicted. Cache is
+    cleared on model unload.
+
+    '
+  acceptance_criteria: 'Adding entries beyond RAM limit evicts oldest. Model unload clears all entries. Setting enabled=false
+    disables caching entirely.
+
+    '
   version: v1.8.3

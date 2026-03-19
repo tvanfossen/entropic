@@ -311,11 +311,33 @@ static std::string parse_lsp_config(
 }
 
 /**
+ * @brief Parse prompt_cache config from inference YAML section.
+ * @param node YAML node for "inference.prompt_cache" section.
+ * @param[out] config Output prompt cache config.
+ * @return Empty string on success, error message on failure.
+ * @version 1.8.3
+ */
+static std::string parse_prompt_cache_config(
+    ryml::ConstNodeRef node,
+    PromptCacheConfig& config)
+{
+    extract(node, "enabled", config.enabled);
+    extract(node, "log_hits", config.log_hits);
+
+    int max_bytes_int = 0;
+    if (extract(node, "max_bytes", max_bytes_int)) {
+        config.max_bytes = static_cast<size_t>(max_bytes_int);
+    }
+
+    return "";
+}
+
+/**
  * @brief Parse optional config sections that don't return errors.
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 1.8.2
+ * @version 1.8.3
  */
 static void parse_optional_sections(
     ryml::ConstNodeRef root, ParsedConfig& config)
@@ -330,6 +352,9 @@ static void parse_optional_sections(
         parse_compaction_config(root["compaction"], config.compaction);
     if (root.has_child("lsp"))
         parse_lsp_config(root["lsp"], config.lsp);
+    if (root.has_child("inference") && root["inference"].has_child("prompt_cache"))
+        parse_prompt_cache_config(root["inference"]["prompt_cache"],
+                                  config.prompt_cache);
 
     extract(root, "log_level", config.log_level);
     extract(root, "inject_model_context", config.inject_model_context);

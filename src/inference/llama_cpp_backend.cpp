@@ -9,16 +9,14 @@
  * - llama_sampler_chain for sampling
  * - llama_chat_apply_template() for chat formatting
  *
- * @version 1.8.2
+ * @version 1.8.3
  */
 
 #include "llama_cpp_backend.h"
 
 #include <entropic/types/logging.h>
 
-#include <chrono>
 #include <cstring>
-#include <sstream>
 
 namespace entropic {
 
@@ -145,6 +143,15 @@ bool LlamaCppBackend::do_activate() {
 
     logger->info("Context created: n_ctx={}, n_batch={}, flash_attn={}",
               config().context_length, config().n_batch, config().flash_attn);
+
+    // Initialize prompt cache if not already created
+    if (!prompt_cache_) {
+        prompt_cache_ = std::make_unique<PromptCache>(
+            prompt_cache_config_.max_bytes);
+        logger->info("Prompt cache initialized: max_bytes={}",
+                     prompt_cache_config_.max_bytes);
+    }
+
     return true;
 }
 
@@ -176,10 +183,13 @@ void LlamaCppBackend::do_deactivate() {
 }
 
 /**
- * @brief Full unload — free all resources.
- * @version 1.8.2
+ * @brief Full unload — free all resources, clear prompt cache.
+ * @version 1.8.3
  */
 void LlamaCppBackend::do_unload() {
+    if (prompt_cache_) {
+        prompt_cache_->clear();
+    }
     if (ctx_) {
         llama_free(ctx_);
         ctx_ = nullptr;
@@ -482,6 +492,169 @@ GenerationResult LlamaCppBackend::decode_loop(
     return result;
 }
 
+// ── Prompt cache helpers ───────────────────────────────────
+
+/**
+ * @brief Extract system prompt text from message list.
+ * @param messages Conversation history.
+ * @return System message content, empty if none found.
+ * @version 1.8.3
+ */
+std::string LlamaCppBackend::extract_system_prompt(
+    const std::vector<Message>& messages)
+{
+    for (const auto& msg : messages) {
+        if (msg.role == "system") {
+            return msg.content;
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Restore cached KV prefix and decode remaining tokens.
+ * @param cached Cache entry to restore from.
+ * @param tokens Full token sequence.
+ * @return true on success, false to fall back to full prefill.
+ * @version 1.8.3
+ */
+bool LlamaCppBackend::restore_cached_prefix(
+    const CacheEntry* cached,
+    const std::vector<llama_token>& tokens)
+{
+    llama_memory_clear(llama_get_memory(ctx_), true);
+
+    size_t restored = llama_state_seq_set_data(
+        ctx_, cached->data.data(), cached->data_size, 0);
+    if (restored == 0) {
+        logger->warn("KV state restore failed, falling back to full prefill");
+        return false;
+    }
+
+    int prefix_len = cached->token_count;
+    if (prefix_len >= static_cast<int>(tokens.size())) {
+        return true;
+    }
+
+    std::vector<llama_token> remaining(
+        tokens.begin() + prefix_len, tokens.end());
+    llama_batch batch = llama_batch_get_one(
+        remaining.data(), static_cast<int32_t>(remaining.size()));
+
+    bool ok = (llama_decode(ctx_, batch) == 0);
+    if (!ok) {
+        logger->error("Decode of remaining tokens after cache restore failed");
+    }
+    return ok;
+}
+
+/**
+ * @brief Save system prefix KV state to the prompt cache.
+ * @param key Cache key for the prefix.
+ * @param prefix_tokens Number of system prefix tokens.
+ * @version 1.8.3
+ */
+void LlamaCppBackend::save_prefix_to_cache(
+    const CacheKey& key, int prefix_tokens)
+{
+    size_t state_size = llama_state_seq_get_size(ctx_, 0);
+    if (state_size == 0) {
+        return;
+    }
+
+    std::vector<uint8_t> buf(state_size);
+    size_t written = llama_state_seq_get_data(
+        ctx_, buf.data(), buf.size(), 0);
+    if (written > 0) {
+        buf.resize(written);
+        prompt_cache_->store(key, std::move(buf), prefix_tokens);
+    }
+}
+
+/**
+ * @brief Compute system prefix token count from messages.
+ * @param messages Original message list.
+ * @param params Generation params (for template).
+ * @return Token count of the system prefix, 0 if no system message.
+ * @version 1.8.3
+ */
+int LlamaCppBackend::compute_prefix_token_count(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    std::vector<Message> sys_msgs;
+    for (const auto& msg : messages) {
+        if (msg.role == "system") {
+            sys_msgs.push_back(msg);
+        }
+    }
+    if (sys_msgs.empty()) {
+        return 0;
+    }
+
+    std::string sys_prompt = apply_chat_template(sys_msgs, params);
+    auto sys_tokens = tokenize(sys_prompt, true);
+    return static_cast<int>(sys_tokens.size());
+}
+
+/**
+ * @brief Run prefill with prompt cache integration.
+ *
+ * On cache hit: restores KV state, decodes remaining tokens.
+ * On cache miss: full prefill, then saves prefix to cache.
+ *
+ * @param tokens Full token sequence.
+ * @param system_prompt System prompt text for cache key.
+ * @param messages Original messages (for prefix boundary).
+ * @param params Generation parameters.
+ * @return true on success.
+ * @version 1.8.3
+ */
+bool LlamaCppBackend::run_prefill_cached(
+    const std::vector<llama_token>& tokens,
+    const std::string& system_prompt,
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    bool cache_enabled = prompt_cache_
+        && prompt_cache_config_.enabled
+        && !system_prompt.empty();
+
+    // Try cache restore if enabled
+    bool restored = false;
+    CacheKey key{0};
+
+    if (cache_enabled) {
+        key = PromptCache::make_key(
+            system_prompt, config().path.string());
+        const CacheEntry* cached = prompt_cache_->lookup(key);
+
+        if (cached) {
+            if (prompt_cache_config_.log_hits) {
+                logger->info("Prompt cache HIT: {} bytes, {} prefix tokens",
+                             cached->data_size, cached->token_count);
+            }
+            restored = restore_cached_prefix(cached, tokens);
+        } else if (prompt_cache_config_.log_hits) {
+            logger->info("Prompt cache MISS: processing full prompt");
+        }
+    }
+
+    // Fall back to full prefill if not restored from cache
+    if (!restored && !run_prefill(tokens)) {
+        return false;
+    }
+
+    // Save prefix to cache on miss
+    if (cache_enabled && !restored) {
+        int prefix_tokens = compute_prefix_token_count(messages, params);
+        if (prefix_tokens > 0) {
+            save_prefix_to_cache(key, prefix_tokens);
+        }
+    }
+    return true;
+}
+
 // ── Generation entry points ────────────────────────────────
 
 /**
@@ -489,7 +662,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult.
- * @version 1.8.2
+ * @version 1.8.3
  */
 GenerationResult LlamaCppBackend::do_generate(
     const std::vector<Message>& messages,
@@ -497,10 +670,47 @@ GenerationResult LlamaCppBackend::do_generate(
 {
     std::string prompt = apply_chat_template(messages, params);
     auto tokens = tokenize(prompt, true);
+    std::string sys = extract_system_prompt(messages);
 
     logger->info("Generate: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
-    return decode_loop(tokens, params, nullptr, nullptr);
+
+    GenerationResult result;
+    llama_sampler* sampler = create_sampler(params);
+
+    if (!run_prefill_cached(tokens, sys, messages, params)) {
+        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        result.error_message = "Prefill decode failed";
+        result.finish_reason = "error";
+        llama_sampler_free(sampler);
+        return result;
+    }
+
+    std::string generated;
+    int n_generated = 0;
+    std::function<void(std::string_view)> no_cb = nullptr;
+
+    while (n_generated < params.max_tokens) {
+        auto status = step_token(sampler, generated, no_cb, params.stop);
+        if (status == "continue") {
+            ++n_generated;
+        } else {
+            result.finish_reason = (status == "error") ? "error" : "stop";
+            if (status == "error") {
+                result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+            }
+            break;
+        }
+    }
+
+    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+
+    llama_sampler_free(sampler);
+    result.content = generated;
+    result.token_count = n_generated;
+    return result;
 }
 
 /**
@@ -510,7 +720,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * @param on_token Per-token callback.
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
- * @version 1.8.2
+ * @version 1.8.3
  */
 GenerationResult LlamaCppBackend::do_generate_streaming(
     const std::vector<Message>& messages,
@@ -520,10 +730,53 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
 {
     std::string prompt = apply_chat_template(messages, params);
     auto tokens = tokenize(prompt, true);
+    std::string sys = extract_system_prompt(messages);
 
     logger->info("Stream: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
-    return decode_loop(tokens, params, on_token, &cancel);
+
+    GenerationResult result;
+    llama_sampler* sampler = create_sampler(params);
+
+    if (!run_prefill_cached(tokens, sys, messages, params)) {
+        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        result.error_message = "Prefill decode failed";
+        result.finish_reason = "error";
+        llama_sampler_free(sampler);
+        return result;
+    }
+
+    std::string generated;
+    int n_generated = 0;
+
+    while (n_generated < params.max_tokens) {
+        bool cancelled = cancel.load(std::memory_order_acquire);
+        if (cancelled) {
+            result.finish_reason = "cancelled";
+            result.error_code = ENTROPIC_ERROR_CANCELLED;
+            break;
+        }
+
+        auto status = step_token(sampler, generated, on_token, params.stop);
+        if (status == "continue") {
+            ++n_generated;
+        } else {
+            result.finish_reason = (status == "error") ? "error" : "stop";
+            if (status == "error") {
+                result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+            }
+            break;
+        }
+    }
+
+    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+
+    llama_sampler_free(sampler);
+    result.content = generated;
+    result.token_count = n_generated;
+    return result;
 }
 
 /**

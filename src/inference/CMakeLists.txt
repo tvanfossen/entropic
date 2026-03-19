@@ -7,6 +7,7 @@
 set(INFERENCE_SOURCES
     backend.cpp
     llama_cpp_backend.cpp
+    prompt_cache.cpp
     orchestrator.cpp
     inference_c_api.cpp
     adapters/adapter_base.cpp

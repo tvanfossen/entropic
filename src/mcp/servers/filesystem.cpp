@@ -252,29 +252,53 @@ std::string check_read_before_write(
  * @param old_str String to find.
  * @param new_str Replacement string.
  * @param replace_all Replace all occurrences if true.
- * @return Modified content, or empty optional on not-found.
+ * @brief Count occurrences of a substring.
+ * @param content Text to search.
+ * @param needle Substring to count.
+ * @return Occurrence count.
+ * @internal
+ * @version 1.8.6
+ */
+int count_occurrences(const std::string& content,
+                      const std::string& needle) {
+    int count = 0;
+    size_t pos = 0;
+    while ((pos = content.find(needle, pos)) != std::string::npos) {
+        count++;
+        pos += needle.size();
+    }
+    return count;
+}
+
+/**
+ * @brief Replace old_str with new_str in content.
+ * @param content File content.
+ * @param old_str String to find.
+ * @param new_str Replacement string.
+ * @param replace_all Replace all occurrences vs single.
+ * @param error_type Output: "not_found" or "multiple_matches" on failure.
+ * @return Modified content, or nullopt on error.
  * @internal
  * @version 1.8.5
  */
-std::optional<std::string> apply_str_replace(
-    const std::string& content,
-    const std::string& old_str,
-    const std::string& new_str,
-    bool replace_all) {
+std::optional<std::string>
+apply_str_replace(const std::string& content, const std::string& old_str, const std::string& new_str, bool replace_all, std::string& error_type) {
 
-    auto pos = content.find(old_str);
-    if (pos == std::string::npos) {
+    int occurrences = count_occurrences(content, old_str);
+    if (occurrences == 0) {
+        error_type = "not_found";
+        return std::nullopt;
+    }
+    if (!replace_all && occurrences > 1) {
+        error_type = "multiple_matches";
         return std::nullopt;
     }
 
     std::string result = content;
-    if (!replace_all) {
-        result.replace(pos, old_str.size(), new_str);
-        return result;
-    }
-
+    auto pos = result.find(old_str);
     while (pos != std::string::npos) {
         result.replace(pos, old_str.size(), new_str);
+        if (!replace_all) { break; }
         pos = result.find(old_str, pos + new_str.size());
     }
     return result;
@@ -449,7 +473,7 @@ std::vector<json> collect_entries(const fs::path& dir,
  * @param out Modified content (output).
  * @return Empty string on success, error JSON on failure.
  * @internal
- * @version 1.8.5
+ * @version 1.8.6
  */
 std::string do_str_replace(const json& args,
                            const std::string& content,
@@ -458,11 +482,14 @@ std::string do_str_replace(const json& args,
     auto new_str = args.at("new_string").get<std::string>();
     bool replace_all = args.value("replace_all", false);
 
+    std::string error_type;
     auto result = apply_str_replace(
-        content, old_str, new_str, replace_all);
+        content, old_str, new_str, replace_all, error_type);
     if (!result.has_value()) {
-        return make_error("not_found",
-            "old_string not found in file");
+        auto msg = (error_type == "multiple_matches")
+            ? "old_string found multiple times — use replace_all"
+            : "old_string not found in file";
+        return make_error(error_type, msg);
     }
     out = result.value();
     return "";

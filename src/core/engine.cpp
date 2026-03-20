@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <sstream>
 
 static auto logger = entropic::log::get("core.engine");
 
@@ -67,6 +68,17 @@ AgentEngine::AgentEngine(
  */
 void AgentEngine::set_callbacks(const EngineCallbacks& callbacks) {
     callbacks_ = callbacks;
+}
+
+/**
+ * @brief Set the tool execution interface.
+ * @param tool_exec Tool execution interface.
+ * @internal
+ * @version 1.8.5
+ */
+void AgentEngine::set_tool_executor(
+    const ToolExecutionInterface& tool_exec) {
+    tool_exec_ = tool_exec;
 }
 
 /**
@@ -129,7 +141,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 1.8.4
+ * @version 1.8.5
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -145,13 +157,19 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     set_state(ctx, AgentState::EXECUTING);
     auto result = response_generator_.generate_response(ctx);
 
+    // Parse tool calls from model output (v1.8.5)
+    auto [cleaned, tool_calls] = parse_tool_calls(result.content);
+
     Message assistant_msg;
     assistant_msg.role = "assistant";
-    assistant_msg.content = result.content;
+    assistant_msg.content = cleaned;
     ctx.messages.push_back(std::move(assistant_msg));
 
-    // v1.8.4: tool_calls branch is dead code (tool execution is v1.8.5)
-    evaluate_no_tool_decision(ctx, result.content, result.finish_reason);
+    if (!tool_calls.empty() && tool_exec_.process_tool_calls != nullptr) {
+        process_tool_results(ctx, tool_calls);
+    } else {
+        evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
+    }
 }
 
 /**
@@ -467,6 +485,78 @@ void AgentEngine::dir_notify(
             np.key.c_str(), np.data_json.c_str(),
             callbacks_.user_data);
     }
+}
+
+// ── Tool call parsing (v1.8.5) ───────────────────────────
+
+/**
+ * @brief Parse tool calls from raw model output.
+ * @param raw_content Raw model output.
+ * @return (cleaned content, parsed tool calls).
+ * @internal
+ * @version 1.8.5
+ */
+std::pair<std::string, std::vector<ToolCall>>
+AgentEngine::parse_tool_calls(const std::string& raw_content) {
+    if (inference_.parse_tool_calls == nullptr) {
+        return {raw_content, {}};
+    }
+
+    char* cleaned = nullptr;
+    char* tc_json = nullptr;
+    int rc = inference_.parse_tool_calls(
+        raw_content.c_str(), &cleaned, &tc_json,
+        inference_.adapter_data);
+
+    std::string cleaned_str = cleaned ? cleaned : raw_content;
+    std::string tc_str = tc_json ? tc_json : "[]";
+
+    if (inference_.free_fn != nullptr) {
+        if (cleaned != nullptr) { inference_.free_fn(cleaned); }
+        if (tc_json != nullptr) { inference_.free_fn(tc_json); }
+    }
+
+    if (rc != 0 || tc_str == "[]" || tc_str.empty()) {
+        return {cleaned_str, {}};
+    }
+
+    // Minimal JSON parse: tool_calls is a JSON array of objects
+    // with "name" and "arguments" fields. This avoids pulling
+    // nlohmann/json into core.so.
+    // For now, store raw JSON — the ToolExecutor (in mcp.so)
+    // will parse it via the ToolExecutionFn callback.
+    ToolCall call;
+    call.id = "tc-" + std::to_string(
+        std::hash<std::string>{}(tc_str) & 0xFFFF);
+    call.name = ""; // Parsed by the facade's callback
+    // Store raw JSON in arguments for facade to parse
+    call.arguments["_raw_json"] = tc_str;
+
+    logger->info("Parsed tool calls from model output");
+    return {cleaned_str, {call}};
+}
+
+/**
+ * @brief Process tool call results and directives.
+ * @param ctx Loop context.
+ * @param tool_calls Parsed tool calls.
+ * @internal
+ * @version 1.8.5
+ */
+void AgentEngine::process_tool_results(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& tool_calls) {
+    set_state(ctx, AgentState::WAITING_TOOL);
+
+    auto results = tool_exec_.process_tool_calls(
+        ctx, tool_calls, tool_exec_.user_data);
+
+    for (auto& msg : results) {
+        ctx.messages.push_back(std::move(msg));
+    }
+
+    ctx.has_pending_tool_results = true;
+    set_state(ctx, AgentState::EXECUTING);
 }
 
 // ── Anchor helper ────────────────────────────────────────

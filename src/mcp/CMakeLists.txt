@@ -16,6 +16,13 @@ target_sources(entropic-mcp PRIVATE
     servers/diagnostics.cpp
     servers/web.cpp
     servers/entropic_server.cpp
+    # v1.8.7: External MCP client
+    transport_stdio.cpp
+    transport_sse.cpp
+    external_client.cpp
+    reconnect_policy.cpp
+    health_monitor.cpp
+    mcp_json_discovery.cpp
 )
 
 target_include_directories(entropic-mcp PUBLIC
@@ -28,6 +35,7 @@ target_link_libraries(entropic-mcp PUBLIC
     entropic-core
     nlohmann_json::nlohmann_json
     spdlog::spdlog
+    httplib::httplib
 )
 
 target_compile_definitions(entropic-mcp PRIVATE ENTROPIC_BUILDING_DLL)

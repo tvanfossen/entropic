@@ -48,6 +48,9 @@ typedef enum {
     ENTROPIC_ERROR_OUT_OF_MEMORY,             ///< Allocation failed (system RAM or VRAM)
     ENTROPIC_ERROR_IO,                        ///< File/network I/O error
     ENTROPIC_ERROR_INTERNAL,                  ///< Unexpected internal error (bug)
+    ENTROPIC_ERROR_SERVER_ALREADY_EXISTS,     ///< MCP server name already registered (v1.8.7)
+    ENTROPIC_ERROR_SERVER_NOT_FOUND,         ///< MCP server name not found (v1.8.7)
+    ENTROPIC_ERROR_CONNECTION_FAILED,        ///< Transport connection failed (v1.8.7)
 } entropic_error_t;
 
 /**

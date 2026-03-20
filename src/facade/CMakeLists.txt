@@ -2,6 +2,7 @@ add_library(entropic-facade)
 
 target_sources(entropic-facade PRIVATE
     entropic.cpp
+    entropic_mcp.cpp
 )
 
 target_link_libraries(entropic-facade PUBLIC
@@ -9,6 +10,7 @@ target_link_libraries(entropic-facade PUBLIC
     entropic-config
     entropic-prompts
     entropic-core
+    entropic-mcp
 )
 
 target_compile_definitions(entropic-facade PRIVATE ENTROPIC_BUILDING_DLL)

@@ -2,19 +2,23 @@
  * @file server_manager.h
  * @brief MCP server lifecycle management and tool routing.
  *
- * Manages registered in-process servers. Routes tool calls by server
- * prefix (e.g., "filesystem.read_file" → filesystem server).
- * Plugin .so discovery via dlopen with API version checking.
+ * Manages both in-process servers (v1.8.5) and external MCP servers
+ * (v1.8.7). Routes tool calls by server prefix. External servers
+ * connect via stdio or SSE transports.
  *
- * @version 1.8.5
+ * @version 1.8.7
  */
 
 #pragma once
 
+#include <entropic/mcp/external_client.h>
+#include <entropic/mcp/health_monitor.h>
+#include <entropic/mcp/mcp_json_discovery.h>
 #include <entropic/mcp/permission_manager.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/config.h>
 
+#include <chrono>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -24,13 +28,29 @@
 namespace entropic {
 
 /**
+ * @brief Runtime state of a connected MCP server.
+ * @version 1.8.7
+ */
+struct ServerInfo {
+    std::string name;                              ///< Server name (unique key)
+    std::string transport;                         ///< "stdio" | "sse" | "in_process"
+    std::string url;                               ///< SSE URL (empty otherwise)
+    std::string command;                           ///< Stdio command (empty otherwise)
+    std::string status;                            ///< "connected" | "disconnected" | "error" | "reconnecting"
+    std::vector<std::string> tools;                ///< Registered tool names (prefixed)
+    std::string source;                            ///< "builtin" | "config" | "mcp_json" | "runtime"
+    std::chrono::system_clock::time_point connected_at; ///< Connection timestamp
+    int reconnect_attempts{0};                     ///< Current reconnect attempt count
+};
+
+/**
  * @brief Manages MCP server instances and routes tool calls.
  *
- * Owns server instances, handles tool routing by server prefix,
- * delegates permission checking to PermissionManager, and provides
- * server-class-level methods (get_permission_pattern, skip_duplicate_check).
+ * Owns both in-process servers (v1.8.5) and external MCP clients
+ * (v1.8.7). Tool routing by server prefix is uniform across both.
+ * External servers discovered from .mcp.json and YAML config.
  *
- * @version 1.8.5
+ * @version 1.8.7
  */
 class ServerManager {
 public:
@@ -113,10 +133,54 @@ public:
     void add_permission(const std::string& pattern, bool allow);
 
     /**
-     * @brief Shutdown all servers.
-     * @version 1.8.5
+     * @brief Shutdown all servers (in-process + external).
+     * @version 1.8.7
      */
     void shutdown();
+
+    /* ── v1.8.7: External server methods ───────────────── */
+
+    /**
+     * @brief Connect to an external MCP server at runtime.
+     * @param name Unique server name.
+     * @param command Stdio command (mutually exclusive with url).
+     * @param args Stdio command arguments.
+     * @param url SSE endpoint URL (mutually exclusive with command).
+     * @return List of tool names registered from the server.
+     * @version 1.8.7
+     */
+    std::vector<std::string> connect_external_server(
+        const std::string& name,
+        const std::string& command = "",
+        const std::vector<std::string>& args = {},
+        const std::string& url = "");
+
+    /**
+     * @brief Disconnect and remove an external server.
+     * @param name Server name to disconnect.
+     * @version 1.8.7
+     */
+    void disconnect_external_server(const std::string& name);
+
+    /**
+     * @brief Get snapshot of all servers with current status.
+     * @return Map of server name to ServerInfo.
+     * @version 1.8.7
+     */
+    std::map<std::string, ServerInfo> list_server_info() const;
+
+    /**
+     * @brief Process pending health events (call from engine loop).
+     * @version 1.8.7
+     */
+    void process_health_events();
+
+    /**
+     * @brief Set MCP config for external server initialization.
+     * @param config MCP configuration with external_servers.
+     * @version 1.8.7
+     */
+    void set_mcp_config(const MCPConfig& config);
 
 private:
     /**
@@ -145,7 +209,99 @@ private:
 
     PermissionManager permissions_;                                 ///< Permission manager
     std::filesystem::path project_dir_;                             ///< Project root
-    std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → server
+    std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
+
+    /* ── v1.8.7: External server state ─────────────────── */
+    std::map<std::string, std::unique_ptr<ExternalMCPClient>> external_clients_; ///< Name → external client
+    std::map<std::string, ServerInfo> server_info_;                               ///< All server info
+    std::unique_ptr<HealthMonitor> health_monitor_;                               ///< Health monitoring
+    std::unique_ptr<MCPJsonDiscovery> mcp_json_discovery_;                        ///< .mcp.json discovery
+    MCPConfig mcp_config_;                                                        ///< MCP configuration
+
+    /**
+     * @brief Initialize external servers from config + .mcp.json.
+     * @utility
+     * @version 1.8.7
+     */
+    void initialize_external_servers();
+
+    /**
+     * @brief Route a tool call to the correct server.
+     * @param tool_name Fully-qualified name.
+     * @param args_json JSON arguments.
+     * @return ServerResponse JSON envelope.
+     * @utility
+     * @version 1.8.7
+     */
+    std::string route_tool_call(const std::string& tool_name,
+                                 const std::string& args_json);
+
+    /**
+     * @brief Route a tool call to an external client.
+     * @param client External client.
+     * @param tool_name Full tool name.
+     * @param local_name Local tool name.
+     * @param args_json JSON arguments.
+     * @return ServerResponse JSON envelope.
+     * @utility
+     * @version 1.8.7
+     */
+    std::string route_external_call(
+        ExternalMCPClient* client,
+        const std::string& tool_name,
+        const std::string& local_name,
+        const std::string& args_json);
+
+    /**
+     * @brief Connect an external client and register info.
+     * @param name Server name.
+     * @param client Client to connect.
+     * @param source Source identifier.
+     * @param url SSE URL (may be empty).
+     * @param command Stdio command (may be empty).
+     * @utility
+     * @version 1.8.7
+     */
+    void connect_and_register_external(
+        const std::string& name,
+        std::unique_ptr<ExternalMCPClient> client,
+        const std::string& source,
+        const std::string& url,
+        const std::string& command);
+
+    /**
+     * @brief Create an ExternalMCPClient from config entry.
+     * @param name Server name.
+     * @param entry Config entry.
+     * @return Unique pointer to client.
+     * @utility
+     * @version 1.8.7
+     */
+    std::unique_ptr<ExternalMCPClient> create_external_client(
+        const std::string& name,
+        const ExternalServerEntry& entry);
+
+    /**
+     * @brief Create an ExternalMCPClient from discovery config.
+     * @param config Discovery config entry.
+     * @return Unique pointer to client.
+     * @utility
+     * @version 1.8.7
+     */
+    std::unique_ptr<ExternalMCPClient> create_external_client(
+        const ExternalServerConfig& config);
+
+    /**
+     * @brief Build error response JSON for disconnected server.
+     * @param tool_name Full tool name.
+     * @param server_name Server name.
+     * @return ServerResponse JSON string.
+     * @utility
+     * @version 1.8.7
+     */
+    static std::string disconnected_error(
+        const std::string& tool_name,
+        const std::string& server_name);
 };
 
 } // namespace entropic

@@ -57,11 +57,15 @@ target_link_libraries(entropic-inference-tests PRIVATE
 )
 
 # v1.8.4: Core engine tests
+# v1.8.6: Added delegation, worktree, auto-chain tests
 add_executable(entropic-core-tests
     core/test_compaction.cpp
     core/test_directives.cpp
     core/test_context_manager.cpp
     core/test_engine.cpp
+    core/test_worktree.cpp
+    core/test_delegation_manager.cpp
+    core/test_auto_chain.cpp
 )
 
 target_include_directories(entropic-core-tests PRIVATE

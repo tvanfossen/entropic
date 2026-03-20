@@ -1,10 +1,12 @@
 /**
  * @file engine.cpp
  * @brief AgentEngine implementation — the agentic loop.
- * @version 1.8.4
+ * @version 1.8.6
  */
 
 #include <entropic/core/engine.h>
+#include <entropic/core/delegation.h>
+#include <entropic/core/worktree.h>
 #include <entropic/types/logging.h>
 
 #include <algorithm>
@@ -82,6 +84,41 @@ void AgentEngine::set_tool_executor(
 }
 
 /**
+ * @brief Set tier resolution interface for delegation.
+ * @param tier_res Tier resolution callbacks.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::set_tier_resolution(
+    const TierResolutionInterface& tier_res) {
+    tier_res_ = tier_res;
+}
+
+/**
+ * @brief Get the tier resolution interface.
+ * @return Tier resolution interface.
+ * @internal
+ * @version 1.8.6
+ */
+const TierResolutionInterface& AgentEngine::tier_resolution() const {
+    return tier_res_;
+}
+
+/**
+ * @brief Run the engine loop on a pre-built context.
+ * @param ctx Loop context to execute.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::run_loop(LoopContext& ctx) {
+    reset_interrupt();
+    pause_flag_.store(false);
+    reinject_context_anchors(ctx);
+    set_state(ctx, AgentState::PLANNING);
+    loop(ctx);
+}
+
+/**
  * @brief Run the engine on initial messages.
  * @param messages System + user messages.
  * @return Final messages.
@@ -141,7 +178,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 1.8.5
+ * @version 1.8.6
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -170,6 +207,15 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
+
+    // Execute pending delegation/pipeline (v1.8.6)
+    if (ctx.pending_delegation.has_value()) {
+        ctx.metrics.iterations--;  // delegation turns are free
+        execute_pending_delegation(ctx);
+    } else if (ctx.pending_pipeline.has_value()) {
+        ctx.metrics.iterations--;  // pipeline turns are free
+        execute_pending_pipeline(ctx);
+    }
 }
 
 /**
@@ -178,7 +224,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param content Response content.
  * @param finish_reason Finish reason from generation.
  * @internal
- * @version 1.8.4
+ * @version 1.8.6
  */
 void AgentEngine::evaluate_no_tool_decision(
     LoopContext& ctx,
@@ -192,6 +238,12 @@ void AgentEngine::evaluate_no_tool_decision(
 
     if (finish_reason == "length") {
         logger->info("[DECISION] length, continuing");
+        return;
+    }
+
+    // Auto-chain check (v1.8.6)
+    if (try_auto_chain(ctx, finish_reason, content)) {
+        logger->info("[DECISION] auto-chain triggered");
         return;
     }
 
@@ -358,27 +410,29 @@ void AgentEngine::dir_tier_change(
 /**
  * @brief Handle delegate directive (store pending).
  * @internal
- * @version 1.8.4
+ * @version 1.8.6
  */
 void AgentEngine::dir_delegate(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& dl = static_cast<const DelegateDirective&>(d);
-    ctx.metadata["pending_delegation"] = dl.target;
+    ctx.pending_delegation = PendingDelegation{
+        dl.target, dl.task, dl.max_turns};
     r.stop_processing = true;
-    logger->info("[DIRECTIVE] delegate: {}", dl.target);
+    logger->info("[DIRECTIVE] delegate: target={} task='{}'",
+                 dl.target, dl.task);
 }
 
 /**
  * @brief Handle pipeline directive (store pending).
  * @internal
- * @version 1.8.4
+ * @version 1.8.6
  */
 void AgentEngine::dir_pipeline(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& pl = static_cast<const PipelineDirective&>(d);
-    ctx.metadata["pending_pipeline"] = pl.task;
+    ctx.pending_pipeline = PendingPipeline{pl.stages, pl.task};
     r.stop_processing = true;
-    logger->info("[DIRECTIVE] pipeline: {}", pl.task);
+    logger->info("[DIRECTIVE] pipeline: {} stages", pl.stages.size());
 }
 
 /**
@@ -578,6 +632,261 @@ static void remove_anchor_messages(LoopContext& ctx,
                 return it != m.metadata.end() && it->second == key;
             }),
         msgs.end());
+}
+
+// ── Delegation execution (v1.8.6) ────────────────────────
+
+/**
+ * @brief Trampoline for DelegationManager to call engine loop.
+ * @param ctx Child loop context.
+ * @param user_data AgentEngine pointer.
+ * @internal
+ * @version 1.8.6
+ */
+static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
+    auto* engine = static_cast<AgentEngine*>(user_data);
+    engine->run_loop(ctx);
+}
+
+/**
+ * @brief Execute a pending delegation after tool processing.
+ * @param ctx Loop context with pending_delegation set.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
+    auto pending = std::move(*ctx.pending_delegation);
+    ctx.pending_delegation.reset();
+
+    if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
+        logger->warn("Delegation rejected: depth {} >= max {}",
+                     ctx.delegation_depth, MAX_DELEGATION_DEPTH);
+        Message reject;
+        reject.role = "user";
+        reject.content = "[DELEGATION REJECTED] Maximum delegation "
+                         "depth (" + std::to_string(MAX_DELEGATION_DEPTH) +
+                         ") reached.";
+        ctx.messages.push_back(std::move(reject));
+        return;
+    }
+
+    set_state(ctx, AgentState::DELEGATING);
+    fire_delegation_start(ctx, pending.target, pending.task);
+
+    auto repo_dir = get_repo_dir();
+    std::optional<int> max_turns;
+    if (pending.max_turns > 0) {
+        max_turns = pending.max_turns;
+    }
+
+    DelegationManager mgr(run_child_loop_trampoline, this,
+                          tier_res_, repo_dir);
+    auto result = mgr.execute_delegation(
+        ctx, pending.target, pending.task, max_turns);
+
+    std::string tag = result.success ? "COMPLETE" : "FAILED";
+    Message result_msg;
+    result_msg.role = "user";
+    result_msg.content = "[DELEGATION " + tag + ": " +
+                         pending.target + "] " + result.summary;
+    ctx.messages.push_back(std::move(result_msg));
+
+    fire_delegation_complete(ctx, pending.target, result);
+    set_state(ctx, AgentState::EXECUTING);
+}
+
+/**
+ * @brief Execute a pending pipeline after tool processing.
+ * @param ctx Loop context with pending_pipeline set.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
+    auto pending = std::move(*ctx.pending_pipeline);
+    ctx.pending_pipeline.reset();
+
+    if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
+        logger->warn("Pipeline rejected: depth {} >= max {}",
+                     ctx.delegation_depth, MAX_DELEGATION_DEPTH);
+        Message reject;
+        reject.role = "user";
+        reject.content = "[PIPELINE REJECTED] Maximum delegation "
+                         "depth reached.";
+        ctx.messages.push_back(std::move(reject));
+        return;
+    }
+
+    set_state(ctx, AgentState::DELEGATING);
+
+    auto repo_dir = get_repo_dir();
+    DelegationManager mgr(run_child_loop_trampoline, this,
+                          tier_res_, repo_dir);
+    auto result = mgr.execute_pipeline(
+        ctx, pending.stages, pending.task);
+
+    std::string tag = result.success ? "COMPLETE" : "FAILED";
+    Message result_msg;
+    result_msg.role = "user";
+    result_msg.content = "[PIPELINE " + tag + "] " + result.summary;
+    ctx.messages.push_back(std::move(result_msg));
+
+    set_state(ctx, AgentState::EXECUTING);
+}
+
+/**
+ * @brief Fire on_delegation_start callback if set.
+ * @param ctx Loop context.
+ * @param tier Target tier.
+ * @param task Task description.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::fire_delegation_start(
+    const LoopContext& /*ctx*/,
+    const std::string& tier,
+    const std::string& task) {
+    if (callbacks_.on_delegation_start != nullptr) {
+        callbacks_.on_delegation_start(
+            "", tier.c_str(), task.c_str(),
+            callbacks_.user_data);
+    }
+}
+
+/**
+ * @brief Fire on_delegation_complete callback if set.
+ * @param ctx Loop context.
+ * @param tier Target tier.
+ * @param result Delegation result.
+ * @internal
+ * @version 1.8.6
+ */
+void AgentEngine::fire_delegation_complete(
+    const LoopContext& /*ctx*/,
+    const std::string& tier,
+    const DelegationResult& result) {
+    if (callbacks_.on_delegation_complete != nullptr) {
+        callbacks_.on_delegation_complete(
+            "", tier.c_str(), result.summary.c_str(),
+            result.success ? 1 : 0,
+            callbacks_.user_data);
+    }
+}
+
+// ── Auto-chain (v1.8.6) ─────────────────────────────────
+
+/**
+ * @brief Check if auto-chain should fire.
+ * @param ctx Loop context.
+ * @param finish_reason Generation finish reason.
+ * @param content Response content.
+ * @return true if auto-chain conditions met.
+ * @internal
+ * @version 1.8.6
+ */
+bool AgentEngine::should_auto_chain(
+    const LoopContext& ctx,
+    const std::string& finish_reason,
+    const std::string& content) {
+    if (ctx.locked_tier.empty() || tier_res_.get_tier_param == nullptr) {
+        return false;
+    }
+
+    std::string auto_chain = tier_res_.get_tier_param(
+        ctx.locked_tier, "auto_chain", tier_res_.user_data);
+    if (auto_chain.empty()) {
+        return false;
+    }
+
+    bool triggered = (finish_reason == "length") ||
+        (finish_reason == "stop" &&
+         response_generator_.is_response_complete(content, "[]"));
+    return triggered;
+}
+
+/**
+ * @brief Attempt auto-chain: child→COMPLETE, root→TierChange.
+ * @param ctx Loop context.
+ * @param finish_reason Generation finish reason.
+ * @param content Response content.
+ * @return true if auto-chain was triggered.
+ * @internal
+ * @version 1.8.6
+ */
+bool AgentEngine::try_auto_chain(
+    LoopContext& ctx,
+    const std::string& finish_reason,
+    const std::string& content) {
+    if (!should_auto_chain(ctx, finish_reason, content)) {
+        return false;
+    }
+
+    if (ctx.delegation_depth > 0) {
+        logger->info("[AUTO-CHAIN] child depth={}, completing",
+                     ctx.delegation_depth);
+        set_state(ctx, AgentState::COMPLETE);
+        return true;
+    }
+
+    // Root: tier change to auto_chain target
+    std::string target = tier_res_.get_tier_param(
+        ctx.locked_tier, "auto_chain", tier_res_.user_data);
+
+    if (!target.empty()) {
+        logger->info("[AUTO-CHAIN] root, tier change to '{}'", target);
+        TierChangeDirective tc(target, "auto_chain");
+        DirectiveResult r;
+        dir_tier_change(ctx, tc, r);
+    }
+    return !target.empty();
+}
+
+// ── Repo init (v1.8.6) ──────────────────────────────────
+
+/**
+ * @brief Get or discover the project git repository.
+ * @return Repo directory, or empty if not found.
+ * @internal
+ * @version 1.8.6
+ */
+std::filesystem::path AgentEngine::get_repo_dir() {
+    if (repo_dir_checked_) {
+        return cached_repo_dir_.value_or(std::filesystem::path{});
+    }
+    repo_dir_checked_ = true;
+
+    auto cwd = std::filesystem::current_path();
+    bool found = std::filesystem::exists(cwd / ".git");
+    bool inited = !found && init_project_repo(cwd);
+
+    if (found || inited) {
+        cached_repo_dir_ = cwd;
+        logger->info("Git repo at: {}", cwd.string());
+    } else {
+        logger->warn("No git repo found or initialized");
+    }
+    return cached_repo_dir_.value_or(std::filesystem::path{});
+}
+
+/**
+ * @brief Initialize a git repo if none exists.
+ * @param project_dir Directory to init.
+ * @return true if repo now exists.
+ * @internal
+ * @version 1.8.6
+ */
+bool AgentEngine::init_project_repo(
+    const std::filesystem::path& project_dir) {
+    auto r1 = run_git(project_dir, "init");
+    if (!r1.success) {
+        return false;
+    }
+    auto r2 = run_git(project_dir, "add -A");
+    if (!r2.success) {
+        return false;
+    }
+    run_git(project_dir, "commit --allow-empty -m 'Initial commit'");
+    logger->info("Initialized git repo at: {}", project_dir.string());
+    return true;
 }
 
 } // namespace entropic

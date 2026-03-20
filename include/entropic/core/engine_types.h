@@ -16,6 +16,8 @@
 #include <entropic/types/tool_call.h>
 
 #include <atomic>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -98,12 +100,74 @@ struct LoopMetrics {
 };
 
 /**
+ * @brief Pending single delegation (stored by dir_delegate handler).
+ * @version 1.8.6
+ */
+struct PendingDelegation {
+    std::string target;    ///< Target tier name
+    std::string task;      ///< Task description
+    int max_turns = -1;    ///< Max turns for child (-1 = default)
+};
+
+/**
+ * @brief Pending multi-stage pipeline (stored by dir_pipeline handler).
+ * @version 1.8.6
+ */
+struct PendingPipeline {
+    std::vector<std::string> stages; ///< Tier names in order
+    std::string task;                ///< Task description
+};
+
+/**
+ * @brief Resolved tier information for building child delegation contexts.
+ * @version 1.8.6
+ */
+struct ChildContextInfo {
+    std::string system_prompt;              ///< Built for target tier
+    std::vector<std::string> tools;         ///< Tool JSON definitions for tier
+    bool explicit_completion = false;       ///< Requires entropic.complete?
+    std::string completion_instructions;    ///< Instructions for explicit completion
+    bool valid = false;                     ///< False if tier not found
+};
+
+/**
+ * @brief Tier resolution callbacks for delegation and auto-chain.
+ *
+ * Injected by the facade. Allows core.so to resolve tier identity
+ * information without depending on prompts.so or inference.so.
+ *
+ * @version 1.8.6
+ */
+struct TierResolutionInterface {
+    /// @brief Build context info for a child delegation to the given tier.
+    ChildContextInfo (*resolve_tier)(
+        const std::string& tier_name, void* user_data) = nullptr;
+
+    /// @brief Get a string parameter from tier identity frontmatter.
+    /// @return Parameter value, or empty string if not found.
+    std::string (*get_tier_param)(
+        const std::string& tier_name,
+        const std::string& param_name,
+        void* user_data) = nullptr;
+
+    /// @brief Get valid handoff targets from a tier.
+    std::vector<std::string> (*get_handoff_targets)(
+        const std::string& tier_name, void* user_data) = nullptr;
+
+    /// @brief Check if a tier exists in the configuration.
+    bool (*tier_exists)(
+        const std::string& tier_name, void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer (facade context)
+};
+
+/**
  * @brief Mutable state carried through the agentic loop.
  *
  * All mutable loop state lives here. The engine itself is stateless
  * between run() calls (except context_anchors which persist).
  *
- * @version 1.8.4
+ * @version 1.8.6
  */
 struct LoopContext {
     std::vector<Message> messages;                         ///< Conversation history
@@ -125,6 +189,8 @@ struct LoopContext {
     std::vector<std::string> child_conversation_ids;       ///< Spawned child IDs
     std::string active_phase = "default";                  ///< Active inference phase
     std::unordered_map<std::string, std::string> recent_tool_calls; ///< Duplicate detection cache (v1.8.5)
+    std::optional<PendingDelegation> pending_delegation;  ///< Stored by dir_delegate (v1.8.6)
+    std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
 };
 
 /**

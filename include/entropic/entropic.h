@@ -203,6 +203,56 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
 
+/* ── External MCP Servers (v1.8.7) ───────────────────── */
+
+/**
+ * @brief Register an external MCP server at runtime.
+ *
+ * Connects to the server immediately. For stdio: spawns child process.
+ * For SSE: connects to HTTP endpoint.
+ *
+ * @param handle Engine handle.
+ * @param name Unique server name (null-terminated).
+ * @param config_json JSON configuration:
+ *   Stdio: {"command":"...","args":[...],"env":{...}}
+ *   SSE:   {"url":"http://..."}
+ * @return ENTROPIC_OK, ENTROPIC_ERROR_SERVER_ALREADY_EXISTS,
+ *         ENTROPIC_ERROR_CONNECTION_FAILED.
+ * @version 1.8.7
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_register_mcp_server(
+    entropic_handle_t handle,
+    const char* name,
+    const char* config_json);
+
+/**
+ * @brief Deregister an external MCP server.
+ *
+ * Disconnects and removes the server. In-progress tool calls
+ * are not interrupted but subsequent calls will fail.
+ *
+ * @param handle Engine handle.
+ * @param name Server name to remove (null-terminated).
+ * @return ENTROPIC_OK, ENTROPIC_ERROR_SERVER_NOT_FOUND.
+ * @version 1.8.7
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_deregister_mcp_server(
+    entropic_handle_t handle,
+    const char* name);
+
+/**
+ * @brief List all MCP servers with status information.
+ *
+ * Returns both in-process and external servers.
+ *
+ * @param handle Engine handle.
+ * @return JSON string: {"servers":{"name":{...ServerInfo...},...}}.
+ *         Caller must free with entropic_free(). NULL on error.
+ * @version 1.8.7
+ */
+ENTROPIC_EXPORT char* entropic_list_mcp_servers(
+    entropic_handle_t handle);
+
 #ifdef __cplusplus
 }
 #endif

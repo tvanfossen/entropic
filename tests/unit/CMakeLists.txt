@@ -80,6 +80,7 @@ target_link_libraries(entropic-core-tests PRIVATE
 )
 
 # v1.8.5: MCP tool system tests
+# v1.8.7: Added external client, reconnect, discovery tests
 add_executable(entropic-mcp-tests
     mcp/test_tool_registry.cpp
     mcp/test_server_base.cpp
@@ -94,6 +95,10 @@ add_executable(entropic-mcp-tests
     mcp/servers/test_diagnostics.cpp
     mcp/servers/test_web.cpp
     mcp/servers/test_entropic.cpp
+    # v1.8.7: External MCP tests
+    mcp/test_external_client.cpp
+    mcp/test_reconnect_policy.cpp
+    mcp/test_mcp_json_discovery.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

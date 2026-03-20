@@ -68,10 +68,14 @@ set(CONFIG_ENTROPIC_MCP_WEB         ${ENTROPIC_MCP_WEB})
 set(CONFIG_ENTROPIC_MCP_ENTROPIC    ${ENTROPIC_MCP_ENTROPIC})
 set(CONFIG_ENTROPIC_STORAGE_SQLITE  ${ENTROPIC_STORAGE_SQLITE})
 set(CONFIG_ENTROPIC_STREAMING       ${ENTROPIC_STREAMING})
+set(CONFIG_ENTROPIC_SOURCE_DATA_DIR ${ENTROPIC_SOURCE_DATA_DIR})
 
 # ── Generate entropic_config.h ──────────────────────────
 set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"
     CACHE PATH "Install path for bundled data files")
+# Source tree data dir for development builds (tools, prompts, grammars)
+set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/entropic/data"
+    CACHE PATH "Source tree path to bundled data files")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/entropic/entropic_config.h.in"
     "${CMAKE_CURRENT_BINARY_DIR}/include/entropic/entropic_config.h"
@@ -85,6 +89,7 @@ add_subdirectory(src/config)
 add_subdirectory(src/prompts)
 add_subdirectory(src/inference)
 add_subdirectory(src/core)
+add_subdirectory(src/mcp)
 add_subdirectory(src/facade)
 
 if(ENTROPIC_BUILD_TESTS)

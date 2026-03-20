@@ -46,3 +46,6 @@
 /** @brief Compile-time path to bundled data files (prompts, grammars, models).
  *  Overridable at runtime via config_dir field in config YAML. */
 #define CONFIG_ENTROPIC_DATA_DIR "@ENTROPIC_DATA_DIR@"
+/** @brief Source tree data dir for development builds.
+ *  Used when CONFIG_ENTROPIC_DATA_DIR doesn't exist on disk. */
+#define CONFIG_ENTROPIC_SOURCE_DATA_DIR "@ENTROPIC_SOURCE_DATA_DIR@"

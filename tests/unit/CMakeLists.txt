@@ -75,9 +75,33 @@ target_link_libraries(entropic-core-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.8.5: MCP tool system tests
+add_executable(entropic-mcp-tests
+    mcp/test_tool_registry.cpp
+    mcp/test_server_base.cpp
+    mcp/test_permission_manager.cpp
+    mcp/test_tool_executor.cpp
+    mcp/test_server_manager.cpp
+    mcp/test_tool_calling_loop.cpp
+)
+
+target_include_directories(entropic-mcp-tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+target_link_libraries(entropic-mcp-tests PRIVATE
+    entropic-mcp
+    entropic-core
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-core-tests)
+catch_discover_tests(entropic-mcp-tests)

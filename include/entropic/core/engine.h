@@ -32,6 +32,7 @@
 #include <atomic>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace entropic {
 
@@ -72,6 +73,13 @@ public:
      * @version 1.8.4
      */
     void set_callbacks(const EngineCallbacks& callbacks);
+
+    /**
+     * @brief Set the tool execution interface.
+     * @param tool_exec Tool execution interface (wired by facade).
+     * @version 1.8.5
+     */
+    void set_tool_executor(const ToolExecutionInterface& tool_exec);
 
     /**
      * @brief Interrupt the running loop (thread-safe).
@@ -174,6 +182,24 @@ private:
     void dir_phase(LoopContext&, const Directive&, DirectiveResult&);        ///< @internal
     void dir_notify(LoopContext&, const Directive&, DirectiveResult&);       ///< @internal
 
+    /**
+     * @brief Parse tool calls from model output via adapter.
+     * @param raw_content Raw model output.
+     * @return Pair of (cleaned content, parsed tool calls).
+     * @version 1.8.5
+     */
+    std::pair<std::string, std::vector<ToolCall>> parse_tool_calls(
+        const std::string& raw_content);
+
+    /**
+     * @brief Process tool calls and handle directives.
+     * @param ctx Loop context.
+     * @param tool_calls Parsed tool calls.
+     * @version 1.8.5
+     */
+    void process_tool_results(LoopContext& ctx,
+                              const std::vector<ToolCall>& tool_calls);
+
     // ── Members ──────────────────────────────────────────
     InferenceInterface inference_;                       ///< Inference contract
     LoopConfig loop_config_;                             ///< Loop config
@@ -181,6 +207,7 @@ private:
     std::atomic<bool> interrupt_flag_{false};             ///< Hard interrupt
     std::atomic<bool> pause_flag_{false};                 ///< Pause signal
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
+    ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     DirectiveProcessor directive_processor_;              ///< Directive dispatch
     TokenCounter token_counter_;                          ///< Token counting
     CompactionManager compaction_manager_;                ///< Compaction

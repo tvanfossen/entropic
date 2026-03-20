@@ -124,6 +124,7 @@ struct LoopContext {
     std::string parent_conversation_id;                    ///< Parent conv ID (delegation)
     std::vector<std::string> child_conversation_ids;       ///< Spawned child IDs
     std::string active_phase = "default";                  ///< Active inference phase
+    std::unordered_map<std::string, std::string> recent_tool_calls; ///< Duplicate detection cache (v1.8.5)
 };
 
 /**
@@ -160,6 +161,36 @@ struct EngineCallbacks {
                                    void* ud) = nullptr;                ///< Delegation returned
     const char* (*error_sanitizer)(const char* raw, void* ud) = nullptr; ///< Sanitize errors
     void* user_data = nullptr; ///< Opaque pointer passed to all callbacks
+};
+
+/**
+ * @brief Tool execution callback type.
+ *
+ * Called by the engine when tool calls are parsed from model output.
+ * The facade wires this to ToolExecutor::process_tool_calls().
+ *
+ * @param ctx Mutable loop context.
+ * @param tool_calls Tool calls to process.
+ * @param user_data Opaque pointer (ToolExecutor instance).
+ * @return Result messages to append to context.
+ * @version 1.8.5
+ */
+using ToolExecutionFn = std::vector<Message> (*)(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& tool_calls,
+    void* user_data);
+
+/**
+ * @brief Tool execution interface for the engine.
+ *
+ * Injected by the facade. Allows core.so to process tool calls
+ * without depending on mcp.so.
+ *
+ * @version 1.8.5
+ */
+struct ToolExecutionInterface {
+    ToolExecutionFn process_tool_calls = nullptr; ///< Dispatches tool calls
+    void* user_data = nullptr;                     ///< Opaque pointer (ToolExecutor*)
 };
 
 /**

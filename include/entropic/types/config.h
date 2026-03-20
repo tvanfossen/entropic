@@ -165,7 +165,7 @@ struct FilesystemConfig {
 };
 
 /**
- * @brief External MCP server configuration.
+ * @brief External MCP server configuration (Entropic-as-server).
  * @version 1.8.1
  */
 struct ExternalMCPConfig {
@@ -175,8 +175,30 @@ struct ExternalMCPConfig {
 };
 
 /**
+ * @brief Reconnection policy configuration for external MCP servers.
+ * @version 1.8.7
+ */
+struct ReconnectConfig {
+    uint32_t base_delay_ms = 1000;   ///< Initial retry delay
+    uint32_t max_delay_ms = 60000;   ///< Maximum retry delay cap
+    uint32_t max_retries = 5;        ///< Max attempts (0 = infinite)
+    double backoff_factor = 2.0;     ///< Exponential backoff multiplier
+};
+
+/**
+ * @brief Configuration for a single external MCP server entry.
+ * @version 1.8.7
+ */
+struct ExternalServerEntry {
+    std::string command;                             ///< Stdio command (empty for SSE)
+    std::vector<std::string> args;                   ///< Stdio command arguments
+    std::unordered_map<std::string, std::string> env; ///< Stdio environment variables
+    std::string url;                                 ///< SSE endpoint URL (empty for stdio)
+};
+
+/**
  * @brief MCP server configuration.
- * @version 1.8.1
+ * @version 1.8.7
  */
 struct MCPConfig {
     bool enable_filesystem = true;   ///< Enable filesystem server
@@ -185,8 +207,14 @@ struct MCPConfig {
     bool enable_diagnostics = true;  ///< Enable diagnostics server
     bool enable_web = true;          ///< Enable web server
     FilesystemConfig filesystem;     ///< Filesystem server config
-    ExternalMCPConfig external;      ///< External MCP server config
+    ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
     int server_timeout_seconds = 30; ///< Server timeout (5–300)
+
+    /* ── v1.8.7: External MCP client settings ──────────── */
+    std::unordered_map<std::string, ExternalServerEntry> external_servers; ///< Named external servers
+    ReconnectConfig reconnect;                   ///< Reconnection backoff policy
+    uint32_t health_check_interval_ms = 0;       ///< Ping interval (0 = disabled)
+    uint32_t tool_call_timeout_ms = 30000;       ///< Per-call timeout for external tools
 };
 
 /**

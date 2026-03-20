@@ -83,10 +83,22 @@ add_executable(entropic-mcp-tests
     mcp/test_tool_executor.cpp
     mcp/test_server_manager.cpp
     mcp/test_tool_calling_loop.cpp
+    # Per-server behavioral tests
+    mcp/servers/test_filesystem.cpp
+    mcp/servers/test_bash.cpp
+    mcp/servers/test_git.cpp
+    mcp/servers/test_diagnostics.cpp
+    mcp/servers/test_web.cpp
+    mcp/servers/test_entropic.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Pass source-tree data dir for tool JSON resolution in tests
+target_compile_definitions(entropic-mcp-tests PRIVATE
+    TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/src/entropic/data"
 )
 
 target_link_libraries(entropic-mcp-tests PRIVATE

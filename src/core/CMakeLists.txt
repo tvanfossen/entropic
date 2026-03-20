@@ -7,6 +7,8 @@ target_sources(entropic-core PRIVATE
     context_manager.cpp
     response_generator.cpp
     engine.cpp
+    worktree.cpp
+    delegation.cpp
 )
 
 target_include_directories(entropic-core PUBLIC

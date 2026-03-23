@@ -218,6 +218,17 @@ struct MCPConfig {
 };
 
 /**
+ * @brief Storage backend configuration.
+ * @version 1.8.8
+ */
+struct StorageConfig {
+    bool enabled = true;                           ///< Enable storage backend
+    std::filesystem::path db_path;                 ///< SQLite database path (derived from config_dir)
+    size_t log_max_file_size = 10 * 1024 * 1024;   ///< Max log file size before rotation (10MB)
+    size_t log_max_files = 3;                       ///< Max rotated log files to keep
+};
+
+/**
  * @brief Auto-compaction configuration.
  * @version 1.8.1
  */
@@ -280,6 +291,7 @@ struct ParsedConfig {
     CompactionConfig compaction;      ///< Auto-compaction settings
     LSPConfig lsp;                    ///< LSP integration
     PromptCacheConfig prompt_cache;   ///< Prompt KV cache settings
+    StorageConfig storage;            ///< Storage backend settings (v1.8.8)
     std::string log_level = "INFO";   ///< Log level string
 
     /// Constitution: nullopt = bundled default, disabled = explicit false

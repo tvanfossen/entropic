@@ -18,6 +18,11 @@
 #define CONFIG_ENTROPIC_VERSION_PATCH @entropic_VERSION_PATCH@
 #define CONFIG_ENTROPIC_VERSION_STRING "@entropic_VERSION@"
 
+/** @brief C API version integer. Bumped on breaking changes only.
+ *  Additive changes (new functions) do not bump this value.
+ *  Compare with entropic_api_version() at runtime. */
+#define ENTROPIC_API_VERSION @ENTROPIC_API_VERSION@
+
 /* ── Build type ───────────────────────────────────────── */
 #cmakedefine01 CONFIG_ENTROPIC_SHARED
 #cmakedefine01 CONFIG_ENTROPIC_STATIC

@@ -17,12 +17,16 @@
  * @endcode
  *
  * @par Thread safety
- * A single handle is NOT thread-safe. Use one handle per thread, or
- * synchronize externally. Different handles are fully independent.
+ * Each function documents its thread safety class:
+ * - **Thread-safe**: callable from any thread at any time.
+ * - **Serialized per-handle**: one call at a time per handle;
+ *   different handles are fully independent.
+ * - **Single-threaded init/destroy**: must not race with any other
+ *   call on the same handle.
  *
  * @par Error handling
- * All functions return entropic_error_t. On failure, call
- * entropic_last_error(handle) for the detailed message.
+ * Functions returning entropic_error_t set per-handle error state on
+ * failure. Call entropic_last_error(handle) for the detailed message.
  *
  * @par Memory ownership
  * Functions returning char* transfer ownership to the caller.
@@ -31,14 +35,17 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.8.0
+ * @version 1.8.9
  */
 
 #pragma once
 
+#include <stddef.h>
+
 #include <entropic/entropic_config.h>
 #include <entropic/entropic_export.h>
 #include <entropic/types/error.h>
+#include <entropic/types/hooks.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -52,8 +59,12 @@ extern "C" {
  * Allocates and initializes an engine handle. The engine is idle until
  * entropic_configure() is called.
  *
- * @param[out] handle Pointer to receive the new handle.
- * @return ENTROPIC_OK on success, ENTROPIC_ERROR_OUT_OF_MEMORY on failure.
+ * @param[out] handle Pointer to receive the new handle. Set to NULL on failure.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — handle is NULL.
+ *         - ENTROPIC_ERROR_OUT_OF_MEMORY — allocation failed.
+ *
+ * @threadsafety Single-threaded init/destroy.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
@@ -72,7 +83,12 @@ ENTROPIC_EXPORT entropic_error_t entropic_create(entropic_handle_t* handle);
  *
  * @param handle Engine handle.
  * @param config_json JSON string with engine configuration.
- * @return ENTROPIC_OK, ENTROPIC_ERROR_INVALID_CONFIG, ENTROPIC_ERROR_INVALID_ARGUMENT.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — config_json is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — config validation failed.
+ *
+ * @threadsafety Serialized per-handle.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT entropic_error_t entropic_configure(
@@ -84,11 +100,16 @@ ENTROPIC_EXPORT entropic_error_t entropic_configure(
  *
  * Convenience wrapper that reads the file, parses it (YAML via ryml or
  * JSON via nlohmann/json based on extension), and applies the configuration.
- * Internally calls entropic_configure() after conversion.
  *
  * @param handle Engine handle.
  * @param config_path Path to YAML (.yaml/.yml) or JSON (.json) config file.
- * @return ENTROPIC_OK, ENTROPIC_ERROR_INVALID_CONFIG, ENTROPIC_ERROR_INVALID_ARGUMENT.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — config_path is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — config validation failed.
+ *         - ENTROPIC_ERROR_IO — file not found or unreadable.
+ *
+ * @threadsafety Serialized per-handle.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT entropic_error_t entropic_configure_from_file(
@@ -101,7 +122,10 @@ ENTROPIC_EXPORT entropic_error_t entropic_configure_from_file(
  * Unloads models, closes storage, destroys all child objects.
  * After this call, the handle is invalid. Passing NULL is a no-op.
  *
- * @param handle Engine handle to destroy.
+ * @param handle Engine handle to destroy (NULL-safe).
+ *
+ * @threadsafety Single-threaded init/destroy. Must not race with any
+ *               other call on the same handle.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT void entropic_destroy(entropic_handle_t handle);
@@ -110,18 +134,32 @@ ENTROPIC_EXPORT void entropic_destroy(entropic_handle_t handle);
 
 /**
  * @brief Get the library version string.
- * @return Static string like "1.8.0". Never NULL. Do NOT free.
+ *
+ * Returns the full semver string (e.g., "1.8.9"). The pointer has
+ * static lifetime — valid for the entire process.
+ *
+ * @return Static null-terminated version string. Never NULL. Do NOT free.
+ *
+ * @threadsafety Thread-safe.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT const char* entropic_version(void);
 
 /**
- * @brief Get the plugin API version number.
+ * @brief Get the C API version number.
  *
- * Plugins call this to verify compatibility before registering.
+ * Returns an integer starting at 1. Incremented on breaking changes:
+ * signature changes, function removals, enum renumbering, or behavior
+ * changes. Adding new functions does NOT increment this value.
  *
- * @return Integer API version (incremented on breaking changes).
+ * Compare with ENTROPIC_API_VERSION at compile time for version checks.
+ *
+ * @return API version integer.
+ *
+ * @threadsafety Thread-safe.
  * @version 1.8.0
+ *
+ * @see ENTROPIC_API_VERSION (compile-time constant in entropic_config.h)
  */
 ENTROPIC_EXPORT int entropic_api_version(void);
 
@@ -136,6 +174,8 @@ ENTROPIC_EXPORT int entropic_api_version(void);
  *
  * @param size Number of bytes to allocate.
  * @return Pointer to allocated memory, or NULL on failure.
+ *
+ * @threadsafety Thread-safe.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT void* entropic_alloc(size_t size);
@@ -147,22 +187,36 @@ ENTROPIC_EXPORT void* entropic_alloc(size_t size);
  * this function. Passing NULL is a no-op.
  *
  * @param ptr Pointer to free (from engine return value or entropic_alloc).
+ *
+ * @threadsafety Thread-safe.
  * @version 1.8.0
  */
 ENTROPIC_EXPORT void entropic_free(void* ptr);
 
-/* ── Generation (stubs — implemented in v1.8.4) ──────── */
+/* ── Execution ────────────────────────────────────────── */
 
 /**
- * @brief Single-turn blocking generation.
+ * @brief Synchronous agentic loop.
+ *
+ * Runs the full agentic loop: generate, parse tool calls, execute tools,
+ * re-generate until complete. Blocks until the loop finishes or is
+ * interrupted via entropic_interrupt().
  *
  * @param handle Engine handle.
  * @param input User message (null-terminated).
  * @param[out] result_json JSON result string. Caller must free with entropic_free().
- * @return ENTROPIC_OK, ENTROPIC_ERROR_GENERATE_FAILED, ENTROPIC_ERROR_INVALID_STATE.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — another run in progress.
+ *         - ENTROPIC_ERROR_INTERRUPTED — cancelled via entropic_interrupt().
  *
- * @note Stub in v1.8.0. Returns ENTROPIC_ERROR_INVALID_STATE until v1.8.4.
- * @version 1.8.0
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.4
+ *
+ * @par Memory ownership
+ * Caller must free *result_json with entropic_free().
  */
 ENTROPIC_EXPORT entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -170,17 +224,28 @@ ENTROPIC_EXPORT entropic_error_t entropic_run(
     char** result_json);
 
 /**
- * @brief Streaming generation with token callback.
+ * @brief Streaming agentic loop with token callback.
+ *
+ * Same as entropic_run() but invokes on_token for each generated token.
+ * The token pointer is valid only for the callback duration — copy if
+ * retention is needed.
  *
  * @param handle Engine handle.
- * @param input User message.
- * @param on_token Called for each generated token. Must be thread-safe.
+ * @param input User message (null-terminated).
+ * @param on_token Called for each generated token. Must not call back
+ *        into the entropic API (deadlock risk).
  * @param user_data Forwarded to on_token.
  * @param cancel_flag Pointer to int. Set to non-zero to cancel. May be NULL.
- * @return ENTROPIC_OK, ENTROPIC_ERROR_GENERATE_FAILED, ENTROPIC_ERROR_CANCELLED.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — another run in progress.
+ *         - ENTROPIC_ERROR_CANCELLED — cancelled via cancel_flag.
+ *         - ENTROPIC_ERROR_INTERRUPTED — cancelled via entropic_interrupt().
  *
- * @note Stub in v1.8.0. Returns ENTROPIC_ERROR_INVALID_STATE until v1.8.4.
- * @version 1.8.0
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.4
  */
 ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -192,14 +257,18 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
 /**
  * @brief Interrupt a running generation.
  *
- * Thread-safe. Can be called from any thread while entropic_run() or
- * entropic_run_streaming() is executing on another thread.
+ * Signals the engine to abort the current entropic_run() or
+ * entropic_run_streaming() call. The interrupted call returns
+ * ENTROPIC_ERROR_INTERRUPTED. If nothing is running, returns
+ * ENTROPIC_ERROR_NOT_RUNNING.
  *
  * @param handle Engine handle.
- * @return ENTROPIC_OK, ENTROPIC_ERROR_INVALID_STATE (nothing running).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_NOT_RUNNING — nothing to interrupt.
  *
- * @note Stub in v1.8.0.
- * @version 1.8.0
+ * @threadsafety Thread-safe. Designed for cross-thread cancellation.
+ * @version 1.8.4
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
 
@@ -216,8 +285,13 @@ ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
  * @param config_json JSON configuration:
  *   Stdio: {"command":"...","args":[...],"env":{...}}
  *   SSE:   {"url":"http://..."}
- * @return ENTROPIC_OK, ENTROPIC_ERROR_SERVER_ALREADY_EXISTS,
- *         ENTROPIC_ERROR_CONNECTION_FAILED.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — name or config_json is NULL.
+ *         - ENTROPIC_ERROR_SERVER_ALREADY_EXISTS — name already registered.
+ *         - ENTROPIC_ERROR_CONNECTION_FAILED — transport connect failed.
+ *
+ * @threadsafety Serialized per-handle.
  * @version 1.8.7
  */
 ENTROPIC_EXPORT entropic_error_t entropic_register_mcp_server(
@@ -233,7 +307,12 @@ ENTROPIC_EXPORT entropic_error_t entropic_register_mcp_server(
  *
  * @param handle Engine handle.
  * @param name Server name to remove (null-terminated).
- * @return ENTROPIC_OK, ENTROPIC_ERROR_SERVER_NOT_FOUND.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — name is NULL.
+ *         - ENTROPIC_ERROR_SERVER_NOT_FOUND — name not registered.
+ *
+ * @threadsafety Serialized per-handle.
  * @version 1.8.7
  */
 ENTROPIC_EXPORT entropic_error_t entropic_deregister_mcp_server(
@@ -248,10 +327,129 @@ ENTROPIC_EXPORT entropic_error_t entropic_deregister_mcp_server(
  * @param handle Engine handle.
  * @return JSON string: {"servers":{"name":{...ServerInfo...},...}}.
  *         Caller must free with entropic_free(). NULL on error.
+ *
+ * @threadsafety Serialized per-handle.
  * @version 1.8.7
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
  */
 ENTROPIC_EXPORT char* entropic_list_mcp_servers(
     entropic_handle_t handle);
+
+/* ── Storage (v1.8.8) ────────────────────────────────── */
+
+/**
+ * @brief Open or create a SQLite storage backend.
+ *
+ * Initializes persistent storage for conversations, delegations, and
+ * session logs. The database file is created if it does not exist.
+ * Storage is optional — the engine operates in-memory without it.
+ *
+ * @param handle Engine handle.
+ * @param db_path Path to SQLite database file.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — db_path is NULL.
+ *         - ENTROPIC_ERROR_STORAGE_FAILED — database open/init failed.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_storage_open(
+    entropic_handle_t handle,
+    const char* db_path);
+
+/**
+ * @brief Close the storage backend and flush pending writes.
+ *
+ * No-op if storage was never opened.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_storage_close(
+    entropic_handle_t handle);
+
+/* ── Identity (v1.8.9) ───────────────────────────────── */
+
+/**
+ * @brief Load an identity by name from the configuration.
+ *
+ * Resolves the identity name against the loaded config, loads the
+ * identity's system prompt and tool filter, and sets it as the
+ * active identity for subsequent entropic_run() calls.
+ *
+ * @param handle Engine handle.
+ * @param identity_name Null-terminated identity name (e.g., "eng", "lead").
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — identity_name is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — name not in config.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — identity config malformed.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_load_identity(
+    entropic_handle_t handle,
+    const char* identity_name);
+
+/**
+ * @brief Get the current active identity as a JSON string.
+ *
+ * Returns a JSON object with identity name, system prompt hash,
+ * allowed_tools list, and phase configuration.
+ *
+ * @param handle Engine handle.
+ * @param[out] identity_json Output: JSON string. Caller must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — identity_json is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — no identity loaded.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.9
+ *
+ * @par Memory ownership
+ * Caller must free *identity_json with entropic_free().
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_get_identity(
+    entropic_handle_t handle,
+    char** identity_json);
+
+/* ── Hooks (v1.8.9 — stub for v1.9.1) ───────────────── */
+
+/**
+ * @brief Register a callback for an engine hook point.
+ *
+ * Hook points allow consumers to intercept and modify engine behavior
+ * at defined stages. See entropic_hook_point_t for available points.
+ *
+ * @note Not implemented until v1.9.1. Currently returns
+ *       ENTROPIC_ERROR_NOT_IMPLEMENTED for all inputs.
+ *
+ * @param handle Engine handle.
+ * @param hook_point The hook point to register for.
+ * @param callback Function pointer invoked when the hook fires.
+ * @param user_data Opaque pointer passed to callback.
+ * @return ENTROPIC_OK on success (v1.9.1+).
+ *         - ENTROPIC_ERROR_NOT_IMPLEMENTED — stub until v1.9.1.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — callback is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.8.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_register_hook(
+    entropic_handle_t handle,
+    entropic_hook_point_t hook_point,
+    entropic_hook_callback_t callback,
+    void* user_data);
 
 #ifdef __cplusplus
 }

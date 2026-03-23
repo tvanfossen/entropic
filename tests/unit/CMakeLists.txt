@@ -141,6 +141,32 @@ if(ENTROPIC_STORAGE_SQLITE)
     target_link_libraries(entropic-storage-tests PRIVATE SQLite::SQLite3)
 endif()
 
+# v1.8.9: C API stabilization tests
+add_executable(entropic-api-tests
+    test_api_version.cpp
+    test_identity_api.cpp
+    test_hook_stub.cpp
+    test_error_enum.cpp
+)
+
+target_link_libraries(entropic-api-tests PRIVATE
+    entropic-facade
+    entropic-types
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# v1.8.9: C99 header compilation test (pure C, not C++)
+add_executable(entropic-c99-test test_header_c99.c)
+target_link_libraries(entropic-c99-test PRIVATE entropic-facade entropic-types)
+set_target_properties(entropic-c99-test PROPERTIES
+    C_STANDARD 99
+    C_STANDARD_REQUIRED ON
+    C_EXTENSIONS OFF
+)
+# C99 test just needs to compile and link — run it as a test
+add_test(NAME entropic-c99-header-test COMMAND entropic-c99-test)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
@@ -148,6 +174,7 @@ catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
+catch_discover_tests(entropic-api-tests)
 if(ENTROPIC_STORAGE_SQLITE)
     catch_discover_tests(entropic-storage-tests)
 endif()

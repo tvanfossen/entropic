@@ -41,6 +41,17 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_OUT_OF_MEMORY",            // 13
     "ENTROPIC_ERROR_IO",                       // 14
     "ENTROPIC_ERROR_INTERNAL",                 // 15
+    "ENTROPIC_ERROR_SERVER_ALREADY_EXISTS",   // 16 (v1.8.7)
+    "ENTROPIC_ERROR_SERVER_NOT_FOUND",        // 17 (v1.8.7)
+    "ENTROPIC_ERROR_CONNECTION_FAILED",       // 18 (v1.8.7)
+    "ENTROPIC_ERROR_INVALID_HANDLE",          // 19 (v1.8.9)
+    "ENTROPIC_ERROR_TOOL_EXECUTION_FAILED",   // 20 (v1.8.9)
+    "ENTROPIC_ERROR_STORAGE_FAILED",          // 21 (v1.8.9)
+    "ENTROPIC_ERROR_IDENTITY_NOT_FOUND",      // 22 (v1.8.9)
+    "ENTROPIC_ERROR_ALREADY_RUNNING",         // 23 (v1.8.9)
+    "ENTROPIC_ERROR_NOT_RUNNING",             // 24 (v1.8.9)
+    "ENTROPIC_ERROR_NOT_IMPLEMENTED",         // 25 (v1.8.9)
+    "ENTROPIC_ERROR_INTERRUPTED",             // 26 (v1.8.9)
 };
 
 static constexpr int s_error_count =

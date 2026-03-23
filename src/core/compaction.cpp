@@ -5,7 +5,10 @@
  */
 
 #include <entropic/core/compaction.h>
+#include <entropic/core/engine_types.h>
 #include <entropic/types/logging.h>
+
+#include <sstream>
 
 static auto logger = entropic::log::get("core.compaction");
 
@@ -115,11 +118,12 @@ CompactionManager::CompactionManager(
  * @param force Bypass threshold.
  * @return CompactionResult with before/after stats.
  * @internal
- * @version 1.8.4
+ * @version 1.8.8
  */
 CompactionResult CompactionManager::check_and_compact(
     std::vector<Message>& messages,
-    bool force) {
+    bool force,
+    const std::string& conversation_id) {
     int current = counter.count_messages(messages);
     int threshold = static_cast<int>(
         static_cast<float>(counter.max_tokens) * config.threshold_percent);
@@ -135,6 +139,11 @@ CompactionResult CompactionManager::check_and_compact(
     }
 
     logger->info("Compacting conversation ({} tokens)", current);
+
+    // Save full history before compacting (v1.8.8)
+    if (config.save_full_history && !conversation_id.empty()) {
+        save_snapshot(conversation_id, messages);
+    }
 
     std::string summary;
     int stripped = 0;
@@ -322,6 +331,84 @@ std::string CompactionManager::format_summary(
            " to save context space.\n\n"
          + summary
          + "\n\n[END SUMMARY - Recent conversation continues below]";
+}
+
+/**
+ * @brief Set storage interface for compaction snapshots.
+ * @param storage Storage callbacks (nullable).
+ * @internal
+ * @version 1.8.8
+ */
+void CompactionManager::set_storage(const StorageInterface* storage) {
+    storage_ = storage;
+}
+
+/**
+ * @brief Save pre-compaction snapshot via storage interface.
+ * @param conversation_id Conversation to snapshot.
+ * @param messages Messages before compaction.
+ * @internal
+ * @version 1.8.8
+ */
+/**
+ * @brief Escape a string for JSON embedding.
+ * @param input Raw string.
+ * @return JSON-safe escaped string.
+ * @utility
+ * @version 1.8.8
+ */
+static std::string json_escape(const std::string& input) {
+    std::ostringstream oss;
+    for (char c : input) {
+        if (c == '"') oss << "\\\"";
+        else if (c == '\\') oss << "\\\\";
+        else if (c == '\n') oss << "\\n";
+        else oss << c;
+    }
+    return oss.str();
+}
+
+/**
+ * @brief Serialize messages to minimal JSON array.
+ * @param messages Messages to serialize.
+ * @return JSON array string.
+ * @utility
+ * @version 1.8.8
+ */
+static std::string serialize_messages_json(
+        const std::vector<Message>& messages) {
+    std::ostringstream oss;
+    oss << '[';
+    for (size_t i = 0; i < messages.size(); ++i) {
+        if (i > 0) oss << ',';
+        oss << "{\"role\":\"" << messages[i].role
+            << "\",\"content\":\"" << json_escape(messages[i].content)
+            << "\"}";
+    }
+    oss << ']';
+    return oss.str();
+}
+
+/**
+ * @brief Save pre-compaction snapshot via storage interface.
+ * @param conversation_id Conversation to snapshot.
+ * @param messages Messages before compaction.
+ * @internal
+ * @version 1.8.8
+ */
+void CompactionManager::save_snapshot(
+    const std::string& conversation_id,
+    const std::vector<Message>& messages) {
+    if (!storage_ || !storage_->save_snapshot) {
+        return;
+    }
+
+    auto json_str = serialize_messages_json(messages);
+    storage_->save_snapshot(
+        conversation_id.c_str(), json_str.c_str(),
+        storage_->user_data);
+    logger->info("Saved compaction snapshot for {} ({} messages)",
+                 conversation_id, messages.size());
 }
 
 } // namespace entropic

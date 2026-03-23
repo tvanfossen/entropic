@@ -180,6 +180,7 @@ struct LoopContext {
     bool has_pending_tool_results = false;                 ///< Tool results awaiting presentation
     std::string locked_tier;                               ///< Tier locked for this loop ("" = none)
     std::string task_id;                                   ///< External task ID (MCP integration)
+    std::string conversation_id;                             ///< Conversation ID for storage (v1.8.8)
     std::string source = "human";                          ///< Message source
     std::vector<std::string> all_tools;                    ///< Full tool list as raw JSON strings
     std::string base_system;                               ///< Base system prompt (pre-tier formatting)
@@ -257,6 +258,94 @@ using ToolExecutionFn = std::vector<Message> (*)(
 struct ToolExecutionInterface {
     ToolExecutionFn process_tool_calls = nullptr; ///< Dispatches tool calls
     void* user_data = nullptr;                     ///< Opaque pointer (ToolExecutor*)
+};
+
+/**
+ * @brief Storage interface for conversation persistence.
+ *
+ * Injected by the facade. Allows core.so to persist conversations,
+ * delegation records, and compaction snapshots without depending
+ * on storage.so. All callbacks are optional (nullptr = no-op).
+ *
+ * @version 1.8.8
+ */
+struct StorageInterface {
+    /// @brief Save a compaction snapshot (full history before compaction).
+    /// @param conversation_id Conversation to snapshot.
+    /// @param messages_json JSON array of all messages.
+    /// @param user_data Opaque pointer.
+    /// @return true on success.
+    bool (*save_snapshot)(
+        const char* conversation_id,
+        const char* messages_json,
+        void* user_data) = nullptr;
+
+    /// @brief Create a delegation record with child conversation.
+    /// @param parent_id Parent conversation ID.
+    /// @param delegating_tier Source tier.
+    /// @param target_tier Target tier.
+    /// @param task Task description.
+    /// @param max_turns Turn limit (0 = unlimited).
+    /// @param[out] delegation_id Created delegation ID.
+    /// @param[out] child_conversation_id Created child conversation ID.
+    /// @param user_data Opaque pointer.
+    /// @return true on success.
+    bool (*create_delegation)(
+        const char* parent_id,
+        const char* delegating_tier,
+        const char* target_tier,
+        const char* task,
+        int max_turns,
+        std::string& delegation_id,
+        std::string& child_conversation_id,
+        void* user_data) = nullptr;
+
+    /// @brief Complete a delegation record.
+    /// @param delegation_id Delegation ID.
+    /// @param status "completed" or "failed".
+    /// @param summary Result summary (may be nullptr).
+    /// @param user_data Opaque pointer.
+    /// @return true on success.
+    bool (*complete_delegation)(
+        const char* delegation_id,
+        const char* status,
+        const char* summary,
+        void* user_data) = nullptr;
+
+    /// @brief Save messages to a conversation.
+    /// @param conversation_id Conversation ID.
+    /// @param messages_json JSON array of message objects.
+    /// @param user_data Opaque pointer.
+    /// @return true on success.
+    bool (*save_conversation)(
+        const char* conversation_id,
+        const char* messages_json,
+        void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer (storage backend)
+};
+
+/**
+ * @brief Permission persistence callback type.
+ *
+ * Called when a user approves ALWAYS_ALLOW or ALWAYS_DENY
+ * so the pattern can be saved to disk. Injected by the facade.
+ *
+ * @param pattern Permission pattern string.
+ * @param allow true for allow, false for deny.
+ * @param user_data Opaque pointer (PermissionPersister*).
+ * @version 1.8.8
+ */
+using PermissionPersistFn = void (*)(
+    const char* pattern, bool allow, void* user_data);
+
+/**
+ * @brief Permission persistence interface.
+ * @version 1.8.8
+ */
+struct PermissionPersistInterface {
+    PermissionPersistFn persist = nullptr; ///< Persist callback
+    void* user_data = nullptr;             ///< Opaque pointer
 };
 
 /**

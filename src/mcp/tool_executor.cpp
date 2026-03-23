@@ -36,6 +36,17 @@ ToolExecutor::ToolExecutor(
       hooks_(hooks) {}
 
 /**
+ * @brief Set permission persistence interface.
+ * @param persist Permission persist callbacks.
+ * @internal
+ * @version 1.8.8
+ */
+void ToolExecutor::set_permission_persist(
+    const PermissionPersistInterface& persist) {
+    permission_persist_ = persist;
+}
+
+/**
  * @brief Process a batch of tool calls.
  * @param ctx Loop context.
  * @param tool_calls Tool calls from model output.

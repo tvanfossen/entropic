@@ -95,6 +95,17 @@ void AgentEngine::set_tier_resolution(
 }
 
 /**
+ * @brief Set the storage interface for persistence.
+ * @param storage Storage callbacks (nullable).
+ * @internal
+ * @version 1.8.8
+ */
+void AgentEngine::set_storage(const StorageInterface& storage) {
+    storage_ = storage;
+    compaction_manager_.set_storage(&storage_);
+}
+
+/**
  * @brief Get the tier resolution interface.
  * @return Tier resolution interface.
  * @internal
@@ -652,7 +663,7 @@ static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
  * @brief Execute a pending delegation after tool processing.
  * @param ctx Loop context with pending_delegation set.
  * @internal
- * @version 1.8.6
+ * @version 1.8.8
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -681,6 +692,12 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 
     DelegationManager mgr(run_child_loop_trampoline, this,
                           tier_res_, repo_dir);
+
+    // Wire storage for delegation records (v1.8.8)
+    if (storage_.create_delegation != nullptr) {
+        mgr.set_storage(&storage_);
+    }
+
     auto result = mgr.execute_delegation(
         ctx, pending.target, pending.task, max_turns);
 
@@ -699,7 +716,7 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 1.8.6
+ * @version 1.8.8
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -721,6 +738,9 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto repo_dir = get_repo_dir();
     DelegationManager mgr(run_child_loop_trampoline, this,
                           tier_res_, repo_dir);
+    if (storage_.create_delegation != nullptr) {
+        mgr.set_storage(&storage_);
+    }
     auto result = mgr.execute_pipeline(
         ctx, pending.stages, pending.task);
 

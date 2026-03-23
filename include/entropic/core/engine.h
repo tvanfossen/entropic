@@ -95,6 +95,14 @@ public:
     void set_tier_resolution(const TierResolutionInterface& tier_res);
 
     /**
+     * @brief Set the storage interface for persistence.
+     * @param storage Storage callbacks (wired by facade). Nullable — engine
+     *        works without storage (in-memory only mode).
+     * @version 1.8.8
+     */
+    void set_storage(const StorageInterface& storage);
+
+    /**
      * @brief Run the engine loop on a pre-built context.
      *
      * Used by DelegationManager for child loops. Public so the
@@ -311,6 +319,7 @@ private:
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
     ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     TierResolutionInterface tier_res_;                    ///< Tier resolution (v1.8.6)
+    StorageInterface storage_;                             ///< Storage persistence (v1.8.8)
     DirectiveProcessor directive_processor_;              ///< Directive dispatch
     TokenCounter token_counter_;                          ///< Token counting
     CompactionManager compaction_manager_;                ///< Compaction

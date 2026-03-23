@@ -9,6 +9,7 @@
  */
 
 #include <entropic/core/delegation.h>
+#include <entropic/core/engine_types.h>
 #include <entropic/types/logging.h>
 
 #include <algorithm>
@@ -63,6 +64,16 @@ void DelegationManager::set_dir_swap(
     ScopedWorktree::SwapDirFn swap_fn, void* user_data) {
     swap_dir_fn_ = swap_fn;
     swap_dir_data_ = user_data;
+}
+
+/**
+ * @brief Set storage interface for delegation record persistence.
+ * @param storage Storage callbacks (nullable).
+ * @internal
+ * @version 1.8.8
+ */
+void DelegationManager::set_storage(const StorageInterface* storage) {
+    storage_ = storage;
 }
 
 // ── Single delegation ────────────────────────────────────
@@ -290,6 +301,64 @@ std::string DelegationManager::extract_summary(
  * @internal
  * @version 1.8.6
  */
+/**
+ * @brief Create delegation storage record if storage is available.
+ * @param child_ctx Child context (conversation_id set on success).
+ * @param target_tier Target tier.
+ * @param task Task description.
+ * @param max_turns Turn limit.
+ * @return Delegation ID (empty if no storage).
+ * @internal
+ * @version 1.8.8
+ */
+std::string DelegationManager::create_storage_record(
+    LoopContext& child_ctx, const std::string& target_tier,
+    const std::string& task, std::optional<int> max_turns) {
+    if (!storage_ || !storage_->create_delegation) {
+        return "";
+    }
+    std::string del_id, child_conv_id;
+    auto src_tier = child_ctx.locked_tier.empty()
+        ? "root" : child_ctx.locked_tier.c_str();
+    storage_->create_delegation(
+        child_ctx.parent_conversation_id.c_str(),
+        src_tier, target_tier.c_str(), task.c_str(),
+        max_turns.value_or(0), del_id, child_conv_id,
+        storage_->user_data);
+    child_ctx.conversation_id = child_conv_id;
+    return del_id;
+}
+
+/**
+ * @brief Complete delegation storage record.
+ * @param delegation_id Delegation ID.
+ * @param result Delegation result.
+ * @internal
+ * @version 1.8.8
+ */
+void DelegationManager::complete_storage_record(
+    const std::string& delegation_id,
+    const DelegationResult& result) {
+    if (!storage_ || !storage_->complete_delegation
+        || delegation_id.empty()) {
+        return;
+    }
+    const char* status = result.success ? "completed" : "failed";
+    storage_->complete_delegation(
+        delegation_id.c_str(), status,
+        result.summary.c_str(), storage_->user_data);
+}
+
+/**
+ * @brief Run child loop with todo save/restore and storage records.
+ * @param child_ctx Child context to execute.
+ * @param target_tier Tier name.
+ * @param task Task description.
+ * @param max_turns Optional turn limit.
+ * @return DelegationResult.
+ * @internal
+ * @version 1.8.8
+ */
 DelegationResult DelegationManager::run_child(
     LoopContext& child_ctx,
     const std::string& target_tier,
@@ -305,10 +374,12 @@ DelegationResult DelegationManager::run_child(
         todo_callbacks_.install_fresh(todo_callbacks_.user_data);
     }
 
+    auto delegation_id = create_storage_record(
+        child_ctx, target_tier, task, max_turns);
+
     logger->info("Running child loop: tier={} depth={}",
                  target_tier, child_ctx.delegation_depth);
 
-    // Run child loop
     if (run_child_fn_ != nullptr) {
         run_child_fn_(child_ctx, run_child_data_);
     }
@@ -325,6 +396,8 @@ DelegationResult DelegationManager::run_child(
     result.turns_used = child_ctx.metrics.iterations;
     result.summary = extract_summary(child_ctx);
     result.child_messages = std::move(child_ctx.messages);
+
+    complete_storage_record(delegation_id, result);
 
     logger->info("Child loop done: tier={} success={} turns={}",
                  target_tier, result.success, result.turns_used);

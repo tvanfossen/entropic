@@ -179,12 +179,14 @@ void ContextManager::inject_context_warning(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param force Bypass threshold check.
  * @internal
- * @version 1.8.4
+ * @version 1.8.8
  */
 void ContextManager::check_compaction(
     LoopContext& ctx,
     bool force) {
-    auto result = compaction_.check_and_compact(ctx.messages, force);
+    // Pass conversation_id so compaction can snapshot (v1.8.8)
+    auto result = compaction_.check_and_compact(
+        ctx.messages, force, ctx.conversation_id);
 
     if (result.compacted) {
         logger->info("Compacted: {} -> {} tokens",

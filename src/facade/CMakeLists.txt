@@ -3,6 +3,9 @@ add_library(entropic-facade)
 target_sources(entropic-facade PRIVATE
     entropic.cpp
     entropic_mcp.cpp
+    entropic_identity.cpp
+    entropic_hooks.cpp
+    entropic_storage.cpp
 )
 
 target_link_libraries(entropic-facade PUBLIC

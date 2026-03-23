@@ -51,6 +51,14 @@ typedef enum {
     ENTROPIC_ERROR_SERVER_ALREADY_EXISTS,     ///< MCP server name already registered (v1.8.7)
     ENTROPIC_ERROR_SERVER_NOT_FOUND,         ///< MCP server name not found (v1.8.7)
     ENTROPIC_ERROR_CONNECTION_FAILED,        ///< Transport connection failed (v1.8.7)
+    ENTROPIC_ERROR_INVALID_HANDLE,           ///< NULL or destroyed handle (v1.8.9)
+    ENTROPIC_ERROR_TOOL_EXECUTION_FAILED,    ///< Tool call returned error (v1.8.9)
+    ENTROPIC_ERROR_STORAGE_FAILED,           ///< Storage operation failed (v1.8.9)
+    ENTROPIC_ERROR_IDENTITY_NOT_FOUND,       ///< Identity name not in config (v1.8.9)
+    ENTROPIC_ERROR_ALREADY_RUNNING,          ///< entropic_run already in progress on handle (v1.8.9)
+    ENTROPIC_ERROR_NOT_RUNNING,              ///< Interrupt called but nothing running (v1.8.9)
+    ENTROPIC_ERROR_NOT_IMPLEMENTED,          ///< Feature stub, not yet available (v1.8.9)
+    ENTROPIC_ERROR_INTERRUPTED,              ///< Operation interrupted via entropic_interrupt (v1.8.9)
 } entropic_error_t;
 
 /**

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 1.8.1
+    VERSION 1.8.9
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )
@@ -69,6 +69,9 @@ set(CONFIG_ENTROPIC_MCP_ENTROPIC    ${ENTROPIC_MCP_ENTROPIC})
 set(CONFIG_ENTROPIC_STORAGE_SQLITE  ${ENTROPIC_STORAGE_SQLITE})
 set(CONFIG_ENTROPIC_STREAMING       ${ENTROPIC_STREAMING})
 set(CONFIG_ENTROPIC_SOURCE_DATA_DIR ${ENTROPIC_SOURCE_DATA_DIR})
+
+# ── API version (bumped on breaking C API changes) ──────
+set(ENTROPIC_API_VERSION 1 CACHE STRING "C API version integer")
 
 # ── Generate entropic_config.h ──────────────────────────
 set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"

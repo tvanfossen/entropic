@@ -69,6 +69,13 @@ public:
                  ToolExecutorHooks hooks = {});
 
     /**
+     * @brief Set permission persistence interface.
+     * @param persist Permission persist callbacks (wired by facade).
+     * @version 1.8.8
+     */
+    void set_permission_persist(const PermissionPersistInterface& persist);
+
+    /**
      * @brief Process a batch of tool calls.
      * @param ctx Mutable loop context.
      * @param tool_calls Tool calls from model output.
@@ -289,6 +296,7 @@ private:
     const LoopConfig& loop_config_;       ///< Loop configuration
     EngineCallbacks& callbacks_;          ///< Shared callbacks
     ToolExecutorHooks hooks_;             ///< Engine hooks
+    PermissionPersistInterface permission_persist_; ///< Permission persistence (v1.8.8)
 };
 
 } // namespace entropic

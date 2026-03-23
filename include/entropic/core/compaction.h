@@ -134,9 +134,25 @@ public:
      * @return Compaction result.
      * @version 1.8.4
      */
+    /**
+     * @brief Check if compaction is needed and perform if so.
+     * @param messages Current message list (modified in place if compacted).
+     * @param force Bypass threshold check and compact immediately.
+     * @param conversation_id Conversation ID for snapshot (empty = skip).
+     * @return Compaction result.
+     * @version 1.8.8
+     */
     CompactionResult check_and_compact(
         std::vector<Message>& messages,
-        bool force = false);
+        bool force = false,
+        const std::string& conversation_id = "");
+
+    /**
+     * @brief Set storage interface for compaction snapshots.
+     * @param storage Storage callbacks (nullable).
+     * @version 1.8.8
+     */
+    void set_storage(const struct StorageInterface* storage);
 
     CompactionConfig config; ///< Compaction configuration
     TokenCounter& counter;   ///< Shared token counter
@@ -192,6 +208,17 @@ private:
     static std::string format_summary(
         const std::string& summary,
         int message_count);
+
+    /**
+     * @brief Save pre-compaction snapshot via storage interface.
+     * @param conversation_id Conversation to snapshot.
+     * @param messages Messages before compaction.
+     * @version 1.8.8
+     */
+    void save_snapshot(const std::string& conversation_id,
+                       const std::vector<Message>& messages);
+
+    const struct StorageInterface* storage_ = nullptr; ///< Nullable storage (v1.8.8)
 };
 
 } // namespace entropic

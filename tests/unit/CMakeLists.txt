@@ -119,6 +119,28 @@ target_link_libraries(entropic-mcp-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.8.8: Storage tests
+if(ENTROPIC_STORAGE_SQLITE)
+    add_executable(entropic-storage-tests
+        storage/test_database.cpp
+        storage/test_backend.cpp
+        storage/test_c_interface.cpp
+        storage/test_logger.cpp
+        storage/test_permission_persister.cpp
+    )
+
+    target_link_libraries(entropic-storage-tests PRIVATE
+        entropic-storage
+        entropic-types
+        nlohmann_json::nlohmann_json
+        spdlog::spdlog
+        Catch2::Catch2WithMain
+    )
+
+    # test_database.cpp uses sqlite3 API directly for stmt binding
+    target_link_libraries(entropic-storage-tests PRIVATE SQLite::SQLite3)
+endif()
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
@@ -126,3 +148,6 @@ catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
+if(ENTROPIC_STORAGE_SQLITE)
+    catch_discover_tests(entropic-storage-tests)
+endif()

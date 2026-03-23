@@ -113,6 +113,13 @@ public:
     void set_dir_swap(ScopedWorktree::SwapDirFn swap_fn, void* user_data);
 
     /**
+     * @brief Set storage interface for delegation record persistence.
+     * @param storage Storage callbacks (nullable).
+     * @version 1.8.8
+     */
+    void set_storage(const struct StorageInterface* storage);
+
+    /**
      * @brief Run a child inference loop for the target tier.
      * @param parent_ctx Parent loop context.
      * @param target_tier Tier name to delegate to.
@@ -187,6 +194,29 @@ private:
         const std::optional<WorktreeInfo>& wt_info,
         const DelegationResult& result);
 
+    /**
+     * @brief Create delegation storage record.
+     * @param child_ctx Child context.
+     * @param target_tier Target tier.
+     * @param task Task description.
+     * @param max_turns Turn limit.
+     * @return Delegation ID (empty if no storage).
+     * @version 1.8.8
+     */
+    std::string create_storage_record(
+        LoopContext& child_ctx, const std::string& target_tier,
+        const std::string& task, std::optional<int> max_turns);
+
+    /**
+     * @brief Complete delegation storage record.
+     * @param delegation_id Delegation ID.
+     * @param result Delegation result.
+     * @version 1.8.8
+     */
+    void complete_storage_record(
+        const std::string& delegation_id,
+        const DelegationResult& result);
+
     RunChildLoopFn run_child_fn_;                      ///< Engine loop callback
     void* run_child_data_;                             ///< Engine instance
     TierResolutionInterface tier_res_;                 ///< Tier lookup callbacks
@@ -195,6 +225,7 @@ private:
     void* swap_dir_data_ = nullptr;                    ///< Dir swap user data
     std::optional<WorktreeManager> worktree_mgr_;      ///< Git worktree manager
     std::filesystem::path repo_dir_;                   ///< Repository root
+    const struct StorageInterface* storage_ = nullptr; ///< Nullable storage (v1.8.8)
 };
 
 } // namespace entropic

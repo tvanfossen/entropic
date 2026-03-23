@@ -82,6 +82,12 @@ configure_file(
     @ONLY
 )
 
+# ── System dependencies ─────────────────────────────────
+# v1.8.8: SQLite3 for storage backend (system library, >= 3.35.0 for FTS5)
+if(ENTROPIC_STORAGE_SQLITE)
+    find_package(SQLite3 3.35.0 REQUIRED)
+endif()
+
 # ── Subdirectories ──────────────────────────────────────
 add_subdirectory(extern)
 add_subdirectory(src/types)
@@ -90,6 +96,7 @@ add_subdirectory(src/prompts)
 add_subdirectory(src/inference)
 add_subdirectory(src/core)
 add_subdirectory(src/mcp)
+add_subdirectory(src/storage)
 add_subdirectory(src/facade)
 
 if(ENTROPIC_BUILD_TESTS)

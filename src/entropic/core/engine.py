@@ -86,7 +86,19 @@ class AgentEngine:
                 manager with built-in servers is created on first ``run()``.
             config: Application configuration. Defaults to ``LibraryConfig()``.
             loop_config: Loop-specific configuration
+
+        .. deprecated:: 1.9.0
+            Use entropic_native.EntropicEngine (C engine wrapper) instead.
         """
+        import warnings
+
+        warnings.warn(
+            "AgentEngine (Python) is deprecated since v1.9.0. "
+            "Use entropic_native.EntropicEngine (C engine) instead. "
+            "The Python engine will be removed in v1.9.15.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.orchestrator = orchestrator
         self.server_manager: ServerManager | None = server_manager
         self.config = config or LibraryConfig()

@@ -2,6 +2,8 @@
 CLI entry point for Entropic.
 
 Handles command-line arguments and initializes the engine.
+Prefers C engine (via generated wrapper) when available, falls
+back to Python engine with deprecation warning.
 """
 
 import asyncio
@@ -27,6 +29,14 @@ from entropic.core.logging import (  # noqa: E402
     setup_logging,
     setup_model_logger,
 )
+
+try:
+    import entropic_native as _entropic_native  # noqa: F401
+
+    _C_ENGINE_AVAILABLE: bool = True
+except ImportError:
+    _entropic_native = None  # type: ignore[assignment]
+    _C_ENGINE_AVAILABLE = False
 
 
 @click.group(invoke_without_command=True)
@@ -114,12 +124,16 @@ def status(ctx: click.Context) -> None:
     """Show system and model status.
 
     @brief Print configured model tiers, router, routing state, and log level.
-    @version 1
+    @version 2
     """
     config = ctx.obj["config"]
 
     click.echo("Entropic Status")
     click.echo("=" * 40)
+
+    # Engine backend
+    backend = "C engine (librentropic)" if _C_ENGINE_AVAILABLE else "Python engine (deprecated)"
+    click.echo(f"  Backend:   {backend}")
 
     # Models
     for name, tier_config in config.models.tiers.items():
@@ -138,14 +152,20 @@ def status(ctx: click.Context) -> None:
 @main.command()
 @click.argument("message", required=False)
 @click.option("--no-stream", is_flag=True, help="Disable streaming output")  # noqa: ARG001
+@click.option("--python-engine", is_flag=True, help="Force Python engine (deprecated)")
 @click.pass_context
-def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:  # noqa: ARG001
+def ask(
+    ctx: click.Context,
+    message: str | None,
+    no_stream: bool,  # noqa: ARG001
+    python_engine: bool,
+) -> None:
     """Send a single message and get a response.
 
     If MESSAGE is not provided, reads from stdin.
 
     @brief Single-turn inference: read message from arg or stdin, run engine, print response.
-    @version 1
+    @version 2
     """
     if message is None:
         if sys.stdin.isatty():
@@ -156,7 +176,18 @@ def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:  # no
     assert message is not None  # guaranteed by stdin read above
     config = ctx.obj["config"]
     project_dir = ctx.obj["project"]
-    asyncio.run(_run_ask(config, project_dir, message))
+
+    if _C_ENGINE_AVAILABLE and not python_engine:
+        _run_ask_native(config, message)
+    else:
+        if not python_engine:
+            warnings.warn(
+                "C engine not available, falling back to Python engine. "
+                "The Python engine is deprecated and will be removed in v1.9.15.",
+                DeprecationWarning,
+                stacklevel=1,
+            )
+        asyncio.run(_run_ask(config, project_dir, message))
 
 
 async def _run_ask(config: Any, project_dir: Path, message: str) -> None:
@@ -247,6 +278,50 @@ async def _run_ask(config: Any, project_dir: Path, message: str) -> None:
     finally:
         await server_manager.shutdown()
         await orchestrator.shutdown()
+
+
+def _run_ask_native(config: Any, message: str) -> None:  # noqa: ARG001
+    """Run a single-turn ask through the C engine wrapper.
+
+    @brief Synchronous ask via EntropicEngine (C engine).
+    @version 1
+    """
+    config_path = _resolve_config_path()
+    engine_cls = _entropic_native.EntropicEngine  # type: ignore[union-attr]
+
+    with engine_cls(config_path=config_path) as engine:
+
+        def on_token(token: str) -> None:
+            """Write streaming token to stdout.
+
+            @brief Forward C engine streaming token to stdout.
+            @version 1
+            """
+            sys.stdout.write(token)
+            sys.stdout.flush()
+
+        engine.run_streaming(message, on_token=on_token)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+def _resolve_config_path() -> str | None:
+    """Resolve config file path for the C engine.
+
+    The C engine needs a file path (YAML or JSON). Check standard
+    config file locations and return the first one found.
+
+    @brief Find the config file path for C engine initialization.
+    @version 1
+    """
+    for candidate in [
+        Path(".entropic/config.local.yaml"),
+        Path(".entropic/config.yaml"),
+        Path.home() / ".entropic" / "config.yaml",
+    ]:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return None
 
 
 @main.command()

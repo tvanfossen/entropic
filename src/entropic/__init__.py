@@ -4,6 +4,10 @@ Entropic - Local AI inference engine with multi-tier model orchestration.
 Public API for library consumers:
   pip install entropic-engine          # Core inference engine
   pip install entropic-tui             # Terminal UI (separate package)
+
+.. deprecated:: 1.9.0
+    The Python entropic engine is deprecated. Use the C engine wrapper
+    (entropic_native) instead. The Python engine will be removed in v1.9.15.
 """
 
 import warnings
@@ -51,6 +55,15 @@ from entropic.prompts import (
     parse_prompt_file,
 )
 from entropic.prompts.manager import PromptManager
+
+# v1.9.0: Python engine deprecated — C engine (entropic_native) is primary
+warnings.warn(
+    "The Python entropic engine is deprecated since v1.9.0. "
+    "Use the C engine wrapper (entropic_native) instead. "
+    "The Python engine will be removed in v1.9.15.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 try:
     from importlib.metadata import version as _get_version

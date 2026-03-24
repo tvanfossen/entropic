@@ -15,6 +15,7 @@
 
 #include <entropic/types/enums.h>
 #include <entropic/types/message.h>
+#include <entropic/interfaces/i_hook_handler.h>
 
 #include <functional>
 #include <string>
@@ -306,8 +307,26 @@ public:
         LoopContext& ctx,
         const std::vector<const Directive*>& directives);
 
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface.
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }
+
 private:
+    /**
+     * @brief Fire ON_DIRECTIVE or ON_CUSTOM_DIRECTIVE hook.
+     * @param directive Directive being processed.
+     * @param has_handler Whether a handler exists.
+     * @return true to proceed, false if suppressed.
+     * @version 1.9.1
+     */
+    bool fire_directive_hook(const Directive* directive,
+                             bool has_handler);          ///< @internal
+
     std::unordered_map<int, DirectiveHandler> handlers_; ///< Type → handler
+    HookInterface hooks_;                                ///< Hook dispatch (v1.9.1)
 };
 
 } // namespace entropic

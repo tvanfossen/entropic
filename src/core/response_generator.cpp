@@ -119,6 +119,8 @@ struct StreamAccumulator {
     std::string content;              ///< Accumulated content
     EngineCallbacks* callbacks;       ///< Callback reference
     GenerationEvents* events;         ///< Event flags
+    const HookInterface* hooks;       ///< Hook dispatch (v1.9.1)
+    int token_index = 0;              ///< Token counter (v1.9.1)
     bool interrupted = false;         ///< Set when interrupt detected
 };
 
@@ -128,7 +130,7 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @internal
- * @version 1.8.4
+ * @version 1.9.1
  */
 static void stream_token_callback(
     const char* token,
@@ -145,6 +147,14 @@ static void stream_token_callback(
         acc->callbacks->on_stream_chunk(token, len,
                                          acc->callbacks->user_data);
     }
+
+    // Hook: ON_STREAM_TOKEN (v1.9.1)
+    if (acc->hooks != nullptr && acc->hooks->fire_info != nullptr) {
+        std::string json = "{\"token_index\":"
+            + std::to_string(acc->token_index++) + "}";
+        acc->hooks->fire_info(acc->hooks->registry,
+            ENTROPIC_HOOK_ON_STREAM_TOKEN, json.c_str());
+    }
 }
 
 /**
@@ -152,7 +162,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 1.8.4
+ * @version 1.9.1
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -167,6 +177,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     StreamAccumulator acc;
     acc.callbacks = &callbacks_;
     acc.events = &events_;
+    acc.hooks = &hooks_;
 
     inference_.generate_stream(
         msgs_json.c_str(), params_json.c_str(),

@@ -13,6 +13,8 @@
 #include <entropic/types/logging.h>
 
 #include <chrono>
+#include <cstdlib>
+#include <string>
 
 namespace entropic {
 
@@ -69,7 +71,7 @@ double elapsed_ms(
  * @param config Validated model config.
  * @return true on success, false on failure.
  * @internal
- * @version 1.8.2
+ * @version 1.9.1
  */
 bool InferenceBackend::load(const ModelConfig& config) {
     std::lock_guard<std::mutex> lock(transition_mutex_);
@@ -79,18 +81,24 @@ bool InferenceBackend::load(const ModelConfig& config) {
         return true;
     }
 
+    // Hook: ON_MODEL_LOAD — can cancel (v1.9.1)
+    bool cancelled = fire_model_load_hook(config);
+    if (cancelled) {
+        return false;
+    }
+
     logger->info("[VRAM] Loading: {}", config.path.string());
     auto start = now();
 
     config_ = config;
-    if (!do_load(config)) {
+    bool ok = do_load(config);
+    if (!ok) {
         logger->error("[VRAM] Load failed: {}", last_error_);
-        return false;
+    } else {
+        state_.store(ModelState::WARM, std::memory_order_release);
+        logger->info("[VRAM] Warm in {:.2f}ms", elapsed_ms(start, now()));
     }
-
-    state_.store(ModelState::WARM, std::memory_order_release);
-    logger->info("[VRAM] Warm in {:.2f}ms", elapsed_ms(start, now()));
-    return true;
+    return ok;
 }
 
 /**
@@ -148,10 +156,18 @@ void InferenceBackend::deactivate() {
 /**
  * @brief Full unload (→ COLD). Idempotent.
  * @internal
- * @version 1.8.2
+ * @version 1.9.1
  */
 void InferenceBackend::unload() {
     std::lock_guard<std::mutex> lock(transition_mutex_);
+
+    // Hook: ON_MODEL_UNLOAD — informational (v1.9.1)
+    if (hooks_.fire_info != nullptr) {
+        std::string json = "{\"state\":\""
+            + std::string(state_name(state())) + "\"}";
+        hooks_.fire_info(hooks_.registry,
+            ENTROPIC_HOOK_ON_MODEL_UNLOAD, json.c_str());
+    }
 
     logger->info("[VRAM] Unloading from {}", state_name(state()));
 
@@ -260,6 +276,31 @@ GenerationResult InferenceBackend::complete(
     auto result = do_complete(prompt, params);
     result.generation_time_ms = elapsed_ms(start, now());
     return result;
+}
+
+// ── Hook helpers (v1.9.1) ──────────────────────────────────
+
+/**
+ * @brief Fire ON_MODEL_LOAD pre-hook.
+ * @param config Model config being loaded.
+ * @return true if hook cancelled the load.
+ * @internal
+ * @version 1.9.1
+ */
+bool InferenceBackend::fire_model_load_hook(const ModelConfig& config) {
+    if (hooks_.fire_pre == nullptr) {
+        return false;
+    }
+    std::string json = "{\"model_path\":\""
+        + config.path.string() + "\"}";
+    char* mod = nullptr;
+    int rc = hooks_.fire_pre(hooks_.registry,
+        ENTROPIC_HOOK_ON_MODEL_LOAD, json.c_str(), &mod);
+    free(mod);
+    if (rc != 0) {
+        logger->info("[VRAM] ON_MODEL_LOAD hook cancelled");
+    }
+    return rc != 0;
 }
 
 // ── Queries ────────────────────────────────────────────────

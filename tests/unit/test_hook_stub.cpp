@@ -1,55 +1,48 @@
 /**
  * @file test_hook_stub.cpp
- * @brief Tests for entropic_register_hook() stub behavior.
- * @version 1.8.9
+ * @brief Tests for entropic_register_hook() and entropic_deregister_hook().
+ *
+ * Tests the C API surface for hook registration/deregistration.
+ * Full dispatch tests are in tests/unit/core/test_hook_registry.cpp.
+ *
+ * @version 1.9.1
  */
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
+#include <entropic/core/hook_registry.h>
 
 /**
  * @brief Dummy hook callback for testing.
  * @param hook_point Unused.
  * @param context_json Unused.
+ * @param modified_json Set to NULL.
  * @param user_data Unused.
  * @return Always 0.
  * @callback
- * @version 1.8.9
+ * @version 1.9.1
  */
 static int dummy_callback(
     entropic_hook_point_t hook_point,
     const char* context_json,
+    char** modified_json,
     void* user_data) {
     (void)hook_point;
     (void)context_json;
     (void)user_data;
+    *modified_json = nullptr;
     return 0;
 }
 
 /**
- * @brief Sentinel non-NULL handle for stub testing.
- * @return Non-NULL handle that is never dereferenced.
+ * @brief Create a handle backed by a real HookRegistry.
+ * @param reg HookRegistry to use as handle.
+ * @return Handle cast from HookRegistry pointer.
  * @internal
- * @version 1.8.9
+ * @version 1.9.1
  */
-static entropic_handle_t fake_handle() {
-    static int sentinel = 0;
-    return reinterpret_cast<entropic_handle_t>(&sentinel);
-}
-
-SCENARIO("Hook registration returns NOT_IMPLEMENTED", "[api][hooks]") {
-    GIVEN("a valid engine handle") {
-        entropic_handle_t h = fake_handle();
-
-        WHEN("entropic_register_hook is called with PRE_GENERATE") {
-            entropic_error_t err = entropic_register_hook(
-                h, ENTROPIC_HOOK_PRE_GENERATE, dummy_callback, nullptr);
-
-            THEN("it returns ENTROPIC_ERROR_NOT_IMPLEMENTED") {
-                REQUIRE(err == ENTROPIC_ERROR_NOT_IMPLEMENTED);
-            }
-        }
-    }
+static entropic_handle_t make_handle(entropic::HookRegistry& reg) {
+    return reinterpret_cast<entropic_handle_t>(&reg);
 }
 
 SCENARIO("Hook registration with null handle", "[api][hooks]") {
@@ -57,7 +50,7 @@ SCENARIO("Hook registration with null handle", "[api][hooks]") {
         WHEN("entropic_register_hook(NULL, ...) is called") {
             entropic_error_t err = entropic_register_hook(
                 nullptr, ENTROPIC_HOOK_PRE_GENERATE,
-                dummy_callback, nullptr);
+                dummy_callback, nullptr, 0);
 
             THEN("it returns ENTROPIC_ERROR_INVALID_HANDLE") {
                 REQUIRE(err == ENTROPIC_ERROR_INVALID_HANDLE);
@@ -68,11 +61,12 @@ SCENARIO("Hook registration with null handle", "[api][hooks]") {
 
 SCENARIO("Hook registration with null callback", "[api][hooks]") {
     GIVEN("a valid handle") {
-        entropic_handle_t h = fake_handle();
+        entropic::HookRegistry reg;
+        auto h = make_handle(reg);
 
-        WHEN("entropic_register_hook with NULL callback is called") {
+        WHEN("entropic_register_hook with NULL callback") {
             entropic_error_t err = entropic_register_hook(
-                h, ENTROPIC_HOOK_PRE_GENERATE, nullptr, nullptr);
+                h, ENTROPIC_HOOK_PRE_GENERATE, nullptr, nullptr, 0);
 
             THEN("it returns ENTROPIC_ERROR_INVALID_ARGUMENT") {
                 REQUIRE(err == ENTROPIC_ERROR_INVALID_ARGUMENT);
@@ -81,37 +75,82 @@ SCENARIO("Hook registration with null callback", "[api][hooks]") {
     }
 }
 
-SCENARIO("All hook points return NOT_IMPLEMENTED", "[api][hooks]") {
-    GIVEN("a valid engine handle") {
-        entropic_handle_t h = fake_handle();
+SCENARIO("Hook registration succeeds via C API", "[api][hooks]") {
+    GIVEN("a valid handle with HookRegistry") {
+        entropic::HookRegistry reg;
+        auto h = make_handle(reg);
 
-        WHEN("entropic_register_hook is called for each hook point") {
-            entropic_hook_point_t points[] = {
-                ENTROPIC_HOOK_PRE_GENERATE,
-                ENTROPIC_HOOK_POST_GENERATE,
-                ENTROPIC_HOOK_ON_STREAM_TOKEN,
-                ENTROPIC_HOOK_PRE_TOOL_CALL,
-                ENTROPIC_HOOK_POST_TOOL_CALL,
-                ENTROPIC_HOOK_ON_LOOP_ITERATION,
-                ENTROPIC_HOOK_ON_STATE_CHANGE,
-                ENTROPIC_HOOK_ON_ERROR,
-                ENTROPIC_HOOK_ON_DELEGATE,
-                ENTROPIC_HOOK_ON_DELEGATE_COMPLETE,
-                ENTROPIC_HOOK_ON_CONTEXT_ASSEMBLE,
-                ENTROPIC_HOOK_ON_PRE_COMPACT,
-                ENTROPIC_HOOK_ON_POST_COMPACT,
-                ENTROPIC_HOOK_ON_MODEL_LOAD,
-                ENTROPIC_HOOK_ON_MODEL_UNLOAD,
-                ENTROPIC_HOOK_ON_PERMISSION_CHECK,
-            };
+        WHEN("entropic_register_hook is called") {
+            entropic_error_t err = entropic_register_hook(
+                h, ENTROPIC_HOOK_PRE_GENERATE,
+                dummy_callback, nullptr, 0);
 
-            THEN("every call returns ENTROPIC_ERROR_NOT_IMPLEMENTED") {
-                for (auto hp : points) {
-                    entropic_error_t err = entropic_register_hook(
-                        h, hp, dummy_callback, nullptr);
-                    REQUIRE(err == ENTROPIC_ERROR_NOT_IMPLEMENTED);
-                }
+            THEN("it returns ENTROPIC_OK") {
+                REQUIRE(err == ENTROPIC_OK);
             }
+            THEN("the hook is registered") {
+                REQUIRE(reg.hook_count(ENTROPIC_HOOK_PRE_GENERATE) == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("Hook deregistration via C API", "[api][hooks]") {
+    GIVEN("a registered hook") {
+        entropic::HookRegistry reg;
+        auto h = make_handle(reg);
+        entropic_register_hook(h, ENTROPIC_HOOK_ON_ERROR,
+                               dummy_callback, nullptr, 0);
+
+        WHEN("entropic_deregister_hook is called") {
+            entropic_error_t err = entropic_deregister_hook(
+                h, ENTROPIC_HOOK_ON_ERROR, dummy_callback, nullptr);
+
+            THEN("it returns ENTROPIC_OK") {
+                REQUIRE(err == ENTROPIC_OK);
+            }
+            THEN("the hook is removed") {
+                REQUIRE(reg.hook_count(ENTROPIC_HOOK_ON_ERROR) == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("Hook deregistration with null handle", "[api][hooks]") {
+    GIVEN("a null handle") {
+        WHEN("entropic_deregister_hook(NULL, ...) is called") {
+            entropic_error_t err = entropic_deregister_hook(
+                nullptr, ENTROPIC_HOOK_PRE_GENERATE,
+                dummy_callback, nullptr);
+
+            THEN("it returns ENTROPIC_ERROR_INVALID_HANDLE") {
+                REQUIRE(err == ENTROPIC_ERROR_INVALID_HANDLE);
+            }
+        }
+    }
+}
+
+SCENARIO("Invalid hook point rejected via C API", "[api][hooks]") {
+    GIVEN("a valid handle") {
+        entropic::HookRegistry reg;
+        auto h = make_handle(reg);
+
+        WHEN("registering with ENTROPIC_HOOK_COUNT_") {
+            entropic_error_t err = entropic_register_hook(
+                h, ENTROPIC_HOOK_COUNT_,
+                dummy_callback, nullptr, 0);
+
+            THEN("it returns ENTROPIC_ERROR_INVALID_CONFIG") {
+                REQUIRE(err == ENTROPIC_ERROR_INVALID_CONFIG);
+            }
+        }
+    }
+}
+
+SCENARIO("Hook count sentinel value", "[api][hooks]") {
+    GIVEN("the hook enum") {
+        THEN("ENTROPIC_HOOK_COUNT_ is 22") {
+            REQUIRE(ENTROPIC_HOOK_COUNT_ == 22);
         }
     }
 }

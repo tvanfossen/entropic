@@ -12,6 +12,7 @@
 
 #include <entropic/core/compaction.h>
 #include <entropic/core/engine_types.h>
+#include <entropic/interfaces/i_hook_handler.h>
 
 #include <functional>
 
@@ -87,10 +88,18 @@ public:
      */
     void check_compaction(LoopContext& ctx, bool force = false);
 
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface.
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks) { hook_iface_ = hooks; }
+
 private:
     CompactionManager& compaction_; ///< Compaction manager
     EngineCallbacks& callbacks_;    ///< Shared callbacks
     ContextManagerHooks hooks_;     ///< Engine hooks
+    HookInterface hook_iface_;      ///< Hook dispatch (v1.9.1)
 };
 
 } // namespace entropic

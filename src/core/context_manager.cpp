@@ -179,12 +179,27 @@ void ContextManager::inject_context_warning(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param force Bypass threshold check.
  * @internal
- * @version 1.8.8
+ * @version 1.9.1
  */
 void ContextManager::check_compaction(
     LoopContext& ctx,
     bool force) {
-    // Pass conversation_id so compaction can snapshot (v1.8.8)
+    // Hook: ON_PRE_COMPACT — can cancel compaction (v1.9.1)
+    if (hook_iface_.fire_pre != nullptr) {
+        int tok = compaction_.counter.count_messages(ctx.messages);
+        std::string json = "{\"token_count\":"
+            + std::to_string(tok) + ",\"force\":"
+            + (force ? "true" : "false") + "}";
+        char* mod = nullptr;
+        int rc = hook_iface_.fire_pre(hook_iface_.registry,
+            ENTROPIC_HOOK_ON_PRE_COMPACT, json.c_str(), &mod);
+        free(mod);
+        if (rc != 0) {
+            logger->info("ON_PRE_COMPACT hook cancelled compaction");
+            return;
+        }
+    }
+
     auto result = compaction_.check_and_compact(
         ctx.messages, force, ctx.conversation_id);
 
@@ -192,11 +207,25 @@ void ContextManager::check_compaction(
         logger->info("Compacted: {} -> {} tokens",
                      result.old_token_count, result.new_token_count);
         if (callbacks_.on_compaction != nullptr) {
-            // Format minimal JSON for callback
-            std::string json = "{\"old\":" + std::to_string(result.old_token_count)
-                + ",\"new\":" + std::to_string(result.new_token_count) + "}";
+            std::string json = "{\"old\":"
+                + std::to_string(result.old_token_count)
+                + ",\"new\":" + std::to_string(result.new_token_count)
+                + "}";
             callbacks_.on_compaction(json.c_str(), callbacks_.user_data);
         }
+
+        // Hook: ON_POST_COMPACT (v1.9.1)
+        if (hook_iface_.fire_post != nullptr) {
+            std::string json = "{\"tokens_before\":"
+                + std::to_string(result.old_token_count)
+                + ",\"tokens_after\":"
+                + std::to_string(result.new_token_count) + "}";
+            char* out = nullptr;
+            hook_iface_.fire_post(hook_iface_.registry,
+                ENTROPIC_HOOK_ON_POST_COMPACT, json.c_str(), &out);
+            free(out);
+        }
+
         if (hooks_.after_compaction) {
             hooks_.after_compaction(ctx);
         }

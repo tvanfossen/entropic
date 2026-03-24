@@ -27,6 +27,7 @@
 #include <entropic/core/directives.h>
 #include <entropic/core/engine_types.h>
 #include <entropic/core/response_generator.h>
+#include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
 
 #include <atomic>
@@ -101,6 +102,13 @@ public:
      * @version 1.8.8
      */
     void set_storage(const StorageInterface& storage);
+
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface (wired by facade).
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks);
 
     /**
      * @brief Run the engine loop on a pre-built context.
@@ -280,6 +288,41 @@ private:
                         const std::string& content);            ///< @internal
 
     /**
+     * @brief Fire a pre-hook and return true if cancelled.
+     * @param point Hook point.
+     * @param iteration Current iteration number.
+     * @return true if hook cancelled the operation.
+     * @version 1.9.1
+     */
+    bool fire_pre_hook(entropic_hook_point_t point, int iteration); ///< @internal
+
+    /**
+     * @brief Fire POST_GENERATE hook.
+     * @param result Generation result.
+     * @version 1.9.1
+     */
+    void fire_post_generate_hook(const GenerateResult& result);     ///< @internal
+
+    /**
+     * @brief Fire ON_DELEGATE pre-hook. Returns true if cancelled.
+     * @param pending Delegation info.
+     * @param depth Current delegation depth.
+     * @return true if hook cancelled delegation.
+     * @version 1.9.1
+     */
+    bool fire_delegate_pre_hook(const PendingDelegation& pending,
+                                int depth);                         ///< @internal
+
+    /**
+     * @brief Fire ON_DELEGATE_COMPLETE post-hook.
+     * @param target Target tier.
+     * @param success Whether delegation succeeded.
+     * @version 1.9.1
+     */
+    void fire_delegate_complete_hook(const std::string& target,
+                                     bool success);                 ///< @internal
+
+    /**
      * @brief Get or discover the project git repository.
      * @return Repo directory, or empty if not found.
      * @version 1.8.6
@@ -325,6 +368,7 @@ private:
     CompactionManager compaction_manager_;                ///< Compaction
     ContextManager context_manager_;                      ///< Context management
     ResponseGenerator response_generator_;                ///< Response generation
+    HookInterface hooks_;                                    ///< Hook dispatch (v1.9.1)
     std::optional<std::filesystem::path> cached_repo_dir_; ///< Cached repo path (v1.8.6)
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
 };

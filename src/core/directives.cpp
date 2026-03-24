@@ -7,6 +7,9 @@
 #include <entropic/core/directives.h>
 #include <entropic/types/logging.h>
 
+#include <cstdlib>
+#include <string>
+
 static auto logger = entropic::log::get("core.directives");
 
 namespace entropic {
@@ -30,7 +33,7 @@ void DirectiveProcessor::register_handler(
  * @param directives Typed directive list.
  * @return Aggregate result.
  * @internal
- * @version 1.8.4
+ * @version 1.9.1
  */
 DirectiveResult DirectiveProcessor::process(
     LoopContext& ctx,
@@ -40,20 +43,51 @@ DirectiveResult DirectiveProcessor::process(
         if (directive == nullptr) {
             continue;
         }
+
         auto it = handlers_.find(static_cast<int>(directive->type));
-        if (it != handlers_.end()) {
+        bool has_handler = it != handlers_.end();
+
+        // Hook: ON_DIRECTIVE or ON_CUSTOM_DIRECTIVE (v1.9.1)
+        if (!fire_directive_hook(directive, has_handler)) {
+            continue; // suppressed by hook
+        }
+
+        if (has_handler) {
             logger->debug("Processing directive type {}",
                           static_cast<int>(directive->type));
             it->second(ctx, *directive, result);
             if (result.stop_processing) {
                 break;
             }
-        } else {
-            logger->warn("No handler for directive type {}",
-                         static_cast<int>(directive->type));
         }
     }
     return result;
+}
+
+/**
+ * @brief Fire ON_DIRECTIVE or ON_CUSTOM_DIRECTIVE hook.
+ * @param directive The directive being processed.
+ * @param has_handler Whether a handler is registered.
+ * @return true to proceed, false if suppressed.
+ * @internal
+ * @version 1.9.1
+ */
+bool DirectiveProcessor::fire_directive_hook(
+    const Directive* directive, bool has_handler) {
+    if (hooks_.fire_pre == nullptr) {
+        return true;
+    }
+
+    auto point = has_handler
+        ? ENTROPIC_HOOK_ON_DIRECTIVE
+        : ENTROPIC_HOOK_ON_CUSTOM_DIRECTIVE;
+    std::string json = "{\"type\":"
+        + std::to_string(static_cast<int>(directive->type)) + "}";
+    char* mod = nullptr;
+    int rc = hooks_.fire_pre(hooks_.registry,
+        point, json.c_str(), &mod);
+    free(mod);
+    return rc == 0;
 }
 
 } // namespace entropic

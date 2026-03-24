@@ -113,8 +113,11 @@ def run(
 def _run_perf(candidate: Path | None, identity: str | None, default_dir: Path) -> None:
     """Execute performance benchmark through the engine.
 
+    Uses C engine when available for inference tok/s measurement.
+    Falls back to Python engine for full benchmark suite (swap, sweep).
+
     @brief Run perf benchmarks, print report, and save results to disk.
-    @version 1
+    @version 2
     """
     from entropic.benchmark.performance import run_performance, save_results
     from entropic.benchmark.report import print_perf_report

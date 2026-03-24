@@ -68,7 +68,19 @@ class ModelOrchestrator:
                    created from config + identity file frontmatter.
             backend_factory: Custom factory for creating model backends.
                 If None, uses the default LlamaCppBackend factory.
+
+        .. deprecated:: 1.9.0
+            Use entropic_native.EntropicEngine (C engine wrapper) instead.
         """
+        import warnings
+
+        warnings.warn(
+            "ModelOrchestrator (Python) is deprecated since v1.9.0. "
+            "Use entropic_native.EntropicEngine (C engine) instead. "
+            "The Python engine will be removed in v1.9.15.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.config = config
         self._tiers: dict[ModelTier, ModelBackend] = {}
         self._model_pool: dict[Path, ModelBackend] = {}  # resolved_path → backend (dedup)

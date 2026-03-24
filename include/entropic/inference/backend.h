@@ -30,6 +30,7 @@
 #include <entropic/types/config.h>
 #include <entropic/types/generation_result.h>
 #include <entropic/types/message.h>
+#include <entropic/interfaces/i_hook_handler.h>
 
 #include <atomic>
 #include <functional>
@@ -239,10 +240,26 @@ protected:
 
     std::string last_error_;  ///< Last error message for diagnostics
 
+    /**
+     * @brief Fire ON_MODEL_LOAD pre-hook.
+     * @param config Model config being loaded.
+     * @return true if hook cancelled the load.
+     * @version 1.9.1
+     */
+    bool fire_model_load_hook(const ModelConfig& config);  ///< @internal
+
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface.
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }
+
 private:
     std::atomic<ModelState> state_{ModelState::COLD};
     ModelConfig config_;
     std::mutex transition_mutex_;  ///< Guards state TRANSITIONS only
+    HookInterface hooks_;          ///< Hook dispatch (v1.9.1)
 };
 
 } // namespace entropic

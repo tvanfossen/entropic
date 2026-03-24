@@ -148,28 +148,35 @@ Message ToolExecutor::handle_duplicate(
  * @param call Tool call.
  * @return true if approved.
  * @internal
- * @version 1.8.5
+ * @version 1.9.1
  */
 bool ToolExecutor::check_approval(const ToolCall& call) {
     auto args_json = serialize_args(call);
     bool auto_ok = loop_config_.auto_approve_tools
                 || server_manager_.is_explicitly_allowed(
                        call.name, args_json);
-    if (auto_ok) {
-        return true;
+
+    bool approved = auto_ok;
+    if (!approved && callbacks_.on_tool_call != nullptr) {
+        auto call_json = serialize_tool_call(call);
+        callbacks_.on_tool_call(call_json.c_str(),
+                                callbacks_.user_data);
+        approved = true;
     }
 
-    // No callback = headless → DENY (per adversarial review #1)
-    if (callbacks_.on_tool_call == nullptr) {
+    // Hook: ON_PERMISSION_CHECK — informational (v1.9.1)
+    if (hook_iface_.fire_info != nullptr) {
+        std::string perm = approved ? "allowed" : "denied";
+        std::string json = "{\"tool_name\":\""
+            + call.name + "\",\"permission\":\"" + perm + "\"}";
+        hook_iface_.fire_info(hook_iface_.registry,
+            ENTROPIC_HOOK_ON_PERMISSION_CHECK, json.c_str());
+    }
+
+    if (!approved) {
         logger->warn("No approval callback — denying: {}", call.name);
-        return false;
     }
-
-    // Invoke approval callback (MVP: treat invocation as approval)
-    auto call_json = serialize_tool_call(call);
-    callbacks_.on_tool_call(call_json.c_str(),
-                            callbacks_.user_data);
-    return true;
+    return approved;
 }
 
 /**
@@ -386,7 +393,7 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 1.8.5
+ * @version 1.9.1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -396,11 +403,34 @@ std::vector<Message> ToolExecutor::process_single_call(
         return {std::move(*rejection)};
     }
 
+    // Hook: PRE_TOOL_CALL — can cancel (v1.9.1)
+    if (hook_iface_.fire_pre != nullptr) {
+        std::string json = "{\"tool_name\":\""
+            + call.name + "\"}";
+        char* mod = nullptr;
+        int rc = hook_iface_.fire_pre(hook_iface_.registry,
+            ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
+        free(mod);
+        if (rc != 0) {
+            return {create_denied_message(call, "Cancelled by hook")};
+        }
+    }
+
     auto [msg, raw_result] = execute_tool(ctx, call);
     ctx.effective_tool_calls++;
     msg.metadata["added_at_iteration"] =
         std::to_string(ctx.metrics.iterations);
     record_tool_call(ctx, call, raw_result);
+
+    // Hook: POST_TOOL_CALL (v1.9.1)
+    if (hook_iface_.fire_post != nullptr) {
+        std::string json = "{\"tool_name\":\""
+            + call.name + "\"}";
+        char* out = nullptr;
+        hook_iface_.fire_post(hook_iface_.registry,
+            ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
+        free(out);
+    }
 
     run_post_tool_hooks(ctx);
 

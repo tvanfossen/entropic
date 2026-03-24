@@ -17,6 +17,24 @@ static auto logger = entropic::log::get("core.engine");
 
 namespace entropic {
 
+// ── Hook dispatch helpers ────────────────────────────────
+
+/**
+ * @brief Fire an informational hook if the interface is wired.
+ * @param hooks Hook interface.
+ * @param point Hook point.
+ * @param json Context JSON.
+ * @internal
+ * @version 1.9.1
+ */
+static void fire_hook_info(const HookInterface& hooks,
+                           entropic_hook_point_t point,
+                           const char* json) {
+    if (hooks.fire_info != nullptr) {
+        hooks.fire_info(hooks.registry, point, json);
+    }
+}
+
 // Forward declaration
 static void remove_anchor_messages(LoopContext& ctx,
                                     const std::string& key);
@@ -106,6 +124,19 @@ void AgentEngine::set_storage(const StorageInterface& storage) {
 }
 
 /**
+ * @brief Set the hook dispatch interface.
+ * @param hooks Hook dispatch interface.
+ * @internal
+ * @version 1.9.1
+ */
+void AgentEngine::set_hooks(const HookInterface& hooks) {
+    hooks_ = hooks;
+    response_generator_.set_hooks(hooks);
+    context_manager_.set_hooks(hooks);
+    directive_processor_.set_hooks(hooks);
+}
+
+/**
  * @brief Get the tier resolution interface.
  * @return Tier resolution interface.
  * @internal
@@ -159,9 +190,18 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 1.8.4
+ * @version 1.9.1
  */
 void AgentEngine::loop(LoopContext& ctx) {
+    // Hook: ON_LOOP_START (v1.9.1)
+    {
+        std::string json = "{\"message_count\":"
+            + std::to_string(ctx.messages.size())
+            + ",\"delegation_depth\":"
+            + std::to_string(ctx.delegation_depth) + "}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_START, json.c_str());
+    }
+
     while (!should_stop(ctx)) {
         ctx.metrics.iterations++;
 
@@ -183,13 +223,22 @@ void AgentEngine::loop(LoopContext& ctx) {
         && ctx.state != AgentState::INTERRUPTED) {
         logger->warn("Loop ended due to max iterations");
     }
+
+    // Hook: ON_LOOP_END (v1.9.1)
+    {
+        std::string json = "{\"final_state\":\""
+            + std::string(agent_state_name(ctx.state))
+            + "\",\"iterations\":"
+            + std::to_string(ctx.metrics.iterations) + "}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_END, json.c_str());
+    }
 }
 
 /**
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 1.8.6
+ * @version 1.9.1
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -198,14 +247,39 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
                  agent_state_name(ctx.state),
                  ctx.messages.size());
 
+    // Hook: ON_LOOP_ITERATION (v1.9.1)
+    {
+        std::string json = "{\"iteration\":"
+            + std::to_string(ctx.metrics.iterations)
+            + ",\"state\":\"" + agent_state_name(ctx.state)
+            + "\",\"consecutive_errors\":"
+            + std::to_string(ctx.consecutive_errors) + "}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_ITERATION, json.c_str());
+    }
+
     context_manager_.refresh_context_limit(ctx, 0);
     context_manager_.prune_old_tool_results(ctx);
     context_manager_.check_compaction(ctx);
 
-    set_state(ctx, AgentState::EXECUTING);
-    auto result = response_generator_.generate_response(ctx);
+    // Hook: ON_CONTEXT_ASSEMBLE (v1.9.1)
+    {
+        std::string json = "{\"message_count\":"
+            + std::to_string(ctx.messages.size()) + "}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_CONTEXT_ASSEMBLE,
+                       json.c_str());
+    }
 
-    // Parse tool calls from model output (v1.8.5)
+    set_state(ctx, AgentState::EXECUTING);
+
+    // Hook: PRE_GENERATE — can cancel (v1.9.1)
+    if (fire_pre_hook(ENTROPIC_HOOK_PRE_GENERATE, ctx.metrics.iterations)) {
+        set_state(ctx, AgentState::COMPLETE);
+        return;
+    }
+
+    auto result = response_generator_.generate_response(ctx);
+    fire_post_generate_hook(result);
+
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
 
     Message assistant_msg;
@@ -221,10 +295,10 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
 
     // Execute pending delegation/pipeline (v1.8.6)
     if (ctx.pending_delegation.has_value()) {
-        ctx.metrics.iterations--;  // delegation turns are free
+        ctx.metrics.iterations--;
         execute_pending_delegation(ctx);
     } else if (ctx.pending_pipeline.has_value()) {
-        ctx.metrics.iterations--;  // pipeline turns are free
+        ctx.metrics.iterations--;
         execute_pending_pipeline(ctx);
     }
 }
@@ -285,14 +359,34 @@ bool AgentEngine::should_stop(const LoopContext& ctx) const {
  * @param ctx Loop context.
  * @param state New state.
  * @internal
- * @version 1.8.4
+ * @version 1.9.1
  */
 void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
+    auto prev = ctx.state;
     ctx.state = state;
     logger->info("State: {}", agent_state_name(state));
     if (callbacks_.on_state_change != nullptr) {
         callbacks_.on_state_change(
             static_cast<int>(state), callbacks_.user_data);
+    }
+
+    // Hook: ON_STATE_CHANGE (v1.9.1)
+    {
+        std::string json = "{\"previous\":\""
+            + std::string(agent_state_name(prev))
+            + "\",\"current\":\""
+            + std::string(agent_state_name(state)) + "\"}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_STATE_CHANGE, json.c_str());
+    }
+
+    // Hook: ON_ERROR when entering ERROR state (v1.9.1)
+    if (state == AgentState::ERROR) {
+        std::string json = "{\"error_code\":\"STATE_ERROR\""
+            ",\"iteration\":"
+            + std::to_string(ctx.metrics.iterations)
+            + ",\"consecutive\":" + std::to_string(ctx.consecutive_errors)
+            + "}";
+        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_ERROR, json.c_str());
     }
 }
 
@@ -645,6 +739,93 @@ static void remove_anchor_messages(LoopContext& ctx,
         msgs.end());
 }
 
+// ── Hook helpers (v1.9.1) ────────────────────────────────
+
+/**
+ * @brief Fire a pre-hook, returning true if cancelled.
+ * @param point Hook point.
+ * @param iteration Current iteration.
+ * @return true if cancelled.
+ * @internal
+ * @version 1.9.1
+ */
+bool AgentEngine::fire_pre_hook(
+    entropic_hook_point_t point, int iteration) {
+    if (hooks_.fire_pre == nullptr) {
+        return false;
+    }
+    std::string json = "{\"iteration\":"
+        + std::to_string(iteration) + "}";
+    char* modified = nullptr;
+    int rc = hooks_.fire_pre(hooks_.registry,
+        point, json.c_str(), &modified);
+    free(modified);
+    return rc != 0;
+}
+
+/**
+ * @brief Fire POST_GENERATE hook.
+ * @param result Generation result.
+ * @internal
+ * @version 1.9.1
+ */
+void AgentEngine::fire_post_generate_hook(const GenerateResult& result) {
+    if (hooks_.fire_post == nullptr) {
+        return;
+    }
+    std::string json = "{\"finish_reason\":\""
+        + result.finish_reason + "\"}";
+    char* out = nullptr;
+    hooks_.fire_post(hooks_.registry,
+        ENTROPIC_HOOK_POST_GENERATE, json.c_str(), &out);
+    free(out);
+}
+
+/**
+ * @brief Fire ON_DELEGATE pre-hook.
+ * @param pending Delegation info.
+ * @param depth Delegation depth.
+ * @return true if cancelled.
+ * @internal
+ * @version 1.9.1
+ */
+bool AgentEngine::fire_delegate_pre_hook(
+    const PendingDelegation& pending, int depth) {
+    if (hooks_.fire_pre == nullptr) {
+        return false;
+    }
+    std::string json = "{\"target_tier\":\""
+        + pending.target + "\",\"task\":\""
+        + pending.task + "\",\"depth\":"
+        + std::to_string(depth) + "}";
+    char* modified = nullptr;
+    int rc = hooks_.fire_pre(hooks_.registry,
+        ENTROPIC_HOOK_ON_DELEGATE, json.c_str(), &modified);
+    free(modified);
+    return rc != 0;
+}
+
+/**
+ * @brief Fire ON_DELEGATE_COMPLETE post-hook.
+ * @param target Target tier.
+ * @param success Whether delegation succeeded.
+ * @internal
+ * @version 1.9.1
+ */
+void AgentEngine::fire_delegate_complete_hook(
+    const std::string& target, bool success) {
+    if (hooks_.fire_post == nullptr) {
+        return;
+    }
+    std::string json = "{\"target_tier\":\""
+        + target + "\",\"success\":"
+        + (success ? "true" : "false") + "}";
+    char* out = nullptr;
+    hooks_.fire_post(hooks_.registry,
+        ENTROPIC_HOOK_ON_DELEGATE_COMPLETE, json.c_str(), &out);
+    free(out);
+}
+
 // ── Delegation execution (v1.8.6) ────────────────────────
 
 /**
@@ -663,7 +844,7 @@ static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
  * @brief Execute a pending delegation after tool processing.
  * @param ctx Loop context with pending_delegation set.
  * @internal
- * @version 1.8.8
+ * @version 1.9.1
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -682,6 +863,14 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     }
 
     set_state(ctx, AgentState::DELEGATING);
+
+    // Hook: ON_DELEGATE pre-hook — can cancel (v1.9.1)
+    if (fire_delegate_pre_hook(pending, ctx.delegation_depth)) {
+        logger->info("ON_DELEGATE hook cancelled delegation");
+        set_state(ctx, AgentState::EXECUTING);
+        return;
+    }
+
     fire_delegation_start(ctx, pending.target, pending.task);
 
     auto repo_dir = get_repo_dir();
@@ -692,8 +881,6 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 
     DelegationManager mgr(run_child_loop_trampoline, this,
                           tier_res_, repo_dir);
-
-    // Wire storage for delegation records (v1.8.8)
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -709,6 +896,7 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     ctx.messages.push_back(std::move(result_msg));
 
     fire_delegation_complete(ctx, pending.target, result);
+    fire_delegate_complete_hook(pending.target, result.success);
     set_state(ctx, AgentState::EXECUTING);
 }
 

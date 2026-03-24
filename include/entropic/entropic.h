@@ -35,7 +35,7 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.8.9
+ * @version 1.9.1
  */
 
 #pragma once
@@ -422,30 +422,54 @@ ENTROPIC_EXPORT entropic_error_t entropic_get_identity(
     entropic_handle_t handle,
     char** identity_json);
 
-/* ── Hooks (v1.8.9 — stub for v1.9.1) ───────────────── */
+/* ── Hooks (v1.9.1) ──────────────────────────────────── */
 
 /**
  * @brief Register a callback for an engine hook point.
  *
- * Hook points allow consumers to intercept and modify engine behavior
- * at defined stages. See entropic_hook_point_t for available points.
+ * Multiple callbacks can be registered for the same hook point.
+ * They execute in ascending priority order (0 = highest priority).
+ * A pre-hook returning non-zero cancels the operation.
+ * A pre-hook returning modified JSON (via context_json out-param)
+ * modifies the operation's input.
  *
- * @note Not implemented until v1.9.1. Currently returns
- *       ENTROPIC_ERROR_NOT_IMPLEMENTED for all inputs.
- *
- * @param handle Engine handle.
+ * @param handle     Engine handle.
  * @param hook_point The hook point to register for.
- * @param callback Function pointer invoked when the hook fires.
- * @param user_data Opaque pointer passed to callback.
- * @return ENTROPIC_OK on success (v1.9.1+).
- *         - ENTROPIC_ERROR_NOT_IMPLEMENTED — stub until v1.9.1.
+ * @param callback   Function pointer invoked when the hook fires.
+ * @param user_data  Opaque pointer passed to callback.
+ * @param priority   Execution priority (0 = first, higher = later).
+ * @return ENTROPIC_OK on success.
  *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
  *         - ENTROPIC_ERROR_INVALID_ARGUMENT — callback is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — invalid hook_point value.
  *
  * @threadsafety Serialized per-handle.
- * @version 1.8.9
+ * @version 1.9.1
  */
 ENTROPIC_EXPORT entropic_error_t entropic_register_hook(
+    entropic_handle_t handle,
+    entropic_hook_point_t hook_point,
+    entropic_hook_callback_t callback,
+    void* user_data,
+    int priority);
+
+/**
+ * @brief Deregister a previously registered hook callback.
+ *
+ * Matches on (hook_point, callback, user_data) triple. If no match
+ * is found, returns ENTROPIC_OK (idempotent).
+ *
+ * @param handle     Engine handle.
+ * @param hook_point The hook point to deregister from.
+ * @param callback   The callback function pointer to remove.
+ * @param user_data  The user_data that was passed during registration.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.1
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_deregister_hook(
     entropic_handle_t handle,
     entropic_hook_point_t hook_point,
     entropic_hook_callback_t callback,

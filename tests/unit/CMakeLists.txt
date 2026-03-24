@@ -66,6 +66,7 @@ add_executable(entropic-core-tests
     core/test_worktree.cpp
     core/test_delegation_manager.cpp
     core/test_auto_chain.cpp
+    core/test_hook_registry.cpp
 )
 
 target_include_directories(entropic-core-tests PRIVATE
@@ -151,6 +152,7 @@ add_executable(entropic-api-tests
 
 target_link_libraries(entropic-api-tests PRIVATE
     entropic-facade
+    entropic-core
     entropic-types
     spdlog::spdlog
     Catch2::Catch2WithMain

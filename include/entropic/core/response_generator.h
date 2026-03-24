@@ -11,6 +11,7 @@
 #pragma once
 
 #include <entropic/core/engine_types.h>
+#include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
 
 #include <string>
@@ -123,6 +124,15 @@ private:
     LoopConfig loop_config_;           ///< Loop configuration
     EngineCallbacks& callbacks_;       ///< Shared callbacks
     GenerationEvents events_;          ///< Interrupt/pause flags
+    HookInterface hooks_;              ///< Hook dispatch (v1.9.1)
+
+public:
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface.
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }
 };
 
 } // namespace entropic

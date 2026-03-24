@@ -9,6 +9,7 @@ target_sources(entropic-core PRIVATE
     engine.cpp
     worktree.cpp
     delegation.cpp
+    hook_registry.cpp
 )
 
 target_include_directories(entropic-core PUBLIC

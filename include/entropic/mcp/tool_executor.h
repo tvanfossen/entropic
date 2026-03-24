@@ -297,6 +297,15 @@ private:
     EngineCallbacks& callbacks_;          ///< Shared callbacks
     ToolExecutorHooks hooks_;             ///< Engine hooks
     PermissionPersistInterface permission_persist_; ///< Permission persistence (v1.8.8)
+    HookInterface hook_iface_;            ///< Hook dispatch (v1.9.1)
+
+public:
+    /**
+     * @brief Set the hook dispatch interface.
+     * @param hooks Hook dispatch interface.
+     * @version 1.9.1
+     */
+    void set_hooks(const HookInterface& hooks) { hook_iface_ = hooks; }
 };
 
 } // namespace entropic

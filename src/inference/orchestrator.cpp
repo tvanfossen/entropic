@@ -5,7 +5,7 @@
  * Model pool deduplication, per-tier adapters, VRAM lifecycle,
  * tier routing via router complete(), and swap logic.
  *
- * @version 1.8.2
+ * @version 1.9.2
  */
 
 #include <entropic/inference/orchestrator.h>
@@ -13,6 +13,8 @@
 
 #include "llama_cpp_backend.h"
 #include "adapters/adapter_registry.h"
+
+#include <llama.h>
 
 #include <chrono>
 
@@ -70,7 +72,7 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 1.8.2
+ * @version 1.9.2
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
@@ -131,6 +133,9 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
             logger->info("Activated router model");
         }
     }
+
+    // Preload LoRA adapters to WARM (v1.9.2)
+    preload_adapters();
 
     return true;
 }
@@ -311,7 +316,7 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
  * @param tier_name Tier name.
  * @return Backend pointer, or nullptr if unavailable.
  * @internal
- * @version 1.8.2
+ * @version 1.9.2
  */
 InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
     std::lock_guard<std::mutex> lock(swap_mutex_);
@@ -345,6 +350,16 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
         }
     }
 
+    // Ensure correct LoRA adapter for this tier (v1.9.2)
+    if (result) {
+        auto* llama_backend = dynamic_cast<LlamaCppBackend*>(result);
+        llama_context* ctx = llama_backend
+            ? llama_backend->llama_context_ptr() : nullptr;
+        double adapter_ms = ensure_adapter_for_tier(tier_name, ctx);
+        last_routing_result_.adapter_swap_ms = adapter_ms;
+        last_routing_result_.adapter_name = lora_manager_.active_adapter();
+    }
+
     return result;
 }
 
@@ -355,7 +370,7 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
  *
  * @param incoming The backend about to be activated.
  * @internal
- * @version 1.8.2
+ * @version 1.9.2
  */
 void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming) {
     auto it = loaded_main_tier_.empty()
@@ -372,6 +387,14 @@ void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming)
     auto& current = it->second;
     auto cfg_it = config_.models.tiers.find(loaded_main_tier_);
     bool keep_warm = cfg_it != config_.models.tiers.end() && cfg_it->second.keep_warm;
+
+    // Cascade: unload adapters for this base model (v1.9.2)
+    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(current.get());
+    if (llama_backend) {
+        lora_manager_.unload_all_for_model(
+            llama_backend->llama_model_ptr(),
+            llama_backend->llama_context_ptr());
+    }
 
     if (keep_warm) {
         logger->info("Deactivating {} (keep_warm=true)", loaded_main_tier_);
@@ -462,6 +485,120 @@ ChatAdapter* ModelOrchestrator::get_adapter(const std::string& tier_name) const 
         return it->second.get();
     }
     return nullptr;
+}
+
+// ── LoRA adapter management (v1.9.2) ──────────────────────
+
+/**
+ * @brief Ensure the correct LoRA adapter is active for a tier.
+ *
+ * If the tier has adapter_path configured, swaps to that adapter.
+ * If the tier has no adapter, deactivates any active adapter.
+ * Clears KV cache after swap (stale entries from prior adapter).
+ *
+ * @param tier_name Target tier.
+ * @param ctx llama_context for activation.
+ * @return Adapter swap time in milliseconds.
+ * @internal
+ * @version 1.9.2
+ */
+/**
+ * @brief Deactivate any active LoRA adapter.
+ * @param ctx llama_context to clear from.
+ * @return true if an adapter was deactivated.
+ * @internal
+ * @version 1.9.2
+ */
+bool ModelOrchestrator::deactivate_if_active(llama_context* ctx) {
+    if (lora_manager_.active_adapter().empty()) {
+        return false;
+    }
+    lora_manager_.deactivate(ctx);
+    return true;
+}
+
+/**
+ * @brief Ensure correct LoRA adapter is active for a tier.
+ * @param tier_name Target tier.
+ * @param ctx llama_context for activation.
+ * @return Adapter swap time in milliseconds.
+ * @internal
+ * @version 1.9.2
+ */
+double ModelOrchestrator::ensure_adapter_for_tier(
+    const std::string& tier_name, llama_context* ctx)
+{
+    auto tier_it = config_.models.tiers.find(tier_name);
+    if (tier_it == config_.models.tiers.end()) {
+        return 0.0;
+    }
+
+    const auto& tier_cfg = tier_it->second;
+    auto t_start = now();
+    bool needs_kv_clear = false;
+
+    if (!tier_cfg.adapter_path) {
+        needs_kv_clear = deactivate_if_active(ctx);
+    } else if (lora_manager_.active_adapter() != tier_name) {
+        needs_kv_clear = lora_manager_.swap(tier_name, ctx);
+        if (!needs_kv_clear) {
+            logger->warn("Adapter swap to '{}' failed", tier_name);
+        }
+    }
+
+    if (needs_kv_clear && ctx) {
+        llama_memory_clear(llama_get_memory(ctx), true);
+        logger->info("Adapter swap for tier '{}' in {:.1f}ms",
+                    tier_name, elapsed_ms(t_start, now()));
+    }
+
+    return elapsed_ms(t_start, now());
+}
+
+/**
+ * @brief Preload all tier-configured LoRA adapters to WARM.
+ *
+ * Scans tier configs for adapter_path. For each, loads the adapter
+ * against its base model. Requires the base model to be at least WARM.
+ *
+ * @internal
+ * @version 1.9.2
+ */
+void ModelOrchestrator::preload_adapters() {
+    int loaded = 0;
+
+    for (const auto& [name, tier_cfg] : config_.models.tiers) {
+        if (!tier_cfg.adapter_path) {
+            continue;
+        }
+
+        auto tier_it = tiers_.find(name);
+        if (tier_it == tiers_.end()) {
+            continue;
+        }
+
+        auto* llama_backend = dynamic_cast<LlamaCppBackend*>(
+            tier_it->second.get());
+        if (!llama_backend || !llama_backend->llama_model_ptr()) {
+            logger->warn("Cannot preload adapter for '{}' — model not loaded",
+                        name);
+            continue;
+        }
+
+        bool ok = lora_manager_.load(
+            name,
+            *tier_cfg.adapter_path,
+            llama_backend->llama_model_ptr(),
+            tier_cfg.adapter_scale);
+
+        if (ok) {
+            ++loaded;
+        }
+    }
+
+    if (loaded > 0) {
+        logger->info("Preloaded {} LoRA adapter(s) to WARM", loaded);
+    }
 }
 
 } // namespace entropic

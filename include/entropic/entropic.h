@@ -475,6 +475,112 @@ ENTROPIC_EXPORT entropic_error_t entropic_deregister_hook(
     entropic_hook_callback_t callback,
     void* user_data);
 
+/* ── LoRA Adapters (v1.9.2) ───────────────────────────── */
+
+/**
+ * @brief Load a LoRA adapter into RAM.
+ *
+ * @param handle Engine handle.
+ * @param adapter_name Unique adapter identifier.
+ * @param adapter_path Path to the LoRA .gguf file.
+ * @param base_model_path Base model this adapter targets (must be loaded).
+ * @param scale LoRA scaling factor (1.0 = full strength).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_MODEL_NOT_FOUND — base model not loaded.
+ *         - ENTROPIC_ERROR_ADAPTER_LOAD_FAILED — adapter file invalid.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — adapter already loaded.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_adapter_load(
+    entropic_handle_t handle,
+    const char* adapter_name,
+    const char* adapter_path,
+    const char* base_model_path,
+    float scale);
+
+/**
+ * @brief Unload a LoRA adapter.
+ *
+ * @param handle Engine handle.
+ * @param adapter_name Adapter to unload.
+ * @return ENTROPIC_OK on success. Idempotent if already COLD.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_adapter_unload(
+    entropic_handle_t handle,
+    const char* adapter_name);
+
+/**
+ * @brief Swap the active LoRA adapter.
+ *
+ * @param handle Engine handle.
+ * @param adapter_name Adapter to activate (must be WARM or HOT).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_ADAPTER_NOT_FOUND — adapter not loaded.
+ *         - ENTROPIC_ERROR_ADAPTER_SWAP_FAILED — swap failed.
+ *         - ENTROPIC_ERROR_ADAPTER_CANCELLED — hook cancelled.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_adapter_swap(
+    entropic_handle_t handle,
+    const char* adapter_name);
+
+/**
+ * @brief Query adapter state.
+ *
+ * @param handle Engine handle.
+ * @param adapter_name Adapter identifier.
+ * @return State as int: 0=COLD, 1=WARM, 2=HOT. -1 if not found.
+ *
+ * @threadsafety Thread-safe.
+ * @version 1.9.2
+ */
+ENTROPIC_EXPORT int entropic_adapter_state(
+    entropic_handle_t handle,
+    const char* adapter_name);
+
+/**
+ * @brief Get adapter info as JSON.
+ *
+ * @param handle Engine handle.
+ * @param adapter_name Adapter identifier.
+ * @return JSON string with adapter metadata. Caller frees with
+ *         entropic_free(). NULL if adapter not found.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.2
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_adapter_info(
+    entropic_handle_t handle,
+    const char* adapter_name);
+
+/**
+ * @brief List all adapters as JSON array.
+ *
+ * @param handle Engine handle.
+ * @return JSON array of AdapterInfo objects. Caller frees with
+ *         entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.2
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_adapter_list(entropic_handle_t handle);
+
 #ifdef __cplusplus
 }
 #endif

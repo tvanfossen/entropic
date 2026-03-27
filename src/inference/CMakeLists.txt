@@ -9,6 +9,7 @@ set(INFERENCE_SOURCES
     llama_cpp_backend.cpp
     prompt_cache.cpp
     orchestrator.cpp
+    adapter_manager.cpp
     inference_c_api.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp

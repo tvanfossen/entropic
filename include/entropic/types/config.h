@@ -39,6 +39,43 @@ enum class ModelState : int {
 };
 
 /**
+ * @brief LoRA adapter lifecycle state.
+ *
+ * Mirrors ModelState but for LoRA adapters. An adapter must be HOT
+ * for its weights to influence generation. Multiple adapters can be
+ * WARM simultaneously (loaded in RAM), but only one can be HOT per
+ * inference context.
+ *
+ * @version 1.9.2
+ */
+enum class AdapterState : int {
+    COLD = 0,  ///< Not loaded. No resources consumed.
+    WARM = 1,  ///< Loaded in RAM via llama_adapter_lora_init(). Ready to activate.
+    HOT  = 2   ///< Active on context via llama_set_adapter_lora(). Influencing generation.
+};
+
+/**
+ * @brief Metadata for a loaded LoRA adapter.
+ *
+ * Used for introspection and routing decisions. Returned by
+ * AdapterManager::info() and the entropic_adapter_info() C API.
+ *
+ * @version 1.9.2
+ */
+struct AdapterInfo {
+    std::string name;                    ///< Unique adapter identifier
+    std::filesystem::path path;          ///< Resolved path to .gguf adapter file
+    AdapterState state = AdapterState::COLD;  ///< Current lifecycle state
+    float scale = 1.0f;                 ///< LoRA scaling factor (alpha/rank)
+    std::string tier_name;              ///< Tier this adapter is assigned to (empty = unassigned)
+    std::string base_model_path;        ///< Path of the base model this adapter targets
+    size_t ram_bytes = 0;               ///< RAM consumption when WARM/HOT (0 if COLD)
+
+    /// @brief Adapter-specific metadata for routing decisions.
+    std::unordered_map<std::string, std::string> metadata;
+};
+
+/**
  * @brief Model configuration for a single tier.
  *
  * Contains all parameters needed to load and configure a model, including
@@ -109,7 +146,7 @@ struct GenerationParams {
  *   disabled=true  → disabled entirely
  *   path set       → custom file (must exist, validated at load)
  *
- * @version 1.8.1
+ * @version 1.9.2 — added adapter_path, adapter_scale
  */
 struct TierConfig : ModelConfig {
     std::optional<std::filesystem::path> identity;  ///< Identity prompt path (nullopt = bundled)
@@ -117,6 +154,15 @@ struct TierConfig : ModelConfig {
     std::optional<std::filesystem::path> grammar;   ///< Grammar file path
     std::optional<std::string> auto_chain;           ///< Target tier name (nullopt = defer to identity)
     std::optional<bool> routable;                   ///< None = defer to identity frontmatter
+
+    /// @brief Optional path to LoRA adapter .gguf file.
+    /// If set, orchestrator loads and activates on tier transition.
+    /// @version 1.9.2
+    std::optional<std::filesystem::path> adapter_path;
+
+    /// @brief LoRA scaling factor (0.0–2.0, default 1.0).
+    /// @version 1.9.2
+    float adapter_scale = 1.0f;
 };
 
 /**

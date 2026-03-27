@@ -36,6 +36,10 @@ FetchContent_Declare(ryml
 set(RYML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(RYML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(ryml)
+# Override hidden visibility — ryml symbols must be visible when linked
+# into entropic shared libraries (config.so, prompts.so).
+set_target_properties(ryml PROPERTIES CXX_VISIBILITY_PRESET default)
+set_target_properties(c4core PROPERTIES CXX_VISIBILITY_PRESET default)
 
 # ── llama.cpp ────────────────────────────────────────────
 # v1.8.2: Build llama.cpp as part of the inference backend.

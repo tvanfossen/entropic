@@ -22,6 +22,7 @@
 #pragma once
 
 #include <entropic/inference/backend.h>
+#include <entropic/inference/adapter_manager.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
 
@@ -32,11 +33,13 @@
 #include <unordered_set>
 #include <vector>
 
+struct llama_context;  // Forward declaration for adapter management
+
 namespace entropic {
 
 /**
  * @brief Result metadata from a routing decision.
- * @version 1.8.2
+ * @version 1.9.2 — added adapter_name, adapter_swap_ms
  */
 struct RoutingResult {
     std::string tier_name;                ///< Selected tier
@@ -44,6 +47,8 @@ struct RoutingResult {
     std::string model_raw;                ///< Raw model output (e.g. "2")
     std::string swap_action = "none";     ///< "none", "reused", "loaded"
     double routing_ms = 0.0;              ///< Total routing time
+    std::string adapter_name;             ///< Active adapter (empty = base model) (v1.9.2)
+    double adapter_swap_ms = 0.0;         ///< Adapter swap latency (v1.9.2)
 };
 
 /**
@@ -144,6 +149,13 @@ public:
      */
     ChatAdapter* get_adapter(const std::string& tier_name) const;
 
+    /**
+     * @brief Access the LoRA adapter manager.
+     * @return Reference to AdapterManager.
+     * @version 1.9.2
+     */
+    AdapterManager& adapter_manager() { return lora_manager_; }
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;
@@ -169,6 +181,9 @@ private:
 
     ParsedConfig config_;
 
+    /* ── LoRA adapter management (v1.9.2) ────────────────── */
+    AdapterManager lora_manager_;  ///< LoRA adapter lifecycle
+
     /* ── Internal ────────────────────────────────────────── */
 
     /**
@@ -189,6 +204,34 @@ private:
      */
     std::pair<std::string, std::string> classify_task(
         const std::vector<Message>& messages);
+
+    /**
+     * @brief Deactivate any active LoRA adapter.
+     * @param ctx llama_context to clear from.
+     * @return true if an adapter was deactivated.
+     * @version 1.9.2
+     */
+    bool deactivate_if_active(llama_context* ctx);
+
+    /**
+     * @brief Ensure correct LoRA adapter is active for a tier.
+     *
+     * If tier has adapter_path, activates it. If tier has no
+     * adapter_path, deactivates any active adapter.
+     *
+     * @param tier_name Target tier.
+     * @param ctx llama_context for activation.
+     * @return Adapter swap time in ms (0 if no swap needed).
+     * @version 1.9.2
+     */
+    double ensure_adapter_for_tier(
+        const std::string& tier_name, llama_context* ctx);
+
+    /**
+     * @brief Preload all configured tier adapters to WARM.
+     * @version 1.9.2
+     */
+    void preload_adapters();
 };
 
 } // namespace entropic

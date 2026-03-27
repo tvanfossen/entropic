@@ -17,8 +17,8 @@ target_include_directories(entropic-prompts PRIVATE
 )
 
 target_link_libraries(entropic-prompts
-    PUBLIC entropic-types
-    PRIVATE entropic-config ryml::ryml spdlog::spdlog
+    PUBLIC entropic-types ryml::ryml
+    PRIVATE entropic-config spdlog::spdlog
 )
 
 target_compile_definitions(entropic-prompts PRIVATE ENTROPIC_BUILDING_DLL)

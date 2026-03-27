@@ -56,6 +56,25 @@ target_link_libraries(entropic-inference-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.9.2: Adapter manager tests (uses mock llama.cpp adapter symbols)
+add_executable(entropic-adapter-tests
+    inference/test_adapter_manager.cpp
+    inference/test_adapter_orchestrator.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/adapter_manager.cpp
+)
+
+target_include_directories(entropic-adapter-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-adapter-tests PRIVATE
+    entropic-types
+    llama
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.8.4: Core engine tests
 # v1.8.6: Added delegation, worktree, auto-chain tests
 add_executable(entropic-core-tests
@@ -174,6 +193,7 @@ include(Catch)
 catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
+catch_discover_tests(entropic-adapter-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
 catch_discover_tests(entropic-api-tests)

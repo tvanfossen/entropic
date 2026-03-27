@@ -177,4 +177,113 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     return ENTROPIC_ERROR_INVALID_STATE;
 }
 
+// ── LoRA Adapter stubs (v1.9.2) ─────────────────────────────
+
+/**
+ * @brief Load a LoRA adapter (stub).
+ * @param handle Engine handle.
+ * @param adapter_name Adapter identifier.
+ * @param adapter_path Path to .gguf file.
+ * @param base_model_path Base model path.
+ * @param scale LoRA scale factor.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+entropic_error_t entropic_adapter_load(
+    entropic_handle_t handle,
+    const char* adapter_name,
+    const char* adapter_path,
+    const char* base_model_path,
+    float scale)
+{
+    (void)handle;
+    (void)adapter_name;
+    (void)adapter_path;
+    (void)base_model_path;
+    (void)scale;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Unload a LoRA adapter (stub).
+ * @param handle Engine handle.
+ * @param adapter_name Adapter to unload.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+entropic_error_t entropic_adapter_unload(
+    entropic_handle_t handle,
+    const char* adapter_name)
+{
+    (void)handle;
+    (void)adapter_name;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Swap active adapter (stub).
+ * @param handle Engine handle.
+ * @param adapter_name Target adapter.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+entropic_error_t entropic_adapter_swap(
+    entropic_handle_t handle,
+    const char* adapter_name)
+{
+    (void)handle;
+    (void)adapter_name;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Query adapter state (stub).
+ * @param handle Engine handle.
+ * @param adapter_name Adapter identifier.
+ * @return -1 — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+int entropic_adapter_state(
+    entropic_handle_t handle,
+    const char* adapter_name)
+{
+    (void)handle;
+    (void)adapter_name;
+    return -1;
+}
+
+/**
+ * @brief Get adapter info as JSON (stub).
+ * @param handle Engine handle.
+ * @param adapter_name Adapter identifier.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+char* entropic_adapter_info(
+    entropic_handle_t handle,
+    const char* adapter_name)
+{
+    (void)handle;
+    (void)adapter_name;
+    return nullptr;
+}
+
+/**
+ * @brief List all adapters as JSON (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.2
+ */
+char* entropic_adapter_list(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
 } // extern "C"

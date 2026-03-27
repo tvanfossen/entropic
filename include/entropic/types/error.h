@@ -59,6 +59,10 @@ typedef enum {
     ENTROPIC_ERROR_NOT_RUNNING,              ///< Interrupt called but nothing running (v1.8.9)
     ENTROPIC_ERROR_NOT_IMPLEMENTED,          ///< Feature stub, not yet available (v1.8.9)
     ENTROPIC_ERROR_INTERRUPTED,              ///< Operation interrupted via entropic_interrupt (v1.8.9)
+    ENTROPIC_ERROR_ADAPTER_NOT_FOUND,        ///< Adapter name not recognized (v1.9.2)
+    ENTROPIC_ERROR_ADAPTER_LOAD_FAILED,      ///< LoRA file invalid or incompatible with base model (v1.9.2)
+    ENTROPIC_ERROR_ADAPTER_SWAP_FAILED,      ///< Swap failed (e.g., base model not ACTIVE) (v1.9.2)
+    ENTROPIC_ERROR_ADAPTER_CANCELLED,        ///< ON_ADAPTER_SWAP hook cancelled the operation (v1.9.2)
 } entropic_error_t;
 
 /**

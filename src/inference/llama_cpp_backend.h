@@ -59,6 +59,22 @@ public:
         prompt_cache_config_ = config;
     }
 
+    /* ── llama.cpp handle accessors (v1.9.2) ────────────── */
+
+    /**
+     * @brief Get the loaded llama_model pointer.
+     * @return nullptr if state is COLD.
+     * @version 1.9.2
+     */
+    llama_model* llama_model_ptr() { return model_; }
+
+    /**
+     * @brief Get the active llama_context pointer.
+     * @return nullptr if state is not ACTIVE.
+     * @version 1.9.2
+     */
+    llama_context* llama_context_ptr() { return ctx_; }
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 

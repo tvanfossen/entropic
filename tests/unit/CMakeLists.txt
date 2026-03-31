@@ -122,6 +122,8 @@ add_executable(entropic-core-tests
     core/test_delegation_manager.cpp
     core/test_auto_chain.cpp
     core/test_hook_registry.cpp
+    core/test_constitutional_validator.cpp
+    core/test_validation_hook.cpp
 )
 
 target_include_directories(entropic-core-tests PRIVATE

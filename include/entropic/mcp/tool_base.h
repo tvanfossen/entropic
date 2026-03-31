@@ -6,10 +6,12 @@
  * implements execute(). Tools are registered with a ToolRegistry inside
  * an MCPServerBase.
  *
- * @version 1.8.5
+ * @version 1.9.4
  */
 
 #pragma once
+
+#include <entropic/types/config.h>
 
 #include <string>
 
@@ -83,6 +85,17 @@ public:
      * Default returns "" (no anchoring — results append normally).
      */
     virtual std::string anchor_key(const std::string& args_json) const;
+
+    /**
+     * @brief Minimum access level required to execute this tool.
+     * @return MCPAccessLevel::WRITE by default (safe default).
+     * @version 1.9.4
+     *
+     * Override in read-only tools (e.g., read_file, list_directory).
+     * The ToolExecutor checks this against the caller's MCPKeySet
+     * before executing.
+     */
+    virtual MCPAccessLevel required_access_level() const;
 
 protected:
     ToolDefinition definition_; ///< Tool definition

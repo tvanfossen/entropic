@@ -232,6 +232,27 @@ bool ServerManager::skip_duplicate_check(
 }
 
 /**
+ * @brief Get the required access level for a tool.
+ * @param tool_name Fully-qualified tool name.
+ * @return MCPAccessLevel required, or WRITE if not found.
+ * @internal
+ * @version 1.9.4
+ */
+MCPAccessLevel ServerManager::get_required_access_level(
+    const std::string& tool_name) const {
+    auto prefix = extract_prefix(tool_name);
+    auto it = servers_.find(prefix);
+    if (it != servers_.end()) {
+        auto local = extract_local_name(tool_name);
+        auto* tool = it->second->registry().get_tool(local);
+        if (tool != nullptr) {
+            return tool->required_access_level();
+        }
+    }
+    return MCPAccessLevel::WRITE;  // Safe default
+}
+
+/**
  * @brief Add a runtime permission pattern.
  * @param pattern Permission pattern.
  * @param allow true for allow list.

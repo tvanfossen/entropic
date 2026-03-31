@@ -7,7 +7,7 @@
  * - entropic_run/run_streaming: v1.8.4 (engine loop)
  * - entropic_interrupt: v1.8.4 (engine loop)
  *
- * @version 1.9.3
+ * @version 1.9.4
  */
 
 #include <entropic/entropic.h>
@@ -389,6 +389,147 @@ char* entropic_grammar_list(entropic_handle_t handle)
 {
     (void)handle;
     return nullptr;
+}
+
+// ── MCP Authorization stubs (v1.9.4) ─────────────────────────
+
+/**
+ * @brief Grant an MCP tool key to an identity (stub).
+ * @param handle Engine handle.
+ * @param identity_name Identity name.
+ * @param pattern Tool pattern.
+ * @param level Access level.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+entropic_error_t entropic_grant_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* pattern,
+    entropic_mcp_access_level_t level)
+{
+    (void)handle;
+    (void)identity_name;
+    (void)pattern;
+    (void)level;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Revoke an MCP tool key (stub).
+ * @param handle Engine handle.
+ * @param identity_name Identity name.
+ * @param pattern Tool pattern.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+entropic_error_t entropic_revoke_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* pattern)
+{
+    (void)handle;
+    (void)identity_name;
+    (void)pattern;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Check MCP key authorization (stub).
+ * @param handle Engine handle.
+ * @param identity_name Identity name.
+ * @param tool_name Tool name.
+ * @param level Required access level.
+ * @return -1 — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+int entropic_check_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* tool_name,
+    entropic_mcp_access_level_t level)
+{
+    (void)handle;
+    (void)identity_name;
+    (void)tool_name;
+    (void)level;
+    return -1;
+}
+
+/**
+ * @brief List MCP keys for identity (stub).
+ * @param handle Engine handle.
+ * @param identity_name Identity name.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+char* entropic_list_mcp_keys(
+    entropic_handle_t handle,
+    const char* identity_name)
+{
+    (void)handle;
+    (void)identity_name;
+    return nullptr;
+}
+
+/**
+ * @brief Grant key from one identity to another (stub).
+ * @param handle Engine handle.
+ * @param granter Granting identity.
+ * @param grantee Receiving identity.
+ * @param pattern Tool pattern.
+ * @param level Access level.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+entropic_error_t entropic_grant_mcp_key_from(
+    entropic_handle_t handle,
+    const char* granter,
+    const char* grantee,
+    const char* pattern,
+    entropic_mcp_access_level_t level)
+{
+    (void)handle;
+    (void)granter;
+    (void)grantee;
+    (void)pattern;
+    (void)level;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Serialize all MCP key sets (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+char* entropic_serialize_mcp_keys(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
+/**
+ * @brief Deserialize all MCP key sets (stub).
+ * @param handle Engine handle.
+ * @param json JSON string.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.4
+ */
+entropic_error_t entropic_deserialize_mcp_keys(
+    entropic_handle_t handle,
+    const char* json)
+{
+    (void)handle;
+    (void)json;
+    return ENTROPIC_ERROR_INVALID_STATE;
 }
 
 } // extern "C"

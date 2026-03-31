@@ -89,6 +89,15 @@ public:
         : ToolBase(std::move(def)), server_(server) {}
 
     /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /**
      * @brief Run git status --short.
      * @param args_json Unused.
      * @return ServerResponse with status output.
@@ -125,6 +134,15 @@ public:
      */
     GitDiffTool(ToolDefinition def, GitServer& server)
         : ToolBase(std::move(def)), server_(server) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief Run git diff with optional flags.
@@ -169,6 +187,15 @@ public:
      */
     GitLogTool(ToolDefinition def, GitServer& server)
         : ToolBase(std::move(def)), server_(server) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief Run git log with count and format options.

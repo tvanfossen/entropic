@@ -9,13 +9,14 @@
  * Structs use aggregate initialization with defaults. Validation is
  * separate — each struct has a standalone validate() function.
  *
- * @version 1.9.3
+ * @version 1.9.4
  */
 
 #pragma once
 
 #include <entropic/types/enums.h>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <optional>
@@ -23,6 +24,49 @@
 #include <unordered_map>
 
 namespace entropic {
+
+/**
+ * @brief MCP tool access level for per-identity authorization.
+ *
+ * Two ordered levels: READ < WRITE. WRITE implies READ.
+ * Default for ungranted keys is NONE (no access).
+ * Default for new tools is WRITE (safe default — tools must opt into READ).
+ *
+ * @version 1.9.4
+ */
+enum class MCPAccessLevel : uint8_t {
+    NONE  = 0,  ///< No access (default for ungranted keys)
+    READ  = 1,  ///< Read-only operations (e.g., read_file, list_directory)
+    WRITE = 2,  ///< Read + write operations (e.g., write_file, execute)
+};
+
+/**
+ * @brief A single authorized MCP key with access level.
+ * @version 1.9.4
+ */
+struct MCPKey {
+    std::string tool_pattern;  ///< Tool pattern (e.g., "filesystem.*", "git.status")
+    MCPAccessLevel level;      ///< Granted access level (READ or WRITE)
+};
+
+/**
+ * @brief Convert MCPAccessLevel to string representation.
+ * @param level Access level.
+ * @return Static string: "NONE", "READ", or "WRITE".
+ * @utility
+ * @version 1.9.4
+ */
+const char* mcp_access_level_name(MCPAccessLevel level);
+
+/**
+ * @brief Parse MCPAccessLevel from string.
+ * @param name String: "NONE", "READ", or "WRITE" (case-sensitive).
+ * @param[out] out Parsed access level.
+ * @return true if parsed successfully, false on unknown string.
+ * @utility
+ * @version 1.9.4
+ */
+bool parse_mcp_access_level(const std::string& name, MCPAccessLevel& out);
 
 /**
  * @brief Metadata for a registered grammar.

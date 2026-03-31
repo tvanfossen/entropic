@@ -44,6 +44,15 @@ public:
         : ToolBase(std::move(def)) {}
 
     /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /**
      * @brief Return placeholder — LSP not yet connected.
      * @param args_json Unused.
      * @return ServerResponse with stub message.
@@ -77,6 +86,15 @@ public:
      */
     explicit CheckErrorsTool(ToolDefinition def)
         : ToolBase(std::move(def)) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief Return placeholder — LSP not yet connected.

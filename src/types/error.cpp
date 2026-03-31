@@ -52,6 +52,13 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_NOT_RUNNING",             // 24 (v1.8.9)
     "ENTROPIC_ERROR_NOT_IMPLEMENTED",         // 25 (v1.8.9)
     "ENTROPIC_ERROR_INTERRUPTED",             // 26 (v1.8.9)
+    "ENTROPIC_ERROR_ADAPTER_NOT_FOUND",       // 27 (v1.9.2)
+    "ENTROPIC_ERROR_ADAPTER_LOAD_FAILED",     // 28 (v1.9.2)
+    "ENTROPIC_ERROR_ADAPTER_SWAP_FAILED",     // 29 (v1.9.2)
+    "ENTROPIC_ERROR_ADAPTER_CANCELLED",       // 30 (v1.9.2)
+    "ENTROPIC_ERROR_GRAMMAR_NOT_FOUND",       // 31 (v1.9.3)
+    "ENTROPIC_ERROR_GRAMMAR_INVALID",         // 32 (v1.9.3)
+    "ENTROPIC_ERROR_MCP_KEY_DENIED",          // 33 (v1.9.4)
 };
 
 static constexpr int s_error_count =

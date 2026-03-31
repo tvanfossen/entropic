@@ -450,7 +450,7 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 1.9.1
+ * @version 1.9.5
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -473,16 +473,18 @@ std::vector<Message> ToolExecutor::process_single_call(
         }
     }
 
+    auto exec_start = std::chrono::steady_clock::now();
     auto [msg, raw_result] = execute_tool(ctx, call);
+    auto exec_ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - exec_start).count();
     ctx.effective_tool_calls++;
     msg.metadata["added_at_iteration"] =
         std::to_string(ctx.metrics.iterations);
     record_tool_call(ctx, call, raw_result);
 
-    // Hook: POST_TOOL_CALL (v1.9.1)
+    // Hook: POST_TOOL_CALL — enriched context (v1.9.5)
     if (hook_iface_.fire_post != nullptr) {
-        std::string json = "{\"tool_name\":\""
-            + call.name + "\"}";
+        auto json = build_post_tool_json(call, raw_result, exec_ms);
         char* out = nullptr;
         hook_iface_.fire_post(hook_iface_.registry,
             ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
@@ -624,6 +626,35 @@ void ToolExecutor::fire_tool_complete_callback(
     callbacks_.on_tool_complete(
         call_json.c_str(), result.c_str(),
         static_cast<double>(ms), callbacks_.user_data);
+}
+
+/**
+ * @brief Build enriched POST_TOOL_CALL hook context JSON.
+ * @param call Tool call that was executed.
+ * @param raw_result Raw server response JSON.
+ * @param elapsed_ms Execution duration in milliseconds.
+ * @return JSON string with tool details for hook consumers.
+ * @internal
+ * @version 1.9.5
+ */
+std::string ToolExecutor::build_post_tool_json(
+    const ToolCall& call,
+    const std::string& raw_result,
+    double elapsed_ms) {
+    nlohmann::json ctx;
+    ctx["tool_name"] = call.name;
+    ctx["args"] = nlohmann::json::parse(serialize_args(call));
+    ctx["elapsed_ms"] = elapsed_ms;
+    try {
+        auto sr = nlohmann::json::parse(raw_result);
+        ctx["result"] = sr.value("result", raw_result);
+        ctx["directives"] = sr.value(
+            "directives", nlohmann::json::array());
+    } catch (...) {
+        ctx["result"] = raw_result;
+        ctx["directives"] = nlohmann::json::array();
+    }
+    return ctx.dump();
 }
 
 } // namespace entropic

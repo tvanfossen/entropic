@@ -6,6 +6,7 @@ target_sources(entropic-facade PRIVATE
     entropic_identity.cpp
     entropic_hooks.cpp
     entropic_storage.cpp
+    entropic_audit.cpp
 )
 
 target_link_libraries(entropic-facade PUBLIC

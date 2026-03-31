@@ -293,6 +293,20 @@ private:
     static std::string serialize_tool_call(const ToolCall& call);
 
     /**
+     * @brief Build enriched POST_TOOL_CALL hook context JSON.
+     * @param call Tool call that was executed.
+     * @param raw_result Raw server response JSON.
+     * @param elapsed_ms Execution duration in milliseconds.
+     * @return JSON string with tool_name, args, result, directives, elapsed_ms.
+     * @internal
+     * @version 1.9.5
+     */
+    static std::string build_post_tool_json(
+        const ToolCall& call,
+        const std::string& raw_result,
+        double elapsed_ms);
+
+    /**
      * @brief Fire tool complete callback.
      * @param call Tool call.
      * @param result Result text.

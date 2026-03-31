@@ -6,13 +6,14 @@
  * tier allowlist enforcement, and bash_commands restriction.
  * Subsystem of AgentEngine — receives shared dependencies by reference.
  *
- * @version 1.8.5
+ * @version 1.9.4
  */
 
 #pragma once
 
 #include <entropic/core/directives.h>
 #include <entropic/core/engine_types.h>
+#include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/server_manager.h>
 
 #include <optional>
@@ -202,14 +203,25 @@ private:
     void truncate_to_limit(std::vector<ToolCall>& calls) const;
 
     /**
-     * @brief Check preconditions (duplicate, approval, tier).
+     * @brief Check preconditions (MCP keys, tier, duplicate, approval).
      * @param ctx Loop context.
      * @param call Tool call.
      * @return Rejection message if blocked, nullopt if clear.
      * @internal
-     * @version 1.8.5
+     * @version 1.9.4
      */
     std::optional<Message> check_call_preconditions(
+        LoopContext& ctx, const ToolCall& call);
+
+    /**
+     * @brief Check duplicate detection and global approval.
+     * @param ctx Loop context.
+     * @param call Tool call.
+     * @return Rejection message if blocked, nullopt if clear.
+     * @internal
+     * @version 1.9.4
+     */
+    std::optional<Message> check_dup_or_approval(
         LoopContext& ctx, const ToolCall& call);
 
     /**
@@ -306,6 +318,30 @@ public:
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hook_iface_ = hooks; }
+
+    /**
+     * @brief Set the MCP authorization manager.
+     * @param auth_mgr Authorization manager (must outlive ToolExecutor).
+     * @version 1.9.4
+     */
+    void set_authorization_manager(MCPAuthorizationManager* auth_mgr) {
+        auth_mgr_ = auth_mgr;
+    }
+
+private:
+    MCPAuthorizationManager* auth_mgr_ = nullptr; ///< MCP key authorization (v1.9.4)
+
+    /**
+     * @brief Check MCP authorization for a tool call.
+     * @param ctx Loop context (provides current identity).
+     * @param call Tool call to check.
+     * @return Error message if denied, nullopt if authorized.
+     * @internal
+     * @version 1.9.4
+     */
+    std::optional<Message> check_mcp_authorization(
+        const LoopContext& ctx,
+        const ToolCall& call) const;
 };
 
 } // namespace entropic

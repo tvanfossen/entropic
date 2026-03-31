@@ -155,6 +155,13 @@ public:
      */
     virtual bool set_working_dir(const std::string& path);
 
+    /**
+     * @brief Get the tool registry (const).
+     * @return Reference to this server's tool registry.
+     * @version 1.9.4
+     */
+    const ToolRegistry& registry() const { return registry_; }
+
 protected:
     std::string name_;         ///< Server name
     ToolRegistry registry_;    ///< Tool registry

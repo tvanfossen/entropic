@@ -39,6 +39,23 @@ struct GenerationResult {
     double swap_ms = 0.0;                  ///< Model swap time
     double total_ms = 0.0;                 ///< Total end-to-end time
 
+    /* ── v1.9.7: Throughput + time cap metadata ── */
+
+    /// @brief Measured throughput for this generation (tok/s).
+    /// Computed from token_count / generation_time_ms. 0.0 if either is 0.
+    /// @version 1.9.7
+    double throughput_tok_s = 0.0;
+
+    /// @brief true if generation was terminated by time limit rather than
+    /// EOS/stop sequence/max_tokens.
+    /// @version 1.9.7
+    bool time_limited = false;
+
+    /// @brief Original max_tokens before auto-adaptation reduced it.
+    /// 0 if no adaptation occurred.
+    /// @version 1.9.7
+    int original_max_tokens = 0;
+
     /* ── Error state (for partial results on failure) ── */
     entropic_error_t error_code = ENTROPIC_OK; ///< Error code (ENTROPIC_OK if no error)
     std::string error_message;              ///< Error description (empty if no error)

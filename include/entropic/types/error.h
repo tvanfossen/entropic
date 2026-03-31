@@ -71,6 +71,7 @@ typedef enum {
     ENTROPIC_ERROR_IN_USE,                   ///< Resource is currently active and cannot be removed (v1.9.6)
     ENTROPIC_ERROR_PROFILE_NOT_FOUND,        ///< Profile name not in registry (v1.9.7)
     ENTROPIC_ERROR_TIME_LIMIT_EXCEEDED,      ///< Generation terminated by time cap (v1.9.7)
+    ENTROPIC_ERROR_VALIDATION_FAILED,        ///< Critique generation failed — infrastructure, not content (v1.9.8)
 } entropic_error_t;
 
 /**

@@ -738,4 +738,56 @@ entropic_error_t entropic_identity_count(
     return ENTROPIC_ERROR_INVALID_STATE;
 }
 
+// ── Constitutional Validation stubs (v1.9.8) ─────────────────
+
+/**
+ * @brief Enable or disable constitutional validation (stub).
+ * @param handle Engine handle.
+ * @param enabled true to enable, false to disable.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — not yet wired.
+ * @internal
+ * @version 1.9.8
+ */
+entropic_error_t entropic_validation_set_enabled(
+    entropic_handle_t handle,
+    bool enabled)
+{
+    (void)handle;
+    (void)enabled;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Set per-identity validation override (stub).
+ * @param handle Engine handle.
+ * @param identity_name Identity name.
+ * @param enabled Whether validation is enabled.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — not yet wired.
+ * @internal
+ * @version 1.9.8
+ */
+entropic_error_t entropic_validation_set_identity(
+    entropic_handle_t handle,
+    const char* identity_name,
+    bool enabled)
+{
+    (void)handle;
+    (void)identity_name;
+    (void)enabled;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Get last validation result as JSON (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.8
+ */
+char* entropic_validation_last_result(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
 } // extern "C"

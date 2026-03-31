@@ -6,7 +6,7 @@
  * (v1.8.7). Routes tool calls by server prefix. External servers
  * connect via stdio or SSE transports.
  *
- * @version 1.8.7
+ * @version 1.9.4
  */
 
 #pragma once
@@ -123,6 +123,15 @@ public:
      * @version 1.8.5
      */
     bool skip_duplicate_check(const std::string& tool_name) const;
+
+    /**
+     * @brief Get the required access level for a tool.
+     * @param tool_name Fully-qualified tool name (e.g., "filesystem.read_file").
+     * @return MCPAccessLevel required, or WRITE if tool not found.
+     * @version 1.9.4
+     */
+    MCPAccessLevel get_required_access_level(
+        const std::string& tool_name) const;
 
     /**
      * @brief Add a runtime permission pattern.

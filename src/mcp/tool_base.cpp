@@ -59,6 +59,16 @@ std::string ToolBase::anchor_key(
 }
 
 /**
+ * @brief Default required access level — WRITE (safe default).
+ * @return MCPAccessLevel::WRITE.
+ * @internal
+ * @version 1.9.4
+ */
+MCPAccessLevel ToolBase::required_access_level() const {
+    return MCPAccessLevel::WRITE;
+}
+
+/**
  * @brief Load a tool definition from a JSON file.
  * @param tool_name Tool name (e.g., "read_file").
  * @param server_prefix Server directory name (e.g., "filesystem").

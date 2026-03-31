@@ -65,6 +65,7 @@ typedef enum {
     ENTROPIC_ERROR_ADAPTER_CANCELLED,        ///< ON_ADAPTER_SWAP hook cancelled the operation (v1.9.2)
     ENTROPIC_ERROR_GRAMMAR_NOT_FOUND,        ///< Grammar key not in registry (v1.9.3)
     ENTROPIC_ERROR_GRAMMAR_INVALID,          ///< GBNF parse failed (v1.9.3)
+    ENTROPIC_ERROR_MCP_KEY_DENIED,           ///< Tool call denied by MCP key set (v1.9.4)
 } entropic_error_t;
 
 /**

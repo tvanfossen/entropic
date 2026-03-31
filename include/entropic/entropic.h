@@ -35,7 +35,7 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.3
+ * @version 1.9.4
  */
 
 #pragma once
@@ -691,6 +691,155 @@ ENTROPIC_EXPORT char* entropic_grammar_validate(const char* gbnf_content);
  * Caller must free returned string with entropic_free().
  */
 ENTROPIC_EXPORT char* entropic_grammar_list(entropic_handle_t handle);
+
+/* ── MCP Authorization (v1.9.4) ──────────────────────── */
+
+/**
+ * @brief Access level enum for MCP authorization.
+ * @version 1.9.4
+ */
+typedef enum {
+    ENTROPIC_MCP_ACCESS_NONE  = 0, ///< No access
+    ENTROPIC_MCP_ACCESS_READ  = 1, ///< Read-only operations
+    ENTROPIC_MCP_ACCESS_WRITE = 2, ///< Read + write operations
+} entropic_mcp_access_level_t;
+
+/**
+ * @brief Grant an MCP tool key to an identity.
+ *
+ * If the identity has no key set, one is created automatically
+ * (enabling enforcement).
+ *
+ * @param handle Engine handle.
+ * @param identity_name Identity/tier name (null-terminated).
+ * @param pattern Tool pattern string (null-terminated).
+ * @param level Access level to grant.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — identity_name or pattern is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_grant_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* pattern,
+    entropic_mcp_access_level_t level);
+
+/**
+ * @brief Revoke an MCP tool key from an identity.
+ *
+ * @param handle Engine handle.
+ * @param identity_name Identity/tier name (null-terminated).
+ * @param pattern Tool pattern string (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — identity_name or pattern is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — identity not registered.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_revoke_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* pattern);
+
+/**
+ * @brief Check if a tool call is authorized for an identity.
+ *
+ * @param handle Engine handle.
+ * @param identity_name Identity/tier name (null-terminated).
+ * @param tool_name Fully-qualified tool name (null-terminated).
+ * @param level Required access level.
+ * @return 1 if authorized, 0 if denied, -1 on error.
+ *
+ * @threadsafety Thread-safe.
+ * @version 1.9.4
+ */
+ENTROPIC_EXPORT int entropic_check_mcp_key(
+    entropic_handle_t handle,
+    const char* identity_name,
+    const char* tool_name,
+    entropic_mcp_access_level_t level);
+
+/**
+ * @brief List all MCP keys for an identity as JSON.
+ *
+ * @param handle Engine handle.
+ * @param identity_name Identity/tier name (null-terminated).
+ * @return JSON array of key objects. Caller frees with entropic_free().
+ *         NULL if identity not found or error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_list_mcp_keys(
+    entropic_handle_t handle,
+    const char* identity_name);
+
+/**
+ * @brief Grant a key from one identity to another.
+ *
+ * The granter must possess the key at >= the granted level.
+ *
+ * @param handle Engine handle.
+ * @param granter Granting identity (null-terminated).
+ * @param grantee Receiving identity (null-terminated).
+ * @param pattern Tool pattern to grant (null-terminated).
+ * @param level Access level to grant.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — either identity not registered.
+ *         - ENTROPIC_ERROR_PERMISSION_DENIED — granter lacks the key.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_grant_mcp_key_from(
+    entropic_handle_t handle,
+    const char* granter,
+    const char* grantee,
+    const char* pattern,
+    entropic_mcp_access_level_t level);
+
+/**
+ * @brief Serialize all identity key sets to JSON.
+ *
+ * @param handle Engine handle.
+ * @return JSON object string. Caller frees with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_serialize_mcp_keys(
+    entropic_handle_t handle);
+
+/**
+ * @brief Deserialize all identity key sets from JSON.
+ *
+ * Replaces all current key sets with the deserialized state.
+ *
+ * @param handle Engine handle.
+ * @param json JSON object string.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — json is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — parse failure.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_deserialize_mcp_keys(
+    entropic_handle_t handle,
+    const char* json);
 
 #ifdef __cplusplus
 }

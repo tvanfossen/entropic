@@ -35,7 +35,7 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.8
+ * @version 1.9.9
  */
 
 #pragma once
@@ -1117,6 +1117,130 @@ ENTROPIC_EXPORT entropic_error_t entropic_identity_count(
     entropic_handle_t handle,
     size_t* total,
     size_t* dynamic);
+
+/* ── Compaction Hooks (v1.9.9) ───────────────────────── */
+
+/**
+ * @brief Compactor function type.
+ *
+ * A compactor takes a JSON array of messages, a configuration JSON,
+ * and produces a compacted JSON array of messages plus a summary string.
+ *
+ * @param messages_json   JSON array of messages to compact.
+ * @param config_json     Compaction configuration (threshold, identity, etc.).
+ * @param out_messages    Output: compacted messages JSON. Caller frees with entropic_free().
+ * @param out_summary     Output: summary text. Caller frees with entropic_free(). May be NULL.
+ * @param user_data       Opaque pointer from registration.
+ * @return 0 on success, non-zero on failure.
+ *
+ * @par Config JSON schema:
+ * @code
+ * {
+ *   "identity": "eng",
+ *   "token_count": 12000,
+ *   "max_tokens": 16384,
+ *   "threshold_percent": 0.75,
+ *   "force": false
+ * }
+ * @endcode
+ *
+ * @callback
+ * @version 1.9.9
+ */
+typedef int (*entropic_compactor_fn)(
+    const char* messages_json,
+    const char* config_json,
+    char** out_messages,
+    char** out_summary,
+    void* user_data);
+
+/**
+ * @brief Trigger compaction on the current context.
+ *
+ * Forces compaction regardless of threshold. Runs through the full
+ * pipeline: PRE_COMPACT hooks -> compactor -> POST_COMPACT hooks.
+ *
+ * @param handle        Engine handle.
+ * @param identity      Identity context for compactor selection (NULL = current).
+ * @param result_json   Output: compaction result JSON. Caller frees with entropic_free().
+ *                      NULL if no compaction occurred (e.g., cancelled by hook).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE
+ *         - ENTROPIC_ERROR_COMPACTION_FAILED
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_compact(
+    entropic_handle_t handle,
+    const char* identity,
+    char** result_json);
+
+/**
+ * @brief Register a custom compactor for an identity.
+ *
+ * Replaces the default compaction strategy for the specified identity.
+ * Pass identity="" to set a global fallback for all identities without
+ * a per-identity compactor.
+ *
+ * Resolution order: per-identity -> global custom ("") -> built-in default.
+ * Only one compactor per identity. Re-registering replaces the previous.
+ *
+ * @param handle     Engine handle.
+ * @param identity   Identity name, or "" for global fallback.
+ * @param compactor  Compactor function pointer.
+ * @param user_data  Opaque pointer passed to compactor on each call.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE
+ *         - ENTROPIC_ERROR_INVALID_CONFIG (NULL compactor)
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_register_compactor(
+    entropic_handle_t handle,
+    const char* identity,
+    entropic_compactor_fn compactor,
+    void* user_data);
+
+/**
+ * @brief Deregister a custom compactor for an identity.
+ *
+ * After deregistration, the identity falls back to the global custom
+ * compactor (if any), then to the built-in default.
+ *
+ * @param handle     Engine handle.
+ * @param identity   Identity name, or "" for global fallback.
+ * @return ENTROPIC_OK on success (idempotent).
+ *         - ENTROPIC_ERROR_INVALID_HANDLE
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_deregister_compactor(
+    entropic_handle_t handle,
+    const char* identity);
+
+/**
+ * @brief Get the built-in default compactor function pointer.
+ *
+ * Useful for consumers that want to wrap the default behavior
+ * (e.g., add logging, metrics, or post-processing around it).
+ *
+ * @param handle     Engine handle.
+ * @param compactor  Output: default compactor function pointer.
+ * @param user_data  Output: user_data to pass to the default compactor.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT (NULL compactor output)
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.9
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_get_default_compactor(
+    entropic_handle_t handle,
+    entropic_compactor_fn* compactor,
+    void** user_data);
 
 /* ── Constitutional Validation (v1.9.8) ──────────────── */
 

@@ -492,6 +492,23 @@ struct ParsedConfig {
  *
  * @version 1.9.8
  */
+/**
+ * @brief Inference parameters for a single identity phase.
+ *
+ * Each identity has one or more named phases. The engine resolves
+ * inference params from the active phase at generation time.
+ * Lives in types/ so core.so can use it without depending on prompts.so.
+ *
+ * @version 1.8.1
+ */
+struct PhaseConfig {
+    float temperature = 0.7f;            ///< Sampling temperature
+    int max_output_tokens = 4096;        ///< Max tokens per generation
+    bool enable_thinking = false;        ///< Enable think-block output
+    float repeat_penalty = 1.1f;         ///< Repetition penalty
+    std::optional<std::vector<std::string>> bash_commands; ///< Phase-specific bash commands
+};
+
 struct ConstitutionalValidationConfig {
     bool enabled = false;             ///< Global enable/disable (default OFF)
     int max_revisions = 2;            ///< Max re-generation attempts (0 = critique only)

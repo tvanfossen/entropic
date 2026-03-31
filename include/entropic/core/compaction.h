@@ -82,7 +82,7 @@ private:
 
 /**
  * @brief Result of a compaction operation.
- * @version 1.8.4
+ * @version 1.9.9 — extended from v1.8.4
  */
 struct CompactionResult {
     bool compacted = false;        ///< Whether compaction occurred
@@ -91,6 +91,12 @@ struct CompactionResult {
     std::string summary;           ///< Generated summary text
     int preserved_messages = 0;    ///< Messages kept after compaction
     int messages_summarized = 0;   ///< Messages stripped into summary
+    std::vector<Message> messages; ///< The compacted message list (v1.9.9)
+
+    /* v1.9.9 additions */
+    std::string identity;              ///< Identity that triggered compaction
+    std::string compactor_source;      ///< "default", "global_custom", or identity name
+    bool custom_compactor_used = false; ///< true if a consumer-provided compactor ran
 };
 
 /**
@@ -146,6 +152,20 @@ public:
         std::vector<Message>& messages,
         bool force = false,
         const std::string& conversation_id = "");
+
+    /**
+     * @brief Compact messages using the value-density strategy.
+     *
+     * Public entry point for the default compaction algorithm. Used by
+     * CompactorRegistry to wrap the built-in strategy as a compactor.
+     * Does NOT check thresholds — callers are responsible for that.
+     *
+     * @param messages Messages to compact.
+     * @return CompactionResult with compacted messages and metadata.
+     * @version 1.9.9
+     */
+    CompactionResult compact_messages(
+        const std::vector<Message>& messages);
 
     /**
      * @brief Set storage interface for compaction snapshots.

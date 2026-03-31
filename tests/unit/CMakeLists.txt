@@ -75,6 +75,24 @@ target_link_libraries(entropic-adapter-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.9.3: Grammar registry tests
+add_executable(entropic-grammar-tests
+    inference/test_grammar_registry.cpp
+    inference/test_grammar_orchestrator.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/grammar_registry.cpp
+)
+
+target_include_directories(entropic-grammar-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-grammar-tests PRIVATE
+    entropic-types
+    llama
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.8.4: Core engine tests
 # v1.8.6: Added delegation, worktree, auto-chain tests
 add_executable(entropic-core-tests
@@ -194,6 +212,7 @@ catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-adapter-tests)
+catch_discover_tests(entropic-grammar-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
 catch_discover_tests(entropic-api-tests)

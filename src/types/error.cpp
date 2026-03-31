@@ -62,6 +62,8 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_LIMIT_REACHED",           // 34 (v1.9.6)
     "ENTROPIC_ERROR_ALREADY_EXISTS",          // 35 (v1.9.6)
     "ENTROPIC_ERROR_IN_USE",                  // 36 (v1.9.6)
+    "ENTROPIC_ERROR_PROFILE_NOT_FOUND",       // 37 (v1.9.7)
+    "ENTROPIC_ERROR_TIME_LIMIT_EXCEEDED",     // 38 (v1.9.7)
 };
 
 static constexpr int s_error_count =

@@ -692,6 +692,105 @@ ENTROPIC_EXPORT char* entropic_grammar_validate(const char* gbnf_content);
  */
 ENTROPIC_EXPORT char* entropic_grammar_list(entropic_handle_t handle);
 
+/* ── GPU Resource Profiles (v1.9.7) ──────────────────── */
+
+/**
+ * @brief Register a custom GPU resource profile.
+ *
+ * @param handle Engine handle.
+ * @param profile_json JSON string: {"name":"...", "n_batch":N,
+ *        "n_threads":N, "n_threads_batch":N, "description":"..."}.
+ *        Only "name" is required; other fields default.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — profile_json is NULL.
+ *         - ENTROPIC_ERROR_ALREADY_EXISTS — name already registered.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_profile_register(
+    entropic_handle_t handle,
+    const char* profile_json);
+
+/**
+ * @brief Remove a GPU resource profile.
+ *
+ * @param handle Engine handle.
+ * @param name Profile name (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_PROFILE_NOT_FOUND — name not registered.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_profile_deregister(
+    entropic_handle_t handle,
+    const char* name);
+
+/**
+ * @brief Get a profile by name as JSON.
+ *
+ * @param handle Engine handle.
+ * @param name Profile name (null-terminated).
+ * @return JSON string of GPUResourceProfile fields.
+ *         NULL if handle is NULL or name not found.
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT char* entropic_profile_get(
+    entropic_handle_t handle,
+    const char* name);
+
+/**
+ * @brief List all registered profiles as JSON array.
+ *
+ * @param handle Engine handle.
+ * @return JSON array of profile objects.
+ *         NULL if handle is NULL.
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT char* entropic_profile_list(entropic_handle_t handle);
+
+/* ── Throughput Query (v1.9.7) ───────────────────────── */
+
+/**
+ * @brief Get current throughput estimate for a model.
+ *
+ * @param handle Engine handle.
+ * @param model_path Path to the model (same key as ModelConfig.path).
+ * @return Tokens per second (EWMA). 0.0 if no data or handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT double entropic_throughput_tok_per_sec(
+    entropic_handle_t handle,
+    const char* model_path);
+
+/**
+ * @brief Reset throughput tracking data for a model.
+ *
+ * @param handle Engine handle.
+ * @param model_path Model path. NULL = reset all models.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.7
+ */
+ENTROPIC_EXPORT void entropic_throughput_reset(
+    entropic_handle_t handle,
+    const char* model_path);
+
 /* ── MCP Authorization (v1.9.4) ──────────────────────── */
 
 /**

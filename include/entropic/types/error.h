@@ -66,6 +66,9 @@ typedef enum {
     ENTROPIC_ERROR_GRAMMAR_NOT_FOUND,        ///< Grammar key not in registry (v1.9.3)
     ENTROPIC_ERROR_GRAMMAR_INVALID,          ///< GBNF parse failed (v1.9.3)
     ENTROPIC_ERROR_MCP_KEY_DENIED,           ///< Tool call denied by MCP key set (v1.9.4)
+    ENTROPIC_ERROR_LIMIT_REACHED,            ///< Resource limit exceeded (e.g., max_identities) (v1.9.6)
+    ENTROPIC_ERROR_ALREADY_EXISTS,           ///< Named resource already exists (v1.9.6)
+    ENTROPIC_ERROR_IN_USE,                   ///< Resource is currently active and cannot be removed (v1.9.6)
 } entropic_error_t;
 
 /**

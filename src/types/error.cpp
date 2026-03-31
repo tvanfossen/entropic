@@ -59,6 +59,9 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_GRAMMAR_NOT_FOUND",       // 31 (v1.9.3)
     "ENTROPIC_ERROR_GRAMMAR_INVALID",         // 32 (v1.9.3)
     "ENTROPIC_ERROR_MCP_KEY_DENIED",          // 33 (v1.9.4)
+    "ENTROPIC_ERROR_LIMIT_REACHED",           // 34 (v1.9.6)
+    "ENTROPIC_ERROR_ALREADY_EXISTS",          // 35 (v1.9.6)
+    "ENTROPIC_ERROR_IN_USE",                  // 36 (v1.9.6)
 };
 
 static constexpr int s_error_count =

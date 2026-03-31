@@ -577,6 +577,15 @@ public:
           server_(server) {}
 
     /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /**
      * @brief Read a file and return numbered lines as JSON.
      * @param args_json JSON with "path" key.
      * @return ServerResponse with file content or error.
@@ -788,6 +797,15 @@ public:
               data_dir + "/tools")) {}
 
     /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /**
      * @brief Find files matching a glob pattern.
      * @param args_json JSON with "pattern" key.
      * @return ServerResponse with matched file paths.
@@ -837,6 +855,15 @@ public:
         : ToolBase(load_tool_definition(
               "grep", "filesystem",
               data_dir + "/tools")) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief Search files for regex pattern matches.
@@ -918,6 +945,15 @@ public:
               "list_directory", "filesystem",
               data_dir + "/tools")),
           server_(server) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief List directory entries with optional recursion.

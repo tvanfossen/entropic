@@ -41,6 +41,15 @@ public:
         : ToolBase(std::move(def)) {}
 
     /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /**
      * @brief Fetch web page content (placeholder).
      * @param args_json JSON with "url" and optional "max_length".
      * @return ServerResponse with placeholder text.
@@ -91,6 +100,15 @@ public:
      */
     explicit WebSearchTool(ToolDefinition def)
         : ToolBase(std::move(def)) {}
+
+    /**
+     * @brief Read-only tool — requires READ access.
+     * @return MCPAccessLevel::READ.
+     * @version 1.9.4
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
 
     /**
      * @brief Execute web search (placeholder).

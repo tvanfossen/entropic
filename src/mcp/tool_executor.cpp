@@ -1,7 +1,7 @@
 /**
  * @file tool_executor.cpp
  * @brief ToolExecutor implementation.
- * @version 1.8.5
+ * @version 1.9.4
  */
 
 #include <entropic/mcp/tool_executor.h>
@@ -366,25 +366,82 @@ void ToolExecutor::truncate_to_limit(
 }
 
 /**
- * @brief Check preconditions (duplicate, approval, tier).
+ * @brief Check MCP authorization for a tool call.
+ * @param ctx Loop context (provides identity from locked_tier).
+ * @param call Tool call.
+ * @return Error message if denied, nullopt if authorized.
+ * @internal
+ * @version 1.9.4
+ */
+std::optional<Message> ToolExecutor::check_mcp_authorization(
+    const LoopContext& ctx,
+    const ToolCall& call) const {
+    if (auth_mgr_ == nullptr) {
+        return std::nullopt;
+    }
+    auto identity = ctx.locked_tier.empty()
+                        ? "lead" : ctx.locked_tier;
+    auto required = server_manager_.get_required_access_level(
+        call.name);
+    if (!auth_mgr_->is_enforced(identity) ||
+        auth_mgr_->check_access(identity, call.name, required)) {
+        return std::nullopt;
+    }
+    auto level_str = mcp_access_level_name(required);
+    logger->warn("MCP key denied: {} requires {} for {}",
+                 call.name, level_str, identity);
+    Message msg;
+    msg.role = "user";
+    msg.content =
+        "Tool `" + call.name + "` was denied: identity `"
+        + identity + "` lacks " + level_str
+        + " access.\n\n"
+        "Your MCP key set does not authorize this tool. "
+        "Use `entropic.delegate` to hand off to an identity "
+        "that has the required access.";
+    return msg;
+}
+
+/**
+ * @brief Check duplicate detection and approval (layers within preconditions).
  * @param ctx Loop context.
  * @param call Tool call.
  * @return Rejection message if blocked, nullopt if clear.
  * @internal
- * @version 1.8.5
+ * @version 1.9.4
  */
-std::optional<Message> ToolExecutor::check_call_preconditions(
+std::optional<Message> ToolExecutor::check_dup_or_approval(
     LoopContext& ctx, const ToolCall& call) {
     auto dup_result = check_duplicate(ctx, call);
     if (!dup_result.empty()) {
         return handle_duplicate(ctx, call, dup_result);
     }
     ctx.consecutive_duplicate_attempts = 0;
+    return check_approval(call)
+        ? std::nullopt
+        : std::optional{create_denied_message(
+              call, "Permission denied")};
+}
 
-    if (!check_approval(call)) {
-        return create_denied_message(call, "Permission denied");
+/**
+ * @brief Check preconditions (MCP keys, duplicate, approval, tier).
+ * @param ctx Loop context.
+ * @param call Tool call.
+ * @return Rejection message if blocked, nullopt if clear.
+ * @internal
+ * @version 1.9.4
+ */
+std::optional<Message> ToolExecutor::check_call_preconditions(
+    LoopContext& ctx, const ToolCall& call) {
+    // Layer 3 (finest) → Layer 2 → duplicate → Layer 1
+    auto result = check_mcp_authorization(ctx, call);
+    if (!result.has_value()) {
+        result = check_tier_allowed(ctx, call);
     }
-    return check_tier_allowed(ctx, call);
+    if (!result.has_value()) {
+        result = check_dup_or_approval(ctx, call);
+    }
+    return result;
 }
 
 /**

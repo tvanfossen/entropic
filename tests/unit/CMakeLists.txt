@@ -137,6 +137,10 @@ add_executable(entropic-mcp-tests
     mcp/test_external_client.cpp
     mcp/test_reconnect_policy.cpp
     mcp/test_mcp_json_discovery.cpp
+    # v1.9.4: MCP authorization tests
+    mcp/test_mcp_key_set.cpp
+    mcp/test_mcp_authorization.cpp
+    mcp/test_tool_executor_authorization.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

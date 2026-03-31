@@ -3,6 +3,7 @@ add_library(entropic-types)
 target_sources(entropic-types PRIVATE
     error.cpp
     logging.cpp
+    config.cpp
 )
 
 target_include_directories(entropic-types PUBLIC
@@ -23,4 +24,5 @@ set_target_properties(entropic-types PROPERTIES
     OUTPUT_NAME "rentropic-types"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET default
 )

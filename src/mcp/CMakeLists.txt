@@ -9,6 +9,9 @@ target_sources(entropic-mcp PRIVATE
     server_manager.cpp
     tool_executor.cpp
     mcp_c_api.cpp
+    # v1.9.4: MCP authorization
+    mcp_key_set.cpp
+    mcp_authorization.cpp
     # Built-in servers (compiled into mcp.so for now; individual .so later)
     servers/filesystem.cpp
     servers/bash.cpp

@@ -181,6 +181,27 @@ struct PromptCacheConfig {
 };
 
 /**
+ * @brief Named GPU resource profile for controlling inference hardware knobs.
+ *
+ * Profiles are applied at the LlamaCppBackend level before each generation
+ * call. They control batch size and thread counts without requiring a model
+ * reload. Profile switching is sub-millisecond.
+ *
+ * @par Bundled profiles
+ * Four profiles ship with the engine: maximum, balanced, background, minimal.
+ * Consumers can register custom profiles at runtime via ProfileRegistry.
+ *
+ * @version 1.9.7
+ */
+struct GPUResourceProfile {
+    std::string name;              ///< Profile name ("maximum", "balanced", "background", "minimal")
+    int n_batch = 512;             ///< Batch size for prompt processing (1-2048)
+    int n_threads = 0;             ///< CPU threads for generation (0 = auto-detect)
+    int n_threads_batch = 0;       ///< CPU threads for batch processing (0 = use n_threads)
+    std::string description;       ///< Human-readable description
+};
+
+/**
  * @brief Generation parameters for a single inference call.
  * @version 1.9.3 — added grammar_key
  */
@@ -200,6 +221,31 @@ struct GenerationParams {
     std::string grammar_key;
     std::vector<std::string> stop;           ///< Stop sequences
     int logprobs = 0;                        ///< Top log-probs per token (0 = disabled)
+
+    /* ── v1.9.7: Time cap + profile fields ────────────── */
+
+    /// @brief Wall-clock time cap in milliseconds. Generation is cancelled
+    /// if this limit is reached. 0 = no time limit (default).
+    /// @version 1.9.7
+    int time_limit_ms = 0;
+
+    /// @brief GPU resource profile name. Resolved to GPUResourceProfile
+    /// by the orchestrator before passing to the backend. Empty string
+    /// means use the "balanced" profile.
+    /// @version 1.9.7
+    std::string profile;
+
+    /// @brief Enable throughput-based max_tokens auto-adaptation.
+    /// When true, the orchestrator may reduce max_tokens to fit within
+    /// time_limit_ms based on recent throughput measurements.
+    /// Ignored if time_limit_ms == 0.
+    /// @version 1.9.7
+    bool auto_adapt = true;
+
+    /// @brief Target time usage fraction for auto-adaptation.
+    /// 0.9 means "use at most 90% of time_limit_ms for generation".
+    /// @version 1.9.7
+    float adapt_headroom = 0.9f;
 };
 
 /**

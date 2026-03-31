@@ -391,6 +391,106 @@ char* entropic_grammar_list(entropic_handle_t handle)
     return nullptr;
 }
 
+// ── GPU Resource Profile stubs (v1.9.7) ──────────────────────
+
+/**
+ * @brief Register a custom GPU resource profile (stub).
+ * @param handle Engine handle.
+ * @param profile_json Profile JSON string.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — not yet wired.
+ * @internal
+ * @version 1.9.7
+ */
+entropic_error_t entropic_profile_register(
+    entropic_handle_t handle,
+    const char* profile_json)
+{
+    (void)handle;
+    (void)profile_json;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Remove a GPU resource profile (stub).
+ * @param handle Engine handle.
+ * @param name Profile name.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — not yet wired.
+ * @internal
+ * @version 1.9.7
+ */
+entropic_error_t entropic_profile_deregister(
+    entropic_handle_t handle,
+    const char* name)
+{
+    (void)handle;
+    (void)name;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Get a profile by name as JSON (stub).
+ * @param handle Engine handle.
+ * @param name Profile name.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.7
+ */
+char* entropic_profile_get(
+    entropic_handle_t handle,
+    const char* name)
+{
+    (void)handle;
+    (void)name;
+    return nullptr;
+}
+
+/**
+ * @brief List all profiles as JSON (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.7
+ */
+char* entropic_profile_list(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
+// ── Throughput Query stubs (v1.9.7) ──────────────────────────
+
+/**
+ * @brief Get throughput estimate for a model (stub).
+ * @param handle Engine handle.
+ * @param model_path Model path.
+ * @return 0.0 — not yet wired.
+ * @internal
+ * @version 1.9.7
+ */
+double entropic_throughput_tok_per_sec(
+    entropic_handle_t handle,
+    const char* model_path)
+{
+    (void)handle;
+    (void)model_path;
+    return 0.0;
+}
+
+/**
+ * @brief Reset throughput data (stub).
+ * @param handle Engine handle.
+ * @param model_path Model path (NULL = all).
+ * @internal
+ * @version 1.9.7
+ */
+void entropic_throughput_reset(
+    entropic_handle_t handle,
+    const char* model_path)
+{
+    (void)handle;
+    (void)model_path;
+}
+
 // ── MCP Authorization stubs (v1.9.4) ─────────────────────────
 
 /**

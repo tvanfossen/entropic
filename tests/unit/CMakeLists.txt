@@ -93,6 +93,24 @@ target_link_libraries(entropic-grammar-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v1.9.7: Profile registry + throughput tracker tests
+add_executable(entropic-cap-tests
+    inference/test_profile_registry.cpp
+    inference/test_throughput_tracker.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/profile_registry.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/throughput_tracker.cpp
+)
+
+target_include_directories(entropic-cap-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-cap-tests PRIVATE
+    entropic-types
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.8.4: Core engine tests
 # v1.8.6: Added delegation, worktree, auto-chain tests
 add_executable(entropic-core-tests
@@ -243,6 +261,7 @@ catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-adapter-tests)
 catch_discover_tests(entropic-grammar-tests)
+catch_discover_tests(entropic-cap-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
 catch_discover_tests(entropic-api-tests)

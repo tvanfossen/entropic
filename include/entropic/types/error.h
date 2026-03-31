@@ -72,6 +72,7 @@ typedef enum {
     ENTROPIC_ERROR_PROFILE_NOT_FOUND,        ///< Profile name not in registry (v1.9.7)
     ENTROPIC_ERROR_TIME_LIMIT_EXCEEDED,      ///< Generation terminated by time cap (v1.9.7)
     ENTROPIC_ERROR_VALIDATION_FAILED,        ///< Critique generation failed — infrastructure, not content (v1.9.8)
+    ENTROPIC_ERROR_COMPACTION_FAILED,        ///< Custom compactor returned non-zero and default fallback also failed (v1.9.9)
 } entropic_error_t;
 
 /**

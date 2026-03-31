@@ -334,6 +334,42 @@ std::string CompactionManager::format_summary(
 }
 
 /**
+ * @brief Compact messages using value-density strategy.
+ *
+ * Public wrapper around the private compact() method. Returns a
+ * fully-populated CompactionResult including the compacted message
+ * list. Does not check thresholds.
+ *
+ * @param messages Messages to compact.
+ * @return CompactionResult with compacted messages and metadata.
+ * @internal
+ * @version 1.9.9
+ */
+CompactionResult CompactionManager::compact_messages(
+    const std::vector<Message>& messages) {
+    int old_count = counter.count_messages(messages);
+
+    std::string summary;
+    int stripped = 0;
+    auto compacted = compact(messages, summary, stripped);
+
+    counter.clear_cache();
+    int new_count = counter.count_messages(compacted);
+
+    CompactionResult result;
+    result.compacted = true;
+    result.old_token_count = old_count;
+    result.new_token_count = new_count;
+    result.summary = summary;
+    result.preserved_messages =
+        static_cast<int>(compacted.size()) - 1;
+    result.messages_summarized = stripped;
+    result.messages = compacted;
+    result.compactor_source = "default";
+    return result;
+}
+
+/**
  * @brief Set storage interface for compaction snapshots.
  * @param storage Storage callbacks (nullable).
  * @internal

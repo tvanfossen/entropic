@@ -11,6 +11,8 @@
 #pragma once
 
 #include <entropic/entropic_export.h>
+#include <entropic/types/config.h>
+
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -18,6 +20,10 @@
 #include <vector>
 
 namespace entropic::prompts {
+
+/// @brief Alias for PhaseConfig from types/ (canonical location).
+/// @version 1.9.6
+using PhaseConfig = entropic::PhaseConfig;
 
 /**
  * @brief Prompt file type (frontmatter "type" field).
@@ -27,22 +33,6 @@ enum class PromptType {
     CONSTITUTION,  ///< Constitution prompt
     APP_CONTEXT,   ///< Application context prompt
     IDENTITY,      ///< Tier identity prompt
-};
-
-/**
- * @brief Inference parameters for a single identity phase.
- *
- * Each role has one or more named phases. The engine resolves
- * inference params from the active phase at generation time.
- *
- * @version 1.8.1
- */
-struct PhaseConfig {
-    float temperature = 0.7f;            ///< Sampling temperature
-    int max_output_tokens = 4096;        ///< Max tokens per generation
-    bool enable_thinking = false;        ///< Enable think-block output
-    float repeat_penalty = 1.1f;         ///< Repetition penalty
-    std::optional<std::vector<std::string>> bash_commands; ///< Phase-specific bash commands
 };
 
 /**

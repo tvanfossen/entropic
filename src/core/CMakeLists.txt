@@ -3,6 +3,7 @@ add_library(entropic-core)
 target_sources(entropic-core PRIVATE
     engine_types.cpp
     compaction.cpp
+    compactor_registry.cpp
     directives.cpp
     context_manager.cpp
     response_generator.cpp

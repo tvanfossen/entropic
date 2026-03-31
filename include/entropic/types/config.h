@@ -9,7 +9,7 @@
  * Structs use aggregate initialization with defaults. Validation is
  * separate — each struct has a standalone validate() function.
  *
- * @version 1.8.2
+ * @version 1.9.3
  */
 
 #pragma once
@@ -23,6 +23,22 @@
 #include <unordered_map>
 
 namespace entropic {
+
+/**
+ * @brief Metadata for a registered grammar.
+ *
+ * Registry entries carry metadata alongside the GBNF content string.
+ * Used by GrammarRegistry for introspection and validation status.
+ *
+ * @version 1.9.3
+ */
+struct GrammarEntry {
+    std::string key;            ///< Unique registry key (e.g., "compactor", "chess_executor")
+    std::string gbnf_content;   ///< Raw GBNF grammar string
+    std::string source;         ///< Origin: "bundled", "file", "runtime", "dynamic"
+    bool validated = false;     ///< true if grammar has passed validation
+    std::string error;          ///< Non-empty if validation failed
+};
 
 /**
  * @brief C++ enum class for model VRAM lifecycle states.
@@ -122,7 +138,7 @@ struct PromptCacheConfig {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 1.8.2
+ * @version 1.9.3 — added grammar_key
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -133,6 +149,11 @@ struct GenerationParams {
     int reasoning_budget = -1;               ///< Per-call think budget override (-1 = unlimited)
     bool enable_thinking = true;             ///< Enable <think> blocks (false if reasoning_budget == 0)
     std::string grammar;                     ///< GBNF grammar string (empty = unconstrained)
+    /// @brief Grammar registry key. Resolved to GBNF content by orchestrator
+    /// before passing to the backend. If both grammar and grammar_key are set,
+    /// grammar (raw string) takes precedence.
+    /// @version 1.9.3
+    std::string grammar_key;
     std::vector<std::string> stop;           ///< Stop sequences
     int logprobs = 0;                        ///< Top log-probs per token (0 = disabled)
 };

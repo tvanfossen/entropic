@@ -15,6 +15,8 @@ add_library(entropic-storage
     logger.cpp
     permission_persister.cpp
     c_interface.cpp
+    audit_entry.cpp
+    audit_logger.cpp
 )
 
 target_include_directories(entropic-storage PUBLIC

@@ -212,6 +212,30 @@ set_target_properties(entropic-c99-test PROPERTIES
 # C99 test just needs to compile and link — run it as a test
 add_test(NAME entropic-c99-header-test COMMAND entropic-c99-test)
 
+# v1.9.6: Identity manager tests (cross-library: core + inference + mcp)
+add_executable(entropic-identity-tests
+    core/test_identity_manager.cpp
+    core/test_identity_validation.cpp
+    ${PROJECT_SOURCE_DIR}/src/core/identity_manager.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/grammar_registry.cpp
+    ${PROJECT_SOURCE_DIR}/src/mcp/mcp_authorization.cpp
+    ${PROJECT_SOURCE_DIR}/src/mcp/mcp_key_set.cpp
+)
+
+target_include_directories(entropic-identity-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+    ${PROJECT_SOURCE_DIR}/src/mcp
+)
+
+target_link_libraries(entropic-identity-tests PRIVATE
+    entropic-core
+    entropic-types
+    llama
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 include(CTest)
 include(Catch)
 catch_discover_tests(entropic-tests)
@@ -222,6 +246,7 @@ catch_discover_tests(entropic-grammar-tests)
 catch_discover_tests(entropic-core-tests)
 catch_discover_tests(entropic-mcp-tests)
 catch_discover_tests(entropic-api-tests)
+catch_discover_tests(entropic-identity-tests)
 if(ENTROPIC_STORAGE_SQLITE)
     catch_discover_tests(entropic-storage-tests)
 endif()

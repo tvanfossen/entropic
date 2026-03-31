@@ -7,7 +7,7 @@
  * - entropic_run/run_streaming: v1.8.4 (engine loop)
  * - entropic_interrupt: v1.8.4 (engine loop)
  *
- * @version 1.9.4
+ * @version 1.9.6
  */
 
 #include <entropic/entropic.h>
@@ -529,6 +529,112 @@ entropic_error_t entropic_deserialize_mcp_keys(
 {
     (void)handle;
     (void)json;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+// ── Dynamic Identity Management stubs (v1.9.6) ──────────────
+
+/**
+ * @brief Create a dynamic identity (stub).
+ * @param handle Engine handle.
+ * @param config_json Identity config JSON.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+entropic_error_t entropic_create_identity(
+    entropic_handle_t handle,
+    const char* config_json)
+{
+    (void)handle;
+    (void)config_json;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Update a dynamic identity (stub).
+ * @param handle Engine handle.
+ * @param name Identity name.
+ * @param config_json Replacement config JSON.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+entropic_error_t entropic_update_identity(
+    entropic_handle_t handle,
+    const char* name,
+    const char* config_json)
+{
+    (void)handle;
+    (void)name;
+    (void)config_json;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Destroy a dynamic identity (stub).
+ * @param handle Engine handle.
+ * @param name Identity name.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+entropic_error_t entropic_destroy_identity(
+    entropic_handle_t handle,
+    const char* name)
+{
+    (void)handle;
+    (void)name;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Get identity config as JSON by name (stub).
+ * @param handle Engine handle.
+ * @param name Identity name.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+char* entropic_get_identity_config(
+    entropic_handle_t handle,
+    const char* name)
+{
+    (void)handle;
+    (void)name;
+    return nullptr;
+}
+
+/**
+ * @brief List all identity names as JSON (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+char* entropic_list_identities(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
+/**
+ * @brief Get identity count (stub).
+ * @param handle Engine handle.
+ * @param total Output: total count.
+ * @param dynamic Output: dynamic count (may be NULL).
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.6
+ */
+entropic_error_t entropic_identity_count(
+    entropic_handle_t handle,
+    size_t* total,
+    size_t* dynamic)
+{
+    (void)handle;
+    (void)total;
+    (void)dynamic;
     return ENTROPIC_ERROR_INVALID_STATE;
 }
 

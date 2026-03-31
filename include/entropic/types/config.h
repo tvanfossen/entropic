@@ -329,14 +329,31 @@ struct MCPConfig {
 };
 
 /**
+ * @brief Audit log configuration within StorageConfig.
+ *
+ * Controls JSONL audit logging of MCP tool calls. When enabled,
+ * every tool execution is recorded to audit.jsonl alongside the
+ * session persistence files.
+ *
+ * @version 1.9.5
+ */
+struct AuditLogConfig {
+    bool enabled = true;                 ///< Master toggle for audit logging
+    size_t flush_interval_entries = 10;  ///< Flush every N entries (0 = every entry)
+    size_t max_file_size = 0;            ///< Rotation size in bytes (0 = unlimited)
+    size_t max_files = 5;                ///< Max rotated files to keep
+};
+
+/**
  * @brief Storage backend configuration.
- * @version 1.8.8
+ * @version 1.9.5
  */
 struct StorageConfig {
     bool enabled = true;                           ///< Enable storage backend
     std::filesystem::path db_path;                 ///< SQLite database path (derived from config_dir)
     size_t log_max_file_size = 10 * 1024 * 1024;   ///< Max log file size before rotation (10MB)
     size_t log_max_files = 3;                       ///< Max rotated log files to keep
+    AuditLogConfig audit_log;                       ///< Audit log settings (v1.9.5)
 };
 
 /**

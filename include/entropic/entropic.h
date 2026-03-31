@@ -841,6 +841,64 @@ ENTROPIC_EXPORT entropic_error_t entropic_deserialize_mcp_keys(
     entropic_handle_t handle,
     const char* json);
 
+/* ── Audit (v1.9.5) ──────────────────────────────────────── */
+
+/**
+ * @brief Flush the audit logger to disk immediately.
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — no audit logger configured.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_audit_flush(
+    entropic_handle_t handle);
+
+/**
+ * @brief Get the number of audit log entries recorded this session.
+ * @param handle Engine handle.
+ * @param[out] count Output: number of entries recorded.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — count is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — no audit logger configured.
+ *
+ * @threadsafety Lock-free read.
+ * @version 1.9.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_audit_count(
+    entropic_handle_t handle,
+    size_t* count);
+
+/**
+ * @brief Read audit log entries from a JSONL file.
+ *
+ * Reads and parses entries from an audit.jsonl file. No tool calls
+ * are executed — this is inspection only.
+ *
+ * @param handle Engine handle.
+ * @param path Path to audit.jsonl file (null-terminated).
+ * @param filter_json Filter criteria as JSON, or NULL for no filter.
+ *        Format: {"caller_id": "eng", "tool_name": "filesystem.*"}
+ *        All fields optional. Absent fields match everything.
+ * @param[out] result_json Output: JSON array of audit entries.
+ *             Caller must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — path or result_json is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — path cannot be read.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_audit_read(
+    entropic_handle_t handle,
+    const char* path,
+    const char* filter_json,
+    char** result_json);
+
 #ifdef __cplusplus
 }
 #endif

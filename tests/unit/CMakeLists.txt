@@ -169,6 +169,8 @@ if(ENTROPIC_STORAGE_SQLITE)
         storage/test_c_interface.cpp
         storage/test_logger.cpp
         storage/test_permission_persister.cpp
+        storage/test_audit_entry.cpp
+        storage/test_audit_logger.cpp
     )
 
     target_link_libraries(entropic-storage-tests PRIVATE

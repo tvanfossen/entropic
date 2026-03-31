@@ -105,3 +105,6 @@ examples/hello-world/.hello-world/
 
 # build cache
 .cache/
+
+# CTest artifacts
+Testing/

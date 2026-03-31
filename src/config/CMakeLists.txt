@@ -29,4 +29,6 @@ set_target_properties(entropic-config PROPERTIES
     OUTPUT_NAME "rentropic-config"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
 )

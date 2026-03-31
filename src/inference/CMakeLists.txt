@@ -60,8 +60,8 @@ set_target_properties(${INFERENCE_LIB_NAME} PROPERTIES
     OUTPUT_NAME "rentropic-inference-${INFERENCE_LIB_NAME}"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
-    CXX_VISIBILITY_PRESET hidden
-    VISIBILITY_INLINES_HIDDEN ON
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
 )
 
 # Create an alias for tests and other targets to link against

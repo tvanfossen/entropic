@@ -27,4 +27,6 @@ set_target_properties(entropic-prompts PROPERTIES
     OUTPUT_NAME "rentropic-prompts"
     VERSION ${PROJECT_VERSION}
     SOVERSION ${PROJECT_VERSION_MAJOR}
+    CXX_VISIBILITY_PRESET default
+    VISIBILITY_INLINES_HIDDEN OFF
 )

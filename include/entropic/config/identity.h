@@ -7,15 +7,13 @@
  * all instances.
  *
  * @par Dependencies
- * - MCPKey from types/config.h (MCP authorization keys)
- * - PhaseConfig from prompts/manager.h (inference phase parameters)
+ * - MCPKey, PhaseConfig from types/config.h
  *
  * @version 1.9.6
  */
 
 #pragma once
 
-#include <entropic/prompts/manager.h>
 #include <entropic/types/config.h>
 
 #include <cstdint>
@@ -66,7 +64,7 @@ struct IdentityConfig {
     bool routable = true;                       ///< Participates in tier routing
     std::string role_type = "front_office";     ///< "front_office", "back_office", or "utility"
     bool explicit_completion = false;           ///< Requires explicit entropic.complete to finish
-    std::unordered_map<std::string, prompts::PhaseConfig> phases; ///< Named inference phases
+    std::unordered_map<std::string, PhaseConfig> phases; ///< Named inference phases
     IdentityOrigin origin = IdentityOrigin::DYNAMIC; ///< How this identity was created
 };
 

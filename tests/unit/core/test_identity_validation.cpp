@@ -227,7 +227,7 @@ TEST_CASE("phase empty name rejected", "[identity_validation]") {
     auto mgr = make_mgr(grammar_reg);
 
     auto cfg = make_config("npc_guard");
-    prompts::PhaseConfig phase;
+    PhaseConfig phase;
     cfg.phases[""] = phase;
     REQUIRE(mgr->create(cfg) == ENTROPIC_ERROR_INVALID_CONFIG);
 }
@@ -238,7 +238,7 @@ TEST_CASE("phase negative tokens rejected",
     auto mgr = make_mgr(grammar_reg);
 
     auto cfg = make_config("npc_guard");
-    prompts::PhaseConfig phase;
+    PhaseConfig phase;
     phase.max_output_tokens = -1;
     cfg.phases["planning"] = phase;
     REQUIRE(mgr->create(cfg) == ENTROPIC_ERROR_INVALID_CONFIG);

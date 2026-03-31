@@ -10,6 +10,7 @@ set(INFERENCE_SOURCES
     prompt_cache.cpp
     orchestrator.cpp
     adapter_manager.cpp
+    grammar_registry.cpp
     inference_c_api.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp

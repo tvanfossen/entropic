@@ -7,7 +7,7 @@
  * - entropic_run/run_streaming: v1.8.4 (engine loop)
  * - entropic_interrupt: v1.8.4 (engine loop)
  *
- * @version 1.8.0
+ * @version 1.9.3
  */
 
 #include <entropic/entropic.h>
@@ -281,6 +281,111 @@ char* entropic_adapter_info(
  * @version 1.9.2
  */
 char* entropic_adapter_list(entropic_handle_t handle)
+{
+    (void)handle;
+    return nullptr;
+}
+
+// ── Grammar Registry stubs (v1.9.3) ─────────────────────────
+
+/**
+ * @brief Register a grammar by key (stub).
+ * @param handle Engine handle.
+ * @param key Grammar name.
+ * @param gbnf_content GBNF grammar string.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.3
+ */
+entropic_error_t entropic_grammar_register(
+    entropic_handle_t handle,
+    const char* key,
+    const char* gbnf_content)
+{
+    (void)handle;
+    (void)key;
+    (void)gbnf_content;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Register a grammar from file (stub).
+ * @param handle Engine handle.
+ * @param key Grammar name.
+ * @param path Path to .gbnf file.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.3
+ */
+entropic_error_t entropic_grammar_register_file(
+    entropic_handle_t handle,
+    const char* key,
+    const char* path)
+{
+    (void)handle;
+    (void)key;
+    (void)path;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Deregister a grammar (stub).
+ * @param handle Engine handle.
+ * @param key Grammar name.
+ * @return ENTROPIC_ERROR_INVALID_STATE — not yet wired.
+ * @internal
+ * @version 1.9.3
+ */
+entropic_error_t entropic_grammar_deregister(
+    entropic_handle_t handle,
+    const char* key)
+{
+    (void)handle;
+    (void)key;
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Get grammar content by key (stub).
+ * @param handle Engine handle.
+ * @param key Grammar name.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.3
+ */
+char* entropic_grammar_get(
+    entropic_handle_t handle,
+    const char* key)
+{
+    (void)handle;
+    (void)key;
+    return nullptr;
+}
+
+/**
+ * @brief Validate a GBNF grammar string (stub).
+ *
+ * Full implementation will use GrammarRegistry::validate() once
+ * the facade is wired to the inference subsystem.
+ *
+ * @param gbnf_content Raw GBNF string.
+ * @return NULL — stub always reports valid.
+ * @internal
+ * @version 1.9.3
+ */
+char* entropic_grammar_validate(const char* gbnf_content) {
+    (void)gbnf_content;
+    return nullptr;
+}
+
+/**
+ * @brief List all grammars as JSON (stub).
+ * @param handle Engine handle.
+ * @return NULL — not yet wired.
+ * @internal
+ * @version 1.9.3
+ */
+char* entropic_grammar_list(entropic_handle_t handle)
 {
     (void)handle;
     return nullptr;

@@ -23,6 +23,7 @@
 
 #include <entropic/inference/backend.h>
 #include <entropic/inference/adapter_manager.h>
+#include <entropic/inference/grammar_registry.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
 
@@ -156,6 +157,13 @@ public:
      */
     AdapterManager& adapter_manager() { return lora_manager_; }
 
+    /**
+     * @brief Access the grammar registry.
+     * @return Reference to GrammarRegistry.
+     * @version 1.9.3
+     */
+    GrammarRegistry& grammar_registry() { return grammar_registry_; }
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;
@@ -183,6 +191,9 @@ private:
 
     /* ── LoRA adapter management (v1.9.2) ────────────────── */
     AdapterManager lora_manager_;  ///< LoRA adapter lifecycle
+
+    /* ── Grammar registry (v1.9.3) ────────────────────────── */
+    GrammarRegistry grammar_registry_;  ///< Named grammar storage and resolution
 
     /* ── Internal ────────────────────────────────────────── */
 
@@ -232,6 +243,21 @@ private:
      * @version 1.9.2
      */
     void preload_adapters();
+
+    /**
+     * @brief Load bundled grammars from data directory at startup.
+     * @version 1.9.3
+     */
+    void load_bundled_grammars();
+
+    /**
+     * @brief Resolve grammar_key to grammar content string.
+     * @param params Generation params (mutated).
+     * @param tier_name Active tier for frontmatter fallback.
+     * @version 1.9.3
+     */
+    void resolve_grammar_key(GenerationParams& params,
+                             const std::string& tier_name);
 };
 
 } // namespace entropic

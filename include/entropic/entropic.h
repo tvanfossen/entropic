@@ -35,7 +35,7 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.1
+ * @version 1.9.3
  */
 
 #pragma once
@@ -580,6 +580,117 @@ ENTROPIC_EXPORT char* entropic_adapter_info(
  * Caller must free returned string with entropic_free().
  */
 ENTROPIC_EXPORT char* entropic_adapter_list(entropic_handle_t handle);
+
+/* ── Grammar Registry (v1.9.3) ───────────────────────── */
+
+/**
+ * @brief Register a grammar by key from a GBNF content string.
+ *
+ * @param handle Engine handle.
+ * @param key Unique grammar name (null-terminated).
+ * @param gbnf_content Raw GBNF grammar string (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — key or gbnf_content is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — key already exists.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.3
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_grammar_register(
+    entropic_handle_t handle,
+    const char* key,
+    const char* gbnf_content);
+
+/**
+ * @brief Register a grammar from a file path.
+ *
+ * @param handle Engine handle.
+ * @param key Grammar name (if NULL, uses filename stem).
+ * @param path Path to .gbnf file (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — path is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — key already exists.
+ *         - ENTROPIC_ERROR_LOAD_FAILED — file unreadable.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.3
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_grammar_register_file(
+    entropic_handle_t handle,
+    const char* key,
+    const char* path);
+
+/**
+ * @brief Remove a grammar from the registry.
+ *
+ * @param handle Engine handle.
+ * @param key Grammar name (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — key is NULL.
+ *         - ENTROPIC_ERROR_GRAMMAR_NOT_FOUND — key not registered.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.3
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_grammar_deregister(
+    entropic_handle_t handle,
+    const char* key);
+
+/**
+ * @brief Get grammar content by key.
+ *
+ * @param handle Engine handle.
+ * @param key Grammar name (null-terminated).
+ * @return GBNF content string. Caller frees with entropic_free().
+ *         NULL if key not found.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.3
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_grammar_get(
+    entropic_handle_t handle,
+    const char* key);
+
+/**
+ * @brief Validate a GBNF grammar string without registering.
+ *
+ * @param gbnf_content Raw GBNF string to validate (null-terminated).
+ * @return NULL on success (valid grammar). Error description string on
+ *         failure. Caller frees with entropic_free().
+ *
+ * @note This is a static function — does not require an engine handle.
+ *       Can be called before engine initialization.
+ *
+ * @threadsafety Thread-safe.
+ * @version 1.9.3
+ *
+ * @par Memory ownership
+ * Caller must free non-NULL returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_grammar_validate(const char* gbnf_content);
+
+/**
+ * @brief List all registered grammars as JSON array.
+ *
+ * @param handle Engine handle.
+ * @return JSON array of grammar metadata objects:
+ *         [{"key":"compactor","source":"bundled","validated":true}, ...]
+ *         Content strings are NOT included (use entropic_grammar_get).
+ *         Caller frees with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.3
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_grammar_list(entropic_handle_t handle);
 
 #ifdef __cplusplus
 }

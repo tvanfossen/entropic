@@ -63,6 +63,8 @@ typedef enum {
     ENTROPIC_ERROR_ADAPTER_LOAD_FAILED,      ///< LoRA file invalid or incompatible with base model (v1.9.2)
     ENTROPIC_ERROR_ADAPTER_SWAP_FAILED,      ///< Swap failed (e.g., base model not ACTIVE) (v1.9.2)
     ENTROPIC_ERROR_ADAPTER_CANCELLED,        ///< ON_ADAPTER_SWAP hook cancelled the operation (v1.9.2)
+    ENTROPIC_ERROR_GRAMMAR_NOT_FOUND,        ///< Grammar key not in registry (v1.9.3)
+    ENTROPIC_ERROR_GRAMMAR_INVALID,          ///< GBNF parse failed (v1.9.3)
 } entropic_error_t;
 
 /**

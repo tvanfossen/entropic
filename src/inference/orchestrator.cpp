@@ -3,9 +3,10 @@
  * @brief ModelOrchestrator implementation.
  *
  * Model pool deduplication, per-tier adapters, VRAM lifecycle,
- * tier routing via router complete(), and swap logic.
+ * tier routing via router complete(), swap logic, and grammar
+ * registry integration.
  *
- * @version 1.9.2
+ * @version 1.9.3
  */
 
 #include <entropic/inference/orchestrator.h>
@@ -72,7 +73,7 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 1.9.2
+ * @version 1.9.3
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
@@ -137,6 +138,9 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     // Preload LoRA adapters to WARM (v1.9.2)
     preload_adapters();
 
+    // Load bundled grammars (v1.9.3)
+    load_bundled_grammars();
+
     return true;
 }
 
@@ -168,7 +172,7 @@ void ModelOrchestrator::shutdown() {
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 1.8.2
+ * @version 1.9.3
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -199,8 +203,12 @@ GenerationResult ModelOrchestrator::generate(
         return err;
     }
 
+    // Resolve grammar_key → grammar content (v1.9.3)
+    GenerationParams resolved_params = params;
+    resolve_grammar_key(resolved_params, selected);
+
     // Generate
-    auto result = model->generate(messages, params);
+    auto result = model->generate(messages, resolved_params);
 
     // Parse tool calls via adapter
     auto* adapter = get_adapter(selected);
@@ -220,7 +228,7 @@ GenerationResult ModelOrchestrator::generate(
 /**
  * @brief Streaming generation.
  * @internal
- * @version 1.8.2
+ * @version 1.9.3
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -240,7 +248,11 @@ GenerationResult ModelOrchestrator::generate_streaming(
         return err;
     }
 
-    return model->generate_streaming(messages, params, on_token, cancel);
+    // Resolve grammar_key → grammar content (v1.9.3)
+    GenerationParams resolved_params = params;
+    resolve_grammar_key(resolved_params, selected);
+
+    return model->generate_streaming(messages, resolved_params, on_token, cancel);
 }
 
 // ── Routing ────────────────────────────────────────────────
@@ -599,6 +611,96 @@ void ModelOrchestrator::preload_adapters() {
     if (loaded > 0) {
         logger->info("Preloaded {} LoRA adapter(s) to WARM", loaded);
     }
+}
+
+// ── Grammar registry (v1.9.3) ──────────────────────────────
+
+/**
+ * @brief Load bundled grammars from data directory.
+ *
+ * Scans ENTROPIC_DATA_DIR/grammars/ for .gbnf files and registers
+ * each with the grammar registry.
+ *
+ * @internal
+ * @version 1.9.3
+ */
+void ModelOrchestrator::load_bundled_grammars() {
+    std::filesystem::path grammar_dir;
+    if (!config_.config_dir.empty()) {
+        grammar_dir = config_.config_dir / "grammars";
+    }
+
+    if (grammar_dir.empty() || !std::filesystem::is_directory(grammar_dir)) {
+        logger->info("No bundled grammar directory found, skipping");
+        return;
+    }
+
+    size_t count = grammar_registry_.load_bundled(grammar_dir);
+    logger->info("Grammar registry: {} grammar(s) loaded", count);
+}
+
+/**
+ * @brief Normalize a frontmatter grammar value to a registry key.
+ *
+ * Strips .gbnf extension if present: "compactor.gbnf" → "compactor".
+ * Values without extension are used as-is.
+ *
+ * @param grammar_value Raw frontmatter value.
+ * @return Normalized registry key.
+ * @utility
+ * @version 1.9.3
+ */
+static std::string normalize_grammar_key(const std::string& grammar_value) {
+    std::filesystem::path p(grammar_value);
+    if (p.extension() == ".gbnf") {
+        return p.stem().string();
+    }
+    return grammar_value;
+}
+
+/**
+ * @brief Resolve grammar_key to grammar content string in params.
+ *
+ * Resolution order:
+ * 1. params.grammar (raw string) — highest priority, skip registry
+ * 2. params.grammar_key — lookup in GrammarRegistry
+ * 3. Identity frontmatter grammar: field — normalize and lookup
+ * 4. None — unconstrained generation
+ *
+ * @param params Generation parameters (mutated: grammar field may be set).
+ * @param tier_name Active tier for frontmatter grammar resolution.
+ * @internal
+ * @version 1.9.3
+ */
+void ModelOrchestrator::resolve_grammar_key(
+    GenerationParams& params, const std::string& tier_name)
+{
+    if (!params.grammar.empty()) {
+        return;
+    }
+
+    // Try explicit grammar_key
+    std::string key = params.grammar_key;
+
+    // Fall back to tier config grammar field (frontmatter)
+    if (key.empty()) {
+        auto it = config_.models.tiers.find(tier_name);
+        if (it != config_.models.tiers.end() && it->second.grammar) {
+            key = normalize_grammar_key(it->second.grammar->string());
+        }
+    }
+
+    if (key.empty()) {
+        return;
+    }
+
+    std::string content = grammar_registry_.get(key);
+    if (content.empty()) {
+        logger->warn("Grammar key '{}' not found in registry", key);
+        return;
+    }
+
+    params.grammar = std::move(content);
 }
 
 } // namespace entropic

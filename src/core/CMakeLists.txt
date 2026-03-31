@@ -10,6 +10,7 @@ target_sources(entropic-core PRIVATE
     worktree.cpp
     delegation.cpp
     hook_registry.cpp
+    identity_manager.cpp
 )
 
 target_include_directories(entropic-core PUBLIC

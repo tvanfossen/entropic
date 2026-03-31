@@ -11,6 +11,7 @@ target_sources(entropic-core PRIVATE
     delegation.cpp
     hook_registry.cpp
     identity_manager.cpp
+    constitutional_validator.cpp
 )
 
 target_include_directories(entropic-core PUBLIC

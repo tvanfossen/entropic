@@ -483,4 +483,21 @@ struct ParsedConfig {
     std::filesystem::path config_dir;
 };
 
+/**
+ * @brief Constitutional validation pipeline configuration.
+ *
+ * Controls the post-generation validation hook that critiques engine
+ * output against constitutional rules. Default disabled — doubles
+ * inference cost per generation when active.
+ *
+ * @version 1.9.8
+ */
+struct ConstitutionalValidationConfig {
+    bool enabled = false;             ///< Global enable/disable (default OFF)
+    int max_revisions = 2;            ///< Max re-generation attempts (0 = critique only)
+    int max_critique_tokens = 512;    ///< Token budget for critique generation
+    int priority = 100;               ///< Hook priority (higher = later)
+    std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
+};
+
 } // namespace entropic

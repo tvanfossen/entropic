@@ -35,11 +35,12 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.6
+ * @version 1.9.8
  */
 
 #pragma once
 
+#include <stdbool.h>
 #include <stddef.h>
 
 #include <entropic/entropic_config.h>
@@ -1116,6 +1117,64 @@ ENTROPIC_EXPORT entropic_error_t entropic_identity_count(
     entropic_handle_t handle,
     size_t* total,
     size_t* dynamic);
+
+/* ── Constitutional Validation (v1.9.8) ──────────────── */
+
+/**
+ * @brief Enable or disable constitutional validation.
+ *
+ * When disabled, the POST_GENERATE hook is deregistered (zero
+ * overhead). When re-enabled, it is re-registered.
+ *
+ * @param handle Engine handle.
+ * @param enabled true to enable, false to disable.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_validation_set_enabled(
+    entropic_handle_t handle,
+    bool enabled);
+
+/**
+ * @brief Set per-identity validation override.
+ *
+ * @param handle Engine handle.
+ * @param identity_name Identity name (null-terminated).
+ * @param enabled true to enable, false to disable for this identity.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — identity_name is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_validation_set_identity(
+    entropic_handle_t handle,
+    const char* identity_name,
+    bool enabled);
+
+/**
+ * @brief Get the last validation result as JSON.
+ *
+ * @param handle Engine handle.
+ * @return JSON string with validation metadata from the last generation.
+ *         NULL if no validation has run. Caller frees with entropic_free().
+ *
+ *         Return format:
+ *         {"was_revised": false, "revision_count": 0, "compliant": true,
+ *          "violations": [], "tier": "eng"}
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.8
+ */
+ENTROPIC_EXPORT char* entropic_validation_last_result(
+    entropic_handle_t handle);
 
 #ifdef __cplusplus
 }

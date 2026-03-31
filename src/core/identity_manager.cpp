@@ -37,11 +37,11 @@ static const std::regex s_name_regex("^[a-z][a-z0-9_-]{0,63}$");
  * @param phases Phase map to validate.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.9.6
+ * @version 1.9.9
  */
 static std::string validate_phases(
     const std::unordered_map<std::string,
-                             prompts::PhaseConfig>& phases) {
+                             PhaseConfig>& phases) {
     for (const auto& [phase_name, phase] : phases) {
         if (phase_name.empty()) {
             return "Phase name cannot be empty";

@@ -115,6 +115,7 @@ target_link_libraries(entropic-cap-tests PRIVATE
 # v1.8.6: Added delegation, worktree, auto-chain tests
 add_executable(entropic-core-tests
     core/test_compaction.cpp
+    core/test_compactor_registry.cpp
     core/test_directives.cpp
     core/test_context_manager.cpp
     core/test_engine.cpp

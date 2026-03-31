@@ -35,7 +35,7 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.4
+ * @version 1.9.6
  */
 
 #pragma once
@@ -898,6 +898,125 @@ ENTROPIC_EXPORT entropic_error_t entropic_audit_read(
     const char* path,
     const char* filter_json,
     char** result_json);
+
+/* ── Dynamic Identity Management (v1.9.6) ────────────── */
+
+/**
+ * @brief Create a dynamic identity.
+ *
+ * @param handle Engine handle.
+ * @param config_json Identity configuration as JSON string.
+ *        Required fields: "name", "system_prompt", "focus" (array, min 1).
+ *        Optional fields: "examples", "grammar_id", "auto_chain",
+ *        "allowed_tools", "bash_commands", "mcp_keys", "adapter_path",
+ *        "max_output_tokens", "temperature", "repeat_penalty",
+ *        "enable_thinking", "model_preference", "interstitial",
+ *        "routable", "role_type", "explicit_completion", "phases".
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — config_json is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — validation failed.
+ *         - ENTROPIC_ERROR_LIMIT_REACHED — max_identities exceeded.
+ *         - ENTROPIC_ERROR_ALREADY_EXISTS — name already taken.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.6
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_create_identity(
+    entropic_handle_t handle,
+    const char* config_json);
+
+/**
+ * @brief Update a dynamic identity.
+ *
+ * @param handle Engine handle.
+ * @param name Identity name (null-terminated).
+ * @param config_json Full replacement config as JSON string.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — name or config_json is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — identity doesn't exist.
+ *         - ENTROPIC_ERROR_PERMISSION_DENIED — identity is static.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — validation failed.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.6
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_update_identity(
+    entropic_handle_t handle,
+    const char* name,
+    const char* config_json);
+
+/**
+ * @brief Destroy a dynamic identity.
+ *
+ * @param handle Engine handle.
+ * @param name Identity name (null-terminated).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — name is NULL.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — identity doesn't exist.
+ *         - ENTROPIC_ERROR_PERMISSION_DENIED — identity is static.
+ *         - ENTROPIC_ERROR_IN_USE — identity active in delegation.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.6
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_destroy_identity(
+    entropic_handle_t handle,
+    const char* name);
+
+/**
+ * @brief Get identity configuration as JSON by name.
+ *
+ * @param handle Engine handle.
+ * @param name Identity name (null-terminated).
+ * @return JSON string of identity config. Caller frees with entropic_free().
+ *         NULL if identity not found or handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.6
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_get_identity_config(
+    entropic_handle_t handle,
+    const char* name);
+
+/**
+ * @brief List all identity names as JSON array.
+ *
+ * @param handle Engine handle.
+ * @return JSON array of identity name strings.
+ *         Caller frees with entropic_free(). NULL on error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.6
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ */
+ENTROPIC_EXPORT char* entropic_list_identities(
+    entropic_handle_t handle);
+
+/**
+ * @brief Get identity count.
+ *
+ * @param handle Engine handle.
+ * @param total Output: total identity count (static + dynamic).
+ * @param dynamic Output: dynamic identity count only. Pass NULL to skip.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — total is NULL.
+ *
+ * @threadsafety Thread-safe.
+ * @version 1.9.6
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_identity_count(
+    entropic_handle_t handle,
+    size_t* total,
+    size_t* dynamic);
 
 #ifdef __cplusplus
 }

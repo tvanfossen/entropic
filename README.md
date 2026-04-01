@@ -2,121 +2,125 @@
 
 > Local-first agentic inference engine with identity-based delegation
 
-This started as "I want to build a local-first Claude Code" — which turned out
-to be quite the undertaking. The initial build was a tightly coupled TUI, but it
-became clear pretty quickly that I was duplicating the same core inference engine
-across other local projects wrapping llama-cpp-python. So it evolved into a
-library: the inference engine, model orchestration, agentic loop, and tool
-framework are all importable and reusable without dragging in a UI. The TUI ships
-alongside it as one consumer, and doubles as a testbed for new ideas.
+Entropic is a **C library** (`librentropic.so`) for local AI inference with an
+agentic tool-calling loop, identity-based delegation, and MCP tool servers. A
+Python wrapper (auto-generated ctypes bindings) and CLI ship alongside it.
 
 The name is a nod to how this actually works. Every handoff — human intent to
 prompt, prompt to model, model to model across tiers — is a lossy translation.
-Information decays at each boundary. That's the entropic process this engine tries
-to manage: structured routing, context management, and tool-augmented reasoning to
-lose as little as possible along the way.
+Information decays at each boundary. That's the entropic process this engine
+manages: structured routing, context management, and tool-augmented reasoning
+to lose as little as possible along the way.
+
+## Architecture
+
+```
++-----------------------------------------------------+
+|  Consumers                                           |
+|  - CLI (entropic command)                            |
+|  - Python apps (via wrapper)                         |
+|  - C/C++ apps (direct linkage)                       |
+|  - entropic-tui (separate package)                   |
++-----------------------------------------------------+
+|  Python Wrapper (auto-generated ctypes)              |
+|  - EntropicEngine, GenerationResult, AgentState      |
+|  - Error handling (entropic_error_t -> exceptions)   |
++-----------------------------------------------------+
+|  librentropic.so (C API)                             |
+|  - Engine loop     - Config        - Tools           |
+|  - Inference       - Prompts       - MCP             |
+|  - Delegation      - Hooks         - Storage         |
+|  - Context mgmt    - Grammars      - Audit           |
++-----------------------------------------------------+
+|  llama.cpp (direct C linkage, CUDA/Vulkan/CPU)       |
++-----------------------------------------------------+
+```
 
 ## Quick Start
 
 ### Prerequisites
 
 - Linux (tested on Ubuntu 24.04)
-- NVIDIA GPU with 16GB+ VRAM
-- Python 3.11+
+- NVIDIA GPU with 16GB+ VRAM (or CPU-only for smaller models)
+- Python 3.10+
 
-### NVIDIA Driver & CUDA Toolkit
-
-```bash
-# Driver (if not already installed)
-sudo apt update
-sudo apt install -y nvidia-driver-580
-sudo reboot
-
-# CUDA Toolkit 12.8
-wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt update
-sudo apt install -y cuda-toolkit-12-8
-echo 'export PATH=/usr/local/cuda/bin:$PATH' >> ~/.bashrc
-echo 'export LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH' >> ~/.bashrc
-source ~/.bashrc
-
-# Verify
-nvidia-smi        # GPU visible, driver 580+
-nvcc --version    # CUDA 12.8
-```
-
-### System Dependencies
+### Install
 
 ```bash
-sudo apt install -y python3-venv python3-pip git cmake build-essential
-```
-
-### Install & Run
-
-```bash
-# Create project
-mkdir ~/Projects/my-project && cd ~/Projects/my-project
-python3 -m venv .venv
-git init
-
-# Install from PyPI (use PIP_CONFIG_FILE=/dev/null if corporate pip config interferes)
-PIP_CONFIG_FILE=/dev/null .venv/bin/pip install entropic-engine[app]
-
-# Build llama.cpp with CUDA support
-.venv/bin/entropic setup-cuda
+# From PyPI (includes librentropic.so + Python wrapper + CLI)
+pip install entropic-engine
 
 # Download the primary model (~13.1 GB)
-.venv/bin/entropic download primary
+entropic download primary
 
 # Initialize project config
-.venv/bin/entropic init
+entropic init
 
-# Run
-.venv/bin/entropic
+# Single-turn inference
+entropic ask "What is 2+2?"
 ```
 
-### Install Extras
+### Build from Source
 
 ```bash
-pip install entropic-engine          # Core library (inference, engine, tools)
-pip install entropic-engine[app]     # TUI application (includes tui + storage deps)
-pip install entropic-engine[voice]   # Voice interface (PersonaPlex)
-pip install entropic-engine[all]     # Everything
+# C engine
+cmake -B build -DENTROPIC_CUDA=ON
+cmake --build build
+
+# Python wrapper + CLI
+pip install -e .
 ```
 
-## Architecture
+## Library Usage
 
-Entropic is a **library first, application second**. The inference engine
-(orchestrator, agentic loop, adapters, tool providers) is fully separable from
-any UI.
+### Python (via wrapper)
 
-```
-+-----------------------------------------------------+
-|  Application Layer (TUI / Headless / Custom)        |
-+-----------------------------------------------------+
-|  Engine          |  Orchestrator    |  Tools         |
-|  - Agentic loop  |  - Tier routing  |  - Filesystem  |
-|  - Directives    |  - Model swap    |  - Bash        |
-|  - Delegation    |  - VRAM mgmt     |  - Diagnostics |
-|  - Context mgmt  |  - Adapters      |  - Git / Web   |
-+-----------------------------------------------------+
-|  Inference Backend (llama-cpp-python)                |
-|  - GGUF models, single-GPU, in-process              |
-+-----------------------------------------------------+
+```python
+from entropic import EntropicEngine
+
+with EntropicEngine(config_path="config.yaml") as engine:
+    result = engine.run("What is 2+2?")
+    print(result.response)
 ```
 
-### Identity-Based Architecture
+### Streaming
 
-A single model serves all roles. Each role (lead, eng, qa, arch, ux, ui, analyst)
-has an identity prompt that defines its behavior, allowed tools, and inference
-parameters. The lead identity delegates work to other roles via pipeline and
-delegation tools.
+```python
+from entropic import EntropicEngine
 
-### Bundled Models
+engine = EntropicEngine(config_path="config.yaml")
+engine.run_streaming(
+    "Explain quantum computing",
+    on_token=lambda tok: print(tok, end="", flush=True),
+)
+```
 
-Models are defined in `bundled_models.yaml` and downloaded via the CLI.
-Default configuration resolves model keys automatically.
+### C API
+
+```c
+#include <entropic/entropic.h>
+
+entropic_handle_t handle;
+entropic_create(&handle);
+entropic_configure_from_file(handle, "config.yaml");
+
+char* result;
+entropic_run(handle, "What is 2+2?", &result);
+printf("%s\n", result);
+entropic_free(result);
+entropic_destroy(handle);
+```
+
+See `examples/` for complete integrations (`hello-world/`, `pychess/`).
+
+## Identity-Based Architecture
+
+A single model serves all roles. Each role (lead, eng, qa, arch, ux, ui,
+analyst) has an identity prompt that defines its behavior, allowed tools, and
+inference parameters. The lead identity delegates work to other roles via
+pipeline and delegation tools.
+
+## Bundled Models
 
 | Key | Model | Size | Purpose |
 |-----|-------|------|---------|
@@ -125,66 +129,41 @@ Default configuration resolves model keys automatically.
 | **lightweight** | Qwen3.5-4B-Q8_0 | 4.5 GB | Alternative (8GB+ VRAM) |
 | **router** | Qwen3-0.6B-Q8_0 | 0.6 GB | Prompt classification |
 
-### Agentic Loop
-
-The engine runs an autonomous tool-calling loop: generate → parse tool calls →
-execute tools → feed results back → generate again. The lead identity delegates
-implementation tasks to specialized roles (eng, qa, arch) via pipeline or
-single-role delegation.
-
-Tools communicate back to the engine via **directives** — structured signals
-embedded in tool results that trigger delegation, context anchoring, and
-state management.
-
 ## Features
 
-- **Fully Local** — All inference on your hardware via llama-cpp-python. No API keys.
-- **Library API** — Embed the engine in your own application with `LibraryConfig`
+- **Fully Local** — All inference on your hardware via llama.cpp. No API keys.
+- **C Library** — `librentropic.so` with pure C API, usable from any language
+- **Python Wrapper** — Auto-generated ctypes bindings from `entropic.h`
 - **Identity System** — 11 bundled identities with role-specific tools and behavior
 - **Delegation** — Lead delegates to specialized roles via pipeline or direct delegation
-- **Single-GPU Orchestration** — Dynamic model swapping with VRAM-aware loading
-- **VRAM Lifecycle** — Three-state model lifecycle (COLD→WARM→ACTIVE)
-- **Per-Model Adapters** — Model-specific chat templates, tool parsing, thinking block handling
+- **MCP Tool Servers** — Filesystem, bash, diagnostics, git, web as plugin `.so` files
+- **Runtime MCP** — External MCP servers via stdio/SSE transport
+- **Plugin Architecture** — Custom MCP servers as standalone `.so` plugins
+- **CUDA/Vulkan/CPU** — Compile-time inference backend selection
 - **Auto-Compaction** — Context summarization for long conversations
-- **MCP Tools** — Filesystem, bash, diagnostics, git, web, and extensible tool servers
-- **Runtime MCP** — `.mcp.json` auto-discovered at startup
-- **Benchmark CLI** — Performance and quality benchmarks via `entropic benchmark run`
-- **Headless Mode** — Full engine without TUI for automation and testing
-- **TUI** — Terminal interface built on Textual with streaming and tool approval
+- **Streaming** — First-class streaming API with cancel token
 
 ## CLI
 
 ```bash
-entropic                # Interactive TUI
-entropic --headless         # Headless mode (automation/testing)
-entropic status             # Show model and system status
-entropic ask "question"     # Single-shot question
+entropic ask "question"     # Single-shot question (streaming)
+entropic status             # Show engine version and model status
 entropic init               # Initialize .entropic/ in current directory
 entropic download <model>   # Download model (primary, mid, lightweight, router, all)
-entropic setup-cuda         # Build llama-cpp-python with CUDA
-entropic benchmark run      # Run performance + quality benchmarks
-entropic benchmark list     # List identities with benchmark definitions
-entropic mcp-bridge         # Stdio→socket bridge for Claude Code integration
+entropic benchmark run      # Run inference benchmarks
 ```
 
 ## Configuration
 
 Configuration loads in priority order (highest wins):
 
-1. Built-in defaults (references `bundled_models.yaml` keys)
+1. Compiled defaults
 2. Global config (`~/.entropic/config.yaml`)
 3. Project config (`.entropic/config.local.yaml`)
-4. CLI arguments
-
-The `path` field in tier config accepts either a `bundled_models.yaml` key
-(e.g., `primary`) or a direct path to a GGUF file.
+4. Environment variables (`ENTROPIC_*`)
 
 Project context is provided via `.entropic/ENTROPIC.md` — a markdown file
 describing the project that gets included in the system prompt.
-
-## Library Usage
-
-See `examples/` for complete integrations (`hello-world/`, `pychess/`).
 
 ## Privacy
 

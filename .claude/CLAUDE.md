@@ -79,7 +79,7 @@ No model tests in pre-commit — too slow, GPU-dependent.
 - Global: `~/.entropic/config.yaml`
 - Project: `.entropic/config.local.yaml`
 - Context: `.entropic/ENTROPIC.md`
-- Model registry: `src/entropic/data/bundled_models.yaml`
+- Model registry: `python/entropic/data/bundled_models.yaml`
 - `path:` resolves bundled model keys (e.g., `primary` → IQ3_XXS path)
 
 ## Session Protocol (MANDATORY — every session)
@@ -117,6 +117,6 @@ Files to be cleaned up (by user, when replaced):
 - `vendor/personaplex/` — moves with TUI at v1.7.2
 - `test-manual/` — session artifacts
 - `scripts/` — Python-specific (except model test scripts while Python engine lives)
-- `src/entropic/` — entire Python engine at v1.9.15
+- `src/entropic/` — DELETED in v1.9.15
 - `benchmark/results/` — re-run on C++ engine
 - `examples/` — rewritten for C API at v1.9.15

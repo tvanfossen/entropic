@@ -492,7 +492,7 @@ def generate_wrapper(api: ParsedAPI, lib_name: str = "librentropic.so") -> str:
         _gen_engine_class(),
         _gen_generation_result(),
     ]
-    return "\n".join(sections)
+    return "\n".join(sections) + "\n"
 
 
 def _gen_header(lib_name: str) -> str:
@@ -689,7 +689,7 @@ def _gen_function_bindings(functions: list[FuncDecl]) -> str:
         "# ── Function Bindings ────────────────────────────────",
         "",
         "",
-        "def _setup_bindings(lib: ctypes.CDLL) -> None:",
+        "def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated",
         '    """Configure argtypes and restype for all C API functions.',
         "",
         "    @brief Set ctypes type signatures for all exported functions.",

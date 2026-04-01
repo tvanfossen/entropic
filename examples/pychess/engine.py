@@ -1,114 +1,57 @@
-"""Engine wiring — connects entropic orchestrator, server manager, and agent engine.
+"""Engine wiring — connects entropic wrapper to chess game loop.
 
-Two-tier chess engine: thinker analyzes → auto-chain → executor plays.
-Same .gguf, zero VRAM swap.
+Thin wrapper around EntropicEngine. The chess MCP server runs as an
+external stdio process registered in the engine's config.
+
+@brief EntropicEngine wrapper for pychess. No async, no Python engine.
+@version 2
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import sys
 from dataclasses import dataclass
-from typing import IO
+from pathlib import Path
 
 import chess
-from chess_server import ChessServer, board_to_pieces
-from config import EXAMPLE_ROOT, load_config
-from entropic import (
-    AgentEngine,
-    EngineCallbacks,
-    LoopConfig,
-    ModelOrchestrator,
-    ServerManager,
-    setup_logging,
-    setup_model_logger,
-)
+from chess_server import board_to_pieces
+from entropic import EntropicEngine
 
 logger = logging.getLogger(__name__)
+
+EXAMPLE_ROOT = Path(__file__).resolve().parent
 
 
 @dataclass
 class ChessEngine:
-    """Wired entropic components for chess play."""
+    """Wired entropic components for chess play.
 
-    orchestrator: ModelOrchestrator
-    server_manager: ServerManager
-    agent_engine: AgentEngine
-    chess_server: ChessServer
-    _stream_file: IO[str] | None = None
-
-
-async def create_engine() -> ChessEngine:
-    """Wire up entropic from config + single player tier + chess server.
-
-    Returns:
-        Fully initialized ChessEngine.
+    @brief Holds EntropicEngine handle and shared board state.
+    @version 2
     """
-    config = load_config()
 
-    # Logging: session.log and session_model.log in .pychess/
-    setup_logging(config, project_dir=EXAMPLE_ROOT, app_dir_name=".pychess")
-    setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".pychess")
+    engine: EntropicEngine
+    board: chess.Board
 
-    # Orchestrator: manages model loading for the player tier.
-    orchestrator = ModelOrchestrator(config)
-    await orchestrator.initialize()
 
-    # MCP server: ChessServer exposes make_move tool.
-    # register_server() must be called BEFORE server_manager.initialize().
-    chess_server = ChessServer()
-    server_manager = ServerManager(config, tier_names=orchestrator.tier_names)
-    server_manager.register_server(chess_server)
-    await server_manager.initialize()
+def create_engine() -> ChessEngine:
+    """Create and configure the engine from local config.
 
-    # Agent engine: agentic loop that generates and executes tool calls.
-    loop_config = LoopConfig(auto_approve_tools=True, max_iterations=5)
-    agent_engine = AgentEngine(orchestrator, server_manager, config, loop_config)
-
-    # Wire callbacks: stream to dedicated file
-    stream_path = EXAMPLE_ROOT / ".pychess" / "session_stream.log"
-    stream_path.parent.mkdir(parents=True, exist_ok=True)
-    stream_file = stream_path.open("w")
-
-    col = 0
-    wrap_at = 100
-
-    def _write_stream_chunk(chunk: str) -> None:
-        nonlocal col
-        for ch in chunk:
-            if ch == "\n":
-                stream_file.write(ch)
-                col = 0
-            elif col >= wrap_at and ch == " ":
-                stream_file.write("\n")
-                col = 0
-            else:
-                stream_file.write(ch)
-                col += 1
-        stream_file.flush()
-
-    callbacks = EngineCallbacks(
-        on_stream_chunk=_write_stream_chunk,
-        on_tier_selected=lambda tier: logger.info("[TIER] %s", tier),
-    )
-    agent_engine.set_callbacks(callbacks)
-
-    return ChessEngine(
-        orchestrator=orchestrator,
-        server_manager=server_manager,
-        agent_engine=agent_engine,
-        chess_server=chess_server,
-        _stream_file=stream_file,
-    )
+    @brief Instantiate EntropicEngine with pychess config.
+    @version 2
+    """
+    config_path = EXAMPLE_ROOT / "data" / "default_config.yaml"
+    engine = EntropicEngine(config_path=str(config_path))
+    return ChessEngine(engine=engine, board=chess.Board())
 
 
 def _annotate_move_history(board: chess.Board) -> str:
     """Replay moves from the start and annotate each with piece name and color.
 
-    Returns a string like::
-
-        1. White pawn e2e4, Black pawn d7d5
-        2. White pawn e4d5, Black queen d8d7
+    @brief Build annotated move history string.
+    @version 1
     """
     replay = chess.Board()
     entries: list[str] = []
@@ -119,7 +62,6 @@ def _annotate_move_history(board: chess.Board) -> str:
         entries.append(f"{color} {name} {move.uci()}")
         replay.push(move)
 
-    # Group into full-move pairs: "1. White ... , Black ..."
     lines: list[str] = []
     for i in range(0, len(entries), 2):
         move_num = (i // 2) + 1
@@ -131,9 +73,8 @@ def _annotate_move_history(board: chess.Board) -> str:
 def _build_board_context(board: chess.Board) -> str:
     """Format current board state for the system prompt.
 
-    Includes board format legend so identity prompts stay role-focused.
-    Uses per-piece representation grouped by ownership so the model
-    never has to infer piece type or color from notation.
+    @brief Build JSON board representation for engine context.
+    @version 1
     """
     pieces_json = json.dumps(board_to_pieces(board), separators=(",", ":"))
 
@@ -160,36 +101,38 @@ def _build_board_context(board: chess.Board) -> str:
     return "\n".join(lines)
 
 
-async def get_ai_move(engine: ChessEngine) -> str | None:
+def get_ai_move(chess_engine: ChessEngine) -> str | None:
     """Run the agentic loop — LLM analyzes the position and plays a move.
 
-    Single generation: the player tier calls get_board, picks a move,
-    and calls make_move.
-
-    Returns:
-        UCI string of the move played, or None if the AI failed to move.
+    @brief Single synchronous generation: analyze + play via C engine.
+    @version 2
     """
-    ply_before = len(engine.chess_server.board.move_stack)
-    board_context = _build_board_context(engine.chess_server.board)
+    ply_before = len(chess_engine.board.move_stack)
+    board_context = _build_board_context(chess_engine.board)
+    prompt = f"{board_context}\n\nIt's your turn (Black). Analyze the position and play your move."
 
-    prompt = "It's your turn (Black). Analyze the position and play your move."
+    def on_token(tok: str) -> None:
+        """Stream tokens to log file.
 
-    async for msg in engine.agent_engine.run(prompt, system_prompt=board_context):
-        logger.debug("Engine message: role=%s content=%s", msg.role, msg.content[:80])
-        if len(engine.chess_server.board.move_stack) > ply_before:
-            break
+        @brief Forward streaming tokens to stderr for debugging.
+        @version 1
+        """
+        sys.stderr.write(tok)
+        sys.stderr.flush()
 
-    # Check if a new move was actually made
-    if len(engine.chess_server.board.move_stack) > ply_before:
-        return engine.chess_server.board.move_stack[-1].uci()
+    chess_engine.engine.run_streaming(prompt, on_token=on_token)
+
+    if len(chess_engine.board.move_stack) > ply_before:
+        return chess_engine.board.move_stack[-1].uci()
 
     logger.warning("AI did not make a move (ply unchanged: %d)", ply_before)
     return None
 
 
-async def shutdown(engine: ChessEngine) -> None:
-    """Clean shutdown of entropic components."""
-    if engine._stream_file:
-        engine._stream_file.close()
-    await engine.server_manager.shutdown()
-    await engine.orchestrator.shutdown()
+def shutdown(chess_engine: ChessEngine) -> None:
+    """Clean shutdown of entropic engine.
+
+    @brief Destroy the C engine handle.
+    @version 2
+    """
+    chess_engine.engine.destroy()

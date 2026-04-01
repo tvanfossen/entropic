@@ -187,7 +187,7 @@ target_include_directories(entropic-mcp-tests PRIVATE
 
 # Pass source-tree data dir for tool JSON resolution in tests
 target_compile_definitions(entropic-mcp-tests PRIVATE
-    TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/src/entropic/data"
+    TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/python/entropic/data"
 )
 
 target_link_libraries(entropic-mcp-tests PRIVATE

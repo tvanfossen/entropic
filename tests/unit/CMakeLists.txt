@@ -17,8 +17,14 @@ add_executable(entropic-config-tests
     config/bundled_models_test.cpp
     config/validate_test.cpp
     config/loader_test.cpp
+    config/yaml_util_test.cpp
+    config/env_overrides_test.cpp
     prompts/prompt_parse_test.cpp
     prompts/classification_prompt_test.cpp
+)
+
+target_include_directories(entropic-config-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/config
 )
 
 target_link_libraries(entropic-config-tests PRIVATE
@@ -138,6 +144,7 @@ add_executable(entropic-core-tests
     core/hook_registry_test.cpp
     core/constitutional_validator_test.cpp
     core/validation_hook_test.cpp
+    core/response_generator_test.cpp
 )
 
 target_include_directories(entropic-core-tests PRIVATE

@@ -336,7 +336,15 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - CI gates: no merge without passing tests
 - Release readiness checklist
 
-## v1.10.2 — Doxygen Traceability & Full Documentation Review
+## v1.10.2 — C++ Model Test Suite
+
+- Port 42 Python model tests to C++ in tests/model/
+- Classification, generation quality, grammar, delegation tests
+- Performance benchmarks (tok/s, engine overhead, memory)
+- GPU-required, developer-run, results checked in
+- Interactive — thresholds and enabled tests tuned hands-on
+
+## v1.10.3 — Doxygen Traceability & Full Documentation Review
 
 - Complete review and implementation of latest doxygen-guard revision
 - Full documentation review: every function in the codebase, not just public API

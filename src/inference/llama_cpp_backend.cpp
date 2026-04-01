@@ -16,7 +16,9 @@
 
 #include <entropic/types/logging.h>
 
+#include <cmath>
 #include <cstring>
+#include <stdexcept>
 
 namespace entropic {
 
@@ -271,6 +273,79 @@ std::string LlamaCppBackend::detokenize(llama_token token) const {
 int LlamaCppBackend::do_count_tokens(const std::string& text) const {
     auto tokens = tokenize(text, false);
     return static_cast<int>(tokens.size());
+}
+
+// ── Evaluation (v1.9.10) ──────────────────────────────────
+
+/**
+ * @brief Evaluate per-token log-probabilities (stub).
+ *
+ * Full implementation will use llama_decode with logits_all=true
+ * on a temporary seq_id. Stubbed until Phase 3 wiring.
+ *
+ * @param tokens Token IDs to evaluate.
+ * @param n_tokens Number of tokens.
+ * @return LogprobResult — stub throws not-implemented.
+ * @internal
+ * @version 1.9.10
+ */
+LogprobResult LlamaCppBackend::do_evaluate_logprobs(
+    const int32_t* /*tokens*/,
+    int /*n_tokens*/)
+{
+    throw std::runtime_error(
+        "LlamaCppBackend::do_evaluate_logprobs not yet implemented");
+}
+
+/**
+ * @brief Allocate a temporary sequence ID for evaluation (stub).
+ * @return -1 — not yet implemented.
+ * @internal
+ * @version 1.9.10
+ */
+llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
+    return -1;
+}
+
+/**
+ * @brief Release a temporary sequence ID (stub).
+ * @param seq_id The seq_id to release.
+ * @internal
+ * @version 1.9.10
+ */
+void LlamaCppBackend::release_temp_seq_id(llama_seq_id /*seq_id*/) {
+}
+
+/**
+ * @brief Extract log-probability for a token from logits.
+ *
+ * Uses numerically stable log-softmax:
+ *   log P(t) = logits[t] - max - log(sum(exp(logits - max)))
+ *
+ * @param logits Raw logits array.
+ * @param next_token Token to score.
+ * @param n_vocab Vocabulary size.
+ * @return log P(next_token | context).
+ * @internal
+ * @version 1.9.10
+ */
+float LlamaCppBackend::extract_token_logprob(
+    const float* logits,
+    int32_t next_token,
+    int n_vocab)
+{
+    float max_logit = logits[0];
+    for (int v = 1; v < n_vocab; v++) {
+        if (logits[v] > max_logit) {
+            max_logit = logits[v];
+        }
+    }
+    float sum_exp = 0.0f;
+    for (int v = 0; v < n_vocab; v++) {
+        sum_exp += std::exp(logits[v] - max_logit);
+    }
+    float log_sum_exp = max_logit + std::log(sum_exp);
+    return logits[next_token] - log_sum_exp;
 }
 
 // ── Chat template ──────────────────────────────────────────

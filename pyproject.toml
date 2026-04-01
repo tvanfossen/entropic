@@ -77,7 +77,7 @@ disallow_untyped_calls = false
 disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
-module = ["entropic.cli", "entropic.cli_download", "entropic.cli_setup_cuda"]
+module = ["entropic.cli", "entropic.cli_download"]
 disallow_untyped_decorators = false
 
 [tool.pytest.ini_options]

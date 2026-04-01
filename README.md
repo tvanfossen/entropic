@@ -150,7 +150,6 @@ entropic ask "question"     # Single-shot question (streaming)
 entropic status             # Show engine version and model status
 entropic init               # Initialize .entropic/ in current directory
 entropic download <model>   # Download model (primary, mid, lightweight, router, all)
-entropic setup-cuda         # Build llama-cpp-python with CUDA
 entropic benchmark run      # Run inference benchmarks
 ```
 

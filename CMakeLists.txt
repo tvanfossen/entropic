@@ -77,7 +77,7 @@ set(ENTROPIC_API_VERSION 1 CACHE STRING "C API version integer")
 set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"
     CACHE PATH "Install path for bundled data files")
 # Source tree data dir for development builds (tools, prompts, grammars)
-set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/entropic/data"
+set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/python/entropic/data"
     CACHE PATH "Source tree path to bundled data files")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/entropic/entropic_config.h.in"

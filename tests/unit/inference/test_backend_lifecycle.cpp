@@ -87,6 +87,18 @@ protected:
     int do_count_tokens(const std::string& text) const override {
         return static_cast<int>(text.size()) / 4;
     }
+
+    entropic::LogprobResult do_evaluate_logprobs(
+        const int32_t* tokens,
+        int n_tokens) override
+    {
+        entropic::LogprobResult r;
+        r.tokens.assign(tokens, tokens + n_tokens);
+        r.n_tokens = n_tokens;
+        r.n_logprobs = n_tokens - 1;
+        r.logprobs.resize(static_cast<size_t>(n_tokens - 1), -0.5f);
+        return r;
+    }
 };
 
 /**

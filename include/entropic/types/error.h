@@ -73,6 +73,9 @@ typedef enum {
     ENTROPIC_ERROR_TIME_LIMIT_EXCEEDED,      ///< Generation terminated by time cap (v1.9.7)
     ENTROPIC_ERROR_VALIDATION_FAILED,        ///< Critique generation failed — infrastructure, not content (v1.9.8)
     ENTROPIC_ERROR_COMPACTION_FAILED,        ///< Custom compactor returned non-zero and default fallback also failed (v1.9.9)
+    ENTROPIC_ERROR_MODEL_NOT_ACTIVE,         ///< Model exists but not in ACTIVE state (v1.9.10)
+    ENTROPIC_ERROR_EVAL_CONTEXT_FULL,        ///< Sequence exceeds model context window (v1.9.10)
+    ENTROPIC_ERROR_EVAL_FAILED,              ///< Evaluation failed (llama_decode error) (v1.9.10)
 } entropic_error_t;
 
 /**

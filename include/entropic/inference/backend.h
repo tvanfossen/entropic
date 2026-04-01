@@ -4,7 +4,8 @@
  *
  * Owns: lifecycle state machine, transition mutex, metrics, logging.
  * Subclasses override: do_load, do_activate, do_deactivate, do_unload,
- * do_generate, do_generate_streaming, do_complete, do_count_tokens.
+ * do_generate, do_generate_streaming, do_complete, do_count_tokens,
+ * do_evaluate_logprobs.
  *
  * @par Thread safety
  * - state() is lock-free (std::atomic<ModelState>)
@@ -12,6 +13,8 @@
  * - generate/generate_streaming/complete require ACTIVE state,
  *   do NOT acquire transition_mutex_ (generation is concurrent with
  *   state queries, but not with state transitions)
+ * - evaluate_logprobs acquires eval_mutex_ (separate from transition
+ *   and generation — evaluation can run concurrently with generation)
  *
  * @par State machine
  * @code
@@ -22,17 +25,19 @@
  *
  * Internal to inference .so — not exposed across boundaries.
  *
- * @version 1.8.2
+ * @version 1.9.10
  */
 
 #pragma once
 
 #include <entropic/types/config.h>
 #include <entropic/types/generation_result.h>
+#include <entropic/types/logprob_result.h>
 #include <entropic/types/message.h>
 #include <entropic/interfaces/i_hook_handler.h>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -138,6 +143,42 @@ public:
         const std::string& prompt,
         const GenerationParams& params);
 
+    /* ── Evaluation (require ACTIVE state) ─────────────── */
+
+    /**
+     * @brief Evaluate per-token log-probabilities for a token sequence.
+     * @param tokens Array of token IDs to evaluate.
+     * @param n_tokens Number of tokens in the array (minimum 2).
+     * @return LogprobResult with per-token logprobs and perplexity.
+     * @throws std::runtime_error if model is not ACTIVE.
+     * @throws std::runtime_error if n_tokens < 2.
+     *
+     * @par Thread safety
+     * Serialized by eval_mutex_. Does not block generation.
+     * Uses a temporary KV cache sequence ID — no mutation of
+     * generation state.
+     *
+     * @version 1.9.10
+     */
+    LogprobResult evaluate_logprobs(
+        const int32_t* tokens,
+        int n_tokens);
+
+    /**
+     * @brief Compute perplexity for a token sequence.
+     * @param tokens Array of token IDs.
+     * @param n_tokens Number of tokens (minimum 2).
+     * @return Perplexity as exp(-mean(logprobs)).
+     *
+     * Convenience method — calls evaluate_logprobs() and returns
+     * only the perplexity value.
+     *
+     * @version 1.9.10
+     */
+    float compute_perplexity(
+        const int32_t* tokens,
+        int n_tokens);
+
     /* ── Queries (lock-free) ─────────────────────────────── */
 
     /**
@@ -238,6 +279,25 @@ protected:
      */
     virtual int do_count_tokens(const std::string& text) const = 0;
 
+    /**
+     * @brief Backend-specific logprob evaluation.
+     * @param tokens Token IDs to evaluate.
+     * @param n_tokens Number of tokens.
+     * @return LogprobResult with per-token logprobs (N-1 values).
+     *
+     * Called by evaluate_logprobs() after state validation and
+     * eval_mutex_ acquisition. The base class handles state
+     * assertion, minimum token count validation, mutex, perplexity
+     * computation from logprobs, and logging. The implementation
+     * handles batch allocation, decode calls, logit extraction,
+     * and temporary seq_id lifecycle.
+     *
+     * @version 1.9.10
+     */
+    virtual LogprobResult do_evaluate_logprobs(
+        const int32_t* tokens,
+        int n_tokens) = 0;
+
     std::string last_error_;  ///< Last error message for diagnostics
 
     /**
@@ -259,6 +319,7 @@ private:
     std::atomic<ModelState> state_{ModelState::COLD};
     ModelConfig config_;
     std::mutex transition_mutex_;  ///< Guards state TRANSITIONS only
+    std::mutex eval_mutex_;        ///< Guards evaluation calls (separate from generation) (v1.9.10)
     HookInterface hooks_;          ///< Hook dispatch (v1.9.1)
 };
 

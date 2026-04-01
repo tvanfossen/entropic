@@ -6,14 +6,16 @@
  * methods handle state validation, locking, timing, and logging.
  * Subclass do_* methods provide the 20% backend-specific logic.
  *
- * @version 1.8.2
+ * @version 1.9.10
  */
 
 #include <entropic/inference/backend.h>
 #include <entropic/types/logging.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
+#include <stdexcept>
 #include <string>
 
 namespace entropic {
@@ -276,6 +278,81 @@ GenerationResult InferenceBackend::complete(
     auto result = do_complete(prompt, params);
     result.generation_time_ms = elapsed_ms(start, now());
     return result;
+}
+
+// ── Evaluation (v1.9.10) ───────────────────────────────────
+
+/**
+ * @brief Evaluate per-token log-probabilities. Requires ACTIVE state.
+ *
+ * The 80% logic: state check, input validation, eval_mutex_,
+ * perplexity computation from raw logprobs, and logging. Delegates
+ * to do_evaluate_logprobs() for backend-specific batch/decode work.
+ *
+ * @param tokens Array of token IDs.
+ * @param n_tokens Number of tokens (minimum 2).
+ * @return LogprobResult with per-token logprobs and perplexity.
+ * @throws std::runtime_error on state/input errors.
+ * @internal
+ * @version 1.9.10
+ */
+LogprobResult InferenceBackend::evaluate_logprobs(
+    const int32_t* tokens,
+    int n_tokens)
+{
+    if (!is_active()) {
+        logger->error("evaluate_logprobs: model not ACTIVE (state={})",
+                      state_name(state()));
+        throw std::runtime_error("Model must be ACTIVE for evaluation");
+    }
+
+    if (n_tokens < 2) {
+        logger->error("evaluate_logprobs: need >= 2 tokens, got {}",
+                      n_tokens);
+        throw std::runtime_error(
+            "Need at least 2 tokens for logprob evaluation");
+    }
+
+    std::lock_guard<std::mutex> lock(eval_mutex_);
+
+    logger->info("evaluate_logprobs: evaluating {} tokens", n_tokens);
+    auto start = now();
+
+    LogprobResult result = do_evaluate_logprobs(tokens, n_tokens);
+
+    result.total_logprob = 0.0f;
+    for (float lp : result.logprobs) {
+        result.total_logprob += lp;
+    }
+    float mean_lp = result.total_logprob /
+        static_cast<float>(result.n_logprobs);
+    result.perplexity = std::exp(-mean_lp);
+
+    logger->info("evaluate_logprobs: {} tokens, perplexity={:.2f}, "
+                 "{:.2f}ms",
+                 n_tokens, result.perplexity,
+                 elapsed_ms(start, now()));
+
+    return result;
+}
+
+/**
+ * @brief Compute perplexity for a token sequence.
+ *
+ * Convenience wrapper — calls evaluate_logprobs() and returns
+ * only the perplexity value.
+ *
+ * @param tokens Array of token IDs.
+ * @param n_tokens Number of tokens (minimum 2).
+ * @return Perplexity as exp(-mean(logprobs)).
+ * @internal
+ * @version 1.9.10
+ */
+float InferenceBackend::compute_perplexity(
+    const int32_t* tokens,
+    int n_tokens)
+{
+    return evaluate_logprobs(tokens, n_tokens).perplexity;
 }
 
 // ── Hook helpers (v1.9.1) ──────────────────────────────────

@@ -27,7 +27,7 @@ namespace {
  * token transition. This gives predictable perplexity values
  * for verification.
  *
- * @version 1.9.10
+ * @version 1.9.13
  */
 class LogprobMockBackend : public entropic::InferenceBackend {
 public:
@@ -36,6 +36,8 @@ public:
     float scripted_logprob = -0.5f;  ///< Logprob value per transition
 
 protected:
+    std::string do_backend_name() const override { return "logprob_mock"; }
+
     bool do_load(const entropic::ModelConfig& /*cfg*/) override {
         return true;
     }

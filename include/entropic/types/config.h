@@ -171,6 +171,16 @@ struct ModelConfig {
     /// inference. Empty (default) = text-only model.
     /// @version 1.9.11
     std::filesystem::path mmproj_path;
+
+    /* ── Model format (v1.9.13) ───────────────────────── */
+
+    /// @brief Expected model format.
+    /// "gguf" (default), "axmodel", "onnx", or empty (auto-detect).
+    /// The backend validates that the file matches the expected format
+    /// during load(). Mismatch returns ENTROPIC_ERROR_LOAD_FAILED with
+    /// a diagnostic message identifying the actual format.
+    /// @version 1.9.13
+    std::string model_format = "gguf";
 };
 
 /**

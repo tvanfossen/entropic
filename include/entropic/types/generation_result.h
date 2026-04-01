@@ -56,6 +56,14 @@ struct GenerationResult {
     /// @version 1.9.7
     int original_max_tokens = 0;
 
+    /* ── v1.9.13: Multi-sequence tracking ── */
+
+    /// @brief Sequence identifier for multi-sequence backends.
+    /// 0 for single-sequence backends (default). Set by generate_seq()
+    /// to track which sequence produced this result.
+    /// @version 1.9.13
+    int seq_id = 0;
+
     /* ── Error state (for partial results on failure) ── */
     entropic_error_t error_code = ENTROPIC_OK; ///< Error code (ENTROPIC_OK if no error)
     std::string error_message;              ///< Error description (empty if no error)

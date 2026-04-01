@@ -334,7 +334,15 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Coverage targets established
 - Regression suite from manual test findings (test1-test6 patterns)
 - CI gates: no merge without passing tests
-- Doxygen-driven test discovery operational
+- `@req` enforcement promoted to ERROR (depends on v1.10.2)
+
+## v1.10.2 — Doxygen Traceability & Full Documentation Review
+
+- Complete review and implementation of latest doxygen-guard revision
+- Full documentation review: every function in the codebase, not just public API
+- `@req REQ-xxx` tags on all public functions (entropic.h + interfaces)
+- doxygen-guard impact analysis integrated into select_tests.py (if available)
+- Depends on: doxygen-guard stable release
 
 ---
 

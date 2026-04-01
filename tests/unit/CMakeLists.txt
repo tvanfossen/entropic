@@ -2,6 +2,8 @@ add_executable(entropic-tests
     test_error.cpp
     test_config_structs.cpp
     test_logging.cpp
+    types/test_content.cpp
+    types/test_message_multimodal.cpp
 )
 
 target_link_libraries(entropic-tests PRIVATE
@@ -44,6 +46,8 @@ add_executable(entropic-inference-tests
     inference/test_generation_params.cpp
     inference/test_prompt_cache.cpp
     inference/test_logprob_evaluation.cpp
+    inference/test_vision_adapter.cpp
+    inference/test_image_preprocessor.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE
@@ -56,6 +60,11 @@ target_link_libraries(entropic-inference-tests PRIVATE
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     Catch2::Catch2WithMain
+)
+
+# v1.9.11: Test data directory for image preprocessor tests
+target_compile_definitions(entropic-inference-tests PRIVATE
+    TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
 )
 
 # v1.9.2: Adapter manager tests (uses mock llama.cpp adapter symbols)

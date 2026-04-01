@@ -1,0 +1,84 @@
+# Valgrind suppression file for entropic engine
+# v1.9.14 — Hardening
+#
+# Every suppression must have a justification comment.
+# Suppressions are reviewed — never add blindly.
+#
+# Usage:
+#   valgrind --leak-check=full --show-leak-kinds=all \
+#            --suppressions=tests/valgrind.supp ./entropic-tests
+
+# ── CUDA driver allocations ──────────────────────────────
+# CUDA runtime allocates driver state on first GPU call.
+# Freed at process exit, not by explicit free(). This is
+# expected behavior, not a leak.
+{
+    cuda_driver_init
+    Memcheck:Leak
+    match-leak-kinds: possible
+    fun:malloc
+    ...
+    obj:*/libcuda.so*
+}
+
+{
+    cuda_driver_context
+    Memcheck:Leak
+    match-leak-kinds: possible
+    fun:calloc
+    ...
+    obj:*/libcuda.so*
+}
+
+# ── CUDA runtime allocations ────────────────────────────
+# cudaRT maintains internal state that persists until
+# process termination. Not actionable.
+{
+    cuda_runtime_init
+    Memcheck:Leak
+    match-leak-kinds: possible
+    fun:malloc
+    ...
+    obj:*/libcudart.so*
+}
+
+# ── llama.cpp ggml allocations ──────────────────────────
+# ggml's memory pool is allocated once per model load and
+# freed on model unload. Valgrind may flag the pool as
+# "possibly lost" if the destructor chain hasn't run at
+# the point Valgrind checks (e.g., during abnormal exit).
+# Normal shutdown frees these via llama_model_free().
+{
+    ggml_compute_buffer
+    Memcheck:Leak
+    match-leak-kinds: possible
+    fun:malloc
+    ...
+    fun:ggml_backend_alloc_buffer
+}
+
+# ── dlopen/dlsym bookkeeping ────────────────────────────
+# Dynamic linker allocates metadata for loaded .so files.
+# Freed on dlclose() or process exit. Expected for plugin
+# architecture that loads MCP server .so files.
+{
+    dlopen_metadata
+    Memcheck:Leak
+    match-leak-kinds: reachable
+    fun:malloc
+    ...
+    fun:dlopen*
+}
+
+# ── spdlog static registry ──────────────────────────────
+# spdlog maintains a static logger registry that persists
+# for the process lifetime. Freed at static destruction,
+# which may happen after Valgrind's final leak check.
+{
+    spdlog_registry
+    Memcheck:Leak
+    match-leak-kinds: reachable
+    fun:*operator new*
+    ...
+    fun:*spdlog*registry*
+}

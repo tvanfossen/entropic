@@ -115,11 +115,37 @@ std::string serialize_result_json(const entropic::GenerationResult& result) {
 }
 
 /**
+ * @brief Parse a single content part from a JSON object.
+ * @param part JSON object with "type" and content fields.
+ * @return Parsed ContentPart.
+ * @internal
+ * @version 1.9.11
+ */
+entropic::ContentPart parse_content_part(const nlohmann::json& part) {
+    entropic::ContentPart cp;
+    auto type_str = part.value("type", "text");
+    if (type_str == "image") {
+        cp.type = entropic::ContentPartType::IMAGE;
+        cp.image_path = part.value("path", "");
+        cp.image_url = part.value("url", "");
+    } else {
+        cp.type = entropic::ContentPartType::TEXT;
+        cp.text = part.value("text", "");
+    }
+    return cp;
+}
+
+/**
  * @brief Parse messages from JSON array string.
+ *
+ * Handles both string content and array content (multimodal).
+ * When content is an array, populates content_parts and sets
+ * content = extract_text(content_parts).
+ *
  * @param json_str JSON array of message objects.
  * @return Vector of Message structs.
  * @internal
- * @version 1.8.2
+ * @version 1.9.11
  */
 std::vector<entropic::Message> parse_messages_json(const char* json_str) {
     std::vector<entropic::Message> messages;
@@ -127,7 +153,14 @@ std::vector<entropic::Message> parse_messages_json(const char* json_str) {
     for (const auto& m : arr) {
         entropic::Message msg;
         msg.role = m.value("role", "user");
-        msg.content = m.value("content", "");
+        if (m.contains("content") && m["content"].is_array()) {
+            for (const auto& part : m["content"]) {
+                msg.content_parts.push_back(parse_content_part(part));
+            }
+            msg.content = entropic::extract_text(msg.content_parts);
+        } else {
+            msg.content = m.value("content", "");
+        }
         messages.push_back(std::move(msg));
     }
     return messages;

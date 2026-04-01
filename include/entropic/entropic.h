@@ -1396,6 +1396,25 @@ ENTROPIC_EXPORT entropic_error_t entropic_validation_set_identity(
 ENTROPIC_EXPORT char* entropic_validation_last_result(
     entropic_handle_t handle);
 
+/* ── Vision / Multimodal (v1.9.11) ────────────────────── */
+
+/**
+ * @brief Check if a model has vision capability.
+ *
+ * Returns 1 when the specified model has an mmproj loaded (vision
+ * encoder active). Returns 0 for text-only models or unknown model_id.
+ *
+ * @param handle Engine handle.
+ * @param model_id Model identifier (tier name, e.g. "primary").
+ * @return 1 if vision-capable (mmproj loaded), 0 if text-only.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.11
+ */
+ENTROPIC_EXPORT int entropic_model_has_vision(
+    entropic_handle_t handle,
+    const char* model_id);
+
 #ifdef __cplusplus
 }
 #endif

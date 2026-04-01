@@ -69,6 +69,10 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_MODEL_NOT_ACTIVE",        // 41 (v1.9.10)
     "ENTROPIC_ERROR_EVAL_CONTEXT_FULL",       // 42 (v1.9.10)
     "ENTROPIC_ERROR_EVAL_FAILED",             // 43 (v1.9.10)
+    "ENTROPIC_ERROR_IMAGE_LOAD_FAILED",       // 44 (v1.9.11)
+    "ENTROPIC_ERROR_IMAGE_TOO_LARGE",         // 45 (v1.9.11)
+    "ENTROPIC_ERROR_MMPROJ_LOAD_FAILED",      // 46 (v1.9.11)
+    "ENTROPIC_ERROR_UNSUPPORTED_URL",         // 47 (v1.9.11)
 };
 
 static constexpr int s_error_count =

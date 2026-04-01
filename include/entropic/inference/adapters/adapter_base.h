@@ -179,6 +179,35 @@ protected:
     std::string tier_name_;          ///< Identity tier name
     std::string identity_prompt_;    ///< Assembled identity prompt
     mutable std::unordered_set<std::string> tool_prefixes_; ///< Known tool prefixes
+
+public:
+    /* ── Vision / multimodal (v1.9.11) ────────────────────── */
+
+    /**
+     * @brief Format system prompt with optional vision context.
+     * @param base_system Base system prompt text.
+     * @param has_vision Whether the model has vision capability.
+     * @return Formatted system prompt.
+     * @version 1.9.11
+     *
+     * Default implementation returns base_system unchanged.
+     * Vision-capable adapters override to append vision instructions.
+     */
+    virtual std::string format_system_with_vision(
+        const std::string& base_system,
+        bool has_vision) const;
+
+    /**
+     * @brief Convert multimodal content parts to adapter-specific format.
+     * @param parts Content parts from a message.
+     * @return JSON string in the format expected by the model's chat template.
+     * @version 1.9.11
+     *
+     * Default: OpenAI-format content array. Adapters override if the
+     * model expects a different image reference format.
+     */
+    virtual std::string format_content_parts(
+        const std::vector<ContentPart>& parts) const;
 };
 
 } // namespace entropic

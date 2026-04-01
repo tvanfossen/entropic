@@ -252,4 +252,43 @@ std::string Qwen35Adapter::clean_content(const std::string& content) const {
     return cleaned;
 }
 
+// ── Vision / multimodal (v1.9.11) ──────────────────────────
+
+/// @brief Vision instruction appended to system prompt.
+static constexpr const char* VISION_INSTRUCTION =
+    "\n\nYou can see and analyze images. When the user shares an "
+    "image, describe what you observe before responding to their "
+    "question.";
+
+/**
+ * @brief Qwen3.5 vision system prompt extension.
+ * @param base_system Base system prompt text.
+ * @param has_vision Whether the model has vision capability.
+ * @return System prompt, with vision instructions appended if active.
+ * @internal
+ * @version 1.9.11
+ */
+std::string Qwen35Adapter::format_system_with_vision(
+    const std::string& base_system,
+    bool has_vision) const {
+    if (!has_vision) {
+        return base_system;
+    }
+    return base_system + VISION_INSTRUCTION;
+}
+
+/**
+ * @brief Qwen3.5 content part formatting (OpenAI-native).
+ * @param parts Content parts from a message.
+ * @return JSON string in OpenAI content array format.
+ * @internal
+ * @version 1.9.11
+ */
+std::string Qwen35Adapter::format_content_parts(
+    const std::vector<ContentPart>& parts) const {
+    // Qwen3.5 uses OpenAI content array format natively —
+    // delegate to base class default.
+    return ChatAdapter::format_content_parts(parts);
+}
+
 } // namespace entropic

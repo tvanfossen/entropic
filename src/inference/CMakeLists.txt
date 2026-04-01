@@ -14,6 +14,7 @@ set(INFERENCE_SOURCES
     profile_registry.cpp
     throughput_tracker.cpp
     inference_c_api.cpp
+    image_preprocessor.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp
     adapters/qwen35_adapter.cpp
@@ -41,6 +42,7 @@ target_include_directories(${INFERENCE_LIB_NAME}
         $<INSTALL_INTERFACE:include>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
+        ${PROJECT_SOURCE_DIR}/extern/llama.cpp/vendor  # stb_image.h for image preprocessing
 )
 
 target_link_libraries(${INFERENCE_LIB_NAME}

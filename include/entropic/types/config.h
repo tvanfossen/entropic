@@ -163,6 +163,14 @@ struct ModelConfig {
 
     /* ── Tool filtering ────────────────────────────────── */
     std::optional<std::vector<std::string>> allowed_tools; ///< Tool whitelist (nullopt = all)
+
+    /* ── Vision / multimodal (v1.9.11) ────────────────── */
+
+    /// @brief Vision projector GGUF path. When non-empty, the backend
+    /// loads an mtmd_context alongside the base model for multimodal
+    /// inference. Empty (default) = text-only model.
+    /// @version 1.9.11
+    std::filesystem::path mmproj_path;
 };
 
 /**

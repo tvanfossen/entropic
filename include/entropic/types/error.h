@@ -76,6 +76,10 @@ typedef enum {
     ENTROPIC_ERROR_MODEL_NOT_ACTIVE,         ///< Model exists but not in ACTIVE state (v1.9.10)
     ENTROPIC_ERROR_EVAL_CONTEXT_FULL,        ///< Sequence exceeds model context window (v1.9.10)
     ENTROPIC_ERROR_EVAL_FAILED,              ///< Evaluation failed (llama_decode error) (v1.9.10)
+    ENTROPIC_ERROR_IMAGE_LOAD_FAILED,        ///< Image file could not be read or decoded (v1.9.11)
+    ENTROPIC_ERROR_IMAGE_TOO_LARGE,          ///< Image exceeds max_file_size (v1.9.11)
+    ENTROPIC_ERROR_MMPROJ_LOAD_FAILED,       ///< mmproj GGUF failed to load (v1.9.11)
+    ENTROPIC_ERROR_UNSUPPORTED_URL,          ///< Remote URL not supported — local file or data URI only (v1.9.11)
 } entropic_error_t;
 
 /**

@@ -1,6 +1,6 @@
 [project]
 name = "entropic-engine"
-version = "1.7.3"
+version = "1.9.15"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -8,12 +8,14 @@ requires-python = ">=3.10"
 authors = [
     {name = "Tristan VanFossen"}
 ]
-keywords = ["ai", "coding", "assistant", "llm", "local"]
+keywords = ["ai", "coding", "assistant", "llm", "local", "inference"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: C",
+    "Programming Language :: C++",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -21,29 +23,18 @@ classifiers = [
 ]
 
 dependencies = [
-    "llama-cpp-python>=0.2.0",
-    "mcp>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "pyyaml>=6.0.0",
     "click>=8.0.0",
-    "aiosqlite>=0.19.0",
     "httpx>=0.25.0",
+    "pyyaml>=6.0.0",
 ]
 
 [project.optional-dependencies]
-app = ["entropic-tui>=1.7.2"]  # Legacy alias — install entropic-tui for the TUI
 dev = [
     "pytest>=7.0.0",
-    "pytest-asyncio>=0.21.0",
-    "pytest-bdd>=7.0.0",
     "pytest-cov>=4.0.0",
     "mypy>=1.0.0",
-    "black>=23.0.0",
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
-    "types-pyyaml>=6.0.0",
-    "python-chess>=1.10.0",  # For grammar pipeline model tests (pychess example)
 ]
 
 [project.scripts]
@@ -54,14 +45,16 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["python"]
 
 [tool.setuptools.package-data]
-entropic = ["data/*.yaml", "data/prompts/*.md", "data/grammars/*.gbnf", "data/tools/**/*.json"]
-
-[tool.black]
-line-length = 100
-target-version = ["py311", "py312"]
+entropic = [
+    "lib/librentropic.so",
+    "data/*.yaml",
+    "data/prompts/*.md",
+    "data/grammars/*.gbnf",
+    "data/tools/**/*.json",
+]
 
 [tool.ruff]
 line-length = 100
@@ -87,22 +80,13 @@ disallow_incomplete_defs = false
 module = ["entropic.cli", "entropic.cli_download", "entropic.cli_setup_cuda"]
 disallow_untyped_decorators = false
 
-[[tool.mypy.overrides]]
-module = "entropic.mcp.servers.base"
-disallow_untyped_decorators = false
-
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
-# Markers for categorizing tests
 markers = [
     "unit: Fast tests without external dependencies",
-    "integration: Tests requiring external services (docker, etc)",
+    "integration: Tests requiring external services",
     "model: Tests requiring actual model inference (GPU recommended)",
     "slow: Tests that take a long time to run",
 ]
-# Run all tests by default including model tests
-# Skip model tests with: pytest -m "not model"
-# Run only model tests: pytest -m model

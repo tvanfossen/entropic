@@ -110,6 +110,50 @@ void entropic_mcp_server_destroy(entropic_mcp_server_t server);
  */
 void entropic_free(void* ptr);
 
+/**
+ * @brief Read-only engine state provider for introspection tools.
+ *
+ * Callback struct passed to EntropicServer for entropic.diagnose
+ * and entropic.inspect. Each callback returns a JSON string
+ * allocated with malloc/strdup. Caller must free with free().
+ *
+ * The facade implements these callbacks by querying the appropriate
+ * subsystem (config loader, prompt manager, server manager, etc.).
+ *
+ * @version 1.9.12
+ */
+typedef struct {
+    /** @brief Get current engine configuration as JSON. */
+    char* (*get_config)(void* user_data);
+
+    /** @brief Get loaded identities as JSON array. */
+    char* (*get_identities)(void* user_data);
+
+    /** @brief Get available tools as JSON array. */
+    char* (*get_tools)(void* user_data);
+
+    /**
+     * @brief Get recent tool call history as JSON array.
+     * @param max_entries Maximum entries to return (0 = all).
+     */
+    char* (*get_history)(int max_entries, void* user_data);
+
+    /** @brief Get engine state as JSON. */
+    char* (*get_state)(void* user_data);
+
+    /** @brief Get engine metrics as JSON. */
+    char* (*get_metrics)(void* user_data);
+
+    /**
+     * @brief Get bundled documentation as text.
+     * @param section Section name (NULL = full doc).
+     */
+    char* (*get_docs)(const char* section, void* user_data);
+
+    /** @brief Opaque user data passed to all callbacks. */
+    void* user_data;
+} entropic_state_provider_t;
+
 #ifdef __cplusplus
 }
 #endif

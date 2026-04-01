@@ -173,6 +173,10 @@ add_executable(entropic-mcp-tests
     mcp/test_mcp_key_set.cpp
     mcp/test_mcp_authorization.cpp
     mcp/test_tool_executor_authorization.cpp
+    # v1.9.12: Diagnose + self-inspection
+    mcp/test_tool_call_history.cpp
+    mcp/servers/test_diagnose.cpp
+    mcp/servers/test_inspect.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

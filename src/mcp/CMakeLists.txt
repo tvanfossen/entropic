@@ -12,6 +12,8 @@ target_sources(entropic-mcp PRIVATE
     # v1.9.4: MCP authorization
     mcp_key_set.cpp
     mcp_authorization.cpp
+    # v1.9.12: Tool call history ring buffer
+    tool_call_history.cpp
     # Built-in servers (compiled into mcp.so for now; individual .so later)
     servers/filesystem.cpp
     servers/bash.cpp

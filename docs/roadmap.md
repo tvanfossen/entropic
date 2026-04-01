@@ -334,7 +334,7 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Coverage targets established
 - Regression suite from manual test findings (test1-test6 patterns)
 - CI gates: no merge without passing tests
-- `@req` enforcement promoted to ERROR (depends on v1.10.2)
+- Release readiness checklist
 
 ## v1.10.2 — Doxygen Traceability & Full Documentation Review
 

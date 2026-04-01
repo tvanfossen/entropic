@@ -1,114 +1,46 @@
-"""Pytest configuration and fixtures."""
+"""Pytest configuration and fixtures.
 
-import os
+@brief Root conftest — markers and basic fixtures only. No engine imports.
+@version 2
+"""
+
 import tempfile
 from pathlib import Path
 
 import pytest
-from entropic.config.loader import ConfigLoader
-from entropic.config.schema import LibraryConfig
-from entropic.inference.orchestrator import ModelOrchestrator
-
-# =============================================================================
-# Basic Fixtures
-# =============================================================================
 
 
 @pytest.fixture
 def tmp_project_dir() -> Path:
-    """Create a temporary project directory."""
+    """Create a temporary project directory.
+
+    @brief Yield a temp dir with .entropic/ structure.
+    @version 1
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         project_dir = Path(tmpdir)
         entropic_dir = project_dir / ".entropic"
         entropic_dir.mkdir()
-        (entropic_dir / "commands").mkdir()
         yield project_dir
 
 
 @pytest.fixture
 def tmp_config_dir() -> Path:
-    """Create a temporary config directory."""
+    """Create a temporary config directory.
+
+    @brief Yield a bare temp directory.
+    @version 1
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
 
-# =============================================================================
-# Model Fixtures (for @pytest.mark.model tests)
-# =============================================================================
-
-
-def _check_model_available(model_path: str) -> bool:
-    """Check if a model file exists."""
-    expanded = os.path.expanduser(model_path)
-    return os.path.exists(expanded)
-
-
-@pytest.fixture(scope="session")
-def config() -> LibraryConfig:
-    """Load the entropic configuration from project config files."""
-    loader = ConfigLoader()
-    return loader.load()
-
-
-@pytest.fixture(scope="session")
-def models_available(config: LibraryConfig) -> dict[str, bool]:
-    """Check which models are available on this system."""
-    available = {}
-
-    for name, tier_config in config.models.tiers.items():
-        available[name] = _check_model_available(str(tier_config.path))
-
-    if config.models.router:
-        available["router"] = _check_model_available(str(config.models.router.path))
-
-    return available
-
-
-@pytest.fixture(scope="session")
-def router_available(models_available: dict[str, bool]) -> bool:
-    """Check if router model is available."""
-    return models_available.get("router", False)
-
-
-@pytest.fixture(scope="module")
-async def orchestrator(config: LibraryConfig, models_available: dict[str, bool]):
-    """
-    Create and initialize a model orchestrator.
-
-    This is a module-scoped fixture to avoid loading models multiple times.
-    Models are loaded once per test module and shared across tests.
-    """
-    # Skip if no models available
-    if not any(models_available.values()):
-        pytest.skip("No models available for testing")
-
-    orch = ModelOrchestrator(config)
-    await orch.initialize()
-
-    yield orch
-
-    await orch.shutdown()
-
-
-@pytest.fixture
-async def router_model(orchestrator: ModelOrchestrator, router_available: bool):
-    """Get the router model for classification tests."""
-    if not router_available:
-        pytest.skip("Router model not available")
-
-    # Router is separate from tiers
-    if orchestrator._router and orchestrator._router.is_loaded:
-        return orchestrator._router
-    pytest.skip("Router model not loaded")
-
-
-# =============================================================================
-# Pytest Hooks
-# =============================================================================
-
-
 def pytest_configure(config):
-    """Register custom markers."""
+    """Register custom markers.
+
+    @brief Add unit/integration/model/slow markers.
+    @version 1
+    """
     config.addinivalue_line("markers", "unit: Fast tests without external dependencies")
     config.addinivalue_line("markers", "integration: Tests requiring external services")
     config.addinivalue_line("markers", "model: Tests requiring actual model inference")
@@ -116,16 +48,15 @@ def pytest_configure(config):
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-mark tests based on their location."""
+    """Auto-mark tests based on their location.
+
+    @brief Apply markers based on test file path.
+    @version 1
+    """
     for item in items:
-        # Auto-mark tests in tests/unit as unit tests
         if "unit" in str(item.fspath):
             item.add_marker(pytest.mark.unit)
-
-        # Auto-mark tests in tests/integration as integration tests
         if "integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
-
-        # Auto-mark tests in tests/model as model tests with timeout
         if "model" in str(item.fspath):
             item.add_marker(pytest.mark.model)

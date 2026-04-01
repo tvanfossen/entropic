@@ -1,67 +1,38 @@
 """Hello World — minimal entropic integration.
 
-Demonstrates entropic's core features:
+Demonstrates:
     - Single-tier config with bundled lead identity
-    - Streaming output via callbacks
+    - Streaming output via callback
     - App context injection (consumer personality)
 
 Usage:
-    1. Run once to seed config: python main.py
-    2. Edit .hello-world/config.local.yaml with your model path
-    3. Run again: python main.py
+    1. Edit config.yaml with your model path
+    2. python main.py
+
+@brief Minimal entropic example using C engine via wrapper.
+@version 2
 """
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
-from entropic import (
-    AgentEngine,
-    ConfigLoader,
-    EngineCallbacks,
-    LoopConfig,
-    ModelOrchestrator,
-    setup_logging,
-    setup_model_logger,
-)
+from entropic import EntropicEngine
 
 EXAMPLE_ROOT = Path(__file__).resolve().parent
 
 
-async def main() -> None:
-    """Interactive prompt loop."""
-    # 1. Load config — seeds .hello-world/config.local.yaml on first run
-    loader = ConfigLoader(
-        project_root=EXAMPLE_ROOT,
-        app_dir_name=".hello-world",
-        default_config_path=EXAMPLE_ROOT / "config.yaml",
-        global_config_dir=None,
-    )
-    config = loader.load()
+def main() -> None:
+    """Interactive prompt loop.
 
-    # 2. Set up logging (writes to .hello-world/session.log + session_model.log)
-    setup_logging(config, project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
-    setup_model_logger(project_dir=EXAMPLE_ROOT, app_dir_name=".hello-world")
+    @brief Load engine, run streaming prompt loop, clean shutdown.
+    @version 2
+    """
+    config_path = EXAMPLE_ROOT / "config.yaml"
+    engine = EntropicEngine(config_path=str(config_path))
 
-    # 3. Initialize orchestrator (loads default tier into VRAM)
-    orchestrator = ModelOrchestrator(config)
-    await orchestrator.initialize()
-
-    # 4. Create engine — default ServerManager provides entropic internal tools
-    loop_config = LoopConfig(max_iterations=5, auto_approve_tools=True)
-    engine = AgentEngine(orchestrator, config=config, loop_config=loop_config)
-
-    # 5. Wire callbacks: streaming output
-    engine.set_callbacks(
-        EngineCallbacks(
-            on_stream_chunk=lambda chunk: print(chunk, end="", flush=True),
-        )
-    )
-
-    # 6. Interactive loop
-    print("entropic hello-world (Qwen3.5-35B-A3B MoE)")
+    print("entropic hello-world (C engine)")
     print("Type 'quit' to exit.\n")
 
     while True:
@@ -72,18 +43,19 @@ async def main() -> None:
         if not prompt or prompt.lower() in ("quit", "exit", "q"):
             break
 
-        async for _msg in engine.run(prompt):
-            pass  # Streaming callback handles display
+        engine.run_streaming(
+            prompt,
+            on_token=lambda tok: print(tok, end="", flush=True),
+        )
         print("\n")
 
-    # 7. Clean shutdown
-    await orchestrator.shutdown()
+    del engine
     print("Bye!")
 
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(0)

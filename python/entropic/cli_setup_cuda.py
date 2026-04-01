@@ -8,6 +8,7 @@ Used by `entropic setup-cuda` for PyPI users and internally by install.sh
 for source installs.
 """
 
+import logging
 import shutil
 import subprocess
 import sys
@@ -15,13 +16,12 @@ from pathlib import Path
 
 import click
 
-from entropic.build_config import (
-    LLAMA_CPP_PYTHON_REPO,
-    LLAMA_CPP_PYTHON_TAG,
-)
-from entropic.core.logging import get_logger
+# Pinned build versions — originally in src/entropic/build_config.py.
+# JamePeng fork, actively maintained (upstream abandoned since Aug 2025).
+LLAMA_CPP_PYTHON_REPO = "https://github.com/JamePeng/llama-cpp-python.git"
+LLAMA_CPP_PYTHON_TAG = "v0.3.25-cu124-Basic-linux-20260215"
 
-logger = get_logger("setup_cuda")
+logger = logging.getLogger("entropic.setup_cuda")
 
 
 def _default_build_dir() -> Path:

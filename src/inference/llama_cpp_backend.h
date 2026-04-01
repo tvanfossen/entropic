@@ -18,7 +18,7 @@
  *
  * Internal to inference .so — not exposed across boundaries.
  *
- * @version 1.9.10
+ * @version 1.9.13
  */
 
 #pragma once
@@ -108,6 +108,13 @@ protected:
     LogprobResult do_evaluate_logprobs(
         const int32_t* tokens,
         int n_tokens) override;
+
+    /* ── Capability overrides (v1.9.13) ──────────────────── */
+
+    bool do_supports(BackendCapability cap) const override;
+    std::string do_backend_name() const override;
+    BackendInfo do_info() const override;
+    bool do_clear_state(int seq_id) override;
 
     /* ── llama.cpp handles ───────────────────────────────── */
 
@@ -286,6 +293,22 @@ protected:
 
     std::mutex seq_id_mutex_;                 ///< Guards temp seq_id pool (v1.9.10)
     std::vector<llama_seq_id> free_seq_ids_;  ///< Available temporary seq_ids (v1.9.10)
+
+    /* ── Architecture detection (v1.9.13) ──────────────── */
+
+    /// @brief True if loaded model is recurrent (GDN/Mamba/RWKV).
+    /// Set during do_load() from llama_model_is_recurrent(). Drives
+    /// capability reporting (KV_CACHE vs HIDDEN_STATE, speculative
+    /// decoding compatibility, etc.).
+    /// @version 1.9.13
+    bool is_recurrent_ = false;
+
+    /**
+     * @brief Check if loaded model is recurrent.
+     * @return true if GDN/Mamba/RWKV architecture.
+     * @version 1.9.13
+     */
+    bool is_recurrent() const;
 };
 
 } // namespace entropic

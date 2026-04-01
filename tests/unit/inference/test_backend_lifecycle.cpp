@@ -14,7 +14,7 @@ namespace {
 
 /**
  * @brief Mock backend that tracks lifecycle calls.
- * @version 1.8.2
+ * @version 1.9.13
  */
 class MockBackend : public entropic::InferenceBackend {
 public:
@@ -28,6 +28,8 @@ public:
     bool fail_activate = false;
 
 protected:
+    std::string do_backend_name() const override { return "mock"; }
+
     bool do_load(const entropic::ModelConfig& /*config*/) override {
         ++load_calls;
         if (fail_load) {

@@ -25,11 +25,12 @@
  *
  * Internal to inference .so — not exposed across boundaries.
  *
- * @version 1.9.10
+ * @version 1.9.13
  */
 
 #pragma once
 
+#include <entropic/types/backend_capability.h>
 #include <entropic/types/config.h>
 #include <entropic/types/generation_result.h>
 #include <entropic/types/logprob_result.h>
@@ -62,7 +63,7 @@ namespace entropic {
  *
  * Invalid transitions are no-ops with INFO log (not errors).
  *
- * @version 1.8.2
+ * @version 1.9.13
  */
 class InferenceBackend {
 public:
@@ -218,6 +219,118 @@ public:
      */
     const ModelConfig& config() const { return config_; }
 
+    /* ── Capability queries (v1.9.13) ────────────────────── */
+
+    /**
+     * @brief Query whether this backend supports a capability.
+     * @param cap Capability to query.
+     * @return true if supported.
+     *
+     * Base class returns false for all capabilities. Subclasses
+     * override do_supports() to declare their capabilities.
+     * Lock-free — no state transitions involved.
+     *
+     * @version 1.9.13
+     */
+    bool supports(BackendCapability cap) const;
+
+    /**
+     * @brief Get all supported capabilities as a vector.
+     * @return Vector of capabilities this backend supports.
+     *
+     * Convenience method. Iterates BackendCapability enum, calls
+     * supports() on each.
+     *
+     * @version 1.9.13
+     */
+    std::vector<BackendCapability> capabilities() const;
+
+    /* ── Backend metadata (v1.9.13) ──────────────────────── */
+
+    /**
+     * @brief Get backend metadata.
+     * @return BackendInfo populated from model metadata after load().
+     *         Returns default (empty) info with name only if COLD.
+     *
+     * Base class returns a default-constructed BackendInfo with name
+     * from do_backend_name(). Subclasses override do_info() to populate
+     * architecture, quantization, memory usage, etc.
+     *
+     * @version 1.9.13
+     */
+    BackendInfo info() const;
+
+    /* ── Model state management (v1.9.13) ────────────────── */
+
+    /**
+     * @brief Save model state to buffer.
+     * @param seq_id Sequence identifier (0 for single-sequence backends).
+     * @param buffer Output buffer. Caller owns the returned data.
+     * @return true on success. false if not ACTIVE or unsupported.
+     *
+     * For transformers: saves KV cache state for the sequence.
+     * For recurrent: saves hidden state.
+     *
+     * @version 1.9.13
+     */
+    bool save_state(int seq_id, std::vector<uint8_t>& buffer) const;
+
+    /**
+     * @brief Restore model state from buffer.
+     * @param seq_id Sequence identifier to restore into.
+     * @param buffer Previously saved state buffer.
+     * @return true on success. false if incompatible or unsupported.
+     * @version 1.9.13
+     */
+    bool restore_state(int seq_id, const std::vector<uint8_t>& buffer);
+
+    /**
+     * @brief Clear/reset model state for a sequence.
+     * @param seq_id Sequence identifier (-1 for all sequences).
+     * @return true on success.
+     *
+     * For transformers: clears KV cache.
+     * For recurrent: resets hidden state to initial values.
+     *
+     * @version 1.9.13
+     */
+    bool clear_state(int seq_id = -1);
+
+    /* ── Multi-sequence generation (v1.9.13) ─────────────── */
+
+    /**
+     * @brief Generate with explicit sequence ID.
+     * @param seq_id Sequence identifier for multi-sequence backends.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @return GenerationResult with seq_id set.
+     *
+     * Default: ignores seq_id, delegates to generate().
+     *
+     * @version 1.9.13
+     */
+    GenerationResult generate_seq(
+        int seq_id,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Streaming generation with explicit sequence ID.
+     * @param seq_id Sequence identifier.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Per-token callback.
+     * @param cancel Cancellation flag.
+     * @return GenerationResult with seq_id set.
+     * @version 1.9.13
+     */
+    GenerationResult generate_streaming_seq(
+        int seq_id,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel);
+
 protected:
     /* ── Subclass overrides (20%) ────────────────────────── */
 
@@ -297,6 +410,103 @@ protected:
     virtual LogprobResult do_evaluate_logprobs(
         const int32_t* tokens,
         int n_tokens) = 0;
+
+    /* ── New overridable methods (v1.9.13) ───────────────── */
+
+    /**
+     * @brief Declare supported capabilities.
+     * @param cap Capability to check.
+     * @return true if this backend supports the capability.
+     *
+     * Default: returns false for everything.
+     *
+     * @version 1.9.13
+     */
+    virtual bool do_supports(BackendCapability cap) const;
+
+    /**
+     * @brief Return backend name identifier.
+     * @return Short name (e.g. "llama.cpp", "axcl").
+     *
+     * Pure virtual — every backend must identify itself.
+     *
+     * @version 1.9.13
+     */
+    virtual std::string do_backend_name() const = 0;
+
+    /**
+     * @brief Populate backend metadata.
+     * @return BackendInfo with model-specific details.
+     *
+     * Default: returns BackendInfo with name from do_backend_name().
+     *
+     * @version 1.9.13
+     */
+    virtual BackendInfo do_info() const;
+
+    /**
+     * @brief Save model state (KV cache or hidden state).
+     * @param seq_id Sequence identifier.
+     * @param buffer Output buffer.
+     * @return true on success. Default: returns false (not supported).
+     * @version 1.9.13
+     */
+    virtual bool do_save_state(int seq_id,
+                               std::vector<uint8_t>& buffer) const;
+
+    /**
+     * @brief Restore model state.
+     * @param seq_id Sequence identifier.
+     * @param buffer State data to restore.
+     * @return true on success. Default: returns false (not supported).
+     * @version 1.9.13
+     */
+    virtual bool do_restore_state(int seq_id,
+                                  const std::vector<uint8_t>& buffer);
+
+    /**
+     * @brief Clear/reset model state.
+     * @param seq_id Sequence ID, or -1 for all.
+     * @return true on success. Default: returns false (not supported).
+     * @version 1.9.13
+     */
+    virtual bool do_clear_state(int seq_id);
+
+    /**
+     * @brief Generate with sequence ID.
+     * @param seq_id Sequence identifier.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @return GenerationResult.
+     *
+     * Default: ignores seq_id, delegates to do_generate().
+     *
+     * @version 1.9.13
+     */
+    virtual GenerationResult do_generate_seq(
+        int seq_id,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Streaming generation with sequence ID.
+     * @param seq_id Sequence identifier.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Per-token callback.
+     * @param cancel Cancellation flag.
+     * @return GenerationResult.
+     *
+     * Default: ignores seq_id, delegates to do_generate_streaming().
+     *
+     * @version 1.9.13
+     */
+    virtual GenerationResult do_generate_streaming_seq(
+        int seq_id,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel);
 
     std::string last_error_;  ///< Last error message for diagnostics
 

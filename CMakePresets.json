@@ -62,18 +62,72 @@
         "ENTROPIC_BUILD_TESTS": "ON",
         "ENTROPIC_BUILD_DOCS": "OFF"
       }
+    },
+    {
+      "name": "asan-ubsan",
+      "displayName": "ASan + UBSan (CI only)",
+      "description": "AddressSanitizer + UndefinedBehaviorSanitizer. CI-only — 2-3x slowdown.",
+      "inherits": "dev",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=address,undefined"
+      }
+    },
+    {
+      "name": "tsan",
+      "displayName": "TSan (CI only)",
+      "description": "ThreadSanitizer. CI-only — 5-15x slowdown. Mutually exclusive with ASan.",
+      "inherits": "dev",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=thread",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread"
+      }
+    },
+    {
+      "name": "msan",
+      "displayName": "MSan (CI only)",
+      "description": "MemorySanitizer. CI-only. Requires all linked libraries instrumented — scoped to non-inference libs if llama.cpp MSan build is impractical.",
+      "inherits": "dev",
+      "cacheVariables": {
+        "CMAKE_C_FLAGS": "-fsanitize=memory -fno-omit-frame-pointer",
+        "CMAKE_CXX_FLAGS": "-fsanitize=memory -fno-omit-frame-pointer",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=memory",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=memory"
+      }
     }
   ],
   "buildPresets": [
     {"name": "full",           "configurePreset": "full"},
     {"name": "minimal-static", "configurePreset": "minimal-static"},
     {"name": "game",           "configurePreset": "game"},
-    {"name": "dev",            "configurePreset": "dev"}
+    {"name": "dev",            "configurePreset": "dev"},
+    {"name": "asan-ubsan",     "configurePreset": "asan-ubsan"},
+    {"name": "tsan",           "configurePreset": "tsan"},
+    {"name": "msan",           "configurePreset": "msan"}
   ],
   "testPresets": [
     {
       "name": "dev",
       "configurePreset": "dev",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {"outputOnFailure": true}
+    },
+    {
+      "name": "msan",
+      "configurePreset": "msan",
       "output": {"outputOnFailure": true}
     }
   ]

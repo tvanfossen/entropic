@@ -34,8 +34,9 @@ option(ENTROPIC_MCP_WEB         "Include web MCP server"            ON)
 option(ENTROPIC_MCP_ENTROPIC    "Include entropic MCP server"       ON)
 option(ENTROPIC_STORAGE_SQLITE  "Include SQLite storage backend"    ON)
 option(ENTROPIC_STREAMING       "Include streaming generation API"  ON)
-option(ENTROPIC_BUILD_TESTS     "Build test suite"                  ON)
-option(ENTROPIC_BUILD_DOCS      "Build Doxygen documentation"       OFF)
+option(ENTROPIC_BUILD_TESTS        "Build test suite"                  ON)
+option(ENTROPIC_BUILD_MODEL_TESTS  "Build model tests (GPU required)"  OFF)
+option(ENTROPIC_BUILD_DOCS         "Build Doxygen documentation"       OFF)
 
 # ── CUDA detection ──────────────────────────────────────
 if(ENTROPIC_CUDA AND NOT ENTROPIC_CPU_ONLY)

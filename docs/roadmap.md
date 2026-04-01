@@ -341,7 +341,8 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - Complete review and implementation of latest doxygen-guard revision
 - Full documentation review: every function in the codebase, not just public API
 - `@req REQ-xxx` tags on all public functions (entropic.h + interfaces)
-- doxygen-guard impact analysis integrated into select_tests.py (if available)
+- `scripts/select_tests.py` — mirror-path + doxygen-guard impact test selection
+- CI pipeline: PR builds use test selection, push runs full suite
 - Depends on: doxygen-guard stable release
 
 ---

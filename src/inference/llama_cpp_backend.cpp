@@ -72,7 +72,7 @@ bool check_stop_sequences(
  * @param config Validated model config.
  * @return true on success.
  * @internal
- * @version 1.8.2
+ * @version 1.9.13
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
     llama_model_params mparams = llama_model_default_params();
@@ -87,8 +87,9 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
     }
 
     vocab_ = llama_model_get_vocab(model_);
-    logger->info("Model loaded (CPU): {} tokens in vocab",
-              llama_vocab_n_tokens(vocab_));
+    is_recurrent_ = llama_model_is_recurrent(model_);
+    logger->info("Model loaded (CPU): {} tokens in vocab, recurrent={}",
+              llama_vocab_n_tokens(vocab_), is_recurrent_);
     return true;
 }
 
@@ -890,6 +891,116 @@ GenerationResult LlamaCppBackend::do_complete(
     logger->info("Complete: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
     return decode_loop(tokens, params, nullptr, nullptr);
+}
+
+// ── Architecture detection (v1.9.13) ───────────────────────
+
+/**
+ * @brief Check if loaded model is recurrent.
+ * @return true if GDN/Mamba/RWKV architecture.
+ * @internal
+ * @version 1.9.13
+ */
+bool LlamaCppBackend::is_recurrent() const {
+    return is_recurrent_;
+}
+
+// ── Capability overrides (v1.9.13) ─────────────────────────
+
+/**
+ * @brief Declare llama.cpp backend capabilities.
+ * @param cap Capability to check.
+ * @return true if this backend supports the capability.
+ * @internal
+ * @version 1.9.13
+ */
+bool LlamaCppBackend::do_supports(BackendCapability cap) const {
+    int idx = static_cast<int>(cap);
+    int count = static_cast<int>(BackendCapability::_COUNT);
+    if (idx < 0 || idx >= count) {
+        return false;
+    }
+
+    // Static capabilities: true = always supported
+    static constexpr bool always[] = {
+        false, false, true, true, true, true,
+        false, true,  true, false, false, true,
+    };
+
+    // Dynamic capabilities override the static table
+    bool result = always[idx];
+    if (!result) {
+        result = (cap == BackendCapability::KV_CACHE && !is_recurrent())
+              || (cap == BackendCapability::HIDDEN_STATE && is_recurrent())
+              || (cap == BackendCapability::VISION
+                  && !config().mmproj_path.empty())
+              || (cap == BackendCapability::SPECULATIVE_DECODING
+                  && !is_recurrent());
+    }
+    return result;
+}
+
+/**
+ * @brief Return backend name.
+ * @return "llama.cpp".
+ * @internal
+ * @version 1.9.13
+ */
+std::string LlamaCppBackend::do_backend_name() const {
+    return "llama.cpp";
+}
+
+/**
+ * @brief Populate backend metadata from llama.cpp model.
+ * @return BackendInfo with model-specific details.
+ * @internal
+ * @version 1.9.13
+ */
+BackendInfo LlamaCppBackend::do_info() const {
+    BackendInfo bi;
+    bi.name = "llama.cpp";
+#if defined(ENTROPIC_BACKEND_CUDA)
+    bi.compute_device = "cuda";
+#elif defined(ENTROPIC_BACKEND_VULKAN)
+    bi.compute_device = "vulkan";
+#else
+    bi.compute_device = "cpu";
+#endif
+    bi.model_format = "gguf";
+
+    if (state() != ModelState::COLD && model_ != nullptr) {
+        bi.architecture = is_recurrent() ? "recurrent" : "transformer";
+        bi.max_context_length =
+            is_recurrent() ? -1 : config().context_length;
+        bi.parameter_count = llama_model_n_params(model_);
+        bi.vram_bytes = 0;
+        bi.ram_bytes = llama_model_size(model_);
+
+        char desc[256] = {};
+        llama_model_desc(model_, desc, sizeof(desc));
+        bi.quantization = desc;
+    }
+    return bi;
+}
+
+/**
+ * @brief Clear KV cache or recurrent hidden state.
+ * @param seq_id Sequence ID, or -1 for all sequences.
+ * @return true on success.
+ * @internal
+ * @version 1.9.13
+ */
+bool LlamaCppBackend::do_clear_state(int seq_id) {
+    if (ctx_ == nullptr) {
+        return false;
+    }
+    auto mem = llama_get_memory(ctx_);
+    if (seq_id < 0) {
+        llama_memory_clear(mem, true);
+    } else {
+        llama_memory_seq_rm(mem, seq_id, -1, -1);
+    }
+    return true;
 }
 
 } // namespace entropic

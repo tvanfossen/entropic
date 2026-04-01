@@ -6,7 +6,7 @@
  * methods handle state validation, locking, timing, and logging.
  * Subclass do_* methods provide the 20% backend-specific logic.
  *
- * @version 1.9.10
+ * @version 1.9.13
  */
 
 #include <entropic/inference/backend.h>
@@ -394,6 +394,287 @@ int InferenceBackend::count_tokens(const std::string& text) const {
         return do_count_tokens(text);
     }
     return static_cast<int>(text.size()) / 4;
+}
+
+// ── Capability queries (v1.9.13) ───────────────────────────
+
+/**
+ * @brief Query backend capability. Delegates to do_supports().
+ * @param cap Capability to query.
+ * @return true if supported.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::supports(BackendCapability cap) const {
+    return do_supports(cap);
+}
+
+/**
+ * @brief Get all supported capabilities.
+ * @return Vector of supported capabilities.
+ * @internal
+ * @version 1.9.13
+ */
+std::vector<BackendCapability> InferenceBackend::capabilities() const {
+    std::vector<BackendCapability> result;
+    int count = static_cast<int>(BackendCapability::_COUNT);
+    for (int i = 0; i < count; ++i) {
+        auto cap = static_cast<BackendCapability>(i);
+        if (supports(cap)) {
+            result.push_back(cap);
+        }
+    }
+    return result;
+}
+
+/**
+ * @brief Get backend metadata. Delegates to do_info().
+ * @return BackendInfo with at least name populated.
+ * @internal
+ * @version 1.9.13
+ */
+BackendInfo InferenceBackend::info() const {
+    return do_info();
+}
+
+// ── Model state management (v1.9.13) ──────────────────────
+
+/**
+ * @brief Save model state. Requires ACTIVE.
+ * @param seq_id Sequence identifier.
+ * @param buffer Output buffer.
+ * @return true on success.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::save_state(
+    int seq_id, std::vector<uint8_t>& buffer) const
+{
+    if (!is_active()) {
+        logger->warn("save_state: not ACTIVE ({})", state_name(state()));
+        return false;
+    }
+    auto start = now();
+    bool ok = do_save_state(seq_id, buffer);
+    if (ok) {
+        logger->info("save_state: seq={} {}B {:.2f}ms",
+                     seq_id, buffer.size(), elapsed_ms(start, now()));
+    }
+    return ok;
+}
+
+/**
+ * @brief Restore model state. Requires ACTIVE.
+ * @param seq_id Sequence identifier.
+ * @param buffer Previously saved state.
+ * @return true on success.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::restore_state(
+    int seq_id, const std::vector<uint8_t>& buffer)
+{
+    if (!is_active()) {
+        logger->warn("restore_state: not ACTIVE ({})",
+                     state_name(state()));
+        return false;
+    }
+    auto start = now();
+    bool ok = do_restore_state(seq_id, buffer);
+    if (ok) {
+        logger->info("restore_state: seq={} {}B {:.2f}ms",
+                     seq_id, buffer.size(), elapsed_ms(start, now()));
+    }
+    return ok;
+}
+
+/**
+ * @brief Clear model state. Requires WARM or ACTIVE.
+ * @param seq_id Sequence ID, or -1 for all.
+ * @return true on success.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::clear_state(int seq_id) {
+    if (state() == ModelState::COLD) {
+        logger->warn("clear_state: model is COLD");
+        return false;
+    }
+    bool ok = do_clear_state(seq_id);
+    if (ok) {
+        logger->info("clear_state: seq={}", seq_id);
+    }
+    return ok;
+}
+
+// ── Multi-sequence generation (v1.9.13) ────────────────────
+
+/**
+ * @brief Generate with explicit sequence ID. Requires ACTIVE.
+ * @param seq_id Sequence identifier.
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return GenerationResult with seq_id set.
+ * @internal
+ * @version 1.9.13
+ */
+GenerationResult InferenceBackend::generate_seq(
+    int seq_id,
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    if (!is_active()) {
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_INVALID_STATE;
+        err.error_message = "generate_seq() requires ACTIVE state";
+        err.finish_reason = "error";
+        logger->error("{}", err.error_message);
+        return err;
+    }
+
+    auto start = now();
+    auto result = do_generate_seq(seq_id, messages, params);
+    result.generation_time_ms = elapsed_ms(start, now());
+    result.seq_id = seq_id;
+    return result;
+}
+
+/**
+ * @brief Streaming generation with sequence ID. Requires ACTIVE.
+ * @param seq_id Sequence identifier.
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @param on_token Per-token callback.
+ * @param cancel Cancellation flag.
+ * @return GenerationResult with seq_id set.
+ * @internal
+ * @version 1.9.13
+ */
+GenerationResult InferenceBackend::generate_streaming_seq(
+    int seq_id,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>& cancel)
+{
+    if (!is_active()) {
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_INVALID_STATE;
+        err.error_message =
+            "generate_streaming_seq() requires ACTIVE state";
+        err.finish_reason = "error";
+        logger->error("{}", err.error_message);
+        return err;
+    }
+
+    auto start = now();
+    auto result = do_generate_streaming_seq(
+        seq_id, messages, params, on_token, cancel);
+    result.generation_time_ms = elapsed_ms(start, now());
+    result.seq_id = seq_id;
+    return result;
+}
+
+// ── Default virtual implementations (v1.9.13) ─────────────
+
+/**
+ * @brief Default: no capabilities supported.
+ * @param cap Capability to check.
+ * @return false.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::do_supports(BackendCapability /*cap*/) const {
+    return false;
+}
+
+/**
+ * @brief Default: BackendInfo with name only.
+ * @return BackendInfo with name from do_backend_name().
+ * @internal
+ * @version 1.9.13
+ */
+BackendInfo InferenceBackend::do_info() const {
+    BackendInfo bi;
+    bi.name = do_backend_name();
+    return bi;
+}
+
+/**
+ * @brief Default: state save not supported.
+ * @param seq_id Sequence identifier.
+ * @param buffer Output buffer.
+ * @return false.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::do_save_state(
+    int /*seq_id*/, std::vector<uint8_t>& /*buffer*/) const
+{
+    return false;
+}
+
+/**
+ * @brief Default: state restore not supported.
+ * @param seq_id Sequence identifier.
+ * @param buffer State data.
+ * @return false.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::do_restore_state(
+    int /*seq_id*/, const std::vector<uint8_t>& /*buffer*/)
+{
+    return false;
+}
+
+/**
+ * @brief Default: state clear not supported.
+ * @param seq_id Sequence identifier.
+ * @return false.
+ * @internal
+ * @version 1.9.13
+ */
+bool InferenceBackend::do_clear_state(int /*seq_id*/) {
+    return false;
+}
+
+/**
+ * @brief Default: ignores seq_id, delegates to do_generate().
+ * @param seq_id Sequence identifier (ignored).
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return GenerationResult from do_generate().
+ * @internal
+ * @version 1.9.13
+ */
+GenerationResult InferenceBackend::do_generate_seq(
+    int /*seq_id*/,
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    return do_generate(messages, params);
+}
+
+/**
+ * @brief Default: ignores seq_id, delegates to do_generate_streaming().
+ * @param seq_id Sequence identifier (ignored).
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @param on_token Per-token callback.
+ * @param cancel Cancellation flag.
+ * @return GenerationResult from do_generate_streaming().
+ * @internal
+ * @version 1.9.13
+ */
+GenerationResult InferenceBackend::do_generate_streaming_seq(
+    int /*seq_id*/,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>& cancel)
+{
+    return do_generate_streaming(messages, params, on_token, cancel);
 }
 
 } // namespace entropic

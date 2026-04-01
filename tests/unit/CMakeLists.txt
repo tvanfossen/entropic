@@ -38,6 +38,7 @@ target_compile_definitions(entropic-config-tests PRIVATE
 # v1.8.2: Inference tests
 # v1.8.3: Added test_prompt_cache.cpp
 # v1.9.10: Added test_logprob_evaluation.cpp
+# v1.9.13: Added test_backend_capabilities.cpp
 add_executable(entropic-inference-tests
     inference/test_backend_lifecycle.cpp
     inference/test_adapter_base.cpp
@@ -48,6 +49,7 @@ add_executable(entropic-inference-tests
     inference/test_logprob_evaluation.cpp
     inference/test_vision_adapter.cpp
     inference/test_image_preprocessor.cpp
+    inference/test_backend_capabilities.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE

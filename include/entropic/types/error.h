@@ -80,6 +80,8 @@ typedef enum {
     ENTROPIC_ERROR_IMAGE_TOO_LARGE,          ///< Image exceeds max_file_size (v1.9.11)
     ENTROPIC_ERROR_MMPROJ_LOAD_FAILED,       ///< mmproj GGUF failed to load (v1.9.11)
     ENTROPIC_ERROR_UNSUPPORTED_URL,          ///< Remote URL not supported — local file or data URI only (v1.9.11)
+    ENTROPIC_ERROR_NOT_SUPPORTED,            ///< Capability not supported by this backend (v1.9.13)
+    ENTROPIC_ERROR_STATE_INCOMPATIBLE,       ///< State buffer incompatible with current model (v1.9.13)
 } entropic_error_t;
 
 /**

@@ -196,28 +196,6 @@ def download(model: str, output_dir: Path, force: bool) -> None:
     download_models(model, output_dir, force)
 
 
-@main.command("setup-cuda")
-@click.option("--force", "-f", is_flag=True, help="Remove cached clone and rebuild from scratch")
-@click.option("--cpu", is_flag=True, help="Build CPU-only (skip CUDA)")
-def setup_cuda(force: bool, cpu: bool) -> None:
-    """Build llama-cpp-python with CUDA support for GPU acceleration.
-
-    Clones llama-cpp-python (pinned to a known release), pins the nested
-    llama.cpp to a commit with latest model architecture support, and
-    installs into the current Python environment.
-
-    \\b
-    Cache:         ~/.entropic/.build/
-    Prerequisites: git, cmake, CUDA toolkit (unless --cpu)
-
-    @brief Clone, pin, and build llama-cpp-python with CUDA or CPU backend.
-    @version 1
-    """
-    from entropic.cli_setup_cuda import setup_cuda_command
-
-    setup_cuda_command(force=force, cpu=cpu)
-
-
 @main.command()
 @click.argument("subcommand", type=click.Choice(["run"]), default="run")
 @click.pass_context

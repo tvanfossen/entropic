@@ -18,7 +18,7 @@
  *
  * Internal to inference .so — not exposed across boundaries.
  *
- * @version 1.8.3
+ * @version 1.9.10
  */
 
 #pragma once
@@ -29,7 +29,9 @@
 
 #include <llama.h>
 
+#include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -100,6 +102,12 @@ protected:
         const GenerationParams& params) override;
 
     int do_count_tokens(const std::string& text) const override;
+
+    /* ── Evaluation override (v1.9.10) ──────────────────── */
+
+    LogprobResult do_evaluate_logprobs(
+        const int32_t* tokens,
+        int n_tokens) override;
 
     /* ── llama.cpp handles ───────────────────────────────── */
 
@@ -242,6 +250,42 @@ protected:
     int compute_prefix_token_count(
         const std::vector<Message>& messages,
         const GenerationParams& params);
+
+    /* ── Evaluation helpers (v1.9.10) ───────────────────── */
+
+    /**
+     * @brief Allocate a temporary sequence ID for evaluation.
+     * @return Unused seq_id, or -1 if pool is exhausted.
+     * @version 1.9.10
+     */
+    llama_seq_id allocate_temp_seq_id();
+
+    /**
+     * @brief Release a temporary sequence ID back to the pool.
+     * @param seq_id The seq_id to release.
+     * @version 1.9.10
+     */
+    void release_temp_seq_id(llama_seq_id seq_id);
+
+    /**
+     * @brief Extract log-probability for a token from logits.
+     *
+     * Computes log_softmax(logits)[next_token] using the numerically
+     * stable form: logits[t] - max - log(sum(exp(logits - max))).
+     *
+     * @param logits Raw logits array from llama_get_logits_ith().
+     * @param next_token The token to score.
+     * @param n_vocab Vocabulary size.
+     * @return log P(next_token | context).
+     * @version 1.9.10
+     */
+    static float extract_token_logprob(
+        const float* logits,
+        int32_t next_token,
+        int n_vocab);
+
+    std::mutex seq_id_mutex_;                 ///< Guards temp seq_id pool (v1.9.10)
+    std::vector<llama_seq_id> free_seq_ids_;  ///< Available temporary seq_ids (v1.9.10)
 };
 
 } // namespace entropic

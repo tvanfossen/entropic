@@ -35,13 +35,14 @@
  * entropic_alloc(). Strings returned as const char* are owned by
  * the handle and valid until the next call on that handle.
  *
- * @version 1.9.9
+ * @version 1.9.10
  */
 
 #pragma once
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include <entropic/entropic_config.h>
 #include <entropic/entropic_export.h>
@@ -1145,7 +1146,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_identity_count(
  * @endcode
  *
  * @callback
- * @version 1.9.9
+ * @version 1.9.10
  */
 typedef int (*entropic_compactor_fn)(
     const char* messages_json,
@@ -1241,6 +1242,101 @@ ENTROPIC_EXPORT entropic_error_t entropic_get_default_compactor(
     entropic_handle_t handle,
     entropic_compactor_fn* compactor,
     void** user_data);
+
+/* ── Log-Probability Evaluation (v1.9.10) ────────────── */
+
+/**
+ * @brief Per-token log-probability result.
+ *
+ * Contains per-token log-probabilities for a sequence evaluated
+ * against a loaded model. The logprobs array has (n_tokens - 1)
+ * entries: logprobs[i] is the log-probability of tokens[i+1]
+ * given tokens[0..i].
+ *
+ * The struct itself is caller-owned (stack or heap). The internal
+ * logprobs and tokens arrays are engine-allocated and must be freed
+ * via entropic_free_logprob_result().
+ *
+ * @version 1.9.10
+ */
+typedef struct entropic_logprob_result {
+    float* logprobs;        /**< Per-token log-probabilities (N-1 values). Engine-allocated. */
+    int32_t* tokens;        /**< Input tokens echoed back (N values). Engine-allocated. */
+    float perplexity;       /**< exp(-mean(logprobs)) over the sequence. */
+    float total_logprob;    /**< Sum of all logprob values. */
+    int n_tokens;           /**< Number of input tokens. */
+    int n_logprobs;         /**< Number of logprob values (n_tokens - 1). */
+} entropic_logprob_result_t;
+
+/**
+ * @brief Evaluate per-token log-probabilities for a token sequence.
+ *
+ * Runs the token sequence through the model and returns the
+ * log-probability of each token given its preceding context.
+ * Evaluation-only — no sampling, no generation, no KV cache
+ * mutation visible to ongoing generation.
+ *
+ * @param handle     Engine handle.
+ * @param model_id   Model identifier (tier name or model key).
+ * @param tokens     Array of token IDs to evaluate.
+ * @param n_tokens   Number of tokens (minimum 2).
+ * @param result     Output: logprob result. Caller frees internal
+ *                   arrays with entropic_free_logprob_result().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE
+ *         - ENTROPIC_ERROR_MODEL_NOT_FOUND (unknown model_id)
+ *         - ENTROPIC_ERROR_MODEL_NOT_ACTIVE (model not ACTIVE)
+ *         - ENTROPIC_ERROR_EVAL_CONTEXT_FULL (exceeds n_ctx)
+ *         - ENTROPIC_ERROR_INVALID_CONFIG (n_tokens < 2)
+ *         - ENTROPIC_ERROR_EVAL_FAILED (llama_decode error)
+ *
+ * @threadsafety Serialized per-model via eval_mutex. Does not
+ *               block generation on the same model.
+ * @version 1.9.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_get_logprobs(
+    entropic_handle_t handle,
+    const char* model_id,
+    const int32_t* tokens,
+    int n_tokens,
+    entropic_logprob_result_t* result);
+
+/**
+ * @brief Compute perplexity for a token sequence.
+ *
+ * Convenience — calls entropic_get_logprobs() internally and
+ * returns only the perplexity value.
+ *
+ * @param handle     Engine handle.
+ * @param model_id   Model identifier (tier name or model key).
+ * @param tokens     Array of token IDs to evaluate.
+ * @param n_tokens   Number of tokens (minimum 2).
+ * @param perplexity Output: perplexity value.
+ * @return ENTROPIC_OK on success. Same error codes as
+ *         entropic_get_logprobs().
+ *
+ * @threadsafety Same as entropic_get_logprobs().
+ * @version 1.9.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_compute_perplexity(
+    entropic_handle_t handle,
+    const char* model_id,
+    const int32_t* tokens,
+    int n_tokens,
+    float* perplexity);
+
+/**
+ * @brief Free internal arrays of a logprob result.
+ *
+ * Frees the logprobs and tokens arrays, then NULLs the pointers
+ * to prevent double-free. The result struct itself is caller-owned
+ * and is NOT freed.
+ *
+ * @param result Pointer to result struct. NULL-safe (no-op).
+ * @version 1.9.10
+ */
+ENTROPIC_EXPORT void entropic_free_logprob_result(
+    entropic_logprob_result_t* result);
 
 /* ── Constitutional Validation (v1.9.8) ──────────────── */
 

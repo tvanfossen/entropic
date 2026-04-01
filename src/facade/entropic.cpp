@@ -738,6 +738,81 @@ entropic_error_t entropic_identity_count(
     return ENTROPIC_ERROR_INVALID_STATE;
 }
 
+// ── Log-Probability Evaluation (v1.9.10) ──────────────────────
+
+/**
+ * @brief Evaluate per-token log-probabilities (stub).
+ * @param handle Engine handle.
+ * @param model_id Model identifier.
+ * @param tokens Array of token IDs.
+ * @param n_tokens Number of tokens.
+ * @param result Output logprob result.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — facade not yet wired.
+ * @internal
+ * @version 1.9.10
+ */
+entropic_error_t entropic_get_logprobs(
+    entropic_handle_t handle,
+    const char* model_id,
+    const int32_t* tokens,
+    int n_tokens,
+    entropic_logprob_result_t* result)
+{
+    (void)handle;
+    (void)model_id;
+    (void)tokens;
+    (void)n_tokens;
+    (void)result;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Compute perplexity for a token sequence (stub).
+ * @param handle Engine handle.
+ * @param model_id Model identifier.
+ * @param tokens Array of token IDs.
+ * @param n_tokens Number of tokens.
+ * @param perplexity Output perplexity value.
+ * @return ENTROPIC_ERROR_NOT_IMPLEMENTED — facade not yet wired.
+ * @internal
+ * @version 1.9.10
+ */
+entropic_error_t entropic_compute_perplexity(
+    entropic_handle_t handle,
+    const char* model_id,
+    const int32_t* tokens,
+    int n_tokens,
+    float* perplexity)
+{
+    (void)handle;
+    (void)model_id;
+    (void)tokens;
+    (void)n_tokens;
+    (void)perplexity;
+    return ENTROPIC_ERROR_NOT_IMPLEMENTED;
+}
+
+/**
+ * @brief Free internal arrays of a logprob result.
+ *
+ * Frees logprobs and tokens arrays, then NULLs the pointers to
+ * prevent double-free. The struct itself is caller-owned.
+ *
+ * @param result Pointer to result struct. NULL-safe.
+ * @utility
+ * @version 1.9.10
+ */
+void entropic_free_logprob_result(entropic_logprob_result_t* result)
+{
+    if (result == nullptr) {
+        return;
+    }
+    free(result->logprobs);
+    result->logprobs = nullptr;
+    free(result->tokens);
+    result->tokens = nullptr;
+}
+
 // ── Constitutional Validation stubs (v1.9.8) ─────────────────
 
 /**

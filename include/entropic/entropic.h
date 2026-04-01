@@ -1415,6 +1415,32 @@ ENTROPIC_EXPORT int entropic_model_has_vision(
     entropic_handle_t handle,
     const char* model_id);
 
+/* ── Diagnose / Self-Inspection (v1.9.12) ─────────────── */
+
+/**
+ * @brief Get the diagnostic prompt text for /diagnose command.
+ *
+ * Returns the bundled diagnostic prompt that consumers inject as
+ * a user message to trigger model self-diagnosis. The prompt
+ * instructs the model to call entropic.diagnose and produce
+ * structured self-assessment.
+ *
+ * @param handle Engine handle.
+ * @param[out] prompt_out Output: diagnostic prompt string.
+ *             Caller must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @par Memory ownership
+ * Caller must free returned string with entropic_free().
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 1.9.12
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_get_diagnostic_prompt(
+    entropic_handle_t handle,
+    char** prompt_out);
+
 #ifdef __cplusplus
 }
 #endif

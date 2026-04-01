@@ -865,4 +865,44 @@ char* entropic_validation_last_result(entropic_handle_t handle)
     return nullptr;
 }
 
+/**
+ * @brief Get diagnostic prompt text for /diagnose command (stub).
+ * @param handle Engine handle.
+ * @param prompt_out Output: diagnostic prompt string.
+ * @return ENTROPIC_OK on success, error code on failure.
+ * @internal
+ * @version 1.9.12
+ */
+entropic_error_t entropic_get_diagnostic_prompt(
+    entropic_handle_t handle,
+    char** prompt_out) {
+    if (handle == nullptr || prompt_out == nullptr) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    (void)handle;
+    static const char* prompt =
+        "[SYSTEM DIRECTIVE: SELF-DIAGNOSIS]\n\n"
+        "Analyze your recent actions and identify any issues. "
+        "Follow these steps:\n\n"
+        "1. Call entropic.diagnose to get a full engine state "
+        "snapshot.\n"
+        "2. Review the tool call history for:\n"
+        "   - Repeated failures (same tool, same error)\n"
+        "   - Duplicate tool calls (circuit breaker risk)\n"
+        "   - Tool calls that returned errors\n"
+        "   - Unexpected state (wrong phase, wrong tier)\n"
+        "3. Review your reasoning for:\n"
+        "   - Actions that didn't achieve the stated goal\n"
+        "   - Unnecessary tool calls\n"
+        "   - Missing context that led to errors\n"
+        "4. Produce a structured assessment:\n"
+        "   - FINDINGS: What went wrong (be specific)\n"
+        "   - ROOT CAUSE: Why it went wrong\n"
+        "   - RECOMMENDATION: What to do differently\n\n"
+        "Be honest and specific. The goal is accurate "
+        "self-assessment, not self-defense.\n";
+    *prompt_out = strdup(prompt);
+    return ENTROPIC_OK;
+}
+
 } // extern "C"

@@ -16,11 +16,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0  # Full history for select_tests.py diff
 
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake build-essential doxygen
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Configure
         run: |
@@ -33,7 +38,23 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Test
+      - name: Select tests (PR only)
+        id: select
+        if: github.event_name == 'pull_request'
+        run: |
+          CMD=$(python scripts/select_tests.py \
+            --diff-against origin/${{ github.base_ref }} \
+            --build-dir build \
+            --verbose 2>&1 | tail -1)
+          echo "ctest_cmd=$CMD" >> "$GITHUB_OUTPUT"
+          echo "Selected: $CMD"
+
+      - name: Test (PR — selected)
+        if: github.event_name == 'pull_request' && steps.select.outputs.ctest_cmd != ''
+        run: ${{ steps.select.outputs.ctest_cmd }}
+
+      - name: Test (push — full suite)
+        if: github.event_name == 'push'
         run: cd build && ctest --output-on-failure --parallel 4
 
       - name: Docs (Release only)

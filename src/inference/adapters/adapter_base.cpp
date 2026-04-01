@@ -374,4 +374,49 @@ std::optional<ToolCall> ChatAdapter::parse_single_tool_call(
     return std::nullopt;
 }
 
+// ── Vision / multimodal (v1.9.11) ──────────────────────────
+
+/**
+ * @brief Default: return system prompt unchanged regardless of vision.
+ * @param base_system Base system prompt text.
+ * @param has_vision Whether vision is available.
+ * @return base_system unchanged.
+ * @internal
+ * @version 1.9.11
+ */
+std::string ChatAdapter::format_system_with_vision(
+    const std::string& base_system,
+    bool /*has_vision*/) const {
+    return base_system;
+}
+
+/**
+ * @brief Default: OpenAI-format content array JSON.
+ * @param parts Content parts from a message.
+ * @return JSON array string with text/image objects.
+ * @internal
+ * @version 1.9.11
+ */
+std::string ChatAdapter::format_content_parts(
+    const std::vector<ContentPart>& parts) const {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& part : parts) {
+        nlohmann::json obj;
+        if (part.type == ContentPartType::TEXT) {
+            obj["type"] = "text";
+            obj["text"] = part.text;
+        } else {
+            obj["type"] = "image";
+            if (!part.image_path.empty()) {
+                obj["path"] = part.image_path;
+            }
+            if (!part.image_url.empty()) {
+                obj["url"] = part.image_url;
+            }
+        }
+        arr.push_back(std::move(obj));
+    }
+    return arr.dump();
+}
+
 } // namespace entropic

@@ -89,6 +89,38 @@ private:
      * @version 1.8.2
      */
     std::string clean_content(const std::string& content) const;
+
+public:
+    /* ── Vision / multimodal (v1.9.11) ────────────────────── */
+
+    /**
+     * @brief Qwen3.5 vision system prompt extension.
+     *
+     * When has_vision is true, appends vision capability instructions.
+     * Otherwise returns base_system unchanged.
+     *
+     * @param base_system Base system prompt text.
+     * @param has_vision Whether the model has vision capability.
+     * @return Formatted system prompt.
+     * @version 1.9.11
+     */
+    std::string format_system_with_vision(
+        const std::string& base_system,
+        bool has_vision) const override;
+
+    /**
+     * @brief Qwen3.5 content part formatting.
+     *
+     * Qwen3.5 uses the OpenAI content array format natively
+     * (early fusion, no special image tags). Default implementation
+     * is sufficient — override exists for documentation and future tweaks.
+     *
+     * @param parts Content parts from a message.
+     * @return JSON string in OpenAI content array format.
+     * @version 1.9.11
+     */
+    std::string format_content_parts(
+        const std::vector<ContentPart>& parts) const override;
 };
 
 } // namespace entropic

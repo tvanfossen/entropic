@@ -168,16 +168,46 @@ static bool json_read_string(JsonCursor& c, std::string& out) {
 }
 
 /**
- * @brief Skip one JSON value (string or primitive) in cursor.
+ * @brief Skip a JSON array or object in cursor (nested-aware).
+ * @param c JSON cursor (positioned at opening '[' or '{').
+ * @utility
+ * @version 1.9.11
+ */
+static void json_skip_composite(JsonCursor& c) {
+    char open = c.data[c.pos];
+    char close = (open == '[') ? ']' : '}';
+    int depth = 1;
+    ++c.pos;
+    while (c.pos < c.data.size() && depth > 0) {
+        char ch = c.data[c.pos];
+        if (ch == '"') {
+            std::string dummy;
+            json_read_string(c, dummy);
+            continue;
+        }
+        if (ch == open) ++depth;
+        else if (ch == close) --depth;
+        ++c.pos;
+    }
+}
+
+/**
+ * @brief Skip one JSON value (string, primitive, array, or object).
  * @param c JSON cursor.
  * @utility
- * @version 1.9.9
+ * @version 1.9.11
  */
 static void json_skip_value(JsonCursor& c) {
     json_skip_ws(c);
-    if (c.pos < c.data.size() && c.data[c.pos] == '"') {
+    if (c.pos >= c.data.size()) return;
+    char ch = c.data[c.pos];
+    if (ch == '"') {
         std::string dummy;
         json_read_string(c, dummy);
+        return;
+    }
+    if (ch == '[' || ch == '{') {
+        json_skip_composite(c);
         return;
     }
     while (c.pos < c.data.size()
@@ -188,12 +218,155 @@ static void json_skip_value(JsonCursor& c) {
 }
 
 /**
+ * @brief Read one field of a content part object into type/text.
+ * @param c JSON cursor (positioned at key start).
+ * @param[out] type_val Populated if key == "type".
+ * @param[out] text_val Populated if key == "text".
+ * @return true on success.
+ * @utility
+ * @version 1.9.11
+ */
+static bool json_read_content_part_field(JsonCursor& c,
+                                         std::string& type_val,
+                                         std::string& text_val) {
+    std::string key;
+    if (!json_read_string(c, key)) return false;
+    json_skip_ws(c);
+    if (c.pos >= c.data.size() || c.data[c.pos] != ':') return false;
+    ++c.pos;
+    if (key == "type") { json_read_string(c, type_val); }
+    else if (key == "text") { json_read_string(c, text_val); }
+    else { json_skip_value(c); }
+    return true;
+}
+
+/**
+ * @brief Parse one content part object, extract type and text.
+ * @param c JSON cursor (positioned after opening '{').
+ * @param[out] type_val The "type" field value.
+ * @param[out] text_val The "text" field value.
+ * @return true on success (object fully consumed).
+ * @utility
+ * @version 1.9.11
+ */
+static bool json_parse_content_part(JsonCursor& c,
+                                    std::string& type_val,
+                                    std::string& text_val) {
+    while (c.pos < c.data.size() && c.data[c.pos] != '}') {
+        json_skip_ws(c);
+        if (c.data[c.pos] == ',') { ++c.pos; continue; }
+        if (!json_read_content_part_field(c, type_val, text_val)) {
+            return false;
+        }
+    }
+    if (c.pos < c.data.size()) ++c.pos; // skip '}'
+    return true;
+}
+
+/**
+ * @brief Append text from a content part if type == "text".
+ * @param type_val Parsed type string.
+ * @param text_val Parsed text string.
+ * @param[out] text Accumulated text.
+ * @utility
+ * @version 1.9.11
+ */
+static void append_text_part(const std::string& type_val,
+                             const std::string& text_val,
+                             std::string& text) {
+    if (type_val != "text" || text_val.empty()) return;
+    if (!text.empty()) text += ' ';
+    text += text_val;
+}
+
+/**
+ * @brief Read one content part object from an array cursor.
+ *
+ * Expects cursor at element start ('{' or ',' or ']'). Skips
+ * commas, parses the object, appends text to output if type=text.
+ *
+ * @param c JSON cursor.
+ * @param[out] text Accumulated text.
+ * @return 1 = continue, 0 = array end reached, -1 = error.
+ * @utility
+ * @version 1.9.11
+ */
+/**
+ * @brief Advance cursor past commas/whitespace to next element.
+ * @param c JSON cursor.
+ * @return Character at next element, or '\0' if past end.
+ * @utility
+ * @version 1.9.11
+ */
+static char json_skip_to_element(JsonCursor& c) {
+    while (c.pos < c.data.size()) {
+        json_skip_ws(c);
+        char ch = c.data[c.pos];
+        if (ch != ',') return ch;
+        ++c.pos;
+    }
+    return '\0';
+}
+
+/**
+ * @brief Parse one content part object and append text if applicable.
+ * @param c JSON cursor (positioned at '{').
+ * @param[out] text Accumulated text output.
+ * @return true on success.
+ * @utility
+ * @version 1.9.11
+ */
+static bool json_read_one_content_part(JsonCursor& c,
+                                       std::string& text) {
+    ++c.pos; // skip '{'
+    std::string type_val;
+    std::string text_val;
+    bool ok = json_parse_content_part(c, type_val, text_val);
+    if (ok) append_text_part(type_val, text_val, text);
+    return ok;
+}
+
+/**
+ * @brief Extract concatenated text from a JSON content array.
+ *
+ * Scans for {"type":"text","text":"..."} objects within a content
+ * array and joins their text values. Skips image parts.
+ *
+ * @param c JSON cursor (positioned at opening '[').
+ * @param[out] text Extracted text.
+ * @return true on success.
+ * @utility
+ * @version 1.9.11
+ */
+static bool json_extract_text_from_array(JsonCursor& c,
+                                         std::string& text) {
+    if (c.pos >= c.data.size() || c.data[c.pos] != '[') {
+        return false;
+    }
+    ++c.pos; // skip '['
+    text.clear();
+
+    bool ok = true;
+    char ch = json_skip_to_element(c);
+    while (ok && ch == '{') {
+        ok = json_read_one_content_part(c, text);
+        ch = ok ? json_skip_to_element(c) : '\0';
+    }
+    if (ok && ch == ']') { ++c.pos; }
+    return ok && ch == ']';
+}
+
+/**
  * @brief Read one key:value pair and apply to message fields.
+ *
+ * Handles both string content and array content (multimodal).
+ * For array content, extracts text parts only.
+ *
  * @param c JSON cursor (positioned at key start).
  * @param[out] msg Message to populate.
  * @return true on success.
  * @utility
- * @version 1.9.9
+ * @version 1.9.11
  */
 static bool json_read_field(JsonCursor& c, Message& msg) {
     std::string key;
@@ -205,9 +378,20 @@ static bool json_read_field(JsonCursor& c, Message& msg) {
         ok = false;
     }
 
-    if (ok && key == "role") { ok = json_read_string(c, msg.role); }
-    else if (ok && key == "content") { ok = json_read_string(c, msg.content); }
-    else if (ok) { json_skip_value(c); }
+    if (!ok) return false;
+
+    if (key == "role") {
+        ok = json_read_string(c, msg.role);
+    } else if (key == "content") {
+        json_skip_ws(c);
+        if (c.pos < c.data.size() && c.data[c.pos] == '[') {
+            ok = json_extract_text_from_array(c, msg.content);
+        } else {
+            ok = json_read_string(c, msg.content);
+        }
+    } else {
+        json_skip_value(c);
+    }
     return ok;
 }
 

@@ -4,6 +4,7 @@ target_sources(entropic-types PRIVATE
     error.cpp
     logging.cpp
     config.cpp
+    content.cpp
 )
 
 target_include_directories(entropic-types PUBLIC

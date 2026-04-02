@@ -11,6 +11,9 @@ add_subdirectory(stress)
 # Retained as empty skeleton for backwards compat.
 add_subdirectory(benchmark)
 
+# v1.10.1: Regression tests from manual test findings (test1-test6).
+add_subdirectory(regression)
+
 # v1.10.0: Merged model quality tests + performance benchmarks.
 # Gated behind ENTROPIC_BUILD_MODEL_TESTS (OFF by default).
 add_subdirectory(model)

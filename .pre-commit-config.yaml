@@ -55,3 +55,21 @@ repos:
       - id: doxygen-guard
         files: \.(h|hpp|c|cpp|cc|cxx)$
         exclude: ^extern/
+
+  # ── Build & Test Gates ──────────────────────────────
+  - repo: local
+    hooks:
+      - id: unit-tests
+        name: Unit tests (dev preset)
+        entry: bash -c 'cmake --preset dev && cmake --build build/dev --parallel && cd build/dev && ctest --output-on-failure --parallel 4 -E "worktree|ensure_develop|run_git|ScopedWorktree|C API (full|delegation|snapshot|search)"'
+        language: system
+        always_run: true
+        pass_filenames: false
+
+      - id: coverage-check
+        name: Per-library coverage (gcovr)
+        entry: scripts/check_coverage.py
+        language: python
+        additional_dependencies: ['gcovr']
+        always_run: true
+        pass_filenames: false

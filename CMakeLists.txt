@@ -37,6 +37,14 @@ option(ENTROPIC_STREAMING       "Include streaming generation API"  ON)
 option(ENTROPIC_BUILD_TESTS        "Build test suite"                  ON)
 option(ENTROPIC_BUILD_MODEL_TESTS  "Build model tests (GPU required)"  OFF)
 option(ENTROPIC_BUILD_DOCS         "Build Doxygen documentation"       OFF)
+option(ENTROPIC_COVERAGE           "Build with coverage instrumentation (gcov)" OFF)
+
+# ── Coverage instrumentation ──────────────────────────
+if(ENTROPIC_COVERAGE)
+    add_compile_options(--coverage -fprofile-arcs -ftest-coverage)
+    add_link_options(--coverage)
+    message(STATUS "Coverage instrumentation enabled (gcov)")
+endif()
 
 # ── CUDA detection ──────────────────────────────────────
 if(ENTROPIC_CUDA AND NOT ENTROPIC_CPU_ONLY)

@@ -1,0 +1,5 @@
+<map id="entropic/storage/logger.h" name="entropic/storage/logger.h">
+<area shape="rect" id="Node000001" title="Session log file management with spdlog rotating sinks." alt="" coords="5,5,189,31"/>
+<area shape="rect" id="Node000002" href="$logger_8cpp.html" title="SessionLogger implementation with spdlog rotating file sinks." alt="" coords="26,79,169,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="100,44,100,79,95,79,95,44"/>
+</map>

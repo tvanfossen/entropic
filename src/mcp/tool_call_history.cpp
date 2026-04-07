@@ -31,7 +31,7 @@ ToolCallHistory::ToolCallHistory(size_t capacity)
  * @brief Record a completed tool call.
  * @param entry Tool call record.
  * @internal
- * @version 1.9.12
+ * @version 2.0.0
  */
 void ToolCallHistory::record(const ToolCallRecord& entry) {
     std::unique_lock lock(mutex_);
@@ -40,6 +40,8 @@ void ToolCallHistory::record(const ToolCallRecord& entry) {
     if (count_ < capacity_) {
         ++count_;
     }
+    logger->info("Recorded: tool='{}', {}/{} slots",
+                 entry.tool_name, count_, capacity_);
 }
 
 /**

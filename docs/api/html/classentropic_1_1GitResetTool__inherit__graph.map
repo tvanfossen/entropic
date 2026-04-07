@@ -1,0 +1,5 @@
+<map id="entropic::GitResetTool" name="entropic::GitResetTool">
+<area shape="rect" id="Node000001" title="Tool: git reset HEAD [files]." alt="" coords="5,79,171,104"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="17,5,159,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="91,44,91,79,85,79,85,44"/>
+</map>

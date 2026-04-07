@@ -1,0 +1,17 @@
+<map id="facade/engine_handle.h" name="facade/engine_handle.h">
+<area shape="rect" id="Node000001" title="Private definition of the entropic_engine struct." alt="" coords="661,5,839,31"/>
+<area shape="rect" id="Node000002" href="$entropic_8cpp.html" title="librentropic facade — C API implementation." alt="" coords="5,79,156,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="648,32,168,81,157,83,156,77,167,76,647,26"/>
+<area shape="rect" id="Node000003" href="$entropic__audit_8cpp.html" title="C API facade for audit log operations." alt="" coords="180,79,371,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="661,35,352,81,351,76,660,30"/>
+<area shape="rect" id="Node000004" href="$entropic__compaction_8cpp.html" title="C API facade for compaction operations." alt="" coords="395,79,628,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="699,37,551,81,549,76,698,32"/>
+<area shape="rect" id="Node000005" href="$entropic__hooks_8cpp.html" title="C API implementation for hook registration and deregistration." alt="" coords="652,79,848,104"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="753,44,753,79,747,79,747,44"/>
+<area shape="rect" id="Node000006" href="$entropic__identity_8cpp.html" title="C API implementation for identity management." alt="" coords="873,79,1078,104"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="800,32,940,76,938,81,798,37"/>
+<area shape="rect" id="Node000007" href="$entropic__mcp_8cpp.html" title="C API implementation for external MCP server management." alt="" coords="1103,79,1288,104"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="836,30,1124,76,1123,81,835,35"/>
+<area shape="rect" id="Node000008" href="$entropic__storage_8cpp.html" title="C API facade for storage open/close." alt="" coords="1312,79,1519,104"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="852,28,1312,76,1312,82,852,33"/>
+</map>

@@ -1,0 +1,79 @@
+<map id="entropic/mcp/tool_base.h" name="entropic/mcp/tool_base.h">
+<area shape="rect" id="Node000001" title="Abstract base class for individual MCP tools." alt="" coords="933,5,1119,31"/>
+<area shape="rect" id="Node000002" href="$server__base_8h.html" title="MCPServerBase concrete base class + ServerResponse." alt="" coords="1077,152,1229,192"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1031,44,1039,73,1053,102,1081,129,1112,150,1110,154,1078,134,1049,106,1034,75,1026,45"/>
+<area shape="rect" id="Node000016" href="$bash_8cpp.html" title="BashServer implementation — shell command execution with safety." alt="" coords="1965,335,2129,361"/>
+<area shape="poly" id="edge40_Node000001_Node000016" title=" " alt="" coords="1134,16,1313,17,1547,26,1809,44,1942,58,2072,76,2196,90,2251,96,2301,105,2346,121,2386,147,2421,185,2452,239,2460,261,2458,271,2452,282,2430,299,2399,312,2315,332,2219,343,2130,348,2129,342,2218,337,2314,326,2397,307,2428,294,2448,278,2453,269,2454,261,2448,241,2417,188,2383,151,2343,126,2299,110,2250,101,2196,95,2071,81,1941,63,1808,49,1546,31,1313,23,1134,21"/>
+<area shape="rect" id="Node000018" href="$diagnostics_8cpp.html" title="DiagnosticsServer implementation — LSP client stubs." alt="" coords="697,335,904,361"/>
+<area shape="poly" id="edge41_Node000001_Node000018" title=" " alt="" coords="919,32,718,57,600,76,480,99,366,127,265,160,222,178,185,198,155,219,134,241,125,261,127,269,133,278,154,285,202,294,353,310,697,337,697,343,352,316,201,299,153,291,130,282,122,271,120,260,129,239,152,215,182,194,220,174,263,155,364,122,479,94,599,70,717,52,918,27"/>
+<area shape="rect" id="Node000020" href="$entropic__server_8cpp.html" title="EntropicServer implementation — engine&#45;level directive tools." alt="" coords="956,328,1115,368"/>
+<area shape="poly" id="edge42_Node000001_Node000020" title=" " alt="" coords="953,36,819,70,747,94,679,122,624,155,604,173,589,192,580,212,579,233,586,255,601,278,625,295,659,306,701,313,749,317,843,321,916,325,956,332,956,337,915,331,843,326,748,323,701,319,658,311,622,299,597,282,581,257,574,234,575,211,584,190,600,170,621,151,677,117,745,89,818,64,952,31"/>
+<area shape="rect" id="Node000022" href="$filesystem_8cpp.html" title="Filesystem MCP server — read/write/edit/glob/grep/list_directory." alt="" coords="5,335,207,361"/>
+<area shape="poly" id="edge43_Node000001_Node000022" title=" " alt="" coords="919,21,794,23,642,32,476,51,393,64,312,81,213,102,174,119,133,154,118,175,108,198,99,250,100,299,106,335,101,335,95,300,93,250,102,197,113,172,129,150,172,115,211,97,311,76,392,59,475,45,641,27,794,18,919,16"/>
+<area shape="rect" id="Node000024" href="$git_8cpp.html" title="GitServer implementation — version control operations." alt="" coords="331,335,481,361"/>
+<area shape="poly" id="edge44_Node000001_Node000024" title=" " alt="" coords="919,28,738,42,525,67,421,84,326,104,248,127,191,154,152,182,120,212,111,228,107,244,110,260,120,278,133,289,153,299,206,316,269,329,331,337,330,342,268,334,205,321,150,304,130,294,116,282,105,262,102,243,106,226,116,209,148,178,189,150,246,122,325,99,420,78,524,62,738,37,918,23"/>
+<area shape="rect" id="Node000026" href="$web_8cpp.html" title="WebServer implementation — web_fetch + web_search placeholders." alt="" coords="1675,335,1835,361"/>
+<area shape="poly" id="edge45_Node000001_Node000026" title=" " alt="" coords="1133,16,1438,24,1630,35,1830,54,2024,81,2114,99,2198,120,2273,144,2337,172,2390,203,2429,238,2439,260,2436,271,2429,282,1836,342,1835,336,2426,278,2432,269,2433,260,2425,242,2387,207,2335,176,2271,149,2196,125,2113,104,2023,87,1829,59,1630,40,1438,29,1133,22"/>
+<area shape="rect" id="Node000029" href="$tool__base_8cpp.html" title="ToolBase implementation + load_tool_definition." alt="" coords="2271,247,2415,273"/>
+<area shape="poly" id="edge46_Node000001_Node000029" title=" " alt="" coords="1109,30,1597,114,1926,173,2260,237,2294,245,2293,250,2259,243,1925,178,1596,119,1108,36"/>
+<area shape="rect" id="Node000031" href="$tool__registry_8h.html" title="Tool registration, lookup, and dispatch." alt="" coords="1063,79,1266,104"/>
+<area shape="poly" id="edge37_Node000001_Node000031" title=" " alt="" coords="1062,34,1143,76,1141,81,1059,39"/>
+<area shape="rect" id="Node000003" href="$server__manager_8h.html" title="MCP server lifecycle management and tool routing." alt="" coords="1441,240,1593,280"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="1243,192,1441,238,1440,243,1241,197"/>
+<area shape="rect" id="Node000015" href="$bash_8h.html" title="Bash MCP server — shell command execution." alt="" coords="1851,240,2009,280"/>
+<area shape="poly" id="edge15_Node000002_Node000015" title=" " alt="" coords="1242,176,1510,198,1675,216,1840,237,1851,239,1850,244,1839,243,1674,221,1510,203,1242,182"/>
+<area shape="poly" id="edge29_Node000002_Node000016" title=" " alt="" coords="1243,175,1703,200,1919,218,1990,228,2024,238,2041,261,2049,288,2051,335,2046,335,2044,289,2036,263,2020,242,1988,233,1918,224,1702,206,1243,180"/>
+<area shape="rect" id="Node000017" href="$diagnostics_8h.html" title="Diagnostics MCP server — LSP client for code diagnostics." alt="" coords="839,240,997,280"/>
+<area shape="poly" id="edge17_Node000002_Node000017" title=" " alt="" coords="1089,199,970,242,968,237,1087,194"/>
+<area shape="poly" id="edge30_Node000002_Node000018" title=" " alt="" coords="1064,183,995,192,926,204,866,221,844,231,828,242,813,264,805,289,802,335,797,335,800,288,808,261,824,238,841,226,864,216,925,199,995,187,1063,178"/>
+<area shape="rect" id="Node000019" href="$entropic__server_8h.html" title="Entropic MCP server — engine&#45;level tools including introspection." alt="" coords="1257,240,1416,280"/>
+<area shape="poly" id="edge19_Node000002_Node000019" title=" " alt="" coords="1207,195,1298,238,1295,242,1204,200"/>
+<area shape="poly" id="edge31_Node000002_Node000020" title=" " alt="" coords="1106,201,1082,219,1063,241,1052,263,1045,286,1039,328,1033,327,1040,285,1047,261,1058,239,1079,216,1102,197"/>
+<area shape="rect" id="Node000021" href="$filesystem_8h.html" title="Filesystem MCP server — read/write/edit/glob/grep/list_directory." alt="" coords="144,240,303,280"/>
+<area shape="poly" id="edge21_Node000002_Node000021" title=" " alt="" coords="1063,179,733,199,524,217,314,243,303,244,302,239,314,237,524,212,732,194,1063,174"/>
+<area shape="poly" id="edge32_Node000002_Node000022" title=" " alt="" coords="1063,176,828,178,535,187,395,196,274,207,182,223,152,232,133,242,117,263,109,289,107,335,102,335,104,288,113,261,130,238,150,227,181,218,273,202,395,190,535,182,828,173,1063,171"/>
+<area shape="rect" id="Node000023" href="$git_8h.html" title="Git MCP server — version control operations." alt="" coords="327,240,485,280"/>
+<area shape="poly" id="edge23_Node000002_Node000023" title=" " alt="" coords="1063,183,812,206,505,243,486,246,485,240,504,237,811,200,1063,177"/>
+<area shape="poly" id="edge33_Node000002_Node000024" title=" " alt="" coords="1063,176,966,181,849,191,723,211,600,243,547,264,497,290,423,338,420,333,494,286,545,259,599,237,722,206,848,186,966,175,1063,171"/>
+<area shape="rect" id="Node000025" href="$web_8h.html" title="Web MCP server — web_fetch + web_search." alt="" coords="1668,240,1827,280"/>
+<area shape="poly" id="edge25_Node000002_Node000025" title=" " alt="" coords="1243,181,1430,205,1649,237,1668,241,1667,246,1648,243,1429,211,1242,187"/>
+<area shape="poly" id="edge34_Node000002_Node000026" title=" " alt="" coords="1243,171,1322,175,1415,186,1512,206,1606,238,1633,256,1658,278,1739,333,1736,337,1655,282,1630,260,1604,242,1511,211,1414,192,1322,181,1242,176"/>
+<area shape="rect" id="Node000027" href="$mcp__c__api_8cpp.html" title="C API implementation for i_mcp_server.h." alt="" coords="612,247,763,273"/>
+<area shape="poly" id="edge27_Node000002_Node000027" title=" " alt="" coords="1064,192,782,243,745,250,744,245,782,237,1063,186"/>
+<area shape="rect" id="Node000028" href="$server__base_8cpp.html" title="MCPServerBase implementation." alt="" coords="1073,247,1233,273"/>
+<area shape="poly" id="edge28_Node000002_Node000028" title=" " alt="" coords="1155,206,1155,247,1150,247,1150,206"/>
+<area shape="poly" id="edge35_Node000002_Node000029" title=" " alt="" coords="1243,171,1429,175,1681,185,1969,205,2116,219,2260,237,2299,245,2298,250,2259,243,2115,225,1969,210,1681,191,1428,180,1243,177"/>
+<area shape="rect" id="Node000030" href="$tool__registry_8cpp.html" title="ToolRegistry implementation." alt="" coords="2085,247,2247,273"/>
+<area shape="poly" id="edge36_Node000002_Node000030" title=" " alt="" coords="1242,174,1603,194,1834,212,2066,237,2112,245,2111,250,2066,243,1833,217,1603,199,1242,179"/>
+<area shape="rect" id="Node000004" href="$tool__executor_8h.html" title="Processes tool calls from model output." alt="" coords="1179,335,1390,361"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="1454,287,1316,338,1315,333,1452,282"/>
+<area shape="rect" id="Node000005" href="$engine__handle_8h.html" title="Private definition of the entropic_engine struct." alt="" coords="1471,416,1648,441"/>
+<area shape="poly" id="edge13_Node000003_Node000005" title=" " alt="" coords="1574,285,1597,303,1615,327,1621,348,1615,369,1598,397,1577,418,1573,414,1594,393,1610,367,1615,348,1610,329,1593,307,1571,289"/>
+<area shape="rect" id="Node000014" href="$server__manager_8cpp.html" title="ServerManager implementation." alt="" coords="1414,335,1601,361"/>
+<area shape="poly" id="edge14_Node000003_Node000014" title=" " alt="" coords="1516,294,1511,335,1506,335,1510,294"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="1338,362,1520,413,1519,419,1337,367"/>
+<area shape="rect" id="Node000013" href="$tool__executor_8cpp.html" title="ToolExecutor implementation." alt="" coords="1201,416,1369,441"/>
+<area shape="poly" id="edge12_Node000004_Node000013" title=" " alt="" coords="1287,374,1287,416,1282,416,1282,374"/>
+<area shape="rect" id="Node000006" href="$entropic_8cpp.html" title="librentropic facade — C API implementation." alt="" coords="815,489,965,515"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="1457,442,977,492,966,493,965,488,976,487,1457,437"/>
+<area shape="rect" id="Node000007" href="$entropic__audit_8cpp.html" title="C API facade for audit log operations." alt="" coords="989,489,1180,515"/>
+<area shape="poly" id="edge6_Node000005_Node000007" title=" " alt="" coords="1470,446,1162,492,1161,487,1469,441"/>
+<area shape="rect" id="Node000008" href="$entropic__compaction_8cpp.html" title="C API facade for compaction operations." alt="" coords="1204,489,1437,515"/>
+<area shape="poly" id="edge7_Node000005_Node000008" title=" " alt="" coords="1509,448,1360,492,1359,487,1507,443"/>
+<area shape="rect" id="Node000009" href="$entropic__hooks_8cpp.html" title="C API implementation for hook registration and deregistration." alt="" coords="1461,489,1657,515"/>
+<area shape="poly" id="edge8_Node000005_Node000009" title=" " alt="" coords="1562,455,1562,489,1557,489,1557,455"/>
+<area shape="rect" id="Node000010" href="$entropic__identity_8cpp.html" title="C API implementation for identity management." alt="" coords="1682,489,1887,515"/>
+<area shape="poly" id="edge9_Node000005_Node000010" title=" " alt="" coords="1609,443,1749,487,1747,492,1608,448"/>
+<area shape="rect" id="Node000011" href="$entropic__mcp_8cpp.html" title="C API implementation for external MCP server management." alt="" coords="1912,489,2097,515"/>
+<area shape="poly" id="edge10_Node000005_Node000011" title=" " alt="" coords="1645,441,1933,487,1933,492,1644,446"/>
+<area shape="rect" id="Node000012" href="$entropic__storage_8cpp.html" title="C API facade for storage open/close." alt="" coords="2121,489,2328,515"/>
+<area shape="poly" id="edge11_Node000005_Node000012" title=" " alt="" coords="1662,438,2122,487,2121,492,1661,443"/>
+<area shape="poly" id="edge16_Node000015_Node000016" title=" " alt="" coords="1968,286,2033,333,2030,337,1965,290"/>
+<area shape="poly" id="edge18_Node000017_Node000018" title=" " alt="" coords="883,290,818,337,815,333,880,286"/>
+<area shape="poly" id="edge20_Node000019_Node000020" title=" " alt="" coords="1258,286,1102,331,1101,325,1256,281"/>
+<area shape="poly" id="edge22_Node000021_Node000022" title=" " alt="" coords="188,290,123,337,120,333,185,286"/>
+<area shape="poly" id="edge24_Node000023_Node000024" title=" " alt="" coords="409,294,409,335,403,335,403,294"/>
+<area shape="poly" id="edge26_Node000025_Node000026" title=" " alt="" coords="1753,294,1757,335,1752,335,1748,294"/>
+<area shape="poly" id="edge38_Node000031_Node000002" title=" " alt="" coords="1163,118,1158,152,1153,151,1158,117"/>
+<area shape="poly" id="edge39_Node000031_Node000030" title=" " alt="" coords="1247,104,2098,245,2097,250,1246,109"/>
+</map>

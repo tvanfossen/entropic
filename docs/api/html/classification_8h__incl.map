@@ -1,0 +1,9 @@
+<map id="entropic/prompts/classification.h" name="entropic/prompts/classification.h">
+<area shape="rect" id="Node000001" title="Auto&#45;generated classification prompt for the router model." alt="" coords="135,5,370,31"/>
+<area shape="rect" id="Node000002" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="5,79,199,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="230,33,140,75,138,70,227,28"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="223,79,282,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="255,31,255,65,250,65,250,31"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="307,79,369,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="268,29,315,68,312,72,265,33"/>
+</map>

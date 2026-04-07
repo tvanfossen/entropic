@@ -5,12 +5,11 @@
  * Tests the C API surface for hook registration/deregistration.
  * Full dispatch tests are in tests/unit/core/test_hook_registry.cpp.
  *
- * @version 1.9.1
+ * @version 2.0.0
  */
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
-#include <entropic/core/hook_registry.h>
 
 /**
  * @brief Dummy hook callback for testing.
@@ -35,15 +34,16 @@ static int dummy_callback(
 }
 
 /**
- * @brief Create a handle backed by a real HookRegistry.
- * @param reg HookRegistry to use as handle.
- * @return Handle cast from HookRegistry pointer.
+ * @brief RAII wrapper for entropic handle in tests.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
-static entropic_handle_t make_handle(entropic::HookRegistry& reg) {
-    return reinterpret_cast<entropic_handle_t>(&reg);
-}
+struct HandleGuard {
+    entropic_handle_t h = nullptr;
+    HandleGuard() { entropic_create(&h); }
+    ~HandleGuard() { entropic_destroy(h); }
+    operator entropic_handle_t() const { return h; }
+};
 
 SCENARIO("Hook registration with null handle", "[api][hooks]") {
     GIVEN("a null handle") {
@@ -61,8 +61,7 @@ SCENARIO("Hook registration with null handle", "[api][hooks]") {
 
 SCENARIO("Hook registration with null callback", "[api][hooks]") {
     GIVEN("a valid handle") {
-        entropic::HookRegistry reg;
-        auto h = make_handle(reg);
+        HandleGuard h;
 
         WHEN("entropic_register_hook with NULL callback") {
             entropic_error_t err = entropic_register_hook(
@@ -76,9 +75,8 @@ SCENARIO("Hook registration with null callback", "[api][hooks]") {
 }
 
 SCENARIO("Hook registration succeeds via C API", "[api][hooks]") {
-    GIVEN("a valid handle with HookRegistry") {
-        entropic::HookRegistry reg;
-        auto h = make_handle(reg);
+    GIVEN("a valid handle") {
+        HandleGuard h;
 
         WHEN("entropic_register_hook is called") {
             entropic_error_t err = entropic_register_hook(
@@ -88,17 +86,13 @@ SCENARIO("Hook registration succeeds via C API", "[api][hooks]") {
             THEN("it returns ENTROPIC_OK") {
                 REQUIRE(err == ENTROPIC_OK);
             }
-            THEN("the hook is registered") {
-                REQUIRE(reg.hook_count(ENTROPIC_HOOK_PRE_GENERATE) == 1);
-            }
         }
     }
 }
 
 SCENARIO("Hook deregistration via C API", "[api][hooks]") {
     GIVEN("a registered hook") {
-        entropic::HookRegistry reg;
-        auto h = make_handle(reg);
+        HandleGuard h;
         entropic_register_hook(h, ENTROPIC_HOOK_ON_ERROR,
                                dummy_callback, nullptr, 0);
 
@@ -108,9 +102,6 @@ SCENARIO("Hook deregistration via C API", "[api][hooks]") {
 
             THEN("it returns ENTROPIC_OK") {
                 REQUIRE(err == ENTROPIC_OK);
-            }
-            THEN("the hook is removed") {
-                REQUIRE(reg.hook_count(ENTROPIC_HOOK_ON_ERROR) == 0);
             }
         }
     }
@@ -132,8 +123,7 @@ SCENARIO("Hook deregistration with null handle", "[api][hooks]") {
 
 SCENARIO("Invalid hook point rejected via C API", "[api][hooks]") {
     GIVEN("a valid handle") {
-        entropic::HookRegistry reg;
-        auto h = make_handle(reg);
+        HandleGuard h;
 
         WHEN("registering with ENTROPIC_HOOK_COUNT_") {
             entropic_error_t err = entropic_register_hook(

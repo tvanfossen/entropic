@@ -450,13 +450,14 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 1.9.5
+ * @version 2.0.0
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
 
     auto rejection = check_call_preconditions(ctx, call);
     if (rejection.has_value()) {
+        logger->info("Tool '{}' rejected by precondition", call.name);
         return {std::move(*rejection)};
     }
 
@@ -491,6 +492,8 @@ std::vector<Message> ToolExecutor::process_single_call(
         free(out);
     }
 
+    logger->info("Tool '{}' executed: {:.0f}ms, result={} chars",
+                 call.name, exec_ms, raw_result.size());
     run_post_tool_hooks(ctx);
 
     return {std::move(msg)};

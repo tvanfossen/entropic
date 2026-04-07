@@ -6,17 +6,22 @@
  */
 
 #include <entropic/inference/throughput_tracker.h>
+#include <entropic/types/logging.h>
 
 #include <algorithm>
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("inference.throughput");
+} // anonymous namespace
 
 /**
  * @brief Record a completed generation sample.
  * @param tokens_generated Number of tokens produced.
  * @param elapsed_ms Wall-clock generation time in milliseconds.
  * @internal
- * @version 1.9.7
+ * @version 2.0.0
  */
 void ThroughputTracker::record(int tokens_generated, int64_t elapsed_ms) {
     if (tokens_generated < kMinTokens || elapsed_ms <= 0) {
@@ -36,6 +41,11 @@ void ThroughputTracker::record(int tokens_generated, int64_t elapsed_ms) {
             std::memory_order_relaxed);
     }
     samples_.fetch_add(1, std::memory_order_relaxed);
+    logger->info("Throughput sample: {:.1f} tok/s, EWMA={:.1f} tok/s, "
+                 "{} samples",
+                 sample_tok_s,
+                 ewma_tok_s_.load(std::memory_order_relaxed),
+                 samples_.load(std::memory_order_relaxed));
 }
 
 /**

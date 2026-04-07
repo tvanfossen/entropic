@@ -236,6 +236,7 @@ add_executable(entropic-api-tests
     api/identity_api_test.cpp
     api/hook_stub_test.cpp
     api/error_enum_test.cpp
+    api/facade_integration_test.cpp
 )
 
 target_link_libraries(entropic-api-tests PRIVATE

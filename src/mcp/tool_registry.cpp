@@ -84,7 +84,7 @@ std::vector<const ToolDefinition*> ToolRegistry::get_definitions() const {
  * @param args_json JSON arguments string.
  * @return ServerResponse from the tool.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 ServerResponse ToolRegistry::dispatch(
     const std::string& name,
@@ -96,6 +96,7 @@ ServerResponse ToolRegistry::dispatch(
         resp.result = "Error: Unknown tool '" + name + "'";
         return resp;
     }
+    logger->info("Dispatch: tool='{}'", name);
     return it->second->execute(args_json);
 }
 

@@ -5,10 +5,15 @@
  */
 
 #include <entropic/prompts/classification.h>
+#include <entropic/types/logging.h>
 #include <algorithm>
 #include <cctype>
 
 namespace entropic::prompts {
+
+namespace {
+auto logger = entropic::log::get("prompts.classification");
+} // anonymous namespace
 
 /**
  * @brief Convert string to uppercase.
@@ -113,7 +118,7 @@ static std::string format_tier_definitions(
  * @param history Recent user messages for context.
  * @param recent_tiers Recent tier activations for continuity.
  * @return Classification prompt string.
- * @version 1.8.2
+ * @version 2.0.0
  * @internal
  */
 std::string build_classification_prompt(
@@ -140,6 +145,9 @@ std::string build_classification_prompt(
     }
 
     result += "\"" + message + "\" -> ";
+    logger->info("Classification prompt: {} tiers, {} history, "
+                 "{} chars",
+                 tiers.size(), history.size(), result.size());
     return result;
 }
 

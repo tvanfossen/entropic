@@ -5,11 +5,12 @@
  * Implements entropic_register_mcp_server, entropic_deregister_mcp_server,
  * and entropic_list_mcp_servers from entropic.h.
  *
- * @version 1.8.7
+ * @version 2.0.0
  */
 
+#include "engine_handle.h"
+
 #include <entropic/entropic.h>
-#include <entropic/mcp/server_manager.h>
 #include <entropic/types/logging.h>
 
 #include <nlohmann/json.hpp>
@@ -18,19 +19,28 @@
 
 static auto logger = entropic::log::get("facade.mcp");
 
-// Forward declaration — engine internals not visible to this file.
-// The actual implementation retrieves ServerManager from the handle.
-// For now, these are stubs that will be wired when the facade
-// owns the full engine state (currently entropic.cpp manages lifecycle).
+/**
+ * @brief Check handle prerequisites for MCP server APIs.
+ * @param h Engine handle.
+ * @return ENTROPIC_OK if valid, error code otherwise.
+ * @internal
+ * @version 2.0.0
+ */
+static entropic_error_t check_server_mgr(entropic_handle_t h) {
+    if (!h) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!h->server_manager) { return ENTROPIC_ERROR_INVALID_STATE; }
+    return ENTROPIC_OK;
+}
 
 /**
  * @brief Register an external MCP server at runtime.
- * @param handle Engine handle.
- * @param name Server name.
- * @param config_json JSON config.
- * @return Error code.
+ *
+ * Parses config_json for "command", "args", and "url" fields
+ * to determine transport type (stdio or SSE).
+ *
+ * @return ENTROPIC_OK or error code.
  * @internal
- * @version 1.8.7
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_register_mcp_server(
@@ -38,58 +48,82 @@ entropic_register_mcp_server(
     const char* name,
     const char* config_json) {
 
-    if (!handle || !name || !config_json) {
-        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    auto rc = check_server_mgr(handle);
+    if (rc != ENTROPIC_OK || !name || !config_json) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
 
-    // TODO: Wire to handle->server_manager when facade owns engine state
-    // For now, log and return stub
-    logger->info("entropic_register_mcp_server: name='{}' config='{}'",
-                 name, config_json);
-    return ENTROPIC_ERROR_INVALID_STATE;
+    try {
+        auto j = nlohmann::json::parse(config_json);
+        auto cmd = j.value("command", "");
+        auto url = j.value("url", "");
+        std::vector<std::string> args;
+        if (j.contains("args") && j["args"].is_array()) {
+            args = j["args"].get<std::vector<std::string>>();
+        }
+        handle->server_manager->connect_external_server(
+            name, cmd, args, url);
+        logger->info("register_mcp_server: name='{}'", name);
+        return ENTROPIC_OK;
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        return ENTROPIC_ERROR_CONNECTION_FAILED;
+    }
 }
 
 /**
  * @brief Deregister an external MCP server.
- * @param handle Engine handle.
- * @param name Server name.
- * @return Error code.
+ *
+ * @return ENTROPIC_OK or error code.
  * @internal
- * @version 1.8.7
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_deregister_mcp_server(
     entropic_handle_t handle,
     const char* name) {
 
-    if (!handle || !name) {
-        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    auto rc = check_server_mgr(handle);
+    if (rc != ENTROPIC_OK || !name) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
 
-    logger->info("entropic_deregister_mcp_server: name='{}'", name);
-    return ENTROPIC_ERROR_INVALID_STATE;
+    try {
+        handle->server_manager->disconnect_external_server(name);
+        logger->info("deregister_mcp_server: name='{}'", name);
+        return ENTROPIC_OK;
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        return ENTROPIC_ERROR_SERVER_NOT_FOUND;
+    }
 }
 
 /**
- * @brief List all MCP servers as JSON.
- * @param handle Engine handle.
- * @return JSON string (caller-owned), or NULL.
+ * @brief List all MCP servers as JSON array.
+ *
+ * @return JSON string (caller frees), or NULL.
  * @internal
- * @version 1.8.7
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT char*
 entropic_list_mcp_servers(entropic_handle_t handle) {
-    if (!handle) {
+    if (!handle || !handle->configured.load()) {
         return nullptr;
     }
-
-    logger->info("entropic_list_mcp_servers called");
-    // Stub: return empty servers object
-    const char* stub = R"({"servers":{}})";
-    auto len = std::strlen(stub) + 1;
-    auto* buf = static_cast<char*>(entropic_alloc(len));
-    if (buf) {
-        std::memcpy(buf, stub, len);
+    try {
+        nlohmann::json arr = nlohmann::json::array();
+        if (handle->server_manager) {
+            auto servers = handle->server_manager->list_server_info();
+            for (const auto& [name, s] : servers) {
+                arr.push_back({{"name", s.name},
+                               {"transport", s.transport},
+                               {"status", s.status},
+                               {"source", s.source}});
+            }
+        }
+        return strdup(arr.dump().c_str());
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        return nullptr;
     }
-    return buf;
 }

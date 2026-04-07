@@ -102,4 +102,22 @@ ENTROPIC_EXPORT void apply_env_overrides(ParsedConfig& config);
  */
 ENTROPIC_EXPORT std::filesystem::path resolve_data_dir(const ParsedConfig& config);
 
+/**
+ * @brief Load config from a YAML/JSON string (no layering).
+ *
+ * Parses the string with ryml (accepts both YAML and JSON since
+ * JSON is a YAML subset), applies env overrides, validates.
+ * Used by entropic_configure().
+ *
+ * @param content Config string (YAML or JSON).
+ * @param registry Bundled models registry for path resolution.
+ * @param[out] config Output parsed config.
+ * @return Empty string on success, error message on failure.
+ * @version 2.0.0
+ */
+ENTROPIC_EXPORT std::string load_config_from_string(
+    const std::string& content,
+    const BundledModels& registry,
+    ParsedConfig& config);
+
 } // namespace entropic::config

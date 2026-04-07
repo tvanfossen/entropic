@@ -1,0 +1,24 @@
+<map id="entropic/mcp/mcp_key_set.h" name="entropic/mcp/mcp_key_set.h">
+<area shape="rect" id="Node000001" title="Per&#45;identity set of authorized MCP tool keys." alt="" coords="493,5,662,45"/>
+<area shape="rect" id="Node000002" href="$config_8h.html" title="Configuration structs with defaults." alt="" coords="281,93,452,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="528,48,411,91,410,86,526,43"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="5,167,64,192"/>
+<area shape="poly" id="edge10_Node000001_Node000005" title=" " alt="" coords="493,45,386,67,270,96,165,130,76,164,74,159,163,125,269,91,385,61,492,39"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="591,167,654,192"/>
+<area shape="poly" id="edge12_Node000001_Node000006" title=" " alt="" coords="586,45,618,153,613,154,581,47"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="678,167,802,192"/>
+<area shape="poly" id="edge11_Node000001_Node000009" title=" " alt="" coords="593,44,620,79,655,117,710,157,707,161,652,121,616,83,588,47"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="665,93,729,119"/>
+<area shape="poly" id="edge9_Node000001_Node000010" title=" " alt="" coords="608,43,670,84,667,88,605,48"/>
+<area shape="rect" id="Node000003" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="393,167,567,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="386,116,452,157,449,162,383,121"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="88,167,155,192"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="328,121,168,167,167,162,327,116"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="305,121,78,169,77,164,304,116"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="409,116,579,163,577,168,407,121"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="179,167,253,192"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="344,121,254,163,252,158,341,116"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="277,167,368,192"/>
+<area shape="poly" id="edge7_Node000002_Node000008" title=" " alt="" coords="362,120,339,156,335,154,357,118"/>
+<area shape="poly" id="edge8_Node000002_Node000009" title=" " alt="" coords="427,116,667,161,666,167,426,121"/>
+</map>

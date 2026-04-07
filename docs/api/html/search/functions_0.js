@@ -1,0 +1,23 @@
+var searchData=
+[
+  ['accept_5fto_5fmain_0',['accept_to_main',['../classentropic_1_1WorktreeManager.html#a1a670506b9638b193552bc5ce38f2a6b',1,'entropic::WorktreeManager']]],
+  ['activate_1',['activate',['../classentropic_1_1AdapterManager.html#a37fab0f117ee88a152c375979e629e74',1,'entropic::AdapterManager::activate()'],['../classentropic_1_1InferenceBackend.html#a6bad69eedc41e2cd2d6b4c8552a4f8b4',1,'entropic::InferenceBackend::activate()']]],
+  ['active_5fadapter_2',['active_adapter',['../classentropic_1_1AdapterManager.html#a4068477a6c3634396affd3ff8a717eb9',1,'entropic::AdapterManager']]],
+  ['adapter_5fmanager_3',['adapter_manager',['../classentropic_1_1ModelOrchestrator.html#a84e31a88f20d6ab19db1266321a80cdf',1,'entropic::ModelOrchestrator']]],
+  ['add_5fpermission_4',['add_permission',['../classentropic_1_1PermissionManager.html#a3fb3b2f4a67b3a9488084602ca05a280',1,'entropic::PermissionManager::add_permission()'],['../classentropic_1_1ServerManager.html#a47fb17c7fcb27281384f9f7d21f5bfda',1,'entropic::ServerManager::add_permission()']]],
+  ['agent_5fstate_5fname_5',['agent_state_name',['../engine__types_8h.html#a6a633fb9f0c9c1f4ad92bf2a4fb9521d',1,'entropic']]],
+  ['agentengine_6',['AgentEngine',['../classentropic_1_1AgentEngine.html#ab59d4e637537c5b55422b4b60f86eb05',1,'entropic::AgentEngine']]],
+  ['all_7',['all',['../classentropic_1_1ToolCallHistory.html#a00c55baebe9f11cea80ca0416b4d19aa',1,'entropic::ToolCallHistory']]],
+  ['alloc_5fstring_8',['alloc_string',['../mcp__c__api_8cpp.html#a48bc1f0e80a5b9dc8a4d663c05fc1e8a',1,'mcp_c_api.cpp']]],
+  ['allocate_5ftemp_5fseq_5fid_9',['allocate_temp_seq_id',['../classentropic_1_1LlamaCppBackend.html#ad17b5f896438ed219e7b385ed85eaf88',1,'entropic::LlamaCppBackend']]],
+  ['anchor_5fkey_10',['anchor_key',['../classentropic_1_1ReadFileTool.html#ab15ac0b0f96dd1528216fee4979002d7',1,'entropic::ReadFileTool::anchor_key()'],['../classentropic_1_1TodoTool.html#a18fb8afefaf3e0ebd1034f688772252c',1,'entropic::TodoTool::anchor_key()'],['../classentropic_1_1ToolBase.html#acdb8cd660ec1373bd5a69cd9ecf49109',1,'entropic::ToolBase::anchor_key()']]],
+  ['append_5ftext_5fpart_11',['append_text_part',['../compactor__registry_8cpp.html#aedb20b1c4ee2d4a90f712da4283e8761',1,'entropic']]],
+  ['apply_5fchat_5ftemplate_12',['apply_chat_template',['../classentropic_1_1LlamaCppBackend.html#a8b8facef5b9d42021e79eddb3a5570ea',1,'entropic::LlamaCppBackend']]],
+  ['apply_5fenv_5foverrides_13',['apply_env_overrides',['../loader_8h.html#a5abd63b9c4e79316e86e2b03cbeb1ced',1,'entropic::config']]],
+  ['apply_5fmigration_14',['apply_migration',['../database_8cpp.html#a5fd8b6e1a64240feb4bfb65ced14c37d',1,'entropic']]],
+  ['attach_15',['attach',['../classentropic_1_1ConstitutionalValidator.html#a281527f586d4326db89686d5273b244b',1,'entropic::ConstitutionalValidator']]],
+  ['audit_5fentry_5ffrom_5fjson_16',['audit_entry_from_json',['../audit__entry_8h.html#a509695b2182ab191d6f19c68c81066f6',1,'entropic']]],
+  ['audit_5fentry_5fto_5fjson_17',['audit_entry_to_json',['../audit__entry_8h.html#af4dbda240bbd44088100a2b2e2ba2135',1,'entropic']]],
+  ['auditlogger_18',['AuditLogger',['../classentropic_1_1AuditLogger.html#a145e8dd888e919e4e2fccc7dc5754711',1,'entropic::AuditLogger']]],
+  ['available_5fmodels_19',['available_models',['../classentropic_1_1ModelOrchestrator.html#a206ee98d0aaa41e95d98fd2b5d639113',1,'entropic::ModelOrchestrator']]]
+];

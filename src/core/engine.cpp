@@ -238,7 +238,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -278,13 +278,12 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     }
 
     auto result = response_generator_.generate_response(ctx);
-    fire_post_generate_hook(result);
-
+    fire_post_generate_hook(result, ctx.locked_tier);
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
-
-    Message assistant_msg;
-    assistant_msg.role = "assistant";
-    assistant_msg.content = cleaned;
+    logger->info("[ITER] finish={}, {} tool call(s), {} chars",
+                 result.finish_reason, tool_calls.size(),
+                 cleaned.size());
+    Message assistant_msg{"assistant", cleaned};
     ctx.messages.push_back(std::move(assistant_msg));
 
     if (!tool_calls.empty() && tool_exec_.process_tool_calls != nullptr) {
@@ -700,7 +699,7 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
  * @param ctx Loop context.
  * @param tool_calls Parsed tool calls.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 void AgentEngine::process_tool_results(
     LoopContext& ctx,
@@ -710,6 +709,8 @@ void AgentEngine::process_tool_results(
     auto results = tool_exec_.process_tool_calls(
         ctx, tool_calls, tool_exec_.user_data);
 
+    logger->info("[TOOLS] {} call(s) -> {} result message(s)",
+                 tool_calls.size(), results.size());
     for (auto& msg : results) {
         ctx.messages.push_back(std::move(msg));
     }
@@ -767,18 +768,33 @@ bool AgentEngine::fire_pre_hook(
  * @brief Fire POST_GENERATE hook.
  * @param result Generation result.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
-void AgentEngine::fire_post_generate_hook(const GenerateResult& result) {
+void AgentEngine::fire_post_generate_hook(
+    GenerateResult& result, const std::string& tier) {
     if (hooks_.fire_post == nullptr) {
         return;
     }
+    std::string escaped;
+    escaped.reserve(result.content.size());
+    for (char c : result.content) {
+        if (c == '"') { escaped += "\\\""; }
+        else if (c == '\\') { escaped += "\\\\"; }
+        else if (c == '\n') { escaped += "\\n"; }
+        else { escaped += c; }
+    }
     std::string json = "{\"finish_reason\":\""
-        + result.finish_reason + "\"}";
+        + result.finish_reason
+        + "\",\"content\":\"" + escaped
+        + "\",\"tier\":\"" + tier + "\"}";
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_POST_GENERATE, json.c_str(), &out);
-    free(out);
+    if (out != nullptr) {
+        result.content = out;
+        logger->info("POST_GENERATE hook revised content");
+        free(out);
+    }
 }
 
 /**

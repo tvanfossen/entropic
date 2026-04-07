@@ -24,6 +24,8 @@
 #include <entropic/inference/backend.h>
 #include <entropic/inference/adapter_manager.h>
 #include <entropic/inference/grammar_registry.h>
+#include <entropic/inference/profile_registry.h>
+#include <entropic/inference/throughput_tracker.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
 
@@ -151,6 +153,14 @@ public:
     ChatAdapter* get_adapter(const std::string& tier_name) const;
 
     /**
+     * @brief Get the inference backend for a tier (for evaluation APIs).
+     * @param tier_name Tier name (e.g. "lead", "eng").
+     * @return Backend pointer, or nullptr if tier not found.
+     * @version 1.10.2
+     */
+    InferenceBackend* get_backend(const std::string& tier_name) const;
+
+    /**
      * @brief Access the LoRA adapter manager.
      * @return Reference to AdapterManager.
      * @version 1.9.2
@@ -163,6 +173,20 @@ public:
      * @version 1.9.3
      */
     GrammarRegistry& grammar_registry() { return grammar_registry_; }
+
+    /**
+     * @brief Access the GPU resource profile registry.
+     * @return Reference to ProfileRegistry.
+     * @version 2.0.0
+     */
+    ProfileRegistry& profile_registry() { return profile_registry_; }
+
+    /**
+     * @brief Access the throughput tracker.
+     * @return Reference to ThroughputTracker.
+     * @version 2.0.0
+     */
+    ThroughputTracker& throughput_tracker() { return throughput_tracker_; }
 
 private:
     /* ── Model pool (one backend per unique path) ────────── */
@@ -194,6 +218,12 @@ private:
 
     /* ── Grammar registry (v1.9.3) ────────────────────────── */
     GrammarRegistry grammar_registry_;  ///< Named grammar storage and resolution
+
+    /* ── Profile registry (v2.0.0) ───────────────────────── */
+    ProfileRegistry profile_registry_;  ///< Named GPU resource profiles
+
+    /* ── Throughput tracker (v2.0.0) ─────────────────────── */
+    ThroughputTracker throughput_tracker_;  ///< EWMA throughput measurement
 
     /* ── Internal ────────────────────────────────────────── */
 

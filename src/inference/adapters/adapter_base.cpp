@@ -286,6 +286,7 @@ std::optional<ToolCall> ChatAdapter::try_recover_json(
     fixed = std::regex_replace(fixed, std::regex(R"(,\s*\])"), "]");
     std::replace(fixed.begin(), fixed.end(), '\'', '"');
 
+    logger->info("JSON recovery attempt: {} chars", json_str.size());
     try {
         auto j = nlohmann::json::parse(fixed);
         if (j.contains("name")) {

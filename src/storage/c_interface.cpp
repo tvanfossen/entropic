@@ -11,7 +11,7 @@
 #include <entropic/interfaces/i_storage_backend.h>
 #include <entropic/storage/backend.h>
 
-#include <spdlog/spdlog.h>
+#include <entropic/types/logging.h>
 
 #include <cstring>
 #include <new>
@@ -19,6 +19,10 @@
 #include <string>
 
 using entropic::SqliteStorageBackend;
+
+namespace {
+auto logger = entropic::log::get("storage.c_api");
+} // anonymous namespace
 
 // ── Handle mapping ────────────────────────────────────────
 
@@ -77,7 +81,7 @@ entropic_storage_create(const char* db_path) {
     try {
         return new entropic_storage_backend(db_path);
     } catch (const std::exception& e) {
-        spdlog::error("storage_create failed: {}", e.what());
+        logger->error("storage_create failed: {}", e.what());
         return nullptr;
     }
 }
@@ -96,7 +100,7 @@ entropic_storage_initialize(entropic_storage_backend_t storage) {
         return storage->impl.initialize()
             ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("storage_initialize failed: {}", e.what());
+        logger->error("storage_initialize failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -121,7 +125,7 @@ void entropic_storage_destroy(entropic_storage_backend_t storage) {
  * @param model_id Optional model ID.
  * @return Conversation ID (caller frees) or NULL.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 char* entropic_storage_create_conversation(
         entropic_storage_backend_t storage,
@@ -134,7 +138,7 @@ char* entropic_storage_create_conversation(
             title, opt_str(project_path), opt_str(model_id));
         return dup_string(id);
     } catch (const std::exception& e) {
-        spdlog::error("create_conversation failed: {}", e.what());
+        logger->error("create_conversation failed: {}", e.what());
         return nullptr;
     }
 }
@@ -146,7 +150,7 @@ char* entropic_storage_create_conversation(
  * @param messages_json JSON array.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_save_conversation(
         entropic_storage_backend_t storage,
@@ -159,7 +163,7 @@ entropic_error_t entropic_storage_save_conversation(
         return storage->impl.save_messages(conversation_id, messages_json)
             ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("save_conversation failed: {}", e.what());
+        logger->error("save_conversation failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -171,7 +175,7 @@ entropic_error_t entropic_storage_save_conversation(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_load_conversation(
         entropic_storage_backend_t storage,
@@ -187,7 +191,7 @@ entropic_error_t entropic_storage_load_conversation(
         *result_json = found ? dup_string(json) : nullptr;
         return found ? ENTROPIC_OK : ENTROPIC_ERROR_INVALID_ARGUMENT;
     } catch (const std::exception& e) {
-        spdlog::error("load_conversation failed: {}", e.what());
+        logger->error("load_conversation failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -200,7 +204,7 @@ entropic_error_t entropic_storage_load_conversation(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_list_conversations(
         entropic_storage_backend_t storage,
@@ -215,7 +219,7 @@ entropic_error_t entropic_storage_list_conversations(
         *result_json = dup_string(json);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
-        spdlog::error("list_conversations failed: {}", e.what());
+        logger->error("list_conversations failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -228,7 +232,7 @@ entropic_error_t entropic_storage_list_conversations(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_search_conversations(
         entropic_storage_backend_t storage,
@@ -243,7 +247,7 @@ entropic_error_t entropic_storage_search_conversations(
         *result_json = dup_string(json);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
-        spdlog::error("search_conversations failed: {}", e.what());
+        logger->error("search_conversations failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -254,7 +258,7 @@ entropic_error_t entropic_storage_search_conversations(
  * @param conversation_id Conversation ID.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_delete_conversation(
         entropic_storage_backend_t storage,
@@ -266,7 +270,7 @@ entropic_error_t entropic_storage_delete_conversation(
         return storage->impl.delete_conversation(conversation_id)
             ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("delete_conversation failed: {}", e.what());
+        logger->error("delete_conversation failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -284,7 +288,7 @@ entropic_error_t entropic_storage_delete_conversation(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_create_delegation(
         entropic_storage_backend_t storage,
@@ -310,7 +314,7 @@ entropic_error_t entropic_storage_create_delegation(
         }
         return ok ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("create_delegation failed: {}", e.what());
+        logger->error("create_delegation failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -323,7 +327,7 @@ entropic_error_t entropic_storage_create_delegation(
  * @param result_summary Optional summary.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_complete_delegation(
         entropic_storage_backend_t storage,
@@ -338,7 +342,7 @@ entropic_error_t entropic_storage_complete_delegation(
             delegation_id, status, opt_str(result_summary))
             ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("complete_delegation failed: {}", e.what());
+        logger->error("complete_delegation failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -350,7 +354,7 @@ entropic_error_t entropic_storage_complete_delegation(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_get_delegations(
         entropic_storage_backend_t storage,
@@ -365,7 +369,7 @@ entropic_error_t entropic_storage_get_delegations(
         *result_json = dup_string(json);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
-        spdlog::error("get_delegations failed: {}", e.what());
+        logger->error("get_delegations failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -379,7 +383,7 @@ entropic_error_t entropic_storage_get_delegations(
  * @param messages_json JSON messages.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_save_snapshot(
         entropic_storage_backend_t storage,
@@ -392,7 +396,7 @@ entropic_error_t entropic_storage_save_snapshot(
         return storage->impl.save_snapshot(conversation_id, messages_json)
             ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
     } catch (const std::exception& e) {
-        spdlog::error("save_snapshot failed: {}", e.what());
+        logger->error("save_snapshot failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }
@@ -405,7 +409,7 @@ entropic_error_t entropic_storage_save_snapshot(
  * @param result_json Output JSON.
  * @return Error code.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 entropic_error_t entropic_storage_get_stats(
         entropic_storage_backend_t storage,
@@ -419,7 +423,7 @@ entropic_error_t entropic_storage_get_stats(
         *result_json = dup_string(json);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
-        spdlog::error("get_stats failed: {}", e.what());
+        logger->error("get_stats failed: {}", e.what());
         return ENTROPIC_ERROR_IO;
     }
 }

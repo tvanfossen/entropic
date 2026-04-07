@@ -338,11 +338,15 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ## v1.10.2 — C++ Model Test Suite
 
-- Port 42 Python model tests to C++ in tests/model/
-- Classification, generation quality, grammar, delegation tests
-- Performance benchmarks (tok/s, engine overhead, memory)
-- GPU-required, developer-run, results checked in
-- Interactive — thresholds and enabled tests tuned hands-on
+- 10 BDD vertical-slice tests: generation, tool parsing, routing, delegation,
+  grammar, compaction, logprob evaluation, dynamic identity routing, GPU profile
+  constrained generation, MCP authorization denial
+- 2 deferred tests (LoRA swap — no adapter fixture, constitutional — v1.9.8 wiring incomplete)
+- GPU-required, developer-run, results checked into test-reports/model/results.json
+- CI staleness gate: version + git_sha freshness check, fails if stale or missing
+- Target runtime under 5 minutes on reference hardware
+- Interactive — thresholds and assertions tuned hands-on with actual model
+- VRAM monitoring between tests, filesystem sandbox for tool tests
 
 ## v1.10.3 — Doxygen Traceability & Full Documentation Review
 
@@ -352,6 +356,16 @@ what exists, validate parity. Each subsystem is independently verifiable.
 - `scripts/select_tests.py` — mirror-path + doxygen-guard impact test selection
 - CI pipeline: PR builds use test selection, push runs full suite
 - Depends on: doxygen-guard stable release
+
+## v1.10.4 — Engine Observability
+
+- Rich INFO-level logging across all subsystems: generation results, routing
+  decisions, grammar enforcement, profile application, identity lifecycle,
+  MCP authorization decisions, compaction triggers, throughput
+- Wire ThroughputTracker to GenerationResult (currently dead code)
+- Wire `entropic_throughput_tok_per_sec()` facade stub
+- Validation: v1.10.2 model test logs must tell complete diagnostic story
+  from engine-emitted logging alone, with zero test-added logging
 
 ---
 

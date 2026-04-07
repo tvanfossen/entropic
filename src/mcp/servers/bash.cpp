@@ -131,7 +131,7 @@ private:
  * @param args_json JSON with "command" and optional "working_dir".
  * @return ServerResponse with output or error.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 ServerResponse ExecuteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -151,10 +151,8 @@ ServerResponse ExecuteTool::execute(const std::string& args_json) {
         "cd " + cwd + " && " + command + " 2>&1";
 
     auto [output, exit_code] = run_popen(full_cmd);
-
-    if (exit_code != 0) {
-        logger->warn("Command exited {}: {}", exit_code, command);
-    }
+    logger->info("Bash: exit={}, stdout={} chars, cmd='{}'",
+                 exit_code, output.size(), command);
 
     nlohmann::json result;
     result["exit_code"] = exit_code;

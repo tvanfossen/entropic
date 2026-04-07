@@ -120,7 +120,7 @@ std::vector<HookEntry> HookRegistry::snapshot(
  * @param out_json Output: accumulated modified JSON, or NULL.
  * @return 0 = proceed, non-zero = cancelled.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 int HookRegistry::fire_pre(
     entropic_hook_point_t point,
@@ -133,6 +133,8 @@ int HookRegistry::fire_pre(
     }
 
     auto entries = snapshot(point);
+    logger->info("fire_pre: point={}, {} handler(s)",
+                 static_cast<int>(point), entries.size());
     char* accumulated = nullptr;
     int result = 0;
 

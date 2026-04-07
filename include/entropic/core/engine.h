@@ -301,7 +301,8 @@ private:
      * @param result Generation result.
      * @version 1.9.1
      */
-    void fire_post_generate_hook(const GenerateResult& result);     ///< @internal
+    void fire_post_generate_hook(GenerateResult& result,
+                                    const std::string& tier);          ///< @internal
 
     /**
      * @brief Fire ON_DELEGATE pre-hook. Returns true if cancelled.

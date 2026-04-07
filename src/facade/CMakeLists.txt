@@ -7,6 +7,7 @@ target_sources(entropic-facade PRIVATE
     entropic_hooks.cpp
     entropic_storage.cpp
     entropic_audit.cpp
+    entropic_compaction.cpp
 )
 
 target_link_libraries(entropic-facade PUBLIC
@@ -14,7 +15,15 @@ target_link_libraries(entropic-facade PUBLIC
     entropic-config
     entropic-prompts
     entropic-core
+    entropic::inference
     entropic-mcp
+    entropic-storage
+)
+
+target_include_directories(entropic-facade PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/inference  # LlamaCppBackend for adapter wiring
+    ${CMAKE_SOURCE_DIR}/extern/llama.cpp/include       # llama.h
+    ${CMAKE_SOURCE_DIR}/extern/llama.cpp/ggml/include  # ggml.h
 )
 
 target_compile_definitions(entropic-facade PRIVATE ENTROPIC_BUILDING_DLL)

@@ -1,0 +1,5 @@
+<map id="entropic::InferenceBackend" name="entropic::InferenceBackend">
+<area shape="rect" id="Node000001" title="Concrete base class for inference backends (80% logic)." alt="" coords="7,5,206,31"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1LlamaCppBackend.html" title="LlamaCppBackend — common llama.cpp patterns (15% layer)." alt="" coords="5,79,208,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="109,44,109,79,104,79,104,44"/>
+</map>

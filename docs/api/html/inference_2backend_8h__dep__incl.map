@@ -1,0 +1,33 @@
+<map id="entropic/inference/backend.h" name="entropic/inference/backend.h">
+<area shape="rect" id="Node000001" title="InferenceBackend concrete base class." alt="" coords="1064,5,1204,45"/>
+<area shape="rect" id="Node000002" href="$orchestrator_8h.html" title="ModelOrchestrator — multi&#45;model lifecycle and routing." alt="" coords="885,93,1025,133"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1084,54,996,96,993,91,1081,49"/>
+<area shape="rect" id="Node000012" href="$inference_2backend_8cpp.html" title="InferenceBackend base class implementation." alt="" coords="1050,101,1218,126"/>
+<area shape="poly" id="edge11_Node000001_Node000012" title=" " alt="" coords="1137,59,1137,100,1131,100,1131,59"/>
+<area shape="rect" id="Node000013" href="$llama__cpp__backend_8h.html" title="LlamaCppBackend — llama.cpp C API integration." alt="" coords="1242,93,1397,133"/>
+<area shape="poly" id="edge12_Node000001_Node000013" title=" " alt="" coords="1188,49,1280,91,1278,96,1186,54"/>
+<area shape="rect" id="Node000003" href="$engine__handle_8h.html" title="Private definition of the entropic_engine struct." alt="" coords="821,189,999,214"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="941,147,919,189,914,187,937,144"/>
+<area shape="rect" id="Node000011" href="$orchestrator_8cpp.html" title="ModelOrchestrator implementation." alt="" coords="1057,189,1249,214"/>
+<area shape="poly" id="edge10_Node000002_Node000011" title=" " alt="" coords="1012,136,1127,186,1125,191,1010,141"/>
+<area shape="rect" id="Node000004" href="$entropic_8cpp.html" title="librentropic facade — C API implementation." alt="" coords="1368,269,1519,295"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="1001,213,1368,267,1367,272,1001,219"/>
+<area shape="rect" id="Node000005" href="$entropic__audit_8cpp.html" title="C API facade for audit log operations." alt="" coords="5,269,196,295"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="808,215,208,272,196,273,196,268,207,267,808,209"/>
+<area shape="rect" id="Node000006" href="$entropic__compaction_8cpp.html" title="C API facade for compaction operations." alt="" coords="220,269,453,295"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="814,218,420,272,420,267,813,213"/>
+<area shape="rect" id="Node000007" href="$entropic__hooks_8cpp.html" title="C API implementation for hook registration and deregistration." alt="" coords="477,269,673,295"/>
+<area shape="poly" id="edge6_Node000003_Node000007" title=" " alt="" coords="849,220,625,272,623,267,847,214"/>
+<area shape="rect" id="Node000008" href="$entropic__identity_8cpp.html" title="C API implementation for identity management." alt="" coords="698,269,903,295"/>
+<area shape="poly" id="edge7_Node000003_Node000008" title=" " alt="" coords="884,224,818,271,815,267,881,220"/>
+<area shape="rect" id="Node000009" href="$entropic__mcp_8cpp.html" title="C API implementation for external MCP server management." alt="" coords="928,269,1113,295"/>
+<area shape="poly" id="edge8_Node000003_Node000009" title=" " alt="" coords="939,220,1006,267,1003,271,936,224"/>
+<area shape="rect" id="Node000010" href="$entropic__storage_8cpp.html" title="C API facade for storage open/close." alt="" coords="1137,269,1344,295"/>
+<area shape="poly" id="edge9_Node000003_Node000010" title=" " alt="" coords="972,214,1193,267,1192,272,971,220"/>
+<area shape="poly" id="edge13_Node000013_Node000004" title=" " alt="" coords="1317,147,1318,184,1323,203,1331,220,1345,236,1362,249,1400,267,1398,272,1359,253,1341,240,1326,223,1318,205,1313,185,1312,147"/>
+<area shape="poly" id="edge16_Node000013_Node000011" title=" " alt="" coords="1272,142,1176,191,1174,186,1269,137"/>
+<area shape="rect" id="Node000014" href="$inference__c__api_8cpp.html" title="C API wrappers for InferenceBackend." alt="" coords="1340,181,1488,221"/>
+<area shape="poly" id="edge14_Node000013_Node000014" title=" " alt="" coords="1352,141,1395,179,1391,183,1349,145"/>
+<area shape="rect" id="Node000015" href="$llama__cpp__backend_8cpp.html" title="LlamaCppBackend implementation — direct llama.cpp C API." alt="" coords="1513,181,1667,221"/>
+<area shape="poly" id="edge15_Node000013_Node000015" title=" " alt="" coords="1393,135,1532,179,1530,184,1391,140"/>
+</map>

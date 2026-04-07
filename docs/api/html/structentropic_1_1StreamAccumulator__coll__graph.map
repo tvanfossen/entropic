@@ -1,0 +1,7 @@
+<map id="entropic::StreamAccumulator" name="entropic::StreamAccumulator">
+<area shape="rect" id="Node000001" title="Context passed to the streaming token callback." alt="" coords="104,93,316,119"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1EngineCallbacks.html" title="Callback function pointer types for engine events." alt="" coords="5,5,196,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="128,37,197,91,193,95,125,41"/>
+<area shape="rect" id="Node000003" href="$structentropic_1_1GenerationEvents.html" title="Atomic flags for interrupt/pause signaling." alt="" coords="220,5,419,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="295,41,227,95,223,91,292,37"/>
+</map>

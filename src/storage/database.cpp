@@ -6,13 +6,17 @@
 
 #include <entropic/storage/database.h>
 
-#include <spdlog/spdlog.h>
+#include <entropic/types/logging.h>
 #include <sqlite3.h>
 
 #include <array>
 #include <cstring>
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("storage.database");
+} // anonymous namespace
 
 // ── Migration definitions ─────────────────────────────────
 
@@ -173,7 +177,7 @@ SqliteDatabase::~SqliteDatabase() {
  * @brief Initialize database and run pending migrations.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteDatabase::initialize() {
     std::lock_guard lock(mutex_);
@@ -190,7 +194,7 @@ bool SqliteDatabase::initialize() {
         nullptr);
 
     if (rc != SQLITE_OK) {
-        spdlog::error("Failed to open database {}: {}",
+        logger->error("Failed to open database {}: {}",
                       db_path_.string(), sqlite3_errmsg(db_));
         return false;
     }
@@ -200,11 +204,11 @@ bool SqliteDatabase::initialize() {
     sqlite3_exec(db_, "PRAGMA journal_mode = WAL", nullptr, nullptr, nullptr);
 
     if (!run_migrations()) {
-        spdlog::error("Migration failed for {}", db_path_.string());
+        logger->error("Migration failed for {}", db_path_.string());
         return false;
     }
 
-    spdlog::info("Database initialized: {}", db_path_.string());
+    logger->info("Database initialized: {}", db_path_.string());
     return true;
 }
 
@@ -237,7 +241,7 @@ bool SqliteDatabase::is_open() const {
  * @param sql SQL text.
  * @return Prepared statement or nullptr on error.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 sqlite3_stmt* SqliteDatabase::prepare(std::string_view sql) {
     sqlite3_stmt* stmt = nullptr;
@@ -246,7 +250,7 @@ sqlite3_stmt* SqliteDatabase::prepare(std::string_view sql) {
         &stmt, nullptr);
 
     if (rc != SQLITE_OK) {
-        spdlog::error("SQL prepare failed: {} — {}",
+        logger->error("SQL prepare failed: {} — {}",
                       sqlite3_errmsg(db_), std::string(sql));
         return nullptr;
     }
@@ -259,7 +263,7 @@ sqlite3_stmt* SqliteDatabase::prepare(std::string_view sql) {
  * @param binder Function to bind parameters.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteDatabase::execute(std::string_view sql,
                              std::function<void(sqlite3_stmt*)> binder) {
@@ -275,7 +279,7 @@ bool SqliteDatabase::execute(std::string_view sql,
     sqlite3_finalize(stmt);
     bool ok = (rc == SQLITE_DONE);
     if (!ok) {
-        spdlog::error("SQL execute failed: {}", sqlite3_errmsg(db_));
+        logger->error("SQL execute failed: {}", sqlite3_errmsg(db_));
     }
     return ok;
 }
@@ -285,7 +289,7 @@ bool SqliteDatabase::execute(std::string_view sql,
  * @param sql SQL text.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteDatabase::execute_raw(std::string_view sql) {
     std::lock_guard lock(mutex_);
@@ -297,7 +301,7 @@ bool SqliteDatabase::execute_raw(std::string_view sql) {
         nullptr, nullptr, &err_msg);
 
     if (rc != SQLITE_OK) {
-        spdlog::error("SQL exec failed: {}",
+        logger->error("SQL exec failed: {}",
                       err_msg ? err_msg : "unknown error");
         sqlite3_free(err_msg);
         return false;
@@ -407,15 +411,15 @@ static std::vector<std::string> get_applied_migrations(sqlite3* db) {
  * @param mig Migration to apply.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 static bool apply_migration(sqlite3* db, const Migration& mig) {
-    spdlog::info("Running migration: {}", mig.name);
+    logger->info("Running migration: {}", mig.name);
 
     char* err_msg = nullptr;
     int rc = sqlite3_exec(db, mig.sql, nullptr, nullptr, &err_msg);
     if (rc != SQLITE_OK) {
-        spdlog::error("Migration {} failed: {}",
+        logger->error("Migration {} failed: {}",
                       mig.name, err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
         return false;
@@ -453,7 +457,7 @@ static bool is_applied(const std::vector<std::string>& applied,
  * @brief Run all pending migrations sequentially.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteDatabase::run_migrations() {
     char* err_msg = nullptr;
@@ -466,7 +470,7 @@ bool SqliteDatabase::run_migrations() {
         nullptr, nullptr, &err_msg);
 
     if (rc != SQLITE_OK) {
-        spdlog::error("Failed to create migrations table: {}",
+        logger->error("Failed to create migrations table: {}",
                       err_msg ? err_msg : "unknown");
         sqlite3_free(err_msg);
         return false;

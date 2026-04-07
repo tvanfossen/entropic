@@ -198,7 +198,7 @@ size_t IdentityManager::load_static(
  * @param config Identity configuration.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.6
+ * @version 2.0.0
  */
 entropic_error_t IdentityManager::create(const IdentityConfig& config) {
     std::unique_lock lock(identities_mutex_);
@@ -215,7 +215,10 @@ entropic_error_t IdentityManager::create(const IdentityConfig& config) {
     register_mcp_keys(cfg);
     identities_[cfg.name] = std::move(cfg);
     router_dirty_.store(true, std::memory_order_release);
-    logger->info("Dynamic identity created: {}", config.name);
+    logger->info("Identity created: name='{}', routable={}, "
+                 "prompt={} chars",
+                 config.name, config.routable,
+                 config.system_prompt.size());
     return ENTROPIC_OK;
 }
 

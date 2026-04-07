@@ -426,6 +426,78 @@ std::string parse_config_file(
 }
 
 /**
+ * @brief Load bundled default config when no user config exists.
+ * @param global_path Path for auto-created global config.
+ * @param registry Bundled models registry.
+ * @param[in,out] config Config to populate.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.0.0
+ */
+static std::string load_bundled_default(
+    const std::filesystem::path& global_path,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    auto data_dir = resolve_data_dir(config);
+    auto bundled = data_dir / "default_config.yaml";
+    if (!std::filesystem::exists(bundled)) {
+        s_log->warn("No config found (checked global, project, bundled)");
+        return "";
+    }
+    s_log->info("No user config — loading bundled default: {}",
+                bundled.string());
+    auto err = parse_config_file(bundled, registry, config);
+    if (!err.empty()) { return "bundled default: " + err; }
+
+    // Auto-create global config so this only happens once
+    if (!std::filesystem::exists(global_path)) {
+        auto parent = global_path.parent_path();
+        std::filesystem::create_directories(parent);
+        std::filesystem::copy_file(bundled, global_path);
+        s_log->info("Created {}", global_path.string());
+    }
+    return "";
+}
+
+/**
+ * @brief Load global, project, and bundled config layers in order.
+ * @param global_path Path to global config file.
+ * @param project_path Path to project config file.
+ * @param registry Bundled models registry.
+ * @param[in,out] config Config to overlay onto.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.0.0
+ */
+static std::string load_config_layers(
+    const std::filesystem::path& global_path,
+    const std::filesystem::path& project_path,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    bool have_config = false;
+    std::string err;
+
+    if (std::filesystem::exists(global_path)) {
+        s_log->info("Loading global config: {}", global_path.string());
+        err = parse_config_file(global_path, registry, config);
+        if (!err.empty()) { return "global config: " + err; }
+        have_config = true;
+    }
+
+    if (err.empty() && std::filesystem::exists(project_path)) {
+        s_log->info("Loading project config: {}", project_path.string());
+        err = parse_config_file(project_path, registry, config);
+        if (!err.empty()) { return "project config: " + err; }
+        have_config = true;
+    }
+
+    return have_config ? ""
+        : load_bundled_default(global_path, registry, config);
+}
+
+/**
  * @brief Load config using layered resolution.
  * @param global_path Path to global config file.
  * @param project_path Path to project config file.
@@ -433,7 +505,7 @@ std::string parse_config_file(
  * @param[out] config Output parsed config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 std::string load_config(
     const std::filesystem::path& global_path,
@@ -441,29 +513,14 @@ std::string load_config(
     const BundledModels& registry,
     ParsedConfig& config)
 {
-    if (std::filesystem::exists(global_path)) {
-        s_log->info("Loading global config: {}", global_path.string());
-        auto err = parse_config_file(global_path, registry, config);
-        if (!err.empty()) {
-            return "global config: " + err;
-        }
-    }
-
-    if (std::filesystem::exists(project_path)) {
-        s_log->info("Loading project config: {}", project_path.string());
-        auto err = parse_config_file(project_path, registry, config);
-        if (!err.empty()) {
-            return "project config: " + err;
-        }
-    }
+    auto err = load_config_layers(global_path, project_path, registry, config);
+    if (!err.empty()) { return err; }
 
     apply_env_overrides(config);
 
     std::vector<std::string> warnings;
-    auto err = validate_config(config, warnings);
-    for (const auto& w : warnings) {
-        s_log->warn("{}", w);
-    }
+    err = validate_config(config, warnings);
+    for (const auto& w : warnings) { s_log->warn("{}", w); }
     return err;
 }
 
@@ -482,6 +539,74 @@ std::string load_config_from_file(
     ParsedConfig& config)
 {
     auto err = parse_config_file(path, registry, config);
+    if (!err.empty()) {
+        return err;
+    }
+
+    apply_env_overrides(config);
+
+    std::vector<std::string> warnings;
+    err = validate_config(config, warnings);
+    for (const auto& w : warnings) {
+        s_log->warn("{}", w);
+    }
+    return err;
+}
+
+/**
+ * @brief Parse a config string (YAML or JSON) and overlay onto config.
+ * @param content Raw config string.
+ * @param registry Bundled models for path resolution.
+ * @param[in,out] config Config to overlay onto.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.0.0
+ */
+static std::string parse_config_string(
+    const std::string& content,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    if (content.empty()) {
+        return "config string is empty";
+    }
+
+    ryml::Tree tree = ryml::parse_in_arena(
+        ryml::to_csubstr("<json>"),
+        ryml::to_csubstr(content));
+    auto root = tree.rootref();
+    if (!root.is_map()) {
+        return "config string root is not a mapping";
+    }
+
+    std::string err;
+    if (root.has_child("models")) {
+        err = parse_models_config(root["models"], registry, config.models);
+    }
+    if (err.empty() && root.has_child("routing")) {
+        err = parse_routing_config(root["routing"], config.routing);
+    }
+    if (err.empty()) {
+        parse_optional_sections(root, config);
+    }
+    return err;
+}
+
+/**
+ * @brief Load config from a YAML/JSON string with validation.
+ * @param content Config string (YAML or JSON).
+ * @param registry Bundled models registry.
+ * @param[out] config Output parsed config.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.0.0
+ */
+std::string load_config_from_string(
+    const std::string& content,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    auto err = parse_config_string(content, registry, config);
     if (!err.empty()) {
         return err;
     }

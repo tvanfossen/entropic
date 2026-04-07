@@ -208,6 +208,15 @@ public:
     int count_tokens(const std::string& text) const;
 
     /**
+     * @brief Tokenize text to token IDs.
+     * @param text Input text.
+     * @return Token ID vector (empty if COLD or error).
+     * @version 1.10.2
+     */
+    virtual std::vector<int32_t> tokenize_text(
+        const std::string& text) const { return {}; }
+
+    /**
      * @brief Model's context window size.
      * @version 1.8.2
      */

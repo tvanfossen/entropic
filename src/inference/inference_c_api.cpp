@@ -176,9 +176,14 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_load(
     entropic_inference_backend_t backend,
     const char* config_json)
 {
+    logger->info("C API: inference_load");
     try {
         auto config = parse_config_json(config_json);
-        return to_backend(backend)->load(config) ? ENTROPIC_OK : ENTROPIC_ERROR_LOAD_FAILED;
+        auto rc = to_backend(backend)->load(config)
+            ? ENTROPIC_OK : ENTROPIC_ERROR_LOAD_FAILED;
+        logger->info("C API: inference_load -> {}",
+                     static_cast<int>(rc));
+        return rc;
     } catch (const std::exception& e) {
         logger->error("inference_load exception: {}", e.what());
         return ENTROPIC_ERROR_LOAD_FAILED;
@@ -232,11 +237,14 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_generate(
     const char* params_json,
     char** result_json)
 {
+    logger->info("C API: inference_generate");
     try {
         auto msgs = parse_messages_json(messages_json);
         auto params = parse_params_json(params_json);
         auto result = to_backend(backend)->generate(msgs, params);
         *result_json = alloc_string(serialize_result_json(result));
+        logger->info("C API: inference_generate -> {}",
+                     result.ok() ? "ok" : "error");
         return result.ok() ? ENTROPIC_OK : result.error_code;
     } catch (const std::exception& e) {
         logger->error("inference_generate exception: {}", e.what());

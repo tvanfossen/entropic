@@ -1,0 +1,5 @@
+<map id="entropic::FilesystemServer" name="entropic::FilesystemServer">
+<area shape="rect" id="Node000001" title="Filesystem MCP server with read&#45;before&#45;write enforcement." alt="" coords="5,79,201,104"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1MCPServerBase.html" title="Concrete base class for MCP servers (80% logic)." alt="" coords="10,5,197,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="106,44,106,79,101,79,101,44"/>
+</map>

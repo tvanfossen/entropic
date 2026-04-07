@@ -6,10 +6,7 @@
  * pipeline, complete) and that constitutional validation catches
  * violations and passes clean content.
  *
- * Note: engine.h and constitutional_validator.h have a CompactionConfig
- * redefinition conflict. This test only needs constitutional_validator.h.
- *
- * @version 1.10.1
+ * @version 1.10.2
  */
 
 #include <entropic/core/constitutional_validator.h>

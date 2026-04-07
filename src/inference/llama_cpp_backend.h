@@ -61,6 +61,15 @@ public:
         prompt_cache_config_ = config;
     }
 
+    /**
+     * @brief Tokenize text to token IDs using model vocabulary.
+     * @param text Input text.
+     * @return Token ID vector with BOS.
+     * @version 1.10.2
+     */
+    std::vector<int32_t> tokenize_text(
+        const std::string& text) const override;
+
     /* ── llama.cpp handle accessors (v1.9.2) ────────────── */
 
     /**

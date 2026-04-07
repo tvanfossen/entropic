@@ -1,0 +1,9 @@
+<map id="entropic/interfaces/i_mcp_server.h" name="entropic/interfaces/i_mcp_server.h">
+<area shape="rect" id="Node000001" title="Pure C interface contract for MCP server plugins." alt="" coords="102,5,246,45"/>
+<area shape="rect" id="Node000002" href="$entropic__server_8h.html" title="Entropic MCP server — engine&#45;level tools including introspection." alt="" coords="5,93,164,133"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="146,57,106,95,103,91,142,53"/>
+<area shape="rect" id="Node000004" href="$mcp__c__api_8cpp.html" title="C API implementation for i_mcp_server.h." alt="" coords="188,101,339,126"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="206,53,253,98,249,102,202,57"/>
+<area shape="rect" id="Node000003" href="$entropic__server_8cpp.html" title="EntropicServer implementation — engine&#45;level directive tools." alt="" coords="5,181,164,221"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="87,147,87,181,82,181,82,147"/>
+</map>

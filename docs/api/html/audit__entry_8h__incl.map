@@ -1,0 +1,7 @@
+<map id="entropic/storage/audit_entry.h" name="entropic/storage/audit_entry.h">
+<area shape="rect" id="Node000001" title="AuditEntry struct and JSON serialization for JSONL audit log." alt="" coords="81,5,247,45"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,93,181,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="149,47,115,85,111,81,145,44"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="205,93,264,119"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="183,44,217,81,213,85,179,47"/>
+</map>

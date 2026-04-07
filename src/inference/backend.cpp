@@ -12,7 +12,6 @@
 #include <entropic/inference/backend.h>
 #include <entropic/types/logging.h>
 
-#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <stdexcept>
@@ -37,30 +36,6 @@ const char* state_name(ModelState s) {
     return (idx >= 0 && idx <= 2) ? names[idx] : "UNKNOWN";
 }
 
-/**
- * @brief Get current time as high-resolution time point.
- * @return Steady clock time point.
- * @utility
- * @version 1.8.2
- */
-auto now() { return std::chrono::steady_clock::now(); }
-
-/**
- * @brief Compute elapsed milliseconds between two time points.
- * @param start Start time point.
- * @param end End time point.
- * @return Elapsed time in milliseconds.
- * @utility
- * @version 1.8.2
- */
-double elapsed_ms(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end)
-{
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    return static_cast<double>(us.count()) / 1000.0;
-}
-
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -73,7 +48,7 @@ double elapsed_ms(
  * @param config Validated model config.
  * @return true on success, false on failure.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 bool InferenceBackend::load(const ModelConfig& config) {
     std::lock_guard<std::mutex> lock(transition_mutex_);
@@ -90,7 +65,7 @@ bool InferenceBackend::load(const ModelConfig& config) {
     }
 
     logger->info("[VRAM] Loading: {}", config.path.string());
-    auto start = now();
+    auto start = entropic::log::now();
 
     config_ = config;
     bool ok = do_load(config);
@@ -98,7 +73,7 @@ bool InferenceBackend::load(const ModelConfig& config) {
         logger->error("[VRAM] Load failed: {}", last_error_);
     } else {
         state_.store(ModelState::WARM, std::memory_order_release);
-        logger->info("[VRAM] Warm in {:.2f}ms", elapsed_ms(start, now()));
+        logger->info("[VRAM] Warm in {:.2f}ms", entropic::log::elapsed_ms(start, entropic::log::now()));
     }
     return ok;
 }
@@ -107,7 +82,7 @@ bool InferenceBackend::load(const ModelConfig& config) {
  * @brief Promote to GPU (WARM → ACTIVE). Loads first if COLD.
  * @return true on success, false on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 bool InferenceBackend::activate() {
     std::lock_guard<std::mutex> lock(transition_mutex_);
@@ -122,13 +97,13 @@ bool InferenceBackend::activate() {
     }
 
     logger->info("[VRAM] Activating");
-    auto start = now();
+    auto start = entropic::log::now();
     bool ok = do_activate();
     if (!ok) {
         logger->error("[VRAM] Activate failed: {}", last_error_);
     } else {
         state_.store(ModelState::ACTIVE, std::memory_order_release);
-        logger->info("[VRAM] Active in {:.2f}ms", elapsed_ms(start, now()));
+        logger->info("[VRAM] Active in {:.2f}ms", entropic::log::elapsed_ms(start, entropic::log::now()));
     }
     return ok;
 }
@@ -136,7 +111,7 @@ bool InferenceBackend::activate() {
 /**
  * @brief Release GPU layers (ACTIVE → WARM). No-op if not ACTIVE.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 void InferenceBackend::deactivate() {
     std::lock_guard<std::mutex> lock(transition_mutex_);
@@ -147,12 +122,12 @@ void InferenceBackend::deactivate() {
     }
 
     logger->info("[VRAM] Deactivating");
-    auto start = now();
+    auto start = entropic::log::now();
 
     do_deactivate();
     state_.store(ModelState::WARM, std::memory_order_release);
 
-    logger->info("[VRAM] Deactivated in {:.2f}ms", elapsed_ms(start, now()));
+    logger->info("[VRAM] Deactivated in {:.2f}ms", entropic::log::elapsed_ms(start, entropic::log::now()));
 }
 
 /**
@@ -201,7 +176,7 @@ bool InferenceBackend::load_and_activate(const ModelConfig& config) {
  * @param params Generation parameters.
  * @return GenerationResult (error result if not ACTIVE).
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate(
     const std::vector<Message>& messages,
@@ -216,9 +191,9 @@ GenerationResult InferenceBackend::generate(
         return err;
     }
 
-    auto start = now();
+    auto start = entropic::log::now();
     auto result = do_generate(messages, params);
-    result.generation_time_ms = elapsed_ms(start, now());
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
     return result;
 }
 
@@ -230,7 +205,7 @@ GenerationResult InferenceBackend::generate(
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate_streaming(
     const std::vector<Message>& messages,
@@ -247,9 +222,9 @@ GenerationResult InferenceBackend::generate_streaming(
         return err;
     }
 
-    auto start = now();
+    auto start = entropic::log::now();
     auto result = do_generate_streaming(messages, params, on_token, cancel);
-    result.generation_time_ms = elapsed_ms(start, now());
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
     return result;
 }
 
@@ -259,7 +234,7 @@ GenerationResult InferenceBackend::generate_streaming(
  * @param params Generation parameters.
  * @return GenerationResult.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 GenerationResult InferenceBackend::complete(
     const std::string& prompt,
@@ -274,9 +249,9 @@ GenerationResult InferenceBackend::complete(
         return err;
     }
 
-    auto start = now();
+    auto start = entropic::log::now();
     auto result = do_complete(prompt, params);
-    result.generation_time_ms = elapsed_ms(start, now());
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
     return result;
 }
 
@@ -294,7 +269,7 @@ GenerationResult InferenceBackend::complete(
  * @return LogprobResult with per-token logprobs and perplexity.
  * @throws std::runtime_error on state/input errors.
  * @internal
- * @version 1.9.10
+ * @version 2.0.0
  */
 LogprobResult InferenceBackend::evaluate_logprobs(
     const int32_t* tokens,
@@ -315,8 +290,11 @@ LogprobResult InferenceBackend::evaluate_logprobs(
 
     std::lock_guard<std::mutex> lock(eval_mutex_);
 
-    logger->info("evaluate_logprobs: evaluating {} tokens", n_tokens);
-    auto start = now();
+    logger->info("evaluate_logprobs: {} tokens, first=[{},{},{}...]",
+                 n_tokens, tokens[0],
+                 n_tokens > 1 ? tokens[1] : 0,
+                 n_tokens > 2 ? tokens[2] : 0);
+    auto start = entropic::log::now();
 
     LogprobResult result = do_evaluate_logprobs(tokens, n_tokens);
 
@@ -328,10 +306,13 @@ LogprobResult InferenceBackend::evaluate_logprobs(
         static_cast<float>(result.n_logprobs);
     result.perplexity = std::exp(-mean_lp);
 
-    logger->info("evaluate_logprobs: {} tokens, perplexity={:.2f}, "
-                 "{:.2f}ms",
-                 n_tokens, result.perplexity,
-                 elapsed_ms(start, now()));
+    auto ms = entropic::log::elapsed_ms(start, entropic::log::now());
+    logger->info("evaluate_logprobs: perplexity={:.2f}, "
+                 "total_lp={:.4f}, {:.2f}ms",
+                 result.perplexity, result.total_logprob, ms);
+    for (int i = 0; i < result.n_logprobs; ++i) {
+        logger->info("  logprob[{}]={:.4f}", i, result.logprobs[i]);
+    }
 
     return result;
 }
@@ -445,7 +426,7 @@ BackendInfo InferenceBackend::info() const {
  * @param buffer Output buffer.
  * @return true on success.
  * @internal
- * @version 1.9.13
+ * @version 2.0.0
  */
 bool InferenceBackend::save_state(
     int seq_id, std::vector<uint8_t>& buffer) const
@@ -454,11 +435,11 @@ bool InferenceBackend::save_state(
         logger->warn("save_state: not ACTIVE ({})", state_name(state()));
         return false;
     }
-    auto start = now();
+    auto start = entropic::log::now();
     bool ok = do_save_state(seq_id, buffer);
     if (ok) {
         logger->info("save_state: seq={} {}B {:.2f}ms",
-                     seq_id, buffer.size(), elapsed_ms(start, now()));
+                     seq_id, buffer.size(), entropic::log::elapsed_ms(start, entropic::log::now()));
     }
     return ok;
 }
@@ -469,7 +450,7 @@ bool InferenceBackend::save_state(
  * @param buffer Previously saved state.
  * @return true on success.
  * @internal
- * @version 1.9.13
+ * @version 2.0.0
  */
 bool InferenceBackend::restore_state(
     int seq_id, const std::vector<uint8_t>& buffer)
@@ -479,11 +460,11 @@ bool InferenceBackend::restore_state(
                      state_name(state()));
         return false;
     }
-    auto start = now();
+    auto start = entropic::log::now();
     bool ok = do_restore_state(seq_id, buffer);
     if (ok) {
         logger->info("restore_state: seq={} {}B {:.2f}ms",
-                     seq_id, buffer.size(), elapsed_ms(start, now()));
+                     seq_id, buffer.size(), entropic::log::elapsed_ms(start, entropic::log::now()));
     }
     return ok;
 }
@@ -516,7 +497,7 @@ bool InferenceBackend::clear_state(int seq_id) {
  * @param params Generation parameters.
  * @return GenerationResult with seq_id set.
  * @internal
- * @version 1.9.13
+ * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate_seq(
     int seq_id,
@@ -532,9 +513,9 @@ GenerationResult InferenceBackend::generate_seq(
         return err;
     }
 
-    auto start = now();
+    auto start = entropic::log::now();
     auto result = do_generate_seq(seq_id, messages, params);
-    result.generation_time_ms = elapsed_ms(start, now());
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
     result.seq_id = seq_id;
     return result;
 }
@@ -548,7 +529,7 @@ GenerationResult InferenceBackend::generate_seq(
  * @param cancel Cancellation flag.
  * @return GenerationResult with seq_id set.
  * @internal
- * @version 1.9.13
+ * @version 2.0.0
  */
 GenerationResult InferenceBackend::generate_streaming_seq(
     int seq_id,
@@ -567,10 +548,10 @@ GenerationResult InferenceBackend::generate_streaming_seq(
         return err;
     }
 
-    auto start = now();
+    auto start = entropic::log::now();
     auto result = do_generate_streaming_seq(
         seq_id, messages, params, on_token, cancel);
-    result.generation_time_ms = elapsed_ms(start, now());
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
     result.seq_id = seq_id;
     return result;
 }

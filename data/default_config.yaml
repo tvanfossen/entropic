@@ -1,0 +1,84 @@
+# Entropic Default Configuration
+# Bundled with the C++ engine. Fallback when no global/project config exists.
+# Hardware params only — inference behavior lives in identity frontmatter.
+
+models:
+  lead:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  arch:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  eng:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  qa:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  ux:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  ui:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  analyst:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  compactor:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  scribe:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  benchmark_judge:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  default: lead
+
+routing:
+  enabled: false
+  fallback_tier: lead
+
+log_level: INFO
+
+mcp:
+  enable_filesystem: true
+  enable_bash: true
+  enable_git: true
+  enable_diagnostics: true
+  enable_web: true
+  filesystem:
+    allow_outside_root: true
+  external:
+    enabled: false
+    rate_limit: 10

@@ -177,7 +177,7 @@ CompactionResult CompactionManager::check_and_compact(
  * @param stripped_count Output: messages stripped.
  * @return Compacted message list.
  * @internal
- * @version 1.8.4
+ * @version 2.0.0
  */
 std::vector<Message> CompactionManager::compact(
     const std::vector<Message>& messages,
@@ -208,6 +208,8 @@ std::vector<Message> CompactionManager::compact(
 
     std::vector<Message> working(messages.begin() + static_cast<long>(start),
                                  messages.end());
+    logger->info("Compact: {} user, {} assistant, {} stripped",
+                 user_msgs.size(), assistant_msgs.size(), stripped_count);
     summary = structured_summary(working);
     Message summary_msg;
     summary_msg.role = "user";

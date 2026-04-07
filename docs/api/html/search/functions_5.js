@@ -1,0 +1,22 @@
+var searchData=
+[
+  ['fetch_5fall_0',['fetch_all',['../classentropic_1_1SqliteDatabase.html#a7edbfbef69c195c67b2893fec1d003e8',1,'entropic::SqliteDatabase']]],
+  ['fetch_5fone_1',['fetch_one',['../classentropic_1_1SqliteDatabase.html#aaea185e4187c0a391cbedd6245f86ab4',1,'entropic::SqliteDatabase']]],
+  ['filesystemserver_2',['FilesystemServer',['../classentropic_1_1FilesystemServer.html#ac4738d1923d85f500c95b8d74dff0632',1,'entropic::FilesystemServer']]],
+  ['filter_5fjson_5fby_5fkey_3',['filter_json_by_key',['../entropic__server_8cpp.html#a7d77f01467696b75818f9a0c92b840f0',1,'entropic']]],
+  ['find_5flist_5fend_4',['find_list_end',['../permission__persister_8cpp.html#a97aae9bffe9d1ed77dd5b05029bf19a2',1,'entropic']]],
+  ['find_5fsection_5fend_5',['find_section_end',['../permission__persister_8cpp.html#a402a1eabe1e27e643dc5ae0bd0b11592',1,'entropic']]],
+  ['find_5ftier_5fby_5fmodel_5fpath_6',['find_tier_by_model_path',['../entropic_8cpp.html#a7a6d6aa12ea6f87c35abb00b47518f2d',1,'entropic.cpp']]],
+  ['fire_5fhook_5finfo_7',['fire_hook_info',['../engine_8cpp.html#aad9bc78b1c6a5511b4bc68d49d0a4947',1,'entropic']]],
+  ['fire_5finfo_8',['fire_info',['../classentropic_1_1HookRegistry.html#ac003a4c43237137a90a7add9bc669365',1,'entropic::HookRegistry']]],
+  ['fire_5fmodel_5fload_5fhook_9',['fire_model_load_hook',['../classentropic_1_1InferenceBackend.html#addf5e2eeeef8a2e55391e9def46ae97f',1,'entropic::InferenceBackend']]],
+  ['fire_5fpost_10',['fire_post',['../classentropic_1_1HookRegistry.html#a776ad46b3bb98705f49be822e658833b',1,'entropic::HookRegistry']]],
+  ['fire_5fpre_11',['fire_pre',['../classentropic_1_1HookRegistry.html#a521a854193bb2c3c54db0a379fb94401',1,'entropic::HookRegistry']]],
+  ['flush_12',['flush',['../classentropic_1_1AuditLogger.html#a475f215068e70cd23fc32c5dbc8e803f',1,'entropic::AuditLogger']]],
+  ['format_5fcontent_5fparts_13',['format_content_parts',['../classentropic_1_1ChatAdapter.html#a90630ee0465312f436698530038fece9',1,'entropic::ChatAdapter::format_content_parts()'],['../classentropic_1_1Qwen35Adapter.html#aca39e35ec860dfc8a43827500e0a4b66',1,'entropic::Qwen35Adapter::format_content_parts()']]],
+  ['format_5fsystem_5fprompt_14',['format_system_prompt',['../classentropic_1_1ChatAdapter.html#a02eb50b8204e3267cbd81c154b0b731f',1,'entropic::ChatAdapter']]],
+  ['format_5fsystem_5fwith_5fvision_15',['format_system_with_vision',['../classentropic_1_1ChatAdapter.html#a5e4d142a68d3589ca629e7bbb13bf1e5',1,'entropic::ChatAdapter::format_system_with_vision()'],['../classentropic_1_1Qwen35Adapter.html#aad43fa7933d361d9632f66bce4e1fe71',1,'entropic::Qwen35Adapter::format_system_with_vision()']]],
+  ['format_5ftier_5fdefinitions_16',['format_tier_definitions',['../classification_8cpp.html#ac7d54c402d9673322b45f6650f3f047e',1,'entropic::prompts']]],
+  ['format_5ftool_5fresult_17',['format_tool_result',['../classentropic_1_1Qwen35Adapter.html#a506e5adff6460613d9f91ef07edc6a4f',1,'entropic::Qwen35Adapter::format_tool_result()'],['../classentropic_1_1ChatAdapter.html#a3f598150bd327366efc1d07768167244',1,'entropic::ChatAdapter::format_tool_result()']]],
+  ['format_5ftools_18',['format_tools',['../classentropic_1_1Qwen35Adapter.html#a0405b04a148a978397b30a14794185a9',1,'entropic::Qwen35Adapter::format_tools()'],['../classentropic_1_1ChatAdapter.html#aa624b00a5e02a89adfbb99003879ace3',1,'entropic::ChatAdapter::format_tools()']]]
+];

@@ -1,0 +1,12 @@
+<map id="entropic/core/worktree.h" name="entropic/core/worktree.h">
+<area shape="rect" id="Node000001" title="Git worktree management for delegation isolation." alt="" coords="17,5,199,31"/>
+<area shape="rect" id="Node000002" href="$engine_8cpp.html" title="AgentEngine implementation — the agentic loop." alt="" coords="5,152,131,177"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="71,40,47,57,29,80,26,99,32,118,57,150,53,153,27,120,21,99,24,78,43,53,67,35"/>
+<area shape="rect" id="Node000003" href="$worktree_8cpp.html" title="WorktreeManager and ScopedWorktree implementation." alt="" coords="39,79,177,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="111,44,111,79,105,79,105,44"/>
+<area shape="rect" id="Node000004" href="$delegation_8h.html" title="DelegationManager — child loop creation and execution." alt="" coords="201,79,393,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="152,33,267,76,265,81,150,38"/>
+<area shape="poly" id="edge5_Node000004_Node000002" title=" " alt="" coords="248,111,106,154,104,149,246,106"/>
+<area shape="rect" id="Node000005" href="$delegation_8cpp.html" title="DelegationManager implementation." alt="" coords="222,152,373,177"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="300,118,300,152,295,152,295,118"/>
+</map>

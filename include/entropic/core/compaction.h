@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <entropic/types/config.h>
 #include <entropic/types/message.h>
 
 #include <string>
@@ -97,21 +98,6 @@ struct CompactionResult {
     std::string identity;              ///< Identity that triggered compaction
     std::string compactor_source;      ///< "default", "global_custom", or identity name
     bool custom_compactor_used = false; ///< true if a consumer-provided compactor ran
-};
-
-/**
- * @brief Compaction configuration values (passed by value, no config dependency).
- * @version 1.8.4
- */
-struct CompactionConfig {
-    bool enabled = true;                    ///< Enable auto-compaction
-    float threshold_percent = 0.75f;        ///< Compaction trigger (0.5–0.99)
-    int preserve_recent_turns = 2;          ///< Turns to preserve (1–10)
-    int summary_max_tokens = 1500;          ///< Summary max tokens (500–4000)
-    bool notify_user = true;                ///< Notify user on compaction
-    bool save_full_history = true;          ///< Save full history before compaction
-    int tool_result_ttl = 10;               ///< Tool result TTL in turns (1–20)
-    float warning_threshold_percent = 0.6f; ///< Warning trigger (0.3–0.9)
 };
 
 /**

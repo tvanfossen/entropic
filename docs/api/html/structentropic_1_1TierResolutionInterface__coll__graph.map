@@ -1,0 +1,5 @@
+<map id="entropic::TierResolutionInterface" name="entropic::TierResolutionInterface">
+<area shape="rect" id="Node000001" title="Tier resolution callbacks for delegation and auto&#45;chain." alt="" coords="13,93,190,133"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1ChildContextInfo.html" title="Resolved tier information for building child delegation contexts." alt="" coords="5,5,197,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="104,44,104,93,99,93,99,44"/>
+</map>

@@ -1,0 +1,20 @@
+<map id="entropic/mcp/reconnect_policy.h" name="entropic/mcp/reconnect_policy.h">
+<area shape="rect" id="Node000001" title="Exponential backoff reconnection policy." alt="" coords="138,5,313,45"/>
+<area shape="rect" id="Node000002" href="$config_8h.html" title="Configuration structs with defaults." alt="" coords="283,93,453,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="261,43,336,84,334,89,258,48"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="5,167,72,192"/>
+<area shape="poly" id="edge9_Node000001_Node000004" title=" " alt="" coords="204,48,65,160,62,156,200,43"/>
+<area shape="rect" id="Node000003" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="97,167,271,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="339,121,228,164,226,159,337,116"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="311,121,86,169,85,164,310,116"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="296,167,355,192"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="363,120,341,156,337,154,359,118"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="379,167,442,192"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="377,118,399,154,395,156,373,120"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="467,167,541,192"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="391,116,471,158,469,163,389,121"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="565,167,656,192"/>
+<area shape="poly" id="edge7_Node000002_Node000008" title=" " alt="" coords="408,116,559,160,558,165,406,121"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="681,167,805,192"/>
+<area shape="poly" id="edge8_Node000002_Node000009" title=" " alt="" coords="429,116,669,161,668,167,428,121"/>
+</map>

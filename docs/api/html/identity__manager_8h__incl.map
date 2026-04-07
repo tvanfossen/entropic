@@ -1,0 +1,38 @@
+<map id="entropic/core/identity_manager.h" name="entropic/core/identity_manager.h">
+<area shape="rect" id="Node000001" title="IdentityManager – lifecycle management for static and dynamic identities." alt="" coords="523,5,685,45"/>
+<area shape="rect" id="Node000002" href="$identity_8h.html" title="Identity configuration – shared by static and dynamic identities." alt="" coords="337,93,519,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="563,48,468,90,465,85,561,43"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="5,240,64,265"/>
+<area shape="poly" id="edge19_Node000001_Node000006" title=" " alt="" coords="523,38,407,58,343,74,281,96,216,128,154,165,61,233,58,229,151,161,213,123,279,91,341,69,406,53,523,32"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="742,240,805,265"/>
+<area shape="poly" id="edge21_Node000001_Node000007" title=" " alt="" coords="607,45,610,76,618,114,632,154,654,190,670,206,689,219,730,237,728,242,687,223,667,210,650,194,627,157,613,116,605,77,602,46"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="89,240,213,265"/>
+<area shape="poly" id="edge20_Node000001_Node000010" title=" " alt="" coords="524,38,426,58,374,75,325,96,277,126,233,163,170,231,166,228,229,159,274,122,323,91,373,70,425,53,523,33"/>
+<area shape="rect" id="Node000011" href="$error_8h.html" title="Error types for cross&#45;.so error reporting." alt="" coords="642,93,803,119"/>
+<area shape="poly" id="edge14_Node000001_Node000011" title=" " alt="" coords="634,43,695,84,692,88,631,48"/>
+<area shape="rect" id="Node000014" title=" " alt="" coords="828,93,895,119"/>
+<area shape="poly" id="edge17_Node000001_Node000014" title=" " alt="" coords="666,43,816,88,814,93,665,48"/>
+<area shape="rect" id="Node000015" title=" " alt="" coords="919,93,1033,119"/>
+<area shape="poly" id="edge18_Node000001_Node000015" title=" " alt="" coords="685,41,909,88,908,93,684,46"/>
+<area shape="rect" id="Node000003" href="$config_8h.html" title="Configuration structs with defaults." alt="" coords="295,167,465,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="422,121,398,157,393,154,418,118"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="651,240,717,265"/>
+<area shape="poly" id="edge10_Node000002_Node000005" title=" " alt="" coords="442,117,482,152,536,190,588,215,638,234,636,239,586,220,533,194,479,156,439,121"/>
+<area shape="poly" id="edge11_Node000002_Node000006" title=" " alt="" coords="388,121,238,169,74,237,72,232,236,164,387,116"/>
+<area shape="poly" id="edge13_Node000002_Node000007" title=" " alt="" coords="449,116,521,156,586,190,661,217,729,237,728,242,659,222,584,194,519,161,447,121"/>
+<area shape="poly" id="edge12_Node000002_Node000010" title=" " alt="" coords="396,121,343,142,284,169,227,202,179,234,176,230,224,198,281,164,340,137,394,116"/>
+<area shape="rect" id="Node000004" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="451,240,626,265"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="407,190,501,232,499,237,404,194"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="431,189,638,237,638,237,637,243,637,243,430,195"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="314,195,78,242,77,237,313,189"/>
+<area shape="poly" id="edge6_Node000003_Node000007" title=" " alt="" coords="458,189,581,209,729,237,728,243,580,215,458,195"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="237,240,312,265"/>
+<area shape="poly" id="edge7_Node000003_Node000008" title=" " alt="" coords="365,194,304,235,302,230,362,190"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="336,240,427,265"/>
+<area shape="poly" id="edge8_Node000003_Node000009" title=" " alt="" coords="383,192,384,226,378,227,378,192"/>
+<area shape="poly" id="edge9_Node000003_Node000010" title=" " alt="" coords="344,195,202,238,200,233,342,189"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="664,167,739,192"/>
+<area shape="poly" id="edge15_Node000011_Node000012" title=" " alt="" coords="722,120,711,154,706,153,717,118"/>
+<area shape="rect" id="Node000013" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="763,167,957,192"/>
+<area shape="poly" id="edge16_Node000011_Node000013" title=" " alt="" coords="746,116,827,158,824,163,744,121"/>
+</map>

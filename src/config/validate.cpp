@@ -279,12 +279,13 @@ static std::string validate_model_tiers(const ModelsConfig& models)
  * @param[out] warnings Non-fatal warnings.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.3
+ * @version 2.0.0
  */
 std::string validate_config(
     const ParsedConfig& config,
     std::vector<std::string>& warnings)
 {
+    s_log->info("Config validation start");
     std::string err = validate_model_tiers(config.models);
 
     if (err.empty()) {
@@ -304,6 +305,12 @@ std::string validate_config(
         }
     }
 
+    if (err.empty()) {
+        s_log->info("Config validation passed ({} warning(s))",
+                    warnings.size());
+    } else {
+        s_log->error("Config validation failed: {}", err);
+    }
     return err;
 }
 

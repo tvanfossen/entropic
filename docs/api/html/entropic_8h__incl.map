@@ -1,0 +1,20 @@
+<map id="entropic/entropic.h" name="entropic/entropic.h">
+<area shape="rect" id="Node000001" title="Public C API for the Entropic inference engine." alt="" coords="281,5,425,31"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,79,88,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="305,33,102,80,101,75,303,28"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="521,152,596,177"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="282,28,224,37,174,53,156,63,146,74,144,87,153,102,176,119,212,133,258,143,309,151,416,159,508,161,507,166,416,164,309,156,257,149,211,138,174,124,149,106,139,88,141,72,153,58,172,48,223,32,281,23"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="163,79,234,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="330,33,237,75,235,70,327,28"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="258,79,449,104"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="356,31,356,65,351,65,351,31"/>
+<area shape="rect" id="Node000006" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="711,152,905,177"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="426,20,542,28,673,39,785,55,823,65,845,77,852,93,850,111,831,143,827,140,845,109,847,94,841,80,821,70,784,61,672,45,541,33,426,26"/>
+<area shape="rect" id="Node000007" href="$error_8h.html" title="Error types for cross&#45;.so error reporting." alt="" coords="669,79,830,104"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="417,28,672,74,671,79,416,33"/>
+<area shape="rect" id="Node000008" href="$hooks_8h.html" title="Hook point enum and callback types for engine lifecycle hooks." alt="" coords="473,79,644,104"/>
+<area shape="poly" id="edge9_Node000001_Node000008" title=" " alt="" coords="387,28,513,72,512,77,385,33"/>
+<area shape="poly" id="edge7_Node000007_Node000003" title=" " alt="" coords="720,107,604,149,602,144,718,102"/>
+<area shape="poly" id="edge8_Node000007_Node000006" title=" " alt="" coords="761,103,792,140,788,143,757,106"/>
+<area shape="poly" id="edge10_Node000008_Node000003" title=" " alt="" coords="561,104,561,138,556,138,556,104"/>
+</map>

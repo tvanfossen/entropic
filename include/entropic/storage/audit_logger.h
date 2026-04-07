@@ -15,6 +15,7 @@
 #pragma once
 
 #include <entropic/storage/audit_entry.h>
+#include <entropic/types/config.h>
 #include <entropic/types/hooks.h>
 
 #include <atomic>
@@ -25,19 +26,6 @@
 #include <string>
 
 namespace entropic {
-
-/**
- * @brief Configuration for the audit logger.
- * @version 1.9.5
- */
-struct AuditLogConfig {
-    std::filesystem::path log_dir;       ///< Directory for audit log files
-    std::string session_id;              ///< UUID for this session
-    bool enabled = true;                 ///< Master enable/disable toggle
-    size_t flush_interval_entries = 10;  ///< Flush every N entries (0 = every entry)
-    size_t max_file_size = 0;            ///< Max file size before rotation (0 = unlimited)
-    size_t max_files = 5;                ///< Max rotated files to keep
-};
 
 /**
  * @brief JSONL audit logger for MCP tool calls.

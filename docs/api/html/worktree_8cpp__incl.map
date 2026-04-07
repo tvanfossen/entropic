@@ -1,0 +1,28 @@
+<map id="core/worktree.cpp" name="core/worktree.cpp">
+<area shape="rect" id="Node000001" title="WorktreeManager and ScopedWorktree implementation." alt="" coords="583,5,721,31"/>
+<area shape="rect" id="Node000002" href="$worktree_8h.html" title="Git worktree management for delegation isolation." alt="" coords="112,79,293,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="583,33,288,79,288,74,582,28"/>
+<area shape="rect" id="Node000006" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="492,79,671,104"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="642,33,604,71,600,67,638,29"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="695,79,751,104"/>
+<area shape="poly" id="edge12_Node000001_Node000012" title=" " alt="" coords="666,29,704,67,700,71,662,33"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="775,79,836,104"/>
+<area shape="poly" id="edge13_Node000001_Node000013" title=" " alt="" coords="678,28,769,70,767,75,676,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="5,159,96,185"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="181,107,86,155,84,151,179,102"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="120,159,195,185"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="198,106,173,149,169,146,194,103"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="219,159,277,185"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="212,103,237,146,232,149,207,106"/>
+<area shape="poly" id="edge11_Node000006_Node000005" title=" " alt="" coords="501,107,400,126,290,155,284,157,283,152,289,149,398,121,500,101"/>
+<area shape="rect" id="Node000007" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="302,159,495,185"/>
+<area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="556,106,439,156,437,151,554,102"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="519,159,643,185"/>
+<area shape="poly" id="edge7_Node000006_Node000008" title=" " alt="" coords="584,104,584,145,579,145,579,104"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="667,152,815,192"/>
+<area shape="poly" id="edge8_Node000006_Node000009" title=" " alt="" coords="606,102,691,143,689,148,603,106"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="840,159,907,185"/>
+<area shape="poly" id="edge9_Node000006_Node000010" title=" " alt="" coords="640,101,730,122,829,149,836,152,834,157,827,155,728,127,639,107"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="931,159,1008,185"/>
+<area shape="poly" id="edge10_Node000006_Node000011" title=" " alt="" coords="671,101,790,121,919,149,929,152,928,157,918,155,789,126,670,107"/>
+</map>

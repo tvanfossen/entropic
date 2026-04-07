@@ -1,0 +1,28 @@
+<map id="entropic/core/directives.h" name="entropic/core/directives.h">
+<area shape="rect" id="Node000001" title="Directive processing for tool&#45;to&#45;engine communication." alt="" coords="547,5,734,31"/>
+<area shape="rect" id="Node000002" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="5,86,180,111"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="548,33,200,81,169,86,168,81,199,76,548,28"/>
+<area shape="rect" id="Node000003" href="$message_8h.html" title="Message struct for conversation history." alt="" coords="412,86,603,111"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="622,33,540,81,537,77,620,29"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="495,240,554,265"/>
+<area shape="poly" id="edge13_Node000001_Node000005" title=" " alt="" coords="653,29,677,60,701,102,709,125,713,149,710,172,700,194,673,220,638,237,602,248,568,253,568,247,601,242,636,232,670,216,696,190,705,170,707,149,704,126,696,104,672,63,649,33"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="237,240,300,265"/>
+<area shape="poly" id="edge15_Node000001_Node000006" title=" " alt="" coords="564,33,484,52,400,81,327,113,301,134,276,168,268,197,267,226,262,226,262,196,272,165,297,130,325,109,398,76,482,47,563,28"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="563,167,687,192"/>
+<area shape="poly" id="edge14_Node000001_Node000007" title=" " alt="" coords="642,31,630,153,625,152,637,30"/>
+<area shape="rect" id="Node000008" href="$i__hook__handler_8h.html" title="Hook dispatch interface injected into engine subsystems." alt="" coords="762,79,906,119"/>
+<area shape="poly" id="edge9_Node000001_Node000008" title=" " alt="" coords="670,28,776,71,774,76,668,33"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="931,86,1017,111"/>
+<area shape="poly" id="edge12_Node000001_Node000011" title=" " alt="" coords="704,28,805,49,919,76,929,79,928,84,917,81,804,54,703,33"/>
+<area shape="rect" id="Node000004" href="$content_8h.html" title="Multimodal content types for messages." alt="" coords="307,167,487,192"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="493,114,426,161,423,156,489,109"/>
+<area shape="poly" id="edge6_Node000003_Node000005" title=" " alt="" coords="511,111,524,226,519,227,506,112"/>
+<area shape="poly" id="edge7_Node000003_Node000006" title=" " alt="" coords="413,112,350,132,321,148,296,169,286,181,280,196,273,227,267,226,274,195,282,179,292,165,318,144,348,127,411,107"/>
+<area shape="poly" id="edge8_Node000003_Node000007" title=" " alt="" coords="526,109,597,157,594,161,523,114"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="419,190,493,231,490,235,416,194"/>
+<area shape="poly" id="edge5_Node000004_Node000006" title=" " alt="" coords="377,194,303,235,301,231,375,190"/>
+<area shape="rect" id="Node000009" href="$hooks_8h.html" title="Hook point enum and callback types for engine lifecycle hooks." alt="" coords="762,167,933,192"/>
+<area shape="poly" id="edge10_Node000008_Node000009" title=" " alt="" coords="840,118,846,153,840,154,835,119"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="810,240,885,265"/>
+<area shape="poly" id="edge11_Node000009_Node000010" title=" " alt="" coords="850,192,850,226,845,226,845,192"/>
+</map>

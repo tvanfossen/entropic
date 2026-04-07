@@ -1,0 +1,5 @@
+<map id="entropic::AuditHookContext" name="entropic::AuditHookContext">
+<area shape="rect" id="Node000001" title="Context passed to AuditLogger hook via user_data pointer." alt="" coords="5,93,208,119"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1AuditLogger.html" title="JSONL audit logger for MCP tool calls." alt="" coords="26,5,187,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="109,45,109,93,104,93,104,45"/>
+</map>

@@ -1,0 +1,7 @@
+<map id="entropic::GitCheckoutTool" name="entropic::GitCheckoutTool">
+<area shape="rect" id="Node000001" title="Tool: git checkout target." alt="" coords="5,168,193,193"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="29,93,170,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="102,133,102,168,97,168,97,133"/>
+<area shape="rect" id="Node000003" href="$structentropic_1_1ToolDefinition.html" title="Parsed tool definition from JSON schema file." alt="" coords="13,5,185,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="102,45,102,93,97,93,97,45"/>
+</map>

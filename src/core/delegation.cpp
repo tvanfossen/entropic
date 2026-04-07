@@ -86,7 +86,7 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @internal
- * @version 1.8.6
+ * @version 2.0.0
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -94,6 +94,9 @@ DelegationResult DelegationManager::execute_delegation(
     const std::string& task,
     std::optional<int> max_turns) {
 
+    logger->info("Delegation: target_tier='{}', task='{}', depth={}",
+                 target_tier, task,
+                 parent_ctx.delegation_depth + 1);
     auto info = tier_res_.resolve_tier
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};

@@ -6,8 +6,8 @@
 
 #include <entropic/storage/backend.h>
 
+#include <entropic/types/logging.h>
 #include <nlohmann/json.hpp>
-#include <spdlog/spdlog.h>
 #include <sqlite3.h>
 
 #include <chrono>
@@ -17,6 +17,10 @@
 using json = nlohmann::json;
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("storage.backend");
+} // anonymous namespace
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -104,7 +108,7 @@ void SqliteStorageBackend::close() {
  * @param model_id Optional model identifier.
  * @return Conversation ID.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 std::string SqliteStorageBackend::create_conversation(
         const std::string& title,
@@ -126,7 +130,7 @@ std::string SqliteStorageBackend::create_conversation(
             sqlite3_bind_text(s, 7, rec.metadata.c_str(), -1, SQLITE_TRANSIENT);
         });
 
-    spdlog::info("Created conversation: {}", rec.id);
+    logger->info("Created conversation: {}", rec.id);
     return rec.id;
 }
 
@@ -136,7 +140,7 @@ std::string SqliteStorageBackend::create_conversation(
  * @param messages_json JSON array of message objects.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteStorageBackend::save_messages(
         const std::string& conversation_id,
@@ -151,7 +155,7 @@ bool SqliteStorageBackend::save_messages(
 
     auto msgs = json::parse(messages_json, nullptr, false);
     if (!msgs.is_array()) {
-        spdlog::error("save_messages: invalid JSON array");
+        logger->error("save_messages: invalid JSON array");
         return false;
     }
 
@@ -290,7 +294,7 @@ bool SqliteStorageBackend::list_conversations(
  * @param conversation_id Conversation ID.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteStorageBackend::delete_conversation(
         const std::string& conversation_id) {
@@ -299,7 +303,7 @@ bool SqliteStorageBackend::delete_conversation(
         [&](sqlite3_stmt* s) {
             sqlite3_bind_text(s, 1, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
         });
-    if (ok) spdlog::info("Deleted conversation: {}", conversation_id);
+    if (ok) logger->info("Deleted conversation: {}", conversation_id);
     return ok;
 }
 
@@ -376,7 +380,7 @@ bool SqliteStorageBackend::search_conversations(
  * @param[out] child_conversation_id Created child conversation ID.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SqliteStorageBackend::create_delegation(
         const std::string& parent_conversation_id,
@@ -423,7 +427,7 @@ bool SqliteStorageBackend::create_delegation(
         });
 
     delegation_id = rec.id;
-    spdlog::info("Created delegation {}: {} -> {}",
+    logger->info("Created delegation {}: {} -> {}",
                  rec.id, delegating_tier, target_tier);
     return ok;
 }

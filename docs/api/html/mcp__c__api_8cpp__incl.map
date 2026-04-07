@@ -1,0 +1,65 @@
+<map id="mcp/mcp_c_api.cpp" name="mcp/mcp_c_api.cpp">
+<area shape="rect" id="Node000001" title="C API implementation for i_mcp_server.h." alt="" coords="541,5,692,31"/>
+<area shape="rect" id="Node000002" href="$i__mcp__server_8h.html" title="Pure C interface contract for MCP server plugins." alt="" coords="137,240,281,280"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="598,33,254,235,251,231,596,29"/>
+<area shape="rect" id="Node000006" href="$server__base_8h.html" title="MCPServerBase concrete base class + ServerResponse." alt="" coords="541,79,693,119"/>
+<area shape="poly" id="edge6_Node000001_Node000006" title=" " alt="" coords="619,31,619,65,614,65,614,31"/>
+<area shape="rect" id="Node000023" title=" " alt="" coords="717,86,783,111"/>
+<area shape="poly" id="edge40_Node000001_Node000023" title=" " alt="" coords="638,29,720,77,717,81,635,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="223,401,298,427"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="218,280,255,387,250,389,213,281"/>
+<area shape="rect" id="Node000004" href="$error_8h.html" title="Error types for cross&#45;.so error reporting." alt="" coords="41,328,203,353"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="189,282,147,320,143,316,186,278"/>
+<area shape="poly" id="edge4_Node000004_Node000003" title=" " alt="" coords="145,351,227,393,225,397,143,356"/>
+<area shape="rect" id="Node000005" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="5,401,199,427"/>
+<area shape="poly" id="edge5_Node000004_Node000005" title=" " alt="" coords="121,354,111,389,106,387,116,353"/>
+<area shape="rect" id="Node000007" href="$directives_8h.html" title="Directive processing for tool&#45;to&#45;engine communication." alt="" coords="663,167,850,192"/>
+<area shape="poly" id="edge7_Node000006_Node000007" title=" " alt="" coords="651,116,725,157,723,162,649,121"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="966,401,1025,427"/>
+<area shape="poly" id="edge38_Node000006_Node000011" title=" " alt="" coords="616,119,612,151,612,192,617,237,631,279,648,306,665,323,716,351,778,375,842,392,902,402,952,407,952,413,902,407,841,397,776,380,714,356,662,327,643,309,626,281,612,238,606,193,607,151,611,119"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="632,401,695,427"/>
+<area shape="poly" id="edge39_Node000006_Node000012" title=" " alt="" coords="581,121,555,141,535,168,523,198,520,223,524,248,535,279,555,314,581,345,635,391,632,395,577,349,550,317,530,281,519,250,515,223,518,196,530,165,551,137,578,117"/>
+<area shape="rect" id="Node000017" href="$tool__base_8h.html" title="Abstract base class for individual MCP tools." alt="" coords="1286,247,1473,273"/>
+<area shape="poly" id="edge23_Node000006_Node000017" title=" " alt="" coords="693,114,705,116,764,121,839,122,1014,123,1103,125,1186,132,1257,144,1313,164,1332,179,1348,197,1371,234,1367,236,1344,200,1329,183,1310,169,1256,149,1185,137,1103,130,1014,128,839,128,764,126,704,121,692,119"/>
+<area shape="rect" id="Node000022" href="$tool__registry_8h.html" title="Tool registration, lookup, and dispatch." alt="" coords="1097,167,1299,192"/>
+<area shape="poly" id="edge33_Node000006_Node000022" title=" " alt="" coords="693,114,705,116,905,144,1083,164,1082,170,904,150,704,121,692,119"/>
+<area shape="rect" id="Node000008" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="1212,401,1387,427"/>
+<area shape="poly" id="edge8_Node000007_Node000008" title=" " alt="" coords="850,180,909,186,974,196,1041,213,1105,238,1161,272,1211,313,1253,355,1284,389,1280,392,1249,358,1208,317,1158,276,1102,242,1039,218,973,202,909,191,850,186"/>
+<area shape="rect" id="Node000009" href="$message_8h.html" title="Message struct for conversation history." alt="" coords="868,247,1059,273"/>
+<area shape="poly" id="edge9_Node000007_Node000009" title=" " alt="" coords="788,190,921,240,920,245,786,195"/>
+<area shape="poly" id="edge20_Node000007_Node000011" title=" " alt="" coords="769,190,808,230,858,278,890,302,921,326,979,389,976,392,918,330,887,306,855,282,804,234,765,194"/>
+<area shape="poly" id="edge22_Node000007_Node000012" title=" " alt="" coords="705,194,664,212,646,225,631,242,615,269,610,294,613,321,622,352,631,372,644,390,640,393,627,375,617,354,607,322,604,294,610,267,627,238,642,221,661,208,703,190"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="1064,401,1188,427"/>
+<area shape="poly" id="edge21_Node000007_Node000013" title=" " alt="" coords="851,185,979,204,1036,218,1073,238,1100,273,1116,313,1125,354,1128,387,1123,388,1120,354,1111,315,1095,275,1070,242,1034,223,978,209,850,190"/>
+<area shape="rect" id="Node000014" href="$i__hook__handler_8h.html" title="Hook dispatch interface injected into engine subsystems." alt="" coords="305,240,449,280"/>
+<area shape="poly" id="edge16_Node000007_Node000014" title=" " alt="" coords="702,195,463,244,462,238,701,189"/>
+<area shape="rect" id="Node000016" title=" " alt="" coords="640,247,727,273"/>
+<area shape="poly" id="edge19_Node000007_Node000016" title=" " alt="" coords="748,194,706,239,702,235,744,190"/>
+<area shape="rect" id="Node000010" href="$content_8h.html" title="Multimodal content types for messages." alt="" coords="727,328,907,353"/>
+<area shape="poly" id="edge10_Node000009_Node000010" title=" " alt="" coords="943,275,852,324,849,319,940,270"/>
+<area shape="poly" id="edge13_Node000009_Node000011" title=" " alt="" coords="968,272,993,387,987,388,963,273"/>
+<area shape="poly" id="edge14_Node000009_Node000012" title=" " alt="" coords="868,273,790,292,752,309,717,330,691,358,675,390,670,387,687,355,714,326,750,304,789,287,867,267"/>
+<area shape="poly" id="edge15_Node000009_Node000013" title=" " alt="" coords="977,271,1105,390,1102,394,974,275"/>
+<area shape="poly" id="edge11_Node000010_Node000011" title=" " alt="" coords="846,351,955,394,953,399,844,356"/>
+<area shape="poly" id="edge12_Node000010_Node000012" title=" " alt="" coords="793,356,702,398,700,393,791,351"/>
+<area shape="rect" id="Node000015" href="$hooks_8h.html" title="Hook point enum and callback types for engine lifecycle hooks." alt="" coords="278,328,449,353"/>
+<area shape="poly" id="edge17_Node000014_Node000015" title=" " alt="" coords="376,281,370,315,365,314,371,280"/>
+<area shape="poly" id="edge18_Node000015_Node000003" title=" " alt="" coords="348,356,290,395,287,391,345,351"/>
+<area shape="poly" id="edge32_Node000017_Node000011" title=" " alt="" coords="1351,275,1038,399,1036,394,1349,270"/>
+<area shape="rect" id="Node000018" href="$config_8h.html" title="Configuration structs with defaults." alt="" coords="1337,328,1507,353"/>
+<area shape="poly" id="edge24_Node000017_Node000018" title=" " alt="" coords="1388,272,1412,315,1407,317,1383,274"/>
+<area shape="poly" id="edge25_Node000018_Node000008" title=" " alt="" coords="1404,356,1332,397,1330,392,1401,351"/>
+<area shape="poly" id="edge27_Node000018_Node000011" title=" " alt="" coords="1347,356,1053,404,1039,407,1038,401,1052,399,1346,351"/>
+<area shape="poly" id="edge28_Node000018_Node000012" title=" " alt="" coords="1337,353,709,411,708,406,1336,347"/>
+<area shape="poly" id="edge31_Node000018_Node000013" title=" " alt="" coords="1375,356,1188,401,1187,395,1374,351"/>
+<area shape="rect" id="Node000019" title=" " alt="" coords="1411,401,1478,427"/>
+<area shape="poly" id="edge26_Node000018_Node000019" title=" " alt="" coords="1428,353,1439,387,1434,389,1423,354"/>
+<area shape="rect" id="Node000020" title=" " alt="" coords="1502,401,1577,427"/>
+<area shape="poly" id="edge29_Node000018_Node000020" title=" " alt="" coords="1442,351,1510,392,1507,396,1439,356"/>
+<area shape="rect" id="Node000021" title=" " alt="" coords="1601,401,1691,427"/>
+<area shape="poly" id="edge30_Node000018_Node000021" title=" " alt="" coords="1459,351,1598,395,1596,400,1457,356"/>
+<area shape="poly" id="edge35_Node000022_Node000011" title=" " alt="" coords="1190,194,1016,393,1012,389,1186,191"/>
+<area shape="poly" id="edge37_Node000022_Node000012" title=" " alt="" coords="1097,193,981,211,918,225,857,243,763,272,727,292,689,330,675,358,668,388,663,387,670,356,685,326,723,288,761,267,856,237,917,220,980,206,1096,187"/>
+<area shape="poly" id="edge36_Node000022_Node000013" title=" " alt="" coords="1206,192,1220,231,1223,256,1219,281,1206,314,1187,344,1149,393,1145,390,1183,341,1201,311,1214,279,1217,256,1214,232,1201,193"/>
+<area shape="poly" id="edge34_Node000022_Node000017" title=" " alt="" coords="1225,190,1341,239,1339,244,1223,194"/>
+</map>

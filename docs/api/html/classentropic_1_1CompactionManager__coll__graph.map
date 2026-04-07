@@ -1,0 +1,7 @@
+<map id="entropic::CompactionManager" name="entropic::CompactionManager">
+<area shape="rect" id="Node000001" title="Manages automatic context compaction." alt="" coords="103,93,321,119"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1CompactionConfig.html" title="Auto&#45;compaction configuration." alt="" coords="5,5,208,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="133,37,199,91,196,95,130,41"/>
+<area shape="rect" id="Node000003" href="$classentropic_1_1TokenCounter.html" title="Track token usage across conversation." alt="" coords="232,5,403,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="294,41,228,95,225,91,291,37"/>
+</map>

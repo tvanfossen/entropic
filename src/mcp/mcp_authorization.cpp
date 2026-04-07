@@ -88,7 +88,7 @@ entropic_error_t MCPAuthorizationManager::revoke(
  * @param required_level Minimum access level.
  * @return true if authorized or no enforcement.
  * @internal
- * @version 1.9.4
+ * @version 2.0.0
  */
 bool MCPAuthorizationManager::check_access(
     const std::string& identity_name,
@@ -97,9 +97,16 @@ bool MCPAuthorizationManager::check_access(
     std::lock_guard<std::mutex> lock(auth_mutex_);
     auto it = key_sets_.find(identity_name);
     if (it == key_sets_.end()) {
-        return true;  // No key set = no enforcement (backward compat)
+        logger->info("Auth ALLOW: {} on {} (no enforcement)",
+                     identity_name, tool_name);
+        return true;
     }
-    return it->second.has_access(tool_name, required_level);
+    bool allowed = it->second.has_access(tool_name, required_level);
+    logger->info("Auth {}: {} on {} (required={})",
+                 allowed ? "ALLOW" : "DENY",
+                 identity_name, tool_name,
+                 static_cast<int>(required_level));
+    return allowed;
 }
 
 /**

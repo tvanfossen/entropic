@@ -116,3 +116,17 @@ jobs:
         with:
           name: coverage-report
           path: test-reports/coverage/
+
+  model-test-freshness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Model test freshness
+        run: |
+          VERSION=$(sed -n 's/.*VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)
+          SHA=$(git rev-parse HEAD)
+          jq -e --arg v "$VERSION" --arg s "$SHA" \
+            '.version == $v and .git_sha == $s' \
+            test-reports/model/results.json || \
+            (echo "Model tests stale or missing for v${VERSION}" && exit 1)

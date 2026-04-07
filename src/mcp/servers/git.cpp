@@ -27,7 +27,7 @@ namespace entropic {
  * @param git_args Arguments appended after "git -C repo_dir".
  * @return Pair of output string and exit code.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 static std::pair<std::string, int> run_git(
     const std::string& repo_dir,
@@ -49,6 +49,8 @@ static std::pair<std::string, int> run_git(
 
     int status = pclose(pipe);  // NOLINT
     int exit_code = WEXITSTATUS(status);
+    logger->info("Git: '{}' exit={}, {} chars",
+                 git_args, exit_code, output.size());
     return {output, exit_code};
 }
 

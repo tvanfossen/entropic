@@ -14,6 +14,24 @@ static auto logger = entropic::log::get("core.response_generator");
 namespace entropic {
 
 /**
+ * @brief Log the full assembled prompt (all messages, no truncation).
+ * @param messages Message list being sent to inference.
+ * @param tier Locked tier name.
+ * @utility
+ * @version 1.10.2
+ */
+static void log_prompt(const std::vector<Message>& messages,
+                       const std::string& tier) {
+    logger->info("─── Prompt ({} messages, tier={}) ───",
+                 messages.size(), tier);
+    for (size_t i = 0; i < messages.size(); ++i) {
+        logger->info("[{}] role={}\n{}", i, messages[i].role,
+                     messages[i].content);
+    }
+    logger->info("─── End prompt ───");
+}
+
+/**
  * @brief Construct a response generator.
  * @param inference Inference interface.
  * @param loop_config Loop configuration.
@@ -162,7 +180,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -170,6 +188,9 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         return generate_batch(ctx);
     }
 
+    logger->info("Generate (stream): tier={}, {} messages",
+                 ctx.locked_tier, ctx.messages.size());
+    log_prompt(ctx.messages, ctx.locked_tier);
     auto msgs_json = serialize_messages(ctx.messages);
     auto params_json = build_params_json();
 
@@ -188,6 +209,8 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     result.finish_reason = acc.interrupted ? "interrupted" : "stop";
     result.content = acc.content;
     result.tool_calls_json = "[]";
+    logger->info("Generate complete (stream): finish={}, {} chars",
+                 result.finish_reason, result.content.size());
     return result;
 }
 
@@ -196,7 +219,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 1.8.4
+ * @version 2.0.0
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -204,6 +227,9 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
         return {"", "[]", "error"};
     }
 
+    logger->info("Generate (batch): tier={}, {} messages",
+                 ctx.locked_tier, ctx.messages.size());
+    log_prompt(ctx.messages, ctx.locked_tier);
     auto msgs_json = serialize_messages(ctx.messages);
     auto params_json = build_params_json();
     char* result_json = nullptr;
@@ -224,6 +250,8 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
         result.finish_reason = "error";
         logger->error("Generate failed (rc={})", rc);
     }
+    logger->info("Generate complete (batch): finish={}, {} chars",
+                 result.finish_reason, result.content.size());
     return result;
 }
 

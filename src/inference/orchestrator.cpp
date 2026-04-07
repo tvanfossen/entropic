@@ -17,32 +17,12 @@
 
 #include <llama.h>
 
-#include <chrono>
-
 namespace entropic {
 
 namespace {
 auto logger = entropic::log::get("inference.orchestrator");
-
-/**
- * @brief Get current time for timing measurements.
- * @utility
- * @version 1.8.2
- */
-auto now() { return std::chrono::steady_clock::now(); }
-
-/**
- * @brief Compute elapsed milliseconds.
- * @utility
- * @version 1.8.2
- */
-double elapsed_ms(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end)
-{
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    return static_cast<double>(us.count()) / 1000.0;
-}
+using entropic::log::now;
+using entropic::log::elapsed_ms;
 
 /**
  * @brief Extract latest user message from conversation.
@@ -172,7 +152,7 @@ void ModelOrchestrator::shutdown() {
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 1.9.3
+ * @version 2.0.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -222,6 +202,14 @@ GenerationResult ModelOrchestrator::generate(
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
     result.total_ms = elapsed_ms(t_start, now());
+    logger->info("Orchestration: tier={}, adapter={}, grammar={}",
+                 selected, last_routing_result_.adapter_name,
+                 resolved_params.grammar.empty()
+                     ? "unconstrained" : resolved_params.grammar_key);
+    logger->info("Total: {:.0f}ms (route={:.0f}ms, swap={:.0f}ms, "
+                 "gen={:.0f}ms)",
+                 result.total_ms, routing_ms, swap_ms,
+                 result.generation_time_ms);
     return result;
 }
 
@@ -262,10 +250,12 @@ GenerationResult ModelOrchestrator::generate_streaming(
  * @param messages Current conversation.
  * @return Selected tier name.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
     if (!config_.routing.enabled || !router_) {
+        logger->info("Route: routing disabled, using default '{}'",
+                     default_tier_);
         last_routing_result_ = {default_tier_, "", "", "none", 0.0};
         return default_tier_;
     }
@@ -288,7 +278,7 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  * @param messages Conversation history.
  * @return Pair of (tier_name, raw_digit).
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -313,11 +303,14 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
         std::string digit(1, c);
         auto it = tier_map_.find(digit);
         if (it != tier_map_.end()) {
+            logger->info("Route: digit='{}' -> tier='{}'",
+                         digit, it->second);
             return {it->second, digit};
         }
     }
 
-    logger->warn("[ROUTER] No valid digit in '{}', defaulting to {}", raw, default_tier_);
+    logger->warn("Route: no valid digit in '{}', defaulting to {}",
+                 raw, default_tier_);
     return {default_tier_, ""};
 }
 
@@ -469,6 +462,20 @@ std::vector<std::string> ModelOrchestrator::available_models() const {
         result.push_back("router");
     }
     return result;
+}
+
+/**
+ * @brief Get the inference backend for a tier.
+ * @param tier_name Tier name.
+ * @return Backend pointer, or nullptr if not found.
+ * @utility
+ * @version 1.10.2
+ */
+InferenceBackend* ModelOrchestrator::get_backend(
+    const std::string& tier_name) const {
+    auto it = tiers_.find(tier_name);
+    if (it == tiers_.end()) { return nullptr; }
+    return it->second.get();
 }
 
 /**
@@ -670,7 +677,7 @@ static std::string normalize_grammar_key(const std::string& grammar_value) {
  * @param params Generation parameters (mutated: grammar field may be set).
  * @param tier_name Active tier for frontmatter grammar resolution.
  * @internal
- * @version 1.9.3
+ * @version 2.0.0
  */
 void ModelOrchestrator::resolve_grammar_key(
     GenerationParams& params, const std::string& tier_name)
@@ -700,6 +707,8 @@ void ModelOrchestrator::resolve_grammar_key(
         return;
     }
 
+    logger->info("Grammar resolved: key='{}', {} bytes",
+                 key, content.size());
     params.grammar = std::move(content);
 }
 

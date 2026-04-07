@@ -32,7 +32,7 @@ std::string to_string(c4::csubstr s)
  * @brief Read a file into a string.
  * @param path File path.
  * @return File contents, or empty string on failure.
- * @version 1.8.2
+ * @version 2.0.0
  * @utility
  */
 std::string read_file(const std::filesystem::path& path)
@@ -44,7 +44,10 @@ std::string read_file(const std::filesystem::path& path)
     }
     std::ostringstream ss;
     ss << ifs.rdbuf();
-    return ss.str();
+    auto content = ss.str();
+    s_log->info("Read file: {}, {} bytes", path.string(),
+                content.size());
+    return content;
 }
 
 /**

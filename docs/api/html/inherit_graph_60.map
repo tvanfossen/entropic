@@ -1,0 +1,5 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="Node000000" href="$classentropic_1_1InferenceBackend.html" title="Concrete base class for inference backends (80% logic)." alt="" coords="5,5,204,31"/>
+<area shape="rect" id="Node000001" href="$classentropic_1_1LlamaCppBackend.html" title="LlamaCppBackend — common llama.cpp patterns (15% layer)." alt="" coords="252,5,455,31"/>
+<area shape="poly" id="edge14_Node000000_Node000001" title=" " alt="" coords="218,15,252,15,252,21,218,21"/>
+</map>

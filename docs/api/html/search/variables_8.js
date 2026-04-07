@@ -1,0 +1,27 @@
+var searchData=
+[
+  ['id_0',['id',['../structentropic_1_1MessageRecord.html#a34bb679288d55dcc5acce931b1c8e73b',1,'entropic::MessageRecord::id'],['../structentropic_1_1DelegationRecord.html#ae7b815329f98a48e19036ecdd0bd1ffb',1,'entropic::DelegationRecord::id'],['../structentropic_1_1ToolCall.html#a4a75c06b63dc04ee65c1a204da9f6195',1,'entropic::ToolCall::id'],['../structentropic_1_1ConversationRecord.html#a5365f53be0fe3b5650d7e5dea155c58a',1,'entropic::ConversationRecord::id']]],
+  ['identity_1',['identity',['../structentropic_1_1CompactionResult.html#a4cfcf5c4111a576192c8050e0bff9cfa',1,'entropic::CompactionResult::identity'],['../structentropic_1_1TierConfig.html#a1ecbf3ff6acad81799bb24a1e9ce9b02',1,'entropic::TierConfig::identity']]],
+  ['identity_5fdisabled_2',['identity_disabled',['../structentropic_1_1TierConfig.html#a7efc8123a4f4113224e113a4332dce92',1,'entropic::TierConfig']]],
+  ['identity_5fmanager_3',['identity_manager',['../structentropic__engine.html#a834a9aa2cd386e1a1a777b94295b383c',1,'entropic_engine']]],
+  ['identity_5fprompt_5f_4',['identity_prompt_',['../classentropic_1_1ChatAdapter.html#ab4eeee067ca1500dd6dcd834b49cab77',1,'entropic::ChatAdapter']]],
+  ['identity_5ftier_5',['identity_tier',['../structentropic_1_1MessageRecord.html#a4c798e25bf69673f38a21cbb6d6b6f18',1,'entropic::MessageRecord']]],
+  ['idle_5ftimeout_5fseconds_6',['idle_timeout_seconds',['../structentropic_1_1LoopConfig.html#ace33c4410eb7da0aecf8dc19aa0e0ad2',1,'entropic::LoopConfig']]],
+  ['image_5fpath_7',['image_path',['../structentropic_1_1ContentPart.html#a9540829c873ad8e29f295cb77baeb43b',1,'entropic::ContentPart']]],
+  ['image_5furl_8',['image_url',['../structentropic_1_1ContentPart.html#af76b87e687bbc7ce156c58c77151f143',1,'entropic::ContentPart']]],
+  ['inference_9',['inference',['../structentropic_1_1ValidationContext.html#ab60710e6bd04ccc7f53fa2c581ccc7d0',1,'entropic::ValidationContext']]],
+  ['inject_5fmodel_5fcontext_10',['inject_model_context',['../structentropic_1_1ParsedConfig.html#ab1d235d4430fc27bbc158e160c1a8df0',1,'entropic::ParsedConfig']]],
+  ['injected_5fmessages_11',['injected_messages',['../structentropic_1_1DirectiveResult.html#a3a09a0c23b78baf2c7eea4b359ea8237',1,'entropic::DirectiveResult']]],
+  ['injection_12',['injection',['../structentropic_1_1InterruptContext.html#ae8f675efea8d4ae06590e9ca9b18fded',1,'entropic::InterruptContext']]],
+  ['input_5fschema_13',['input_schema',['../structentropic_1_1ToolDefinition.html#a3dbb4abc5823f0639412861b596f77dc',1,'entropic::ToolDefinition']]],
+  ['install_5ffresh_14',['install_fresh',['../structentropic_1_1TodoCallbacks.html#add2de3d616790765f3f922ca70fd45ff',1,'entropic::TodoCallbacks']]],
+  ['interrupt_15',['interrupt',['../structentropic_1_1GenerationEvents.html#a45eec9fa6d04cc50c54aace8ce7a20ad',1,'entropic::GenerationEvents']]],
+  ['interrupted_16',['interrupted',['../structentropic_1_1StreamAccumulator.html#ab5f4adbfe046dcc4efa6fb70ba282bd1',1,'entropic::StreamAccumulator']]],
+  ['interstitial_17',['interstitial',['../structentropic_1_1IdentityConfig.html#a33e087e540977e77d6fafc975558bf2f',1,'entropic::IdentityConfig::interstitial'],['../structentropic_1_1prompts_1_1IdentityFrontmatter.html#ae85317b8fe87e56154a860dce92d8ae2',1,'entropic::prompts::IdentityFrontmatter::interstitial']]],
+  ['is_5fcompacted_18',['is_compacted',['../structentropic_1_1MessageRecord.html#ac5ff0d2a12c5f8df843595cac27974c1',1,'entropic::MessageRecord']]],
+  ['is_5fenforced_19',['is_enforced',['../structentropic_1_1MCPKeyInterface.html#a351b5d6436dc52f842a8557b92818fe0',1,'entropic::MCPKeyInterface']]],
+  ['is_5ferror_20',['is_error',['../structentropic_1_1ToolResult.html#ab9add8a7034bc20b8947af65719ef343',1,'entropic::ToolResult']]],
+  ['is_5frecurrent_5f_21',['is_recurrent_',['../classentropic_1_1LlamaCppBackend.html#a13f23eaff4cbbb22bac155f9adbc15ac',1,'entropic::LlamaCppBackend']]],
+  ['iteration_22',['iteration',['../structentropic_1_1ToolCallRecord.html#a49e5adeb6bf7aa2b7c417ece522dec65',1,'entropic::ToolCallRecord::iteration'],['../structentropic_1_1AuditEntry.html#a882327c124a0d7dbf9715cc533596a93',1,'entropic::AuditEntry::iteration'],['../structentropic_1_1AuditHookContext.html#a6c8c1ee9bdda9644bb718f5462b6435e',1,'entropic::AuditHookContext::iteration']]],
+  ['iterations_23',['iterations',['../structentropic_1_1LoopMetrics.html#aa9085a5b3d853c34ee9b6674f856a466',1,'entropic::LoopMetrics']]]
+];

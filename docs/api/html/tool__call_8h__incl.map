@@ -1,0 +1,9 @@
+<map id="entropic/types/tool_call.h" name="entropic/types/tool_call.h">
+<area shape="rect" id="Node000001" title="Tool call and tool result types." alt="" coords="79,5,223,45"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,93,64,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="124,48,65,88,62,83,121,43"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="89,93,213,119"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="153,46,153,79,148,79,148,46"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="237,93,299,119"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="181,43,241,84,238,88,178,48"/>
+</map>

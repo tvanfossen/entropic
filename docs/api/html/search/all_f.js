@@ -1,0 +1,28 @@
+var searchData=
+[
+  ['ok_0',['ok',['../structentropic_1_1GenerationResult.html#a61ed1dc78b0da89f275ec1047c7ab22b',1,'entropic::GenerationResult']]],
+  ['old_5fstatus_1',['old_status',['../structentropic_1_1HealthEvent.html#a8563e56a21d1756b19ff799a2591ab58',1,'entropic::HealthEvent']]],
+  ['old_5ftoken_5fcount_2',['old_token_count',['../structentropic_1_1CompactionResult.html#a8aab81dfdeee7fd5fcde32830974a61c',1,'entropic::CompactionResult']]],
+  ['on_5fcompaction_3',['on_compaction',['../structentropic_1_1EngineCallbacks.html#a5c7bad98fe81e0bb6efbbc989a128c1f',1,'entropic::EngineCallbacks']]],
+  ['on_5fdelegation_5fcomplete_4',['on_delegation_complete',['../structentropic_1_1EngineCallbacks.html#a6fcaa5192a34e1adb82993f0bdb9fdcb',1,'entropic::EngineCallbacks']]],
+  ['on_5fdelegation_5fstart_5',['on_delegation_start',['../structentropic_1_1EngineCallbacks.html#abb83deed9ede81123c77224f7fd5fee5',1,'entropic::EngineCallbacks']]],
+  ['on_5fpause_5fprompt_6',['on_pause_prompt',['../structentropic_1_1EngineCallbacks.html#ac0d7b04cc4ca85f0835c6ac347edfb7f',1,'entropic::EngineCallbacks']]],
+  ['on_5fpresenter_5fnotify_7',['on_presenter_notify',['../structentropic_1_1EngineCallbacks.html#a6730a6cda7cd888172a8f97a451be3ba',1,'entropic::EngineCallbacks']]],
+  ['on_5frouting_5fcomplete_8',['on_routing_complete',['../structentropic_1_1EngineCallbacks.html#a176c910a1e3439279698e62c4ed5894c',1,'entropic::EngineCallbacks']]],
+  ['on_5fstate_5fchange_9',['on_state_change',['../structentropic_1_1EngineCallbacks.html#ad580b2c98939e2eceed99c5b3a461dce',1,'entropic::EngineCallbacks']]],
+  ['on_5fstream_5fchunk_10',['on_stream_chunk',['../structentropic_1_1EngineCallbacks.html#af0130b6593567d6523fbfb7eff3873ce',1,'entropic::EngineCallbacks']]],
+  ['on_5ftier_5fselected_11',['on_tier_selected',['../structentropic_1_1EngineCallbacks.html#a044c165ef61ab5db4c49160bfa55c274',1,'entropic::EngineCallbacks']]],
+  ['on_5ftool_5fcall_12',['on_tool_call',['../structentropic_1_1EngineCallbacks.html#a39d104a2be3d852bb7631b2c4cea3148',1,'entropic::EngineCallbacks']]],
+  ['on_5ftool_5fcomplete_13',['on_tool_complete',['../structentropic_1_1EngineCallbacks.html#a769aaf296efb2b3d888baa86b5fc65c6',1,'entropic::EngineCallbacks']]],
+  ['on_5ftool_5frecord_14',['on_tool_record',['../structentropic_1_1EngineCallbacks.html#af6c61e98312be2a7e6bc073a52f79502',1,'entropic::EngineCallbacks']]],
+  ['on_5ftool_5fstart_15',['on_tool_start',['../structentropic_1_1EngineCallbacks.html#aa64b9f0b6583c4a20501b504596ef6ef',1,'entropic::EngineCallbacks']]],
+  ['open_16',['open',['../classentropic_1_1SSETransport.html#ab90304700d49c056dcb3d52b64e01c48',1,'entropic::SSETransport::open()'],['../classentropic_1_1StdioTransport.html#a292d38d84d77e976a82ea0fd7a162dea',1,'entropic::StdioTransport::open()'],['../classentropic_1_1Transport.html#a277f3f52300d7b7b10456cd550b89368',1,'entropic::Transport::open()']]],
+  ['operator_28_29_17',['operator()',['../structentropic_1_1CacheKeyHash.html#a595867968420bfeff3fdcbfd3fb6d8e0',1,'entropic::CacheKeyHash']]],
+  ['opt_5fstr_18',['opt_str',['../c__interface_8cpp.html#a9a486c3f48194ffcd6dffd9c2482436c',1,'c_interface.cpp']]],
+  ['orchestrator_19',['orchestrator',['../structentropic__engine.html#acd00e06608b9062c098fb646a6937555',1,'entropic_engine']]],
+  ['orchestrator_2ecpp_20',['orchestrator.cpp',['../orchestrator_8cpp.html',1,'']]],
+  ['orchestrator_2eh_21',['orchestrator.h',['../orchestrator_8h.html',1,'']]],
+  ['origin_22',['origin',['../structentropic_1_1IdentityConfig.html#a516649e25ac4e823df6489697561209d',1,'entropic::IdentityConfig']]],
+  ['original_5fmax_5ftokens_23',['original_max_tokens',['../structentropic_1_1GenerationResult.html#ab8143959b60757a1eb9980160ff7f3fa',1,'entropic::GenerationResult']]],
+  ['output_24',['output',['../structentropic_1_1GitResult.html#a86f4ea70f202f05bdf7c30205ef8c8fc',1,'entropic::GitResult']]]
+];

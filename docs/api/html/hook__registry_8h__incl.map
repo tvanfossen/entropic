@@ -1,0 +1,18 @@
+<map id="entropic/core/hook_registry.h" name="entropic/core/hook_registry.h">
+<area shape="rect" id="Node000001" title="Thread&#45;safe hook registration and dispatch." alt="" coords="343,5,486,45"/>
+<area shape="rect" id="Node000002" href="$hooks_8h.html" title="Hook point enum and callback types for engine lifecycle hooks." alt="" coords="5,93,176,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="344,46,152,93,151,88,343,41"/>
+<area shape="rect" id="Node000004" href="$error_8h.html" title="Error types for cross&#45;.so error reporting." alt="" coords="201,93,362,119"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="384,48,314,89,311,84,381,43"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="387,93,443,119"/>
+<area shape="poly" id="edge6_Node000001_Node000006" title=" " alt="" coords="417,46,417,79,412,79,412,46"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="467,93,581,119"/>
+<area shape="poly" id="edge7_Node000001_Node000007" title=" " alt="" coords="443,43,498,83,495,87,440,48"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="606,93,669,119"/>
+<area shape="poly" id="edge8_Node000001_Node000008" title=" " alt="" coords="469,43,594,87,592,92,467,48"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="69,167,144,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="96,118,104,153,99,154,91,120"/>
+<area shape="poly" id="edge4_Node000004_Node000003" title=" " alt="" coords="254,121,149,164,147,159,252,116"/>
+<area shape="rect" id="Node000005" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="185,167,378,192"/>
+<area shape="poly" id="edge5_Node000004_Node000005" title=" " alt="" coords="284,119,284,153,279,153,279,119"/>
+</map>

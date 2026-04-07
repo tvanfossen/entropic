@@ -1,11 +1,12 @@
 /**
  * @file logging.cpp
- * @brief spdlog initialization and logger factory.
- * @version 1.8.0
+ * @brief spdlog initialization, logger factory, and formatting utilities.
+ * @version 1.10.4
  */
 
 #include <entropic/types/logging.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <array>
 #include <mutex>
 
 namespace entropic::log {
@@ -31,10 +32,16 @@ void init(spdlog::level::level_enum level) {
 }
 
 /**
- * @brief Get or create a named logger sharing the root sink.
+ * @brief Get or create a named logger sharing current sinks.
+ *
+ * New loggers inherit sinks from the default logger rather than
+ * the original s_sink. This ensures loggers created after test
+ * infrastructure replaces sinks via spdlog::apply_all() still
+ * write to the correct destinations (e.g., per-test file sinks).
+ *
  * @param name Logger name.
  * @return Shared pointer to the logger.
- * @version 1.8.0
+ * @version 1.10.4
  * @internal
  */
 std::shared_ptr<spdlog::logger> get(const std::string& name) {
@@ -45,9 +52,175 @@ std::shared_ptr<spdlog::logger> get(const std::string& name) {
     if (!s_sink) {
         init(spdlog::level::info);
     }
-    logger = std::make_shared<spdlog::logger>(name, s_sink);
-    spdlog::register_logger(logger);
-    return logger;
+    auto default_logger = spdlog::default_logger();
+    auto new_logger = std::make_shared<spdlog::logger>(
+        name, default_logger->sinks().begin(),
+        default_logger->sinks().end());
+    new_logger->set_level(default_logger->level());
+    spdlog::register_logger(new_logger);
+    return new_logger;
+}
+
+// ── Content escaping ──────────────────────────────────────────
+
+/**
+ * @brief Consume an ANSI CSI sequence starting at the ESC byte.
+ *
+ * Writes "[ESC<params>]" into result. Advances i past the
+ * sequence terminator 'm'. If the sequence is malformed, writes
+ * "[ESC]" and leaves i on the ESC byte.
+ *
+ * @param text Source string.
+ * @param i Current index (on the ESC byte). Updated in place.
+ * @param result Destination string.
+ * @utility
+ * @version 1.10.4
+ */
+void escape_ansi(const std::string& text, size_t& i,
+                 std::string& result)
+{
+    result += "[ESC";
+    if (i + 1 >= text.size() || text[i + 1] != '[') {
+        result += ']';
+        return;
+    }
+    ++i; // skip '['
+    while (i + 1 < text.size() && text[i + 1] != 'm') {
+        ++i;
+        result += text[i];
+    }
+    if (i + 1 < text.size()) { ++i; } // skip 'm'
+    result += ']';
+}
+
+/**
+ * @brief 256-entry table mapping bytes to escape strings (nullptr = passthrough).
+ * @return Reference to static lookup table.
+ * @internal
+ * @version 1.10.4
+ */
+static const std::array<const char*, 256>& escape_table() {
+    static const auto tbl = []() {
+        std::array<const char*, 256> t{};
+        t[static_cast<unsigned char>('\n')] = "\\n";
+        t[static_cast<unsigned char>('\r')] = "\\r";
+        t[static_cast<unsigned char>('\t')] = "\\t";
+        t[static_cast<unsigned char>('{')] = "{{";
+        t[static_cast<unsigned char>('}')] = "}}";
+        return t;
+    }();
+    return tbl;
+}
+
+/**
+ * @brief Append escaped form of c if special, else return false.
+ * @param c Character to test.
+ * @param result Destination string.
+ * @return True if c was escaped, false for passthrough.
+ * @utility
+ * @version 1.10.4
+ */
+bool escape_char(char c, std::string& result) {
+    const char* esc = escape_table()[static_cast<unsigned char>(c)];
+    if (!esc) { return false; }
+    result += esc;
+    return true;
+}
+
+/**
+ * @brief Escape content for safe spdlog formatting.
+ *
+ * Replaces embedded newlines with \\n, carriage returns with \\r,
+ * ANSI escape sequences with [ESC...], and curly braces with doubled
+ * braces so spdlog/fmt does not interpret them as format specifiers.
+ *
+ * @param text Raw content.
+ * @return Escaped string safe for spdlog.
+ * @utility
+ * @version 1.10.4
+ */
+std::string escape_content(const std::string& text) {
+    std::string result;
+    result.reserve(text.size() + text.size() / 8);
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (escape_char(text[i], result)) { continue; }
+        if (text[i] == '\033') { escape_ansi(text, i, result); }
+        else { result += text[i]; }
+    }
+    return result;
+}
+
+// ── Formatting helpers ────────────────────────────────────────
+
+/**
+ * @brief Log full content with escaping applied.
+ * @param logger Target logger.
+ * @param level spdlog level.
+ * @param label Prefix label.
+ * @param text Raw text — escaped before formatting.
+ * @utility
+ * @version 1.10.4
+ */
+void log_content(
+    const std::shared_ptr<spdlog::logger>& logger,
+    spdlog::level::level_enum level,
+    const std::string& label,
+    const std::string& text)
+{
+    logger->log(level, "{}: {}", label, escape_content(text));
+}
+
+/**
+ * @brief Log a timing measurement.
+ * @param logger Target logger.
+ * @param label Operation label.
+ * @param ms Elapsed milliseconds.
+ * @utility
+ * @version 1.10.4
+ */
+void log_timing(
+    const std::shared_ptr<spdlog::logger>& logger,
+    const std::string& label,
+    double ms)
+{
+    logger->info("{}: {:.1f}ms", label, ms);
+}
+
+/**
+ * @brief Log token count with throughput.
+ * @param logger Target logger.
+ * @param count Token count.
+ * @param time_ms Generation time in milliseconds.
+ * @utility
+ * @version 1.10.4
+ */
+void log_tokens(
+    const std::shared_ptr<spdlog::logger>& logger,
+    int count,
+    double time_ms)
+{
+    double tok_s = (time_ms > 0.0)
+        ? (static_cast<double>(count) / time_ms * 1000.0) : 0.0;
+    logger->info("{} tokens, {:.1f}ms, {:.1f} tok/s",
+                 count, time_ms, tok_s);
+}
+
+/**
+ * @brief Log a decision/routing event.
+ * @param logger Target logger.
+ * @param label Decision category.
+ * @param key Decision input.
+ * @param value Decision output.
+ * @utility
+ * @version 1.10.4
+ */
+void log_decision(
+    const std::shared_ptr<spdlog::logger>& logger,
+    const std::string& label,
+    const std::string& key,
+    const std::string& value)
+{
+    logger->info("{}: {} -> {}", label, key, value);
 }
 
 } // namespace entropic::log

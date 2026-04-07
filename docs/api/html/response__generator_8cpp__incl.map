@@ -1,0 +1,61 @@
+<map id="core/response_generator.cpp" name="core/response_generator.cpp">
+<area shape="rect" id="Node000001" title="Response generation implementation." alt="" coords="1598,5,1808,31"/>
+<area shape="rect" id="Node000002" href="$response__generator_8h.html" title="Response generation subsystem for the agentic loop." alt="" coords="1035,79,1206,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1619,33,1220,87,1219,81,1618,28"/>
+<area shape="rect" id="Node000018" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="1614,86,1792,111"/>
+<area shape="poly" id="edge28_Node000001_Node000018" title=" " alt="" coords="1706,31,1706,72,1700,72,1700,31"/>
+<area shape="rect" id="Node000024" title=" " alt="" coords="1816,86,1883,111"/>
+<area shape="poly" id="edge35_Node000001_Node000024" title=" " alt="" coords="1726,28,1817,77,1815,82,1723,33"/>
+<area shape="rect" id="Node000003" href="$engine__types_8h.html" title="Types for the agentic loop engine." alt="" coords="540,167,695,207"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="1035,117,709,173,708,167,1034,112"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="976,416,1035,441"/>
+<area shape="poly" id="edge26_Node000002_Node000007" title=" " alt="" coords="1120,120,1099,228,1078,299,1051,369,1027,407,1022,404,1046,367,1073,297,1093,227,1115,118"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="340,416,402,441"/>
+<area shape="poly" id="edge27_Node000002_Node000008" title=" " alt="" coords="1035,108,782,128,461,160,307,181,174,204,76,229,44,243,25,256,13,275,8,292,11,308,19,322,33,336,51,348,100,370,158,388,219,402,326,420,326,425,218,408,156,394,98,375,48,353,29,340,15,325,6,309,3,292,8,273,21,253,41,238,74,224,173,198,306,175,460,155,782,122,1035,103"/>
+<area shape="rect" id="Node000014" href="$i__hook__handler_8h.html" title="Hook dispatch interface injected into engine subsystems." alt="" coords="1282,167,1426,207"/>
+<area shape="poly" id="edge21_Node000002_Node000014" title=" " alt="" coords="1172,116,1291,159,1289,164,1171,121"/>
+<area shape="rect" id="Node000017" href="$i__inference__callbacks_8h.html" title="Function pointer types for core&#45;to&#45;inference communication." alt="" coords="1126,255,1304,295"/>
+<area shape="poly" id="edge24_Node000002_Node000017" title=" " alt="" coords="1133,118,1200,241,1196,244,1128,120"/>
+<area shape="rect" id="Node000004" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="468,262,642,287"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="606,209,574,252,569,249,602,205"/>
+<area shape="rect" id="Node000005" href="$message_8h.html" title="Message struct for conversation history." alt="" coords="718,262,909,287"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="662,204,776,254,774,259,660,209"/>
+<area shape="poly" id="edge18_Node000003_Node000007" title=" " alt="" coords="695,187,783,192,878,203,961,223,993,236,1014,253,1026,270,1032,290,1035,331,1028,371,1018,404,1013,403,1023,370,1030,331,1027,291,1021,273,1010,256,990,241,960,228,877,209,782,198,695,192"/>
+<area shape="poly" id="edge20_Node000003_Node000008" title=" " alt="" coords="541,195,469,202,393,214,328,232,305,244,289,256,279,274,277,294,281,314,291,335,319,374,349,405,345,409,315,377,286,337,276,316,272,294,274,273,285,253,302,239,327,227,392,209,468,197,540,190"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="534,343,658,368"/>
+<area shape="poly" id="edge19_Node000003_Node000009" title=" " alt="" coords="634,206,655,247,660,271,656,296,643,318,625,336,621,332,638,315,651,294,655,271,650,248,630,208"/>
+<area shape="rect" id="Node000010" href="$tool__call_8h.html" title="Tool call and tool result types." alt="" coords="299,255,443,295"/>
+<area shape="poly" id="edge11_Node000003_Node000010" title=" " alt="" coords="564,209,439,253,437,248,563,204"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="934,262,1000,287"/>
+<area shape="poly" id="edge15_Node000003_Node000011" title=" " alt="" coords="696,199,803,221,921,252,929,255,927,260,920,257,802,226,694,204"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="35,262,126,287"/>
+<area shape="poly" id="edge16_Node000003_Node000012" title=" " alt="" coords="540,197,356,219,247,236,138,257,126,260,125,255,137,252,246,230,355,213,540,192"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="150,262,224,287"/>
+<area shape="poly" id="edge17_Node000003_Node000013" title=" " alt="" coords="541,201,401,224,244,257,232,260,231,255,242,252,401,218,540,196"/>
+<area shape="rect" id="Node000006" href="$content_8h.html" title="Multimodal content types for messages." alt="" coords="734,343,914,368"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="818,287,823,328,818,329,813,288"/>
+<area shape="poly" id="edge8_Node000005_Node000007" title=" " alt="" coords="838,285,881,309,927,341,962,372,990,404,986,407,958,376,924,345,878,313,836,290"/>
+<area shape="poly" id="edge9_Node000005_Node000008" title=" " alt="" coords="801,290,746,330,710,352,671,370,603,393,534,409,416,426,416,421,533,404,601,388,669,366,707,347,743,325,798,285"/>
+<area shape="poly" id="edge10_Node000005_Node000009" title=" " alt="" coords="783,290,642,341,640,336,781,285"/>
+<area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="854,366,964,408,962,413,852,371"/>
+<area shape="poly" id="edge7_Node000006_Node000008" title=" " alt="" coords="752,371,416,423,415,418,751,365"/>
+<area shape="poly" id="edge12_Node000010_Node000007" title=" " alt="" coords="396,293,452,331,486,350,523,365,582,384,644,398,768,416,879,424,962,425,962,431,879,429,768,421,644,403,581,389,521,371,484,355,449,335,393,297"/>
+<area shape="poly" id="edge14_Node000010_Node000008" title=" " alt="" coords="374,295,374,402,368,402,368,295"/>
+<area shape="poly" id="edge13_Node000010_Node000009" title=" " alt="" coords="426,292,551,336,549,341,424,297"/>
+<area shape="rect" id="Node000015" href="$hooks_8h.html" title="Hook point enum and callback types for engine lifecycle hooks." alt="" coords="1328,262,1499,287"/>
+<area shape="poly" id="edge22_Node000014_Node000015" title=" " alt="" coords="1369,205,1400,249,1395,252,1365,208"/>
+<area shape="rect" id="Node000016" title=" " alt="" coords="1276,343,1351,368"/>
+<area shape="poly" id="edge23_Node000015_Node000016" title=" " alt="" coords="1400,290,1341,336,1338,332,1397,285"/>
+<area shape="poly" id="edge25_Node000017_Node000016" title=" " alt="" coords="1240,293,1290,332,1286,336,1237,297"/>
+<area shape="poly" id="edge34_Node000018_Node000007" title=" " alt="" coords="1660,114,1610,135,1585,150,1564,168,1551,184,1544,200,1539,231,1533,263,1526,279,1513,296,1478,328,1446,346,1364,371,1278,394,1190,410,1049,427,1048,422,1190,405,1276,388,1362,365,1443,341,1475,324,1509,293,1521,277,1528,261,1533,230,1539,198,1547,182,1560,165,1582,146,1607,130,1658,109"/>
+<area shape="rect" id="Node000019" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="1766,174,1960,199"/>
+<area shape="poly" id="edge29_Node000018_Node000019" title=" " alt="" coords="1726,109,1830,165,1828,170,1723,114"/>
+<area shape="rect" id="Node000020" title=" " alt="" coords="1984,174,2108,199"/>
+<area shape="poly" id="edge30_Node000018_Node000020" title=" " alt="" coords="1750,109,1973,164,1989,168,1987,173,1972,169,1749,114"/>
+<area shape="rect" id="Node000021" title=" " alt="" coords="2132,167,2280,207"/>
+<area shape="poly" id="edge31_Node000018_Node000021" title=" " alt="" coords="1763,109,1805,116,1960,139,2118,164,2117,169,1959,144,1804,121,1762,114"/>
+<area shape="rect" id="Node000022" title=" " alt="" coords="1574,174,1640,199"/>
+<area shape="poly" id="edge32_Node000018_Node000022" title=" " alt="" coords="1692,114,1632,166,1629,162,1688,110"/>
+<area shape="rect" id="Node000023" title=" " alt="" coords="1664,174,1742,199"/>
+<area shape="poly" id="edge33_Node000018_Node000023" title=" " alt="" coords="1706,112,1706,160,1700,160,1700,112"/>
+</map>

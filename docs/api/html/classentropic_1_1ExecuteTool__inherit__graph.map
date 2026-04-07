@@ -1,0 +1,5 @@
+<map id="entropic::ExecuteTool" name="entropic::ExecuteTool">
+<area shape="rect" id="Node000001" title="Tool for executing shell commands." alt="" coords="5,79,165,104"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="15,5,156,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="88,44,88,79,83,79,83,44"/>
+</map>

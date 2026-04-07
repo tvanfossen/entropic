@@ -6,12 +6,16 @@
 
 #include <entropic/storage/logger.h>
 
-#include <spdlog/spdlog.h>
+#include <entropic/types/logging.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
 #include <filesystem>
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("storage.logger");
+} // anonymous namespace
 
 /**
  * @brief Construct with configuration.
@@ -42,7 +46,7 @@ SessionLogger::~SessionLogger() {
  * @brief Initialize rotating file sinks.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool SessionLogger::initialize() {
     std::filesystem::create_directories(config_.log_dir);
@@ -70,7 +74,7 @@ bool SessionLogger::initialize() {
         model_logger_->info("Model output log started");
         return true;
     } catch (const spdlog::spdlog_ex& ex) {
-        spdlog::error("SessionLogger init failed: {}", ex.what());
+        logger->error("SessionLogger init failed: {}", ex.what());
         return false;
     }
 }

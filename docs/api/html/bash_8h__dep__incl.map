@@ -1,0 +1,5 @@
+<map id="entropic/mcp/servers/bash.h" name="entropic/mcp/servers/bash.h">
+<area shape="rect" id="Node000001" title="Bash MCP server — shell command execution." alt="" coords="8,5,167,45"/>
+<area shape="rect" id="Node000002" href="$bash_8cpp.html" title="BashServer implementation — shell command execution with safety." alt="" coords="5,93,169,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="90,59,90,93,85,93,85,59"/>
+</map>

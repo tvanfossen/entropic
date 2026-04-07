@@ -16,7 +16,7 @@
  * spdlog loggers are thread-safe. Initialization (init_logging) must
  * happen once from a single thread before any logging calls.
  *
- * @version 1.8.0
+ * @version 1.10.4
  */
 
 #pragma once
@@ -24,6 +24,7 @@
 #include <entropic/entropic_export.h>
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <chrono>
 #include <memory>
 #include <string>
 
@@ -58,5 +59,106 @@ ENTROPIC_EXPORT void init(spdlog::level::level_enum level = spdlog::level::info)
  * @version 1.8.0
  */
 ENTROPIC_EXPORT std::shared_ptr<spdlog::logger> get(const std::string& name);
+
+// ── Timing utilities ──────────────────────────────────────────
+
+/**
+ * @brief Get current time for timing measurements.
+ * @return Steady clock time point.
+ * @utility
+ * @version 1.10.4
+ */
+inline auto now() { return std::chrono::steady_clock::now(); }
+
+/**
+ * @brief Compute elapsed milliseconds between two time points.
+ * @param start Start time point.
+ * @param end End time point.
+ * @return Elapsed time in milliseconds.
+ * @utility
+ * @version 1.10.4
+ */
+inline double elapsed_ms(
+    std::chrono::steady_clock::time_point start,
+    std::chrono::steady_clock::time_point end)
+{
+    auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+        end - start);
+    return static_cast<double>(us.count()) / 1000.0;
+}
+
+// ── Content escaping ──────────────────────────────────────────
+
+/**
+ * @brief Escape content for safe spdlog formatting.
+ *
+ * Replaces embedded newlines with \\n, ANSI escape sequences with
+ * their hex representation, and curly braces (fmt specifiers) with
+ * doubled braces so spdlog/fmt does not interpret them.
+ *
+ * @param text Raw content (user input or model output).
+ * @return Escaped string safe for spdlog format strings.
+ * @utility
+ * @version 1.10.4
+ */
+ENTROPIC_EXPORT std::string escape_content(const std::string& text);
+
+// ── Formatting helpers ────────────────────────────────────────
+
+/**
+ * @brief Log full content with escaping applied.
+ * @param logger Target logger.
+ * @param level spdlog level.
+ * @param label Prefix label (e.g., "Content", "Input").
+ * @param text Raw text — escaped before formatting.
+ * @utility
+ * @version 1.10.4
+ */
+ENTROPIC_EXPORT void log_content(
+    const std::shared_ptr<spdlog::logger>& logger,
+    spdlog::level::level_enum level,
+    const std::string& label,
+    const std::string& text);
+
+/**
+ * @brief Log a timing measurement.
+ * @param logger Target logger.
+ * @param label Operation label.
+ * @param ms Elapsed milliseconds.
+ * @utility
+ * @version 1.10.4
+ */
+ENTROPIC_EXPORT void log_timing(
+    const std::shared_ptr<spdlog::logger>& logger,
+    const std::string& label,
+    double ms);
+
+/**
+ * @brief Log token count with throughput.
+ * @param logger Target logger.
+ * @param count Token count.
+ * @param time_ms Generation time in milliseconds.
+ * @utility
+ * @version 1.10.4
+ */
+ENTROPIC_EXPORT void log_tokens(
+    const std::shared_ptr<spdlog::logger>& logger,
+    int count,
+    double time_ms);
+
+/**
+ * @brief Log a decision/routing event.
+ * @param logger Target logger.
+ * @param label Decision category (e.g., "Route", "Grammar").
+ * @param key Decision input.
+ * @param value Decision output.
+ * @utility
+ * @version 1.10.4
+ */
+ENTROPIC_EXPORT void log_decision(
+    const std::shared_ptr<spdlog::logger>& logger,
+    const std::string& label,
+    const std::string& key,
+    const std::string& value);
 
 } // namespace entropic::log

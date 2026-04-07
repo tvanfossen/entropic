@@ -32,13 +32,15 @@ PermissionManager::PermissionManager(
  * @param pattern Tool pattern with args.
  * @return true if denied.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 bool PermissionManager::is_denied(
     const std::string& tool_name,
     const std::string& pattern) const {
     for (const auto& deny : deny_list_) {
         if (pattern_matches(tool_name, pattern, deny)) {
+            logger->info("Permission DENIED: {} (matched '{}')",
+                         tool_name, deny);
             return true;
         }
     }
@@ -51,13 +53,15 @@ bool PermissionManager::is_denied(
  * @param pattern Tool pattern with args.
  * @return true if in allow list.
  * @internal
- * @version 1.8.5
+ * @version 2.0.0
  */
 bool PermissionManager::is_allowed(
     const std::string& tool_name,
     const std::string& pattern) const {
     for (const auto& allow : allow_list_) {
         if (pattern_matches(tool_name, pattern, allow)) {
+            logger->info("Permission ALLOWED: {} (matched '{}')",
+                         tool_name, allow);
             return true;
         }
     }

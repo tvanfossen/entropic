@@ -148,7 +148,7 @@ bool PromptCache::store(const CacheKey& key,
  * @param key Hash to look up.
  * @return Pointer to entry on hit, nullptr on miss.
  * @internal
- * @version 1.8.3
+ * @version 2.0.0
  */
 const CacheEntry* PromptCache::lookup(const CacheKey& key) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -156,6 +156,8 @@ const CacheEntry* PromptCache::lookup(const CacheKey& key) {
     auto it = entries_.find(key);
     if (it == entries_.end()) {
         ++stats_.misses;
+        logger->info("Cache MISS: key={:016x}, {} hits / {} misses",
+                     key.hash, stats_.hits, stats_.misses);
         return nullptr;
     }
 
@@ -166,6 +168,9 @@ const CacheEntry* PromptCache::lookup(const CacheKey& key) {
     }
 
     ++stats_.hits;
+    logger->info("Cache HIT: key={:016x}, {} tokens, {} bytes",
+                 key.hash, it->second.token_count,
+                 it->second.data_size);
     return &it->second;
 }
 

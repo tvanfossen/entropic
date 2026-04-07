@@ -1,0 +1,29 @@
+<map id="storage/logger.cpp" name="storage/logger.cpp">
+<area shape="rect" id="Node000001" title="SessionLogger implementation with spdlog rotating file sinks." alt="" coords="329,5,471,31"/>
+<area shape="rect" id="Node000002" href="$logger_8h.html" title="Session log file management with spdlog rotating sinks." alt="" coords="172,86,356,111"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="381,33,297,81,295,77,379,29"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="5,174,96,199"/>
+<area shape="poly" id="edge14_Node000001_Node000004" title=" " alt="" coords="329,30,246,47,202,62,161,81,134,100,108,122,69,165,65,162,105,118,130,95,159,76,200,57,245,42,328,24"/>
+<area shape="rect" id="Node000007" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="537,86,716,111"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="434,28,582,79,580,84,432,33"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="741,79,899,119"/>
+<area shape="poly" id="edge13_Node000001_Node000013" title=" " alt="" coords="466,28,727,76,726,81,465,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="121,174,191,199"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="251,114,183,167,180,163,248,109"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="236,114,93,171,91,166,234,109"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="337,174,415,199"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="281,109,351,163,348,167,277,114"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="215,174,313,199"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="267,112,267,160,261,160,261,112"/>
+<area shape="poly" id="edge11_Node000007_Node000005" title=" " alt="" coords="592,114,428,169,420,172,418,167,426,164,591,109"/>
+<area shape="rect" id="Node000008" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="439,174,633,199"/>
+<area shape="poly" id="edge7_Node000007_Node000008" title=" " alt="" coords="616,113,561,166,557,162,613,110"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="657,174,781,199"/>
+<area shape="poly" id="edge8_Node000007_Node000009" title=" " alt="" coords="641,110,697,162,694,166,637,113"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="805,167,953,207"/>
+<area shape="poly" id="edge9_Node000007_Node000010" title=" " alt="" coords="662,109,811,160,809,165,660,114"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="977,174,1044,199"/>
+<area shape="poly" id="edge10_Node000007_Node000011" title=" " alt="" coords="688,109,966,164,974,167,972,172,965,169,687,114"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="1068,174,1127,199"/>
+<area shape="poly" id="edge12_Node000007_Node000012" title=" " alt="" coords="688,109,730,116,822,128,894,133,966,142,1057,164,1063,166,1062,171,1055,169,965,148,894,139,821,133,729,121,687,114"/>
+</map>

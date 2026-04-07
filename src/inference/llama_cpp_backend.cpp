@@ -59,6 +59,58 @@ bool check_stop_sequences(
     return false;
 }
 
+/**
+ * @brief Create a prefill-failed GenerationResult.
+ * @return GenerationResult with error fields populated.
+ * @utility
+ * @version 1.10.4
+ */
+GenerationResult prefill_error() {
+    GenerationResult r;
+    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+    r.error_message = "Prefill decode failed";
+    r.finish_reason = "error";
+    return r;
+}
+
+/**
+ * @brief Log sampler chain configuration at INFO.
+ * @param params Generation parameters.
+ * @utility
+ * @version 1.10.4
+ */
+void log_sampler_config(const GenerationParams& params) {
+    logger->info("Sampler: temp={:.2f}, top_k={}, top_p={:.2f}, "
+                 "repeat_penalty={:.2f}, thinking={}",
+                 params.temperature, params.top_k, params.top_p,
+                 params.repeat_penalty, params.enable_thinking);
+}
+
+/**
+ * @brief Populate timing fields and log post-generation summary.
+ * @param result Generation result (mutated: timing fields populated).
+ * @param start_time Generation start time.
+ * @utility
+ * @version 1.10.4
+ */
+void finalize_result(GenerationResult& result,
+    std::chrono::steady_clock::time_point start_time)
+{
+    auto end = entropic::log::now();
+    result.generation_time_ms = entropic::log::elapsed_ms(
+        start_time, end);
+    if (result.token_count > 0 && result.generation_time_ms > 0.0) {
+        result.throughput_tok_s =
+            static_cast<double>(result.token_count)
+            / result.generation_time_ms * 1000.0;
+    }
+    logger->info("Generated: {} tokens, finish={}, {:.0f}ms, "
+                 "{:.1f} tok/s",
+                 result.token_count, result.finish_reason,
+                 result.generation_time_ms, result.throughput_tok_s);
+    logger->info("Content:\n{}", result.content);
+}
+
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -276,45 +328,100 @@ int LlamaCppBackend::do_count_tokens(const std::string& text) const {
     return static_cast<int>(tokens.size());
 }
 
+/**
+ * @brief Tokenize text to token IDs using model vocabulary.
+ * @param text Input text.
+ * @return Token ID vector with BOS.
+ * @utility
+ * @version 1.10.2
+ */
+std::vector<int32_t> LlamaCppBackend::tokenize_text(
+    const std::string& text) const {
+    auto tokens = tokenize(text, true);
+    return {tokens.begin(), tokens.end()};
+}
+
 // ── Evaluation (v1.9.10) ──────────────────────────────────
 
 /**
- * @brief Evaluate per-token log-probabilities (stub).
+ * @brief Evaluate per-token log-probabilities via sequential decode.
  *
- * Full implementation will use llama_decode with logits_all=true
- * on a temporary seq_id. Stubbed until Phase 3 wiring.
+ * Clears memory, then processes tokens one at a time using the same
+ * decode path as generation. After each token, extracts logits for
+ * the next-token prediction. Compatible with recurrent/hybrid models
+ * that only support single-output-position batches.
  *
  * @param tokens Token IDs to evaluate.
- * @param n_tokens Number of tokens.
- * @return LogprobResult — stub throws not-implemented.
+ * @param n_tokens Number of tokens (minimum 2).
+ * @return LogprobResult with per-transition logprobs and perplexity.
  * @internal
- * @version 1.9.10
+ * @version 1.10.2
  */
 LogprobResult LlamaCppBackend::do_evaluate_logprobs(
-    const int32_t* /*tokens*/,
-    int /*n_tokens*/)
+    const int32_t* tokens,
+    int n_tokens)
 {
-    throw std::runtime_error(
-        "LlamaCppBackend::do_evaluate_logprobs not yet implemented");
+    int n_vocab = llama_vocab_n_tokens(vocab_);
+    LogprobResult result;
+    result.tokens.assign(tokens, tokens + n_tokens);
+    result.n_tokens = n_tokens;
+    result.n_logprobs = n_tokens - 1;
+    result.logprobs.reserve(result.n_logprobs);
+
+    auto* mem = llama_get_memory(ctx_);
+    llama_memory_clear(mem, true);
+
+    for (int i = 0; i < n_tokens; i++) {
+        llama_token tok = tokens[i];
+        llama_batch batch = llama_batch_get_one(&tok, 1);
+        int rc = llama_decode(ctx_, batch);
+        if (rc != 0) {
+            llama_memory_clear(mem, true);
+            throw std::runtime_error("llama_decode failed at logprob pos");
+        }
+        if (i < n_tokens - 1) {
+            const float* logits = llama_get_logits_ith(ctx_, -1);
+            float lp = extract_token_logprob(
+                logits, tokens[i + 1], n_vocab);
+            result.logprobs.push_back(lp);
+        }
+    }
+
+    float sum = 0.0f;
+    for (float lp : result.logprobs) { sum += lp; }
+    result.total_logprob = sum;
+    result.perplexity = std::exp(
+        -sum / static_cast<float>(result.n_logprobs));
+
+    llama_memory_clear(mem, true);
+    return result;
 }
 
 /**
- * @brief Allocate a temporary sequence ID for evaluation (stub).
- * @return -1 — not yet implemented.
+ * @brief Allocate a temporary sequence ID for evaluation.
+ * @return Unused seq_id (starts at 1, 0 is generation).
  * @internal
- * @version 1.9.10
+ * @version 1.10.2
  */
 llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
-    return -1;
+    std::lock_guard<std::mutex> lock(seq_id_mutex_);
+    if (!free_seq_ids_.empty()) {
+        auto id = free_seq_ids_.back();
+        free_seq_ids_.pop_back();
+        return id;
+    }
+    return static_cast<llama_seq_id>(1 + free_seq_ids_.size());
 }
 
 /**
- * @brief Release a temporary sequence ID (stub).
+ * @brief Release a temporary sequence ID back to the pool.
  * @param seq_id The seq_id to release.
  * @internal
- * @version 1.9.10
+ * @version 1.10.2
  */
-void LlamaCppBackend::release_temp_seq_id(llama_seq_id /*seq_id*/) {
+void LlamaCppBackend::release_temp_seq_id(llama_seq_id seq_id) {
+    std::lock_guard<std::mutex> lock(seq_id_mutex_);
+    free_seq_ids_.push_back(seq_id);
 }
 
 /**
@@ -467,20 +574,26 @@ llama_sampler* LlamaCppBackend::create_sampler(
  * @param tokens Input token sequence.
  * @return true on success.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
     llama_memory_clear(llama_get_memory(ctx_), true);
 
-    std::vector<llama_token> input(tokens);
-    llama_batch batch = llama_batch_get_one(
-        input.data(), static_cast<int32_t>(input.size()));
+    const int n_batch = config().n_batch;
+    const int n_tokens = static_cast<int>(tokens.size());
 
-    bool ok = (llama_decode(ctx_, batch) == 0);
-    if (!ok) {
-        logger->error("Prefill decode failed");
+    for (int i = 0; i < n_tokens; i += n_batch) {
+        int chunk = std::min(n_batch, n_tokens - i);
+        std::vector<llama_token> slice(
+            tokens.begin() + i, tokens.begin() + i + chunk);
+        llama_batch batch = llama_batch_get_one(
+            slice.data(), static_cast<int32_t>(chunk));
+        if (llama_decode(ctx_, batch) != 0) {
+            logger->error("Prefill decode failed at offset {}", i);
+            return false;
+        }
     }
-    return ok;
+    return true;
 }
 
 /**
@@ -756,28 +869,27 @@ bool LlamaCppBackend::run_prefill_cached(
  * @param params Generation parameters.
  * @return GenerationResult.
  * @internal
- * @version 1.8.3
+ * @version 2.0.0
  */
 GenerationResult LlamaCppBackend::do_generate(
     const std::vector<Message>& messages,
     const GenerationParams& params)
 {
+    auto t0 = entropic::log::now();
     std::string prompt = apply_chat_template(messages, params);
     auto tokens = tokenize(prompt, true);
     std::string sys = extract_system_prompt(messages);
 
     logger->info("Generate: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
+    log_sampler_config(params);
 
     GenerationResult result;
     llama_sampler* sampler = create_sampler(params);
 
     if (!run_prefill_cached(tokens, sys, messages, params)) {
-        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
-        result.error_message = "Prefill decode failed";
-        result.finish_reason = "error";
         llama_sampler_free(sampler);
-        return result;
+        return prefill_error();
     }
 
     std::string generated;
@@ -785,11 +897,12 @@ GenerationResult LlamaCppBackend::do_generate(
     std::function<void(std::string_view)> no_cb = nullptr;
 
     while (n_generated < params.max_tokens) {
-        auto status = step_token(sampler, generated, no_cb, params.stop);
-        if (status == "continue") {
-            ++n_generated;
-        } else {
-            result.finish_reason = (status == "error") ? "error" : "stop";
+        auto status = step_token(
+            sampler, generated, no_cb, params.stop);
+        if (status == "continue") { ++n_generated; }
+        else {
+            result.finish_reason =
+                (status == "error") ? "error" : "stop";
             if (status == "error") {
                 result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
             }
@@ -797,13 +910,15 @@ GenerationResult LlamaCppBackend::do_generate(
         }
     }
 
-    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
+    if (n_generated >= params.max_tokens
+        && result.finish_reason.empty()) {
         result.finish_reason = "length";
     }
 
     llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
+    finalize_result(result, t0);
     return result;
 }
 
@@ -815,7 +930,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
  * @internal
- * @version 1.8.3
+ * @version 2.0.0
  */
 GenerationResult LlamaCppBackend::do_generate_streaming(
     const std::vector<Message>& messages,
@@ -823,54 +938,48 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
     std::function<void(std::string_view token)> on_token,
     std::atomic<bool>& cancel)
 {
-    std::string prompt = apply_chat_template(messages, params);
+    auto t0 = entropic::log::now();
+    auto prompt = apply_chat_template(messages, params);
     auto tokens = tokenize(prompt, true);
-    std::string sys = extract_system_prompt(messages);
-
+    auto sys = extract_system_prompt(messages);
     logger->info("Stream: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
+    log_sampler_config(params);
 
     GenerationResult result;
-    llama_sampler* sampler = create_sampler(params);
-
+    auto* sampler = create_sampler(params);
     if (!run_prefill_cached(tokens, sys, messages, params)) {
-        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
-        result.error_message = "Prefill decode failed";
-        result.finish_reason = "error";
         llama_sampler_free(sampler);
-        return result;
+        return prefill_error();
     }
-
     std::string generated;
     int n_generated = 0;
-
     while (n_generated < params.max_tokens) {
-        bool cancelled = cancel.load(std::memory_order_acquire);
-        if (cancelled) {
+        if (cancel.load(std::memory_order_acquire)) {
             result.finish_reason = "cancelled";
             result.error_code = ENTROPIC_ERROR_CANCELLED;
             break;
         }
-
-        auto status = step_token(sampler, generated, on_token, params.stop);
-        if (status == "continue") {
-            ++n_generated;
-        } else {
-            result.finish_reason = (status == "error") ? "error" : "stop";
+        auto status = step_token(
+            sampler, generated, on_token, params.stop);
+        if (status == "continue") { ++n_generated; }
+        else {
+            result.finish_reason =
+                (status == "error") ? "error" : "stop";
             if (status == "error") {
                 result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
             }
             break;
         }
     }
-
-    if (n_generated >= params.max_tokens && result.finish_reason.empty()) {
+    if (n_generated >= params.max_tokens
+        && result.finish_reason.empty()) {
         result.finish_reason = "length";
     }
-
     llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
+    finalize_result(result, t0);
     return result;
 }
 
@@ -880,17 +989,21 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
  * @param params Generation parameters.
  * @return GenerationResult.
  * @internal
- * @version 1.8.2
+ * @version 1.10.4
  */
 GenerationResult LlamaCppBackend::do_complete(
     const std::string& prompt,
     const GenerationParams& params)
 {
+    auto t0 = entropic::log::now();
     auto tokens = tokenize(prompt, false);
 
     logger->info("Complete: {} input tokens, max_tokens={}",
               tokens.size(), params.max_tokens);
-    return decode_loop(tokens, params, nullptr, nullptr);
+    log_sampler_config(params);
+    auto result = decode_loop(tokens, params, nullptr, nullptr);
+    finalize_result(result, t0);
+    return result;
 }
 
 // ── Architecture detection (v1.9.13) ───────────────────────

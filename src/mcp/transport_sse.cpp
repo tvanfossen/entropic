@@ -223,12 +223,13 @@ std::string SSETransport::await_response(
  * @param timeout_ms Timeout (0 = default).
  * @return Response string, or empty on error/timeout.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 std::string SSETransport::send_request(
     const std::string& request_json,
     uint32_t timeout_ms) {
 
+    logger->info("SSE request: {} bytes", request_json.size());
     int request_id = 0;
     bool ready = connected_ && !message_endpoint_.empty() &&
                  parse_request_id(request_json, request_id) &&

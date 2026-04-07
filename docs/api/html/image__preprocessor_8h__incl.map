@@ -1,0 +1,13 @@
+<map id="entropic/inference/image_preprocessor.h" name="entropic/inference/image_preprocessor.h">
+<area shape="rect" id="Node000001" title="Image preprocessing for multimodal inference." alt="" coords="152,5,321,45"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,93,76,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="191,48,83,91,81,86,189,43"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="101,93,167,119"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="213,48,162,87,158,83,210,43"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="191,93,282,119"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="239,46,239,79,234,79,234,46"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="306,93,365,119"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="262,43,311,82,308,87,259,48"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="389,93,452,119"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="282,43,382,85,380,90,280,48"/>
+</map>

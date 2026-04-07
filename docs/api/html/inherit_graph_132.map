@@ -1,0 +1,7 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="Node000000" href="$classentropic_1_1Transport.html" title="Abstract transport for external MCP communication." alt="" coords="5,31,148,56"/>
+<area shape="rect" id="Node000001" href="$classentropic_1_1SSETransport.html" title="SSE transport: HTTP GET for event stream, POST for requests." alt="" coords="201,5,367,31"/>
+<area shape="poly" id="edge49_Node000000_Node000001" title=" " alt="" coords="162,30,200,26,201,31,162,36"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1StdioTransport.html" title="Stdio transport: fork/exec child, pipe stdin/stdout." alt="" coords="196,55,372,80"/>
+<area shape="poly" id="edge50_Node000000_Node000002" title=" " alt="" coords="162,51,196,55,196,60,162,56"/>
+</map>

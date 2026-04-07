@@ -11,12 +11,16 @@
 #include <entropic/core/constitutional_validator.h>
 #include <entropic/core/hook_registry.h>
 
-#include <spdlog/spdlog.h>
+#include <entropic/types/logging.h>
 
 #include <cstdlib>
 #include <cstring>
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("core.constitutional_validator");
+} // anonymous namespace
 
 /**
  * @brief Construct validator with config and constitution text.
@@ -111,7 +115,7 @@ void ConstitutionalValidator::set_identity_validation(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 1.9.8
+ * @version 2.0.0
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -121,11 +125,17 @@ ValidationResult ConstitutionalValidator::validate(
     result.content = content;
 
     if (!should_validate(tier)) {
+        logger->info("Validation skipped for tier '{}'", tier);
         store_result(result);
         return result;
     }
 
+    logger->info("Validation start: {} chars, tier='{}'",
+                 content.size(), tier);
     result = run_validation_loop(content, tier, messages_json);
+    logger->info("Validation {}: {} revision(s)",
+                 result.was_revised ? "revised" : "passed",
+                 result.revision_count);
     store_result(result);
     return result;
 }
@@ -263,7 +273,7 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
  * @param messages_json Conversation context.
  * @return Updated ValidationResult.
  * @internal
- * @version 1.9.8
+ * @version 2.0.0
  */
 ValidationResult ConstitutionalValidator::apply_revisions(
     ValidationResult result,
@@ -289,7 +299,7 @@ ValidationResult ConstitutionalValidator::apply_revisions(
         }
     }
 
-    spdlog::warn("Constitutional validation: max revisions ({}) "
+    logger->warn("Constitutional validation: max revisions ({}) "
                  "exhausted, returning last output",
                  config_.max_revisions);
     return result;
@@ -319,12 +329,12 @@ std::string ConstitutionalValidator::attempt_revision(
  * @param content Text to critique.
  * @return Parsed CritiqueResult.
  * @internal
- * @version 1.9.8
+ * @version 2.0.0
  */
 CritiqueResult ConstitutionalValidator::run_critique(
     const std::string& content) {
     if (inference_ == nullptr || inference_->generate == nullptr) {
-        spdlog::warn("Constitutional validation: no inference "
+        logger->warn("Constitutional validation: no inference "
                      "interface, skipping critique");
         return {};
     }
@@ -338,7 +348,7 @@ CritiqueResult ConstitutionalValidator::run_critique(
         &result_json, inference_->backend_data);
 
     if (rc != 0 || result_json == nullptr) {
-        spdlog::warn("Constitutional validation: critique generation "
+        logger->warn("Constitutional validation: critique generation "
                      "failed (rc={})", rc);
         return {};
     }
@@ -386,7 +396,7 @@ std::string ConstitutionalValidator::build_critique_params() const {
  * @param messages_json Original conversation context.
  * @return Revised content string.
  * @internal
- * @version 1.9.8
+ * @version 2.0.0
  */
 std::string ConstitutionalValidator::revise(
     const std::string& original,
@@ -405,7 +415,7 @@ std::string ConstitutionalValidator::revise(
         inference_->backend_data);
 
     if (rc != 0 || result_json == nullptr) {
-        spdlog::warn("Constitutional validation: revision generation "
+        logger->warn("Constitutional validation: revision generation "
                      "failed (rc={})", rc);
         return original;
     }
@@ -649,13 +659,13 @@ std::string ConstitutionalValidator::extract_string_after_colon(
  * @param result CritiqueResult to populate.
  * @return true if field was found and parsed.
  * @utility
- * @version 1.9.8
+ * @version 2.0.0
  */
 bool ConstitutionalValidator::extract_compliant_field(
     const std::string& json, CritiqueResult& result) {
     auto pos = json.find("\"compliant\"");
     if (pos == std::string::npos) {
-        spdlog::warn("Constitutional validation: malformed critique "
+        logger->warn("Constitutional validation: malformed critique "
                      "JSON — missing 'compliant' field");
         return false;
     }

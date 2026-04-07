@@ -1,0 +1,28 @@
+<map id="entropic/storage/backend.h" name="entropic/storage/backend.h">
+<area shape="rect" id="Node000001" title="SqliteStorageBackend — conversation persistence via SQLite." alt="" coords="539,5,737,31"/>
+<area shape="rect" id="Node000002" href="$database_8h.html" title="Thread&#45;safe SQLite database wrapper with migration support." alt="" coords="181,79,385,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="582,33,355,79,354,73,580,28"/>
+<area shape="rect" id="Node000008" href="$records_8h.html" title="Typed record structs for storage persistence." alt="" coords="475,79,667,104"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="629,33,593,70,590,67,625,29"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="537,152,603,177"/>
+<area shape="poly" id="edge11_Node000001_Node000009" title=" " alt="" coords="540,33,498,51,480,64,466,80,461,90,461,99,473,117,497,133,525,146,523,151,494,138,470,121,456,101,456,89,461,77,477,60,496,46,538,28"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="627,152,702,177"/>
+<area shape="poly" id="edge12_Node000001_Node000010" title=" " alt="" coords="651,29,668,51,682,78,684,110,678,139,672,138,679,110,677,79,664,53,647,33"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="726,152,785,177"/>
+<area shape="poly" id="edge13_Node000001_Node000011" title=" " alt="" coords="654,29,703,77,744,138,740,141,699,80,650,33"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="793,79,856,104"/>
+<area shape="poly" id="edge14_Node000001_Node000012" title=" " alt="" coords="669,28,782,71,781,76,667,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="127,152,197,177"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="265,106,195,147,192,143,262,102"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="222,152,313,177"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="283,105,275,139,270,138,278,104"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="337,152,424,177"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="301,102,355,141,352,146,297,106"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="449,152,513,177"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="316,102,436,145,435,150,314,107"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="5,152,103,177"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="247,107,105,150,104,145,246,101"/>
+<area shape="poly" id="edge8_Node000008_Node000009" title=" " alt="" coords="574,104,573,139,568,138,568,104"/>
+<area shape="poly" id="edge9_Node000008_Node000010" title=" " alt="" coords="588,102,640,141,637,146,585,106"/>
+<area shape="poly" id="edge10_Node000008_Node000011" title=" " alt="" coords="602,102,714,145,712,150,600,107"/>
+</map>

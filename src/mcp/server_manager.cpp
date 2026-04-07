@@ -64,7 +64,7 @@ void ServerManager::initialize() {
  * @brief List tools from all servers (in-process + external).
  * @return JSON array string.
  * @internal
- * @version 1.8.7
+ * @version 2.0.0
  */
 std::string ServerManager::list_tools() const {
     auto all = nlohmann::json::array();
@@ -92,6 +92,9 @@ std::string ServerManager::list_tools() const {
         }
     }
 
+    logger->info("Tool list: {} tools from {} server(s) + {} external",
+                 all.size(), servers_.size(),
+                 external_clients_.size());
     return all.dump();
 }
 

@@ -1,0 +1,32 @@
+<map id="mcp/tool_call_history.cpp" name="mcp/tool_call_history.cpp">
+<area shape="rect" id="Node000001" title="ToolCallHistory ring buffer implementation." alt="" coords="778,5,965,31"/>
+<area shape="rect" id="Node000002" href="$tool__call__history_8h.html" title="In&#45;memory ring buffer of recent tool calls for introspection." alt="" coords="220,79,387,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="789,33,401,87,400,81,788,28"/>
+<area shape="rect" id="Node000008" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="689,86,867,111"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="859,33,804,79,801,75,856,29"/>
+<area shape="rect" id="Node000014" title=" " alt="" coords="891,86,1038,111"/>
+<area shape="poly" id="edge14_Node000001_Node000014" title=" " alt="" coords="887,29,942,75,939,79,883,33"/>
+<area shape="rect" id="Node000015" title=" " alt="" coords="1062,86,1147,111"/>
+<area shape="poly" id="edge15_Node000001_Node000015" title=" " alt="" coords="907,28,1051,76,1059,79,1058,84,1049,81,905,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="5,174,76,199"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="240,121,90,169,83,172,81,167,88,164,238,116"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="101,174,165,199"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="267,121,169,170,166,165,265,116"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="189,174,303,199"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="293,120,264,164,259,161,288,117"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="415,174,474,199"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="336,116,416,165,413,169,333,121"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="328,174,391,199"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="318,117,346,161,342,164,314,120"/>
+<area shape="poly" id="edge13_Node000008_Node000006" title=" " alt="" coords="711,114,605,136,487,169,481,171,479,166,485,164,604,131,710,109"/>
+<area shape="rect" id="Node000009" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="499,174,692,199"/>
+<area shape="poly" id="edge8_Node000008_Node000009" title=" " alt="" coords="754,114,634,170,631,166,752,109"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="716,174,840,199"/>
+<area shape="poly" id="edge9_Node000008_Node000010" title=" " alt="" coords="781,112,781,160,775,160,775,112"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="864,167,1012,207"/>
+<area shape="poly" id="edge10_Node000008_Node000011" title=" " alt="" coords="801,109,892,158,889,162,798,114"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="1037,174,1103,199"/>
+<area shape="poly" id="edge11_Node000008_Node000012" title=" " alt="" coords="828,109,920,132,1025,164,1032,166,1030,172,1024,169,919,138,827,114"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="1127,174,1205,199"/>
+<area shape="poly" id="edge12_Node000008_Node000013" title=" " alt="" coords="839,109,1116,164,1125,167,1124,172,1115,169,838,114"/>
+</map>

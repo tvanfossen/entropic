@@ -1,0 +1,31 @@
+<map id="inference/adapters/qwen35_adapter.h" name="inference/adapters/qwen35_adapter.h">
+<area shape="rect" id="Node000001" title="Qwen 3.5 chat adapter." alt="" coords="544,5,689,45"/>
+<area shape="rect" id="Node000002" href="$adapter__base_8h.html" title="ChatAdapter concrete base class." alt="" coords="367,93,554,133"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="583,48,508,89,505,84,581,43"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="517,269,641,295"/>
+<area shape="poly" id="edge18_Node000001_Node000007" title=" " alt="" coords="651,43,699,76,747,120,765,145,776,171,777,197,765,223,743,246,715,262,685,273,655,279,654,274,684,268,713,257,739,241,761,220,771,196,771,172,760,148,743,124,696,81,648,48"/>
+<area shape="rect" id="Node000003" href="$message_8h.html" title="Message struct for conversation history." alt="" coords="32,189,222,214"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="388,136,185,188,184,183,386,131"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="162,343,220,368"/>
+<area shape="poly" id="edge14_Node000002_Node000005" title=" " alt="" coords="367,118,270,122,166,133,118,141,76,152,43,166,21,183,10,205,11,226,23,248,43,269,97,306,152,335,150,339,94,311,39,273,18,251,6,228,4,204,17,180,40,162,75,147,117,136,165,127,269,117,366,112"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="510,343,573,368"/>
+<area shape="poly" id="edge17_Node000002_Node000006" title=" " alt="" coords="554,120,617,128,679,141,731,157,751,168,765,180,774,194,778,208,774,235,756,259,728,281,694,301,657,318,587,344,585,339,655,313,692,296,725,277,752,255,769,233,773,208,769,196,761,183,748,172,729,162,678,146,616,134,553,125"/>
+<area shape="rect" id="Node000008" href="$tool__call_8h.html" title="Tool call and tool result types." alt="" coords="607,181,751,221"/>
+<area shape="poly" id="edge9_Node000002_Node000008" title=" " alt="" coords="509,131,619,174,617,179,507,136"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="247,189,322,214"/>
+<area shape="poly" id="edge13_Node000002_Node000009" title=" " alt="" coords="423,136,321,185,319,180,420,131"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="346,189,444,214"/>
+<area shape="poly" id="edge15_Node000002_Node000010" title=" " alt="" coords="448,135,414,179,410,176,444,132"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="468,189,583,214"/>
+<area shape="poly" id="edge16_Node000002_Node000011" title=" " alt="" coords="477,132,510,176,506,179,473,135"/>
+<area shape="rect" id="Node000004" href="$content_8h.html" title="Multimodal content types for messages." alt="" coords="165,269,345,295"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="147,212,226,260,223,264,144,216"/>
+<area shape="poly" id="edge6_Node000003_Node000005" title=" " alt="" coords="132,214,140,250,155,294,176,330,172,333,150,296,135,252,126,215"/>
+<area shape="poly" id="edge7_Node000003_Node000006" title=" " alt="" coords="174,211,260,235,357,267,439,301,508,334,506,339,437,306,355,272,258,240,173,217"/>
+<area shape="poly" id="edge8_Node000003_Node000007" title=" " alt="" coords="193,211,235,219,504,265,503,270,234,224,192,217"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="246,297,212,334,208,331,242,293"/>
+<area shape="poly" id="edge5_Node000004_Node000006" title=" " alt="" coords="302,292,497,340,496,346,300,297"/>
+<area shape="poly" id="edge10_Node000008_Node000005" title=" " alt="" coords="619,224,234,343,232,338,618,219"/>
+<area shape="poly" id="edge12_Node000008_Node000006" title=" " alt="" coords="680,222,673,258,666,278,654,296,623,324,587,342,585,337,620,319,650,293,661,276,668,257,675,221"/>
+<area shape="poly" id="edge11_Node000008_Node000007" title=" " alt="" coords="656,224,606,263,603,258,653,219"/>
+</map>

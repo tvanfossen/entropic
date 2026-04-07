@@ -1,0 +1,5 @@
+<map id="entropic::ValidationResult" name="entropic::ValidationResult">
+<area shape="rect" id="Node000001" title="Result of the full validation pipeline (critique + optional revision)." alt="" coords="5,93,195,119"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1CritiqueResult.html" title="Structured result from a single critique generation pass." alt="" coords="13,5,187,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="103,45,103,93,97,93,97,45"/>
+</map>

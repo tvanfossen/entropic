@@ -25,7 +25,7 @@ auto logger = entropic::log::get("inference.adapter.registry");
  * @param identity_prompt Assembled identity prompt.
  * @return Owned adapter instance.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 std::unique_ptr<ChatAdapter> create_adapter(
     const std::string& name,
@@ -37,12 +37,14 @@ std::unique_ptr<ChatAdapter> create_adapter(
                    [](unsigned char c) { return std::tolower(c); });
 
     if (lower == "qwen35") {
+        logger->info("Adapter created: type=qwen35, tier={}", tier_name);
         return std::make_unique<Qwen35Adapter>(tier_name, identity_prompt);
     }
 
     if (lower != "generic") {
         logger->warn("Unknown adapter '{}', falling back to generic", name);
     }
+    logger->info("Adapter created: type=generic, tier={}", tier_name);
     return std::make_unique<GenericAdapter>(tier_name, identity_prompt);
 }
 

@@ -1,0 +1,7 @@
+<map id="entropic::Transport" name="entropic::Transport">
+<area shape="rect" id="Node000001" title="Abstract transport for external MCP communication." alt="" coords="115,5,257,31"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1SSETransport.html" title="SSE transport: HTTP GET for event stream, POST for requests." alt="" coords="5,79,172,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="161,41,106,81,103,76,158,37"/>
+<area shape="rect" id="Node000003" href="$classentropic_1_1StdioTransport.html" title="Stdio transport: fork/exec child, pipe stdin/stdout." alt="" coords="197,79,373,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="214,36,270,76,267,81,211,41"/>
+</map>

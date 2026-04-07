@@ -1,0 +1,23 @@
+<map id="entropic/config/identity.h" name="entropic/config/identity.h">
+<area shape="rect" id="Node000001" title="Identity configuration – shared by static and dynamic identities." alt="" coords="553,5,736,31"/>
+<area shape="rect" id="Node000002" href="$identity__manager_8h.html" title="IdentityManager – lifecycle management for static and dynamic identities." alt="" coords="564,79,725,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="647,44,647,79,642,79,642,44"/>
+<area shape="rect" id="Node000003" href="$identity__manager_8cpp.html" title="IdentityManager implementation – CRUD, validation, MCP key lifecycle." alt="" coords="442,167,637,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="610,129,557,168,554,164,607,125"/>
+<area shape="rect" id="Node000004" href="$engine__handle_8h.html" title="Private definition of the entropic_engine struct." alt="" coords="661,167,839,192"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="683,125,736,164,733,168,679,129"/>
+<area shape="rect" id="Node000005" href="$entropic_8cpp.html" title="librentropic facade — C API implementation." alt="" coords="5,240,156,265"/>
+<area shape="poly" id="edge4_Node000004_Node000005" title=" " alt="" coords="648,195,406,218,168,243,157,244,156,239,167,237,405,213,647,189"/>
+<area shape="rect" id="Node000006" href="$entropic__audit_8cpp.html" title="C API facade for audit log operations." alt="" coords="180,240,371,265"/>
+<area shape="poly" id="edge5_Node000004_Node000006" title=" " alt="" coords="661,197,352,243,351,237,660,191"/>
+<area shape="rect" id="Node000007" href="$entropic__compaction_8cpp.html" title="C API facade for compaction operations." alt="" coords="395,240,628,265"/>
+<area shape="poly" id="edge6_Node000004_Node000007" title=" " alt="" coords="699,198,551,242,549,237,698,193"/>
+<area shape="rect" id="Node000008" href="$entropic__hooks_8cpp.html" title="C API implementation for hook registration and deregistration." alt="" coords="652,240,848,265"/>
+<area shape="poly" id="edge7_Node000004_Node000008" title=" " alt="" coords="753,206,753,240,747,240,747,206"/>
+<area shape="rect" id="Node000009" href="$entropic__identity_8cpp.html" title="C API implementation for identity management." alt="" coords="873,240,1078,265"/>
+<area shape="poly" id="edge8_Node000004_Node000009" title=" " alt="" coords="800,194,940,237,938,242,798,199"/>
+<area shape="rect" id="Node000010" href="$entropic__mcp_8cpp.html" title="C API implementation for external MCP server management." alt="" coords="1103,240,1288,265"/>
+<area shape="poly" id="edge9_Node000004_Node000010" title=" " alt="" coords="836,192,1124,237,1123,243,835,197"/>
+<area shape="rect" id="Node000011" href="$entropic__storage_8cpp.html" title="C API facade for storage open/close." alt="" coords="1312,240,1519,265"/>
+<area shape="poly" id="edge10_Node000004_Node000011" title=" " alt="" coords="852,189,1312,238,1312,243,852,194"/>
+</map>

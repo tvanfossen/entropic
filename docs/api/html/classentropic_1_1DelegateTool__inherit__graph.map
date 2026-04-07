@@ -1,0 +1,5 @@
+<map id="entropic::DelegateTool" name="entropic::DelegateTool">
+<area shape="rect" id="Node000001" title="Tool for delegating tasks to child inference loops." alt="" coords="5,79,173,104"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="19,5,160,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="92,44,92,79,87,79,87,44"/>
+</map>

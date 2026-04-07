@@ -1,0 +1,5 @@
+<map id="entropic::GitLogTool" name="entropic::GitLogTool">
+<area shape="rect" id="Node000001" title="Tool: git log &#45;N [–oneline]." alt="" coords="5,79,156,104"/>
+<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="10,5,151,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="83,44,83,79,78,79,78,44"/>
+</map>

@@ -1,0 +1,62 @@
+<map id="core/delegation.cpp" name="core/delegation.cpp">
+<area shape="rect" id="Node000001" title="DelegationManager implementation." alt="" coords="988,5,1139,31"/>
+<area shape="rect" id="Node000002" href="$delegation_8h.html" title="DelegationManager — child loop creation and execution." alt="" coords="738,79,930,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="1027,33,885,77,884,72,1026,28"/>
+<area shape="rect" id="Node000003" href="$engine__types_8h.html" title="Types for the agentic loop engine." alt="" coords="466,152,621,192"/>
+<area shape="poly" id="edge30_Node000001_Node000003" title=" " alt="" coords="988,29,864,47,795,62,727,81,651,113,587,147,584,143,649,108,725,76,793,57,863,42,987,24"/>
+<area shape="rect" id="Node000016" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="1218,79,1397,104"/>
+<area shape="poly" id="edge31_Node000001_Node000016" title=" " alt="" coords="1103,28,1256,72,1254,77,1102,33"/>
+<area shape="rect" id="Node000022" title=" " alt="" coords="1421,79,1506,104"/>
+<area shape="poly" id="edge38_Node000001_Node000022" title=" " alt="" coords="1134,28,1408,76,1407,81,1133,33"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="792,107,627,151,626,146,791,101"/>
+<area shape="rect" id="Node000005" href="$message_8h.html" title="Message struct for conversation history." alt="" coords="552,247,743,273"/>
+<area shape="poly" id="edge25_Node000002_Node000005" title=" " alt="" coords="827,106,792,147,745,194,679,242,676,238,742,190,788,143,823,103"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="751,401,810,427"/>
+<area shape="poly" id="edge28_Node000002_Node000007" title=" " alt="" coords="923,101,978,119,1005,133,1029,150,1060,180,1080,211,1085,227,1086,244,1082,263,1072,281,1048,311,1019,337,987,357,952,374,883,398,824,410,823,405,882,392,950,369,984,353,1016,332,1044,308,1068,279,1077,261,1081,244,1080,228,1075,213,1056,183,1026,154,1002,137,976,124,921,107"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="173,401,236,427"/>
+<area shape="poly" id="edge29_Node000002_Node000008" title=" " alt="" coords="738,98,554,108,446,117,336,131,230,150,137,174,63,205,35,222,15,242,9,255,9,271,22,308,51,352,76,370,104,384,160,402,159,407,102,389,73,374,47,355,18,310,4,272,4,254,10,238,32,218,60,200,136,169,229,145,335,126,445,112,554,102,738,92"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="983,247,1058,273"/>
+<area shape="poly" id="edge27_Node000002_Node000013" title=" " alt="" coords="916,102,963,119,984,133,1003,150,1015,170,1022,192,1025,234,1020,234,1016,193,1010,172,999,154,981,137,960,124,915,107"/>
+<area shape="rect" id="Node000014" href="$worktree_8h.html" title="Git worktree management for delegation isolation." alt="" coords="807,159,989,185"/>
+<area shape="poly" id="edge21_Node000002_Node000014" title=" " alt="" coords="846,102,882,147,878,150,841,106"/>
+<area shape="rect" id="Node000015" title=" " alt="" coords="645,159,732,185"/>
+<area shape="poly" id="edge26_Node000002_Node000015" title=" " alt="" coords="814,107,723,155,721,150,811,102"/>
+<area shape="rect" id="Node000004" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="301,247,476,273"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="511,194,422,243,420,238,508,190"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="568,190,624,236,620,240,565,194"/>
+<area shape="poly" id="edge18_Node000003_Node000007" title=" " alt="" coords="616,190,703,215,737,228,756,238,777,274,787,315,789,355,787,388,782,387,784,355,781,316,772,276,752,242,735,232,702,220,615,195"/>
+<area shape="poly" id="edge20_Node000003_Node000008" title=" " alt="" coords="466,181,344,189,208,203,91,221,52,231,32,242,20,263,22,285,34,306,54,327,109,365,165,393,163,398,106,370,50,331,29,310,17,286,15,262,28,238,50,226,90,215,207,197,344,184,466,175"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="312,328,436,353"/>
+<area shape="poly" id="edge19_Node000003_Node000009" title=" " alt="" coords="540,193,521,236,507,260,489,282,457,307,421,325,419,320,454,302,485,278,503,257,517,234,535,191"/>
+<area shape="rect" id="Node000010" href="$tool__call_8h.html" title="Tool call and tool result types." alt="" coords="133,240,277,280"/>
+<area shape="poly" id="edge11_Node000003_Node000010" title=" " alt="" coords="470,195,291,240,289,235,468,189"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="42,247,109,273"/>
+<area shape="poly" id="edge15_Node000003_Node000011" title=" " alt="" coords="466,183,306,204,213,220,121,243,114,245,112,240,120,237,212,215,305,198,465,177"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="818,247,909,273"/>
+<area shape="poly" id="edge16_Node000003_Node000012" title=" " alt="" coords="618,189,800,237,813,241,811,246,799,243,617,195"/>
+<area shape="poly" id="edge17_Node000003_Node000013" title=" " alt="" coords="621,187,633,189,921,237,970,246,969,252,920,243,632,195,620,192"/>
+<area shape="rect" id="Node000006" href="$content_8h.html" title="Multimodal content types for messages." alt="" coords="512,328,692,353"/>
+<area shape="poly" id="edge5_Node000005_Node000006" title=" " alt="" coords="643,274,618,317,613,315,638,272"/>
+<area shape="poly" id="edge8_Node000005_Node000007" title=" " alt="" coords="659,271,763,389,759,393,655,274"/>
+<area shape="poly" id="edge9_Node000005_Node000008" title=" " alt="" coords="622,275,501,330,475,344,448,356,343,387,251,407,249,402,341,382,446,351,473,339,498,326,620,270"/>
+<area shape="poly" id="edge10_Node000005_Node000009" title=" " alt="" coords="608,275,428,327,426,322,607,270"/>
+<area shape="poly" id="edge6_Node000006_Node000007" title=" " alt="" coords="632,351,740,394,738,399,630,356"/>
+<area shape="poly" id="edge7_Node000006_Node000008" title=" " alt="" coords="539,356,250,407,249,402,538,351"/>
+<area shape="poly" id="edge12_Node000010_Node000007" title=" " alt="" coords="220,278,254,317,276,336,300,351,337,364,386,375,509,392,637,402,738,408,738,414,637,408,509,397,385,380,335,369,298,356,273,340,250,321,216,282"/>
+<area shape="poly" id="edge14_Node000010_Node000008" title=" " alt="" coords="207,280,207,388,202,388,202,280"/>
+<area shape="poly" id="edge13_Node000010_Node000009" title=" " alt="" coords="246,278,338,320,335,325,244,282"/>
+<area shape="poly" id="edge24_Node000014_Node000007" title=" " alt="" coords="907,184,925,227,928,254,923,281,901,318,873,350,842,376,814,396,811,392,839,372,869,346,897,315,918,279,923,254,920,228,902,186"/>
+<area shape="poly" id="edge22_Node000014_Node000012" title=" " alt="" coords="896,186,876,235,871,233,891,184"/>
+<area shape="poly" id="edge23_Node000014_Node000013" title=" " alt="" coords="916,183,994,237,991,241,913,187"/>
+<area shape="poly" id="edge37_Node000016_Node000007" title=" " alt="" coords="1301,106,1263,153,1201,222,1120,295,1075,328,1027,356,975,378,920,394,824,411,823,406,918,389,973,373,1025,351,1072,323,1117,291,1197,218,1259,150,1297,103"/>
+<area shape="rect" id="Node000017" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="1279,159,1472,185"/>
+<area shape="poly" id="edge32_Node000016_Node000017" title=" " alt="" coords="1319,102,1358,147,1354,151,1315,106"/>
+<area shape="rect" id="Node000018" title=" " alt="" coords="1496,159,1620,185"/>
+<area shape="poly" id="edge33_Node000016_Node000018" title=" " alt="" coords="1345,101,1509,153,1508,158,1343,107"/>
+<area shape="rect" id="Node000019" title=" " alt="" coords="1644,152,1792,192"/>
+<area shape="poly" id="edge34_Node000016_Node000019" title=" " alt="" coords="1374,101,1631,149,1630,154,1373,107"/>
+<area shape="rect" id="Node000020" title=" " alt="" coords="1817,159,1883,185"/>
+<area shape="poly" id="edge35_Node000016_Node000020" title=" " alt="" coords="1397,100,1646,129,1805,149,1813,152,1812,157,1804,155,1645,134,1397,105"/>
+<area shape="rect" id="Node000021" title=" " alt="" coords="1126,159,1203,185"/>
+<area shape="poly" id="edge36_Node000016_Node000021" title=" " alt="" coords="1288,107,1199,155,1196,150,1285,102"/>
+</map>

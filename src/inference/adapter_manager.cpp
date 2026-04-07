@@ -17,36 +17,14 @@
 #include <llama.h>
 #include <nlohmann/json.hpp>
 
-#include <chrono>
 #include <cstring>
 
 namespace entropic {
 
 namespace {
 auto logger = entropic::log::get("inference.adapter_manager");
-
-/**
- * @brief Get steady clock time point.
- * @utility
- * @version 1.9.2
- */
-auto now() { return std::chrono::steady_clock::now(); }
-
-/**
- * @brief Compute elapsed milliseconds between two time points.
- * @param start Start time.
- * @param end End time.
- * @return Elapsed milliseconds.
- * @utility
- * @version 1.9.2
- */
-double elapsed_ms(
-    std::chrono::steady_clock::time_point start,
-    std::chrono::steady_clock::time_point end)
-{
-    auto us = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-    return static_cast<double>(us.count()) / 1000.0;
-}
+using entropic::log::now;
+using entropic::log::elapsed_ms;
 
 /**
  * @brief Apply a single adapter to a context via llama_set_adapters_lora.

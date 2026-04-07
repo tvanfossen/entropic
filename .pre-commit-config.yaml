@@ -59,9 +59,16 @@ repos:
   # ── Build & Test Gates ──────────────────────────────
   - repo: local
     hooks:
+      - id: build
+        name: Build (inv build --cpu)
+        entry: .venv/bin/inv build --cpu
+        language: system
+        always_run: true
+        pass_filenames: false
+
       - id: unit-tests
-        name: Unit tests (dev preset)
-        entry: bash -c 'cmake --preset dev && cmake --build build/dev --parallel && cd build/dev && ctest --output-on-failure --parallel 4 -E "worktree|ensure_develop|run_git|ScopedWorktree|C API (full|delegation|snapshot|search)"'
+        name: Unit tests (inv test --cpu)
+        entry: .venv/bin/inv test --cpu --no-build
         language: system
         always_run: true
         pass_filenames: false

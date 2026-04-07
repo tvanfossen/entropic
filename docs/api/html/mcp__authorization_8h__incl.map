@@ -1,0 +1,36 @@
+<map id="entropic/mcp/mcp_authorization.h" name="entropic/mcp/mcp_authorization.h">
+<area shape="rect" id="Node000001" title="Per&#45;identity MCP authorization with runtime grant/revoke." alt="" coords="337,5,581,31"/>
+<area shape="rect" id="Node000002" href="$mcp__key__set_8h.html" title="Per&#45;identity set of authorized MCP tool keys." alt="" coords="279,79,448,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="447,33,399,72,395,68,443,29"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="93,240,151,265"/>
+<area shape="poly" id="edge18_Node000001_Node000006" title=" " alt="" coords="390,33,328,51,296,64,268,81,225,116,188,156,137,230,133,227,184,153,221,112,264,76,294,60,326,46,388,28"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="5,240,68,265"/>
+<area shape="poly" id="edge20_Node000001_Node000007" title=" " alt="" coords="362,33,288,51,251,64,215,81,165,115,120,156,55,231,51,227,116,153,162,111,213,76,249,59,287,46,361,28"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="680,240,804,265"/>
+<area shape="poly" id="edge19_Node000001_Node000010" title=" " alt="" coords="473,29,549,99,657,190,714,230,711,235,654,194,545,103,469,33"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="506,167,570,192"/>
+<area shape="poly" id="edge17_Node000001_Node000011" title=" " alt="" coords="467,30,529,153,524,155,463,32"/>
+<area shape="rect" id="Node000012" href="$error_8h.html" title="Error types for cross&#45;.so error reporting." alt="" coords="645,86,807,111"/>
+<area shape="poly" id="edge14_Node000001_Node000012" title=" " alt="" coords="499,28,675,80,673,85,497,33"/>
+<area shape="rect" id="Node000003" href="$config_8h.html" title="Configuration structs with defaults." alt="" coords="261,167,431,192"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="362,119,354,154,349,153,357,118"/>
+<area shape="poly" id="edge11_Node000002_Node000006" title=" " alt="" coords="331,121,250,169,151,234,148,230,247,164,329,116"/>
+<area shape="poly" id="edge13_Node000002_Node000007" title=" " alt="" coords="317,121,206,169,71,236,69,231,204,164,315,116"/>
+<area shape="poly" id="edge12_Node000002_Node000010" title=" " alt="" coords="386,117,434,154,495,190,571,213,671,235,670,240,570,218,493,194,431,158,383,121"/>
+<area shape="poly" id="edge10_Node000002_Node000011" title=" " alt="" coords="406,116,501,158,499,163,404,121"/>
+<area shape="rect" id="Node000004" href="$enums_8h.html" title="Shared enumerations used across .so boundaries." alt="" coords="176,240,351,265"/>
+<area shape="poly" id="edge3_Node000003_Node000004" title=" " alt="" coords="334,194,289,233,286,229,331,190"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="375,240,442,265"/>
+<area shape="poly" id="edge4_Node000003_Node000005" title=" " alt="" coords="358,191,391,228,387,231,354,194"/>
+<area shape="poly" id="edge5_Node000003_Node000006" title=" " alt="" coords="311,195,165,241,164,235,309,189"/>
+<area shape="poly" id="edge6_Node000003_Node000007" title=" " alt="" coords="293,195,82,243,81,237,292,189"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="466,240,541,265"/>
+<area shape="poly" id="edge7_Node000003_Node000008" title=" " alt="" coords="372,190,466,232,464,237,370,194"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="565,240,655,265"/>
+<area shape="poly" id="edge8_Node000003_Node000009" title=" " alt="" coords="389,189,555,234,553,239,388,195"/>
+<area shape="poly" id="edge9_Node000003_Node000010" title=" " alt="" coords="410,189,667,235,666,240,409,195"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="667,167,742,192"/>
+<area shape="poly" id="edge15_Node000012_Node000013" title=" " alt="" coords="725,112,714,154,709,153,720,111"/>
+<area shape="rect" id="Node000014" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="767,167,960,192"/>
+<area shape="poly" id="edge16_Node000012_Node000014" title=" " alt="" coords="748,109,833,158,830,162,745,114"/>
+</map>

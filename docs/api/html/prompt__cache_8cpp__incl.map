@@ -1,0 +1,36 @@
+<map id="inference/prompt_cache.cpp" name="inference/prompt_cache.cpp">
+<area shape="rect" id="Node000001" title="PromptCache implementation — LRU eviction, thread&#45;safe." alt="" coords="963,5,1169,31"/>
+<area shape="rect" id="Node000002" href="$prompt__cache_8h.html" title="Host&#45;memory KV cache state storage with LRU eviction." alt="" coords="332,79,459,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="963,33,473,85,472,79,962,28"/>
+<area shape="rect" id="Node000011" href="$logging_8h.html" title="spdlog initialization and logger access." alt="" coords="977,79,1155,104"/>
+<area shape="poly" id="edge10_Node000001_Node000011" title=" " alt="" coords="1069,31,1069,65,1063,65,1063,31"/>
+<area shape="rect" id="Node000017" title=" " alt="" coords="1179,79,1265,104"/>
+<area shape="poly" id="edge17_Node000001_Node000017" title=" " alt="" coords="1092,28,1185,70,1183,75,1090,33"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="5,159,76,185"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="332,104,218,124,89,155,82,157,80,152,88,149,217,119,331,99"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="101,159,167,185"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="348,107,269,127,180,155,174,157,172,152,178,149,267,122,347,102"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="191,159,234,185"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="364,107,247,154,245,155,243,150,245,150,362,102"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="258,159,322,185"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="381,106,318,153,315,149,378,102"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="703,159,762,185"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="459,99,568,118,691,149,697,152,696,157,689,155,567,124,459,104"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="347,159,444,185"/>
+<area shape="poly" id="edge7_Node000002_Node000008" title=" " alt="" coords="398,104,398,145,393,145,393,104"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="468,159,592,185"/>
+<area shape="poly" id="edge8_Node000002_Node000009" title=" " alt="" coords="417,102,500,150,497,155,414,106"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="616,159,679,185"/>
+<area shape="poly" id="edge9_Node000002_Node000010" title=" " alt="" coords="442,101,518,122,604,149,610,152,608,157,602,155,517,127,441,107"/>
+<area shape="poly" id="edge16_Node000011_Node000007" title=" " alt="" coords="986,107,884,126,775,155,769,157,767,152,773,149,883,121,985,101"/>
+<area shape="rect" id="Node000012" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="787,159,980,185"/>
+<area shape="poly" id="edge11_Node000011_Node000012" title=" " alt="" coords="1040,106,924,156,922,151,1038,102"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="1004,159,1128,185"/>
+<area shape="poly" id="edge12_Node000011_Node000013" title=" " alt="" coords="1069,104,1069,145,1063,145,1063,104"/>
+<area shape="rect" id="Node000014" title=" " alt="" coords="1152,152,1300,192"/>
+<area shape="poly" id="edge13_Node000011_Node000014" title=" " alt="" coords="1090,102,1176,143,1174,148,1088,106"/>
+<area shape="rect" id="Node000015" title=" " alt="" coords="1325,159,1391,185"/>
+<area shape="poly" id="edge14_Node000011_Node000015" title=" " alt="" coords="1125,101,1214,122,1313,149,1320,152,1319,157,1312,155,1213,127,1124,107"/>
+<area shape="rect" id="Node000016" title=" " alt="" coords="1415,159,1493,185"/>
+<area shape="poly" id="edge15_Node000011_Node000016" title=" " alt="" coords="1156,101,1275,121,1404,149,1414,152,1412,157,1403,155,1274,126,1155,107"/>
+</map>

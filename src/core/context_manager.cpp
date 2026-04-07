@@ -54,7 +54,7 @@ void ContextManager::refresh_context_limit(
  * @param keep_recent Number of recent results to keep.
  * @return (pruned_count, freed_chars).
  * @internal
- * @version 1.8.4
+ * @version 2.0.0
  */
 std::pair<int, int> ContextManager::prune_tool_results(
     LoopContext& ctx,
@@ -94,6 +94,8 @@ std::pair<int, int> ContextManager::prune_tool_results(
 
     if (pruned > 0) {
         compaction_.counter.clear_cache();
+        logger->info("Pruned {} tool result(s), freed {} chars",
+                     pruned, freed);
     }
     return {pruned, freed};
 }
@@ -179,11 +181,18 @@ void ContextManager::inject_context_warning(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param force Bypass threshold check.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 void ContextManager::check_compaction(
     LoopContext& ctx,
     bool force) {
+    int cur = compaction_.counter.count_messages(ctx.messages);
+    int max = compaction_.counter.max_tokens;
+    if (max > 0) {
+        int pct = (cur * 100) / max;
+        logger->info("Context: {}/{} tokens ({}%)", cur, max, pct);
+    }
+
     // Hook: ON_PRE_COMPACT — can cancel compaction (v1.9.1)
     if (hook_iface_.fire_pre != nullptr) {
         int tok = compaction_.counter.count_messages(ctx.messages);

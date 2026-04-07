@@ -402,6 +402,8 @@ struct MCPConfig {
  * @version 1.9.5
  */
 struct AuditLogConfig {
+    std::filesystem::path log_dir;       ///< Directory for audit log files
+    std::string session_id;              ///< UUID for this session
     bool enabled = true;                 ///< Master toggle for audit logging
     size_t flush_interval_entries = 10;  ///< Flush every N entries (0 = every entry)
     size_t max_file_size = 0;            ///< Rotation size in bytes (0 = unlimited)

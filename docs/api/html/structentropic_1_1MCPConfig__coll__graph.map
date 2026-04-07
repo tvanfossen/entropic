@@ -1,0 +1,9 @@
+<map id="entropic::MCPConfig" name="entropic::MCPConfig">
+<area shape="rect" id="Node000001" title="MCP server configuration." alt="" coords="251,93,405,119"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1FilesystemConfig.html" title="Filesystem MCP server configuration." alt="" coords="5,5,200,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="147,33,299,91,297,96,145,38"/>
+<area shape="rect" id="Node000003" href="$structentropic_1_1ExternalMCPConfig.html" title="External MCP server configuration (Entropic&#45;as&#45;server)." alt="" coords="225,5,431,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="331,45,331,93,325,93,325,45"/>
+<area shape="rect" id="Node000004" href="$structentropic_1_1ReconnectConfig.html" title="Reconnection policy configuration for external MCP servers." alt="" coords="456,5,648,31"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="510,38,359,96,357,91,508,33"/>
+</map>

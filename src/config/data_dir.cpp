@@ -23,7 +23,7 @@ namespace entropic::config {
  * @param config Parsed config.
  * @return Resolved data directory path.
  * @internal
- * @version 1.8.2
+ * @version 2.0.0
  */
 std::filesystem::path resolve_data_dir(const ParsedConfig& config)
 {
@@ -43,12 +43,12 @@ std::filesystem::path resolve_data_dir(const ParsedConfig& config)
         }
     }
 
-    // Priority 2-4: compile-time, source tree, local
+    // Priority 2-4: compile-time install, source tree (absolute), local
     if (result.empty()) {
         const Candidate candidates[] = {
-            {CONFIG_ENTROPIC_DATA_DIR, "compile-time path"},
-            {"src/entropic/data",      "source tree"},
-            {"data",                   "local"},
+            {CONFIG_ENTROPIC_DATA_DIR,        "compile-time path"},
+            {CONFIG_ENTROPIC_SOURCE_DATA_DIR, "source tree"},
+            {"data",                          "local"},
         };
 
         for (const auto& [path, label] : candidates) {

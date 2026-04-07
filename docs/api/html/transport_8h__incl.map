@@ -1,0 +1,7 @@
+<map id="entropic/mcp/transport.h" name="entropic/mcp/transport.h">
+<area shape="rect" id="Node000001" title="Abstract transport for external MCP server communication." alt="" coords="5,5,188,31"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="21,79,87,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="92,32,70,68,66,66,87,30"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="111,79,170,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="106,30,129,66,124,68,102,32"/>
+</map>

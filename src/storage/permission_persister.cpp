@@ -10,7 +10,7 @@
 
 #include <entropic/storage/permission_persister.h>
 
-#include <spdlog/spdlog.h>
+#include <entropic/types/logging.h>
 
 #include <algorithm>
 #include <fstream>
@@ -19,6 +19,10 @@
 #include <vector>
 
 namespace entropic {
+
+namespace {
+auto logger = entropic::log::get("storage.permission_persister");
+} // anonymous namespace
 
 /**
  * @brief Construct with config directory path.
@@ -167,7 +171,7 @@ static std::string join_lines(const std::vector<std::string>& lines) {
  * @param allow true for allow list, false for deny list.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.0.0
  */
 bool PermissionPersister::save_permission(std::string_view pattern,
                                           bool allow) {
@@ -201,12 +205,12 @@ bool PermissionPersister::save_permission(std::string_view pattern,
     }
 
     if (!write_file(config_path_, join_lines(lines))) {
-        spdlog::error("Failed to write permission to {}",
+        logger->error("Failed to write permission to {}",
                       config_path_.string());
         return false;
     }
 
-    spdlog::info("Saved permission {}: {}",
+    logger->info("Saved permission {}: {}",
                  allow ? "allow" : "deny", pattern);
     return true;
 }

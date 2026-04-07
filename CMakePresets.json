@@ -12,7 +12,8 @@
         "CMAKE_BUILD_TYPE": "Release",
         "ENTROPIC_CUDA": "ON",
         "ENTROPIC_SHARED": "ON",
-        "ENTROPIC_BUILD_TESTS": "ON"
+        "ENTROPIC_BUILD_TESTS": "ON",
+        "ENTROPIC_BUILD_MODEL_TESTS": "ON"
       }
     },
     {

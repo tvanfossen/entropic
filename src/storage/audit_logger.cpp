@@ -66,7 +66,7 @@ bool AuditLogger::initialize() {
  * @brief Record a tool call audit entry.
  * @param entry The audit log entry to write.
  * @internal
- * @version 1.9.5
+ * @version 2.0.0
  */
 void AuditLogger::record(const AuditEntry& entry) {
     if (!config_.enabled || !file_.is_open()) {
@@ -80,7 +80,9 @@ void AuditLogger::record(const AuditEntry& entry) {
 
     std::string serialized = line.dump();
     write_line(serialized);
-    entry_count_.fetch_add(1);
+    auto seq = entry_count_.fetch_add(1);
+    logger->info("Audit: tool='{}', caller='{}', seq={}",
+                 entry.tool_name, entry.caller_id, seq);
 }
 
 /**

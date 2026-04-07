@@ -14,8 +14,8 @@ SCENARIO("API version is queryable at runtime", "[api][version]") {
         WHEN("entropic_api_version() is called") {
             int version = entropic_api_version();
 
-            THEN("it returns 1") {
-                REQUIRE(version == 1);
+            THEN("it returns 2") {
+                REQUIRE(version == 2);
             }
         }
     }
@@ -28,7 +28,7 @@ SCENARIO("Library version matches build", "[api][version]") {
 
             THEN("it returns the expected version string") {
                 REQUIRE(ver != nullptr);
-                REQUIRE(std::strcmp(ver, "1.8.9") == 0);
+                REQUIRE(std::strcmp(ver, "2.0.0") == 0);
             }
 
             THEN("the returned pointer is valid for the process lifetime") {

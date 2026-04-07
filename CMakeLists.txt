@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 1.8.9
+    VERSION 2.0.0
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )
@@ -80,13 +80,13 @@ set(CONFIG_ENTROPIC_STREAMING       ${ENTROPIC_STREAMING})
 set(CONFIG_ENTROPIC_SOURCE_DATA_DIR ${ENTROPIC_SOURCE_DATA_DIR})
 
 # ── API version (bumped on breaking C API changes) ──────
-set(ENTROPIC_API_VERSION 1 CACHE STRING "C API version integer")
+set(ENTROPIC_API_VERSION 2 CACHE STRING "C API version integer")
 
 # ── Generate entropic_config.h ──────────────────────────
 set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"
     CACHE PATH "Install path for bundled data files")
 # Source tree data dir for development builds (tools, prompts, grammars)
-set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/python/entropic/data"
+set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data"
     CACHE PATH "Source tree path to bundled data files")
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/entropic/entropic_config.h.in"

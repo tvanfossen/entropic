@@ -6,64 +6,58 @@
  * (Phase 8, deferred). Validates inputs and returns appropriate
  * errors until the facade has a live AuditLogger.
  *
- * @version 1.9.5
+ * @version 2.0.0
  */
+
+#include "engine_handle.h"
 
 #include <entropic/entropic.h>
 #include <entropic/types/logging.h>
+#include <nlohmann/json.hpp>
+#include <fstream>
+#include <string>
 
 static auto logger = entropic::log::get("facade.audit");
 
 /**
  * @brief Flush the audit logger to disk.
- * @param handle Engine handle.
- * @return ENTROPIC_ERROR_INVALID_HANDLE if handle is NULL,
- *         ENTROPIC_ERROR_INVALID_STATE (stub — no engine wiring yet).
+ *
+ * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.5
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_audit_flush(entropic_handle_t handle) {
-    if (!handle) {
-        return ENTROPIC_ERROR_INVALID_HANDLE;
-    }
-    logger->info("entropic_audit_flush called (stub)");
-    return ENTROPIC_ERROR_INVALID_STATE;
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!handle->audit_logger) { return ENTROPIC_OK; }
+    handle->audit_logger->flush();
+    return ENTROPIC_OK;
 }
 
 /**
  * @brief Get the number of audit log entries this session.
- * @param handle Engine handle.
- * @param count Output pointer.
- * @return ENTROPIC_ERROR_INVALID_HANDLE if handle is NULL,
- *         ENTROPIC_ERROR_INVALID_ARGUMENT if count is NULL,
- *         ENTROPIC_ERROR_INVALID_STATE (stub — no engine wiring yet).
+ *
+ * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.5
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_audit_count(entropic_handle_t handle, size_t* count) {
-    if (!handle) {
-        return ENTROPIC_ERROR_INVALID_HANDLE;
+    if (!handle || !count) {
+        return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
+                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
-    if (!count) {
-        return ENTROPIC_ERROR_INVALID_ARGUMENT;
-    }
-    logger->info("entropic_audit_count called (stub)");
-    return ENTROPIC_ERROR_INVALID_STATE;
+    *count = handle->audit_logger
+        ? handle->audit_logger->entry_count() : 0;
+    return ENTROPIC_OK;
 }
 
 /**
  * @brief Read audit log entries from a JSONL file.
- * @param handle Engine handle.
- * @param path Path to audit.jsonl file.
- * @param filter_json Filter criteria JSON or NULL.
- * @param result_json Output: JSON array.
- * @return ENTROPIC_ERROR_INVALID_HANDLE if handle is NULL,
- *         ENTROPIC_ERROR_INVALID_ARGUMENT if path/result_json is NULL,
- *         ENTROPIC_ERROR_INVALID_STATE (stub — no engine wiring yet).
+ *
+ * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.5
+ * @version 2.0.0
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_audit_read(
@@ -71,12 +65,23 @@ entropic_audit_read(
     const char* path,
     const char* /*filter_json*/,
     char** result_json) {
-    if (!handle) {
-        return ENTROPIC_ERROR_INVALID_HANDLE;
+    if (!handle || !path || !result_json) {
+        return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
+                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
-    if (!path || !result_json) {
-        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    try {
+        std::ifstream file(path);
+        if (!file.is_open()) { throw std::runtime_error("cannot open"); }
+        nlohmann::json arr = nlohmann::json::array();
+        std::string line;
+        while (std::getline(file, line)) {
+            if (line.empty()) { continue; }
+            arr.push_back(nlohmann::json::parse(line));
+        }
+        *result_json = strdup(arr.dump().c_str());
+        return ENTROPIC_OK;
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        return ENTROPIC_ERROR_IO;
     }
-    logger->info("entropic_audit_read called (stub): {}", path);
-    return ENTROPIC_ERROR_INVALID_STATE;
 }

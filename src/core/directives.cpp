@@ -33,12 +33,14 @@ void DirectiveProcessor::register_handler(
  * @param directives Typed directive list.
  * @return Aggregate result.
  * @internal
- * @version 1.9.1
+ * @version 2.0.0
  */
 DirectiveResult DirectiveProcessor::process(
     LoopContext& ctx,
     const std::vector<const Directive*>& directives) {
+    logger->info("Processing {} directive(s)", directives.size());
     DirectiveResult result;
+    int processed = 0;
     for (const auto* directive : directives) {
         if (directive == nullptr) {
             continue;
@@ -53,14 +55,17 @@ DirectiveResult DirectiveProcessor::process(
         }
 
         if (has_handler) {
-            logger->debug("Processing directive type {}",
-                          static_cast<int>(directive->type));
+            logger->info("Directive type={}, handler invoked",
+                         static_cast<int>(directive->type));
             it->second(ctx, *directive, result);
+            ++processed;
             if (result.stop_processing) {
                 break;
             }
         }
     }
+    logger->info("Directives: {}/{} processed", processed,
+                 directives.size());
     return result;
 }
 

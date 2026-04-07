@@ -1,0 +1,7 @@
+<map id="entropic::ToolExecutionInterface" name="entropic::ToolExecutionInterface">
+<area shape="rect" id="Node000001" title="Tool execution interface for the engine." alt="" coords="5,181,236,207"/>
+<area shape="rect" id="Node000002" href="$structentropic_1_1LoopContext.html" title="Mutable state carried through the agentic loop." alt="" coords="38,93,203,119"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="123,133,123,181,118,181,118,133"/>
+<area shape="rect" id="Node000003" href="$structentropic_1_1LoopMetrics.html" title="Metrics collected during loop execution." alt="" coords="39,5,202,31"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="123,45,123,93,118,93,118,45"/>
+</map>

@@ -31,6 +31,9 @@ static entropic_error_t check_compactor(entropic_handle_t h) {
 /**
  * @brief Trigger compaction on current context.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param identity Identity name from configured tier set.
+ * @param result_json Out-param: newly allocated JSON string (caller owns; free with entropic_free).
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0
@@ -56,6 +59,10 @@ entropic_compact(
 /**
  * @brief Register a custom compactor for an identity.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param identity Identity name from configured tier set.
+ * @param compactor Function pointer to consumer-supplied compactor.
+ * @param user_data Opaque pointer passed back to the callback.
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0
@@ -82,6 +89,8 @@ entropic_register_compactor(
 /**
  * @brief Deregister a custom compactor for an identity.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param identity Identity name from configured tier set.
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0
@@ -102,6 +111,9 @@ entropic_deregister_compactor(
 /**
  * @brief Get the built-in default compactor function pointer.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param compactor Out-param: receives function pointer to current compactor.
+ * @param user_data Opaque pointer passed back to the callback.
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0

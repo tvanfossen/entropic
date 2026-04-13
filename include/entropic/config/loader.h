@@ -44,6 +44,28 @@ ENTROPIC_EXPORT std::string load_config(
     ParsedConfig& config);
 
 /**
+ * @brief Load config with consumer defaults + global + project layers.
+ *
+ * Resolution order (highest wins):
+ * 1. Consumer defaults (CWD/default_config.yaml or specified path)
+ * 2. Global (~/.entropic/config.yaml)
+ * 3. Project ({project_dir}/config.local.yaml)
+ * 4. Environment variables (ENTROPIC_*)
+ *
+ * @param project_dir Project config directory (empty = skip project layer).
+ * @param consumer_defaults Path to consumer defaults YAML (empty = skip).
+ * @param registry Bundled models registry for path resolution.
+ * @param[out] config Output parsed config.
+ * @return Empty string on success, error message on failure.
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT std::string load_layered(
+    const std::filesystem::path& project_dir,
+    const std::filesystem::path& consumer_defaults,
+    const BundledModels& registry,
+    ParsedConfig& config);
+
+/**
  * @brief Load config from a single YAML file (no layering).
  *
  * Applies compiled defaults first, then overlays the file.

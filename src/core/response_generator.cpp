@@ -8,25 +8,39 @@
 #include <entropic/types/logging.h>
 
 #include <cstring>
+#include <functional>
 
 static auto logger = entropic::log::get("core.response_generator");
 
 namespace entropic {
+
+static size_t s_last_system_hash = 0;
 
 /**
  * @brief Log the full assembled prompt (all messages, no truncation).
  * @param messages Message list being sent to inference.
  * @param tier Locked tier name.
  * @utility
- * @version 1.10.2
+ * @version 2.0.2
  */
 static void log_prompt(const std::vector<Message>& messages,
                        const std::string& tier) {
     logger->info("─── Prompt ({} messages, tier={}) ───",
                  messages.size(), tier);
     for (size_t i = 0; i < messages.size(); ++i) {
-        logger->info("[{}] role={}\n{}", i, messages[i].role,
-                     messages[i].content);
+        if (messages[i].role == "system") {
+            size_t h = std::hash<std::string>{}(messages[i].content);
+            if (h != s_last_system_hash) {
+                s_last_system_hash = h;
+                logger->info("[{}] role=system\n{}", i, messages[i].content);
+            } else {
+                logger->info("[{}] role=system [unchanged, {} chars]",
+                             i, messages[i].content.size());
+            }
+        } else {
+            logger->info("[{}] role={}\n{}", i, messages[i].role,
+                         messages[i].content);
+        }
     }
     logger->info("─── End prompt ───");
 }
@@ -180,7 +194,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -192,7 +206,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
                  ctx.locked_tier, ctx.messages.size());
     log_prompt(ctx.messages, ctx.locked_tier);
     auto msgs_json = serialize_messages(ctx.messages);
-    auto params_json = build_params_json();
+    auto params_json = build_params_json(ctx.locked_tier);
 
     int cancel_flag = 0;
     StreamAccumulator acc;
@@ -219,7 +233,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -231,7 +245,7 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
                  ctx.locked_tier, ctx.messages.size());
     log_prompt(ctx.messages, ctx.locked_tier);
     auto msgs_json = serialize_messages(ctx.messages);
-    auto params_json = build_params_json();
+    auto params_json = build_params_json(ctx.locked_tier);
     char* result_json = nullptr;
 
     int rc = inference_.generate(
@@ -345,10 +359,12 @@ std::string ResponseGenerator::serialize_messages(
  * @brief Build generation params JSON.
  * @return JSON string with default params.
  * @internal
- * @version 1.8.4
+ * @version 2.0.2
  */
-std::string ResponseGenerator::build_params_json() {
-    return "{}";
+std::string ResponseGenerator::build_params_json(
+    const std::string& tier) {
+    if (tier.empty()) { return "{}"; }
+    return "{\"tier\":\"" + tier + "\"}";
 }
 
 } // namespace entropic

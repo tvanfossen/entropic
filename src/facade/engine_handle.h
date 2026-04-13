@@ -27,6 +27,7 @@
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_executor.h>
 #include <entropic/storage/audit_logger.h>
+#include <entropic/types/session_logger.h>
 #include <entropic/storage/backend.h>
 #include <entropic/types/config.h>
 #include <entropic/types/error.h>
@@ -87,9 +88,10 @@ struct entropic_engine {
     std::unique_ptr<entropic::MCPAuthorizationManager> mcp_auth;       ///< Per-identity tool auth
 
     // ── Phase 4: Engine Loop + Storage + Audit ─────────────────
-    std::unique_ptr<entropic::AgentEngine> engine;                     ///< Agentic loop
+    std::unique_ptr<entropic::AgentEngine> engine;                     ///< Agentic loop (owns conversation state)
     std::unique_ptr<entropic::SqliteStorageBackend> storage;           ///< SQLite persistence
     std::unique_ptr<entropic::AuditLogger> audit_logger;               ///< Audit log
+    std::unique_ptr<entropic::SessionLogger> session_logger;           ///< Model transcript log
 
     // ── Phase 5: Constitutional + Compaction ────────────────────
     std::unique_ptr<entropic::ConstitutionalValidator> validator;       ///< Constitutional validation

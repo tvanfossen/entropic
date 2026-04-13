@@ -36,6 +36,9 @@ MAX_MODEL_RETRIES = 2
 MODEL_RESULTS_FILE = "test-reports/model/results.json"
 
 
+## @brief Configure and build the project via CMake preset.
+## @utility
+## @version 1
 @task(
     help={
         "cpu": "CPU-only debug build (dev preset)",
@@ -57,6 +60,10 @@ def build(c, cpu=False, preset="", jobs=JOBS, clean=False):
     c.run(f"cmake --build {build_dir} --parallel {jobs}")
 
 
+## @brief Extract project version from CMakeLists.txt.
+## @utility
+## @return Version string or "unknown".
+## @version 1
 def _get_version():
     """Extract project version from CMakeLists.txt."""
     with open("CMakeLists.txt") as f:
@@ -67,6 +74,10 @@ def _get_version():
     return "unknown"
 
 
+## @brief Get current git HEAD sha.
+## @utility
+## @return Hex SHA string or "unknown".
+## @version 1
 def _get_git_sha():
     """Get current git HEAD sha."""
     try:
@@ -82,6 +93,10 @@ def _get_git_sha():
         return "unknown"
 
 
+## @brief Get GPU name via nvidia-smi.
+## @utility
+## @return GPU name string or "unknown".
+## @version 1
 def _get_gpu_name():
     """Get GPU name via nvidia-smi."""
     try:
@@ -98,6 +113,10 @@ def _get_gpu_name():
         return "unknown"
 
 
+## @brief Run model tests 1:1 with retries.
+## @utility
+## @return Tuple of (results list, failed count).
+## @version 1
 def _run_model_tests(build_dir):
     """Run model tests 1:1 with retries. Returns (results, failed_count)."""
     test_dir = os.path.join(build_dir, "tests", "model")
@@ -162,6 +181,9 @@ def _run_model_tests(build_dir):
     return results, failed
 
 
+## @brief Write test-reports/model/results.json.
+## @utility
+## @version 1
 def _write_results_json(test_results, duration_ms):
     """Write test-reports/model/results.json."""
     os.makedirs(os.path.dirname(MODEL_RESULTS_FILE), exist_ok=True)
@@ -194,6 +216,9 @@ def _write_results_json(test_results, duration_ms):
     print(f"Written: {MODEL_RESULTS_FILE}")
 
 
+## @brief Run tests. Builds first unless --no-build.
+## @utility
+## @version 1
 @task(
     help={
         "model": "Include model tests (GPU required, writes results.json)",
@@ -250,10 +275,158 @@ def test(  # noqa: CFQ002
         c.run(".venv/bin/python scripts/check_coverage.py")
 
 
+EXAMPLES = {
+    "hello-world": {"lang": "c", "binary": "hello-world"},
+    "pychess": {"lang": "cxx", "binary": "pychess"},
+}
+
+LIB_DIRS = [
+    "src/facade",
+    "src/types",
+    "src/core",
+    "src/config",
+    "src/prompts",
+    "src/inference",
+    "src/mcp",
+    "src/storage",
+    "_deps/spdlog-build",
+    "_deps/ryml-build",
+]
+
+
+## @brief Return absolute path to librentropic.so in the build tree.
+## @utility
+## @return Absolute path string.
+## @version 1
+def _lib_path(preset):
+    """Return absolute path to librentropic.so in the build tree."""
+    return os.path.abspath(os.path.join("build", preset, "src", "facade", "librentropic.so"))
+
+
+## @brief Build LD_LIBRARY_PATH covering all internal .so directories.
+## @utility
+## @return Colon-separated directory path string.
+## @version 1
+def _ld_library_path(preset):
+    """Build LD_LIBRARY_PATH covering all internal .so directories."""
+    base = os.path.abspath(os.path.join("build", preset))
+    return ":".join(os.path.join(base, d) for d in LIB_DIRS)
+
+
+## @brief Semicolon-separated list of internal .so dirs for linker search.
+## @utility
+## @return Semicolon-separated directory path string.
+## @version 1
+def _deps_lib_dirs(preset):
+    """Semicolon-separated list of internal .so dirs for linker search."""
+    base = os.path.abspath(os.path.join("build", preset))
+    return ";".join(os.path.join(base, d) for d in LIB_DIRS)
+
+
+## @brief Configure and build a C/C++ example against the engine build tree.
+## @utility
+## @version 1
+def _build_c_example(c, name, preset, jobs):
+    """Configure and build a C/C++ example against the engine build tree."""
+    example_dir = os.path.join("examples", name)
+    build_dir = os.path.join(example_dir, "build")
+    include_dir = os.path.abspath("include")
+    build_include_dir = os.path.abspath(os.path.join("build", preset, "include"))
+    lib_dir = os.path.abspath(os.path.join("build", preset, "src", "facade"))
+
+    c.run(
+        f"cmake -B {build_dir}"
+        f" -DENTROPIC_LIB_DIR={lib_dir}"
+        f" -DENTROPIC_INCLUDE_DIR={include_dir}"
+        f" -DENTROPIC_BUILD_INCLUDE_DIR={build_include_dir}"
+        f' -DENTROPIC_DEPS_LIB_DIRS="{_deps_lib_dirs(preset)}"'
+        f" {example_dir}"
+    )
+    c.run(f"cmake --build {build_dir} --parallel {jobs}")
+
+
+## @brief Build and run an example. Builds engine first if needed.
+## @utility
+## @version 1
+@task(
+    help={
+        "name": "Example name: hello-world, pychess",
+        "wrapper": "Run Python wrapper version instead of C/C++",
+        "cpu": "Use CPU dev build instead of full CUDA",
+        "preset": "CMake preset (overrides --cpu)",
+        "jobs": f"Parallel build jobs (default: {JOBS})",
+    }
+)
+def example(c, name, wrapper=False, cpu=False, preset="", jobs=JOBS):
+    """Build and run an example. Builds engine first if needed."""
+    if name not in EXAMPLES:
+        names = ", ".join(EXAMPLES)
+        raise SystemExit(f"Unknown example '{name}'. Available: {names}")
+
+    if not preset:
+        preset = "dev" if cpu else "full"
+
+    lib_so = _lib_path(preset)
+    if not os.path.isfile(lib_so):
+        print(f"Engine not built ({lib_so}). Building...")
+        build(c, cpu=cpu, preset=preset, jobs=jobs)
+
+    example_dir = os.path.abspath(os.path.join("examples", name))
+    env = {**os.environ, "LD_LIBRARY_PATH": _ld_library_path(preset)}
+
+    if wrapper:
+        _run_wrapper(c, name, example_dir, lib_so, env)
+    else:
+        _run_native(c, name, example_dir, preset, jobs, env)
+
+
+## @brief Run the Python wrapper version of an example.
+## @utility
+## @version 1
+def _run_wrapper(c, name, example_dir, lib_so, env):
+    """Run the Python wrapper version of an example."""
+    script = os.path.join(example_dir, "main_wrapper.py")
+    if not os.path.isfile(script):
+        raise SystemExit(f"No wrapper script: {script}")
+
+    env["ENTROPIC_LIB_PATH"] = lib_so
+    python = os.path.abspath(".venv/bin/python")
+    print(f"Running {name} (Python wrapper)...")
+    c.run(f"cd {example_dir} && {python} main_wrapper.py", env=env, pty=True)
+
+
+## @brief Build and run the C/C++ version of an example.
+## @utility
+## @version 1
+def _run_native(c, name, example_dir, preset, jobs, env):
+    """Build and run the C/C++ version of an example."""
+    _build_c_example(c, name, preset, jobs)
+    binary = os.path.abspath(os.path.join(example_dir, "build", EXAMPLES[name]["binary"]))
+    if not os.path.isfile(binary):
+        raise SystemExit(f"Build succeeded but binary not found: {binary}")
+
+    print(f"Running {name} (C/C++)...")
+    c.run(f"cd {example_dir} && {binary}", env=env, pty=True)
+
+
+## @brief Remove all build directories.
+## @utility
+## @version 1
 @task
 def clean(c):
     """Remove all build directories."""
-    for d in ("build/dev", "build/full", "build/coverage", "build/minimal-static", "build/game"):
+    dirs = [
+        "build/dev",
+        "build/full",
+        "build/coverage",
+        "build/minimal-static",
+        "build/game",
+    ]
+    # Also clean example build dirs
+    for name in EXAMPLES:
+        dirs.append(os.path.join("examples", name, "build"))
+
+    for d in dirs:
         if os.path.isdir(d):
             print(f"Removing {d}")
             shutil.rmtree(d)

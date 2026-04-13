@@ -71,6 +71,22 @@ public:
     void register_server(std::unique_ptr<MCPServerBase> server);
 
     /**
+     * @brief Register built-in servers based on config flags.
+     *
+     * Creates and registers enabled built-in servers (entropic,
+     * filesystem, bash, git, diagnostics, web). Called by the
+     * facade after construction.
+     *
+     * @param mcp_config MCP config with enable flags.
+     * @param tier_names Tier names for entropic server schemas.
+     * @param data_dir Bundled data directory path.
+     * @version 2.0.1
+     */
+    void init_builtins(const MCPConfig& mcp_config,
+                       const std::vector<std::string>& tier_names,
+                       const std::string& data_dir);
+
+    /**
      * @brief Initialize all registered servers.
      * @version 1.8.5
      */

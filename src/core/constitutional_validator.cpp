@@ -96,6 +96,17 @@ bool ConstitutionalValidator::should_validate(
 }
 
 /**
+ * @brief Toggle the global validation gate at runtime.
+ * @param enabled New global enable state.
+ * @req REQ-VALID-004
+ * @version 2.0.2
+ */
+void ConstitutionalValidator::set_global_enabled(bool enabled) {
+    std::lock_guard<std::mutex> lock(overrides_mutex_);
+    config_.enabled = enabled;
+}
+
+/**
  * @brief Set per-identity validation override.
  * @param identity_name Identity name.
  * @param enabled Whether validation is enabled.

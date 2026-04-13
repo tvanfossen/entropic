@@ -1,0 +1,23 @@
+{
+  "name": "pipeline",
+  "description": "Execute a multi-stage delegation pipeline.\n\nDelegates a task through a sequence of identity tiers in order. Each stage receives the original task plus the output from the previous stage. Only the final stage's result is returned.\n\nExample: stages=[\"eng\", \"qa\"] delegates to eng first, then qa reviews eng's output.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "stages": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": []
+        },
+        "minItems": 2,
+        "description": "Ordered list of identity tiers to delegate through"
+      },
+      "task": {
+        "type": "string",
+        "description": "Natural language description of the task for the pipeline"
+      }
+    },
+    "required": ["stages", "task"]
+  }
+}

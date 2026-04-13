@@ -13,7 +13,7 @@
 #include <entropic/entropic.h>
 #include <entropic/types/logging.h>
 
-#include <nlohmann/json.hpp>
+#include "json_serializers.h"
 
 #include <cstring>
 
@@ -38,6 +38,9 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
  * Parses config_json for "command", "args", and "url" fields
  * to determine transport type (stdio or SSE).
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param name MCP server name (must be unique).
+ * @param config_json JSON-serialized MCP server configuration.
  * @return ENTROPIC_OK or error code.
  * @internal
  * @version 2.0.0
@@ -74,6 +77,8 @@ entropic_register_mcp_server(
 /**
  * @brief Deregister an external MCP server.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param name MCP server name (must be unique).
  * @return ENTROPIC_OK or error code.
  * @internal
  * @version 2.0.0
@@ -101,6 +106,7 @@ entropic_deregister_mcp_server(
 /**
  * @brief List all MCP servers as JSON array.
  *
+ * @param handle Engine handle returned by entropic_create.
  * @return JSON string (caller frees), or NULL.
  * @internal
  * @version 2.0.0

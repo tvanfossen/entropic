@@ -140,6 +140,7 @@ public:
     /**
      * @brief Get the default CompactionManager reference.
      * @return Reference to the v1.8.4 CompactionManager.
+     * @utility
      * @version 1.9.9
      */
     CompactionManager& default_manager() { return default_manager_; }

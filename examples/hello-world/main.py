@@ -23,6 +23,9 @@ from entropic import EntropicEngine
 EXAMPLE_ROOT = Path(__file__).resolve().parent
 
 
+## @brief Load engine, run streaming prompt loop, clean shutdown.
+## @utility
+## @version 2
 def main() -> None:
     """Interactive prompt loop.
 

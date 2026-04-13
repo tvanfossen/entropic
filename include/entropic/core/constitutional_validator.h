@@ -124,6 +124,19 @@ public:
         const std::string& identity_name, bool enabled);
 
     /**
+     * @brief Toggle the global validation gate at runtime.
+     *
+     * Per-identity overrides set via set_identity_validation() still
+     * take precedence; this only changes the fallback value used when
+     * no per-identity override exists.
+     *
+     * @param enabled true to enable validation globally, false to disable.
+     * @req REQ-VALID-004
+     * @version 2.0.2
+     */
+    void set_global_enabled(bool enabled);
+
+    /**
      * @brief Run the validation pipeline on generated content.
      * @param content The generated text to validate.
      * @param tier The tier/identity that produced the content.
@@ -154,6 +167,7 @@ public:
     /**
      * @brief Get the config (read-only after construction).
      * @return Reference to config.
+     * @utility
      * @version 1.9.8
      */
     const ConstitutionalValidationConfig& config() const { return config_; }

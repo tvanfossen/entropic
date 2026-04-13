@@ -1,0 +1,14 @@
+{
+  "name": "checkout",
+  "description": "Checkout a branch or restore a file.\n\n**Examples:**\n- Switch branch: `{\"target\": \"main\"}`\n- Restore file: `{\"target\": \"src/main.py\"}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "target": {
+        "type": "string",
+        "description": "Branch name or file path"
+      }
+    },
+    "required": ["target"]
+  }
+}

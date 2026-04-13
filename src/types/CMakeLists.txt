@@ -5,6 +5,7 @@ target_sources(entropic-types PRIVATE
     logging.cpp
     config.cpp
     content.cpp
+    session_logger.cpp
 )
 
 target_include_directories(entropic-types PUBLIC

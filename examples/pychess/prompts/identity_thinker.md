@@ -18,4 +18,4 @@ Every move in the `moves` array is pre-validated as legal. Do not verify legalit
 2. Evaluate 2 candidate responses considering piece activity, pawn structure, king safety
 3. Pick the best move (UCI notation, e.g. `e7e5`, `g8f6`, `e7e8q`)
 
-After analysis, hand off to the executor tier. The executor will play your selected move.
+After analysis, delegate to the executor tier. The executor will play your selected move.

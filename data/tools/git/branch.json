@@ -1,0 +1,14 @@
+{
+  "name": "branch",
+  "description": "List or create git branches.\n\n**Examples:**\n- List branches: `{}`\n- Create branch: `{\"name\": \"feature/new-feature\"}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Branch name to create (omit to list)"
+      }
+    },
+    "required": []
+  }
+}

@@ -22,28 +22,7 @@
 
 namespace entropic {
 
-/**
- * @brief Engine-level hooks called during tool processing.
- * @version 1.8.5
- */
-struct ToolExecutorHooks {
-    /**
-     * @brief Called after each tool execution (compaction, context warning).
-     * @version 1.8.5
-     */
-    void (*after_tool)(LoopContext& ctx, void* user_data) = nullptr;
-
-    /**
-     * @brief Process directives from tool results. Returns DirectiveResult.
-     * @version 1.8.5
-     */
-    DirectiveResult (*process_directives)(
-        LoopContext& ctx,
-        const std::vector<Directive>& directives,
-        void* user_data) = nullptr;
-
-    void* user_data = nullptr; ///< Opaque pointer for hooks
-};
+/* ToolExecutorHooks moved to engine_types.h — v2.0.2 */
 
 /**
  * @brief Processes tool calls from model output.
@@ -96,6 +75,15 @@ private:
      */
     static std::vector<ToolCall> sort_tool_calls(
         const std::vector<ToolCall>& calls);
+
+    /**
+     * @brief Extract directives from ServerResponse and process via hooks.
+     * @param ctx Loop context (mutated by directive handlers).
+     * @param raw_result ServerResponse JSON string.
+     * @version 2.0.1
+     */
+    void extract_and_process_directives(
+        LoopContext& ctx, const std::string& raw_result);
 
     /**
      * @brief Check duplicate tool call. Returns previous result or empty.
@@ -329,6 +317,7 @@ public:
     /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.
+     * @utility
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hook_iface_ = hooks; }
@@ -336,6 +325,7 @@ public:
     /**
      * @brief Set the MCP authorization manager.
      * @param auth_mgr Authorization manager (must outlive ToolExecutor).
+     * @utility
      * @version 1.9.4
      */
     void set_authorization_manager(MCPAuthorizationManager* auth_mgr) {

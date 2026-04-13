@@ -13,6 +13,7 @@ target_sources(entropic-core PRIVATE
     hook_registry.cpp
     identity_manager.cpp
     constitutional_validator.cpp
+    stream_think_filter.cpp
 )
 
 target_include_directories(entropic-core PUBLIC
@@ -23,6 +24,7 @@ target_include_directories(entropic-core PUBLIC
 target_link_libraries(entropic-core PUBLIC
     entropic-types
     spdlog::spdlog
+    nlohmann_json::nlohmann_json
 )
 
 target_compile_definitions(entropic-core PRIVATE ENTROPIC_BUILDING_DLL)

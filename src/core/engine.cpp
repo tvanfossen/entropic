@@ -9,6 +9,8 @@
 #include <entropic/core/worktree.h>
 #include <entropic/types/logging.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <chrono>
 #include <sstream>
@@ -654,6 +656,56 @@ void AgentEngine::dir_notify(
  * @internal
  * @version 1.8.5
  */
+/**
+ * @brief Build one ToolCall from a parsed JSON object.
+ * @param obj JSON object with "name" and optional "arguments".
+ * @param tc_str Original JSON string (used in id hash).
+ * @return Populated ToolCall.
+ * @internal
+ * @version 2.0.2
+ */
+static ToolCall build_tool_call_from_json(
+    const nlohmann::json& obj, const std::string& tc_str) {
+    ToolCall tc;
+    tc.name = obj.value("name", "");
+    tc.id = "tc-" + std::to_string(
+        std::hash<std::string>{}(tc.name + tc_str) & 0xFFFF);
+    if (obj.contains("arguments") && obj["arguments"].is_object()) {
+        tc.arguments_json = obj["arguments"].dump();
+        for (auto& [k, v] : obj["arguments"].items()) {
+            tc.arguments[k] = v.is_string()
+                ? v.get<std::string>() : v.dump();
+        }
+    }
+    return tc;
+}
+
+/**
+ * @brief Decode a JSON tool-calls array string into ToolCall vector.
+ * @param tc_str JSON array string ("[]" or "" yields empty result).
+ * @return Parsed ToolCall vector (empty on parse failure or empty input).
+ * @internal
+ * @version 2.0.2
+ */
+static std::vector<ToolCall> decode_tool_calls_json(
+    const std::string& tc_str) {
+    std::vector<ToolCall> calls;
+    if (tc_str == "[]" || tc_str.empty()) { return calls; }
+    auto arr = nlohmann::json::parse(tc_str, nullptr, false);
+    if (!arr.is_array()) { return calls; }
+    for (const auto& obj : arr) {
+        calls.push_back(build_tool_call_from_json(obj, tc_str));
+    }
+    return calls;
+}
+
+/**
+ * @brief Parse tool calls from raw model output via adapter.
+ * @param raw_content Raw model output string.
+ * @return Pair of (cleaned content, parsed tool calls).
+ * @utility
+ * @version 2.0.2
+ */
 std::pair<std::string, std::vector<ToolCall>>
 AgentEngine::parse_tool_calls(const std::string& raw_content) {
     if (inference_.parse_tool_calls == nullptr) {
@@ -674,24 +726,12 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
         if (tc_json != nullptr) { inference_.free_fn(tc_json); }
     }
 
-    if (rc != 0 || tc_str == "[]" || tc_str.empty()) {
-        return {cleaned_str, {}};
+    if (rc != 0) { return {cleaned_str, {}}; }
+    auto calls = decode_tool_calls_json(tc_str);
+    if (!calls.empty()) {
+        logger->info("Parsed tool calls from model output");
     }
-
-    // Minimal JSON parse: tool_calls is a JSON array of objects
-    // with "name" and "arguments" fields. This avoids pulling
-    // nlohmann/json into core.so.
-    // For now, store raw JSON — the ToolExecutor (in mcp.so)
-    // will parse it via the ToolExecutionFn callback.
-    ToolCall call;
-    call.id = "tc-" + std::to_string(
-        std::hash<std::string>{}(tc_str) & 0xFFFF);
-    call.name = ""; // Parsed by the facade's callback
-    // Store raw JSON in arguments for facade to parse
-    call.arguments["_raw_json"] = tc_str;
-
-    logger->info("Parsed tool calls from model output");
-    return {cleaned_str, {call}};
+    return {cleaned_str, std::move(calls)};
 }
 
 /**
@@ -699,7 +739,7 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
  * @param ctx Loop context.
  * @param tool_calls Parsed tool calls.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 void AgentEngine::process_tool_results(
     LoopContext& ctx,
@@ -716,7 +756,12 @@ void AgentEngine::process_tool_results(
     }
 
     ctx.has_pending_tool_results = true;
-    set_state(ctx, AgentState::EXECUTING);
+    // Don't overwrite terminal states set by directive handlers
+    if (ctx.state != AgentState::COMPLETE
+        && ctx.state != AgentState::ERROR
+        && ctx.state != AgentState::INTERRUPTED) {
+        set_state(ctx, AgentState::EXECUTING);
+    }
 }
 
 // ── Anchor helper ────────────────────────────────────────
@@ -862,6 +907,45 @@ static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
  * @internal
  * @version 1.9.1
  */
+/**
+ * @brief Append a delegation rejection message to the loop context.
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.0.2
+ */
+static void push_delegation_rejected(LoopContext& ctx) {
+    Message reject;
+    reject.role = "user";
+    reject.content = "[DELEGATION REJECTED] Maximum delegation "
+                     "depth (" + std::to_string(
+                         AgentEngine::MAX_DELEGATION_DEPTH) +
+                     ") reached.";
+    ctx.messages.push_back(std::move(reject));
+}
+
+/**
+ * @brief Append a delegation result message to the loop context.
+ * @param ctx Loop context.
+ * @param target Target tier name.
+ * @param result Delegation result.
+ * @internal
+ * @version 2.0.2
+ */
+static void push_delegation_result(LoopContext& ctx,
+    const std::string& target, const DelegationResult& result) {
+    std::string tag = result.success ? "COMPLETE" : "FAILED";
+    Message msg;
+    msg.role = "user";
+    msg.content = "[DELEGATION " + tag + ": " + target + "] " + result.summary;
+    ctx.messages.push_back(std::move(msg));
+}
+
+/**
+ * @brief Execute a pending delegation from the tool result directives.
+ * @param ctx Loop context with pending delegation.
+ * @utility
+ * @version 2.0.2
+ */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
     ctx.pending_delegation.reset();
@@ -869,12 +953,7 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
         logger->warn("Delegation rejected: depth {} >= max {}",
                      ctx.delegation_depth, MAX_DELEGATION_DEPTH);
-        Message reject;
-        reject.role = "user";
-        reject.content = "[DELEGATION REJECTED] Maximum delegation "
-                         "depth (" + std::to_string(MAX_DELEGATION_DEPTH) +
-                         ") reached.";
-        ctx.messages.push_back(std::move(reject));
+        push_delegation_rejected(ctx);
         return;
     }
 
@@ -889,31 +968,31 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 
     fire_delegation_start(ctx, pending.target, pending.task);
 
-    auto repo_dir = get_repo_dir();
     std::optional<int> max_turns;
-    if (pending.max_turns > 0) {
-        max_turns = pending.max_turns;
-    }
+    if (pending.max_turns > 0) { max_turns = pending.max_turns; }
 
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, repo_dir);
+                          tier_res_, get_repo_dir());
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
 
     auto result = mgr.execute_delegation(
         ctx, pending.target, pending.task, max_turns);
-
-    std::string tag = result.success ? "COMPLETE" : "FAILED";
-    Message result_msg;
-    result_msg.role = "user";
-    result_msg.content = "[DELEGATION " + tag + ": " +
-                         pending.target + "] " + result.summary;
-    ctx.messages.push_back(std::move(result_msg));
+    push_delegation_result(ctx, pending.target, result);
 
     fire_delegation_complete(ctx, pending.target, result);
     fire_delegate_complete_hook(pending.target, result.success);
-    set_state(ctx, AgentState::EXECUTING);
+
+    // Auto-complete unless tier requires explicit completion.
+    bool needs_explicit = false;
+    if (tier_res_.get_tier_param != nullptr) {
+        auto val = tier_res_.get_tier_param(
+            ctx.locked_tier, "explicit_completion", tier_res_.user_data);
+        needs_explicit = (val == "true" || val == "1");
+    }
+    set_state(ctx, (result.success && !needs_explicit)
+        ? AgentState::COMPLETE : AgentState::EXECUTING);
 }
 
 /**
@@ -1096,7 +1175,7 @@ std::filesystem::path AgentEngine::get_repo_dir() {
  * @param project_dir Directory to init.
  * @return true if repo now exists.
  * @internal
- * @version 1.8.6
+ * @version 2.0.2
  */
 bool AgentEngine::init_project_repo(
     const std::filesystem::path& project_dir) {
@@ -1111,6 +1190,275 @@ bool AgentEngine::init_project_repo(
     run_git(project_dir, "commit --allow-empty -m 'Initial commit'");
     logger->info("Initialized git repo at: {}", project_dir.string());
     return true;
+}
+
+// ── Conversation state (v2.0.2) ─────────────────────────────
+
+/**
+ * @brief Set the system prompt for conversation state.
+ * @param prompt Assembled system prompt.
+ * @internal
+ * @version 2.0.2
+ */
+void AgentEngine::set_system_prompt(const std::string& prompt) {
+    system_prompt_ = prompt;
+}
+
+/**
+ * @brief Set session logger for model transcript logging.
+ * @param log Non-owning pointer (nullable).
+ * @internal
+ * @version 2.0.2
+ */
+void AgentEngine::set_session_logger(SessionLogger* log) {
+    session_logger_ = log;
+}
+
+/**
+ * @brief Run a single conversation turn (stateful).
+ * @param input User input string.
+ * @return Result messages from engine.
+ * @internal
+ * @version 2.0.2
+ */
+std::vector<Message> AgentEngine::run_turn(const std::string& input) {
+    if (conversation_.empty() && !system_prompt_.empty()) {
+        Message sys;
+        sys.role = "system";
+        sys.content = system_prompt_;
+        conversation_.push_back(std::move(sys));
+    }
+    Message usr;
+    usr.role = "user";
+    usr.content = input;
+    conversation_.push_back(std::move(usr));
+
+    size_t sent_len = conversation_.size();
+    auto result = run(conversation_);  // copy — run() may mutate
+    for (size_t i = sent_len; i < result.size(); ++i) {
+        conversation_.push_back(result[i]);
+    }
+    return result;
+}
+
+/**
+ * @brief Run a streaming conversation turn (stateful).
+ * @param input User input.
+ * @param on_token Consumer callback (filtered, UTF-8 aligned).
+ * @param user_data Consumer context.
+ * @param cancel_flag Polled per-token, nullable.
+ * @return 0=OK, 1=cancelled, 2=error.
+ * @internal
+ * @version 2.0.2
+ */
+int AgentEngine::run_streaming(
+    const std::string& input,
+    TokenCallback on_token,
+    void* user_data,
+    int* cancel_flag)
+{
+    if (session_logger_) {
+        session_logger_->log_user_input(input);
+    }
+
+    StreamThinkFilter filter(on_token, user_data);
+    if (session_logger_ && session_logger_->is_open()) {
+        filter.set_raw_callback(
+            SessionLogger::raw_token_callback,
+            session_logger_);
+    }
+
+    struct Ctx {
+        StreamThinkFilter* filter;
+        int* cancel;
+        AgentEngine* engine;
+    };
+    Ctx sctx{&filter, cancel_flag, this};
+
+    EngineCallbacks cbs{};
+    cbs.on_stream_chunk = [](const char* t, size_t l, void* ud) {
+        auto* c = static_cast<Ctx*>(ud);
+        if (c->cancel && *c->cancel) {
+            c->engine->interrupt();
+            return;
+        }
+        c->filter->on_token(t, l);
+    };
+    cbs.user_data = &sctx;
+    set_callbacks(cbs);
+
+    auto result = run_turn(input);
+    filter.flush();
+
+    if (session_logger_) {
+        session_logger_->end_turn();
+    }
+    if (cancel_flag && *cancel_flag) { return 1; }
+    return 0;
+}
+
+/**
+ * @brief Clear conversation history.
+ * @internal
+ * @version 2.0.2
+ */
+void AgentEngine::clear_conversation() {
+    conversation_.clear();
+    logger->info("conversation cleared");
+}
+
+/**
+ * @brief Get conversation message count.
+ * @return Number of messages.
+ * @internal
+ * @version 2.0.2
+ */
+size_t AgentEngine::message_count() const {
+    return conversation_.size();
+}
+
+/**
+ * @brief Get conversation messages.
+ * @return Const reference to messages.
+ * @internal
+ * @version 2.0.2
+ */
+const std::vector<Message>& AgentEngine::get_messages() const {
+    return conversation_;
+}
+
+// ── Directive hooks (v2.0.2) ────────────────────────────────
+
+/**
+ * @brief Build ToolExecutorHooks wired to this engine's DirectiveProcessor.
+ * @return Configured hooks.
+ * @internal
+ * @version 2.0.2
+ */
+ToolExecutorHooks AgentEngine::build_directive_hooks() {
+    ToolExecutorHooks hooks;
+    hooks.process_directives = [](
+        LoopContext& ctx,
+        const std::vector<const Directive*>& dirs,
+        void* ud) -> DirectiveResult {
+        return static_cast<AgentEngine*>(ud)
+            ->directive_processor().process(ctx, dirs);
+    };
+    hooks.user_data = this;
+    return hooks;
+}
+
+// ── Tier resolution (v2.0.2) ────────────────────────────────
+
+/**
+ * @brief Store pre-resolved tier context info.
+ * @param name Tier name.
+ * @param info Context info.
+ * @internal
+ * @version 2.0.2
+ */
+void AgentEngine::set_tier_info(
+    const std::string& name,
+    const ChildContextInfo& info)
+{
+    tier_info_[name] = info;
+}
+
+/**
+ * @brief Store handoff rules.
+ * @param rules Source tier → valid targets.
+ * @internal
+ * @version 2.0.2
+ */
+void AgentEngine::set_handoff_rules(
+    const std::unordered_map<std::string,
+        std::vector<std::string>>& rules)
+{
+    handoff_rules_ = rules;
+    wire_internal_tier_resolution();
+}
+
+/**
+ * @brief Wire internal TierResolutionInterface from stored data.
+ * @internal
+ * @version 2.0.2
+ */
+ChildContextInfo AgentEngine::tri_resolve_tier(
+    const std::string& name, void* ud) {
+    auto* self = static_cast<AgentEngine*>(ud);
+    auto it = self->tier_info_.find(name);
+    ChildContextInfo info;
+    if (it == self->tier_info_.end()) {
+        info.valid = false;
+    } else {
+        info = it->second;
+    }
+    return info;
+}
+
+/**
+ * @brief Check if a tier exists in the tier info map.
+ * @param name Tier name.
+ * @param ud AgentEngine pointer.
+ * @return true if tier exists.
+ * @utility
+ * @version 2.0.2
+ */
+bool AgentEngine::tri_tier_exists(const std::string& name, void* ud) {
+    auto* self = static_cast<AgentEngine*>(ud);
+    return self->tier_info_.count(name) > 0;
+}
+
+/**
+ * @brief Get handoff targets for a tier.
+ * @param name Source tier name.
+ * @param ud AgentEngine pointer.
+ * @return List of target tier names.
+ * @utility
+ * @version 2.0.2
+ */
+std::vector<std::string> AgentEngine::tri_get_handoff_targets(
+    const std::string& name, void* ud) {
+    auto* self = static_cast<AgentEngine*>(ud);
+    auto it = self->handoff_rules_.find(name);
+    std::vector<std::string> result;
+    if (it != self->handoff_rules_.end()) { result = it->second; }
+    return result;
+}
+
+/**
+ * @brief Get a named parameter for a tier.
+ * @param name Tier name.
+ * @param param Parameter name.
+ * @param ud AgentEngine pointer.
+ * @return Parameter value string.
+ * @utility
+ * @version 2.0.2
+ */
+std::string AgentEngine::tri_get_tier_param(const std::string& name,
+    const std::string& param, void* ud) {
+    auto* self = static_cast<AgentEngine*>(ud);
+    auto it = self->tier_info_.find(name);
+    std::string result;
+    if (it != self->tier_info_.end() && param == "explicit_completion") {
+        result = it->second.explicit_completion ? "true" : "false";
+    }
+    return result;
+}
+
+/**
+ * @brief Wire internal tier resolution callbacks into the delegation manager.
+ * @utility
+ * @version 2.0.2
+ */
+void AgentEngine::wire_internal_tier_resolution() {
+    TierResolutionInterface tri;
+    tri.resolve_tier = &AgentEngine::tri_resolve_tier;
+    tri.tier_exists = &AgentEngine::tri_tier_exists;
+    tri.get_handoff_targets = &AgentEngine::tri_get_handoff_targets;
+    tri.get_tier_param = &AgentEngine::tri_get_tier_param;
+    tri.user_data = this;
+    set_tier_resolution(tri);
 }
 
 } // namespace entropic

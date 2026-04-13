@@ -51,6 +51,12 @@ set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 if(ENTROPIC_HAS_CUDA)
     set(GGML_CUDA ON CACHE BOOL "" FORCE)
 endif()
+# CUDA graphs: disabled by default — no benefit for autoregressive generation
+# with growing KV cache (graph invalidated every token). Enable for batch/fixed-shape workloads.
+if(NOT DEFINED ENTROPIC_CUDA_GRAPHS)
+    set(ENTROPIC_CUDA_GRAPHS OFF)
+endif()
+set(GGML_CUDA_GRAPHS ${ENTROPIC_CUDA_GRAPHS} CACHE BOOL "" FORCE)
 set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE_SAVED ${CMAKE_POSITION_INDEPENDENT_CODE})

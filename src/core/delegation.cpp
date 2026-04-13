@@ -86,7 +86,7 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -107,6 +107,7 @@ DelegationResult DelegationManager::execute_delegation(
     }
 
     auto child_ctx = build_child_context(parent_ctx, info, task);
+    child_ctx.locked_tier = target_tier;
 
     // Create per-delegation worktree
     std::optional<WorktreeInfo> wt_info;
@@ -162,7 +163,7 @@ static std::string pipeline_context(
  * @param task Task description.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 1.8.6
+ * @version 2.0.2
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -198,6 +199,7 @@ DelegationResult DelegationManager::execute_pipeline(
         }
 
         auto child_ctx = build_child_context(parent_ctx, info, stage_task);
+        child_ctx.locked_tier = stages[i];
 
         if (shared_wt && swap_dir_fn_ != nullptr) {
             ScopedWorktree scope(swap_dir_fn_, swap_dir_data_,

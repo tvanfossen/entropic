@@ -119,9 +119,13 @@ entropic_hook_callback_t = ctypes.CFUNCTYPE(
 )
 
 
-# ── Library Discovery ────────────────────────────────────
+## ── Library Discovery ────────────────────────────────────
 
 
+## @brief Find and load the entropic shared library.
+## @utility
+## @return Loaded ctypes.CDLL handle.
+## @version 1
 def _find_library() -> ctypes.CDLL:
     """Locate and load librentropic.so.
 
@@ -158,6 +162,10 @@ def _find_library() -> ctypes.CDLL:
 _lib: ctypes.CDLL | None = None
 
 
+## @brief Lazy library loader — defers ImportError until first use.
+## @utility
+## @return Loaded ctypes.CDLL handle.
+## @version 1
 def _get_lib() -> ctypes.CDLL:
     """Get the loaded library, loading lazily on first access.
 
@@ -170,9 +178,12 @@ def _get_lib() -> ctypes.CDLL:
     return _lib
 
 
-# ── Function Bindings ────────────────────────────────
+## ── Function Bindings ────────────────────────────────
 
 
+## @brief Set ctypes type signatures for all exported functions.
+## @utility
+## @version 1
 def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated
     """Configure argtypes and restype for all C API functions.
 
@@ -187,6 +198,9 @@ def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated
 
     lib.entropic_configure_from_file.restype = ctypes.c_int
     lib.entropic_configure_from_file.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+
+    lib.entropic_configure_dir.restype = ctypes.c_int
+    lib.entropic_configure_dir.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
 
     lib.entropic_destroy.restype = None
     lib.entropic_destroy.argtypes = [ctypes.c_void_p]
@@ -217,6 +231,15 @@ def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated
 
     lib.entropic_interrupt.restype = ctypes.c_int
     lib.entropic_interrupt.argtypes = [ctypes.c_void_p]
+
+    lib.entropic_context_clear.restype = ctypes.c_int
+    lib.entropic_context_clear.argtypes = [ctypes.c_void_p]
+
+    lib.entropic_context_get.restype = ctypes.c_int
+    lib.entropic_context_get.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+
+    lib.entropic_context_count.restype = ctypes.c_int
+    lib.entropic_context_count.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
 
     lib.entropic_register_mcp_server.restype = ctypes.c_int
     lib.entropic_register_mcp_server.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_char_p]
@@ -478,6 +501,9 @@ class EntropicError(Exception):
     @version 1
     """
 
+    ## @brief Initialize with error code and message.
+    ## @utility
+    ## @version 1
     def __init__(self, code: int, message: str):
         self.code = code
         self.message = message
@@ -488,6 +514,9 @@ class EntropicError(Exception):
         super().__init__(f"entropic error {code}: {message}")
 
 
+## @brief Convert non-OK error codes to EntropicError exceptions.
+## @utility
+## @version 1
 def _check_error(handle: ctypes.c_void_p, error_code: int) -> None:
     """Check an entropic_error_t return and raise on failure.
 
@@ -514,14 +543,24 @@ class _OwnedString:
     @version 1
     """
 
+    ## @brief Store pointer to engine-allocated string.
+    ## @utility
+    ## @version 1
     def __init__(self, ptr: ctypes.c_void_p):
         self._ptr = ptr
 
+    ## @brief Decode and return the C string.
+    ## @utility
+    ## @return Decoded string or empty string if null.
+    ## @version 1
     def __str__(self) -> str:
         if self._ptr:
             return ctypes.cast(self._ptr, ctypes.c_char_p).value.decode()
         return ""
 
+    ## @brief Free the engine-allocated string.
+    ## @utility
+    ## @version 1
     def __del__(self) -> None:
         if self._ptr:
             lib = _get_lib()
@@ -551,6 +590,9 @@ class EntropicEngine:
     @version 1
     """
 
+    ## @brief Create engine handle and apply configuration.
+    ## @utility
+    ## @version 1
     def __init__(
         self,
         config_path: str | None = None,
@@ -594,6 +636,10 @@ class EntropicEngine:
 
         self._lib = lib
 
+    ## @brief Execute entropic_run and return parsed result.
+    ## @utility
+    ## @return GenerationResult from the engine.
+    ## @version 1
     def run(self, prompt: str) -> GenerationResult:
         """Run the agentic loop synchronously.
 
@@ -616,6 +662,9 @@ class EntropicEngine:
             if result_ptr.value:
                 self._lib.entropic_free(result_ptr)
 
+    ## @brief Execute entropic_run_streaming with Python callback.
+    ## @utility
+    ## @version 1
     def run_streaming(
         self,
         prompt: str,
@@ -629,6 +678,9 @@ class EntropicEngine:
         """
         cancel_flag = ctypes.c_int(0)
 
+        ## @brief Background thread to bridge Event to C cancel_flag.
+        ## @callback
+        ## @version 1
         def _cancel_monitor() -> None:
             """Monitor cancel event and set flag.
 
@@ -643,6 +695,9 @@ class EntropicEngine:
             monitor = threading.Thread(target=_cancel_monitor, daemon=True)
             monitor.start()
 
+        ## @brief Bridge ctypes callback to user-provided on_token.
+        ## @callback
+        ## @version 1
         @_StreamCallbackType
         def _on_token_cb(
             token: bytes,
@@ -668,6 +723,9 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Signal the engine to abort current run.
+    ## @utility
+    ## @version 1
     def interrupt(self) -> None:
         """Interrupt a running generation.
 
@@ -679,6 +737,9 @@ class EntropicEngine:
             self._lib.entropic_interrupt(self._handle),
         )
 
+    ## @brief Set active identity for subsequent runs.
+    ## @utility
+    ## @version 1
     def load_identity(self, name: str) -> None:
         """Load an identity by name.
 
@@ -693,6 +754,10 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Retrieve active identity JSON from C engine.
+    ## @utility
+    ## @return Identity as a dict.
+    ## @version 1
     def get_identity(self) -> dict[str, Any]:
         """Get the current active identity as a dict.
 
@@ -713,6 +778,9 @@ class EntropicEngine:
             if result_ptr.value:
                 self._lib.entropic_free(result_ptr)
 
+    ## @brief Configure engine from JSON after creation.
+    ## @utility
+    ## @version 1
     def configure(self, config_json: str) -> None:
         """Apply configuration from a JSON string.
 
@@ -727,6 +795,9 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Configure engine from file after creation.
+    ## @utility
+    ## @version 1
     def configure_from_file(self, config_path: str) -> None:
         """Apply configuration from a YAML/JSON file.
 
@@ -741,6 +812,88 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Layered config resolution from project directory.
+    ## @utility
+    ## @version 1
+    def configure_dir(self, project_dir: str) -> None:
+        """Configure using layered resolution from a project directory.
+
+        Loads: bundled default -> ~/.entropic/config.yaml ->
+        {project_dir}/config.local.yaml -> env overrides.
+
+        @brief Layered config resolution from project directory.
+        @version 1
+        """
+        _check_error(
+            self._handle,
+            self._lib.entropic_configure_dir(
+                self._handle,
+                project_dir.encode(),
+            ),
+        )
+
+    ## @brief Reset conversation to empty.
+    ## @utility
+    ## @version 1
+    def context_clear(self) -> None:
+        """Clear conversation history, starting a new session.
+
+        @brief Reset conversation to empty.
+        @version 1
+        """
+        _check_error(
+            self._handle,
+            self._lib.entropic_context_clear(self._handle),
+        )
+
+    ## @brief Return conversation as list of message dicts.
+    ## @utility
+    ## @return List of {role, content} dicts.
+    ## @version 1
+    def context_get(self) -> list[dict[str, Any]]:
+        """Get the current conversation history.
+
+        @brief Return conversation as list of {role, content} dicts.
+        @version 1
+        """
+        result_ptr = ctypes.c_void_p()
+        _check_error(
+            self._handle,
+            self._lib.entropic_context_get(
+                self._handle,
+                ctypes.byref(result_ptr),
+            ),
+        )
+        try:
+            raw = ctypes.cast(result_ptr, ctypes.c_char_p).value
+            return json.loads(raw.decode() if raw else "[]")
+        finally:
+            if result_ptr.value:
+                self._lib.entropic_free(result_ptr)
+
+    ## @brief Return message count.
+    ## @utility
+    ## @return Number of messages in conversation.
+    ## @version 1
+    def context_count(self) -> int:
+        """Get the number of messages in the conversation.
+
+        @brief Return message count.
+        @version 1
+        """
+        count = ctypes.c_size_t(0)
+        _check_error(
+            self._handle,
+            self._lib.entropic_context_count(
+                self._handle,
+                ctypes.byref(count),
+            ),
+        )
+        return count.value
+
+    ## @brief Initialize persistent storage for conversations.
+    ## @utility
+    ## @version 1
     def storage_open(self, db_path: str) -> None:
         """Open SQLite storage backend.
 
@@ -755,6 +908,9 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Flush and close storage.
+    ## @utility
+    ## @version 1
     def storage_close(self) -> None:
         """Close the storage backend.
 
@@ -766,6 +922,9 @@ class EntropicEngine:
             self._lib.entropic_storage_close(self._handle),
         )
 
+    ## @brief Connect and register an external MCP server at runtime.
+    ## @utility
+    ## @version 1
     def register_mcp_server(self, name: str, config_json: str) -> None:
         """Register an external MCP server.
 
@@ -781,6 +940,9 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Disconnect and remove a registered MCP server.
+    ## @utility
+    ## @version 1
     def deregister_mcp_server(self, name: str) -> None:
         """Deregister an external MCP server.
 
@@ -795,6 +957,10 @@ class EntropicEngine:
             ),
         )
 
+    ## @brief Get server info JSON from C engine.
+    ## @utility
+    ## @return Dict of server names to status info.
+    ## @version 1
     def list_mcp_servers(self) -> dict[str, Any]:
         """List all MCP servers with status.
 
@@ -809,6 +975,10 @@ class EntropicEngine:
         finally:
             self._lib.entropic_free(result_ptr)
 
+    ## @brief Return semver string from C engine.
+    ## @utility
+    ## @return Version string.
+    ## @version 1
     def version(self) -> str:
         """Get the library version string.
 
@@ -817,6 +987,10 @@ class EntropicEngine:
         """
         return self._lib.entropic_version().decode()
 
+    ## @brief Return API version for compatibility checks.
+    ## @utility
+    ## @return Integer API version.
+    ## @version 1
     def api_version(self) -> int:
         """Get the C API version integer.
 
@@ -825,6 +999,9 @@ class EntropicEngine:
         """
         return self._lib.entropic_api_version()
 
+    ## @brief Release all engine resources. Handle becomes invalid.
+    ## @utility
+    ## @version 1
     def destroy(self) -> None:
         """Destroy the engine handle and free resources.
 
@@ -835,6 +1012,9 @@ class EntropicEngine:
             self._lib.entropic_destroy(self._handle)
             self._handle = None
 
+    ## @brief Release handle on garbage collection.
+    ## @utility
+    ## @version 1
     def __del__(self) -> None:
         """Destructor — ensures handle is freed.
 
@@ -843,6 +1023,10 @@ class EntropicEngine:
         """
         self.destroy()
 
+    ## @brief Return self for with-statement usage.
+    ## @utility
+    ## @return Self.
+    ## @version 1
     def __enter__(self) -> EntropicEngine:
         """Context manager entry.
 
@@ -851,6 +1035,9 @@ class EntropicEngine:
         """
         return self
 
+    ## @brief Clean up engine on context exit.
+    ## @utility
+    ## @version 1
     def __exit__(self, *args: object) -> None:
         """Context manager exit — destroys handle.
 
@@ -876,6 +1063,10 @@ class Message:
     metadata: dict[str, Any] = field(default_factory=dict)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
+    ## @brief Construct Message from deserialized JSON.
+    ## @utility
+    ## @return New Message instance.
+    ## @version 1
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Message:
         """Create from JSON dict.
@@ -902,6 +1093,10 @@ class ToolCall:
     name: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
 
+    ## @brief Construct ToolCall from deserialized JSON.
+    ## @utility
+    ## @return New ToolCall instance.
+    ## @version 1
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ToolCall:
         """Create from JSON dict.
@@ -932,6 +1127,10 @@ class GenerationResult:
     tier: str = ""
     raw_json: dict[str, Any] = field(default_factory=dict)
 
+    ## @brief Deserialize JSON from entropic_run into GenerationResult.
+    ## @utility
+    ## @return New GenerationResult instance.
+    ## @version 1
     @classmethod
     def from_json(cls, json_str: str) -> GenerationResult:
         """Parse a JSON result string from the C engine.

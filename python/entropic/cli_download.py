@@ -18,11 +18,18 @@ import yaml
 _MODELS_FILE = Path(__file__).parent / "data" / "bundled_models.yaml"
 
 
+## @brief Load model registry from bundled YAML.
+## @utility
+## @return Dict mapping model keys to their config dicts.
+## @version 1
 def _load_models() -> dict[str, dict[str, Any]]:
     """Load model registry from bundled YAML."""
     return yaml.safe_load(_MODELS_FILE.read_text())
 
 
+## @brief Download one or all bundled models to a local directory.
+## @utility
+## @version 2
 def download_models(
     model: str,
     output_dir: Path,
@@ -62,6 +69,9 @@ def download_models(
             click.echo(f"Failed to download {model_key}: {e}", err=True)
 
 
+## @brief Stream a URL to disk with percentage updates on stderr.
+## @utility
+## @version 2
 def download_file(url: str, output_path: Path) -> None:
     """Download file with plain-text progress.
 
@@ -90,6 +100,10 @@ def download_file(url: str, output_path: Path) -> None:
             sys.stderr.flush()
 
 
+## @brief Compare file SHA-256 against expected digest.
+## @utility
+## @return True if match or no expected hash, False otherwise.
+## @version 1
 def verify_file(file_path: Path, expected_hash: str | None) -> bool:
     """Verify file integrity using SHA256.
 
@@ -107,6 +121,9 @@ def verify_file(file_path: Path, expected_hash: str | None) -> bool:
     return sha256_hash.hexdigest() == expected_hash
 
 
+## @brief CLI entry point for standalone model download.
+## @utility
+## @version 1
 @click.command()
 @click.argument("model", type=click.STRING)
 @click.option(

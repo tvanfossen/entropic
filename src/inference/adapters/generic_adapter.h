@@ -23,6 +23,8 @@ public:
 
     /**
      * @brief Chat format: ChatML.
+     * @return The string "chatml".
+     * @utility
      * @version 1.8.2
      */
     std::string chat_format() const override { return "chatml"; }

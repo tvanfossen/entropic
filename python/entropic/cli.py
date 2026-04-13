@@ -16,6 +16,10 @@ import click
 from entropic import EntropicEngine
 
 
+## @brief Check standard config locations and return first match.
+## @utility
+## @return Config path string or None.
+## @version 1
 def _resolve_config_path() -> str | None:
     """Find the first available config file.
 
@@ -32,6 +36,10 @@ def _resolve_config_path() -> str | None:
     return None
 
 
+## @brief Resolve config path and instantiate C engine.
+## @utility
+## @return Configured EntropicEngine instance.
+## @version 1
 def _create_engine(config_override: str | None = None) -> EntropicEngine:
     """Create an EntropicEngine with config resolution.
 
@@ -42,6 +50,9 @@ def _create_engine(config_override: str | None = None) -> EntropicEngine:
     return EntropicEngine(config_path=config_path)
 
 
+## @brief Root CLI group: store config path for subcommands.
+## @utility
+## @version 1
 @click.group(invoke_without_command=True)
 @click.version_option(prog_name="entropic")
 @click.option(
@@ -68,6 +79,9 @@ def main(ctx: click.Context, config: Path | None) -> None:
         click.echo(ctx.get_help())
 
 
+## @brief Single-turn inference via EntropicEngine.
+## @utility
+## @version 1
 @main.command()
 @click.argument("message", required=False)
 @click.option("--no-stream", is_flag=True, help="Disable streaming output")
@@ -101,6 +115,9 @@ def ask(ctx: click.Context, message: str | None, no_stream: bool) -> None:
             sys.stdout.flush()
 
 
+## @brief Print engine version and model state.
+## @utility
+## @version 1
 @main.command()
 @click.pass_context
 def status(ctx: click.Context) -> None:
@@ -117,6 +134,9 @@ def status(ctx: click.Context) -> None:
         click.echo(f"  API:       v{engine.api_version()}")
 
 
+## @brief Create .entropic/ directory with default config and context file.
+## @utility
+## @version 1
 @main.command()
 def init() -> None:
     """Initialize Entropic in the current directory.
@@ -175,6 +195,9 @@ This file provides context to Entropic. Edit it to describe your project.
     click.echo(f"  - {entropic_dir}/ENTROPIC.md")
 
 
+## @brief Delegate to cli_download module to fetch model files.
+## @utility
+## @version 1
 @main.command()
 @click.argument("model", type=str)
 @click.option(
@@ -196,6 +219,9 @@ def download(model: str, output_dir: Path, force: bool) -> None:
     download_models(model, output_dir, force)
 
 
+## @brief Route benchmark commands through EntropicEngine.
+## @utility
+## @version 1
 @main.command()
 @click.argument("subcommand", type=click.Choice(["run"]), default="run")
 @click.pass_context

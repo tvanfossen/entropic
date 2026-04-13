@@ -262,12 +262,13 @@ static std::string parse_external_mcp_config(
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.0.2
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
     MCPConfig& config)
 {
+    extract(node, "enable_entropic", config.enable_entropic);
     extract(node, "enable_filesystem", config.enable_filesystem);
     extract(node, "enable_bash", config.enable_bash);
     extract(node, "enable_git", config.enable_git);
@@ -349,7 +350,7 @@ static std::string parse_prompt_cache_config(
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 1.8.3
+ * @version 2.0.2
  */
 static void parse_optional_sections(
     ryml::ConstNodeRef root, ParsedConfig& config)
@@ -372,6 +373,8 @@ static void parse_optional_sections(
     extract(root, "inject_model_context", config.inject_model_context);
     extract(root, "vram_reserve_mb", config.vram_reserve_mb);
     extract_path(root, "config_dir", config.config_dir);
+    extract_path(root, "log_dir", config.log_dir);
+    extract(root, "ggml_logging", config.ggml_logging);
 
     extract_tri_state_path(root, "constitution",
                            config.constitution, config.constitution_disabled);
@@ -550,6 +553,55 @@ std::string load_config_from_file(
     for (const auto& w : warnings) {
         s_log->warn("{}", w);
     }
+    return err;
+}
+
+/**
+ * @brief Load config with consumer defaults + global + project layers.
+ *
+ * @param project_dir Project config directory.
+ * @param consumer_defaults Path to consumer defaults YAML.
+ * @param registry Bundled models registry.
+ * @param config Output config.
+ * @return Empty string on success.
+ * @internal
+ * @version 2.0.1
+ */
+std::string load_layered(
+    const std::filesystem::path& project_dir,
+    const std::filesystem::path& consumer_defaults,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    // Layer 0: consumer-specific defaults
+    if (!consumer_defaults.empty()
+        && std::filesystem::exists(consumer_defaults)) {
+        s_log->info("Loading consumer defaults: {}",
+                     consumer_defaults.string());
+        auto err = parse_config_file(consumer_defaults, registry, config);
+        if (!err.empty()) {
+            s_log->warn("Consumer defaults failed: {}", err);
+        }
+    }
+
+    // Set log_dir to project_dir by default
+    if (!project_dir.empty() && config.log_dir.empty()) {
+        config.log_dir = project_dir;
+    }
+
+    // Layers 1-2: global + project local
+    const char* home = getenv("HOME");
+    std::filesystem::path global;
+    if (home) {
+        global = std::filesystem::path(home)
+            / ".entropic" / "config.yaml";
+    }
+    std::filesystem::path project;
+    if (!project_dir.empty()) {
+        project = project_dir / "config.local.yaml";
+    }
+
+    auto err = load_config(global, project, registry, config);
     return err;
 }
 

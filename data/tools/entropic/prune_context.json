@@ -1,0 +1,13 @@
+{
+  "name": "prune_context",
+  "description": "Remove old tool results from context to free space. Use when context is filling up and you need room for more file reads or planning. Old tool results are replaced with brief stubs.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "keep_recent": {
+        "type": "integer",
+        "description": "Number of recent tool results to keep intact (default: 2)"
+      }
+    }
+  }
+}

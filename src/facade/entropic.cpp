@@ -13,15 +13,51 @@
 
 #include <entropic/config/loader.h>
 #include <entropic/entropic.h>
+#include <entropic/prompts/manager.h>
 #include <entropic/types/logging.h>
 #include "llama_cpp_backend.h"
-#include <nlohmann/json.hpp>
+#include <entropic/inference/interface_factory.h>
+#include <entropic/interfaces/i_inference_backend.h>
+#include "json_serializers.h"
 #include <cstdlib>
 #include <cstring>
 #include <new>
 #include <stdexcept>
+#include <string>
 
 static auto s_log = entropic::log::get("facade");
+
+/**
+ * @brief Allocate a C string copy via the engine allocator.
+ *
+ * Uses entropic_alloc so the caller can free with entropic_free().
+ * Returns NULL on allocation failure (OOM).
+ *
+ * @param src Source string (null-terminated).
+ * @return Heap-allocated copy, or NULL on OOM.
+ * @utility
+ * @version 2.0.1
+ */
+static char* alloc_cstr(const char* src) {
+    if (!src) { return nullptr; }
+    size_t len = std::strlen(src) + 1;
+    auto* dst = static_cast<char*>(entropic_alloc(len));
+    if (dst) { std::memcpy(dst, src, len); }
+    return dst;
+}
+
+/**
+ * @brief Allocate a C string copy from std::string.
+ * @param src Source string.
+ * @return Heap-allocated copy, or NULL on OOM.
+ * @utility
+ * @version 2.0.1
+ */
+static char* alloc_cstr(const std::string& src) {
+    return alloc_cstr(src.c_str());
+}
+
+/* setup_ggml_logging moved to ModelOrchestrator::initialize() — Step 7 */
 
 /**
  * @brief Check handle prerequisites for orchestrator APIs.
@@ -68,24 +104,7 @@ static entropic_error_t check_identity(entropic_handle_t h) {
     return ENTROPIC_OK;
 }
 
-/**
- * @brief Find the tier whose config model path matches.
- * @param h Engine handle with orchestrator + config.
- * @param model_path Model file path to match.
- * @return Tier name, or empty string if not found.
- * @internal
- * @version 2.0.0
- */
-static std::string find_tier_by_model_path(
-    entropic_handle_t h, const std::string& model_path)
-{
-    for (const auto& [name, tier] : h->config.models.tiers) {
-        if (tier.path.string() == model_path) {
-            return name;
-        }
-    }
-    return "";
-}
+/* find_tier_by_model_path moved to ModelsConfig::find_tier_by_path() — v2.0.1 */
 
 /**
  * @brief Resolve tier name to an ACTIVE backend, or throw.
@@ -122,13 +141,14 @@ extern "C" {
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 entropic_error_t entropic_create(entropic_handle_t* handle) {
     if (handle == nullptr) {
         return ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     entropic::log::init(spdlog::level::info);
+    entropic_inference_log_silence();  // silent until configure enables
     s_log->info("entropic_create() — v{}", CONFIG_ENTROPIC_VERSION_STRING);
 
     auto* engine = new (std::nothrow) entropic_engine();
@@ -149,15 +169,79 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
  * @internal
  * @version 2.0.0
  */
-static entropic_error_t configure_common(entropic_handle_t h) {
-    auto data_dir = entropic::config::resolve_data_dir(h->config);
-    auto models_yaml = data_dir / "bundled_models.yaml";
+/**
+ * @brief Pre-load bundled models from default locations.
+ *
+ * Tries compile-time and source-tree data dirs before config
+ * is parsed, so registry keys resolve during config loading.
+ *
+ * @param h Engine handle.
+ * @internal
+ * @version 2.0.1
+ */
+/* preload_bundled_models moved to BundledModels::auto_discover_and_load() — Step 6 */
 
-    auto err = h->bundled_models.load(models_yaml);
-    if (!err.empty()) {
-        s_log->warn("bundled models not loaded: {}", err);
+/* InferenceInterface wiring moved to inference/interface_factory.cpp — Step 3 */
+
+/* InferenceInterface C-wrappers + factory moved to inference/interface_factory.cpp — Step 3 */
+
+/* facade_process_directives → engine->build_directive_hooks() — v2.0.2 */
+/* facade_resolve_tier/tier_exists/handoff/param → engine->set_tier_info() — v2.0.2 */
+/* wire_engine_interfaces → inline in configure_common — v2.0.2 */
+
+// ── configure_common ───────────────────────────────────────
+
+/**
+ * @brief Initialize persistence: storage + session logger.
+ * @param h Engine handle with config.log_dir set.
+ * @internal
+ * @version 2.0.1
+ */
+static void init_persistence(entropic_handle_t h) {
+    if (h->config.log_dir.empty()) { return; }
+    auto db_path = h->config.log_dir / "entropic.db";
+    h->storage = std::make_unique<entropic::SqliteStorageBackend>(db_path);
+    if (h->storage->initialize()) {
+        s_log->info("storage: {}", db_path.string());
+    } else {
+        s_log->warn("storage init failed, continuing without persistence");
+        h->storage.reset();
     }
+    h->session_logger = std::make_unique<entropic::SessionLogger>(
+        h->config.log_dir);
+}
 
+/**
+ * @brief Wire the ToolExecutor and attach it to the engine.
+ * @param h Engine handle with engine + server_manager constructed.
+ * @internal
+ * @version 2.0.3
+ */
+static void wire_tool_executor(entropic_handle_t h) {
+    h->tool_executor = std::make_unique<entropic::ToolExecutor>(
+        *h->server_manager,
+        h->engine->loop_config(),
+        h->engine->callbacks(),
+        h->engine->build_directive_hooks());
+    entropic::ToolExecutionInterface tei;
+    tei.process_tool_calls = [](entropic::LoopContext& ctx,
+        const std::vector<entropic::ToolCall>& calls,
+        void* ud) -> std::vector<entropic::Message> {
+        return static_cast<entropic::ToolExecutor*>(ud)
+            ->process_tool_calls(ctx, calls);
+    };
+    tei.user_data = h->tool_executor.get();
+    h->engine->set_tool_executor(tei);
+}
+
+/**
+ * @brief Post-parse config setup: subsystem construction + wiring.
+ * @param h Engine handle with config populated.
+ * @return ENTROPIC_OK or error code.
+ * @internal
+ * @version 2.0.3
+ */
+static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
     if (!h->orchestrator->initialize(h->config)) {
         h->last_error = "orchestrator initialization failed";
@@ -165,14 +249,51 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         return ENTROPIC_ERROR_LOAD_FAILED;
     }
 
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
     h->identity_manager = std::make_unique<entropic::IdentityManager>(
         entropic::IdentityManagerConfig{});
     h->server_manager = std::make_unique<entropic::ServerManager>(
         h->config.permissions, std::filesystem::current_path());
+    {
+        std::vector<std::string> tier_names;
+        for (const auto& [name, _] : h->config.models.tiers) {
+            tier_names.push_back(name);
+        }
+        h->server_manager->init_builtins(
+            h->config.mcp, tier_names, data_dir.string());
+    }
+
+    auto iface = entropic::build_orchestrator_interface(
+        h->orchestrator.get(), h->config.models.default_tier);
+    entropic::LoopConfig lc;
+    lc.stream_output = true;
+    lc.auto_approve_tools = h->config.permissions.auto_approve;
+    h->engine = std::make_unique<entropic::AgentEngine>(
+        iface, lc, h->config.compaction);
+
+    wire_tool_executor(h);
+
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        entropic::ChildContextInfo info;
+        info.valid = true;
+        info.system_prompt = entropic::prompts::resolve_tier_identity(
+            tier, name, data_dir);
+        info.explicit_completion = !tier.auto_chain.has_value();
+        h->engine->set_tier_info(name, info);
+    }
+    h->engine->set_handoff_rules(h->config.routing.handoff_rules);
+
+    init_persistence(h);
+
+    h->engine->set_system_prompt(
+        entropic::prompts::assemble(h->config, data_dir));
+    if (h->session_logger) {
+        h->engine->set_session_logger(h->session_logger.get());
+    }
 
     h->configured.store(true);
-    s_log->info("configure complete — data_dir={}", data_dir.string());
+    s_log->info("configure complete");
     return ENTROPIC_OK;
 }
 
@@ -181,7 +302,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 entropic_error_t entropic_configure(
     entropic_handle_t handle,
@@ -192,6 +313,8 @@ entropic_error_t entropic_configure(
     }
 
     std::lock_guard lock(handle->api_mutex);
+
+    handle->bundled_models.auto_discover_and_load();
 
     auto err = entropic::config::load_config_from_string(
         config_json, handle->bundled_models, handle->config);
@@ -209,7 +332,7 @@ entropic_error_t entropic_configure(
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 entropic_error_t entropic_configure_from_file(
     entropic_handle_t handle,
@@ -221,11 +344,53 @@ entropic_error_t entropic_configure_from_file(
 
     std::lock_guard lock(handle->api_mutex);
 
+    handle->bundled_models.auto_discover_and_load();
+
     auto err = entropic::config::load_config_from_file(
         config_path, handle->bundled_models, handle->config);
     if (!err.empty()) {
         handle->last_error = err;
         s_log->error("configure_from_file: {}", err);
+        return ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+
+    return configure_common(handle);
+}
+
+/**
+ * @brief Configure using layered resolution (project dir).
+ *
+ * Loads bundled default → global → project config.local.yaml → env.
+ * Sets config.log_dir to project_dir if not already set.
+ *
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.1
+ */
+entropic_error_t entropic_configure_dir(
+    entropic_handle_t handle,
+    const char* project_dir) {
+    if (!handle) {
+        return ENTROPIC_ERROR_INVALID_HANDLE;
+    }
+
+    std::lock_guard lock(handle->api_mutex);
+
+    // Session logging FIRST — capture everything from preload through init.
+    if (project_dir && project_dir[0] != '\0') {
+        entropic::log::setup_session(project_dir);
+    }
+
+    handle->bundled_models.auto_discover_and_load();
+
+    std::filesystem::path proj_dir = (project_dir && project_dir[0] != '\0')
+        ? project_dir : "";
+    auto err = entropic::config::load_layered(
+        proj_dir, "default_config.yaml",
+        handle->bundled_models, handle->config);
+    if (!err.empty()) {
+        handle->last_error = err;
+        s_log->error("configure_dir: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
     }
 
@@ -240,13 +405,15 @@ entropic_error_t entropic_configure_from_file(
  * handle is invalid.
  *
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
         return;
     }
     s_log->info("entropic_destroy()");
+
+    entropic_inference_log_silence();
 
     // Phase 1+ subsystem teardown will go here in reverse order.
     // Phase 0: struct itself owns hook_registry by value.
@@ -295,11 +462,20 @@ void entropic_free(void* ptr) {
 }
 
 /**
- * @brief Single-turn blocking generation.
+ * @brief Single-turn blocking agentic run.
  *
- * @return ENTROPIC_OK on success.
- * @internal
- * @version 2.0.0
+ * Appends the user input to the conversation, runs the engine loop
+ * synchronously to completion (or interrupt/error), and returns the
+ * serialized result.
+ *
+ * @param handle Engine handle returned by entropic_create.
+ * @param input Null-terminated user input string.
+ * @param result_json Out-parameter receiving a newly allocated JSON
+ *                    result string (caller owns, free with
+ *                    entropic_free).
+ * @return ENTROPIC_OK on success, error code otherwise.
+ * @req REQ-API-002
+ * @version 2.0.2
  */
 entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -312,15 +488,9 @@ entropic_error_t entropic_run(
             : ENTROPIC_ERROR_INVALID_STATE;
     }
     try {
-        entropic::Message msg;
-        msg.role = "user";
-        msg.content = input;
-        auto result = handle->engine->run({msg});
-        nlohmann::json j = nlohmann::json::array();
-        for (const auto& m : result) {
-            j.push_back({{"role", m.role}, {"content", m.content}});
-        }
-        *result_json = strdup(j.dump().c_str());
+        auto result = handle->engine->run_turn(input);
+        *result_json = alloc_cstr(
+            facade_json::serialize_messages(result));
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
@@ -329,12 +499,21 @@ entropic_error_t entropic_run(
     }
 }
 
+/* StreamBridge + think filter moved to inference/stream_think_filter.cpp — Step 4 */
+
+/* StreamCtx + stream_chunk_cb → engine->run_streaming() — v2.0.2 */
+
 /**
- * @brief Streaming generation with token callback.
+ * @brief Streaming generation — delegates entirely to engine.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param input User message to generate a response for.
+ * @param on_token Callback invoked for each generated token.
+ * @param user_data Opaque pointer passed back to the callback.
+ * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.3
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -343,21 +522,13 @@ entropic_error_t entropic_run_streaming(
     void* user_data,
     int* cancel_flag) {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !input || !on_token) {
+    if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::atomic<bool> cancel{false};
-        auto token_cb = [&](std::string_view tok) {
-            on_token(tok.data(), tok.size(), user_data);
-            if (cancel_flag && *cancel_flag) { cancel.store(true); }
-        };
-        entropic::Message msg;
-        msg.role = "user";
-        msg.content = input;
-        auto result = handle->orchestrator->generate_streaming(
-            {msg}, entropic::GenerationParams{}, token_cb, cancel);
-        return ENTROPIC_OK;
+        int code = handle->engine->run_streaming(
+            input, on_token, user_data, cancel_flag);
+        return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_streaming: {}", handle->last_error);
@@ -368,6 +539,7 @@ entropic_error_t entropic_run_streaming(
 /**
  * @brief Interrupt a running generation (thread-safe).
  *
+ * @param handle Engine handle returned by entropic_create.
  * @return ENTROPIC_OK if interrupted.
  * @internal
  * @version 2.0.0
@@ -376,6 +548,56 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->engine) { return ENTROPIC_ERROR_INVALID_STATE; }
     handle->engine->interrupt();
+    return ENTROPIC_OK;
+}
+
+// ── Conversation Context (v2.0.1) ────────────────────────────
+
+/**
+ * @brief Clear conversation history.
+ * @param handle Engine handle returned by entropic_create.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.1
+ */
+entropic_error_t entropic_context_clear(entropic_handle_t handle) {
+    if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    std::lock_guard lock(handle->api_mutex);
+    handle->engine->clear_conversation();
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Get conversation as JSON array.
+ * @param handle Engine handle returned by entropic_create.
+ * @param messages_json Out-param: newly allocated JSON string (caller owns; free with entropic_free).
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.1
+ */
+entropic_error_t entropic_context_get(
+    entropic_handle_t handle, char** messages_json) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!messages_json) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    std::lock_guard lock(handle->api_mutex);
+    *messages_json = alloc_cstr(
+        facade_json::serialize_messages(handle->engine->get_messages()));
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Get conversation message count.
+ * @param handle Engine handle returned by entropic_create.
+ * @param count Out-param: receives the token count.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.1
+ */
+entropic_error_t entropic_context_count(
+    entropic_handle_t handle, size_t* count) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!count) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    *count = handle->engine->message_count();
     return ENTROPIC_OK;
 }
 
@@ -391,7 +613,7 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
  *
  * @return ENTROPIC_OK on success, error code on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 entropic_error_t entropic_adapter_load(
     entropic_handle_t handle,
@@ -406,7 +628,7 @@ entropic_error_t entropic_adapter_load(
     }
     try {
         std::lock_guard lock(handle->api_mutex);
-        auto tier = find_tier_by_model_path(handle, base_model_path);
+        auto tier = handle->config.models.find_tier_by_path(base_model_path);
         if (tier.empty()) {
             throw std::runtime_error("no tier for model: "
                 + std::string(base_model_path));
@@ -535,7 +757,7 @@ int entropic_adapter_state(
  *
  * @return JSON string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_adapter_info(
     entropic_handle_t handle,
@@ -547,15 +769,8 @@ char* entropic_adapter_info(
     }
     try {
         auto ai = handle->orchestrator->adapter_manager().info(adapter_name);
-        nlohmann::json j;
-        j["name"] = ai.name;
-        j["state"] = static_cast<int>(ai.state);
-        j["scale"] = ai.scale;
-        j["ram_bytes"] = ai.ram_bytes;
-        j["path"] = ai.path.string();
-        j["tier_name"] = ai.tier_name;
-        j["base_model_path"] = ai.base_model_path;
-        return strdup(j.dump().c_str());
+        return alloc_cstr(
+            facade_json::serialize_adapter_info(ai).c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("adapter_info: {}", handle->last_error);
@@ -571,7 +786,7 @@ char* entropic_adapter_info(
  *
  * @return JSON array string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_adapter_list(entropic_handle_t handle)
 {
@@ -580,14 +795,8 @@ char* entropic_adapter_list(entropic_handle_t handle)
     }
     try {
         auto adapters = handle->orchestrator->adapter_manager().list_adapters();
-        nlohmann::json arr = nlohmann::json::array();
-        for (const auto& a : adapters) {
-            arr.push_back({{"name", a.name},
-                           {"state", static_cast<int>(a.state)},
-                           {"scale", a.scale},
-                           {"tier_name", a.tier_name}});
-        }
-        return strdup(arr.dump().c_str());
+        return alloc_cstr(
+            facade_json::serialize_adapter_list(adapters).c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("adapter_list: {}", handle->last_error);
@@ -703,7 +912,7 @@ entropic_error_t entropic_grammar_deregister(
  *
  * @return GBNF string (caller frees), or NULL if not found.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_grammar_get(
     entropic_handle_t handle,
@@ -715,7 +924,7 @@ char* entropic_grammar_get(
     }
     try {
         auto content = handle->orchestrator->grammar_registry().get(key);
-        return content.empty() ? nullptr : strdup(content.c_str());
+        return content.empty() ? nullptr : alloc_cstr(content.c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("grammar_get: {}", handle->last_error);
@@ -732,15 +941,15 @@ char* entropic_grammar_get(
  * @return NULL if valid; error description string (caller frees) if
  *         invalid.
  * @utility
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_grammar_validate(const char* gbnf_content) {
-    if (!gbnf_content) { return strdup("null input"); }
+    if (!gbnf_content) { return alloc_cstr("null input"); }
     try {
         auto err = entropic::GrammarRegistry::validate(gbnf_content);
-        return err.empty() ? nullptr : strdup(err.c_str());
+        return err.empty() ? nullptr : alloc_cstr(err.c_str());
     } catch (const std::exception& e) {
-        return strdup(e.what());
+        return alloc_cstr(e.what());
     }
 }
 
@@ -753,7 +962,7 @@ char* entropic_grammar_validate(const char* gbnf_content) {
  *
  * @return JSON array string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_grammar_list(entropic_handle_t handle)
 {
@@ -769,7 +978,7 @@ char* entropic_grammar_list(entropic_handle_t handle)
                            {"validated", e.validated},
                            {"error", e.error}});
         }
-        return strdup(arr.dump().c_str());
+        return alloc_cstr(arr.dump().c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("grammar_list: {}", handle->last_error);
@@ -861,7 +1070,7 @@ entropic_error_t entropic_profile_deregister(
  *
  * @return JSON string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_profile_get(
     entropic_handle_t handle,
@@ -879,7 +1088,7 @@ char* entropic_profile_get(
         j["n_threads"] = p.n_threads;
         j["n_threads_batch"] = p.n_threads_batch;
         j["description"] = p.description;
-        return strdup(j.dump().c_str());
+        return alloc_cstr(j.dump().c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("profile_get: {}", handle->last_error);
@@ -895,7 +1104,7 @@ char* entropic_profile_get(
  *
  * @return JSON array string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_profile_list(entropic_handle_t handle)
 {
@@ -905,7 +1114,7 @@ char* entropic_profile_list(entropic_handle_t handle)
     try {
         auto names = handle->orchestrator->profile_registry().list();
         nlohmann::json arr = nlohmann::json(names);
-        return strdup(arr.dump().c_str());
+        return alloc_cstr(arr.dump().c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("profile_list: {}", handle->last_error);
@@ -950,6 +1159,8 @@ double entropic_throughput_tok_per_sec(
  * Clears all recorded samples. model_path is accepted for API
  * compatibility but the orchestrator tracks a single global throughput.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param model_path Path or registry key identifying the model whose throughput should be reset.
  * @internal
  * @version 2.0.0
  */
@@ -1038,7 +1249,7 @@ int entropic_check_mcp_key(
  *
  * @return JSON array string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_list_mcp_keys(
     entropic_handle_t handle,
@@ -1055,7 +1266,7 @@ char* entropic_list_mcp_keys(
             arr.push_back({{"pattern", k.tool_pattern},
                            {"level", static_cast<int>(k.level)}});
         }
-        return strdup(arr.dump().c_str());
+        return alloc_cstr(arr.dump().c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         return nullptr;
@@ -1089,7 +1300,7 @@ entropic_error_t entropic_grant_mcp_key_from(
  *
  * @return JSON string (caller frees), or NULL on error.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_serialize_mcp_keys(entropic_handle_t handle)
 {
@@ -1098,7 +1309,7 @@ char* entropic_serialize_mcp_keys(entropic_handle_t handle)
     }
     try {
         auto json = handle->mcp_auth->serialize_all();
-        return strdup(json.c_str());
+        return alloc_cstr(json.c_str());
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         return nullptr;
@@ -1212,7 +1423,7 @@ entropic_error_t entropic_destroy_identity(
  *
  * @return JSON string (caller frees), or NULL if not found.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_get_identity_config(
     entropic_handle_t handle,
@@ -1227,7 +1438,7 @@ char* entropic_get_identity_config(
         j["system_prompt"] = cfg->system_prompt;
         j["origin"] = (cfg->origin == entropic::IdentityOrigin::STATIC)
                        ? "static" : "dynamic";
-        return strdup(j.dump().c_str());
+        return alloc_cstr(j.dump().c_str());
     } catch (...) {
         return nullptr;
     }
@@ -1238,7 +1449,7 @@ char* entropic_get_identity_config(
  *
  * @return JSON array string (caller frees), or NULL.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_list_identities(entropic_handle_t handle)
 {
@@ -1246,7 +1457,7 @@ char* entropic_list_identities(entropic_handle_t handle)
     try {
         auto names = handle->identity_manager->list();
         nlohmann::json arr(names);
-        return strdup(arr.dump().c_str());
+        return alloc_cstr(arr.dump().c_str());
     } catch (...) {
         return nullptr;
     }
@@ -1413,7 +1624,7 @@ int entropic_model_has_vision(
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 entropic_error_t entropic_validation_set_enabled(
     entropic_handle_t handle,
@@ -1421,8 +1632,7 @@ entropic_error_t entropic_validation_set_enabled(
 {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->validator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    // Global enable stored in config; validator checks at runtime.
-    handle->config.compaction.enabled = enabled;
+    handle->validator->set_global_enabled(enabled);
     return ENTROPIC_OK;
 }
 
@@ -1452,7 +1662,7 @@ entropic_error_t entropic_validation_set_identity(
  *
  * @return JSON string (caller frees), or NULL if no result.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 char* entropic_validation_last_result(entropic_handle_t handle)
 {
@@ -1463,7 +1673,7 @@ char* entropic_validation_last_result(entropic_handle_t handle)
         j["content"] = result.content;
         j["was_revised"] = result.was_revised;
         j["revision_count"] = result.revision_count;
-        return strdup(j.dump().c_str());
+        return alloc_cstr(j.dump().c_str());
     } catch (...) {
         return nullptr;
     }
@@ -1472,9 +1682,11 @@ char* entropic_validation_last_result(entropic_handle_t handle)
 /**
  * @brief Get diagnostic prompt text for /diagnose command (stub).
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param prompt_out Out-param: newly allocated JSON string (caller owns; free with entropic_free).
  * @return ENTROPIC_OK on success, error code on failure.
  * @internal
- * @version 1.9.12
+ * @version 2.0.2
  */
 entropic_error_t entropic_get_diagnostic_prompt(
     entropic_handle_t handle,
@@ -1504,7 +1716,7 @@ entropic_error_t entropic_get_diagnostic_prompt(
         "   - RECOMMENDATION: What to do differently\n\n"
         "Be honest and specific. The goal is accurate "
         "self-assessment, not self-defense.\n";
-    *prompt_out = strdup(prompt);
+    *prompt_out = alloc_cstr(prompt);
     return ENTROPIC_OK;
 }
 

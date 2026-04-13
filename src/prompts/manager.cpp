@@ -402,4 +402,87 @@ std::string load_app_context(
     return err;
 }
 
+/**
+ * @brief Resolve the system prompt body for a named tier.
+ *
+ * Path convention:
+ * 1. If tier has explicit identity path → use it
+ * 2. If identity not disabled → data_dir/prompts/identity_{tier_name}.md
+ * 3. If disabled or not found → empty string
+ *
+ * @param tier_config Tier configuration.
+ * @param tier_name Tier name (for default path convention).
+ * @param data_dir Bundled data directory.
+ * @return Identity body string (empty if disabled or not found).
+ * @utility
+ * @version 2.0.1
+ */
+std::string resolve_tier_identity(
+    const entropic::TierConfig& tier_config,
+    const std::string& tier_name,
+    const std::filesystem::path& data_dir)
+{
+    std::filesystem::path id_path;
+    if (tier_config.identity.has_value()) {
+        id_path = tier_config.identity.value();
+    } else if (!tier_config.identity_disabled) {
+        id_path = data_dir / "prompts"
+            / ("identity_" + tier_name + ".md");
+    }
+    if (id_path.empty() || !std::filesystem::exists(id_path)) {
+        return "";
+    }
+    ParsedIdentity id;
+    auto err = load_identity(id_path, id);
+    if (!err.empty()) {
+        s_log->warn("identity load failed for tier '{}': {}",
+                     tier_name, err);
+        return "";
+    }
+    s_log->info("identity loaded for tier '{}' from {}",
+                 tier_name, id_path.string());
+    return id.body;
+}
+
+/**
+ * @brief Assemble the full system prompt from config.
+ *
+ * Loads constitution, app_context, and default tier identity,
+ * then concatenates. The data_dir is used for bundled fallback paths.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Assembled system prompt string.
+ * @internal
+ * @version 2.0.1
+ */
+std::string assemble(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir) {
+    std::string constitution, app_ctx;
+
+    load_constitution(config.constitution, config.constitution_disabled,
+                      data_dir, constitution);
+    load_app_context(config.app_context, config.app_context_disabled,
+                     data_dir, app_ctx);
+
+    std::string identity_body;
+    auto tier_it = config.models.tiers.find(config.models.default_tier);
+    if (tier_it != config.models.tiers.end()) {
+        identity_body = resolve_tier_identity(
+            tier_it->second, config.models.default_tier, data_dir);
+    }
+
+    std::string prompt;
+    if (!constitution.empty()) { prompt += constitution + "\n\n"; }
+    if (!app_ctx.empty()) { prompt += app_ctx + "\n\n"; }
+    if (!identity_body.empty()) { prompt += identity_body; }
+
+    s_log->info("system prompt assembled: {} chars "
+                "(constitution={}, app_context={}, identity={})",
+                prompt.size(), !constitution.empty(),
+                !app_ctx.empty(), !identity_body.empty());
+    return prompt;
+}
+
 } // namespace entropic::prompts

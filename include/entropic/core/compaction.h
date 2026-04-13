@@ -123,13 +123,6 @@ public:
      * @brief Check if compaction is needed and perform if so.
      * @param messages Current message list (modified in place if compacted).
      * @param force Bypass threshold check and compact immediately.
-     * @return Compaction result.
-     * @version 1.8.4
-     */
-    /**
-     * @brief Check if compaction is needed and perform if so.
-     * @param messages Current message list (modified in place if compacted).
-     * @param force Bypass threshold check and compact immediately.
      * @param conversation_id Conversation ID for snapshot (empty = skip).
      * @return Compaction result.
      * @version 1.8.8

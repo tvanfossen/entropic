@@ -1,9 +1,28 @@
 # doxygen-guard configuration for Entropic engine
-# See: https://github.com/tvanfossen/doxygen-guard
+#
+# Mode: validation + impact report only (no trace/sequence diagrams).
+# Entropic is a library engine (not event-driven embedded), so PlantUML
+# sequence diagrams and external-participant routing are not used.
+#
+# Reference: https://github.com/tvanfossen/doxygen-guard (v1.2.1)
+
+output_dir: docs/generated/
 
 validate:
+  # Pre-commit hook handles file filtering via the `files`/`exclude` regex
+  # on the hook itself; this exclude list is the doxygen-guard-level
+  # backstop and applies to CLI invocations (validate/impact/coverage).
+  exclude:
+    - "^extern/"
+    - "^tests/"
+    - "^build/"
+    - "^\\.build/"
+    - "^\\.old/"
+    - "^\\.venv/"
+
   presence:
     require_doxygen: true
+    require_return: true
     skip_forward_declarations: true
 
   version:
@@ -12,10 +31,7 @@ validate:
 
   tags:
     req:
-      pattern: "^REQ-[A-Z]+-\\d{3}$"
-
-  exclude:
-    - "^extern/"
+      cross_reference: true
 
 impact:
   requirements:
@@ -23,6 +39,3 @@ impact:
     format: yaml
     id_column: id
     name_column: name
-
-  output:
-    format: markdown

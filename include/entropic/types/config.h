@@ -292,6 +292,25 @@ struct TierConfig : ModelConfig {
     /// @brief LoRA scaling factor (0.0–2.0, default 1.0).
     /// @version 1.9.2
     float adapter_scale = 1.0f;
+
+    /**
+     * @brief Get a named parameter derived from tier config fields.
+     *
+     * Encapsulates policy mappings (e.g., auto_chain presence implies
+     * no explicit_completion). Keeps this logic on the data struct
+     * instead of in facade callbacks.
+     *
+     * @param param_name Parameter name (e.g., "explicit_completion").
+     * @return Value string, or empty if unknown.
+     * @utility
+     * @version 2.0.1
+     */
+    std::string get_param(const std::string& param_name) const {
+        if (param_name == "explicit_completion") {
+            return auto_chain.has_value() ? "false" : "true";
+        }
+        return "";
+    }
 };
 
 /**
@@ -302,6 +321,25 @@ struct ModelsConfig {
     std::unordered_map<std::string, TierConfig> tiers; ///< Tier name → config
     std::optional<ModelConfig> router;                  ///< Router model (separate from tiers)
     std::string default_tier = "lead";                  ///< Default tier name
+
+    /**
+     * @brief Find tier name by model path.
+     *
+     * Iterates tiers to find one whose resolved path matches.
+     * Returns empty string if no tier uses the given path.
+     *
+     * @param model_path Model file path to match.
+     * @return Tier name, or empty string if not found.
+     * @utility
+     * @version 2.0.1
+     */
+    std::string find_tier_by_path(
+        const std::filesystem::path& model_path) const {
+        for (const auto& [name, tier] : tiers) {
+            if (tier.path == model_path) { return name; }
+        }
+        return "";
+    }
 };
 
 /**
@@ -376,6 +414,7 @@ struct ExternalServerEntry {
  * @version 1.8.7
  */
 struct MCPConfig {
+    bool enable_entropic = true;     ///< Enable entropic internal server (handoff, delegate, pipeline)
     bool enable_filesystem = true;   ///< Enable filesystem server
     bool enable_bash = true;         ///< Enable bash server
     bool enable_git = true;          ///< Enable git server
@@ -501,6 +540,14 @@ struct ParsedConfig {
 
     /// Config dir — base for bundled data discovery.
     std::filesystem::path config_dir;
+
+    /// Session log directory (session.log + session_model.log).
+    /// When non-empty, the facade creates a SessionLogger on configure.
+    std::filesystem::path log_dir;
+
+    /// Enable ggml/llama.cpp logging to llama_ggml.log in log_dir.
+    /// Default false — when off, ggml/llama output is silenced entirely.
+    bool ggml_logging = false;
 };
 
 /**

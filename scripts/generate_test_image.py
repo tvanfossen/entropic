@@ -12,6 +12,10 @@ import sys
 import zlib
 
 
+## @brief Create a minimal RGB PNG in memory.
+## @utility
+## @return Raw PNG bytes.
+## @version 1
 def create_png(width: int, height: int, r: int, g: int, b: int) -> bytes:
     """Create a minimal RGB PNG in memory."""
 
@@ -32,6 +36,9 @@ def create_png(width: int, height: int, r: int, g: int, b: int) -> bytes:
     )
 
 
+## @brief Generate a test PNG image with configurable dimensions.
+## @utility
+## @version 1
 def main() -> None:
     width = int(sys.argv[1]) if len(sys.argv) > 1 else 100
     height = int(sys.argv[2]) if len(sys.argv) > 2 else 100

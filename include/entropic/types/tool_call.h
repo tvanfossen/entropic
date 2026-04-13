@@ -31,6 +31,7 @@ struct ToolCall {
     std::string id;                                            ///< Unique call ID (UUID)
     std::string name;                                          ///< Tool name (e.g. "filesystem.read_file")
     std::unordered_map<std::string, std::string> arguments;    ///< Tool arguments as string key-value pairs
+    std::string arguments_json;                                ///< Original JSON string (for passthrough dispatch)
 };
 
 /**

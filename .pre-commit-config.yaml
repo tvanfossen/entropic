@@ -34,7 +34,7 @@ repos:
           - '--max-cognitive-complexity=15'
           - '--max-returns-amount=3'
           - '--max-line-length=100'
-          - '--ignore=E501,W503,E203,E704'
+          - '--ignore=E501,W503,E203,E704,E266'
 
   - repo: https://github.com/brandon-arrendondo/knots
     rev: v1.1.0
@@ -50,11 +50,11 @@ repos:
         exclude: ^extern/
 
   - repo: https://github.com/tvanfossen/doxygen-guard
-    rev: v0.2.0
+    rev: v1.2.4
     hooks:
       - id: doxygen-guard
-        files: \.(h|hpp|c|cpp|cc|cxx)$
-        exclude: ^extern/
+        files: \.(h|hpp|c|cpp|cc|cxx|py)$
+        exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
 
   # ── Build & Test Gates ──────────────────────────────
   - repo: local

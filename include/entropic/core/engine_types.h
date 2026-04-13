@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <entropic/core/directives.h>
 #include <entropic/types/enums.h>
 #include <entropic/types/message.h>
 #include <entropic/types/tool_call.h>
@@ -258,6 +259,29 @@ using ToolExecutionFn = std::vector<Message> (*)(
 struct ToolExecutionInterface {
     ToolExecutionFn process_tool_calls = nullptr; ///< Dispatches tool calls
     void* user_data = nullptr;                     ///< Opaque pointer (ToolExecutor*)
+};
+
+/**
+ * @brief Engine-level hooks called during tool processing.
+ *
+ * Bridges ToolExecutor (mcp.so) to DirectiveProcessor (core.so).
+ * Defined in engine_types.h because it only uses core types.
+ *
+ * @version 2.0.2
+ */
+struct ToolExecutorHooks {
+    /// @brief Called after each tool execution.
+    /// @version 1.8.5
+    void (*after_tool)(LoopContext& ctx, void* user_data) = nullptr;
+
+    /// @brief Process directives from tool results.
+    /// @version 1.8.5
+    DirectiveResult (*process_directives)(
+        LoopContext& ctx,
+        const std::vector<const Directive*>& directives,
+        void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer for hooks
 };
 
 /**

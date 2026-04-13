@@ -46,7 +46,9 @@ struct BundledModelEntry {
  * @par Thread safety
  * Immutable after load. Safe to read from any thread.
  *
- * @version 1.8.1
+ * @return A default-constructed BundledModels instance; populate via load().
+ * @req REQ-CFG-003
+ * @version 2.0.2
  */
 class ENTROPIC_EXPORT BundledModels {
 public:
@@ -92,6 +94,18 @@ public:
      * @version 1.8.1
      */
     const std::unordered_map<std::string, BundledModelEntry>& entries() const;
+
+    /**
+     * @brief Auto-discover and load bundled_models.yaml.
+     *
+     * Searches compile-time install path, source tree path, and
+     * CWD-relative "data/" for bundled_models.yaml. Loads the first
+     * one found.
+     *
+     * @return Empty string on success, error message if not found.
+     * @version 2.0.1
+     */
+    std::string auto_discover_and_load();
 
 private:
     std::unordered_map<std::string, BundledModelEntry> entries_; ///< Key → entry map

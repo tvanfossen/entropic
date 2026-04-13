@@ -1,0 +1,18 @@
+{
+  "name": "write_file",
+  "description": "Create a new file or fully overwrite an existing file.\n\n**Requirements:**\n- If file EXISTS: You must read it first\n- If file is NEW: Can create directly\n\n**When to use:**\n- Creating new files\n- Major rewrites (changing >50% of file content)\n- Splitting files: extract code to new file, rewrite original with remainder\n- When the edit tool fails with \"no_match\" on large strings\n\n**File Splitting Pattern:**\n1. Read the source file\n2. Write the new file with extracted content\n3. Rewrite the original with remaining content\n\nFor partial modifications, use the edit tool instead.\n\n**Success response:**\n```json\n{\"success\": true, \"bytes_written\": 1234, \"path\": \"file.py\"}\n```\n\n**Error responses:**\n```json\n{\"error\": \"read_required\", \"message\": \"Cannot write: file must be read first\"}\n{\"error\": \"file_changed\", \"message\": \"File modified since read. Read again first.\"}\n```",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Path to the file"
+      },
+      "content": {
+        "type": "string",
+        "description": "Full file content"
+      }
+    },
+    "required": ["path", "content"]
+  }
+}

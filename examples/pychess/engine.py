@@ -36,6 +36,10 @@ class ChessEngine:
     board: chess.Board
 
 
+## @brief Instantiate EntropicEngine with pychess config.
+## @utility
+## @return Configured ChessEngine instance.
+## @version 2
 def create_engine() -> ChessEngine:
     """Create and configure the engine from local config.
 
@@ -47,6 +51,10 @@ def create_engine() -> ChessEngine:
     return ChessEngine(engine=engine, board=chess.Board())
 
 
+## @brief Build annotated move history string.
+## @utility
+## @return Formatted move history.
+## @version 1
 def _annotate_move_history(board: chess.Board) -> str:
     """Replay moves from the start and annotate each with piece name and color.
 
@@ -70,6 +78,10 @@ def _annotate_move_history(board: chess.Board) -> str:
     return "\n".join(lines)
 
 
+## @brief Build JSON board representation for engine context.
+## @utility
+## @return Markdown-formatted board context string.
+## @version 1
 def _build_board_context(board: chess.Board) -> str:
     """Format current board state for the system prompt.
 
@@ -101,6 +113,10 @@ def _build_board_context(board: chess.Board) -> str:
     return "\n".join(lines)
 
 
+## @brief Single synchronous generation: analyze + play via C engine.
+## @utility
+## @return UCI move string or None if AI failed.
+## @version 2
 def get_ai_move(chess_engine: ChessEngine) -> str | None:
     """Run the agentic loop — LLM analyzes the position and plays a move.
 
@@ -129,6 +145,9 @@ def get_ai_move(chess_engine: ChessEngine) -> str | None:
     return None
 
 
+## @brief Destroy the C engine handle.
+## @utility
+## @version 2
 def shutdown(chess_engine: ChessEngine) -> None:
     """Clean shutdown of entropic engine.
 

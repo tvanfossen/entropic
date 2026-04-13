@@ -1,0 +1,9 @@
+{
+  "name": "status",
+  "description": "Get git repository status.\n\nShows staged, unstaged, and untracked files.\n\nNo parameters required.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {},
+    "required": []
+  }
+}

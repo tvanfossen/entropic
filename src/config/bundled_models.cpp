@@ -5,6 +5,7 @@
  */
 
 #include <entropic/config/bundled_models.h>
+#include <entropic/entropic_config.h>
 #include <entropic/types/logging.h>
 #include "yaml_util.h"
 
@@ -113,12 +114,43 @@ std::filesystem::path BundledModels::resolve(const std::string& value) const
 /**
  * @brief Get all entries.
  * @return Reference to the entries map.
+ * @utility
  * @version 1.8.2
  */
 const std::unordered_map<std::string, BundledModelEntry>&
 BundledModels::entries() const
 {
     return entries_;
+}
+
+/**
+ * @brief Auto-discover and load bundled_models.yaml.
+ *
+ * Searches compile-time install path, source tree path, and
+ * CWD-relative "data/" for the registry file.
+ *
+ * @return Empty string on success, error message if none found.
+ * @internal
+ * @version 2.0.1
+ */
+std::string BundledModels::auto_discover_and_load() {
+    const std::filesystem::path candidates[] = {
+        std::filesystem::path(CONFIG_ENTROPIC_DATA_DIR) / "bundled_models.yaml",
+        std::filesystem::path(CONFIG_ENTROPIC_SOURCE_DATA_DIR) / "bundled_models.yaml",
+        "data/bundled_models.yaml",
+    };
+    for (const auto& path : candidates) {
+        if (std::filesystem::is_regular_file(path)) {
+            auto err = load(path);
+            if (err.empty()) {
+                s_log->info("pre-loaded {} bundled model(s) from {}",
+                            entries_.size(), path.string());
+                return "";
+            }
+            s_log->warn("bundled models load failed: {} — {}", path.string(), err);
+        }
+    }
+    return "bundled_models.yaml not found in default paths";
 }
 
 } // namespace entropic::config

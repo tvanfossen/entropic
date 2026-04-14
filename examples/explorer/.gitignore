@@ -1,0 +1,5 @@
+# Runtime session directory
+.explorer/
+
+# Build directory
+build/

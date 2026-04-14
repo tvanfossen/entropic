@@ -1,5 +1,0 @@
-<map id="entropic::InspectTool" name="entropic::InspectTool">
-<area shape="rect" id="Node000001" title="Tool for targeted engine state queries." alt="" coords="5,79,161,104"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="13,5,154,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="86,44,86,79,81,79,81,44"/>
-</map>

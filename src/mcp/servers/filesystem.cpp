@@ -579,6 +579,7 @@ public:
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {
@@ -786,19 +787,22 @@ ServerResponse EditFileTool::execute(const std::string& args_json) {
 class GlobTool : public ToolBase {
 public:
     /**
-     * @brief Construct from data directory.
+     * @brief Construct with server reference and data directory.
+     * @param server Owning FilesystemServer (for root_dir).
      * @param data_dir Path to bundled data directory.
      * @internal
-     * @version 1.8.5
+     * @version 2.0.4
      */
-    explicit GlobTool(const std::string& data_dir)
+    GlobTool(FilesystemServer& server, const std::string& data_dir)
         : ToolBase(load_tool_definition(
               "glob", "filesystem",
-              data_dir + "/tools")) {}
+              data_dir + "/tools")),
+          server_(server) {}
 
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {
@@ -813,6 +817,9 @@ public:
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
+
+private:
+    FilesystemServer& server_; ///< Owning server (for root_dir)
 };
 
 /**
@@ -820,7 +827,7 @@ public:
  * @param args_json JSON arguments.
  * @return ServerResponse with matched paths.
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 ServerResponse GlobTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -828,7 +835,7 @@ ServerResponse GlobTool::execute(const std::string& args_json) {
     constexpr int MAX_GLOB_RESULTS = 500;
 
     auto matches = collect_glob_matches(
-        fs::current_path(), pattern, MAX_GLOB_RESULTS);
+        server_.root_dir(), pattern, MAX_GLOB_RESULTS);
 
     logger->info("Glob '{}': {} matches", pattern,
                  matches.size());
@@ -849,16 +856,18 @@ public:
      * @brief Construct from data directory.
      * @param data_dir Path to bundled data directory.
      * @internal
-     * @version 1.8.5
+     * @version 2.0.4
      */
-    explicit GrepTool(const std::string& data_dir)
+    GrepTool(FilesystemServer& server, const std::string& data_dir)
         : ToolBase(load_tool_definition(
               "grep", "filesystem",
-              data_dir + "/tools")) {}
+              data_dir + "/tools")),
+          server_(server) {}
 
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {
@@ -873,6 +882,9 @@ public:
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
+
+private:
+    FilesystemServer& server_; ///< Owning server (for root_dir)
 };
 
 /**
@@ -880,7 +892,7 @@ public:
  * @param args_json JSON arguments.
  * @return ServerResponse with matches.
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 ServerResponse GrepTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -891,7 +903,7 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
     constexpr int MAX_GREP_RESULTS = 100;
     std::vector<json> matches;
 
-    auto root = fs::current_path();
+    auto root = server_.root_dir();
     auto it = fs::recursive_directory_iterator(
         root, fs::directory_options::skip_permission_denied);
 
@@ -949,6 +961,7 @@ public:
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {
@@ -1004,9 +1017,9 @@ ServerResponse ListDirectoryTool::execute(
  * @brief Compute max read bytes from config and model context.
  * @param config Filesystem configuration.
  * @param model_context_bytes Model context window in bytes.
- * @return Max read bytes (0 = unlimited).
+ * @return Max read bytes (32KB default when no model context provided).
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 static int compute_max_read_bytes(const FilesystemConfig& config,
                                   int model_context_bytes) {
@@ -1014,7 +1027,10 @@ static int compute_max_read_bytes(const FilesystemConfig& config,
         return config.max_read_bytes.value();
     }
     if (model_context_bytes <= 0) {
-        return 0;
+        // Safe default: 32KB prevents a single file from blowing typical
+        // context budgets (16-128K). Large files trigger size_exceeded and
+        // the model must use offset/limit or docs.* tools instead.
+        return 32 * 1024;
     }
     return static_cast<int>(
         model_context_bytes * config.max_read_context_pct);
@@ -1027,7 +1043,7 @@ static int compute_max_read_bytes(const FilesystemConfig& config,
  * @param data_dir Path to bundled data directory.
  * @param model_context_bytes Model context window in bytes.
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 FilesystemServer::FilesystemServer(
     const fs::path& root_dir,
@@ -1043,8 +1059,8 @@ FilesystemServer::FilesystemServer(
     read_file_ = std::make_unique<ReadFileTool>(*this, data_dir);
     write_file_ = std::make_unique<WriteFileTool>(*this, data_dir);
     edit_file_ = std::make_unique<EditFileTool>(*this, data_dir);
-    glob_ = std::make_unique<GlobTool>(data_dir);
-    grep_ = std::make_unique<GrepTool>(data_dir);
+    glob_ = std::make_unique<GlobTool>(*this, data_dir);
+    grep_ = std::make_unique<GrepTool>(*this, data_dir);
     list_dir_ = std::make_unique<ListDirectoryTool>(
         *this, data_dir);
 

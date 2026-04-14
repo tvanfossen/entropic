@@ -1,0 +1,14 @@
+{
+  "name": "diagnostics",
+  "description": "Get code errors and warnings from the language server.\n\nReturns diagnostics including:\n- Syntax errors\n- Type errors\n- Linting warnings\n- Import issues\n\nUse after editing files to verify correctness.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "file_path": {
+        "type": "string",
+        "description": "Path to the file to check, or 'all' for all files"
+      }
+    },
+    "required": ["file_path"]
+  }
+}

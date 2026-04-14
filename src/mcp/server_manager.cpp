@@ -5,6 +5,12 @@
  */
 
 #include <entropic/mcp/server_manager.h>
+#include <entropic/mcp/servers/bash.h>
+#include <entropic/mcp/servers/diagnostics.h>
+#include <entropic/mcp/servers/entropic_server.h>
+#include <entropic/mcp/servers/filesystem.h>
+#include <entropic/mcp/servers/git.h>
+#include <entropic/mcp/servers/web.h>
 #include <entropic/mcp/transport_stdio.h>
 #include <entropic/mcp/transport_sse.h>
 #include <entropic/types/logging.h>
@@ -27,6 +33,43 @@ ServerManager::ServerManager(
     const std::filesystem::path& project_dir)
     : permissions_(permissions.allow, permissions.deny),
       project_dir_(project_dir) {}
+
+/**
+ * @brief Register built-in servers based on config flags.
+ * @param mcp MCP config with enable flags.
+ * @param tier_names Tier names for entropic server.
+ * @param data_dir Bundled data directory.
+ * @internal
+ * @version 2.0.1
+ */
+void ServerManager::init_builtins(
+    const MCPConfig& mcp,
+    const std::vector<std::string>& tier_names,
+    const std::string& data_dir) {
+    if (mcp.enable_entropic) {
+        register_server(std::make_unique<EntropicServer>(
+            tier_names, data_dir));
+    }
+    if (mcp.enable_filesystem) {
+        register_server(std::make_unique<FilesystemServer>(
+            project_dir_, mcp.filesystem, data_dir));
+    }
+    if (mcp.enable_bash) {
+        register_server(std::make_unique<BashServer>(
+            project_dir_, data_dir));
+    }
+    if (mcp.enable_git) {
+        register_server(std::make_unique<GitServer>(
+            project_dir_, data_dir));
+    }
+    if (mcp.enable_diagnostics) {
+        register_server(std::make_unique<DiagnosticsServer>(
+            project_dir_, data_dir));
+    }
+    if (mcp.enable_web) {
+        register_server(std::make_unique<WebServer>(data_dir));
+    }
+}
 
 /**
  * @brief Register a built-in server.

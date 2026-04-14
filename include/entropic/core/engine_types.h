@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <entropic/core/directives.h>
 #include <entropic/types/enums.h>
 #include <entropic/types/message.h>
 #include <entropic/types/tool_call.h>
@@ -74,6 +75,7 @@ struct LoopConfig {
     int max_consecutive_errors = 3;     ///< Errors before ERROR state
     int max_tool_calls_per_turn = 10;   ///< Tool calls per iteration (v1.8.5)
     int idle_timeout_seconds = 300;     ///< Idle timeout (reserved)
+    int context_length = 16384;         ///< Context budget for compaction (v2.0.4)
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
@@ -258,6 +260,29 @@ using ToolExecutionFn = std::vector<Message> (*)(
 struct ToolExecutionInterface {
     ToolExecutionFn process_tool_calls = nullptr; ///< Dispatches tool calls
     void* user_data = nullptr;                     ///< Opaque pointer (ToolExecutor*)
+};
+
+/**
+ * @brief Engine-level hooks called during tool processing.
+ *
+ * Bridges ToolExecutor (mcp.so) to DirectiveProcessor (core.so).
+ * Defined in engine_types.h because it only uses core types.
+ *
+ * @version 2.0.2
+ */
+struct ToolExecutorHooks {
+    /// @brief Called after each tool execution.
+    /// @version 1.8.5
+    void (*after_tool)(LoopContext& ctx, void* user_data) = nullptr;
+
+    /// @brief Process directives from tool results.
+    /// @version 1.8.5
+    DirectiveResult (*process_directives)(
+        LoopContext& ctx,
+        const std::vector<const Directive*>& directives,
+        void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer for hooks
 };
 
 /**

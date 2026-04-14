@@ -13,7 +13,7 @@
 
 #include <entropic/entropic.h>
 #include <entropic/types/logging.h>
-#include <nlohmann/json.hpp>
+#include "json_serializers.h"
 
 static auto logger = entropic::log::get("facade.identity");
 
@@ -33,6 +33,8 @@ static entropic_error_t check_identity_mgr(entropic_handle_t h) {
 /**
  * @brief Load an identity by name — verify it exists.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param identity_name Identity name from configured tier set.
  * @return ENTROPIC_OK if identity exists, error otherwise.
  * @internal
  * @version 2.0.0
@@ -55,9 +57,11 @@ entropic_load_identity(
 /**
  * @brief Get an identity's config as JSON.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param identity_json Out-param: newly allocated JSON string (caller owns; free with entropic_free).
  * @return ENTROPIC_OK on success, error otherwise.
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_get_identity(
@@ -74,7 +78,7 @@ entropic_get_identity(
         ? nullptr : handle->identity_manager->get(names[0]);
     if (!cfg) { return ENTROPIC_ERROR_IDENTITY_NOT_FOUND; }
 
-    nlohmann::json j;
+    auto j = facade_json::obj();
     j["name"] = cfg->name;
     j["origin"] = (cfg->origin == entropic::IdentityOrigin::STATIC)
                    ? "static" : "dynamic";

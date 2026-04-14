@@ -719,7 +719,7 @@ std::string LlamaCppBackend::extract_system_prompt(
  * @param tokens Full token sequence.
  * @return true on success, false to fall back to full prefill.
  * @internal
- * @version 1.8.3
+ * @version 2.0.2
  */
 bool LlamaCppBackend::restore_cached_prefix(
     const CacheEntry* cached,
@@ -735,18 +735,22 @@ bool LlamaCppBackend::restore_cached_prefix(
     }
 
     int prefix_len = cached->token_count;
-    if (prefix_len >= static_cast<int>(tokens.size())) {
-        return true;
-    }
-
-    std::vector<llama_token> remaining(
-        tokens.begin() + prefix_len, tokens.end());
-    llama_batch batch = llama_batch_get_one(
-        remaining.data(), static_cast<int32_t>(remaining.size()));
-
-    bool ok = (llama_decode(ctx_, batch) == 0);
-    if (!ok) {
-        logger->error("Decode of remaining tokens after cache restore failed");
+    bool ok = true;
+    if (prefix_len < static_cast<int>(tokens.size())) {
+        int n_batch = llama_n_batch(ctx_);
+        int n_remaining = static_cast<int>(tokens.size()) - prefix_len;
+        for (int off = 0; off < n_remaining; off += n_batch) {
+            int chunk = std::min(n_batch, n_remaining - off);
+            llama_batch batch = llama_batch_get_one(
+                const_cast<llama_token*>(tokens.data()) + prefix_len + off,
+                chunk);
+            if (llama_decode(ctx_, batch) != 0) {
+                logger->error("Decode chunk failed after cache restore "
+                              "(offset={}, chunk={})", off, chunk);
+                ok = false;
+                break;
+            }
+        }
     }
     return ok;
 }

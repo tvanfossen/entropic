@@ -13,7 +13,7 @@
 
 #include <entropic/entropic.h>
 #include <entropic/types/logging.h>
-#include <nlohmann/json.hpp>
+#include "json_serializers.h"
 #include <fstream>
 #include <string>
 
@@ -55,6 +55,8 @@ entropic_audit_count(entropic_handle_t handle, size_t* count) {
 /**
  * @brief Read audit log entries from a JSONL file.
  *
+ * @param path Filesystem path to the JSONL audit log file.
+ * @param result_json Out-param: newly allocated JSON string (caller owns; free with entropic_free).
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0

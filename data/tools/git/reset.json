@@ -1,0 +1,14 @@
+{
+  "name": "reset",
+  "description": "Unstage files from the staging area.\n\n**Examples:**\n- Unstage all: `{}`\n- Unstage specific file: `{\"files\": \"src/main.py\"}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "files": {
+        "type": "string",
+        "description": "Files to unstage (space-separated)"
+      }
+    },
+    "required": []
+  }
+}

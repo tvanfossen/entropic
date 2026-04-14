@@ -110,3 +110,9 @@ examples/hello-world/.hello-world/
 
 # CTest artifacts
 Testing/
+
+# Generated doxygen output (regenerate with: inv docs)
+docs/api/
+docs/entropic_docs.db
+html/
+latex/

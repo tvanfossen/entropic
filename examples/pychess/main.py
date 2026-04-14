@@ -18,6 +18,9 @@ import chess
 from chess_server import format_board_text
 
 
+## @brief Display board state and move list to stdout.
+## @utility
+## @version 1
 def print_board(board: chess.Board) -> None:
     """Print the board with coordinates and move history.
 
@@ -38,6 +41,10 @@ def print_board(board: chess.Board) -> None:
     print()
 
 
+## @brief Read UCI move from stdin, validate, return or re-prompt.
+## @utility
+## @return Validated Move or None to quit.
+## @version 1
 def get_human_move(board: chess.Board, prompt: str | None = None) -> chess.Move | None:
     """Prompt the human for a move. Returns None to quit.
 
@@ -62,6 +69,9 @@ def get_human_move(board: chess.Board, prompt: str | None = None) -> chess.Move 
         return move
 
 
+## @brief Display winner or draw status.
+## @utility
+## @version 1
 def _print_game_result(board: chess.Board) -> None:
     """Print the game outcome.
 
@@ -78,6 +88,10 @@ def _print_game_result(board: chess.Board) -> None:
         print("Draw!")
 
 
+## @brief Prompt for move, push to board, display.
+## @utility
+## @return False if the player quit, True otherwise.
+## @version 2
 def _play_human_turn(board: chess.Board) -> bool:
     """Handle human's turn. Returns False if the player quit.
 
@@ -93,6 +107,10 @@ def _play_human_turn(board: chess.Board) -> bool:
     return True
 
 
+## @brief Run AI generation, fall back to manual input on failure.
+## @utility
+## @return False if player quit, True otherwise.
+## @version 2
 def _play_ai_turn(chess_engine: object, board: chess.Board) -> bool:
     """Handle AI's turn. Returns False if AI failed and player quit.
 
@@ -117,6 +135,9 @@ def _play_ai_turn(chess_engine: object, board: chess.Board) -> bool:
     return True
 
 
+## @brief Initialize engine, alternate human/AI turns until game over.
+## @utility
+## @version 3
 def game_loop() -> None:
     """Run the main game loop.
 
@@ -146,6 +167,9 @@ def game_loop() -> None:
     eng.shutdown(chess_engine)
 
 
+## @brief Run game loop, handle keyboard interrupt.
+## @utility
+## @version 1
 def main() -> None:
     """Entry point.
 

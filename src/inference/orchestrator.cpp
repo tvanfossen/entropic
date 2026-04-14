@@ -10,6 +10,7 @@
  */
 
 #include <entropic/inference/orchestrator.h>
+#include <entropic/interfaces/i_inference_backend.h>
 #include <entropic/types/logging.h>
 
 #include "llama_cpp_backend.h"
@@ -53,38 +54,39 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 1.9.3
+ * @version 2.0.2
  */
-bool ModelOrchestrator::initialize(const ParsedConfig& config) {
-    config_ = config;
-    default_tier_ = config.models.default_tier;
-
-    logger->info("Initializing model orchestrator");
-
-    // Create deduplicated backends per unique model path
+bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
     for (const auto& [name, tier_config] : config.models.tiers) {
         std::string path_key = tier_config.path.string();
-
+        if (!std::filesystem::exists(tier_config.path)) {
+            logger->error("Model file not found for tier '{}': {}",
+                          name, path_key);
+            logger->error("Download with: entropic download {}", path_key);
+            return false;
+        }
         if (model_pool_.find(path_key) == model_pool_.end()) {
-            auto backend = std::make_shared<LlamaCppBackend>();
-            model_pool_[path_key] = backend;
+            model_pool_[path_key] = std::make_shared<LlamaCppBackend>();
         }
         tiers_[name] = model_pool_[path_key];
-
-        // Per-tier adapter (identity-specific)
         adapters_[name] = create_adapter(
             tier_config.adapter, name, "" /* prompt resolved later */);
     }
-
-    logger->info("Created {} unique backend(s) for {} tier(s)",
-              model_pool_.size(), tiers_.size());
-
-    // Router backend (separate small model)
     if (config.models.router) {
         router_ = std::make_shared<LlamaCppBackend>();
     }
+    logger->info("Created {} unique backend(s) for {} tier(s)",
+                 model_pool_.size(), tiers_.size());
+    return true;
+}
 
-    // Build routing data
+/**
+ * @brief Build digit-to-tier and handoff rule maps from config.
+ * @param config Parsed engine config.
+ * @utility
+ * @version 2.0.2
+ */
+void ModelOrchestrator::build_routing_tables(const ParsedConfig& config) {
     for (const auto& [digit, tier_name] : config.routing.tier_map) {
         tier_map_[digit] = tier_name;
     }
@@ -92,35 +94,70 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
         handoff_rules_[src] = std::unordered_set<std::string>(
             targets.begin(), targets.end());
     }
+}
 
-    // Load default tier
-    if (tiers_.find(default_tier_) != tiers_.end()) {
-        auto& backend = tiers_[default_tier_];
-        auto& tier_cfg = config.models.tiers.at(default_tier_);
-        if (backend->load_and_activate(tier_cfg)) {
-            loaded_main_tier_ = default_tier_;
-            logger->info("Activated default tier: {}", default_tier_);
-        } else {
-            logger->error("Failed to activate default tier: {}", default_tier_);
-            return false;
-        }
+/**
+ * @brief Load and activate the default inference tier.
+ * @param config Parsed engine config.
+ * @return true on success, false on activation failure.
+ * @utility
+ * @version 2.0.2
+ */
+bool ModelOrchestrator::activate_default_tier(const ParsedConfig& config) {
+    if (tiers_.find(default_tier_) == tiers_.end()) { return true; }
+    auto& backend = tiers_[default_tier_];
+    auto& tier_cfg = config.models.tiers.at(default_tier_);
+    if (!backend->load_and_activate(tier_cfg)) {
+        logger->error("Failed to activate default tier: {}", default_tier_);
+        return false;
+    }
+    loaded_main_tier_ = default_tier_;
+    logger->info("Activated default tier: {}", default_tier_);
+    return true;
+}
+
+/**
+ * @brief Load and activate the router model if configured.
+ * @param config Parsed engine config.
+ * @utility
+ * @version 2.0.2
+ */
+void ModelOrchestrator::activate_router(const ParsedConfig& config) {
+    if (!router_ || !config.models.router) { return; }
+    if (!router_->load_and_activate(*config.models.router)) {
+        logger->error("Failed to activate router model");
+    } else {
+        logger->info("Activated router model");
+    }
+}
+
+/**
+ * @brief Initialize orchestrator: backends, routing, adapters, grammars.
+ * @param config Parsed engine config.
+ * @return true on success.
+ * @utility
+ * @version 2.0.2
+ */
+bool ModelOrchestrator::initialize(const ParsedConfig& config) {
+    config_ = config;
+    default_tier_ = config.models.default_tier;
+
+    // Route ggml/llama logs before any model loading
+    if (config.ggml_logging && !config.log_dir.empty()) {
+        auto path = (config.log_dir / "llama_ggml.log").string();
+        entropic_inference_log_to_file(path.c_str());
+        logger->info("ggml logging: {}", path);
     }
 
-    // Load router
-    if (router_ && config.models.router) {
-        if (!router_->load_and_activate(*config.models.router)) {
-            logger->error("Failed to activate router model");
-        } else {
-            logger->info("Activated router model");
-        }
-    }
+    logger->info("Initializing model orchestrator");
 
-    // Preload LoRA adapters to WARM (v1.9.2)
-    preload_adapters();
+    if (!create_tier_backends(config)) { return false; }
+    build_routing_tables(config);
+    if (!activate_default_tier(config)) { return false; }
+    activate_router(config);
 
-    // Load bundled grammars (v1.9.3)
-    load_bundled_grammars();
-
+    preload_adapters();          // LoRA adapters → WARM (v1.9.2)
+    load_bundled_grammars();     // Bundled grammars (v1.9.3)
     return true;
 }
 

@@ -30,6 +30,9 @@ BUILD_DIR = Path("build/coverage")
 REPORT_DIR = Path("test-reports/coverage")
 
 
+## @brief Run a subprocess, exit on failure.
+## @utility
+## @version 1.10.1
 def run(cmd, **kwargs):
     """@brief Run a subprocess, exit on failure.
     @param cmd Command list.
@@ -40,6 +43,9 @@ def run(cmd, **kwargs):
         sys.exit(result.returncode)
 
 
+## @brief Configure, build, and run tests with coverage.
+## @utility
+## @version 1.10.1
 def build_and_test():
     """@brief Configure, build, and run tests with coverage.
     @version 1.10.1
@@ -63,6 +69,10 @@ def build_and_test():
         print("         Failed tests do not generate coverage data.")
 
 
+## @brief Check one library's coverage against its threshold.
+## @utility
+## @return True if meets threshold or no data, False if below.
+## @version 1.10.1
 def check_library(name, source_filter, threshold):
     """@brief Check one library's coverage against its threshold.
     @param name Display name.
@@ -102,6 +112,9 @@ def check_library(name, source_filter, threshold):
     return True
 
 
+## @brief Generate HTML coverage report for local inspection.
+## @utility
+## @version 1.10.1
 def generate_report():
     """@brief Generate HTML coverage report for local inspection.
     @version 1.10.1
@@ -128,6 +141,10 @@ def generate_report():
     )
 
 
+## @brief Check if .gcda files exist from a prior test run.
+## @utility
+## @return True if gcov data is present.
+## @version 1.10.1
 def has_gcov_data():
     """@brief Check if .gcda files exist from a prior test run.
     @return True if gcov data is present.
@@ -136,6 +153,9 @@ def has_gcov_data():
     return bool(glob.glob(str(BUILD_DIR / "**/*.gcda"), recursive=True))
 
 
+## @brief Entry point: build, test, check coverage, report.
+## @utility
+## @version 1.10.1
 def main():
     """@brief Entry point: build, test, check coverage, report.
     @version 1.10.1

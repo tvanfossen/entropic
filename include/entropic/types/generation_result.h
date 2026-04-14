@@ -68,8 +68,12 @@ struct GenerationResult {
     entropic_error_t error_code = ENTROPIC_OK; ///< Error code (ENTROPIC_OK if no error)
     std::string error_message;              ///< Error description (empty if no error)
 
-    /// @brief True if generation completed without error.
-    /// @version 1.8.2
+    /**
+     * @brief True if generation completed without error.
+     * @return true when error_code == ENTROPIC_OK.
+     * @utility
+     * @version 1.8.2
+     */
     bool ok() const { return error_code == ENTROPIC_OK; }
 };
 

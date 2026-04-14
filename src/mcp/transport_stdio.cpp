@@ -25,6 +25,11 @@ namespace {
  * @version 1.8.7
  */
 struct IgnoreSigpipe {
+    /**
+     * @brief Install SIGPIPE handler at static init.
+     * @utility
+     * @version 1.8.7
+     */
     IgnoreSigpipe() { signal(SIGPIPE, SIG_IGN); }
 };
 static IgnoreSigpipe ignore_sigpipe;

@@ -24,7 +24,7 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
-# ── Parsed Data Structures ───────────────────────────────
+## ── Parsed Data Structures ───────────────────────────────
 
 
 @dataclass
@@ -106,9 +106,13 @@ class ParsedAPI:
     typedefs: list[TypedefDecl] = field(default_factory=list)
 
 
-# ── Parser ───────────────────────────────────────────────
+## ── Parser ───────────────────────────────────────────────
 
 
+## @brief Build function-name-to-brief mapping from Doxygen comments.
+## @utility
+## @return Dict mapping function names to their brief text.
+## @version 1
 def _extract_briefs(text: str) -> dict[str, str]:
     """Extract @brief comments associated with function declarations.
 
@@ -131,6 +135,10 @@ def _extract_briefs(text: str) -> dict[str, str]:
     return briefs
 
 
+## @brief Extract all entropic enum typedefs with values and docs.
+## @utility
+## @return List of parsed EnumDef objects.
+## @version 2
 def parse_enums(text: str) -> list[EnumDef]:
     """Parse typedef enum { ... } name; declarations.
 
@@ -150,6 +158,10 @@ def parse_enums(text: str) -> list[EnumDef]:
     return enums
 
 
+## @brief Extract member names, values, and docs from enum body text.
+## @utility
+## @return List of EnumValue objects.
+## @version 1
 def _parse_enum_body(body: str) -> list[EnumValue]:
     """Parse the body of a C enum into EnumValue list.
 
@@ -181,6 +193,10 @@ def _parse_enum_body(body: str) -> list[EnumValue]:
     return values
 
 
+## @brief Extract opaque handle pointer typedefs.
+## @utility
+## @return List of TypedefDecl objects with kind="handle".
+## @version 1
 def parse_handle_typedefs(text: str) -> list[TypedefDecl]:
     """Parse opaque handle typedefs: typedef struct X* Y;
 
@@ -203,6 +219,10 @@ def parse_handle_typedefs(text: str) -> list[TypedefDecl]:
     return typedefs
 
 
+## @brief Extract callback typedefs like typedef void (*name_t)(...).
+## @utility
+## @return List of TypedefDecl objects with kind="callback".
+## @version 1
 def parse_callback_typedefs(text: str) -> list[TypedefDecl]:
     """Parse callback function pointer typedefs.
 
@@ -231,6 +251,10 @@ def parse_callback_typedefs(text: str) -> list[TypedefDecl]:
     return typedefs
 
 
+## @brief Scan balanced parentheses accounting for nesting depth.
+## @utility
+## @return Content between outermost parens, or None if unbalanced.
+## @version 1
 def _extract_balanced_parens(text: str, start: int) -> str | None:
     """Extract text inside balanced parentheses starting at position start.
 
@@ -253,6 +277,10 @@ def _extract_balanced_parens(text: str, start: int) -> str | None:
     return None
 
 
+## @brief Extract all exported C API function signatures.
+## @utility
+## @return List of FuncDecl objects.
+## @version 2
 def parse_exported_functions(text: str) -> list[FuncDecl]:
     """Parse ENTROPIC_EXPORT function declarations.
 
@@ -296,6 +324,10 @@ def parse_exported_functions(text: str) -> list[FuncDecl]:
     return functions
 
 
+## @brief Split parameter string into typed name pairs.
+## @utility
+## @return List of FuncParam objects.
+## @version 1
 def _parse_param_list(params_str: str) -> list[FuncParam]:
     """Parse a C function parameter list string.
 
@@ -350,6 +382,10 @@ def _parse_param_list(params_str: str) -> list[FuncParam]:
     return params
 
 
+## @brief Comma-split with parenthesis depth tracking.
+## @utility
+## @return List of parameter strings.
+## @version 1
 def _split_params(params_str: str) -> list[str]:
     """Split parameter string on commas, respecting nested parentheses.
 
@@ -376,6 +412,10 @@ def _split_params(params_str: str) -> list[str]:
     return parts
 
 
+## @brief Collapse whitespace and normalize pointer/const spacing.
+## @utility
+## @return Normalized type string.
+## @version 1
 def _normalize_type(c_type: str) -> str:
     """Normalize whitespace in a C type string.
 
@@ -385,6 +425,10 @@ def _normalize_type(c_type: str) -> str:
     return re.sub(r"\s+", " ", c_type).strip()
 
 
+## @brief Main parse entry point — reads header files and extracts API.
+## @utility
+## @return ParsedAPI with all enums, functions, typedefs.
+## @version 1
 def parse_headers(
     header_path: Path,
     types_dir: Path,
@@ -419,7 +463,7 @@ def parse_headers(
     return api
 
 
-# ── C Type → ctypes Mapping ─────────────────────────────
+## ── C Type → ctypes Mapping ─────────────────────────────
 
 
 # Map of C type strings to ctypes type expressions
@@ -444,6 +488,10 @@ _CTYPE_MAP: dict[str, str] = {
 }
 
 
+## @brief Map C type to Python ctypes expression string.
+## @utility
+## @return Ctypes expression string.
+## @version 2
 def _c_type_to_ctypes(c_type: str) -> str:
     """Convert a C type string to its ctypes equivalent.
 
@@ -463,6 +511,10 @@ def _c_type_to_ctypes(c_type: str) -> str:
     return result
 
 
+## @brief Detect function pointer syntax in parameter type.
+## @utility
+## @return True if parameter is a function pointer.
+## @version 1
 def _is_func_ptr_param(param: FuncParam) -> bool:
     """Check if a parameter is a function pointer.
 
@@ -472,9 +524,13 @@ def _is_func_ptr_param(param: FuncParam) -> bool:
     return "(*" in param.c_type
 
 
-# ── Code Generator ───────────────────────────────────────
+## ── Code Generator ───────────────────────────────────────
 
 
+## @brief Main code generation entry point — produces full Python module.
+## @utility
+## @return Complete Python module source as string.
+## @version 1
 def generate_wrapper(api: ParsedAPI, lib_name: str = "librentropic.so") -> str:
     """Generate complete Python wrapper module source code.
 
@@ -495,6 +551,10 @@ def generate_wrapper(api: ParsedAPI, lib_name: str = "librentropic.so") -> str:
     return "\n".join(sections) + "\n"
 
 
+## @brief Emit module docstring, imports, and version info.
+## @utility
+## @return Header section source string.
+## @version 1
 def _gen_header(lib_name: str) -> str:
     """Generate module header with imports.
 
@@ -528,6 +588,10 @@ def _gen_header(lib_name: str) -> str:
     ''')
 
 
+## @brief Emit IntEnum classes mirroring C enum typedefs.
+## @utility
+## @return Enum section source string.
+## @version 1
 def _gen_enums(enums: list[EnumDef]) -> str:
     """Generate Python enum classes from C enums.
 
@@ -554,6 +618,10 @@ def _gen_enums(enums: list[EnumDef]) -> str:
     return "\n".join(lines)
 
 
+## @brief C enum name to PascalCase Python class name.
+## @utility
+## @return PascalCase class name string.
+## @version 1
 def _enum_class_name(c_name: str) -> str:
     """Convert C enum typedef name to Python class name.
 
@@ -574,6 +642,10 @@ def _enum_class_name(c_name: str) -> str:
     return "".join(word.capitalize() for word in stem.split("_"))
 
 
+## @brief Strip common C prefix from enum member name.
+## @utility
+## @return Python enum member name.
+## @version 2
 def _enum_member_name(c_name: str, enum_c_name: str) -> str:
     """Convert C enum member name to Python member name.
 
@@ -596,6 +668,10 @@ def _enum_member_name(c_name: str, enum_c_name: str) -> str:
     return c_name.removeprefix("ENTROPIC_")
 
 
+## @brief Emit CFUNCTYPE definitions for C callback function pointers.
+## @utility
+## @return Callback type section source string.
+## @version 1
 def _gen_callback_types(typedefs: list[TypedefDecl]) -> str:
     """Generate ctypes CFUNCTYPE declarations for callback typedefs.
 
@@ -618,6 +694,10 @@ def _gen_callback_types(typedefs: list[TypedefDecl]) -> str:
     return "\n".join(lines)
 
 
+## @brief Emit _find_library() and module-level _lib loading.
+## @utility
+## @return Library loader section source string.
+## @version 1
 def _gen_library_loader(lib_name: str) -> str:
     """Generate library discovery and loading code.
 
@@ -625,9 +705,13 @@ def _gen_library_loader(lib_name: str) -> str:
     @version 1
     """
     return textwrap.dedent(f'''\
-        # ── Library Discovery ────────────────────────────────────
+        ## ── Library Discovery ────────────────────────────────────
 
 
+        ## @brief Find and load the entropic shared library.
+        ## @utility
+        ## @return Loaded ctypes.CDLL handle.
+        ## @version 1
         def _find_library() -> ctypes.CDLL:
             """Locate and load {lib_name}.
 
@@ -664,6 +748,10 @@ def _gen_library_loader(lib_name: str) -> str:
         _lib: ctypes.CDLL | None = None
 
 
+        ## @brief Lazy library loader — defers ImportError until first use.
+        ## @utility
+        ## @return Loaded ctypes.CDLL handle.
+        ## @version 1
         def _get_lib() -> ctypes.CDLL:
             """Get the loaded library, loading lazily on first access.
 
@@ -679,6 +767,10 @@ def _gen_library_loader(lib_name: str) -> str:
     ''')
 
 
+## @brief Emit argtypes/restype setup for each exported C function.
+## @utility
+## @return Function bindings section source string.
+## @version 1
 def _gen_function_bindings(functions: list[FuncDecl]) -> str:
     """Generate ctypes function binding declarations.
 
@@ -686,9 +778,12 @@ def _gen_function_bindings(functions: list[FuncDecl]) -> str:
     @version 1
     """
     lines = [
-        "# ── Function Bindings ────────────────────────────────",
+        "## ── Function Bindings ────────────────────────────────",
         "",
         "",
+        "## @brief Set ctypes type signatures for all exported functions.",
+        "## @utility",
+        "## @version 1",
         "def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated",
         '    """Configure argtypes and restype for all C API functions.',
         "",
@@ -722,6 +817,10 @@ def _gen_function_bindings(functions: list[FuncDecl]) -> str:
     return "\n".join(lines)
 
 
+## @brief Emit EntropicError exception and _check_error helper.
+## @utility
+## @return Error handling section source string.
+## @version 1
 def _gen_error_handling() -> str:
     """Generate error exception class and check function.
 
@@ -739,6 +838,9 @@ def _gen_error_handling() -> str:
             @version 1
             """
 
+            ## @brief Initialize with error code and message.
+            ## @utility
+            ## @version 1
             def __init__(self, code: int, message: str):
                 self.code = code
                 self.message = message
@@ -749,6 +851,9 @@ def _gen_error_handling() -> str:
                 super().__init__(f"entropic error {code}: {message}")
 
 
+        ## @brief Convert non-OK error codes to EntropicError exceptions.
+        ## @utility
+        ## @version 1
         def _check_error(handle: ctypes.c_void_p, error_code: int) -> None:
             """Check an entropic_error_t return and raise on failure.
 
@@ -766,6 +871,10 @@ def _gen_error_handling() -> str:
     ''')
 
 
+## @brief Emit _OwnedString class for automatic entropic_free() calls.
+## @utility
+## @return Memory management section source string.
+## @version 1
 def _gen_owned_string() -> str:
     """Generate RAII wrapper for engine-allocated strings.
 
@@ -785,14 +894,24 @@ def _gen_owned_string() -> str:
             @version 1
             """
 
+            ## @brief Store pointer to engine-allocated string.
+            ## @utility
+            ## @version 1
             def __init__(self, ptr: ctypes.c_void_p):
                 self._ptr = ptr
 
+            ## @brief Decode and return the C string.
+            ## @utility
+            ## @return Decoded string or empty string if null.
+            ## @version 1
             def __str__(self) -> str:
                 if self._ptr:
                     return ctypes.cast(self._ptr, ctypes.c_char_p).value.decode()
                 return ""
 
+            ## @brief Free the engine-allocated string.
+            ## @utility
+            ## @version 1
             def __del__(self) -> None:
                 if self._ptr:
                     lib = _get_lib()
@@ -803,6 +922,10 @@ def _gen_owned_string() -> str:
     ''')
 
 
+## @brief Emit dataclass for parsed JSON generation results.
+## @utility
+## @return Result types section source string.
+## @version 1
 def _gen_generation_result() -> str:
     """Generate GenerationResult dataclass.
 
@@ -826,6 +949,10 @@ def _gen_generation_result() -> str:
             metadata: dict[str, Any] = field(default_factory=dict)
             tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
+            ## @brief Construct Message from deserialized JSON.
+            ## @utility
+            ## @return New Message instance.
+            ## @version 1
             @classmethod
             def from_dict(cls, data: dict[str, Any]) -> "Message":
                 """Create from JSON dict.
@@ -852,6 +979,10 @@ def _gen_generation_result() -> str:
             name: str = ""
             arguments: dict[str, Any] = field(default_factory=dict)
 
+            ## @brief Construct ToolCall from deserialized JSON.
+            ## @utility
+            ## @return New ToolCall instance.
+            ## @version 1
             @classmethod
             def from_dict(cls, data: dict[str, Any]) -> "ToolCall":
                 """Create from JSON dict.
@@ -882,6 +1013,10 @@ def _gen_generation_result() -> str:
             tier: str = ""
             raw_json: dict[str, Any] = field(default_factory=dict)
 
+            ## @brief Deserialize JSON from entropic_run into GenerationResult.
+            ## @utility
+            ## @return New GenerationResult instance.
+            ## @version 1
             @classmethod
             def from_json(cls, json_str: str) -> "GenerationResult":
                 """Parse a JSON result string from the C engine.
@@ -909,6 +1044,10 @@ def _gen_generation_result() -> str:
     ''')
 
 
+## @brief Emit high-level Engine class with handle lifecycle management.
+## @utility
+## @return Engine class section source string.
+## @version 1
 def _gen_engine_class() -> str:
     """Generate the EntropicEngine wrapper class.
 
@@ -938,6 +1077,9 @@ def _gen_engine_class() -> str:
             @version 1
             """
 
+            ## @brief Create engine handle and apply configuration.
+            ## @utility
+            ## @version 1
             def __init__(
                 self,
                 config_path: str | None = None,
@@ -979,6 +1121,10 @@ def _gen_engine_class() -> str:
 
                 self._lib = lib
 
+            ## @brief Execute entropic_run and return parsed result.
+            ## @utility
+            ## @return GenerationResult from the engine.
+            ## @version 1
             def run(self, prompt: str) -> GenerationResult:
                 """Run the agentic loop synchronously.
 
@@ -1001,6 +1147,9 @@ def _gen_engine_class() -> str:
                     if result_ptr.value:
                         self._lib.entropic_free(result_ptr)
 
+            ## @brief Execute entropic_run_streaming with Python callback.
+            ## @utility
+            ## @version 1
             def run_streaming(
                 self,
                 prompt: str,
@@ -1014,6 +1163,9 @@ def _gen_engine_class() -> str:
                 """
                 cancel_flag = ctypes.c_int(0)
 
+                ## @brief Background thread to bridge Event to C cancel_flag.
+                ## @callback
+                ## @version 1
                 def _cancel_monitor() -> None:
                     """Monitor cancel event and set flag.
 
@@ -1028,6 +1180,9 @@ def _gen_engine_class() -> str:
                     monitor = threading.Thread(target=_cancel_monitor, daemon=True)
                     monitor.start()
 
+                ## @brief Bridge ctypes callback to user-provided on_token.
+                ## @callback
+                ## @version 1
                 @_StreamCallbackType
                 def _on_token_cb(
                     token: bytes,
@@ -1053,6 +1208,9 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Signal the engine to abort current run.
+            ## @utility
+            ## @version 1
             def interrupt(self) -> None:
                 """Interrupt a running generation.
 
@@ -1064,6 +1222,9 @@ def _gen_engine_class() -> str:
                     self._lib.entropic_interrupt(self._handle),
                 )
 
+            ## @brief Set active identity for subsequent runs.
+            ## @utility
+            ## @version 1
             def load_identity(self, name: str) -> None:
                 """Load an identity by name.
 
@@ -1077,6 +1238,10 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Retrieve active identity JSON from C engine.
+            ## @utility
+            ## @return Identity as a dict.
+            ## @version 1
             def get_identity(self) -> dict[str, Any]:
                 """Get the current active identity as a dict.
 
@@ -1096,6 +1261,9 @@ def _gen_engine_class() -> str:
                     if result_ptr.value:
                         self._lib.entropic_free(result_ptr)
 
+            ## @brief Configure engine from JSON after creation.
+            ## @utility
+            ## @version 1
             def configure(self, config_json: str) -> None:
                 """Apply configuration from a JSON string.
 
@@ -1109,6 +1277,9 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Configure engine from file after creation.
+            ## @utility
+            ## @version 1
             def configure_from_file(self, config_path: str) -> None:
                 """Apply configuration from a YAML/JSON file.
 
@@ -1122,6 +1293,85 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Layered config resolution from project directory.
+            ## @utility
+            ## @version 1
+            def configure_dir(self, project_dir: str) -> None:
+                """Configure using layered resolution from a project directory.
+
+                Loads: bundled default -> ~/.entropic/config.yaml ->
+                {project_dir}/config.local.yaml -> env overrides.
+
+                @brief Layered config resolution from project directory.
+                @version 1
+                """
+                _check_error(
+                    self._handle,
+                    self._lib.entropic_configure_dir(
+                        self._handle, project_dir.encode(),
+                    ),
+                )
+
+            ## @brief Reset conversation to empty.
+            ## @utility
+            ## @version 1
+            def context_clear(self) -> None:
+                """Clear conversation history, starting a new session.
+
+                @brief Reset conversation to empty.
+                @version 1
+                """
+                _check_error(
+                    self._handle,
+                    self._lib.entropic_context_clear(self._handle),
+                )
+
+            ## @brief Return conversation as list of message dicts.
+            ## @utility
+            ## @return List of {role, content} dicts.
+            ## @version 1
+            def context_get(self) -> list[dict[str, Any]]:
+                """Get the current conversation history.
+
+                @brief Return conversation as list of {role, content} dicts.
+                @version 1
+                """
+                result_ptr = ctypes.c_void_p()
+                _check_error(
+                    self._handle,
+                    self._lib.entropic_context_get(
+                        self._handle, ctypes.byref(result_ptr),
+                    ),
+                )
+                try:
+                    raw = ctypes.cast(result_ptr, ctypes.c_char_p).value
+                    return json.loads(raw.decode() if raw else "[]")
+                finally:
+                    if result_ptr.value:
+                        self._lib.entropic_free(result_ptr)
+
+            ## @brief Return message count.
+            ## @utility
+            ## @return Number of messages in conversation.
+            ## @version 1
+            def context_count(self) -> int:
+                """Get the number of messages in the conversation.
+
+                @brief Return message count.
+                @version 1
+                """
+                count = ctypes.c_size_t(0)
+                _check_error(
+                    self._handle,
+                    self._lib.entropic_context_count(
+                        self._handle, ctypes.byref(count),
+                    ),
+                )
+                return count.value
+
+            ## @brief Initialize persistent storage for conversations.
+            ## @utility
+            ## @version 1
             def storage_open(self, db_path: str) -> None:
                 """Open SQLite storage backend.
 
@@ -1135,6 +1385,9 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Flush and close storage.
+            ## @utility
+            ## @version 1
             def storage_close(self) -> None:
                 """Close the storage backend.
 
@@ -1146,6 +1399,9 @@ def _gen_engine_class() -> str:
                     self._lib.entropic_storage_close(self._handle),
                 )
 
+            ## @brief Connect and register an external MCP server at runtime.
+            ## @utility
+            ## @version 1
             def register_mcp_server(self, name: str, config_json: str) -> None:
                 """Register an external MCP server.
 
@@ -1159,6 +1415,9 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Disconnect and remove a registered MCP server.
+            ## @utility
+            ## @version 1
             def deregister_mcp_server(self, name: str) -> None:
                 """Deregister an external MCP server.
 
@@ -1172,6 +1431,10 @@ def _gen_engine_class() -> str:
                     ),
                 )
 
+            ## @brief Get server info JSON from C engine.
+            ## @utility
+            ## @return Dict of server names to status info.
+            ## @version 1
             def list_mcp_servers(self) -> dict[str, Any]:
                 """List all MCP servers with status.
 
@@ -1188,6 +1451,10 @@ def _gen_engine_class() -> str:
                 finally:
                     self._lib.entropic_free(result_ptr)
 
+            ## @brief Return semver string from C engine.
+            ## @utility
+            ## @return Version string.
+            ## @version 1
             def version(self) -> str:
                 """Get the library version string.
 
@@ -1196,6 +1463,10 @@ def _gen_engine_class() -> str:
                 """
                 return self._lib.entropic_version().decode()
 
+            ## @brief Return API version for compatibility checks.
+            ## @utility
+            ## @return Integer API version.
+            ## @version 1
             def api_version(self) -> int:
                 """Get the C API version integer.
 
@@ -1204,6 +1475,9 @@ def _gen_engine_class() -> str:
                 """
                 return self._lib.entropic_api_version()
 
+            ## @brief Release all engine resources. Handle becomes invalid.
+            ## @utility
+            ## @version 1
             def destroy(self) -> None:
                 """Destroy the engine handle and free resources.
 
@@ -1214,6 +1488,9 @@ def _gen_engine_class() -> str:
                     self._lib.entropic_destroy(self._handle)
                     self._handle = None
 
+            ## @brief Release handle on garbage collection.
+            ## @utility
+            ## @version 1
             def __del__(self) -> None:
                 """Destructor — ensures handle is freed.
 
@@ -1222,6 +1499,10 @@ def _gen_engine_class() -> str:
                 """
                 self.destroy()
 
+            ## @brief Return self for with-statement usage.
+            ## @utility
+            ## @return Self.
+            ## @version 1
             def __enter__(self) -> "EntropicEngine":
                 """Context manager entry.
 
@@ -1230,6 +1511,9 @@ def _gen_engine_class() -> str:
                 """
                 return self
 
+            ## @brief Clean up engine on context exit.
+            ## @utility
+            ## @version 1
             def __exit__(self, *args: object) -> None:
                 """Context manager exit — destroys handle.
 
@@ -1241,9 +1525,13 @@ def _gen_engine_class() -> str:
     ''')
 
 
-# ── Main Entry Point ─────────────────────────────────────
+## ── Main Entry Point ─────────────────────────────────────
 
 
+## @brief Check header and type directory paths exist.
+## @utility
+## @return Error message string or None if valid.
+## @version 2
 def _validate_inputs(args: argparse.Namespace) -> str | None:
     """Validate CLI arguments, returning error message or None.
 
@@ -1265,6 +1553,10 @@ def _validate_inputs(args: argparse.Namespace) -> str | None:
     return failures[0] if failures else None
 
 
+## @brief CLI entry point for wrapper generation.
+## @utility
+## @return Exit code (0=success, 1=error).
+## @version 2
 def main() -> int:
     """Parse headers and generate wrapper module.
 

@@ -114,11 +114,23 @@ private:
         const std::vector<Message>& messages);
 
     /**
-     * @brief Build generation params JSON.
+     * @brief Build generation params JSON with tier routing.
+     * @param tier Locked tier name (embedded in params for orchestrator).
      * @return JSON string.
-     * @version 1.8.4
+     * @version 2.0.1
      */
-    static std::string build_params_json();
+    static std::string build_params_json(const std::string& tier);
+
+    /**
+     * @brief Inject tool definitions into system message.
+     * @param messages Original message list.
+     * @param tier Locked tier name for tool filtering.
+     * @return Copy of messages with tool prompt appended to system message.
+     * @version 2.0.4
+     */
+    std::vector<Message> inject_tool_prompt(
+        const std::vector<Message>& messages,
+        const std::string& tier);
 
     InferenceInterface inference_;     ///< Inference function pointers
     LoopConfig loop_config_;           ///< Loop configuration
@@ -130,6 +142,7 @@ public:
     /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.
+     * @utility
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }

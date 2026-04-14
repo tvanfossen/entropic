@@ -14,6 +14,7 @@ set(INFERENCE_SOURCES
     profile_registry.cpp
     throughput_tracker.cpp
     inference_c_api.cpp
+    interface_factory.cpp
     image_preprocessor.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp

@@ -73,6 +73,7 @@ public:
 
     /**
      * @brief Load model into CPU RAM (COLD → WARM).
+     * @param config Model configuration (path, context length, GPU layers, etc.).
      * @return true on success.
      * @version 1.8.2
      */
@@ -99,7 +100,8 @@ public:
 
     /**
      * @brief Convenience: load() + activate().
-     * @return true on success.
+     * @param config Model configuration passed through to load().
+     * @return true on success (both load and activate succeeded).
      * @version 1.8.2
      */
     bool load_and_activate(const ModelConfig& config);
@@ -184,18 +186,24 @@ public:
 
     /**
      * @brief Current lifecycle state (lock-free read).
+     * @return Current ModelState value.
+     * @utility
      * @version 1.8.2
      */
     ModelState state() const { return state_.load(std::memory_order_acquire); }
 
     /**
      * @brief True when state is ACTIVE.
+     * @return true if state is ACTIVE, false otherwise.
+     * @utility
      * @version 1.8.2
      */
     bool is_active() const { return state() == ModelState::ACTIVE; }
 
     /**
      * @brief True when state is WARM or ACTIVE.
+     * @return true if state is WARM or ACTIVE, false if COLD.
+     * @utility
      * @version 1.8.2
      */
     bool is_loaded() const { return state() != ModelState::COLD; }
@@ -211,6 +219,7 @@ public:
      * @brief Tokenize text to token IDs.
      * @param text Input text.
      * @return Token ID vector (empty if COLD or error).
+     * @utility
      * @version 1.10.2
      */
     virtual std::vector<int32_t> tokenize_text(
@@ -218,12 +227,16 @@ public:
 
     /**
      * @brief Model's context window size.
+     * @return Maximum context length in tokens.
+     * @utility
      * @version 1.8.2
      */
     int context_length() const { return config_.context_length; }
 
     /**
      * @brief Stored model config.
+     * @return Const reference to the ModelConfig used for this backend.
+     * @utility
      * @version 1.8.2
      */
     const ModelConfig& config() const { return config_; }
@@ -371,6 +384,9 @@ protected:
 
     /**
      * @brief Subclass generation. Called only when ACTIVE.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @return Generation result populated by the subclass.
      * @version 1.8.2
      */
     virtual GenerationResult do_generate(
@@ -379,6 +395,11 @@ protected:
 
     /**
      * @brief Subclass streaming generation. Called only when ACTIVE.
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Callback invoked per emitted token.
+     * @param cancel Atomic flag — when true, subclass must stop streaming.
+     * @return Generation result populated by the subclass.
      * @version 1.8.2
      */
     virtual GenerationResult do_generate_streaming(
@@ -389,6 +410,9 @@ protected:
 
     /**
      * @brief Subclass raw completion. Called only when ACTIVE.
+     * @param prompt Raw prompt string (no chat template applied).
+     * @param params Generation parameters.
+     * @return Generation result populated by the subclass.
      * @version 1.8.2
      */
     virtual GenerationResult do_complete(
@@ -397,6 +421,8 @@ protected:
 
     /**
      * @brief Subclass token counting. Called only when model loaded.
+     * @param text Text whose tokens should be counted.
+     * @return Token count for the provided text.
      * @version 1.8.2
      */
     virtual int do_count_tokens(const std::string& text) const = 0;
@@ -530,6 +556,7 @@ protected:
     /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.
+     * @utility
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }

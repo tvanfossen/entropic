@@ -43,6 +43,7 @@ public:
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {
@@ -104,6 +105,7 @@ public:
     /**
      * @brief Read-only tool — requires READ access.
      * @return MCPAccessLevel::READ.
+     * @utility
      * @version 1.9.4
      */
     MCPAccessLevel required_access_level() const override {

@@ -3,7 +3,22 @@
 # Grows with every version — start with v1.7.1 behavioral spec subsystems.
 #
 # Format: REQ-{SUBSYSTEM}-{NNN}
-# Subsystems: LOOP, DELEG, TOOL, IDEN, INFER, CFG, STOR
+# Subsystems:
+#   LOOP     — engine loop, state machine, response generation, directives
+#   DELEG    — delegation, pipelines, worktree isolation
+#   TOOL     — tool dispatch, permissions, duplicate detection, history
+#   IDEN     — identity loading, tiers, phases, constitution
+#   INFER    — inference backends, VRAM lifecycle, LoRA, capabilities
+#   CFG      — configuration merge, validation, bundled models
+#   STOR     — persistence, records, search, statistics
+#   CACHE    — KV cache save/load, eviction
+#   MCP      — MCP servers, transport, external clients, key authorization
+#   HOOK     — hook points, pre/post/info dispatch, modification semantics
+#   PROMPT   — prompt files, frontmatter parsing, system prompt assembly
+#   VALID    — constitutional validation, critique loop
+#   COMPACT  — context compaction strategies and snapshots
+#   AUDIT    — tool call audit logging, rotation, query
+#   API      — C API surface, handle lifecycle, diagnostics
 #
 # Each requirement has:
 #   name: short descriptive name
@@ -480,3 +495,513 @@
 
     '
   version: v1.8.3
+
+# =============================================================================
+# v2.0.0+ additions — C++ rewrite public API coverage
+# =============================================================================
+
+# ── LOOP additions: response generation and directive processing ──────────
+- id: REQ-LOOP-011
+  name: Tier routing and identity locking
+  description: ResponseGenerator resolves the active tier for each iteration and locks the identity so inference is stable across streaming.
+  acceptance_criteria: Identity resolved once per iteration. Mid-iteration identity changes take effect only on next iteration. Locked identity drives grammar, system prompt, and inference params.
+  version: v2.0.2
+- id: REQ-LOOP-012
+  name: Streaming generation with pause/resume
+  description: ResponseGenerator emits tokens via callback and honors pause flag by returning control to consumer for injection, then resuming.
+  acceptance_criteria: Token callback fires per token. Pause flag stops streaming within one token. Resume continues from saved state without reprocessing prior context.
+  version: v2.0.2
+- id: REQ-LOOP-013
+  name: Tool call extraction from model output
+  description: ResponseGenerator parses tool calls from raw adapter output and surfaces them as structured ToolCall objects for dispatch.
+  acceptance_criteria: Tool calls recognized per the active adapter's format. Multiple tool calls in one output parsed in order. Malformed calls reported as parse errors not silently dropped.
+  version: v2.0.2
+- id: REQ-LOOP-014
+  name: Response completion check
+  description: ResponseGenerator queries the active inference adapter to determine if a response is complete, supporting identity-specific completion semantics.
+  acceptance_criteria: Non-tool-producing output is checked for completion. Adapter-specific terminators honored. Identities with explicit_completion defer to REQ-LOOP-010.
+  version: v2.0.2
+- id: REQ-LOOP-015
+  name: Typed directive parsing
+  description: DirectiveProcessor parses 11 typed directives from tool results (stop_processing, tier_change, delegate, pipeline, complete, clear_self_todos, inject_context, prune_messages, context_anchor, phase_change, notify_presenter).
+  acceptance_criteria: Each directive type deserializes to its struct with validation. Unknown directive types produce actionable errors. Valid directives dispatch to their handler.
+  version: v2.0.2
+- id: REQ-LOOP-016
+  name: Directive handler registry
+  description: DirectiveProcessor maintains a registry of handlers keyed by directive type, allowing engine subsystems to register handlers at startup.
+  acceptance_criteria: Handlers register once per type. Duplicate registration rejected. DirectiveResult aggregates side effects across all handlers invoked for a directive batch.
+  version: v2.0.2
+- id: REQ-LOOP-017
+  name: Hook integration for directives
+  description: ON_DIRECTIVE and ON_CUSTOM_DIRECTIVE hook points fire for each directive, allowing consumers to observe or cancel directive processing.
+  acceptance_criteria: Hooks fire with directive payload. Pre-hook cancellation skips directive handler. Post-hook can observe DirectiveResult side effects.
+  version: v2.0.2
+
+# ── TOOL additions: executor policy and call history ──────────────────────
+- id: REQ-TOOL-009
+  name: Tool approval flow
+  description: ToolExecutor gates tool invocation through approval policies (auto-allow, allowlist match, consumer callback, default-deny).
+  acceptance_criteria: Allowlist-matched tools auto-approve. Unknown tools invoke approval callback. Callback return value determines allow/deny/always-allow. Denied tools return structured error to model.
+  version: v2.0.2
+- id: REQ-TOOL-010
+  name: Tool call sort order
+  description: ToolExecutor sorts tool calls within a single response so that entropic.delegate always executes last, preventing delegation from blocking same-iteration tool work.
+  acceptance_criteria: Batch with filesystem.read_file + entropic.delegate executes read first. Multiple delegates in one batch preserve relative order among themselves.
+  version: v2.0.2
+- id: REQ-TOOL-011
+  name: Directive extraction from tool results
+  description: ToolExecutor inspects tool results for JSON directive envelopes and forwards extracted directives to DirectiveProcessor before returning the textual result.
+  acceptance_criteria: Results containing valid directive JSON dispatch directives. Results without directives pass through unchanged. Malformed directive JSON produces warning log but does not fail the tool call.
+  version: v2.0.2
+- id: REQ-TOOL-012
+  name: Per-phase tool restriction overlay
+  description: Active phase's allowed_tools and bash_commands override identity-level values when a phase is active.
+  acceptance_criteria: Phase with allowed_tools=[entropic.complete] restricts to that set even if identity allows more. Empty phase list falls back to identity list. Phase change switches restriction set atomically.
+  version: v2.0.2
+- id: REQ-TOOL-013
+  name: Consumer-facing tool approval callback
+  description: ToolExecutor invokes a consumer-registered callback for tool approval decisions, passing tool name, arguments, caller identity, and returning allow/deny/always-allow.
+  acceptance_criteria: Callback receives structured decision context. always-allow persists the decision via PermissionPersister. Callback absence equates to default-deny.
+  version: v2.0.2
+- id: REQ-TOOL-014
+  name: Ring-buffer tool call history
+  description: ToolCallHistory retains recent tool invocations in a fixed-capacity ring buffer, overwriting oldest entries when full.
+  acceptance_criteria: Capacity configurable at construction. 101st entry in a 100-capacity buffer evicts entry 1. History is consumer-queryable without consuming entries.
+  version: v2.0.2
+- id: REQ-TOOL-015
+  name: Tool call record schema
+  description: Each history entry records tool name, params summary (top-level keys), result (truncated to 200 chars), caller identity, timestamp, and outcome.
+  acceptance_criteria: params summary lists top-level JSON keys only (no values). Result truncated at 200 chars with truncation indicator. Outcome enum (success/error/denied) reflects approval and execution state.
+  version: v2.0.2
+- id: REQ-TOOL-016
+  name: Recent and historical entry queries
+  description: ToolCallHistory exposes recent(N) returning newest-first entries and all() returning oldest-first entries for chronological inspection.
+  acceptance_criteria: recent(5) returns last 5 tool calls newest-first. all() returns full buffer oldest-first. Queries are non-destructive.
+  version: v2.0.2
+- id: REQ-TOOL-017
+  name: Tool history JSON serialization
+  description: ToolCallHistory serializes its contents to JSON for introspection by diagnostic tools and audit inspection.
+  acceptance_criteria: Serialized output includes all record fields. Array order matches query order. Round-trip parsing preserves record fidelity.
+  version: v2.0.2
+
+# ── IDEN additions: dynamic identities and runtime overrides ──────────────
+- id: REQ-IDEN-007
+  name: Static identity loading from config
+  description: IdentityManager loads all configured identities at engine startup, validates their frontmatter, and registers them with the tier resolution system.
+  acceptance_criteria: Every identity in config loaded before engine becomes ready. Invalid identity blocks startup with actionable error. Successful load is visible via entropic_list_identities.
+  version: v2.0.2
+- id: REQ-IDEN-008
+  name: Dynamic identity creation
+  description: Consumers can create identities at runtime via the C API with validation of frontmatter fields, grammar references, and MCP key allocations.
+  acceptance_criteria: Valid frontmatter creates identity without engine restart. Invalid fields return structured error. max_identities limit enforced at creation time.
+  version: v2.0.2
+- id: REQ-IDEN-009
+  name: Dynamic identity update and destruction
+  description: Runtime identity mutations (update fields, destroy identity) are supported with enforcement that an active tier cannot be destroyed.
+  acceptance_criteria: Update applies to subsequent iterations. Destroy succeeds on inactive identities. Destroying active identity returns error with current-tier info.
+  version: v2.0.2
+- id: REQ-IDEN-010
+  name: Grammar validation callback injection
+  description: IdentityManager accepts a grammar validation callback that confirms referenced grammar keys exist in the grammar registry before accepting an identity.
+  acceptance_criteria: Identity referencing unknown grammar key rejected at load time. Runtime grammar registration can retroactively validate pending identities.
+  version: v2.0.2
+- id: REQ-IDEN-011
+  name: MCP key auto-registration for new identities
+  description: On identity creation, IdentityManager invokes a callback to allocate the identity's MCP key set per its allowed_tools configuration.
+  acceptance_criteria: Identity with allowed_tools=[fs.read_file] gets a key set granting that tool. Key set persists for identity lifetime. Destroyed identity releases its key set.
+  version: v2.0.2
+- id: REQ-IDEN-012
+  name: Classification prompt rebuild on change
+  description: Adding, updating, or destroying an identity flags the classification prompt for rebuild so the router incorporates the current tier set.
+  acceptance_criteria: Identity mutation sets rebuild flag. Next classification rebuilds the prompt before routing. Rebuild is idempotent per mutation batch.
+  version: v2.0.2
+
+# ── INFER additions: backend capabilities, LoRA, infrastructure ───────────
+- id: REQ-INFER-006
+  name: Grammar registry with GBNF validation
+  description: GrammarRegistry stores GBNF grammars by key, validates grammar syntax at registration, and exposes them for inference at runtime.
+  acceptance_criteria: Registered grammars are retrievable by key. Malformed GBNF rejected with parser error. Duplicate key registration rejected unless force flag set.
+  version: v2.0.2
+- id: REQ-INFER-007
+  name: GPU resource profile registry
+  description: ProfileRegistry stores named GPU resource profiles (n_batch, n_threads, n_ctx, description) that tiers can reference by name instead of duplicating parameters.
+  acceptance_criteria: Profile resolved by name at tier activation. Missing profile rejected with available-profiles list. Profile changes require tier unload.
+  version: v2.0.2
+- id: REQ-INFER-008
+  name: EWMA throughput tracking per model
+  description: ThroughputTracker maintains exponentially-weighted moving average of tokens/sec per loaded model and supports reset.
+  acceptance_criteria: Generation rate updates EWMA after each generation. Reset clears history. Throughput query is lock-free and reflects recent generations with decay.
+  version: v2.0.2
+- id: REQ-INFER-009
+  name: Backend capability queries
+  description: Inference backends expose a capability bitmap (KV_CACHE, HIDDEN_STATE, GRAMMAR, VISION, LOG_PROBS, LORA, etc.) so consumers can branch on feature availability.
+  acceptance_criteria: Capability query returns backend-reported bitmap. Consumer features that require a capability gracefully degrade or error when absent. Capabilities constant for a loaded model.
+  version: v2.0.2
+- id: REQ-INFER-010
+  name: Sequence-scoped generation
+  description: Inference interface supports sequence-scoped generation allowing multiple concurrent conversation sequences on one backend via sequence IDs.
+  acceptance_criteria: Generations with distinct seq IDs do not interfere. State save/restore/clear operate per seq ID. Invalid seq ID returns structured error.
+  version: v2.0.2
+- id: REQ-INFER-011
+  name: Log-probability evaluation and perplexity
+  description: Engine can evaluate log-probabilities of a given token sequence against a loaded model and compute perplexity for that sequence.
+  acceptance_criteria: Logprob query returns per-token logprobs. Perplexity computed from logprob sum and token count. Backends without LOG_PROBS capability return structured unsupported error.
+  version: v2.0.2
+- id: REQ-INFER-012
+  name: Vision capability and image preprocessing
+  description: Engine detects vision-capable models and preprocesses images (resize, normalize, encode) for multimodal inference.
+  acceptance_criteria: Vision capability query returns true for multimodal models. ImagePreprocessor produces model-compatible tensors. Non-vision models reject image inputs with actionable error.
+  version: v2.0.2
+- id: REQ-INFER-013
+  name: Model metadata introspection
+  description: Backends expose metadata (name, version, architecture, quantization, parameter count) for diagnostics and model selection.
+  acceptance_criteria: Metadata available once model is WARM or ACTIVE. Fields populated from model file (GGUF metadata). COLD state returns best-effort metadata from path.
+  version: v2.0.2
+- id: REQ-INFER-014
+  name: LoRA adapter load and unload
+  description: Engine supports loading LoRA adapter files against a base model with explicit unload for memory reclaim.
+  acceptance_criteria: Load registers adapter with a handle. Unload releases GPU memory. Multiple adapters may be loaded against one base model.
+  version: v2.0.2
+- id: REQ-INFER-015
+  name: LoRA adapter activation and scaling
+  description: Loaded adapters can be activated with a configurable scale parameter and swapped at runtime without reloading the base model.
+  acceptance_criteria: Activate applies adapter to subsequent inference. Scale parameter accepted per activation. Swap deactivates previous adapter and activates the new one atomically.
+  version: v2.0.2
+- id: REQ-INFER-016
+  name: LoRA adapter introspection
+  description: Consumer can query loaded adapters (list, info) to inspect state, scale, and identifying metadata.
+  acceptance_criteria: List returns all loaded adapter handles. Info returns scale, base model reference, and file path. Unloaded adapter lookup returns structured error.
+  version: v2.0.2
+- id: REQ-INFER-017
+  name: Backend state machine
+  description: InferenceBackend exposes a three-state lifecycle (COLD, WARM, ACTIVE) with load, activate, deactivate, unload transitions mirroring REQ-INFER-001 at the interface level.
+  acceptance_criteria: load promotes COLD→WARM. activate promotes WARM→ACTIVE. deactivate demotes ACTIVE→WARM. unload demotes WARM→COLD. Invalid transitions rejected.
+  version: v2.0.2
+- id: REQ-INFER-018
+  name: Atomic lock-free state query
+  description: Backend state queries use std::atomic so hot-path consumers can check state without acquiring the transition mutex.
+  acceptance_criteria: state() is lock-free and consistent with the last completed transition. Concurrent transitions use the mutex and update the atomic on completion.
+  version: v2.0.2
+- id: REQ-INFER-019
+  name: Token counting across states
+  description: Backend supports token counting in all states — exact counting when loaded (WARM/ACTIVE) and best-effort estimation when COLD.
+  acceptance_criteria: count_tokens in WARM/ACTIVE tokenizes against the loaded model. In COLD, returns heuristic estimate with is_estimate=true flag. Never panics across states.
+  version: v2.0.2
+- id: REQ-INFER-020
+  name: Inference log redirection
+  description: Engine allows consumer to redirect or silence llama.cpp/ggml log output to a file or sink instead of stderr.
+  acceptance_criteria: Configured log file receives inference-layer output. Silence mode suppresses all inference logs. Redirection affects all loaded backends.
+  version: v2.0.2
+
+# ── CFG additions: env overrides, schema validation, file parsing ─────────
+- id: REQ-CFG-004
+  name: YAML and JSON config file parsing
+  description: Config loader accepts both YAML and JSON formats for config files and validates against the compiled schema.
+  acceptance_criteria: Either format loads equivalently. Schema violations produce field-specific error messages. Parse errors include line and column.
+  version: v2.0.2
+- id: REQ-CFG-005
+  name: Environment variable overrides
+  description: ENTROPIC_* environment variables override config fields using SECTION__FIELD naming convention (double underscore as section separator).
+  acceptance_criteria: ENTROPIC_MODELS__DEFAULT overrides models.default. Unknown env var names logged as warnings but do not abort startup. Env overrides apply after file merge.
+  version: v2.0.2
+- id: REQ-CFG-006
+  name: Inline JSON config string
+  description: Engine accepts an inline JSON configuration string for embedding scenarios without a config file on disk.
+  acceptance_criteria: entropic_configure_json parses JSON string and applies it. Malformed JSON returns actionable error. Inline config participates in the standard layered merge.
+  version: v2.0.2
+- id: REQ-CFG-007
+  name: Directory-based config with project root
+  description: Consumer can point the engine at a project directory, and the loader discovers .entropic/config.local.yaml and .entropic/ENTROPIC.md relative to that root.
+  acceptance_criteria: project_dir parameter sets the project root. Missing project config is not an error. Global config still applies.
+  version: v2.0.2
+- id: REQ-CFG-008
+  name: Schema validation with typo suggestions
+  description: Config loader rejects unknown keys with actionable error messages that suggest similar valid keys.
+  acceptance_criteria: Unknown key 'tiers.default_tier' suggests 'models.default_tier'. Typo suggestion uses edit distance. Multiple unknown keys reported together.
+  version: v2.0.2
+
+# ── STOR additions: search, snapshots, statistics ─────────────────────────
+- id: REQ-STOR-004
+  name: Conversation full-text search
+  description: Storage backend supports FTS5 full-text search over conversation messages with snippet generation for match context.
+  acceptance_criteria: Search query returns matching conversations with snippets. Snippets highlight matched terms. Search works across roles (user/assistant/tool).
+  version: v2.0.2
+- id: REQ-STOR-005
+  name: Compaction snapshot storage
+  description: Pre-compaction message snapshots are persisted so compactions are reversible and auditable.
+  acceptance_criteria: Snapshot saved before compaction completes. Snapshot retrievable by conversation ID and compaction timestamp. Snapshot retention policy configurable.
+  version: v2.0.2
+- id: REQ-STOR-006
+  name: Storage statistics
+  description: Storage backend exposes aggregate statistics (total conversations, messages, tokens, delegations) for diagnostics and UI.
+  acceptance_criteria: Stats query returns current counts. Query is O(1) via cached counters. Stats update atomically on insert/delete.
+  version: v2.0.2
+
+# ── MCP: in-process servers, transport, external clients, authorization ───
+- id: REQ-MCP-001
+  name: In-process MCP server registration
+  description: ServerManager registers in-process MCP servers (entropic, filesystem, bash, git, diagnostics, web) and exposes their tools for discovery and dispatch.
+  acceptance_criteria: Each configured built-in server initializes on engine start. Registered tools discoverable via list_tools. Disabled servers (via config) absent from registry.
+  version: v2.0.2
+- id: REQ-MCP-002
+  name: Built-in server enable flags
+  description: Each built-in server has an enable flag in config that activates or suppresses it at engine startup.
+  acceptance_criteria: filesystem.enabled=false omits filesystem server. Absent flag defaults to enabled. Per-server enable is independent.
+  version: v2.0.2
+- id: REQ-MCP-003
+  name: Per-tool access level declaration
+  description: MCP tools declare an access level (READ or WRITE) that PermissionManager uses to apply different approval policies.
+  acceptance_criteria: READ tools may auto-approve under permissive policy. WRITE tools always require explicit approval or allowlist. Access level immutable per tool.
+  version: v2.0.2
+- id: REQ-MCP-004
+  name: Default-deny permission model
+  description: PermissionManager defaults to deny for any tool not matched by an allow pattern, with glob-style pattern matching for allow and deny lists.
+  acceptance_criteria: Tool call with no allow-list match denied. Glob patterns (fnmatch) support wildcards. Deny patterns evaluated before allow patterns.
+  version: v2.0.2
+- id: REQ-MCP-005
+  name: External MCP server registration
+  description: Consumers register external MCP servers via the C API specifying transport type (stdio, SSE) and connection parameters; handshake completes before tools are exposed.
+  acceptance_criteria: Stdio and SSE transports supported. Handshake failures return actionable error. Successful registration surfaces external tools in list_tools output.
+  version: v2.0.2
+- id: REQ-MCP-006
+  name: SSE transport with event reader
+  description: SSETransport maintains a background event reader thread and matches JSON-RPC responses to pending requests by id.
+  acceptance_criteria: Responses route to correct caller. Thread shuts down cleanly on transport close. Malformed events logged but do not crash reader.
+  version: v2.0.2
+- id: REQ-MCP-007
+  name: Stdio transport with child process
+  description: StdioTransport spawns a child process and exchanges newline-delimited JSON-RPC on stdin/stdout, forwarding child stderr to engine logs.
+  acceptance_criteria: Child process spawned per transport. Requests written with newline terminator. Stderr lines tagged with server name in engine log.
+  version: v2.0.2
+- id: REQ-MCP-008
+  name: External server output sanitization
+  description: External MCP server responses are stripped of engine directive envelopes (CWE-94 defense) so untrusted servers cannot inject engine-level directives.
+  acceptance_criteria: Directive JSON in external server result stripped before dispatch. Sanitization logged at DEBUG. Internal servers bypass sanitization.
+  version: v2.0.2
+- id: REQ-MCP-009
+  name: Health monitoring and reconnect
+  description: HealthMonitor tracks external server connectivity and triggers reconnection via ReconnectPolicy with exponential backoff; tool list is refreshed on reconnect.
+  acceptance_criteria: Connection loss detected within configured interval. Reconnect attempts use exponential backoff with jitter. Tool list re-synced after reconnect.
+  version: v2.0.2
+- id: REQ-MCP-010
+  name: .mcp.json discovery
+  description: ServerManager discovers external MCP server configurations from a .mcp.json file in the project directory at startup.
+  acceptance_criteria: .mcp.json entries registered as external servers automatically. Missing file is not an error. Invalid entries logged and skipped without aborting startup.
+  version: v2.0.2
+- id: REQ-MCP-011
+  name: Per-identity MCP key sets
+  description: MCPKeySet associates an identity with a set of authorized tool keys (grant, revoke, pattern match) enforced at tool dispatch time.
+  acceptance_criteria: Tool call rejected if identity's key set lacks the tool's key. grant/revoke operate atomically. Pattern-based grants (e.g., fs.*) resolve at dispatch time.
+  version: v2.0.2
+- id: REQ-MCP-012
+  name: Cross-identity key delegation
+  description: Authorization layer allows identity A to grant a subset of its keys to identity B (e.g., lead grants fs.* to a child for delegation scope).
+  acceptance_criteria: Grant succeeds only for keys A holds. Revoke reverts delegated grant. Delegated grants expire with the granting identity's destruction.
+  version: v2.0.2
+- id: REQ-MCP-013
+  name: Key set serialization
+  description: All identity key sets serialize to a consumer-accessible format for inspection and persistence.
+  acceptance_criteria: Serialized output includes identity, granted keys, source (static vs delegated). Round-trip deserialization preserves state. Empty key sets serialize explicitly.
+  version: v2.0.2
+
+# ── HOOK: engine lifecycle event points ───────────────────────────────────
+- id: REQ-HOOK-001
+  name: Hook point catalog
+  description: Engine defines 22 hook points (pre/post/info variants for tool calls, directives, state transitions, compaction, etc.) and dispatches them at well-defined locations.
+  acceptance_criteria: Each hook point fires exactly where its contract specifies. Hook enum stable across patch versions. New hooks require minor version bump.
+  version: v2.0.2
+- id: REQ-HOOK-002
+  name: Priority-based hook dispatch with snapshot
+  description: HookRegistry dispatches hooks in priority order using a snapshot of registered hooks to prevent reentrancy issues when hooks modify registrations.
+  acceptance_criteria: Higher-priority hooks fire before lower-priority. Hook registration during dispatch takes effect next invocation. Snapshot prevents iterator invalidation.
+  version: v2.0.2
+- id: REQ-HOOK-003
+  name: Pre-hook modification and cancellation
+  description: Pre-hooks can mutate operation context and can cancel the operation by returning a cancel signal.
+  acceptance_criteria: Mutations to context visible to subsequent pre-hooks and the operation. Cancel signal aborts operation cleanly. Cancellation reason propagates to caller.
+  version: v2.0.2
+- id: REQ-HOOK-004
+  name: Post-hook result transformation
+  description: Post-hooks can transform operation output by returning a modified_json payload that replaces the original result.
+  acceptance_criteria: Absent modified_json passes original result. Present modified_json replaces result for subsequent post-hooks and caller. Transformation chain applies in priority order.
+  version: v2.0.2
+
+# ── PROMPT: prompt files, frontmatter, system prompt assembly ─────────────
+- id: REQ-PROMPT-001
+  name: YAML frontmatter parsing
+  description: PromptManager parses YAML frontmatter from .md prompt files with strict type and version validation.
+  acceptance_criteria: Frontmatter fields validated against expected types. Missing required fields rejected with field name. Unknown fields logged as warnings.
+  version: v2.0.2
+- id: REQ-PROMPT-002
+  name: Tri-state constitution resolution
+  description: Constitution resolves in priority order — consumer-provided custom path, bundled default, or disabled (if explicitly set).
+  acceptance_criteria: Custom path overrides bundled. constitution=false disables injection. Absent field uses bundled.
+  version: v2.0.2
+- id: REQ-PROMPT-003
+  name: Tri-state app_context resolution
+  description: Application context resolves in priority order — consumer-provided custom path, bundled default, or disabled (if explicitly set).
+  acceptance_criteria: Custom app_context overrides bundled. app_context=false disables. Absent field uses bundled if present, otherwise no app_context.
+  version: v2.0.2
+- id: REQ-PROMPT-004
+  name: Identity frontmatter with phase definitions
+  description: Identity files support per-identity phase definitions with phase-specific inference params, allowed_tools, and bash_commands overlays.
+  acceptance_criteria: Phase blocks parsed as sub-structures. Phase name must be unique within an identity. Phase switch applies phase's overlays atomically.
+  version: v2.0.2
+- id: REQ-PROMPT-005
+  name: System prompt assembly
+  description: System prompt is assembled from constitution + app_context + tier identity in a deterministic order.
+  acceptance_criteria: Order is constitution, then app_context, then tier identity body. Missing optional sections omitted without placeholder. Output byte-identical for identical inputs.
+  version: v2.0.2
+
+# ── VALID: constitutional validation ──────────────────────────────────────
+- id: REQ-VALID-001
+  name: Grammar-constrained critique pass
+  description: ConstitutionalValidator runs a critique inference pass over generated output using a GBNF-constrained critique identity to produce a structured verdict.
+  acceptance_criteria: Critique uses grammar from config. Output parseable as structured JSON verdict. Non-conforming critique outputs logged and treated as pass.
+  version: v2.0.2
+- id: REQ-VALID-002
+  name: Violation extraction
+  description: Validator parses the critique verdict and extracts zero or more Violation records with category, severity, and message.
+  acceptance_criteria: Each violation has category, severity, message. Empty violations list indicates pass. Unparseable verdict produces fail-open with warning log.
+  version: v2.0.2
+- id: REQ-VALID-003
+  name: Automatic revision loop
+  description: When violations exist, validator triggers a revision pass (Path A direct retry, Path B with feedback injected into context) with configurable max retries.
+  acceptance_criteria: Path A retries generation with same context. Path B injects violation feedback. Max retries reached returns fail with last violation set.
+  version: v2.0.2
+- id: REQ-VALID-004
+  name: Per-identity validation override
+  description: Each identity can enable or disable constitutional validation overriding the engine-wide default.
+  acceptance_criteria: Identity with validate=false skips validator. validate=true runs validator even if engine default off. Absent field uses engine default.
+  version: v2.0.2
+
+# ── COMPACT: context compaction strategies and snapshots ──────────────────
+- id: REQ-COMPACT-001
+  name: Token usage tracking
+  description: TokenCounter tracks token usage across the conversation (heuristic when model is COLD, exact when WARM/ACTIVE) and exposes current usage vs. max_context_window.
+  acceptance_criteria: Usage updates after each message. Exact counting when backend is loaded. Heuristic estimation falls within ±10% of exact.
+  version: v2.0.2
+- id: REQ-COMPACT-002
+  name: Automatic compaction trigger
+  description: CompactionManager automatically triggers compaction when token usage exceeds a configurable threshold (percentage of max_context_window).
+  acceptance_criteria: Threshold crossed fires compaction before next generation. Threshold configurable per engine config. Warning threshold < compaction threshold produces pre-compaction warning log.
+  version: v2.0.2
+- id: REQ-COMPACT-003
+  name: Deterministic structured extraction
+  description: Default compactor uses deterministic structured extraction (no model inference) to summarize tool results, drop redundant content, and preserve user messages.
+  acceptance_criteria: Compaction reproducible bit-for-bit given same input. No GPU calls during default compaction. User messages preserved verbatim.
+  version: v2.0.2
+- id: REQ-COMPACT-004
+  name: Pre-compaction snapshot save
+  description: Before compaction mutates the message list, the manager saves a snapshot via the storage interface (REQ-STOR-005) for auditability and reversal.
+  acceptance_criteria: Snapshot written before compaction applies. Failure to save snapshot aborts compaction. Storage-less engines skip snapshot with warning log.
+  version: v2.0.2
+- id: REQ-COMPACT-005
+  name: Custom compactor registration with fallback
+  description: Consumers register custom compactors per identity with a fallback chain (identity-specific → global custom → default deterministic).
+  acceptance_criteria: Identity-specific compactor used when available. Fallback to global or default when absent. Registration/deregistration idempotent.
+  version: v2.0.2
+- id: REQ-COMPACT-006
+  name: Compaction result metadata
+  description: CompactionResult reports old/new token counts, summary text, and post-compaction message list for consumer inspection and logging.
+  acceptance_criteria: Result includes numeric token deltas. Summary non-empty for non-trivial compactions. Message list reflects post-compaction state.
+  version: v2.0.2
+
+# ── AUDIT: tool call audit logging ────────────────────────────────────────
+- id: REQ-AUDIT-001
+  name: JSONL append-only audit log
+  description: AuditLogger writes audit entries to a JSONL file in append-only mode with session metadata and a monotonic sequence counter.
+  acceptance_criteria: Each entry is a single JSON line. Sequence counter strictly increasing per session. Log file never rewritten (append-only).
+  version: v2.0.2
+- id: REQ-AUDIT-002
+  name: POST_TOOL_CALL hook integration
+  description: AuditLogger registers as a POST_TOOL_CALL hook so every tool invocation is automatically recorded without explicit consumer code.
+  acceptance_criteria: Audit entry written for every tool call including denials. Hook registration automatic when audit enabled. Disabling audit removes the hook.
+  version: v2.0.2
+- id: REQ-AUDIT-003
+  name: Entry filtering and query
+  description: Consumers can query audit entries with filters on caller identity, tool name pattern, and timestamp range.
+  acceptance_criteria: Filter by caller returns entries matching exact identity. Tool name pattern uses glob. Timestamp range inclusive of bounds.
+  version: v2.0.2
+- id: REQ-AUDIT-004
+  name: Log rotation on size threshold
+  description: Audit log rotates when the file exceeds configured max_file_size, creating a timestamped archive and continuing writes to a fresh file.
+  acceptance_criteria: Rotation fires at threshold without dropping entries. Archive filename includes rotation timestamp. Active file is always the newest.
+  version: v2.0.2
+
+# ── API: C boundary, handle lifecycle, diagnostics ────────────────────────
+- id: REQ-API-001
+  name: Handle lifecycle
+  description: Engine handles are created via entropic_create, configured via entropic_configure_*, and destroyed via entropic_destroy with thread-safe construction and destruction.
+  acceptance_criteria: Create returns opaque handle or null on error. Destroy releases all resources. Double-destroy is a no-op (not undefined behavior).
+  version: v2.0.2
+- id: REQ-API-002
+  name: Synchronous agentic run
+  description: entropic_run executes a full agentic loop synchronously, returning when the loop terminates (stop, complete, error, or interrupt).
+  acceptance_criteria: Blocks until loop ends. Returns structured result with final state and outputs. Does not spawn consumer-visible threads.
+  version: v2.0.2
+- id: REQ-API-003
+  name: Streaming agentic run with callbacks
+  description: entropic_run_streaming executes the agentic loop and emits tokens via a consumer callback, with a cancel flag to stop mid-generation.
+  acceptance_criteria: Callback fires per token. Cancel flag stops within one token. Callback return value can also request cancellation.
+  version: v2.0.2
+- id: REQ-API-004
+  name: Cross-thread interrupt
+  description: entropic_interrupt signals a running engine from another thread to abort generation at the next token boundary.
+  acceptance_criteria: Signal propagates to inference layer via atomic. Interrupted loop transitions to INTERRUPTED (REQ-LOOP-004). No race between interrupt and normal completion.
+  version: v2.0.2
+- id: REQ-API-005
+  name: Memory management across C boundary
+  description: entropic_alloc and entropic_free provide allocator symmetry so consumers never mix their allocator with engine-allocated buffers.
+  acceptance_criteria: Engine-returned buffers freed only with entropic_free. Alloc/free pair safe across DLL boundaries. Null free is a no-op.
+  version: v2.0.2
+- id: REQ-API-006
+  name: Context management
+  description: Consumers can inspect, clear, and count tokens in the engine's conversation context via dedicated C functions.
+  acceptance_criteria: get_context returns serialized context. clear_context resets to empty. count_tokens returns current token count consistent with REQ-COMPACT-001.
+  version: v2.0.2
+- id: REQ-API-007
+  name: Version and API compatibility queries
+  description: entropic_version returns runtime version string; entropic_api_version returns integer ABI version for consumer compatibility checks.
+  acceptance_criteria: Version string matches build tag. API version increments on ABI break. Compatibility check function reports compatible/incompatible against consumer's compiled-against version.
+  version: v2.0.2
+- id: REQ-API-008
+  name: Per-handle error state
+  description: Every API function that can fail updates a handle-local last_error string retrievable via entropic_last_error for detailed diagnostics.
+  acceptance_criteria: last_error reflects most recent failure on that handle. Success clears last_error. Thread-safe if multiple consumer threads share a handle with external synchronization.
+  version: v2.0.2
+- id: REQ-API-009
+  name: Structured error codes
+  description: All API functions return a structured error code enum (ENTROPIC_OK, ENTROPIC_ERROR_*) separate from the last_error message string.
+  acceptance_criteria: Error code space stable across patch versions. Each code maps to a category (config, io, inference, etc.). Unknown code never returned.
+  version: v2.0.2
+- id: REQ-API-010
+  name: External MCP registration via C API
+  description: Consumers register external MCP servers at runtime via entropic_register_mcp_server with transport enum, command/args or URL, and optional auth headers.
+  acceptance_criteria: Registration succeeds after handshake. Duplicate name returns structured error. Deregistration releases the transport cleanly.
+  version: v2.0.2
+- id: REQ-API-011
+  name: Hook registration via C API
+  description: Consumers register and deregister hooks via C API with idempotent semantics (same callback + hook point registered once).
+  acceptance_criteria: Second registration of same callback+point returns already-registered status. Deregister is a no-op for unregistered hooks. Callback lifetime managed by consumer.
+  version: v2.0.2
+- id: REQ-API-012
+  name: Identity listing
+  description: entropic_list_identities returns the current tier set with metadata for each identity (name, focus, allowed_tools, active phase).
+  acceptance_criteria: List reflects dynamic and static identities. Active phase populated for phase-capable identities. Consumer owns returned buffer and frees via entropic_free.
+  version: v2.0.2
+- id: REQ-API-013
+  name: Tool and server listing
+  description: Consumers can list all registered tools and servers (internal and external) with per-tool metadata (access level, server, permission status).
+  acceptance_criteria: List includes disabled servers with disabled flag. Tool metadata complete. External servers show connection state.
+  version: v2.0.2
+- id: REQ-API-014
+  name: Diagnostic prompt retrieval
+  description: entropic_diagnostic_prompt returns a composed diagnostic snapshot (config, identities, tools, history, metrics) for the /diagnose command.
+  acceptance_criteria: Snapshot includes all diagnostic sections. Output is stable text format. Safe to call during active generation (uses snapshot reads).
+  version: v2.0.2
+- id: REQ-API-015
+  name: Vision capability query
+  description: entropic_has_vision_capability returns whether the currently loaded model supports image inputs.
+  acceptance_criteria: Returns true for vision-capable models per REQ-INFER-012. Returns false for COLD models (model not yet inspected). Matches backend capability bitmap.
+  version: v2.0.2

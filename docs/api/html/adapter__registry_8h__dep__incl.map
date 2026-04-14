@@ -1,7 +1,0 @@
-<map id="inference/adapters/adapter_registry.h" name="inference/adapters/adapter_registry.h">
-<area shape="rect" id="Node000001" title="Adapter factory — create adapters by name." alt="" coords="113,5,257,45"/>
-<area shape="rect" id="Node000002" href="$adapter__registry_8cpp.html" title="Adapter factory implementation." alt="" coords="5,93,164,133"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="154,56,109,95,105,91,150,52"/>
-<area shape="rect" id="Node000003" href="$orchestrator_8cpp.html" title="ModelOrchestrator implementation." alt="" coords="189,101,381,126"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="219,52,273,98,269,102,215,56"/>
-</map>

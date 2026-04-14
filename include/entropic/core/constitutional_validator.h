@@ -10,9 +10,10 @@
  * - Register/deregister as POST_GENERATE hook
  *
  * @par Thread safety:
- * - Config is immutable after construction
+ * - Config is immutable after construction (global_enabled_ is a
+ *   separate runtime toggle, not part of the frozen config)
  * - Critique generation is stateless (uses inference interface)
- * - Per-identity overrides guarded by mutex
+ * - Per-identity overrides and global_enabled_ guarded by mutex
  * - last_result_ guarded by mutex for concurrent access
  *
  * @par Ownership:
@@ -124,6 +125,19 @@ public:
         const std::string& identity_name, bool enabled);
 
     /**
+     * @brief Toggle the global validation gate at runtime.
+     *
+     * Per-identity overrides set via set_identity_validation() still
+     * take precedence; this only changes the fallback value used when
+     * no per-identity override exists.
+     *
+     * @param enabled true to enable validation globally, false to disable.
+     * @req REQ-VALID-004
+     * @version 2.0.2
+     */
+    void set_global_enabled(bool enabled);
+
+    /**
      * @brief Run the validation pipeline on generated content.
      * @param content The generated text to validate.
      * @param tier The tier/identity that produced the content.
@@ -154,6 +168,7 @@ public:
     /**
      * @brief Get the config (read-only after construction).
      * @return Reference to config.
+     * @utility
      * @version 1.9.8
      */
     const ConstitutionalValidationConfig& config() const { return config_; }
@@ -416,14 +431,16 @@ private:
     static void extract_revised_field(
         const std::string& json, CritiqueResult& result);
 
-    ConstitutionalValidationConfig config_;   ///< Pipeline configuration
+    ConstitutionalValidationConfig config_;   ///< Pipeline configuration (immutable)
     std::string constitution_text_;           ///< Full constitution content
     InferenceInterface* inference_ = nullptr; ///< For critique/revision generation
     ValidationContext context_;                ///< Hook user_data context
 
+    /// @brief Runtime global enable toggle (decoupled from frozen config_).
+    bool global_enabled_;
     /// @brief Per-identity validation overrides.
     std::unordered_map<std::string, bool> identity_overrides_;
-    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_
+    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + global_enabled_
 
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;

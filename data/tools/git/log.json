@@ -1,0 +1,18 @@
+{
+  "name": "log",
+  "description": "Get git commit history.\n\n**Examples:**\n- Recent 5 commits: `{\"count\": 5}`\n- Condensed view: `{\"oneline\": true}`",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "count": {
+        "type": "integer",
+        "description": "Number of commits"
+      },
+      "oneline": {
+        "type": "boolean",
+        "description": "One line per commit"
+      }
+    },
+    "required": []
+  }
+}

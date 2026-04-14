@@ -119,6 +119,35 @@ ENTROPIC_EXPORT entropic_error_t entropic_configure_from_file(
     const char* config_path);
 
 /**
+ * @brief Configure engine using layered config resolution.
+ *
+ * Loads configuration in priority order (highest wins):
+ * 1. Compiled defaults
+ * 2. Bundled default (data/default_config.yaml)
+ * 3. Global config (~/.entropic/config.yaml)
+ * 4. Project config ({project_dir}/config.local.yaml)
+ * 5. Environment variables (ENTROPIC_*)
+ *
+ * This is the recommended configuration path for most consumers.
+ * The project_dir also sets the working directory for log files
+ * and session state (e.g., ".hello-world", ".entropic").
+ *
+ * @param handle Engine handle.
+ * @param project_dir Project config directory (null-terminated).
+ *        Contains config.local.yaml and receives session logs.
+ *        Pass NULL or "" to use only global + bundled defaults.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_CONFIG — config validation failed.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_configure_dir(
+    entropic_handle_t handle,
+    const char* project_dir);
+
+/**
  * @brief Destroy an engine instance and free all resources.
  *
  * Unloads models, closes storage, destroys all child objects.
@@ -273,6 +302,65 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
  * @version 1.8.4
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
+
+/* ── Conversation Context (v2.0.1) ───────────────────── */
+
+/**
+ * @brief Clear conversation history, starting a new session.
+ *
+ * Removes all messages (system, user, assistant, tool) from the
+ * conversation. The next entropic_run() call starts fresh with
+ * only the system prompt.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_clear(
+    entropic_handle_t handle);
+
+/**
+ * @brief Get the current conversation history as a JSON array.
+ *
+ * Returns the full message history including system prompt, user
+ * messages, assistant responses, and tool call results.
+ *
+ * @param handle Engine handle.
+ * @param[out] messages_json Output: JSON array of message objects.
+ *             Each object has "role" and "content" fields.
+ *             Caller must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — messages_json is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.0.1
+ *
+ * @par Memory ownership
+ * Caller must free *messages_json with entropic_free().
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_get(
+    entropic_handle_t handle,
+    char** messages_json);
+
+/**
+ * @brief Get the number of messages in the conversation.
+ *
+ * @param handle Engine handle.
+ * @param[out] count Output: number of messages.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — count is NULL.
+ *
+ * @threadsafety Thread-safe (read-only).
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_count(
+    entropic_handle_t handle,
+    size_t* count);
 
 /* ── External MCP Servers (v1.8.7) ───────────────────── */
 

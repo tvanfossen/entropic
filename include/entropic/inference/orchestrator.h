@@ -163,6 +163,7 @@ public:
     /**
      * @brief Access the LoRA adapter manager.
      * @return Reference to AdapterManager.
+     * @utility
      * @version 1.9.2
      */
     AdapterManager& adapter_manager() { return lora_manager_; }
@@ -170,6 +171,7 @@ public:
     /**
      * @brief Access the grammar registry.
      * @return Reference to GrammarRegistry.
+     * @utility
      * @version 1.9.3
      */
     GrammarRegistry& grammar_registry() { return grammar_registry_; }
@@ -177,6 +179,7 @@ public:
     /**
      * @brief Access the GPU resource profile registry.
      * @return Reference to ProfileRegistry.
+     * @utility
      * @version 2.0.0
      */
     ProfileRegistry& profile_registry() { return profile_registry_; }
@@ -184,6 +187,7 @@ public:
     /**
      * @brief Access the throughput tracker.
      * @return Reference to ThroughputTracker.
+     * @utility
      * @version 2.0.0
      */
     ThroughputTracker& throughput_tracker() { return throughput_tracker_; }
@@ -273,6 +277,40 @@ private:
      * @version 1.9.2
      */
     void preload_adapters();
+
+    /**
+     * @brief Build per-tier backends and adapters from config.
+     * @param config Full engine config.
+     * @return true on success, false if any tier model file is missing.
+     * @internal
+     * @version 2.0.2
+     */
+    bool create_tier_backends(const ParsedConfig& config);
+
+    /**
+     * @brief Build routing maps (tier_map_, handoff_rules_) from config.
+     * @param config Full engine config.
+     * @internal
+     * @version 2.0.2
+     */
+    void build_routing_tables(const ParsedConfig& config);
+
+    /**
+     * @brief Activate the default tier (and load if not yet loaded).
+     * @param config Full engine config.
+     * @return true on success.
+     * @internal
+     * @version 2.0.2
+     */
+    bool activate_default_tier(const ParsedConfig& config);
+
+    /**
+     * @brief Activate the router model if configured.
+     * @param config Full engine config.
+     * @internal
+     * @version 2.0.2
+     */
+    void activate_router(const ParsedConfig& config);
 
     /**
      * @brief Load bundled grammars from data directory at startup.

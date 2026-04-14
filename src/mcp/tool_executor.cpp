@@ -11,6 +11,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <memory>
+#include <optional>
 
 static auto logger = entropic::log::get("mcp.tool_executor");
 
@@ -450,7 +452,7 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.0
+ * @version 2.0.2
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -494,6 +496,10 @@ std::vector<Message> ToolExecutor::process_single_call(
 
     logger->info("Tool '{}' executed: {:.0f}ms, result={} chars",
                  call.name, exec_ms, raw_result.size());
+
+    // Extract and process directives from ServerResponse (v2.0.1)
+    extract_and_process_directives(ctx, raw_result);
+
     run_post_tool_hooks(ctx);
 
     return {std::move(msg)};
@@ -505,12 +511,15 @@ std::vector<Message> ToolExecutor::process_single_call(
  * @param results Results so far.
  * @return true if batch should stop.
  * @internal
- * @version 1.8.5
+ * @version 2.0.2
  */
 bool ToolExecutor::should_stop_batch(
     const LoopContext& ctx,
     const std::vector<Message>& /*results*/) const {
-    return ctx.consecutive_duplicate_attempts >= 3;
+    return ctx.state == AgentState::COMPLETE
+        || ctx.pending_delegation.has_value()
+        || ctx.pending_pipeline.has_value()
+        || ctx.consecutive_duplicate_attempts >= 3;
 }
 
 /**
@@ -579,12 +588,20 @@ Message ToolExecutor::create_duplicate_message(
 
 /**
  * @brief Serialize tool call arguments to JSON string.
+ *
+ * Prefers arguments_json (preserves type info from interface_factory parse)
+ * over the string-only arguments map. Without this, boolean/integer values
+ * get serialized as strings and crash tools that expect typed values.
+ *
  * @param call Tool call.
  * @return JSON string.
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 std::string ToolExecutor::serialize_args(const ToolCall& call) {
+    if (!call.arguments_json.empty()) {
+        return call.arguments_json;
+    }
     nlohmann::json args;
     for (const auto& [k, v] : call.arguments) {
         args[k] = v;
@@ -658,6 +675,115 @@ std::string ToolExecutor::build_post_tool_json(
         ctx["directives"] = nlohmann::json::array();
     }
     return ctx.dump();
+}
+
+/**
+ * @brief Extract directives from ServerResponse JSON and process them.
+ *
+ * Parses the directives array from the raw tool result, constructs
+ * typed Directive objects, and passes them to the engine's
+ * DirectiveProcessor via the hooks callback.
+ *
+ * @param ctx Loop context (mutated by directive handlers).
+ * @param raw_result ServerResponse JSON string.
+ * @internal
+ * @version 2.0.1
+ */
+/**
+ * @brief Extract pipeline stage names from a result JSON object.
+ * @param result_json Parsed result JSON.
+ * @return Stage tier names (empty if absent).
+ * @internal
+ * @version 2.0.2
+ */
+static std::vector<std::string> extract_pipeline_stages(
+    const nlohmann::json& result_json) {
+    std::vector<std::string> stages;
+    if (!result_json.contains("stages")) { return stages; }
+    for (const auto& s : result_json["stages"]) {
+        stages.push_back(s.get<std::string>());
+    }
+    return stages;
+}
+
+/**
+ * @brief Build a typed Directive from a directive-descriptor JSON.
+ * @param d Directive JSON ("type": ...).
+ * @param result_json Parsed result JSON for parameter lookup.
+ * @return Owned Directive (nullptr if type is unrecognized).
+ * @internal
+ * @version 2.0.2
+ */
+static std::unique_ptr<Directive> build_directive(
+    const nlohmann::json& d, const nlohmann::json& result_json) {
+    auto type_str = d.value("type", "");
+    std::unique_ptr<Directive> result;
+    if (type_str == "stop_processing") {
+        result = std::make_unique<StopProcessingDirective>();
+    } else if (type_str == "delegate") {
+        result = std::make_unique<DelegateDirective>(
+            result_json.value("target", ""),
+            result_json.value("task", ""),
+            result_json.value("max_turns", -1));
+    } else if (type_str == "complete") {
+        result = std::make_unique<CompleteDirective>(
+            result_json.value("summary", ""));
+    } else if (type_str == "pipeline") {
+        result = std::make_unique<PipelineDirective>(
+            extract_pipeline_stages(result_json),
+            result_json.value("task", ""));
+    }
+    return result;
+}
+
+/**
+ * @brief Pull the "directives" array out of a tool ServerResponse JSON.
+ * @param raw_result Raw ServerResponse JSON string.
+ * @return Pair of (resp object, directives reference). Returns
+ *         (null, null) if the response is missing/empty/invalid.
+ * @internal
+ * @version 2.0.2
+ */
+static std::optional<std::pair<nlohmann::json, nlohmann::json>>
+extract_directive_array(const std::string& raw_result) {
+    auto resp = nlohmann::json::parse(raw_result, nullptr, false);
+    if (!resp.is_object() || !resp.contains("directives")) {
+        return std::nullopt;
+    }
+    auto dirs = resp["directives"];
+    if (!dirs.is_array() || dirs.empty()) { return std::nullopt; }
+    return std::make_pair(std::move(resp), std::move(dirs));
+}
+
+/**
+ * @brief Extract directives from tool ServerResponse JSON and dispatch them.
+ * @param ctx Loop context (mutated by directive handlers).
+ * @param raw_result Raw ServerResponse JSON string.
+ * @utility
+ * @version 2.0.2
+ */
+void ToolExecutor::extract_and_process_directives(
+    LoopContext& ctx, const std::string& raw_result) {
+    if (hooks_.process_directives == nullptr) { return; }
+    auto extracted = extract_directive_array(raw_result);
+    if (!extracted) { return; }
+    auto& [resp, dirs] = *extracted;
+
+    auto result_json = nlohmann::json::parse(
+        resp.value("result", "{}"), nullptr, false);
+
+    std::vector<std::unique_ptr<Directive>> owned;
+    for (const auto& d : dirs) {
+        auto directive = build_directive(d, result_json);
+        if (directive) { owned.push_back(std::move(directive)); }
+    }
+    if (owned.empty()) { return; }
+
+    std::vector<const Directive*> ptrs;
+    ptrs.reserve(owned.size());
+    for (const auto& d : owned) { ptrs.push_back(d.get()); }
+    logger->info("Processing {} directives from tool result", ptrs.size());
+    hooks_.process_directives(ctx, ptrs, hooks_.user_data);
 }
 
 } // namespace entropic

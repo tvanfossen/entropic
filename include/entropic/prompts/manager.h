@@ -163,10 +163,16 @@ ENTROPIC_EXPORT std::string load_constitution(
 /**
  * @brief Load app_context prompt with tri-state resolution.
  *
+ * Resolution order: if disabled or app_context_path is nullopt, body
+ * is left empty (no bundled fallback — app_context is opt-in). If a
+ * path is provided and is a bare filename, it is resolved relative
+ * to data_dir/prompts/. Absolute paths and paths with directory
+ * components are used as-is.
+ *
  * @param app_context_path Custom path (nullopt = disabled by default).
  * @param disabled true if app_context explicitly disabled.
- * @param data_dir Bundled data directory for fallback.
- * @param[out] body Output app_context text (empty if disabled).
+ * @param data_dir Bundled data directory used to resolve bare filenames.
+ * @param[out] body Output app_context text (empty if disabled or nullopt).
  * @return Empty string on success, error on failure.
  * @version 1.8.1
  */
@@ -175,5 +181,39 @@ ENTROPIC_EXPORT std::string load_app_context(
     bool disabled,
     const std::filesystem::path& data_dir,
     std::string& body);
+
+/**
+ * @brief Resolve the system prompt body for a named tier.
+ *
+ * Looks up the tier in config, resolves the identity file path
+ * (explicit, bundled convention, or disabled), loads it, and
+ * returns the markdown body. Encapsulates the path convention
+ * "identity_{tier_name}.md" in one place.
+ *
+ * @param tier_config Tier configuration.
+ * @param tier_name Tier name (for default path convention).
+ * @param data_dir Bundled data directory.
+ * @return Identity body string (empty if disabled or not found).
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT std::string resolve_tier_identity(
+    const entropic::TierConfig& tier_config,
+    const std::string& tier_name,
+    const std::filesystem::path& data_dir);
+
+/**
+ * @brief Assemble the full system prompt from config.
+ *
+ * Loads constitution, app_context, and default tier identity, then
+ * concatenates them. Used by the facade during configure.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Assembled system prompt string (may be empty if all disabled).
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT std::string assemble(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir);
 
 } // namespace entropic::prompts

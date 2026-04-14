@@ -320,6 +320,25 @@ entropic_error_t entropic_inference_generate_streaming_seq(
     void* user_data,
     int* cancel_flag);
 
+/* ── Inference log control (v2.0.1) ──────────────────── */
+
+/**
+ * @brief Redirect llama/ggml logs to a file.
+ *
+ * Opens the file (truncating), redirects all llama.cpp and ggml
+ * log output to it. Call with NULL to silence logs entirely.
+ *
+ * @param path Log file path (null-terminated), or NULL to silence.
+ * @version 2.0.1
+ */
+void entropic_inference_log_to_file(const char* path);
+
+/**
+ * @brief Silence all llama/ggml log output.
+ * @version 2.0.1
+ */
+void entropic_inference_log_silence(void);
+
 #ifdef __cplusplus
 }
 #endif

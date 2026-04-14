@@ -1,7 +1,0 @@
-<map id="entropic::EntropicServer" name="entropic::EntropicServer">
-<area shape="rect" id="Node000001" title="Entropic MCP server for engine&#45;level tools." alt="" coords="9,168,188,193"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1MCPServerBase.html" title="Concrete base class for MCP servers (80% logic)." alt="" coords="5,93,192,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="101,133,101,168,96,168,96,133"/>
-<area shape="rect" id="Node000003" href="$classentropic_1_1ToolRegistry.html" title="Manages a collection of ToolBase instances." alt="" coords="17,5,180,31"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="101,45,101,93,96,93,96,45"/>
-</map>

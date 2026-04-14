@@ -19,6 +19,8 @@ static auto logger = entropic::log::get("facade.storage");
 /**
  * @brief Open or create a SQLite storage backend.
  *
+ * @param handle Engine handle returned by entropic_create.
+ * @param db_path Filesystem path to the SQLite database file.
  * @return ENTROPIC_OK on success.
  * @internal
  * @version 2.0.0
@@ -51,6 +53,7 @@ entropic_storage_open(
 /**
  * @brief Close the storage backend.
  *
+ * @param handle Engine handle returned by entropic_create.
  * @return ENTROPIC_OK (no-op if storage not opened).
  * @internal
  * @version 2.0.0

@@ -25,6 +25,7 @@
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <chrono>
+#include <filesystem>
 #include <memory>
 #include <string>
 
@@ -40,6 +41,19 @@ namespace entropic::log {
  * @version 1.8.0
  */
 ENTROPIC_EXPORT void init(spdlog::level::level_enum level = spdlog::level::info);
+
+/**
+ * @brief Add a file sink to all loggers (truncated per run).
+ *
+ * Creates the parent directory, opens the file (truncating any
+ * existing content), adds the sink to the default logger, and
+ * applies it to every logger already registered. Loggers created
+ * after this call inherit the sink automatically via get().
+ *
+ * @param path Log file path.
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT void add_file_sink(const std::filesystem::path& path);
 
 /**
  * @brief Get or create a named logger.
@@ -59,6 +73,18 @@ ENTROPIC_EXPORT void init(spdlog::level::level_enum level = spdlog::level::info)
  * @version 1.8.0
  */
 ENTROPIC_EXPORT std::shared_ptr<spdlog::logger> get(const std::string& name);
+
+/**
+ * @brief Set up session logging for a project directory.
+ *
+ * Adds a spdlog file sink for session.log and truncates
+ * session_model.log for a fresh session. Centralizes log
+ * file lifecycle that was previously inline in the facade.
+ *
+ * @param log_dir Directory for session log files.
+ * @version 2.0.1
+ */
+ENTROPIC_EXPORT void setup_session(const std::filesystem::path& log_dir);
 
 // ── Timing utilities ──────────────────────────────────────────
 

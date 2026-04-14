@@ -127,6 +127,25 @@ typedef int (*entropic_is_response_complete_fn)(
  */
 typedef void (*entropic_inference_free_fn)(void* ptr);
 
+/**
+ * @brief Get formatted tool prompt for a tier.
+ *
+ * Returns the adapter-formatted tool definitions filtered by the
+ * tier's allowed_tools. The caller must free the result with the
+ * interface's free_fn.
+ *
+ * @param tier Tier name (e.g., "lead", "researcher").
+ * @param[out] result Output: formatted tool prompt string. Caller frees.
+ * @param user_data Opaque pointer (facade context).
+ * @return 0 on success, non-zero if tier has no tools.
+ * @callback
+ * @version 2.0.4
+ */
+typedef int (*entropic_get_tool_prompt_fn)(
+    const char* tier,
+    char** result,
+    void* user_data);
+
 #ifdef __cplusplus
 }
 #endif
@@ -152,9 +171,11 @@ struct InferenceInterface {
     entropic_parse_tool_calls_fn parse_tool_calls = nullptr; ///< Tool call parsing
     entropic_is_response_complete_fn is_response_complete = nullptr; ///< Completion check
     entropic_inference_free_fn free_fn = nullptr;            ///< Free allocated strings
+    entropic_get_tool_prompt_fn get_tool_prompt = nullptr;   ///< Tool definitions for tier (v2.0.4)
     void* backend_data = nullptr;                            ///< Opaque backend pointer
     void* orchestrator_data = nullptr;                       ///< Opaque orchestrator pointer
     void* adapter_data = nullptr;                            ///< Opaque adapter pointer
+    void* tool_prompt_data = nullptr;                        ///< Opaque pointer for get_tool_prompt (v2.0.4)
 };
 
 } // namespace entropic

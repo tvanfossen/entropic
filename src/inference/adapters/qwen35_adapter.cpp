@@ -118,7 +118,7 @@ std::vector<ToolCall> Qwen35Adapter::parse_xml_function_calls(
  * @param func_body Function body text.
  * @return Map of parameter key → value.
  * @internal
- * @version 1.8.2
+ * @version 2.0.4
  */
 std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_parameters(
     const std::string& func_body) const
@@ -142,13 +142,13 @@ std::unordered_map<std::string, std::string> Qwen35Adapter::extract_xml_paramete
         std::string key = (*it)[1].str();
         std::string value = (*it)[2].str();
 
-        // Trim
-        auto ks = key.find_first_not_of(" \t");
-        auto ke = key.find_last_not_of(" \t");
+        // Trim whitespace including newlines
+        auto ks = key.find_first_not_of(" \t\n\r");
+        auto ke = key.find_last_not_of(" \t\n\r");
         if (ks != std::string::npos) key = key.substr(ks, ke - ks + 1);
 
-        auto vs = value.find_first_not_of(" \t");
-        auto ve = value.find_last_not_of(" \t");
+        auto vs = value.find_first_not_of(" \t\n\r");
+        auto ve = value.find_last_not_of(" \t\n\r");
         if (vs != std::string::npos) value = value.substr(vs, ve - vs + 1);
 
         if (key.empty() || value.empty()) {

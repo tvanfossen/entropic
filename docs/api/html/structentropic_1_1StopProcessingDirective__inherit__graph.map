@@ -1,5 +1,0 @@
-<map id="entropic::StopProcessingDirective" name="entropic::StopProcessingDirective">
-<area shape="rect" id="Node000001" title="Stop processing remaining tool calls." alt="" coords="5,79,188,119"/>
-<area shape="rect" id="Node000002" href="$structentropic_1_1Directive.html" title="Base directive — all directives carry a type tag." alt="" coords="25,5,168,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="99,44,99,79,94,79,94,44"/>
-</map>

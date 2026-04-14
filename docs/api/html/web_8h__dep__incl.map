@@ -1,5 +1,0 @@
-<map id="entropic/mcp/servers/web.h" name="entropic/mcp/servers/web.h">
-<area shape="rect" id="Node000001" title="Web MCP server — web_fetch + web_search." alt="" coords="6,5,165,45"/>
-<area shape="rect" id="Node000002" href="$web_8cpp.html" title="WebServer implementation — web_fetch + web_search placeholders." alt="" coords="5,93,165,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="88,59,88,93,83,93,83,59"/>
-</map>

@@ -61,7 +61,7 @@ static double now_seconds() {
  * @param loop_config Loop configuration.
  * @param compaction_config Compaction configuration.
  * @internal
- * @version 1.8.4
+ * @version 2.0.4
  */
 AgentEngine::AgentEngine(
     const InferenceInterface& inference,
@@ -69,7 +69,7 @@ AgentEngine::AgentEngine(
     const CompactionConfig& compaction_config)
     : inference_(inference),
       loop_config_(loop_config),
-      token_counter_(16384),
+      token_counter_(loop_config.context_length),
       compaction_manager_(compaction_config, token_counter_),
       context_manager_(
           compaction_manager_, callbacks_,
@@ -701,8 +701,13 @@ static std::vector<ToolCall> decode_tool_calls_json(
 
 /**
  * @brief Parse tool calls from raw model output via adapter.
+ *
+ * Delegates raw extraction to the adapter's parse_tool_calls callback,
+ * then fully parses the resulting JSON array into individual ToolCall
+ * objects with populated name, id, and arguments fields.
+ *
  * @param raw_content Raw model output string.
- * @return Pair of (cleaned content, parsed tool calls).
+ * @return Pair of (cleaned content, fully-parsed tool call vector).
  * @utility
  * @version 2.0.2
  */
@@ -902,12 +907,6 @@ static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
 }
 
 /**
- * @brief Execute a pending delegation after tool processing.
- * @param ctx Loop context with pending_delegation set.
- * @internal
- * @version 1.9.1
- */
-/**
  * @brief Append a delegation rejection message to the loop context.
  * @param ctx Loop context.
  * @internal
@@ -942,6 +941,12 @@ static void push_delegation_result(LoopContext& ctx,
 
 /**
  * @brief Execute a pending delegation from the tool result directives.
+ *
+ * On successful delegation the state transitions to COMPLETE unless the
+ * tier's "explicit_completion" parameter is set, in which case the state
+ * returns to EXECUTING so the parent loop continues.  On failure or
+ * rejection the state is always EXECUTING.
+ *
  * @param ctx Loop context with pending delegation.
  * @utility
  * @version 2.0.2

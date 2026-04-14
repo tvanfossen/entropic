@@ -1,5 +1,0 @@
-<map id="entropic/storage/permission_persister.h" name="entropic/storage/permission_persister.h">
-<area shape="rect" id="Node000001" title="Persist permission allow/deny patterns to project config." alt="" coords="5,5,209,45"/>
-<area shape="rect" id="Node000002" href="$permission__persister_8cpp.html" title="PermissionPersister implementation using string&#45;based YAML editing." alt="" coords="34,93,181,133"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="110,59,110,93,105,93,105,59"/>
-</map>

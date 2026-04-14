@@ -1,7 +1,0 @@
-<map id="inference/adapters/generic_adapter.h" name="inference/adapters/generic_adapter.h">
-<area shape="rect" id="Node000001" title="GenericAdapter — default ChatML adapter with JSON tool calls." alt="" coords="103,5,247,45"/>
-<area shape="rect" id="Node000002" href="$adapter__registry_8cpp.html" title="Adapter factory implementation." alt="" coords="5,93,164,133"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="147,57,107,95,103,91,144,53"/>
-<area shape="rect" id="Node000003" href="$generic__adapter_8cpp.html" title="GenericAdapter implementation." alt="" coords="189,93,346,133"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="207,53,249,91,245,95,204,57"/>
-</map>

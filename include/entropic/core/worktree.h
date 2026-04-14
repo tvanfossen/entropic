@@ -142,6 +142,13 @@ private:
      */
     std::string find_main_branch() const;
 
+    /**
+     * @brief Remove stale delegation branches from prior sessions.
+     * @utility
+     * @version 2.0.4
+     */
+    void prune_stale_worktrees();
+
     std::filesystem::path repo_dir_;       ///< Repository root
     std::filesystem::path worktree_base_;  ///< .worktrees/ directory
     bool develop_ready_ = false;           ///< develop branch checked out

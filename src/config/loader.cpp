@@ -262,7 +262,7 @@ static std::string parse_external_mcp_config(
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.2
+ * @version 2.0.4
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -275,6 +275,7 @@ static std::string parse_mcp_config(
     extract(node, "enable_diagnostics", config.enable_diagnostics);
     extract(node, "enable_web", config.enable_web);
     extract(node, "server_timeout_seconds", config.server_timeout_seconds);
+    extract(node, "working_dir", config.working_dir);
 
     if (node.has_child("filesystem")) {
         parse_filesystem_config(node["filesystem"], config.filesystem);

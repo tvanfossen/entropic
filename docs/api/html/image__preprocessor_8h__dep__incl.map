@@ -1,5 +1,0 @@
-<map id="entropic/inference/image_preprocessor.h" name="entropic/inference/image_preprocessor.h">
-<area shape="rect" id="Node000001" title="Image preprocessing for multimodal inference." alt="" coords="43,5,213,45"/>
-<area shape="rect" id="Node000002" href="$image__preprocessor_8cpp.html" title="Image preprocessing implementation." alt="" coords="5,93,251,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="131,59,131,93,125,93,125,59"/>
-</map>

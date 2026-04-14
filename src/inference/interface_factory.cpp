@@ -187,7 +187,7 @@ static int iface_complete(const char* prompt,
 /**
  * @brief Parse tool calls from raw model output via adapter.
  * @callback
- * @version 2.0.1
+ * @version 2.0.4
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -206,7 +206,9 @@ static int iface_parse_tool_calls(const char* raw,
     for (const auto& tc : parsed.tool_calls) {
         nlohmann::json args;
         for (const auto& [k, v] : tc.arguments) {
-            args[k] = nlohmann::json::parse(v, nullptr, false);
+            auto parsed_val = nlohmann::json::parse(v, nullptr, false);
+            args[k] = parsed_val.is_discarded()
+                ? nlohmann::json(v) : parsed_val;
         }
         arr.push_back({{"name", tc.name}, {"arguments", args}});
     }

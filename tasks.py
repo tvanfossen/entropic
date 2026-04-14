@@ -278,6 +278,7 @@ def test(  # noqa: CFQ002
 EXAMPLES = {
     "hello-world": {"lang": "c", "binary": "hello-world"},
     "pychess": {"lang": "cxx", "binary": "pychess"},
+    "explorer": {"lang": "cxx", "binary": "explorer"},
 }
 
 LIB_DIRS = [
@@ -407,6 +408,31 @@ def _run_native(c, name, example_dir, preset, jobs, env):
 
     print(f"Running {name} (C/C++)...")
     c.run(f"cd {example_dir} && {binary}", env=env, pty=True)
+
+
+## @brief Generate doxygen SQLite knowledge database from engine source.
+## @utility
+## @version 2
+@task(
+    help={
+        "enrich": "Also populate architecture_topics from YAML",
+        "verbose": "Enable verbose logging",
+    }
+)
+def docs(c, enrich=False, verbose=False):
+    """Generate doxygen SQLite database (docs/entropic_docs.db)."""
+    python = os.path.abspath(".venv/bin/python")
+    script = os.path.abspath("examples/explorer/scripts/build_docs_db.py")
+    doxyfile = os.path.abspath("docs/Doxyfile")
+    output = os.path.abspath("docs/entropic_docs.db")
+    enrich_yaml = os.path.abspath("examples/explorer/data/architecture_topics.yaml")
+
+    cmd = f"{python} {script} --doxyfile {doxyfile} --output {output}"
+    if enrich and os.path.isfile(enrich_yaml):
+        cmd += f" --enrich {enrich_yaml}"
+    if verbose:
+        cmd += " --verbose"
+    c.run(cmd)
 
 
 ## @brief Remove all build directories.

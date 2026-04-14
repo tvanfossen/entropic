@@ -75,6 +75,7 @@ struct LoopConfig {
     int max_consecutive_errors = 3;     ///< Errors before ERROR state
     int max_tool_calls_per_turn = 10;   ///< Tool calls per iteration (v1.8.5)
     int idle_timeout_seconds = 300;     ///< Idle timeout (reserved)
+    int context_length = 16384;         ///< Context budget for compaction (v2.0.4)
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)

@@ -13,6 +13,7 @@
 
 #include <array>
 #include <cstdio>
+#include <sstream>
 
 static auto logger = entropic::log::get("core.worktree");
 
@@ -57,12 +58,46 @@ GitResult run_git(const std::filesystem::path& repo_dir,
  * @brief Construct with repository root directory.
  * @param repo_dir Path to the git repository root.
  * @internal
- * @version 1.8.6
+ * @version 2.0.4
  */
 WorktreeManager::WorktreeManager(const std::filesystem::path& repo_dir)
     : repo_dir_(repo_dir),
       worktree_base_(repo_dir / ".worktrees") {
     logger->info("WorktreeManager: repo={}", repo_dir_.string());
+    prune_stale_worktrees();
+}
+
+/**
+ * @brief Remove stale delegation worktrees and branches from prior sessions.
+ *
+ * Called at startup to clean up any worktrees/branches left behind by
+ * crashed or interrupted sessions. Without this, `worktree add -b` fails
+ * with "branch already exists" and blocks all delegation.
+ *
+ * @internal
+ * @version 2.0.4
+ */
+void WorktreeManager::prune_stale_worktrees() {
+    run_git(repo_dir_, "worktree prune");
+    auto branches = run_git(repo_dir_, "branch --list 'delegation/*'");
+    if (!branches.success || branches.output.empty()) { return; }
+
+    std::istringstream iss(branches.output);
+    std::string line;
+    int pruned = 0;
+    while (std::getline(iss, line)) {
+        auto start = line.find_first_not_of(" *+");
+        if (start == std::string::npos) { continue; }
+        std::string branch = line.substr(start);
+        auto end = branch.find_first_of(" \t");
+        if (end != std::string::npos) { branch = branch.substr(0, end); }
+        if (branch.rfind("delegation/", 0) != 0) { continue; }
+        run_git(repo_dir_, "branch -D " + branch);
+        pruned++;
+    }
+    if (pruned > 0) {
+        logger->info("Pruned {} stale delegation branch(es)", pruned);
+    }
 }
 
 /**
@@ -127,7 +162,7 @@ bool WorktreeManager::ensure_develop() {
  * @param tier Target tier name.
  * @return WorktreeInfo on success, nullopt on failure.
  * @internal
- * @version 1.8.6
+ * @version 2.0.4
  */
 std::optional<WorktreeInfo> WorktreeManager::create_worktree(
     const std::string& delegation_id,
@@ -146,8 +181,17 @@ std::optional<WorktreeInfo> WorktreeManager::create_worktree(
                       " '" + path.string() + "' develop";
     auto r = run_git(repo_dir_, cmd);
     if (!r.success) {
-        logger->error("Failed to create worktree: {}", r.output);
-        return std::nullopt;
+        logger->warn("create_worktree failed, cleaning stale state: {}",
+                     r.output);
+        run_git(repo_dir_, "worktree remove --force '"
+                           + path.string() + "'");
+        run_git(repo_dir_, "branch -D " + branch);
+        r = run_git(repo_dir_, cmd);
+        if (!r.success) {
+            logger->error("create_worktree failed after cleanup: {}",
+                          r.output);
+            return std::nullopt;
+        }
     }
 
     logger->info("Created worktree: {} -> {}", branch, path.string());

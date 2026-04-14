@@ -102,6 +102,17 @@ public:
         const ToolCall& tool_call,
         const std::string& result) const;
 
+    /* ── Tool formatting (subclass can override) ─────────── */
+
+    /**
+     * @brief Format tool definitions for injection into system prompt.
+     * @param tool_jsons Tool definition JSON strings.
+     * @return Adapter-formatted tool prompt string.
+     * @version 2.0.4
+     */
+    virtual std::string format_tools(
+        const std::vector<std::string>& tool_jsons) const;
+
     /* ── Response completeness ───────────────────────────── */
 
     /**
@@ -166,15 +177,6 @@ protected:
      */
     std::optional<ToolCall> parse_single_tool_call(
         const std::string& json_str) const;
-
-    /* ── Tool formatting (subclass can override) ─────────── */
-
-    /**
-     * @brief Format tool definitions for system prompt.
-     * @version 1.8.2
-     */
-    virtual std::string format_tools(
-        const std::vector<std::string>& tool_jsons) const;
 
     std::string tier_name_;          ///< Identity tier name
     std::string identity_prompt_;    ///< Assembled identity prompt

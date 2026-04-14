@@ -28,7 +28,9 @@
 #include <entropic/core/engine_types.h>
 #include <entropic/core/response_generator.h>
 #include <entropic/interfaces/i_hook_handler.h>
+#include <entropic/core/stream_think_filter.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
+#include <entropic/types/session_logger.h>
 
 #include <atomic>
 #include <filesystem>
@@ -160,6 +162,137 @@ public:
      */
     std::pair<int, int> context_usage(
         const std::vector<Message>& messages) const;
+
+    /**
+     * @brief Get mutable reference to engine callbacks.
+     *
+     * Used by ToolExecutor which holds a reference that survives
+     * set_callbacks() reassignment (same pattern as ResponseGenerator).
+     *
+     * @return Reference to internal callbacks member.
+     * @utility
+     * @version 2.0.1
+     */
+    EngineCallbacks& callbacks() { return callbacks_; }
+
+    /**
+     * @brief Get loop configuration.
+     * @return Const reference to loop config.
+     * @utility
+     * @version 2.0.1
+     */
+    const LoopConfig& loop_config() const { return loop_config_; }
+
+    /**
+     * @brief Get directive processor for external hook wiring.
+     * @return Reference to internal directive processor.
+     * @utility
+     * @version 2.0.1
+     */
+    DirectiveProcessor& directive_processor() { return directive_processor_; }
+
+    // ── Conversation state (v2.0.2) ─────────────────────────
+
+    /**
+     * @brief Set the system prompt for conversation state.
+     * @param prompt Assembled system prompt string.
+     * @version 2.0.2
+     */
+    void set_system_prompt(const std::string& prompt);
+
+    /**
+     * @brief Set session logger for model transcript logging.
+     * @param logger Non-owning pointer (nullable). Must outlive engine.
+     * @version 2.0.2
+     */
+    void set_session_logger(SessionLogger* logger);
+
+    /**
+     * @brief Run a single conversation turn (stateful).
+     *
+     * Manages conversation history internally. Appends user message,
+     * runs the agentic loop, appends result messages.
+     *
+     * @param input User input string.
+     * @return Full result messages from engine.
+     * @version 2.0.2
+     */
+    std::vector<Message> run_turn(const std::string& input);
+
+    /**
+     * @brief Run a streaming conversation turn (stateful).
+     *
+     * Same as run_turn but with streaming token output. Owns the
+     * StreamThinkFilter, cancel polling, and session logger wiring.
+     *
+     * @param input User input string.
+     * @param on_token Consumer token callback (receives filtered UTF-8).
+     * @param user_data Consumer callback context.
+     * @param cancel_flag Polled per-token, nullable.
+     * @return 0 on success, 1 if cancelled, 2 on error.
+     * @version 2.0.2
+     */
+    int run_streaming(const std::string& input,
+                      TokenCallback on_token,
+                      void* user_data,
+                      int* cancel_flag);
+
+    /**
+     * @brief Clear conversation history.
+     * @version 2.0.2
+     */
+    void clear_conversation();
+
+    /**
+     * @brief Get conversation message count.
+     * @return Number of messages.
+     * @version 2.0.2
+     */
+    size_t message_count() const;
+
+    /**
+     * @brief Get conversation messages (read-only).
+     * @return Const reference to message vector.
+     * @version 2.0.2
+     */
+    const std::vector<Message>& get_messages() const;
+
+    // ── Directive hooks (v2.0.2) ────────────────────────────
+
+    /**
+     * @brief Build ToolExecutorHooks wired to this engine's DirectiveProcessor.
+     *
+     * Returns hooks with process_directives bridged to directive_processor().
+     * Eliminates the need for facade bridge functions.
+     *
+     * @return Configured ToolExecutorHooks.
+     * @version 2.0.2
+     */
+    ToolExecutorHooks build_directive_hooks();
+
+    // ── Tier info (v2.0.2) ──────────────────────────────────
+
+    /**
+     * @brief Store pre-resolved tier context info.
+     *
+     * Called at configure time. The engine uses this data for
+     * delegation instead of external TierResolutionInterface callbacks.
+     *
+     * @param name Tier name.
+     * @param info Pre-resolved context info (system prompt, tools, etc.).
+     * @version 2.0.2
+     */
+    void set_tier_info(const std::string& name,
+                       const ChildContextInfo& info);
+
+    /**
+     * @brief Store handoff rules for tier delegation.
+     * @param rules Map of source tier → valid target tiers.
+     * @version 2.0.2
+     */
+    void set_handoff_rules(
+        const std::unordered_map<std::string,
+            std::vector<std::string>>& rules);
 
 private:
     /**
@@ -298,7 +431,8 @@ private:
 
     /**
      * @brief Fire POST_GENERATE hook.
-     * @param result Generation result.
+     * @param result Generation result (mutable — hooks may transform output).
+     * @param tier Active tier name at the time of generation.
      * @version 1.9.1
      */
     void fire_post_generate_hook(GenerateResult& result,
@@ -340,6 +474,9 @@ private:
 
     /**
      * @brief Fire on_delegation_start callback.
+     * @param ctx Parent loop context that initiated the delegation.
+     * @param tier Target tier the delegation is going to.
+     * @param task Delegated task description.
      * @version 1.8.6
      */
     void fire_delegation_start(const LoopContext& ctx,
@@ -348,6 +485,9 @@ private:
 
     /**
      * @brief Fire on_delegation_complete callback.
+     * @param ctx Parent loop context that received the delegation result.
+     * @param tier Target tier the delegation ran on.
+     * @param result Final delegation result returned to the parent.
      * @version 1.8.6
      */
     void fire_delegation_complete(const LoopContext& ctx,
@@ -372,6 +512,65 @@ private:
     HookInterface hooks_;                                    ///< Hook dispatch (v1.9.1)
     std::optional<std::filesystem::path> cached_repo_dir_; ///< Cached repo path (v1.8.6)
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
+
+    // ── Conversation state (v2.0.2) ─────────────────────────
+    std::vector<Message> conversation_;                    ///< Persistent conversation
+    std::string system_prompt_;                            ///< Cached system prompt
+    SessionLogger* session_logger_ = nullptr;              ///< Non-owning model log
+
+    // ── Pre-resolved tier data (v2.0.2) ─────────────────────
+    std::unordered_map<std::string, ChildContextInfo> tier_info_;  ///< Tier → context info
+    std::unordered_map<std::string, std::vector<std::string>> handoff_rules_; ///< Tier → targets
+
+    /**
+     * @brief Wire internal TierResolutionInterface from stored tier data.
+     * @internal
+     * @version 2.0.2
+     */
+    void wire_internal_tier_resolution();
+
+    /* ── TierResolutionInterface trampolines (static — accept void* ud) ── */
+    /**
+     * @brief Resolve tier (TierResolutionInterface trampoline).
+     * @param name Tier name.
+     * @param ud Untyped AgentEngine* pointer.
+     * @return ChildContextInfo (valid=false if tier unknown).
+     * @internal
+     * @version 2.0.2
+     */
+    static ChildContextInfo tri_resolve_tier(
+        const std::string& name, void* ud);
+    /**
+     * @brief Check tier existence (TierResolutionInterface trampoline).
+     * @param name Tier name.
+     * @param ud Untyped AgentEngine* pointer.
+     * @return true if tier registered.
+     * @internal
+     * @version 2.0.2
+     */
+    static bool tri_tier_exists(
+        const std::string& name, void* ud);
+    /**
+     * @brief Look up handoff targets (TierResolutionInterface trampoline).
+     * @param name Source tier name.
+     * @param ud Untyped AgentEngine* pointer.
+     * @return Target tiers, empty if no handoff configured.
+     * @internal
+     * @version 2.0.2
+     */
+    static std::vector<std::string> tri_get_handoff_targets(
+        const std::string& name, void* ud);
+    /**
+     * @brief Look up named tier parameter (TierResolutionInterface trampoline).
+     * @param name Tier name.
+     * @param param Parameter key.
+     * @param ud Untyped AgentEngine* pointer.
+     * @return String value, empty if tier or param unknown.
+     * @internal
+     * @version 2.0.2
+     */
+    static std::string tri_get_tier_param(
+        const std::string& name, const std::string& param, void* ud);
 };
 
 } // namespace entropic

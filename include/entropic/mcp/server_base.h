@@ -158,6 +158,7 @@ public:
     /**
      * @brief Get the tool registry (const).
      * @return Reference to this server's tool registry.
+     * @utility
      * @version 1.9.4
      */
     const ToolRegistry& registry() const { return registry_; }

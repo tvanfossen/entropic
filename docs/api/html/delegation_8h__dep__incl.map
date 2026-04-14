@@ -1,7 +1,0 @@
-<map id="entropic/core/delegation.h" name="entropic/core/delegation.h">
-<area shape="rect" id="Node000001" title="DelegationManager — child loop creation and execution." alt="" coords="66,5,258,31"/>
-<area shape="rect" id="Node000002" href="$delegation_8cpp.html" title="DelegationManager implementation." alt="" coords="5,79,156,104"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="140,42,96,80,92,76,137,38"/>
-<area shape="rect" id="Node000003" href="$engine_8cpp.html" title="AgentEngine implementation — the agentic loop." alt="" coords="181,79,306,104"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="187,38,232,76,228,80,184,42"/>
-</map>

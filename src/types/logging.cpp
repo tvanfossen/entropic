@@ -5,8 +5,10 @@
  */
 
 #include <entropic/types/logging.h>
+#include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <array>
+#include <filesystem>
 #include <mutex>
 
 namespace entropic::log {
@@ -29,6 +31,38 @@ void init(spdlog::level::level_enum level) {
         spdlog::set_level(level);
         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
     });
+}
+
+/**
+ * @brief Add a rotating file sink to all loggers.
+ *
+ * Creates the log directory, adds the sink to the default logger,
+ * then walks every registered logger and adds the same sink.
+ * Future loggers created via get() inherit it automatically.
+ *
+ * @param path Log file path.
+ * @param max_size Max bytes before rotation.
+ * @param max_files Rotated files to keep.
+ * @utility
+ * @version 2.0.1
+ */
+void add_file_sink(const std::filesystem::path& path) {
+    std::filesystem::create_directories(path.parent_path());
+    auto file_sink = std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+        path.string(), true);  // truncate = true → fresh file each run
+    file_sink->set_level(spdlog::level::trace);
+    file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
+
+    // Add to default logger (inherited by future get() calls)
+    spdlog::default_logger()->sinks().push_back(file_sink);
+
+    // Add to every already-registered logger
+    spdlog::apply_all([&file_sink](std::shared_ptr<spdlog::logger> l) {
+        l->sinks().push_back(file_sink);
+    });
+
+    // Flush on every message — session logs must survive crashes/early exits
+    spdlog::flush_on(spdlog::level::trace);
 }
 
 /**
@@ -59,6 +93,33 @@ std::shared_ptr<spdlog::logger> get(const std::string& name) {
     new_logger->set_level(default_logger->level());
     spdlog::register_logger(new_logger);
     return new_logger;
+}
+
+/**
+ * @brief Set up session logging for a project directory.
+ *
+ * Adds a spdlog file sink for session.log (captures all engine
+ * operational logging). Truncates session_model.log for a fresh
+ * session (raw streaming user/assistant content).
+ *
+ * @param log_dir Directory for session log files.
+ * @utility
+ * @version 2.0.1
+ */
+void setup_session(const std::filesystem::path& log_dir) {
+    if (log_dir.empty()) { return; }
+
+    auto log_file = log_dir / "session.log";
+    add_file_sink(log_file);
+
+    auto model_file = log_dir / "session_model.log";
+    std::filesystem::create_directories(model_file.parent_path());
+    FILE* fp = fopen(model_file.string().c_str(), "w");
+    if (fp) { fclose(fp); }
+
+    auto logger = get("log");
+    logger->info("session log: {}", log_file.string());
+    logger->info("model log: {}", model_file.string());
 }
 
 // ── Content escaping ──────────────────────────────────────────

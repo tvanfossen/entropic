@@ -274,6 +274,37 @@ SCENARIO("Per-identity override at runtime", "[validation]") {
     }
 }
 
+SCENARIO("Global enable toggle at runtime", "[validation]") {
+    GIVEN("validator constructed with enabled=false") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = false;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+
+        WHEN("set_global_enabled(true) is called") {
+            validator.set_global_enabled(true);
+            THEN("should_validate falls through to true for any identity") {
+                REQUIRE(validator.should_validate("any") == true);
+                REQUIRE(validator.should_validate("other") == true);
+            }
+        }
+        WHEN("set_global_enabled(true) then (false)") {
+            validator.set_global_enabled(true);
+            validator.set_global_enabled(false);
+            THEN("should_validate falls through to false") {
+                REQUIRE(validator.should_validate("any") == false);
+            }
+        }
+        WHEN("per-identity override is set and global flipped") {
+            validator.set_identity_validation("eng", true);
+            validator.set_global_enabled(false);
+            THEN("identity override takes precedence over global") {
+                REQUIRE(validator.should_validate("eng") == true);
+                REQUIRE(validator.should_validate("other") == false);
+            }
+        }
+    }
+}
+
 SCENARIO("Critique JSON parse succeeds", "[validation]") {
     GIVEN("valid critique JSON with violations") {
         std::string json = NONCOMPLIANT_WITH_REVISION;

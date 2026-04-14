@@ -71,9 +71,9 @@ public:
      * @brief Open the log file and prepare for writing.
      *
      * Opens audit.jsonl in the configured log_dir. If the file
-     * exists, new entries are APPENDED (not overwritten). If the
-     * file has existing entries, the sequence counter resumes from
-     * the last recorded value.
+     * exists, new entries are APPENDED (not overwritten). The
+     * sequence counter starts at 0 for each new logger instance
+     * (it is monotonic per-session, not per-file).
      *
      * @return true on success, false on I/O error.
      * @version 1.9.5

@@ -536,6 +536,7 @@ public:
 
     /** @brief Set state provider pointer.
      * @param p Provider pointer (must outlive tool).
+     * @utility
      * @version 1.9.12
      */
     void set_provider(const entropic_state_provider_t* p) {
@@ -723,6 +724,7 @@ public:
 
     /** @brief Set state provider pointer.
      * @param p Provider pointer.
+     * @utility
      * @version 1.9.12
      */
     void set_provider(const entropic_state_provider_t* p) {

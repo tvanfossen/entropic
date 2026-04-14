@@ -1,5 +1,8 @@
-root ::= "<tool_call>" ws json ws "</tool_call>" ws
-json ::= "{\"name\":\"chess.make_move\",\"arguments\":{\"move\":\"" uci "\"}}"
+root ::= move-call ws complete-call ws
+move-call ::= "<tool_call>" ws move-json ws "</tool_call>"
+move-json ::= "{\"name\":\"chess.make_move\",\"arguments\":{\"move\":\"" uci "\"}}"
+complete-call ::= "<tool_call>" ws complete-json ws "</tool_call>"
+complete-json ::= "{\"name\":\"entropic.complete\",\"arguments\":{\"summary\":\"" [^"]+ "\"}}"
 uci ::= [a-h] [1-8] [a-h] [1-8] promotion?
 promotion ::= [qrbn]
 ws ::= [ \t\n]*

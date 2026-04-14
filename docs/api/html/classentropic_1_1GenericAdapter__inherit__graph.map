@@ -1,5 +1,0 @@
-<map id="entropic::GenericAdapter" name="entropic::GenericAdapter">
-<area shape="rect" id="Node000001" title="Generic adapter using &lt;tool_call&gt;JSON&lt;/tool_call&gt; format." alt="" coords="5,79,189,104"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1ChatAdapter.html" title="Concrete base class for chat format adapters (80% logic)." alt="" coords="15,5,179,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="100,44,100,79,95,79,95,44"/>
-</map>

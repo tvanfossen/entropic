@@ -55,6 +55,7 @@ public:
      * the cache is constructed during do_activate().
      *
      * @param config Prompt cache configuration.
+     * @utility
      * @version 1.8.3
      */
     void set_prompt_cache_config(const PromptCacheConfig& config) {
@@ -75,6 +76,7 @@ public:
     /**
      * @brief Get the loaded llama_model pointer.
      * @return nullptr if state is COLD.
+     * @utility
      * @version 1.9.2
      */
     llama_model* llama_model_ptr() { return model_; }
@@ -82,6 +84,7 @@ public:
     /**
      * @brief Get the active llama_context pointer.
      * @return nullptr if state is not ACTIVE.
+     * @utility
      * @version 1.9.2
      */
     llama_context* llama_context_ptr() { return ctx_; }

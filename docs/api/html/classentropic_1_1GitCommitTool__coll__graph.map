@@ -1,7 +1,0 @@
-<map id="entropic::GitCommitTool" name="entropic::GitCommitTool">
-<area shape="rect" id="Node000001" title="Tool: git commit &#45;m &quot;message&quot;, optionally git add &#45;A first." alt="" coords="5,168,185,193"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="25,93,166,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="98,133,98,168,93,168,93,133"/>
-<area shape="rect" id="Node000003" href="$structentropic_1_1ToolDefinition.html" title="Parsed tool definition from JSON schema file." alt="" coords="9,5,181,31"/>
-<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="98,45,98,93,93,93,93,45"/>
-</map>

@@ -96,6 +96,7 @@ public:
     /**
      * @brief Get server name.
      * @return Server name string.
+     * @utility
      * @version 1.8.7
      */
     const std::string& name() const { return name_; }

@@ -310,6 +310,7 @@ public:
     /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.
+     * @utility
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }

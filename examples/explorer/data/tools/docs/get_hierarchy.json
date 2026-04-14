@@ -1,0 +1,14 @@
+{
+  "name": "get_hierarchy",
+  "description": "Get the inheritance hierarchy (ancestors and descendants) for a class.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "class_name": {
+        "type": "string",
+        "description": "Class name to look up hierarchy for."
+      }
+    },
+    "required": ["class_name"]
+  }
+}

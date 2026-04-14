@@ -423,6 +423,7 @@ struct MCPConfig {
     FilesystemConfig filesystem;     ///< Filesystem server config
     ExternalMCPConfig external;      ///< External MCP server config (Entropic-as-server)
     int server_timeout_seconds = 30; ///< Server timeout (5–300)
+    std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
     /* ── v1.8.7: External MCP client settings ──────────── */
     std::unordered_map<std::string, ExternalServerEntry> external_servers; ///< Named external servers

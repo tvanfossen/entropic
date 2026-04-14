@@ -1,5 +1,0 @@
-<map id="entropic::StorageConfig" name="entropic::StorageConfig">
-<area shape="rect" id="Node000001" title="Storage backend configuration." alt="" coords="9,93,183,119"/>
-<area shape="rect" id="Node000002" href="$structentropic_1_1AuditLogConfig.html" title="Audit log configuration within StorageConfig." alt="" coords="5,5,187,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="99,45,99,93,93,93,93,45"/>
-</map>

@@ -1,9 +1,0 @@
-<map id="entropic/storage/permission_persister.h" name="entropic/storage/permission_persister.h">
-<area shape="rect" id="Node000001" title="Persist permission allow/deny patterns to project config." alt="" coords="50,5,254,45"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="5,93,96,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="129,48,78,87,75,82,126,43"/>
-<area shape="rect" id="Node000003" title=" " alt="" coords="120,93,184,119"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="155,46,155,79,149,79,149,46"/>
-<area shape="rect" id="Node000004" title=" " alt="" coords="209,93,306,119"/>
-<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="179,43,232,83,229,87,176,48"/>
-</map>

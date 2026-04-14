@@ -1,0 +1,89 @@
+# Entropic Explorer — default configuration.
+#
+# Repo knowledge assistant with 8 identities and 4 pipeline flows.
+# Constitutional validation enforces architectural rules on all output.
+
+app_context: prompts/app_context.md
+constitution: prompts/constitution.md
+
+models:
+  lead:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_lead.md
+    context_length: 65536
+
+  researcher:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_researcher.md
+    context_length: 65536
+
+  architect:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_architect.md
+    context_length: 65536
+
+  reviewer:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_reviewer.md
+    context_length: 65536
+
+  critic:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_critic.md
+    context_length: 65536
+
+  teacher:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_teacher.md
+    context_length: 65536
+
+  quizzer:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_quizzer.md
+    grammar: data/grammars/quiz.gbnf
+    context_length: 16384
+
+  tracer:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_tracer.md
+    context_length: 65536
+
+  default: lead
+
+routing:
+  enabled: false
+  handoff_rules:
+    lead: [researcher, architect, reviewer, teacher, tracer]
+    reviewer: [critic]
+
+permissions:
+  auto_approve: true
+
+mcp:
+  enable_entropic: true
+  enable_filesystem: true
+  enable_git: true
+  enable_bash: false
+  enable_diagnostics: false
+  enable_web: false
+  working_dir: ../..
+  filesystem:
+    allow_outside_root: false
+    max_read_bytes: 32768  # Cap single reads to prevent context overflow
+
+constitutional_validation:
+  enabled: true
+  max_revisions: 2
+
+lsp:
+  enabled: false
+
+log_level: INFO

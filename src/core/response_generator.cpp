@@ -194,7 +194,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.2
+ * @version 2.0.4
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -202,10 +202,11 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         return generate_batch(ctx);
     }
 
+    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
     logger->info("Generate (stream): tier={}, {} messages",
-                 ctx.locked_tier, ctx.messages.size());
-    log_prompt(ctx.messages, ctx.locked_tier);
-    auto msgs_json = serialize_messages(ctx.messages);
+                 ctx.locked_tier, messages.size());
+    log_prompt(messages, ctx.locked_tier);
+    auto msgs_json = serialize_messages(messages);
     auto params_json = build_params_json(ctx.locked_tier);
 
     int cancel_flag = 0;
@@ -233,7 +234,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.2
+ * @version 2.0.4
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -241,10 +242,11 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
         return {"", "[]", "error"};
     }
 
+    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
     logger->info("Generate (batch): tier={}, {} messages",
-                 ctx.locked_tier, ctx.messages.size());
-    log_prompt(ctx.messages, ctx.locked_tier);
-    auto msgs_json = serialize_messages(ctx.messages);
+                 ctx.locked_tier, messages.size());
+    log_prompt(messages, ctx.locked_tier);
+    auto msgs_json = serialize_messages(messages);
     auto params_json = build_params_json(ctx.locked_tier);
     char* result_json = nullptr;
 
@@ -365,6 +367,43 @@ std::string ResponseGenerator::build_params_json(
     const std::string& tier) {
     if (tier.empty()) { return "{}"; }
     return "{\"tier\":\"" + tier + "\"}";
+}
+
+/**
+ * @brief Inject tool definitions into the system message.
+ *
+ * Copies the message list and appends the adapter-formatted tool
+ * prompt to the system message content. If no tool prompt callback
+ * is wired or the tier has no tools, returns the original messages
+ * unchanged.
+ *
+ * @param messages Original message list (not modified).
+ * @param tier Locked tier name.
+ * @return Messages with tool prompt injected into system message.
+ * @internal
+ * @version 2.0.4
+ */
+std::vector<Message> ResponseGenerator::inject_tool_prompt(
+    const std::vector<Message>& messages,
+    const std::string& tier) {
+    if (inference_.get_tool_prompt == nullptr) { return messages; }
+
+    char* tool_prompt = nullptr;
+    int rc = inference_.get_tool_prompt(
+        tier.c_str(), &tool_prompt, inference_.tool_prompt_data);
+    if (rc != 0 || tool_prompt == nullptr) { return messages; }
+
+    std::string prompt_str(tool_prompt);
+    if (inference_.free_fn) { inference_.free_fn(tool_prompt); }
+
+    auto result = messages;
+    for (auto& msg : result) {
+        if (msg.role == "system") {
+            msg.content += "\n\n" + prompt_str;
+            break;
+        }
+    }
+    return result;
 }
 
 } // namespace entropic

@@ -1,7 +1,0 @@
-<map id="entropic/types/backend_capability.h" name="entropic/types/backend_capability.h">
-<area shape="rect" id="Node000001" title="Backend capability flags and metadata for architecture&#45;agnostic queries." alt="" coords="5,5,179,45"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="13,93,83,119"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="84,47,64,83,59,80,79,44"/>
-<area shape="rect" id="Node000003" title=" " alt="" coords="108,93,167,119"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="105,44,126,80,121,83,101,47"/>
-</map>

@@ -189,6 +189,91 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
 /* facade_resolve_tier/tier_exists/handoff/param → engine->set_tier_info() — v2.0.2 */
 /* wire_engine_interfaces → inline in configure_common — v2.0.2 */
 
+// ── Tool prompt injection (v2.0.4) ─────────────────────────
+
+/**
+ * @brief Resolve allowed_tools list for a tier.
+ *
+ * Checks identity config first, then model config fallback.
+ * Empty result means all tools are allowed (no filter).
+ *
+ * @param h Engine handle.
+ * @param tier Tier name.
+ * @return Allowed tool names (empty = all allowed).
+ * @utility
+ * @version 2.0.4
+ */
+static std::vector<std::string> resolve_allowed_tools(
+    entropic_engine* h, const std::string& tier) {
+    // Primary: cached from identity frontmatter (v2.0.4)
+    auto cached = h->tier_allowed_tools.find(tier);
+    if (cached != h->tier_allowed_tools.end()) {
+        return cached->second;
+    }
+    // Fallback: dynamic identity or model config
+    if (h->identity_manager) {
+        auto* cfg = h->identity_manager->get(tier);
+        if (cfg && !cfg->allowed_tools.empty()) {
+            return cfg->allowed_tools;
+        }
+    }
+    return {};
+}
+
+/**
+ * @brief Filter tool definitions by allowed list.
+ *
+ * @param all_tools Parsed JSON array of all tool definitions.
+ * @param allowed Allowed tool names (empty = no filter).
+ * @return JSON strings of matching tools.
+ * @utility
+ * @version 2.0.4
+ */
+static std::vector<std::string> filter_tools(
+    const nlohmann::json& all_tools,
+    const std::vector<std::string>& allowed) {
+    std::vector<std::string> result;
+    for (const auto& tool : all_tools) {
+        std::string name = tool.value("name", "");
+        bool pass = allowed.empty()
+            || std::find(allowed.begin(), allowed.end(), name)
+               != allowed.end();
+        if (pass) { result.push_back(tool.dump()); }
+    }
+    return result;
+}
+
+/**
+ * @brief Build formatted tool prompt for a tier.
+ *
+ * @param tier Tier name.
+ * @param result Output: heap-allocated prompt string. Caller frees.
+ * @param user_data Engine handle.
+ * @return 0 on success, non-zero if no tools available.
+ * @callback
+ * @version 2.0.4
+ */
+static int facade_get_tool_prompt(const char* tier, char** result,
+                                  void* user_data) {
+    auto* h = static_cast<entropic_engine*>(user_data);
+    *result = nullptr;
+    if (!h || !h->server_manager || !h->orchestrator) { return 1; }
+
+    std::string tier_name = tier ? tier : "";
+    auto all_json = h->server_manager->list_tools();
+    auto all_tools = nlohmann::json::parse(all_json, nullptr, false);
+    auto allowed = resolve_allowed_tools(h, tier_name);
+    auto tool_jsons = filter_tools(all_tools, allowed);
+    auto* adapter = h->orchestrator->get_adapter(tier_name);
+
+    bool ok = all_tools.is_array() && !all_tools.empty()
+           && !tool_jsons.empty() && adapter != nullptr;
+    if (!ok) { return 1; }
+
+    *result = strdup(adapter->format_tools(tool_jsons).c_str());
+    return 0;
+}
+
 // ── configure_common ───────────────────────────────────────
 
 /**
@@ -209,6 +294,100 @@ static void init_persistence(entropic_handle_t h) {
     }
     h->session_logger = std::make_unique<entropic::SessionLogger>(
         h->config.log_dir);
+}
+
+/**
+ * @brief Collect tiers reachable through handoff_rules for delegation.
+ *
+ * Only tiers that appear as targets in handoff_rules (plus the
+ * default tier as source) are included. This prevents global tiers
+ * from leaking into consumer-specific delegate/pipeline enums.
+ *
+ * @param config Parsed engine config.
+ * @return Deduplicated tier names for delegate/pipeline schemas.
+ * @utility
+ * @version 2.0.4
+ */
+static std::vector<std::string> collect_delegatable_tiers(
+    const entropic::ParsedConfig& config) {
+    std::unordered_set<std::string> reachable;
+    reachable.insert(config.models.default_tier);
+    for (const auto& [source, targets] : config.routing.handoff_rules) {
+        reachable.insert(source);
+        for (const auto& t : targets) { reachable.insert(t); }
+    }
+    return {reachable.begin(), reachable.end()};
+}
+
+/**
+ * @brief Initialize MCP servers with resolved working directory.
+ * @param h Engine handle with config loaded.
+ * @param data_dir Bundled data directory path.
+ * @internal
+ * @version 2.0.4
+ */
+static void init_mcp_servers(entropic_handle_t h,
+                             const std::filesystem::path& data_dir) {
+    auto root = h->config.mcp.working_dir.empty()
+        ? std::filesystem::current_path()
+        : std::filesystem::path(h->config.mcp.working_dir);
+    h->server_manager = std::make_unique<entropic::ServerManager>(
+        h->config.permissions, root);
+    auto tier_names = collect_delegatable_tiers(h->config);
+    h->server_manager->init_builtins(
+        h->config.mcp, tier_names, data_dir.string());
+}
+
+/**
+ * @brief Build shared system prompt prefix (constitution + app_context).
+ * @param h Engine handle with config loaded.
+ * @param data_dir Bundled data directory.
+ * @return Concatenated prefix string.
+ * @utility
+ * @version 2.0.4
+ */
+static std::string build_shared_prompt_prefix(
+    entropic_handle_t h,
+    const std::filesystem::path& data_dir) {
+    std::string constitution, app_ctx;
+    entropic::prompts::load_constitution(
+        h->config.constitution, h->config.constitution_disabled,
+        data_dir, constitution);
+    entropic::prompts::load_app_context(
+        h->config.app_context, h->config.app_context_disabled,
+        data_dir, app_ctx);
+    std::string prefix;
+    if (!constitution.empty()) { prefix += constitution + "\n\n"; }
+    if (!app_ctx.empty()) { prefix += app_ctx + "\n\n"; }
+    return prefix;
+}
+
+/**
+ * @brief Cache per-tier allowed_tools from identity frontmatter.
+ * @param h Engine handle with config loaded.
+ * @param data_dir Bundled data directory.
+ * @internal
+ * @version 2.0.4
+ */
+static void cache_tier_allowed_tools(
+    entropic_handle_t h,
+    const std::filesystem::path& data_dir) {
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        std::filesystem::path id_path;
+        if (tier.identity.has_value()) {
+            id_path = tier.identity.value();
+        } else if (!tier.identity_disabled) {
+            id_path = data_dir / "prompts" / ("identity_" + name + ".md");
+        }
+        if (id_path.empty() || !std::filesystem::exists(id_path)) {
+            continue;
+        }
+        entropic::prompts::ParsedIdentity id;
+        if (entropic::prompts::load_identity(id_path, id).empty()
+            && id.frontmatter.allowed_tools.has_value()) {
+            h->tier_allowed_tools[name] = *id.frontmatter.allowed_tools;
+        }
+    }
 }
 
 /**
@@ -239,7 +418,7 @@ static void wire_tool_executor(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.3
+ * @version 2.0.4
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -253,35 +432,36 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
     h->identity_manager = std::make_unique<entropic::IdentityManager>(
         entropic::IdentityManagerConfig{});
-    h->server_manager = std::make_unique<entropic::ServerManager>(
-        h->config.permissions, std::filesystem::current_path());
-    {
-        std::vector<std::string> tier_names;
-        for (const auto& [name, _] : h->config.models.tiers) {
-            tier_names.push_back(name);
-        }
-        h->server_manager->init_builtins(
-            h->config.mcp, tier_names, data_dir.string());
-    }
+    init_mcp_servers(h, data_dir);
 
     auto iface = entropic::build_orchestrator_interface(
         h->orchestrator.get(), h->config.models.default_tier);
+    iface.get_tool_prompt = facade_get_tool_prompt;
+    iface.tool_prompt_data = h;
     entropic::LoopConfig lc;
     lc.stream_output = true;
     lc.auto_approve_tools = h->config.permissions.auto_approve;
+    auto default_it = h->config.models.tiers.find(
+        h->config.models.default_tier);
+    if (default_it != h->config.models.tiers.end()) {
+        lc.context_length = default_it->second.context_length;
+    }
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
 
     wire_tool_executor(h);
 
+    auto shared_prefix = build_shared_prompt_prefix(h, data_dir);
     for (const auto& [name, tier] : h->config.models.tiers) {
         entropic::ChildContextInfo info;
         info.valid = true;
-        info.system_prompt = entropic::prompts::resolve_tier_identity(
+        auto identity = entropic::prompts::resolve_tier_identity(
             tier, name, data_dir);
+        info.system_prompt = shared_prefix + identity;
         info.explicit_completion = !tier.auto_chain.has_value();
         h->engine->set_tier_info(name, info);
     }
+    cache_tier_allowed_tools(h, data_dir);
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
 
     init_persistence(h);

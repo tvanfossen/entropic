@@ -1,5 +1,0 @@
-<map id="entropic::GitAddTool" name="entropic::GitAddTool">
-<area shape="rect" id="Node000001" title="Tool: git add files (space&#45;separated)." alt="" coords="5,79,159,104"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1ToolBase.html" title="Abstract base class for individual MCP tools." alt="" coords="11,5,153,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="85,44,85,79,79,79,79,44"/>
-</map>

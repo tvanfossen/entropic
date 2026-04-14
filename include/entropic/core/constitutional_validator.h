@@ -10,9 +10,10 @@
  * - Register/deregister as POST_GENERATE hook
  *
  * @par Thread safety:
- * - Config is immutable after construction
+ * - Config is immutable after construction (global_enabled_ is a
+ *   separate runtime toggle, not part of the frozen config)
  * - Critique generation is stateless (uses inference interface)
- * - Per-identity overrides guarded by mutex
+ * - Per-identity overrides and global_enabled_ guarded by mutex
  * - last_result_ guarded by mutex for concurrent access
  *
  * @par Ownership:
@@ -430,14 +431,16 @@ private:
     static void extract_revised_field(
         const std::string& json, CritiqueResult& result);
 
-    ConstitutionalValidationConfig config_;   ///< Pipeline configuration
+    ConstitutionalValidationConfig config_;   ///< Pipeline configuration (immutable)
     std::string constitution_text_;           ///< Full constitution content
     InferenceInterface* inference_ = nullptr; ///< For critique/revision generation
     ValidationContext context_;                ///< Hook user_data context
 
+    /// @brief Runtime global enable toggle (decoupled from frozen config_).
+    bool global_enabled_;
     /// @brief Per-identity validation overrides.
     std::unordered_map<std::string, bool> identity_overrides_;
-    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_
+    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + global_enabled_
 
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;

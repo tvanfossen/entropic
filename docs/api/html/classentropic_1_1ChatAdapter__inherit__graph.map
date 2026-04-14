@@ -1,7 +1,0 @@
-<map id="entropic::ChatAdapter" name="entropic::ChatAdapter">
-<area shape="rect" id="Node000001" title="Concrete base class for chat format adapters (80% logic)." alt="" coords="119,5,283,31"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1GenericAdapter.html" title="Generic adapter using &lt;tool_call&gt;JSON&lt;/tool_call&gt; format." alt="" coords="5,79,189,104"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="175,41,116,81,113,76,172,36"/>
-<area shape="rect" id="Node000003" href="$classentropic_1_1Qwen35Adapter.html" title="Qwen 3.5 MoE chat adapter (20% override layer)." alt="" coords="213,79,400,104"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="231,36,291,76,288,81,228,41"/>
-</map>

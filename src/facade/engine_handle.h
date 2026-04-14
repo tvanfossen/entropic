@@ -96,4 +96,8 @@ struct entropic_engine {
     // ── Phase 5: Constitutional + Compaction ────────────────────
     std::unique_ptr<entropic::ConstitutionalValidator> validator;       ///< Constitutional validation
     std::unique_ptr<entropic::CompactorRegistry> compactor_registry;   ///< Compaction strategies
+
+    // ── Phase 6: Tier metadata (v2.0.4) ───────────────────────
+    /// @brief Per-tier allowed_tools from identity frontmatter.
+    std::unordered_map<std::string, std::vector<std::string>> tier_allowed_tools;
 };

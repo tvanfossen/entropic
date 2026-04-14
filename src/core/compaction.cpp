@@ -259,31 +259,76 @@ std::string CompactionManager::structured_summary(
  * @internal
  * @version 1.8.4
  */
-std::string CompactionManager::extract_original_task(
-    const std::vector<Message>& messages) {
-    std::string task;
+/**
+ * @brief Check if a message is a tool result rather than a user task.
+ * @param msg Message to check.
+ * @return true if the message appears to be a tool result.
+ * @utility
+ * @version 2.0.4
+ */
+static bool is_tool_result(const Message& msg) {
+    if (msg.content.rfind("Tool `", 0) == 0) { return true; }
+    auto src = msg.metadata.find("source");
+    return src != msg.metadata.end() && src->second == "tool";
+}
+
+/**
+ * @brief Find the first message matching a source tag.
+ * @param messages Message list.
+ * @param source Source metadata value to match.
+ * @return Content of matching message, or empty string.
+ * @utility
+ * @version 2.0.4
+ */
+static std::string find_tagged(
+    const std::vector<Message>& messages,
+    const std::string& source) {
     for (const auto& msg : messages) {
         auto src = msg.metadata.find("source");
-        if (src != msg.metadata.end() && src->second == "user") {
-            task = msg.content;
-            break;
+        if (src != msg.metadata.end() && src->second == source) {
+            return msg.content;
         }
     }
-    if (task.empty()) {
-        for (const auto& msg : messages) {
-            if (msg.role == "user" && !msg.content.empty()
-                && msg.content[0] != '[') {
-                task = msg.content;
-                break;
-            }
-        }
+    return {};
+}
+
+/**
+ * @brief Find the first user-role message that isn't a tool result.
+ * @param messages Message list.
+ * @return Content of first real user message, or empty string.
+ * @utility
+ * @version 2.0.4
+ */
+static std::string find_first_user_task(
+    const std::vector<Message>& messages) {
+    for (const auto& msg : messages) {
+        if (msg.role != "user" || msg.content.empty()) { continue; }
+        if (is_tool_result(msg)) { continue; }
+        return msg.content;
     }
-    if (task.empty()) {
-        return "(no user message found)";
-    }
-    if (task.size() > 500) {
-        return task.substr(0, 500) + "...";
-    }
+    return {};
+}
+
+/**
+ * @brief Extract the original user task from message history.
+ *
+ * Prefers messages tagged with source=user metadata. Falls back to
+ * the first user-role message that isn't a tool result. Child-loop
+ * tasks wrapped in "[PIPELINE CONTEXT]..." are preserved — the old
+ * "skip if starts with [" heuristic was wrong and caused the task
+ * to be replaced by the first tool result content on compaction.
+ *
+ * @param messages Conversation messages.
+ * @return Task text (truncated to 500 chars).
+ * @internal
+ * @version 2.0.4
+ */
+std::string CompactionManager::extract_original_task(
+    const std::vector<Message>& messages) {
+    std::string task = find_tagged(messages, "user");
+    if (task.empty()) { task = find_first_user_task(messages); }
+    if (task.empty()) { return "(no user message found)"; }
+    if (task.size() > 500) { return task.substr(0, 500) + "..."; }
     return task;
 }
 

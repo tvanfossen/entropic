@@ -26,13 +26,14 @@ auto logger = entropic::log::get("core.constitutional_validator");
  * @brief Construct validator with config and constitution text.
  * @param config Validation pipeline configuration.
  * @param constitution_text Full constitution text.
- * @version 1.9.8
+ * @version 2.0.4
  */
 ConstitutionalValidator::ConstitutionalValidator(
     const ConstitutionalValidationConfig& config,
     const std::string& constitution_text)
     : config_(config),
-      constitution_text_(constitution_text) {
+      constitution_text_(constitution_text),
+      global_enabled_(config.enabled) {
     context_.validator = this;
     context_.inference = nullptr;
 }
@@ -83,7 +84,7 @@ void ConstitutionalValidator::detach(HookInterface* hook_iface) {
  * @param identity_name Identity name to check.
  * @return true if validation should run.
  * @internal
- * @version 1.9.8
+ * @version 2.0.4
  */
 bool ConstitutionalValidator::should_validate(
     const std::string& identity_name) const {
@@ -92,18 +93,18 @@ bool ConstitutionalValidator::should_validate(
     if (it != identity_overrides_.end()) {
         return it->second;
     }
-    return config_.enabled;
+    return global_enabled_;
 }
 
 /**
  * @brief Toggle the global validation gate at runtime.
  * @param enabled New global enable state.
  * @req REQ-VALID-004
- * @version 2.0.2
+ * @version 2.0.4
  */
 void ConstitutionalValidator::set_global_enabled(bool enabled) {
     std::lock_guard<std::mutex> lock(overrides_mutex_);
-    config_.enabled = enabled;
+    global_enabled_ = enabled;
 }
 
 /**

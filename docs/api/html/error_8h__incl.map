@@ -1,7 +1,0 @@
-<map id="entropic/types/error.h" name="entropic/types/error.h">
-<area shape="rect" id="Node000001" title="Error types for cross&#45;.so error reporting." alt="" coords="41,5,202,31"/>
-<area shape="rect" id="Node000002" title=" " alt="" coords="5,79,80,104"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="110,33,67,71,64,68,107,29"/>
-<area shape="rect" id="Node000003" href="$entropic__export_8h.html" title="Symbol visibility macro for all exported symbols." alt="" coords="105,79,298,104"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="136,29,180,68,176,72,132,33"/>
-</map>

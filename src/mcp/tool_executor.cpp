@@ -588,12 +588,20 @@ Message ToolExecutor::create_duplicate_message(
 
 /**
  * @brief Serialize tool call arguments to JSON string.
+ *
+ * Prefers arguments_json (preserves type info from interface_factory parse)
+ * over the string-only arguments map. Without this, boolean/integer values
+ * get serialized as strings and crash tools that expect typed values.
+ *
  * @param call Tool call.
  * @return JSON string.
  * @internal
- * @version 1.8.5
+ * @version 2.0.4
  */
 std::string ToolExecutor::serialize_args(const ToolCall& call) {
+    if (!call.arguments_json.empty()) {
+        return call.arguments_json;
+    }
     nlohmann::json args;
     for (const auto& [k, v] : call.arguments) {
         args[k] = v;

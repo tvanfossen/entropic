@@ -1,5 +1,0 @@
-<map id="entropic::SSETransport" name="entropic::SSETransport">
-<area shape="rect" id="Node000001" title="SSE transport: HTTP GET for event stream, POST for requests." alt="" coords="5,79,172,104"/>
-<area shape="rect" id="Node000002" href="$classentropic_1_1Transport.html" title="Abstract transport for external MCP communication." alt="" coords="17,5,160,31"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="91,44,91,79,86,79,86,44"/>
-</map>

@@ -1,0 +1,250 @@
+# Architecture topics — curriculum metadata for the entropic explorer.
+#
+# Each topic maps to a set of documented symbols in the doxygen database.
+# The build_docs_db.py --enrich step inserts these into the
+# architecture_topics table for the guide to query.
+#
+# Difficulty: 1=beginner, 2=intermediate, 3=advanced
+
+- topic: c_api_facade
+  title: "The C API Facade"
+  summary: >
+    The entropic engine exposes a pure C API (entropic.h) through librentropic.so.
+    This facade wraps all internal C++ subsystems behind opaque handles and C
+    function pointers, preventing ABI compatibility issues.
+  key_files:
+    - include/entropic/entropic.h
+    - src/facade/entropic.cpp
+  key_concepts:
+    - entropic_handle_t
+    - entropic_create
+    - entropic_configure
+    - entropic_destroy
+    - ENTROPIC_EXPORT
+  prerequisite_topics: []
+  difficulty: 1
+
+- topic: type_system
+  title: "Shared Types Library"
+  summary: >
+    librentropic-types.so contains all shared data types — messages, tool calls,
+    directives, errors, and config structs. It has zero logic and is the universal
+    dependency that every other library links against.
+  key_files:
+    - include/entropic/types/message.h
+    - include/entropic/types/error.h
+    - include/entropic/types/tool_call.h
+    - include/entropic/types/directive.h
+  key_concepts:
+    - entropic_error_t
+    - Message
+    - ToolCall
+    - Directive
+    - GenerationResult
+  prerequisite_topics: []
+  difficulty: 1
+
+- topic: engine_loop
+  title: "The Agent Engine Loop"
+  summary: >
+    The AgentEngine in librentropic-core.so drives the agentic loop: receive
+    user input, generate a response, process tool calls, handle directives,
+    repeat until completion. It uses injected interfaces for inference and
+    tool execution.
+  key_files:
+    - include/entropic/core/engine.h
+    - src/core/engine.cpp
+    - include/entropic/core/engine_types.h
+  key_concepts:
+    - AgentEngine
+    - LoopConfig
+    - LoopContext
+    - run_loop
+    - AgentState
+  prerequisite_topics:
+    - c_api_facade
+    - type_system
+  difficulty: 2
+
+- topic: inference_backend
+  title: "Inference Backends"
+  summary: >
+    Inference is handled by compile-time variants (CUDA, Vulkan, CPU). Each
+    backend implements the InferenceBackend base class. The three-layer pattern:
+    C interface (i_inference_backend.h) -> base class (backend.h) -> concrete
+    implementation (LlamaCppBackend).
+  key_files:
+    - include/entropic/interfaces/i_inference_backend.h
+    - include/entropic/inference/backend.h
+    - src/inference/llama_cpp_backend.cpp
+  key_concepts:
+    - InferenceBackend
+    - LlamaCppBackend
+    - ModelState
+    - entropic_inference_generate
+    - entropic_inference_generate_streaming
+  prerequisite_topics:
+    - c_api_facade
+    - type_system
+  difficulty: 2
+
+- topic: mcp_servers
+  title: "MCP Tool Servers"
+  summary: >
+    MCP (Model Context Protocol) servers are plugins loaded via dlopen. Each
+    server .so exports a factory function and implements the MCPServerBase
+    interface. Built-in servers include filesystem, bash, git, and diagnostics.
+  key_files:
+    - include/entropic/interfaces/i_mcp_server.h
+    - include/entropic/mcp/server_base.h
+    - src/mcp/server_manager.cpp
+  key_concepts:
+    - MCPServerBase
+    - entropic_create_server
+    - entropic_mcp_server_execute
+    - ToolRegistry
+    - ENTROPIC_MCP_PLUGIN_API_VERSION
+  prerequisite_topics:
+    - c_api_facade
+  difficulty: 2
+
+- topic: delegation
+  title: "Tier Delegation"
+  summary: >
+    The engine supports multi-tier delegation: one identity can hand off work
+    to another. The DelegationManager handles child loop creation, context
+    isolation, and result propagation. This is how the explorer's guide
+    delegates to analyst and quiz_master.
+  key_files:
+    - include/entropic/core/delegation.h
+    - src/core/delegation_manager.cpp
+    - include/entropic/types/directive.h
+  key_concepts:
+    - DelegationManager
+    - PendingDelegation
+    - DelegateDirective
+    - auto_chain
+    - explicit_completion
+  prerequisite_topics:
+    - engine_loop
+    - mcp_servers
+  difficulty: 3
+
+- topic: context_management
+  title: "Context Window Management"
+  summary: >
+    The ContextManager tracks token usage and handles compaction when the
+    context window fills. It preserves system prompts, recent messages,
+    and tool results while summarizing older history.
+  key_files:
+    - include/entropic/core/context.h
+    - src/core/context_manager.cpp
+  key_concepts:
+    - ContextManager
+    - context_length
+    - compaction
+    - token_count
+  prerequisite_topics:
+    - engine_loop
+    - inference_backend
+  difficulty: 3
+
+- topic: config_system
+  title: "Configuration & Identity Loading"
+  summary: >
+    Configuration flows from YAML files through a validation layer into typed
+    C++ structs. The resolution order: compiled defaults -> global config ->
+    project config -> environment variables. Identity prompts use YAML
+    frontmatter for metadata.
+  key_files:
+    - include/entropic/config/schema.h
+    - src/config/config_loader.cpp
+    - src/prompts/prompt_manager.cpp
+  key_concepts:
+    - ModelConfig
+    - TierConfig
+    - validate
+    - PromptManager
+    - config_dir
+  prerequisite_topics:
+    - c_api_facade
+    - type_system
+  difficulty: 2
+
+- topic: storage_persistence
+  title: "SQLite Storage Backend"
+  summary: >
+    librentropic-storage.so provides optional SQLite persistence for
+    conversations, delegation records, and compaction snapshots. The
+    storage interface is pure C at the .so boundary.
+  key_files:
+    - include/entropic/interfaces/i_storage_backend.h
+    - src/storage/storage_backend.cpp
+  key_concepts:
+    - entropic_storage_create
+    - entropic_storage_save_conversation
+    - entropic_storage_create_delegation
+    - FTS5
+  prerequisite_topics:
+    - c_api_facade
+    - engine_loop
+  difficulty: 2
+
+- topic: grammar_constraints
+  title: "GBNF Grammar Constraints"
+  summary: >
+    The GrammarRegistry manages GBNF grammars that constrain model output to
+    specific formats. Grammars are validated at registration time (without a
+    loaded model) and applied during generation via llama.cpp's sampler chain.
+  key_files:
+    - src/inference/grammar_registry.cpp
+    - src/inference/model_orchestrator.cpp
+  key_concepts:
+    - GrammarRegistry
+    - llama_sampler_init_grammar
+    - GBNF
+    - grammar_key
+  prerequisite_topics:
+    - inference_backend
+  difficulty: 3
+
+- topic: error_handling
+  title: "Error Handling Across .so Boundaries"
+  summary: >
+    Exceptions never cross .so boundaries. Errors are reported via return codes
+    (entropic_error_t), per-handle error state (entropic_last_error), and
+    optional error callbacks for async operations.
+  key_files:
+    - include/entropic/types/error.h
+    - include/entropic/interfaces/i_inference_backend.h
+  key_concepts:
+    - entropic_error_t
+    - entropic_last_error
+    - entropic_error_callback_t
+    - ENTROPIC_OK
+  prerequisite_topics:
+    - c_api_facade
+    - type_system
+  difficulty: 1
+
+- topic: hooks_system
+  title: "Hook System"
+  summary: >
+    The HookRegistry enables pre/post hooks at key engine points (generation,
+    tool execution, delegation). Hooks can modify context, cancel operations,
+    or observe events. Subsystems use an injected HookInterface to fire hooks
+    without depending on the registry directly.
+  key_files:
+    - include/entropic/interfaces/i_hook_handler.h
+    - include/entropic/types/hooks.h
+    - src/core/hook_registry.cpp
+  key_concepts:
+    - HookInterface
+    - HookRegistry
+    - entropic_hook_point_t
+    - fire_pre
+    - fire_post
+  prerequisite_topics:
+    - engine_loop
+    - c_api_facade
+  difficulty: 3

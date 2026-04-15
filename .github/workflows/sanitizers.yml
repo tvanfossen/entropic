@@ -7,7 +7,7 @@ on:
 jobs:
   asan-ubsan:
     name: ASan + UBSan
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     env:
       ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1:print_stats=1"
       UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
@@ -32,7 +32,7 @@ jobs:
 
   tsan:
     name: TSan
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     env:
       TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
     steps:
@@ -56,7 +56,7 @@ jobs:
 
   msan:
     name: MSan (scoped subset)
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     env:
       MSAN_OPTIONS: "halt_on_error=1"
     steps:

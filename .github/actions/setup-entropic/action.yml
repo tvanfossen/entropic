@@ -9,12 +9,16 @@
 # (Phase 4) so they all start from the same base.
 
 name: Set up entropic build environment
-description: Install toolchain, Python venv (invoke + pre-commit), and pre-commit cache.
+description: Install toolchain, optionally CUDA, Python venv (invoke + pre-commit), and pre-commit cache.
 
 inputs:
   python-version:
     description: Python version to install
     default: "3.12"
+    required: false
+  install-cuda:
+    description: Install NVIDIA CUDA toolkit (for -DENTROPIC_CUDA=ON builds). Does not require a physical GPU — builds only, no runtime execution.
+    default: "false"
     required: false
 
 runs:
@@ -32,6 +36,23 @@ runs:
           libsqlite3-dev \
           ninja-build \
           pkg-config
+
+    - name: Install NVIDIA CUDA toolkit
+      if: ${{ inputs.install-cuda == 'true' }}
+      shell: bash
+      run: |
+        # nvcc + CUDA runtime headers for compile-time CUDA support.
+        # No GPU needed: nvcc cross-compiles to target architectures.
+        # Using NVIDIA's official apt repo pinned to Ubuntu 24.04.
+        set -euo pipefail
+        wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+        sudo dpkg -i cuda-keyring_1.1-1_all.deb
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends cuda-toolkit-12-6
+        # Expose nvcc + libs to subsequent steps in the same job.
+        echo "/usr/local/cuda-12.6/bin" >>"$GITHUB_PATH"
+        echo "LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
+        echo "CUDA_HOME=/usr/local/cuda-12.6" >>"$GITHUB_ENV"
 
     - name: Set up Python ${{ inputs.python-version }}
       uses: actions/setup-python@v5

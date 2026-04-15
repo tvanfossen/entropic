@@ -450,3 +450,194 @@ def clean(c):
         if os.path.isdir(d):
             print(f"Removing {d}")
             shutil.rmtree(d)
+
+
+## @brief Extract project VERSION from CMakeLists.txt (X.Y.Z triple).
+## @utility
+## @return Version string (e.g. "2.0.5").
+## @version 1
+def _cmake_project_version():
+    """Return the X.Y.Z from project(... VERSION <triple> ...)."""
+    with open("CMakeLists.txt") as f:
+        for line in f:
+            m = re.search(r"VERSION\s+(\d+\.\d+\.\d+)", line)
+            if m and "cmake_minimum_required" not in line:
+                return m.group(1)
+    raise SystemExit("Could not extract project VERSION from CMakeLists.txt")
+
+
+## @brief Configure + build + install one release backend to a scratch prefix.
+## @utility
+## @version 1
+def _build_and_stage(c, backend, build_dir, stage_dir, jobs):
+    """Run cmake configure → build → install for one backend."""
+    cuda_flag = "-DENTROPIC_CUDA=ON" if backend == "cuda" else "-DENTROPIC_CUDA=OFF"
+    cpu_flag = "-DENTROPIC_CPU_ONLY=ON" if backend == "cpu" else "-DENTROPIC_CPU_ONLY=OFF"
+    extra = ""
+    if backend == "cuda":
+        # Match release.yaml's arch list so the local build approximates CI.
+        extra = ' "-DCMAKE_CUDA_ARCHITECTURES=80;86;89;90"'
+
+    c.run(
+        f"cmake -B {build_dir} -S ."
+        f" {cuda_flag} {cpu_flag}"
+        f" -DENTROPIC_SHARED=ON -DENTROPIC_STATIC=OFF"
+        f" -DENTROPIC_BUILD_TESTS=OFF"
+        f" -DCMAKE_BUILD_TYPE=Release"
+        f" -DCMAKE_INSTALL_PREFIX={stage_dir}"
+        f"{extra}"
+    )
+    c.run(f"cmake --build {build_dir} --parallel {jobs}")
+    c.run(f"cmake --install {build_dir}")
+
+
+## @brief Validate a staged install via find_package + CLI launch.
+## @utility
+## @version 1
+def _smoke_staged_install(c, stage_dir, build_dir):
+    """Run packaging/smoke-consumer + bin/entropic version against stage."""
+    consumer_build = os.path.join(build_dir, "consumer")
+    shutil.rmtree(consumer_build, ignore_errors=True)
+    c.run(
+        f"cmake -B {consumer_build} -S packaging/smoke-consumer"
+        f" -Dentropic_DIR={stage_dir}/lib/cmake/entropic"
+    )
+    c.run(f"cmake --build {consumer_build}")
+    c.run(f"{consumer_build}/entropic-smoke")
+    c.run(f"{stage_dir}/bin/entropic version")
+
+
+## @brief Verify installed .so has no unresolved / surprise runtime deps.
+## @utility
+## @version 1
+def _check_linkage(stage_dir, backend):
+    """Inspect ldd output for the installed facade and CLI.
+
+    Fails if librentropic.so has `not found` entries, or if CLI
+    doesn't resolve librentropic.so via the $ORIGIN/../lib RPATH.
+    """
+    lib = os.path.join(stage_dir, "lib", "librentropic.so.2.0.5")
+    bin_entropic = os.path.join(stage_dir, "bin", "entropic")
+
+    lib_ldd = subprocess.check_output(["ldd", lib], text=True)
+    if "not found" in lib_ldd:
+        print(lib_ldd)
+        raise SystemExit(f"{lib}: unresolved runtime dependency")
+
+    bin_ldd = subprocess.check_output(["ldd", bin_entropic], text=True)
+    if "not found" in bin_ldd:
+        print(bin_ldd)
+        raise SystemExit(f"{bin_entropic}: unresolved runtime dependency")
+    # CLI must resolve librentropic via the bin-relative path (install RPATH),
+    # not by finding it in the system loader cache.
+    if f"{stage_dir}/bin/../lib/librentropic.so" not in bin_ldd:
+        print(bin_ldd)
+        raise SystemExit(
+            f"{bin_entropic}: install RPATH not resolving — expected "
+            f"librentropic.so.2 via {stage_dir}/bin/../lib/"
+        )
+
+    # CUDA tarball: confirm libcudart is actually linked. Not an error
+    # if missing — just flag prominently.
+    if backend == "cuda" and "libcudart" not in lib_ldd:
+        print(
+            f"WARNING: {lib} is CUDA backend but libcudart not in ldd output "
+            f"— build may not have included CUDA code."
+        )
+
+
+## @brief Pack a staged install into a release-format tar.gz + sha256.
+## @utility
+## @return Path to the produced .tar.gz.
+## @version 1
+def _pack_tarball(c, stage_dir, version, backend, outdir):
+    """Tar the stage as entropic-<version>-linux-x86_64-<backend>.tar.gz."""
+    artifact = f"entropic-{version}-linux-x86_64-{backend}.tar.gz"
+    artifact_path = os.path.join(outdir, artifact)
+    stage_parent = os.path.dirname(stage_dir)
+    stage_name = os.path.basename(stage_dir)
+    c.run(f"tar -C {stage_parent} -czf {artifact_path} {stage_name}")
+    c.run(f"cd {outdir} && sha256sum {artifact} > {artifact}.sha256")
+    return artifact_path
+
+
+## @brief Build + smoke-install a wheel from a CPU release tarball.
+## @utility
+## @version 1
+def _build_and_verify_wheel(c, cpu_tarball, version, outdir):
+    """Run pack_wheel.py, pip-install into a fresh venv, import-check."""
+    c.run(
+        f".venv/bin/python scripts/pack_wheel.py"
+        f" --tarball {cpu_tarball}"
+        f" --version {version}"
+        f" --platform-tag linux_x86_64"
+        f" --outdir {outdir}"
+    )
+    venv = os.path.join(outdir, "smoke-venv")
+    shutil.rmtree(venv, ignore_errors=True)
+    c.run(f"python3 -m venv {venv}")
+    c.run(f"{venv}/bin/pip install {outdir}/entropic_engine-{version}-*.whl")
+    c.run(f'{venv}/bin/python -c "import entropic; assert entropic._get_lib() is not None"')
+    c.run(f"{venv}/bin/entropic --help >/dev/null")
+
+
+## @brief Pre-flight the tag-driven release workflow locally (no publish).
+## @utility
+## @version 1
+@task(
+    help={
+        "version": "Artifact version string (default: CMakeLists project VERSION)",
+        "skip_cuda": "Skip the CUDA matrix entry (faster iteration)",
+        "skip_wheel": "Skip the wheel build + pip-install smoke step",
+        "outdir": "Output directory for tarballs and wheel (default: dist/)",
+        "jobs": f"Parallel build jobs (default: {JOBS})",
+    }
+)
+def release_check(c, version="", skip_cuda=False, skip_wheel=False, outdir="dist", jobs=JOBS):
+    """Pre-flight the tag-driven release workflow locally.
+
+    Mirrors .github/workflows/release.yaml's build-package + build-wheel
+    jobs on the local machine — no tag push, no publish. Confidence
+    gate for "the release will succeed" before burning hosted-runner
+    minutes on a paid tier or cutting a real tag.
+
+    Produces .tar.gz per backend + optional .whl, verifies:
+      - CMake install tree is self-contained (no unresolved deps)
+      - CLI launches via install RPATH (no LD_LIBRARY_PATH needed)
+      - find_package(entropic 2.0 REQUIRED) consumer build+links+runs
+      - Wheel imports + bundled librentropic.so loads + CLI runs
+    """
+    if not version:
+        version = _cmake_project_version()
+    os.makedirs(outdir, exist_ok=True)
+
+    backends = ["cpu"] if skip_cuda else ["cpu", "cuda"]
+    tarballs = {}
+
+    for backend in backends:
+        print(f"\n══ Release check: {backend} backend ══")
+        build_dir = os.path.abspath(os.path.join("build", f"release-{backend}"))
+        stage_dir = os.path.abspath(os.path.join(build_dir, "stage", "entropic"))
+        shutil.rmtree(build_dir, ignore_errors=True)
+
+        _build_and_stage(c, backend, build_dir, stage_dir, jobs)
+        _smoke_staged_install(c, stage_dir, build_dir)
+        _check_linkage(stage_dir, backend)
+        tarballs[backend] = _pack_tarball(c, stage_dir, version, backend, outdir)
+        print(f"  ✓ {tarballs[backend]}")
+
+    if not skip_wheel and "cpu" in tarballs:
+        print("\n══ Release check: wheel ══")
+        _build_and_verify_wheel(c, tarballs["cpu"], version, outdir)
+        print(f"  ✓ {outdir}/entropic_engine-{version}-py3-none-linux_x86_64.whl")
+
+    print("\n══ Release pre-flight: PASSED ══")
+    for backend, path in tarballs.items():
+        size = os.path.getsize(path) / (1024 * 1024)
+        print(f"  {backend:<5} {path}  ({size:.1f} MB)")
+    if not skip_wheel and "cpu" in tarballs:
+        wheel = f"{outdir}/entropic_engine-{version}-py3-none-linux_x86_64.whl"
+        size = os.path.getsize(wheel) / (1024 * 1024)
+        print(f"  wheel {wheel}  ({size:.1f} MB)")
+    print(f"\nVersion: {version}")
+    print(f"Next: git tag v{version} && git push origin v{version}")

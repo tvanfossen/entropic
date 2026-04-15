@@ -102,23 +102,24 @@ const BundledModelEntry* BundledModels::get(const std::string& key) const
  * @brief Resolve a model reference to a filesystem path.
  *
  * If the argument is a known registry key, walk the v2.0.5 discovery
- * order for the model directory:
+ * order:
  *
- *   1. `ENTROPIC_MODEL_DIR` env var (explicit operator override)
- *   2. `~/.entropic/models/` (user convention)
- *   3. `/opt/entropic/models/` (system convention)
+ *   1. `ENTROPIC_MODEL_DIR` env var — if set, wins unconditionally
+ *      (operator intent), even if the file doesn't exist there yet.
+ *      This lets the caller pre-specify a download destination.
+ *   2. `~/.entropic/models/<name>.gguf` (user convention)
+ *   3. `/opt/entropic/models/<name>.gguf` (system convention)
  *
- * The first directory that actually contains `<name>.gguf` wins. If
- * none do, the function returns the priority-1 candidate anyway (or
- * priority 2 if the env var is unset) so the caller gets a sensible
- * path to report in its error message.
+ * For 2 and 3, first directory that actually contains `<name>.gguf`
+ * wins; if neither exists on disk, #2 is returned so error messages
+ * point at the most-likely-intended location.
  *
  * Otherwise the argument is treated as a direct path (with ~-expansion).
  *
  * @param value Registry key or direct path string.
  * @return Resolved filesystem path.
  * @internal
- * @version 2.0.5
+ * @version 2.0.5.1
  */
 std::filesystem::path BundledModels::resolve(const std::string& value) const
 {
@@ -128,27 +129,38 @@ std::filesystem::path BundledModels::resolve(const std::string& value) const
     }
 
     const auto filename = it->second.name + ".gguf";
-    std::vector<std::filesystem::path> candidates;
+    std::filesystem::path result;
+    const char* reason = nullptr;
 
+    // Priority 1: explicit operator override via env var always wins.
+    // Deliberately does NOT check existence — the user may be pointing
+    // at a download destination that hasn't been populated yet.
     if (const char* env = std::getenv("ENTROPIC_MODEL_DIR"); env && *env) {
-        candidates.emplace_back(std::filesystem::path(env) / filename);
-    }
-    candidates.emplace_back(expand_home("~") / ".entropic" / "models" / filename);
-    candidates.emplace_back(std::filesystem::path("/opt/entropic/models") / filename);
-
-    for (const auto& path : candidates) {
-        if (std::filesystem::is_regular_file(path)) {
-            s_log->info("Model '{}' resolved to {}", value, path.string());
-            return path;
+        result = std::filesystem::path(env) / filename;
+        reason = "ENTROPIC_MODEL_DIR";
+    } else {
+        // Priority 2-3: user home, then system. First existing file wins;
+        // if neither exists, home_path is returned so error messages
+        // point at the most-likely-intended location.
+        const auto home_path =
+            expand_home("~") / ".entropic" / "models" / filename;
+        const auto sys_path =
+            std::filesystem::path("/opt/entropic/models") / filename;
+        if (std::filesystem::is_regular_file(sys_path)
+            && !std::filesystem::is_regular_file(home_path)) {
+            result = sys_path;
+            reason = "/opt/entropic/models";
+        } else {
+            result = home_path;
+            reason = std::filesystem::is_regular_file(home_path)
+                ? "~/.entropic/models"
+                : "fallback (file not found)";
         }
     }
 
-    // No hit on disk — return the highest-priority candidate so the
-    // caller's error message points at the most-likely-intended location.
-    s_log->warn("Model '{}' not found in ENTROPIC_MODEL_DIR, ~/.entropic/models, "
-                "or /opt/entropic/models; falling back to {}",
-                value, candidates.front().string());
-    return candidates.front();
+    s_log->info("Model '{}' resolved to {} ({})",
+                value, result.string(), reason);
+    return result;
 }
 
 /**

@@ -21,10 +21,6 @@ if(DEFINED ENTROPIC_LIB_DIR)
     target_link_directories(headless PRIVATE ${ENTROPIC_LIB_DIR})
 endif()
 
-if(DEFINED ENTROPIC_DEPS_LIB_DIRS)
-    target_link_directories(headless PRIVATE ${ENTROPIC_DEPS_LIB_DIRS})
-endif()
-
 if(DEFINED ENTROPIC_INCLUDE_DIR)
     target_include_directories(headless PRIVATE ${ENTROPIC_INCLUDE_DIR})
 else()
@@ -35,4 +31,6 @@ if(DEFINED ENTROPIC_BUILD_INCLUDE_DIR)
     target_include_directories(headless PRIVATE ${ENTROPIC_BUILD_INCLUDE_DIR})
 endif()
 
-target_link_libraries(headless PRIVATE rentropic rentropic-types)
+# v2.0.5: sublibs are OBJECT-absorbed into the facade — only
+# librentropic.so exists. Link the facade only.
+target_link_libraries(headless PRIVATE rentropic)

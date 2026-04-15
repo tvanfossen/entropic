@@ -42,8 +42,11 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF#refs/tags/v}"
-          CMAKE_VERSION=$(sed -n 's/.*VERSION \([0-9][0-9A-Za-z.\-]*\).*/\1/p' CMakeLists.txt | head -1)
-          echo "tag version:  $TAG"
+          # Grab an X.Y.Z triple — rules out cmake_minimum_required(VERSION 3.21)
+          # (only two components) and hits the project()'s VERSION 2.0.5.
+          CMAKE_VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt \
+                            | head -1 | awk '{print $2}')
+          echo "tag version:   $TAG"
           echo "cmake version: $CMAKE_VERSION"
           # Allow release-candidate suffix on the tag ("-rc1" etc.) without
           # requiring it in CMakeLists.txt.

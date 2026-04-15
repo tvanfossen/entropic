@@ -9,6 +9,11 @@
 #include <entropic/types/logging.h>
 #include "yaml_util.h"
 
+#include <nlohmann/json.hpp>
+
+#include <fstream>
+#include <sstream>
+
 static auto s_log = entropic::log::get("config");
 
 namespace entropic::config {
@@ -558,6 +563,94 @@ std::string load_config_from_file(
 }
 
 /**
+ * @brief Parse a single mcpServers entry from .mcp.json.
+ * @param name Server name (key in mcpServers object).
+ * @param entry JSON value for that server.
+ * @return ExternalServerEntry populated from JSON.
+ * @utility
+ * @version 2.0.3
+ */
+static ExternalServerEntry parse_mcp_json_entry(
+    const std::string& name,
+    const nlohmann::json& entry) {
+    ExternalServerEntry result;
+    std::string type = entry.value("type", std::string("stdio"));
+    if (type == "sse") {
+        result.url = entry.value("url", std::string{});
+    } else {
+        result.command = entry.value("command", std::string{});
+        if (entry.contains("args") && entry["args"].is_array()) {
+            for (const auto& a : entry["args"]) {
+                result.args.push_back(a.get<std::string>());
+            }
+        }
+        if (entry.contains("env") && entry["env"].is_object()) {
+            for (auto it = entry["env"].begin();
+                 it != entry["env"].end(); ++it) {
+                result.env[it.key()] = it.value().get<std::string>();
+            }
+        }
+    }
+    s_log->info("Discovered external MCP server: {} (type={})",
+                 name, type);
+    return result;
+}
+
+/**
+ * @brief Discover and parse .mcp.json from the project directory.
+ *
+ * Auto-registers external MCP servers (stdio/SSE) declared in the
+ * project's .mcp.json. Format matches Claude Code / VSCode MCP config:
+ *   { "mcpServers": { "name": { "type": "stdio|sse", ... } } }
+ *
+ * Entries are merged into config.mcp.external_servers. The
+ * ServerManager initializes them during builtin setup.
+ *
+ * @param project_dir Project directory to search for .mcp.json.
+ * @param[in,out] config Config to populate external_servers into.
+ * @utility
+ * @version 2.0.3
+ */
+static void discover_mcp_json(
+    const std::filesystem::path& project_dir,
+    ParsedConfig& config) {
+    if (project_dir.empty()) { return; }
+    auto path = project_dir / ".mcp.json";
+    if (!std::filesystem::exists(path)) { return; }
+
+    std::ifstream f(path);
+    nlohmann::json j;
+    if (f.is_open()) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        j = nlohmann::json::parse(ss.str(), nullptr, false);
+    }
+    bool valid = f.is_open() && !j.is_discarded() && j.is_object()
+                 && j.contains("mcpServers")
+                 && j["mcpServers"].is_object();
+    if (!valid) {
+        s_log->warn(".mcp.json missing/malformed: {}", path.string());
+        return;
+    }
+
+    int added = 0;
+    for (auto it = j["mcpServers"].begin();
+         it != j["mcpServers"].end(); ++it) {
+        const std::string& name = it.key();
+        if (config.mcp.external_servers.count(name)) {
+            s_log->info(".mcp.json: {} already in config, skipping",
+                         name);
+            continue;
+        }
+        config.mcp.external_servers[name] = parse_mcp_json_entry(
+            name, it.value());
+        added++;
+    }
+    s_log->info("Loaded {} external MCP server(s) from {}",
+                 added, path.string());
+}
+
+/**
  * @brief Load config with consumer defaults + global + project layers.
  *
  * @param project_dir Project config directory.
@@ -566,7 +659,7 @@ std::string load_config_from_file(
  * @param config Output config.
  * @return Empty string on success.
  * @internal
- * @version 2.0.1
+ * @version 2.0.3
  */
 std::string load_layered(
     const std::filesystem::path& project_dir,
@@ -603,6 +696,7 @@ std::string load_layered(
     }
 
     auto err = load_config(global, project, registry, config);
+    if (err.empty()) { discover_mcp_json(project_dir, config); }
     return err;
 }
 

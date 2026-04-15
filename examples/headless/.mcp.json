@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "test": {
+      "type": "stdio",
+      "command": "python3",
+      "args": ["test_server.py"]
+    }
+  }
+}

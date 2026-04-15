@@ -279,6 +279,7 @@ EXAMPLES = {
     "hello-world": {"lang": "c", "binary": "hello-world"},
     "pychess": {"lang": "cxx", "binary": "pychess"},
     "explorer": {"lang": "cxx", "binary": "explorer"},
+    "headless": {"lang": "c", "binary": "headless"},
 }
 
 LIB_DIRS = [

@@ -111,6 +111,7 @@ add_subdirectory(src/core)
 add_subdirectory(src/mcp)
 add_subdirectory(src/storage)
 add_subdirectory(src/facade)
+add_subdirectory(src/cli)
 add_subdirectory(python)
 
 if(ENTROPIC_BUILD_TESTS)

@@ -1,16 +1,5 @@
 [
   {
-    "req_id": "REQ-API-002",
-    "req_name": "Synchronous agentic run",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.0.2"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-CFG-001",
     "req_name": "Layered config merge",
     "functions": [
@@ -18,17 +7,6 @@
         "name": "parse_config_file",
         "file": "src/config/loader.cpp",
         "version": "1.8.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-VALID-004",
-    "req_name": "Per-identity validation override",
-    "functions": [
-      {
-        "name": "set_global_enabled",
-        "file": "src/core/constitutional_validator.cpp",
-        "version": "2.0.4"
       }
     ]
   }

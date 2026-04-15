@@ -20,7 +20,7 @@ target_include_directories(entropic-config
 
 target_link_libraries(entropic-config
     PUBLIC entropic-types ryml::ryml
-    PRIVATE spdlog::spdlog
+    PRIVATE spdlog::spdlog nlohmann_json::nlohmann_json
 )
 
 target_compile_definitions(entropic-config PRIVATE ENTROPIC_BUILDING_DLL)

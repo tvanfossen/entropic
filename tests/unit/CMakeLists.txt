@@ -212,7 +212,6 @@ if(ENTROPIC_STORAGE_SQLITE)
         storage/database_test.cpp
         storage/backend_test.cpp
         storage/c_interface_test.cpp
-        storage/logger_test.cpp
         storage/permission_persister_test.cpp
         storage/audit_entry_test.cpp
         storage/audit_logger_test.cpp

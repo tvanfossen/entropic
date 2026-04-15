@@ -60,14 +60,30 @@ SCENARIO("BundledModels resolves keys to paths", "[config][bundled_models]") {
         auto err = registry.load(test_data() / "bundled_models.yaml");
         REQUIRE(err.empty());
 
-        WHEN("resolving a registry key") {
+        // v2.0.5: resolve() uses ENTROPIC_MODEL_DIR → ~/.entropic/models →
+        // /opt/entropic/models discovery. Unset the env var so the test
+        // exercises the home-dir fallback deterministically.
+        unsetenv("ENTROPIC_MODEL_DIR");
+
+        WHEN("resolving a registry key with no env override") {
             auto path = registry.resolve("primary");
 
-            THEN("it returns ~/models/gguf/{name}.gguf") {
+            THEN("it returns ~/.entropic/models/{name}.gguf fallback") {
                 auto home = std::filesystem::path(std::getenv("HOME"));
-                auto expected = home / "models" / "gguf"
+                auto expected = home / ".entropic" / "models"
                                 / "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf";
                 REQUIRE(path == expected);
+            }
+        }
+
+        WHEN("ENTROPIC_MODEL_DIR points at an arbitrary directory") {
+            setenv("ENTROPIC_MODEL_DIR", "/custom/models", 1);
+            auto path = registry.resolve("primary");
+            unsetenv("ENTROPIC_MODEL_DIR");
+
+            THEN("resolve uses that directory") {
+                REQUIRE(path == std::filesystem::path("/custom/models")
+                                / "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf");
             }
         }
 

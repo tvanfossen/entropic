@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 name: Release
 
 # Tag-driven release pipeline.
@@ -94,13 +95,17 @@ jobs:
               -DENTROPIC_BUILD_TESTS=OFF
           - backend: cuda
             install_cuda: "true"
+            # CMAKE_CUDA_ARCHITECTURES is passed separately in the
+            # Configure step (must be quoted — the `;` in a cmake list
+            # gets interpreted as a bash command separator if inlined
+            # into a folded-block var).
             cmake_flags: >-
               -DENTROPIC_CUDA=ON
               -DENTROPIC_CPU_ONLY=OFF
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
-              -DCMAKE_CUDA_ARCHITECTURES=80;86;89;90
+            cuda_archs: "80;86;89;90"
 
     steps:
       - uses: actions/checkout@v4
@@ -116,9 +121,19 @@ jobs:
         # CMAKE_<LANG>_COMPILER_LAUNCHER=ccache prepends ccache to every
         # compile invocation; per-project cache hit rate is ~95% on
         # llama.cpp once the submodule SHA is stable.
+        #
+        # CUDA_ARCHS must be quoted because its value contains `;`
+        # (cmake list separator) that bash would otherwise split.
+        env:
+          CUDA_ARCHS: ${{ matrix.cuda_archs }}
         run: |
+          extra=()
+          if [[ -n "${CUDA_ARCHS:-}" ]]; then
+            extra+=("-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS}")
+          fi
           cmake -B build/release -S . \
             ${{ matrix.cmake_flags }} \
+            "${extra[@]}" \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=stage/entropic \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \

@@ -13,7 +13,12 @@ FetchContent_Declare(spdlog
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
+# v2.0.5: absorbed into librentropic.so; force STATIC regardless of
+# top-level BUILD_SHARED_LIBS so no separate libspdlog.so is shipped.
+set(BUILD_SHARED_LIBS_SAVED_SPDLOG ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(spdlog)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED_SPDLOG})
 
 # ── Catch2 (test framework, BDD-style) ──────────────────
 if(ENTROPIC_BUILD_TESTS)
@@ -35,7 +40,13 @@ FetchContent_Declare(ryml
 )
 set(RYML_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(RYML_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+# v2.0.5: absorbed into librentropic.so; force STATIC regardless of
+# top-level BUILD_SHARED_LIBS, and suppress the separate install rules.
+set(RYML_INSTALL OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS_SAVED_RYML ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
 FetchContent_MakeAvailable(ryml)
+set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED_RYML})
 # Override hidden visibility — ryml symbols must be visible when linked
 # into entropic shared libraries (config.so, prompts.so).
 set_target_properties(ryml PROPERTIES CXX_VISIBILITY_PRESET default)
@@ -61,7 +72,11 @@ set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
 set(BUILD_SHARED_LIBS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE_SAVED ${CMAKE_POSITION_INDEPENDENT_CODE})
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-add_subdirectory(llama.cpp)
+# v2.0.5: EXCLUDE_FROM_ALL suppresses llama.cpp's unconditional install
+# rules (libllama.a, llama-config.cmake, convert_hf_to_gguf.py, llama.pc).
+# Our facade absorbs libllama.a as a static dependency; consumers never
+# link to llama directly.
+add_subdirectory(llama.cpp EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 
@@ -72,6 +87,7 @@ FetchContent_Declare(json
     GIT_SHALLOW    TRUE
 )
 set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(json)
 
 # ── cpp-httplib (header-only HTTP/SSE client) ────────────
@@ -83,4 +99,5 @@ FetchContent_Declare(httplib
 set(HTTPLIB_COMPILE OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_REQUIRE_OPENSSL OFF CACHE BOOL "" FORCE)
 set(HTTPLIB_REQUIRE_ZLIB OFF CACHE BOOL "" FORCE)
+set(HTTPLIB_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(httplib)

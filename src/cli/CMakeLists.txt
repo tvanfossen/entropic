@@ -26,3 +26,9 @@ target_link_libraries(entropic
 set_target_properties(entropic PROPERTIES
     OUTPUT_NAME "entropic"
 )
+
+# v2.0.5: ship the CLI in the distribution.
+include(GNUInstallDirs)
+install(TARGETS entropic
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)

@@ -174,3 +174,99 @@ jobs:
           fail_on_unmatched_files: true
           # Mark RCs as prerelease so pip and consumers don't auto-upgrade.
           prerelease: ${{ contains(needs.validate-tag.outputs.version, '-') }}
+
+  # ──────────────────────────────────────────────────────────────────
+  # Build the PyPI wheel from the same CPU tarball that was just
+  # published to GitHub Release. One binary, two channels — `pip
+  # install entropic-engine` delivers the exact librentropic.so bytes
+  # that `install.sh --cpu` would have extracted.
+  #
+  # CUDA wheel is not published to PyPI yet — the conventional pattern
+  # is a separate distribution name (entropic-engine-cuda) that isn't
+  # registered. CUDA consumers use install.sh --cuda for now.
+  # ──────────────────────────────────────────────────────────────────
+  build-wheel:
+    name: Build PyPI wheel (CPU)
+    needs: [validate-tag, build-package, github-release]
+    runs-on: ubuntu-24.04
+    outputs:
+      wheel_name: ${{ steps.pack.outputs.wheel_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download CPU tarball artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: entropic-cpu
+          path: tarball
+
+      - id: pack
+        name: Repackage tarball as wheel
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          BARE="${VERSION#v}"
+          TARBALL="tarball/entropic-${BARE}-linux-x86_64-cpu.tar.gz"
+          python3 scripts/pack_wheel.py \
+            --tarball "$TARBALL" \
+            --version "$BARE" \
+            --platform-tag linux_x86_64 \
+            --outdir dist
+          WHEEL=$(ls dist/entropic_engine-*.whl)
+          echo "wheel_name=$(basename "$WHEEL")" >>"$GITHUB_OUTPUT"
+          ls -lh "$WHEEL"
+
+      - name: Smoke-install the wheel and import
+        # Catches "wheel builds but doesn't import" regressions before
+        # we push to PyPI (where yanking is painful).
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install dist/entropic_engine-*.whl
+          /tmp/smoke-venv/bin/python -c "import entropic; assert entropic._get_lib() is not None"
+          /tmp/smoke-venv/bin/entropic --help >/dev/null
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: entropic-wheel
+          path: dist/entropic_engine-*.whl
+
+  # ──────────────────────────────────────────────────────────────────
+  # PyPI trusted publishing via OIDC. Uploads the wheel only — no
+  # sdist (source distribution). The distribution model is binary
+  # tarball → wheel re-pack; building from source via `pip install`
+  # would require scikit-build-core integration we don't ship.
+  #
+  # RC tags (e.g., v2.0.5-rc1) skip this job so we never clutter PyPI
+  # with prereleases; developers pip-install RCs from the GitHub
+  # Release tarball via install.sh.
+  # ──────────────────────────────────────────────────────────────────
+  pypi-publish:
+    name: Publish to PyPI
+    needs: [validate-tag, build-wheel]
+    if: ${{ !contains(needs.validate-tag.outputs.version, '-') }}
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/entropic-engine
+    permissions:
+      id-token: write   # OIDC
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: entropic-wheel
+          path: dist
+
+      - name: Publish to PyPI via trusted publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # skip-existing so re-running the workflow against an existing
+          # tag doesn't fail if PyPI already has the wheel.
+          skip-existing: true

@@ -130,10 +130,23 @@ if(ENTROPIC_BUILD_DOCS)
 endif()
 
 # ── Install ─────────────────────────────────────────────
+include(GNUInstallDirs)
+
+# Public headers (entire tree; internal headers live in src/ not include/)
 install(DIRECTORY include/entropic
-    DESTINATION include
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/entropic/entropic_config.h"
-    DESTINATION include/entropic
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/entropic
+)
+
+# Runtime data: bundled models registry, prompts, grammars, tool defs
+install(DIRECTORY data/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/entropic
+)
+
+# License + release README
+install(FILES LICENSE packaging/README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )

@@ -283,66 +283,58 @@ EXAMPLES = {
     "headless": {"lang": "c", "binary": "headless"},
 }
 
-LIB_DIRS = [
-    "src/facade",
-    "src/types",
-    "src/core",
-    "src/config",
-    "src/prompts",
-    "src/inference",
-    "src/mcp",
-    "src/storage",
-    "_deps/spdlog-build",
-    "_deps/ryml-build",
-]
+# v2.0.5: the distribution is a single librentropic.so — sublibs (types,
+# core, config, prompts, inference, mcp, storage) are OBJECT libraries
+# absorbed into the facade, and third-party deps (spdlog, ryml, llama,
+# etc.) are absorbed statically. So only one lib dir matters at
+# runtime: src/facade/. Pre-v2.0.5 code listed eight dirs here to
+# cover the old per-sublib .so layout; all of that is now stale.
+FACADE_LIB_SUBDIR = os.path.join("src", "facade")
 
 
 ## @brief Return absolute path to librentropic.so in the build tree.
 ## @utility
 ## @return Absolute path string.
-## @version 1
+## @version 2
 def _lib_path(preset):
     """Return absolute path to librentropic.so in the build tree."""
-    return os.path.abspath(os.path.join("build", preset, "src", "facade", "librentropic.so"))
+    return os.path.abspath(os.path.join("build", preset, FACADE_LIB_SUBDIR, "librentropic.so"))
 
 
-## @brief Build LD_LIBRARY_PATH covering all internal .so directories.
+## @brief Directory containing the built librentropic.so for a given preset.
 ## @utility
-## @return Colon-separated directory path string.
-## @version 1
+## @return Absolute directory path.
+## @version 2
+def _facade_dir(preset):
+    """Absolute path to the facade output directory (src/facade/)."""
+    return os.path.abspath(os.path.join("build", preset, FACADE_LIB_SUBDIR))
+
+
+## @brief Single-directory LD_LIBRARY_PATH for the in-tree build.
+## @utility
+## @return Directory path string.
+## @version 2
 def _ld_library_path(preset):
-    """Build LD_LIBRARY_PATH covering all internal .so directories."""
-    base = os.path.abspath(os.path.join("build", preset))
-    return ":".join(os.path.join(base, d) for d in LIB_DIRS)
-
-
-## @brief Semicolon-separated list of internal .so dirs for linker search.
-## @utility
-## @return Semicolon-separated directory path string.
-## @version 1
-def _deps_lib_dirs(preset):
-    """Semicolon-separated list of internal .so dirs for linker search."""
-    base = os.path.abspath(os.path.join("build", preset))
-    return ";".join(os.path.join(base, d) for d in LIB_DIRS)
+    """Build LD_LIBRARY_PATH — only the facade dir is needed post-v2.0.5."""
+    return _facade_dir(preset)
 
 
 ## @brief Configure and build a C/C++ example against the engine build tree.
 ## @utility
-## @version 1
+## @version 2
 def _build_c_example(c, name, preset, jobs):
     """Configure and build a C/C++ example against the engine build tree."""
     example_dir = os.path.join("examples", name)
     build_dir = os.path.join(example_dir, "build")
     include_dir = os.path.abspath("include")
     build_include_dir = os.path.abspath(os.path.join("build", preset, "include"))
-    lib_dir = os.path.abspath(os.path.join("build", preset, "src", "facade"))
+    lib_dir = _facade_dir(preset)
 
     c.run(
         f"cmake -B {build_dir}"
         f" -DENTROPIC_LIB_DIR={lib_dir}"
         f" -DENTROPIC_INCLUDE_DIR={include_dir}"
         f" -DENTROPIC_BUILD_INCLUDE_DIR={build_include_dir}"
-        f' -DENTROPIC_DEPS_LIB_DIRS="{_deps_lib_dirs(preset)}"'
         f" {example_dir}"
     )
     c.run(f"cmake --build {build_dir} --parallel {jobs}")

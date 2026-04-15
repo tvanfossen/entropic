@@ -24,11 +24,6 @@ if(DEFINED ENTROPIC_LIB_DIR)
     target_link_directories(hello-world PRIVATE ${ENTROPIC_LIB_DIR})
 endif()
 
-# Transitive .so dependencies (types, core, etc.) live in sibling dirs
-if(DEFINED ENTROPIC_DEPS_LIB_DIRS)
-    target_link_directories(hello-world PRIVATE ${ENTROPIC_DEPS_LIB_DIRS})
-endif()
-
 # Option 2: Explicit include directories (source + build tree)
 if(DEFINED ENTROPIC_INCLUDE_DIR)
     target_include_directories(hello-world PRIVATE ${ENTROPIC_INCLUDE_DIR})
@@ -42,5 +37,6 @@ if(DEFINED ENTROPIC_BUILD_INCLUDE_DIR)
     target_include_directories(hello-world PRIVATE ${ENTROPIC_BUILD_INCLUDE_DIR})
 endif()
 
-# Link facade + transitive deps the linker needs on the command line
-target_link_libraries(hello-world PRIVATE rentropic rentropic-types)
+# v2.0.5: sublibs are OBJECT-absorbed into the facade — only
+# librentropic.so exists. Link the facade only.
+target_link_libraries(hello-world PRIVATE rentropic)

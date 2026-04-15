@@ -29,7 +29,9 @@ jobs:
   pre-commit:
     name: Pre-commit (knots, flake8, doxygen-guard, build, tests, coverage)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    # 2-core hosted runner: cold-cache llama.cpp build dominates. First
+    # run fills ccache (~20-30 min); subsequent runs hit it (~5-10 min).
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,9 +39,15 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/setup-entropic
+        with:
+          ccache-key: cpu
 
       - name: Run pre-commit (all hooks, all files)
         run: .venv/bin/pre-commit run --all-files --show-diff-on-failure
+
+      - name: ccache stats (post-build)
+        if: always()
+        run: ccache --show-stats
 
       - name: Upload per-library coverage artifact
         if: always()
@@ -52,7 +60,7 @@ jobs:
   distribution-smoke:
     name: Distribution smoke (find_package + CLI RPATH)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     needs: pre-commit
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +68,8 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/setup-entropic
+        with:
+          ccache-key: cpu
 
       - name: Run scripts/smoke_distribution.sh
         # Builds a clean shared CPU install, stages it to a scratch

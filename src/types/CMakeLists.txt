@@ -1,4 +1,4 @@
-add_library(entropic-types STATIC)
+add_library(entropic-types OBJECT)
 
 target_sources(entropic-types PRIVATE
     error.cpp

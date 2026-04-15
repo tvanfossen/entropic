@@ -257,14 +257,13 @@ set_target_properties(entropic-c99-test PROPERTIES
 # C99 test just needs to compile and link — run it as a test
 add_test(NAME entropic-c99-header-test COMMAND entropic-c99-test)
 
-# v1.9.6: Identity manager tests (cross-library: core + inference + mcp)
+# v1.9.6: Identity manager tests (cross-library: core + inference + mcp).
+# v2.0.5: sublibs are OBJECT libraries now — link them in directly
+# rather than compiling individual .cpp files (which would collide with
+# the OBJECT libs' own copies when both get absorbed).
 add_executable(entropic-identity-tests
     core/identity_manager_test.cpp
     core/identity_validation_test.cpp
-    ${PROJECT_SOURCE_DIR}/src/core/identity_manager.cpp
-    ${PROJECT_SOURCE_DIR}/src/inference/grammar_registry.cpp
-    ${PROJECT_SOURCE_DIR}/src/mcp/mcp_authorization.cpp
-    ${PROJECT_SOURCE_DIR}/src/mcp/mcp_key_set.cpp
 )
 
 target_include_directories(entropic-identity-tests PRIVATE
@@ -275,6 +274,8 @@ target_include_directories(entropic-identity-tests PRIVATE
 target_link_libraries(entropic-identity-tests PRIVATE
     entropic-core
     entropic-types
+    entropic-mcp
+    entropic::inference
     llama
     nlohmann_json::nlohmann_json
     spdlog::spdlog

@@ -1,4 +1,4 @@
-add_library(entropic-core STATIC)
+add_library(entropic-core OBJECT)
 
 target_sources(entropic-core PRIVATE
     engine_types.cpp

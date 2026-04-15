@@ -1,4 +1,4 @@
-add_library(entropic-config STATIC)
+add_library(entropic-config OBJECT)
 
 target_sources(entropic-config PRIVATE
     yaml_util.cpp

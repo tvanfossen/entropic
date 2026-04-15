@@ -79,13 +79,16 @@ jobs:
   build-package:
     name: Build + package (${{ matrix.backend }})
     needs: validate-tag
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
+          # CPU build stays on the free 2-core runner — small artifact
+          # (~4 MB), fast build with ccache, no CUDA toolkit overhead.
           - backend: cpu
+            runner: ubuntu-24.04
             install_cuda: "false"
             cmake_flags: >-
               -DENTROPIC_CPU_ONLY=ON
@@ -93,12 +96,17 @@ jobs:
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
+          # CUDA build uses the paid 8-core runner (32 GB RAM, ~300 GB
+          # disk). The 2-core runner can't fit CUDA toolkit + nvcc
+          # multi-arch kernel compilation in its disk/memory envelope.
+          # Estimated cost: ~15 min × $0.032 = ~$0.50 per release.
+          #
+          # CMAKE_CUDA_ARCHITECTURES is passed separately in the
+          # Configure step (the `;` in a cmake list gets interpreted as
+          # a bash command separator if inlined into a folded-block var).
           - backend: cuda
+            runner: ubuntu-24.04-8-cores
             install_cuda: "true"
-            # CMAKE_CUDA_ARCHITECTURES is passed separately in the
-            # Configure step (must be quoted — the `;` in a cmake list
-            # gets interpreted as a bash command separator if inlined
-            # into a folded-block var).
             cmake_flags: >-
               -DENTROPIC_CUDA=ON
               -DENTROPIC_CPU_ONLY=OFF
@@ -141,10 +149,11 @@ jobs:
             -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        # Explicit -j2: ubuntu-24.04 standard has 2 vCPU / 16 GB RAM.
-        # Default --parallel can oversubscribe when llama.cpp's CUDA
-        # link step peaks >8 GB RSS, leading to runner OOM-kills.
-        run: cmake --build build/release --parallel 2
+        # Let cmake auto-detect parallelism from nproc. On the 2-core
+        # CPU runner that's 2 (safe). On the 8-core CUDA runner that's
+        # 8, and its 32 GB RAM absorbs llama.cpp's CUDA link peak
+        # (~8-10 GB RSS) without oversubscription.
+        run: cmake --build build/release --parallel
 
       - name: ccache stats (post-build)
         if: always()

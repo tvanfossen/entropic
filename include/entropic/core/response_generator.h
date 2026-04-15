@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file response_generator.h
  * @brief Response generation subsystem for the agentic loop.

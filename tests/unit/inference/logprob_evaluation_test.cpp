@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_logprob_evaluation.cpp
  * @brief Tests for InferenceBackend logprob evaluation (base class logic).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_qwen35_adapter.cpp
  * @brief Tests for Qwen 3.5 XML tool call parsing.

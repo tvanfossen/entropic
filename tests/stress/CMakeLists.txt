@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v1.9.14: Stress tests — long-running, high-volume
 #
 # NOT pre-commit. Too slow (30-60 min). Separate CTest label "stress"

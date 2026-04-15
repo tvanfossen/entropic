@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file mcp_c_api.cpp
  * @brief C API implementation for i_mcp_server.h.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Build a doxygen SQLite knowledge database from source code.
 
 Standalone script for generating a SQLite database from doxygen comments

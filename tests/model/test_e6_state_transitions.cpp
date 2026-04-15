@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e6_state_transitions.cpp
  * @brief E6: Engine state transitions include PLANNING and EXECUTING.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_backend_lifecycle.cpp
  * @brief Tests for InferenceBackend state machine.

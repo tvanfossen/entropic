@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_directives.cpp
  * @brief DirectiveProcessor unit tests.

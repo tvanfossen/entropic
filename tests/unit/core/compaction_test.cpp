@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_compaction.cpp
  * @brief TokenCounter and CompactionManager unit tests.

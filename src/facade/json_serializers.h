@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file json_serializers.h
  * @brief JSON serialization helpers for the facade.

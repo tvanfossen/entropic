@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file generic_adapter.cpp
  * @brief GenericAdapter implementation.

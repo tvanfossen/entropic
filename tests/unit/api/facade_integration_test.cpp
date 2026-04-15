@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file facade_integration_test.cpp
  * @brief Integration tests for the v2.0.0 C API facade wiring.

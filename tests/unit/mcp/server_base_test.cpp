@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_server_base.cpp
  * @brief MCPServerBase unit tests.

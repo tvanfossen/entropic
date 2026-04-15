@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file i_hook_handler.h
  * @brief Hook dispatch interface injected into engine subsystems.

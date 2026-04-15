@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Docs MCP server — query doxygen SQLite database over stdio JSON-RPC.
 
 Provides tools for looking up functions, classes, searching documentation,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file database.h
  * @brief Thread-safe SQLite database wrapper with migration support.

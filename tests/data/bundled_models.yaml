@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 primary:
   name: Qwen3.5-35B-A3B-UD-IQ3_XXS
   url: https://example.com/primary.gguf

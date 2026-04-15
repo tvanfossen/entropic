@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e7_delegation.cpp
  * @brief E7: Delegation wiring fires on_delegation_start callback.

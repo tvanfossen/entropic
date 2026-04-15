@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file entropic_export.h
  * @brief Symbol visibility macro for all exported symbols.

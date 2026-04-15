@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_identity_validation.cpp
  * @brief Identity name and field validation tests.

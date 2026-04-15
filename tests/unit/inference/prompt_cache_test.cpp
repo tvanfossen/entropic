@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_prompt_cache.cpp
  * @brief Unit tests for PromptCache — cache lifecycle, LRU eviction,

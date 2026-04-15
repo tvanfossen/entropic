@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file audit_hook_context.h
  * @brief AuditHookContext — bridges engine state to audit hook callback.

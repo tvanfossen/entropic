@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_tool_registry.cpp
  * @brief ToolRegistry unit tests.

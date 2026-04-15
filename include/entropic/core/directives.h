@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file directives.h
  * @brief Directive processing for tool-to-engine communication.

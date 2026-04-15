@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file bash.h
  * @brief Bash MCP server — shell command execution.

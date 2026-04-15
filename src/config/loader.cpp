@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file loader.cpp
  * @brief Config loader implementation — YAML parsing + layered merge.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file constitutional_validator.cpp
  * @brief Constitutional validation pipeline implementation.

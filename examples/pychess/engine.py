@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Engine wiring — connects entropic wrapper to chess game loop.
 
 Thin wrapper around EntropicEngine. The chess MCP server runs as an

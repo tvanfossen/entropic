@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file stream_think_filter.h
  * @brief Streaming filter that strips <think>...</think> blocks.

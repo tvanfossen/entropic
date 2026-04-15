@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_logprob_evaluation.cpp
  * @brief BDD subsystem test — evaluation produces valid log-probabilities.

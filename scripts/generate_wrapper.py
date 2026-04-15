@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Generate Python ctypes wrapper from entropic C API headers.
 
 Parses entropic.h, types/error.h, and types/hooks.h to produce a complete

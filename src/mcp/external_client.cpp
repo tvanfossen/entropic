@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file external_client.cpp
  * @brief ExternalMCPClient implementation.

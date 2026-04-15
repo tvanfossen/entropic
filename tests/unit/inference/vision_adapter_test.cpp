@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_vision_adapter.cpp
  * @brief Tests for ChatAdapter / Qwen35Adapter vision formatting.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_grammar_constraint.cpp
  * @brief BDD subsystem test — GBNF grammar constrains output to valid JSON.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/Doxyfile)
 add_custom_target(docs
     COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}

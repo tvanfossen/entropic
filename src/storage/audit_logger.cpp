@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file audit_logger.cpp
  * @brief AuditLogger implementation — JSONL recording and hook callback.

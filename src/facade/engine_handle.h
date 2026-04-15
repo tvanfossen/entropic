@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file engine_handle.h
  * @brief Private definition of the entropic_engine struct.

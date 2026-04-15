@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_tool_calling_loop.cpp
  * @brief Regression test from test3: tool calling loop.

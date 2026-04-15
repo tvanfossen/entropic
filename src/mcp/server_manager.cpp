@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file server_manager.cpp
  * @brief ServerManager implementation.

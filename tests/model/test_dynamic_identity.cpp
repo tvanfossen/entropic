@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_dynamic_identity.cpp
  * @brief BDD subsystem test — runtime-created identity participates in routing.

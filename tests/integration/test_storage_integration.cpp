@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_storage_integration.cpp
  * @brief Integration tests for storage wiring into core engine.

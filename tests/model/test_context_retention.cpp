@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_context_retention.cpp
  * @brief BDD subsystem test — multi-turn context retention.

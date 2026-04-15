@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_prompt_parse.cpp
  * @brief BDD tests for prompt file parsing and identity loading.

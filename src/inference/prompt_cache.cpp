@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file prompt_cache.cpp
  * @brief PromptCache implementation — LRU eviction, thread-safe.

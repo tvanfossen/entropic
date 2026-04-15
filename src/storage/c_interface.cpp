@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file c_interface.cpp
  * @brief C boundary implementation for i_storage_backend.h.

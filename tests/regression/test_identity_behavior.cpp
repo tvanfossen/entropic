@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_identity_behavior.cpp
  * @brief Regression test from test6: identity tool filtering and constitution.

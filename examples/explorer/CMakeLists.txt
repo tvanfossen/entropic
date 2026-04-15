@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Entropic Explorer — interactive architecture guide.
 #
 # Standalone build (not part of the main entropic build):

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_external_mcp.cpp
  * @brief Integration tests for external MCP server lifecycle.

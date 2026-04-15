@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file entropic_mcp.cpp
  * @brief C API implementation for external MCP server management.

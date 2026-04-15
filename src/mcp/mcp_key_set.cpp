@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file mcp_key_set.cpp
  * @brief MCPKeySet implementation.

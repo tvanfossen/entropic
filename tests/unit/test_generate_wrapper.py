@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Unit tests for scripts/generate_wrapper.py — header parser and code generator.
 
 Tests the parser against the real entropic.h and type headers to ensure

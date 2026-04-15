@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # doxygen-guard configuration for Entropic engine
 #
 # Mode: validation + impact report only (no trace/sequence diagrams).

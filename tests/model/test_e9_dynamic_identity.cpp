@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e9_dynamic_identity.cpp
  * @brief E9: Dynamic identity creation and generation through engine loop.

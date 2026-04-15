@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Chess MCP server — standalone external server over stdio.
 
 Exposes chess board tools (get_board, make_move) via the MCP protocol.

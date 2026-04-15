@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file backend.cpp
  * @brief InferenceBackend base class implementation.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_basic_response.cpp
  * @brief Regression test from test1: basic generation flow.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file permission_persister.cpp
  * @brief PermissionPersister implementation using string-based YAML editing.

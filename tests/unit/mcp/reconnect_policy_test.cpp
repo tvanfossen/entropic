@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_reconnect_policy.cpp
  * @brief ReconnectPolicy unit tests.

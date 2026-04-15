@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Smallest-possible consumer of an installed entropic release.
 #
 # Used by scripts/smoke_distribution.sh and (eventually) by the Phase 3

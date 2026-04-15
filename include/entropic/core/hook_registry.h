@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file hook_registry.h
  * @brief Thread-safe hook registration and dispatch.

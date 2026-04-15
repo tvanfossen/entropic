@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v1.10.2: C++ model test suite — BDD behavioral validation with live model.
 #
 # 29 individual executables, one per test. Each loads its own model

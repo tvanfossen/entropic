@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file yaml_util_test.cpp
  * @brief BDD tests for ryml extraction helpers.

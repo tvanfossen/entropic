@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_config_validate.cpp
  * @brief BDD tests for config validation functions.

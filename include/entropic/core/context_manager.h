@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file context_manager.h
  * @brief Context management subsystem for the agentic loop.

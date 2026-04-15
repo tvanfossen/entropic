@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_adapter_orchestrator.cpp
  * @brief Tests for ModelOrchestrator LoRA adapter integration.

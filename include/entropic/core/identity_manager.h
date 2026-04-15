@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file identity_manager.h
  * @brief IdentityManager -- lifecycle management for static and dynamic identities.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file llama_cpp_backend.h
  * @brief LlamaCppBackend — llama.cpp C API integration.

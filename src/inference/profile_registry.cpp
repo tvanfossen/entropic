@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file profile_registry.cpp
  * @brief ProfileRegistry implementation -- named GPU resource profiles.

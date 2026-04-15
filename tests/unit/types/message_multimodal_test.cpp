@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_message_multimodal.cpp
  * @brief Tests for Message struct multimodal content_parts extension.

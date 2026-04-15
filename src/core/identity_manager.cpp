@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file identity_manager.cpp
  * @brief IdentityManager implementation -- CRUD, validation, MCP key lifecycle.

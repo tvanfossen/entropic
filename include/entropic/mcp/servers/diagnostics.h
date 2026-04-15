@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file diagnostics.h
  * @brief Diagnostics MCP server — LSP client for code diagnostics.

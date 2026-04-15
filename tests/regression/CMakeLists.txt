@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v1.10.1: Regression tests from manual test findings (test1-test6).
 # All use mock inference — CPU-only, CI-runnable.
 add_executable(entropic-regression-tests

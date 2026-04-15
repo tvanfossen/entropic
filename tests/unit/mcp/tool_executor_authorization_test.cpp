@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_tool_executor_authorization.cpp
  * @brief ToolExecutor MCP authorization integration tests.

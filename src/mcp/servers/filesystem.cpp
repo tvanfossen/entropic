@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file filesystem.cpp
  * @brief Filesystem MCP server — read/write/edit/glob/grep/list_directory.

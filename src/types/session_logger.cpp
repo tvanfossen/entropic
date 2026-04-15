@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file session_logger.cpp
  * @brief Session model log implementation.

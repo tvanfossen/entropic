@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 add_subdirectory(unit)
 add_subdirectory(helpers)
 add_subdirectory(integration)

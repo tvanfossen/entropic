@@ -25,6 +25,13 @@ target_link_libraries(entropic
 
 set_target_properties(entropic PROPERTIES
     OUTPUT_NAME "entropic"
+    # v2.0.5: relative RPATH so bin/entropic finds ../lib/librentropic.so.2
+    # from any install prefix without LD_LIBRARY_PATH. $ORIGIN is resolved
+    # by ld.so at load time to the directory containing the executable.
+    INSTALL_RPATH "$ORIGIN/../lib"
+    # Don't auto-populate the install RPATH from link paths (would bake
+    # build-tree paths into the distributed binary).
+    INSTALL_RPATH_USE_LINK_PATH FALSE
 )
 
 # v2.0.5: ship the CLI in the distribution.

@@ -1,0 +1,17 @@
+@PACKAGE_INIT@
+
+# entropic CMake package config.
+#
+# Consumer usage:
+#   find_package(entropic 2.0 REQUIRED)
+#   target_link_libraries(my-app PRIVATE entropic::entropic)
+#
+# All third-party build dependencies (spdlog, ryml, llama.cpp, nlohmann/json)
+# are absorbed statically into librentropic.so at library build time. The
+# only runtime-link dependencies that reach the consumer are system libraries
+# (libc, libstdc++, libssl, libcrypto, libsqlite3, libz, libgomp, libm).
+# Consumers therefore need no find_dependency() calls here.
+
+include("${CMAKE_CURRENT_LIST_DIR}/entropic-targets.cmake")
+
+check_required_components(entropic)

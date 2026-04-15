@@ -11,6 +11,7 @@
 #include <entropic/interfaces/i_mcp_server.h>
 #include <entropic/mcp/server_base.h>
 
+#include <cstdlib>
 #include <cstring>
 
 /**
@@ -26,13 +27,18 @@ static entropic::MCPServerBase* cast(entropic_mcp_server_t server) {
 
 /**
  * @brief Allocate a C string copy for caller-owned return.
+ *
+ * Uses malloc so the caller can deallocate via entropic_free()
+ * (which is the canonical public free in facade/entropic.cpp and
+ * wraps free(3)). Mismatched new[]/free is undefined behavior.
+ *
  * @param s Source string.
- * @return Heap-allocated copy.
+ * @return Heap-allocated copy (free with entropic_free).
  * @internal
- * @version 1.8.5
+ * @version 2.0.5
  */
 static char* alloc_string(const std::string& s) {
-    auto* p = new char[s.size() + 1];
+    auto* p = static_cast<char*>(std::malloc(s.size() + 1));
     std::memcpy(p, s.c_str(), s.size() + 1);
     return p;
 }
@@ -134,16 +140,6 @@ entropic_error_t entropic_mcp_server_set_working_dir(
  */
 void entropic_mcp_server_destroy(entropic_mcp_server_t server) {
     delete cast(server);
-}
-
-/**
- * @brief Free a string allocated by the server.
- * @param ptr Pointer to free.
- * @internal
- * @version 1.8.5
- */
-void entropic_free(void* ptr) {
-    delete[] static_cast<char*>(ptr);
 }
 
 } // extern "C"

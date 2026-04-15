@@ -9,6 +9,9 @@
 #include <entropic/types/logging.h>
 #include "yaml_util.h"
 
+#include <cstdlib>
+#include <vector>
+
 static auto s_log = entropic::log::get("config");
 
 namespace entropic::config {
@@ -96,19 +99,55 @@ const BundledModelEntry* BundledModels::get(const std::string& key) const
 
 /**
  * @brief Resolve a model reference to a filesystem path.
+ *
+ * If the argument is a known registry key, walk the v2.0.5 discovery
+ * order for the model directory:
+ *
+ *   1. `ENTROPIC_MODEL_DIR` env var (explicit operator override)
+ *   2. `~/.entropic/models/` (user convention)
+ *   3. `/opt/entropic/models/` (system convention)
+ *
+ * The first directory that actually contains `<name>.gguf` wins. If
+ * none do, the function returns the priority-1 candidate anyway (or
+ * priority 2 if the env var is unset) so the caller gets a sensible
+ * path to report in its error message.
+ *
+ * Otherwise the argument is treated as a direct path (with ~-expansion).
+ *
  * @param value Registry key or direct path string.
  * @return Resolved filesystem path.
  * @internal
- * @version 1.8.2
+ * @version 2.0.5
  */
 std::filesystem::path BundledModels::resolve(const std::string& value) const
 {
     auto it = entries_.find(value);
-    if (it != entries_.end()) {
-        auto home = expand_home("~");
-        return home / "models" / "gguf" / (it->second.name + ".gguf");
+    if (it == entries_.end()) {
+        return expand_home(std::filesystem::path(value));
     }
-    return expand_home(std::filesystem::path(value));
+
+    const auto filename = it->second.name + ".gguf";
+    std::vector<std::filesystem::path> candidates;
+
+    if (const char* env = std::getenv("ENTROPIC_MODEL_DIR"); env && *env) {
+        candidates.emplace_back(std::filesystem::path(env) / filename);
+    }
+    candidates.emplace_back(expand_home("~") / ".entropic" / "models" / filename);
+    candidates.emplace_back(std::filesystem::path("/opt/entropic/models") / filename);
+
+    for (const auto& path : candidates) {
+        if (std::filesystem::is_regular_file(path)) {
+            s_log->info("Model '{}' resolved to {}", value, path.string());
+            return path;
+        }
+    }
+
+    // No hit on disk — return the highest-priority candidate so the
+    // caller's error message points at the most-likely-intended location.
+    s_log->warn("Model '{}' not found in ENTROPIC_MODEL_DIR, ~/.entropic/models, "
+                "or /opt/entropic/models; falling back to {}",
+                value, candidates.front().string());
+    return candidates.front();
 }
 
 /**

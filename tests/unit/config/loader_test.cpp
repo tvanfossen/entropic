@@ -90,9 +90,12 @@ SCENARIO("Parse config with tiers", "[config][loader]") {
             }
 
             THEN("model paths are resolved from registry") {
+                // v2.0.5: resolve() falls back to ~/.entropic/models/<name>.gguf
+                // when ENTROPIC_MODEL_DIR is unset and no candidate exists on
+                // disk. The previous hardcoded ~/models/gguf/ path is gone.
                 auto& lead = config.models.tiers["lead"];
                 auto home = std::filesystem::path(std::getenv("HOME"));
-                auto expected = home / "models" / "gguf"
+                auto expected = home / ".entropic" / "models"
                                 / "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf";
                 REQUIRE(lead.path == expected);
             }

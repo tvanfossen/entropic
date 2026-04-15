@@ -1,0 +1,69 @@
+name: CI
+
+# PR + push checks on develop/main.
+#
+# Runs the project's authoritative quality gate — the full pre-commit
+# suite, which itself invokes `inv build --cpu`, `inv test --cpu`, and
+# the per-library coverage check. That keeps the CI signal identical
+# to what contributors see locally before committing.
+#
+# Runs on the self-hosted runner (same machine as CUDA + release +
+# nightly). No GitHub-hosted runners anywhere in this repo. CPU build
+# + unit tests + distribution smoke is the PR gate; CUDA build
+# verification lives in nightly.yml.
+#
+# Model tests do not run in CI — they are developer-run at x.y.0 bumps
+# per docs/architecture-cpp.md §Test Gating.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    name: Pre-commit (knots, flake8, doxygen-guard, build, tests, coverage)
+    runs-on: [self-hosted]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # llama.cpp submodule is required for the CPU build.
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-entropic
+
+      - name: Run pre-commit (all hooks, all files)
+        run: .venv/bin/pre-commit run --all-files --show-diff-on-failure
+
+      - name: Upload per-library coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: test-reports/coverage/
+          if-no-files-found: ignore
+
+  distribution-smoke:
+    name: Distribution smoke (find_package + CLI RPATH)
+    runs-on: [self-hosted]
+    timeout-minutes: 20
+    needs: pre-commit
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-entropic
+
+      - name: Run scripts/smoke_distribution.sh
+        # Builds a clean shared CPU install, stages it to a scratch
+        # prefix, then builds+runs packaging/smoke-consumer against it
+        # via find_package(entropic). Confirms the Phase 1 packaging
+        # story still works for external consumers.
+        run: scripts/smoke_distribution.sh

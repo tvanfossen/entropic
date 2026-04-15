@@ -1,0 +1,155 @@
+name: Nightly
+
+# Scheduled GPU run against develop. Exercises the code paths that are
+# too slow or GPU-dependent for PR CI:
+#   - Full CUDA build (ENTROPIC_CUDA=ON)
+#   - All unit tests on the CUDA binary
+#   - Model tests (inv test --model) — the x.y.0 gate requirement per
+#     docs/architecture-cpp.md §Test Gating
+#   - Distribution smoke (find_package + CLI RPATH) to confirm the
+#     Phase 1 packaging story still works on CUDA builds
+#
+# Benchmark regression detection (>10% tok/s, >15% TTFT) is staged as
+# a follow-on — the harness + baseline aren't in the repo yet. Added
+# as a TODO in the workflow for when the benchmark script lands.
+#
+# On failure, opens (or refreshes) a `nightly-failure` issue with the
+# failed step, commit SHA, and logs URL so the maintainer gets a
+# single trackable signal.
+
+on:
+  schedule:
+    # 02:00 UTC daily — after US evening commits settle.
+    - cron: '0 2 * * *'
+  # Manual trigger for the maintainer to re-run without waiting.
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  cuda-model-tests:
+    name: CUDA build + full tests + model tests
+    runs-on: [self-hosted, gpu, cuda]
+    timeout-minutes: 120
+    outputs:
+      commit_sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: develop
+          submodules: recursive
+
+      - id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
+
+      # Self-hosted runner has CUDA toolkit + CMake + build-essential
+      # preinstalled per proposal §Secrets & Infrastructure. Still need
+      # a venv for invoke + pre-commit.
+      - name: Bootstrap venv
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install invoke
+
+      - name: Build (full preset, CUDA + model tests)
+        run: .venv/bin/inv build
+
+      - name: Unit + regression tests on CUDA build
+        run: .venv/bin/inv test
+
+      - name: Model tests (writes test-reports/model/results.json)
+        run: .venv/bin/inv test --model
+
+      - name: Distribution smoke on CUDA build
+        # Rebuilds a shared CUDA install to a scratch prefix and runs
+        # the checked-in smoke consumer against it. Keeps the Phase 1
+        # packaging story honest on the CUDA path (the hosted-CPU CI
+        # job can't exercise CUDA link).
+        run: |
+          cmake -B build/cuda-smoke -S . \
+            -DENTROPIC_CUDA=ON \
+            -DENTROPIC_CPU_ONLY=OFF \
+            -DENTROPIC_SHARED=ON \
+            -DENTROPIC_STATIC=OFF \
+            -DENTROPIC_BUILD_TESTS=OFF \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/tmp/entropic-nightly
+          cmake --build build/cuda-smoke --parallel
+          rm -rf /tmp/entropic-nightly
+          cmake --install build/cuda-smoke
+          rm -rf build/cuda-smoke/consumer
+          cmake -B build/cuda-smoke/consumer -S packaging/smoke-consumer \
+            -Dentropic_DIR=/tmp/entropic-nightly/lib/cmake/entropic
+          cmake --build build/cuda-smoke/consumer
+          build/cuda-smoke/consumer/entropic-smoke
+          /tmp/entropic-nightly/bin/entropic version
+
+      - name: Upload model test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-results-${{ steps.commit.outputs.sha }}
+          path: test-reports/model/results.json
+          if-no-files-found: ignore
+
+      # TODO (Phase 4b): benchmark regression detection. Needs:
+      #   - A checked-in benchmark harness that writes comparable
+      #     metrics (tok/s, TTFT) to test-reports/benchmark/results.json
+      #   - A baseline results file committed to the repo
+      #   - scripts/check_benchmark_regression.py (>10% tok/s / >15%
+      #     TTFT → fail) invoked here
+      # Current state: benchmark/results/ exists but no harness is
+      # wired up, so this job doesn't run benchmarks yet.
+
+  # ──────────────────────────────────────────────────────────────────
+  # On any failure from cuda-model-tests, ensure there's exactly one
+  # open `nightly-failure` issue pointing at the failed run. Avoids
+  # issue spam: reuses an existing open issue instead of creating a
+  # new one each night.
+  # ──────────────────────────────────────────────────────────────────
+  on-failure-issue:
+    name: Open / refresh nightly-failure issue
+    needs: cuda-model-tests
+    if: failure()
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create or update failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COMMIT_SHA: ${{ needs.cuda-model-tests.outputs.commit_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE="Nightly failure on develop ($(date -u +%Y-%m-%d))"
+          BODY=$(cat <<EOF
+          Nightly run against \`develop\` failed.
+
+          - Commit: \`${COMMIT_SHA}\`
+          - Run:    ${RUN_URL}
+
+          The cuda-model-tests job failed — full CUDA build, unit
+          tests, model tests, or distribution smoke. Check the run
+          link for the specific step.
+          EOF
+          )
+
+          # Find existing open nightly-failure issue, if any.
+          EXISTING=$(gh issue list --label nightly-failure --state open --json number \
+            --jq '.[0].number' || true)
+
+          if [[ -n "${EXISTING:-}" && "$EXISTING" != "null" ]]; then
+            echo "Refreshing existing issue #$EXISTING"
+            gh issue comment "$EXISTING" --body "$BODY"
+          else
+            echo "Opening new nightly-failure issue"
+            gh issue create \
+              --title "$TITLE" \
+              --body "$BODY" \
+              --label nightly-failure
+          fi

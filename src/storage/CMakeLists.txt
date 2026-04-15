@@ -12,7 +12,6 @@ endif()
 add_library(entropic-storage
     database.cpp
     backend.cpp
-    logger.cpp
     permission_persister.cpp
     c_interface.cpp
     audit_entry.cpp

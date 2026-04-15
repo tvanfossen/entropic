@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+models:
+  lead:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  eng:
+    path: primary
+    adapter: qwen35
+    context_length: 131072
+    gpu_layers: 40
+
+  default: lead
+
+routing:
+  enabled: false
+  fallback_tier: lead
+
+log_level: INFO
+
+mcp:
+  enable_filesystem: true
+  enable_bash: true
+  filesystem:
+    allow_outside_root: true

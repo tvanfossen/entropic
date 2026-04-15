@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 fail_fast: true
 
 repos:
@@ -34,32 +35,49 @@ repos:
           - '--max-cognitive-complexity=15'
           - '--max-returns-amount=3'
           - '--max-line-length=100'
-          - '--ignore=E501,W503,E203,E704'
+          - '--ignore=E501,W503,E203,E704,E266'
 
-  # Local hooks for pytest - runs full test suite including model tests
+  - repo: https://github.com/brandon-arrendondo/knots
+    rev: v1.1.0
+    hooks:
+      - id: knots
+        args:
+          - --cognitive-threshold=15
+          - --mccabe-threshold=15
+          - --nesting-threshold=4
+          - --sloc-threshold=50
+          - --abc-threshold=10.0
+          - --return-threshold=3
+        exclude: ^extern/
+
+  - repo: https://github.com/tvanfossen/doxygen-guard
+    rev: v1.2.7
+    hooks:
+      - id: doxygen-guard
+        files: \.(h|hpp|c|cpp|cc|cxx|py)$
+        exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
+
+  # ── Build & Test Gates ──────────────────────────────
   - repo: local
     hooks:
-      - id: pytest-unit
-        name: pytest unit tests
-        entry: .venv/bin/pytest tests/unit/ -v --tb=short
+      - id: build
+        name: Build (inv build --cpu)
+        entry: .venv/bin/inv build --cpu
         language: system
-        pass_filenames: false
         always_run: true
-        stages: [pre-commit]
+        pass_filenames: false
 
-      - id: model-test-cache
-        name: model test cache check
-        entry: bash scripts/model-test-cache-check.sh
+      - id: unit-tests
+        name: Unit tests (inv test --cpu)
+        entry: .venv/bin/inv test --cpu --no-build
         language: system
-        pass_filenames: false
         always_run: true
-        stages: [pre-commit]
-        verbose: true
+        pass_filenames: false
 
-      - id: pytest-model
-        name: pytest model tests
-        entry: bash scripts/run-model-tests.sh
-        language: system
-        pass_filenames: false
+      - id: coverage-check
+        name: Per-library coverage (gcovr)
+        entry: scripts/check_coverage.py
+        language: python
+        additional_dependencies: ['gcovr']
         always_run: true
-        stages: [pre-commit]
+        pass_filenames: false

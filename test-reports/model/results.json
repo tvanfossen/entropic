@@ -1,0 +1,191 @@
+{
+  "schema_version": 1,
+  "version": "2.0.0",
+  "git_sha": "21eb3541fe442b99a2f9e9c35d3e391d6574ac17",
+  "timestamp": "2026-04-07T13:48:43Z",
+  "model": "Qwen3.5-35B-A3B-UD-IQ3_XXS",
+  "gpu": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
+  "duration_ms": 387730,
+  "tests": [
+    {
+      "name": "test-adapter-lifecycle",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 10261
+    },
+    {
+      "name": "test-audit-log",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2675
+    },
+    {
+      "name": "test-backend-capabilities",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2736
+    },
+    {
+      "name": "test-basic-generation",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3390
+    },
+    {
+      "name": "test-constitutional-validation",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 128828
+    },
+    {
+      "name": "test-context-retention",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 11630
+    },
+    {
+      "name": "test-custom-compactor",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2500
+    },
+    {
+      "name": "test-delegation",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 33919
+    },
+    {
+      "name": "test-dynamic-identity",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2540
+    },
+    {
+      "name": "test-e0-true-e2e",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 5833
+    },
+    {
+      "name": "test-e1-single-turn",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3692
+    },
+    {
+      "name": "test-e2-tool-call",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 7848
+    },
+    {
+      "name": "test-e3-routing",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 12902
+    },
+    {
+      "name": "test-e4-multi-turn",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 5264
+    },
+    {
+      "name": "test-e5-compaction",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 11254
+    },
+    {
+      "name": "test-e6-state-transitions",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3564
+    },
+    {
+      "name": "test-e7-delegation",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 75273
+    },
+    {
+      "name": "test-e8-mcp-auth",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 17083
+    },
+    {
+      "name": "test-e9-dynamic-identity",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 6160
+    },
+    {
+      "name": "test-external-mcp",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2408
+    },
+    {
+      "name": "test-gpu-profile",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3473
+    },
+    {
+      "name": "test-grammar-constraint",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3943
+    },
+    {
+      "name": "test-hook-lifecycle",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3443
+    },
+    {
+      "name": "test-logprob-evaluation",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3611
+    },
+    {
+      "name": "test-mcp-auth-denial",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 6057
+    },
+    {
+      "name": "test-multimodal-fallback",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3765
+    },
+    {
+      "name": "test-session-persistence",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 3928
+    },
+    {
+      "name": "test-tier-routing",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 2602
+    },
+    {
+      "name": "test-tool-call-parsing",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 7134
+    }
+  ],
+  "summary": {
+    "total": 29,
+    "passed": 29,
+    "failed": 0,
+    "flaky": 0
+  }
+}

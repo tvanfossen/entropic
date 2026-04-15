@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Install pre-commit hooks with test-report auto-staging wrapper.
 #
 # The wrapper stages test-reports/ BEFORE pre-commit's stash mechanism,

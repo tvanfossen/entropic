@@ -1,32 +1,38 @@
-"""Chess MCP server — wraps python-chess board state."""
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Chess MCP server — standalone external server over stdio.
+
+Exposes chess board tools (get_board, make_move) via the MCP protocol.
+Registered in config as an external MCP server; the C engine communicates
+with it over stdio transport.
+
+Can also be imported directly for board utility functions (board_to_pieces,
+format_board_text).
+
+@brief Standalone chess MCP server (stdio transport).
+@version 2
+"""
 
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import sys
 from typing import Any
 
 import chess
-from entropic import BaseMCPServer, BaseTool
-
-# Tool JSON definitions live alongside default_config.yaml
-_TOOLS_DIR = Path(__file__).parent / "data" / "tools"
 
 
+## @brief Build structured piece list from board state.
+## @utility
+## @return Dict with your_pieces and opponent_pieces lists.
+## @version 1
 def board_to_pieces(
     board: chess.Board,
     ai_color: chess.Color = chess.BLACK,
 ) -> dict[str, list[dict[str, Any]]]:
     """Convert board to per-piece representation grouped by ownership.
 
-    Returns::
-
-        {
-            "your_pieces": [{"square": "g8", "piece": "knight", "moves": [...]}, ...],
-            "opponent_pieces": [{"square": "e4", "piece": "pawn"}, ...]
-        }
-
-    ``moves`` is only present on the side-to-move's pieces that have legal moves.
+    @brief Build structured piece list from board state.
+    @version 1
     """
     your: list[dict[str, Any]] = []
     opponent: list[dict[str, Any]] = []
@@ -51,16 +57,15 @@ def board_to_pieces(
     return {"your_pieces": your, "opponent_pieces": opponent}
 
 
+## @brief Render board as ASCII art with file/rank labels.
+## @utility
+## @return Multi-line ASCII board string.
+## @version 1
 def format_board_text(board: chess.Board) -> str:
-    """Labeled ASCII board for human display (terminal / logs).
+    """Labeled ASCII board for human display.
 
-    Returns a string like::
-
-          a b c d e f g h
-        8 r n b q k b n r
-        7 p p p p p p p p
-        ...
-        1 R N B Q K B N R
+    @brief Render board as ASCII art with file/rank labels.
+    @version 1
     """
     header = "    " + " ".join("abcdefgh")
     rows: list[str] = []
@@ -74,72 +79,136 @@ def format_board_text(board: chess.Board) -> str:
     return "\n".join([header, *rows])
 
 
-class MakeMoveTool(BaseTool):
-    """Validate and push a UCI move onto the board."""
+# ── MCP Stdio Server ────────────────────────────────
 
-    def __init__(self, board: chess.Board, ai_color: chess.Color) -> None:
-        super().__init__("make_move", "chess", _TOOLS_DIR)
-        self._board = board
-        self._ai_color = ai_color
-
-    async def execute(self, arguments: dict[str, Any]) -> str:
-        """Parse UCI string, validate legality, push move."""
-        error = self._validate_move(arguments)
-        if error:
-            return error
-
-        move = chess.Move.from_uci(arguments.get("move", ""))
-        self._board.push(move)
-        return json.dumps(
-            {
-                "status": "ok",
-                "move": move.uci(),
-                "move_number": self._board.fullmove_number,
-            }
-        )
-
-    def _validate_move(self, arguments: dict[str, Any]) -> str | None:
-        """Check turn, UCI syntax, and legality. Returns error JSON or None."""
-        if self._board.turn != self._ai_color:
-            side = "White" if self._ai_color == chess.WHITE else "Black"
-            return json.dumps(
-                {"error": f"Not your turn. You are {side}, but it is the opponent's turn."}
-            )
-
-        uci = arguments.get("move", "")
-        error = self._check_move_valid(uci)
-        if error:
-            return json.dumps(error)
-        return None
-
-    def _check_move_valid(self, uci: str) -> dict[str, Any] | None:
-        """Parse and validate a UCI move string. Returns error dict or None."""
-        try:
-            move = chess.Move.from_uci(uci)
-        except (chess.InvalidMoveError, ValueError):
-            return {"error": f"Invalid UCI string: '{uci}'"}
-
-        if move not in self._board.legal_moves:
-            legal = [m.uci() for m in self._board.legal_moves]
-            return {"error": f"Illegal move: '{uci}'", "legal_moves": legal}
-        return None
+_MCP_TOOLS: list[dict[str, str]] = [
+    {
+        "name": "make_move",
+        "description": "Play a move on the board using UCI notation (e.g. 'e7e5').",
+    },
+]
 
 
-class ChessServer(BaseMCPServer):
-    """MCP server exposing chess board tools.
+## @brief Parse newline-delimited JSON-RPC request.
+## @utility
+## @return Parsed dict or None on EOF.
+## @version 1
+def _read_jsonrpc() -> dict[str, Any] | None:
+    """Read one JSON-RPC 2.0 message from stdin.
 
-    Maintains a shared ``chess.Board`` instance. Both the human
-    player (via ``main.py``) and the AI (via tool calls) mutate
-    the same board.
+    @brief Parse newline-delimited JSON-RPC request.
+    @version 1
     """
+    line = sys.stdin.readline()
+    if not line:
+        return None
+    return json.loads(line.strip())
 
-    def __init__(self, ai_color: chess.Color = chess.BLACK) -> None:
-        """Initialize chess server with a fresh board.
 
-        Args:
-            ai_color: The color the AI plays. ``make_move`` rejects
-                calls when it's not this color's turn.
-        """
-        super().__init__("chess")
-        self.board = chess.Board()
-        self.register_tool(MakeMoveTool(self.board, ai_color))
+## @brief Send newline-delimited JSON-RPC response.
+## @utility
+## @version 1
+def _write_jsonrpc(response: dict[str, Any]) -> None:
+    """Write one JSON-RPC 2.0 message to stdout.
+
+    @brief Send newline-delimited JSON-RPC response.
+    @version 1
+    """
+    sys.stdout.write(json.dumps(response, separators=(",", ":")) + "\n")
+    sys.stdout.flush()
+
+
+## @brief Write result envelope.
+## @utility
+## @version 1
+def _jsonrpc_ok(rid: int | None, result: dict[str, Any]) -> None:
+    """Send a JSON-RPC success response.
+
+    @brief Write result envelope.
+    @version 1
+    """
+    _write_jsonrpc({"jsonrpc": "2.0", "id": rid, "result": result})
+
+
+## @brief Write error envelope.
+## @utility
+## @version 1
+def _jsonrpc_err(rid: int | None, code: int, message: str) -> None:
+    """Send a JSON-RPC error response.
+
+    @brief Write error envelope.
+    @version 1
+    """
+    _write_jsonrpc({"jsonrpc": "2.0", "id": rid, "error": {"code": code, "message": message}})
+
+
+## @brief Dispatch tool call. Stateless — acknowledges moves without board tracking.
+## @utility
+## @version 1
+def _handle_tools_call(rid: int | None, params: dict[str, Any]) -> None:
+    """Handle a tools/call request.
+
+    @brief Dispatch tool call. Stateless — acknowledges moves without board tracking.
+    @version 1
+    """
+    name = params.get("name", "")
+    args = params.get("arguments", {})
+    if name == "make_move":
+        move = args.get("move", "")
+        _jsonrpc_ok(rid, {"content": [{"type": "text", "text": f"Move applied: {move}"}]})
+    else:
+        _jsonrpc_err(rid, -32601, f"Unknown tool: {name}")
+
+
+## @brief Route method to handler, send response.
+## @utility
+## @version 1
+def _dispatch(request: dict[str, Any]) -> None:
+    """Dispatch a JSON-RPC request to the appropriate handler.
+
+    @brief Route method to handler, send response.
+    @version 1
+    """
+    method = request.get("method", "")
+    params = request.get("params", {})
+    rid = request.get("id")
+    handlers: dict[str, Any] = {
+        "initialize": lambda: _jsonrpc_ok(
+            rid,
+            {
+                "protocolVersion": "2024-11-05",
+                "serverInfo": {"name": "chess"},
+                "capabilities": {},
+            },
+        ),
+        "tools/list": lambda: _jsonrpc_ok(rid, {"tools": _MCP_TOOLS}),
+        "tools/call": lambda: _handle_tools_call(rid, params),
+    }
+    handler = handlers.get(method)
+    if handler:
+        handler()
+    else:
+        _jsonrpc_err(rid, -32601, f"Unknown method: {method}")
+
+
+## @brief Main MCP server loop.
+## @utility
+## @version 1
+def serve_stdio() -> None:
+    """Run the MCP server loop over stdio transport.
+
+    Reads newline-delimited JSON-RPC 2.0 requests from stdin,
+    dispatches to handlers, writes responses to stdout.
+
+    @brief Main MCP server loop.
+    @version 1
+    """
+    while True:
+        request = _read_jsonrpc()
+        if request is None:
+            break
+        _dispatch(request)
+
+
+if __name__ == "__main__":
+    serve_stdio()

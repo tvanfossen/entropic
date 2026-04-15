@@ -1,0 +1,18 @@
+{
+  "name": "execute",
+  "description": "Execute a shell command. **Preferred for exploration and discovery.**\n\n**Common Uses:**\n- List files: `{\"command\": \"ls -la\"}` or `{\"command\": \"ls *.py\"}`\n- Find files: `{\"command\": \"find . -name '*.py' -type f\"}`\n- Check existence: `{\"command\": \"test -f file.py && echo exists\"}`\n- Run tests: `{\"command\": \"pytest tests/\"}`\n- Install packages: `{\"command\": \"pip install requests\"}`\n\n**Path Notes:**\n- Commands run from workspace root\n- Use relative paths: `ls src/` not `ls /home/user/project/src/`\n\n**Permissions:**\nCommands are checked against config.local.yaml allow/deny patterns.\nDenied commands will fail with permission error.\n\n**When to use bash vs filesystem tools:**\n- Bash: exploration, discovery, running commands, quick checks\n- Filesystem: reading/editing files (provides structured output + safety)",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "command": {
+        "type": "string",
+        "description": "Command to execute"
+      },
+      "working_dir": {
+        "type": "string",
+        "description": "Working directory (optional)"
+      }
+    },
+    "required": ["command"]
+  }
+}

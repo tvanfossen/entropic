@@ -1,0 +1,14 @@
+{
+  "name": "lookup_function",
+  "description": "Look up a function by name. Returns brief description, parameters, return type, and file:line location.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Function name to look up (partial match supported)."
+      }
+    },
+    "required": ["name"]
+  }
+}

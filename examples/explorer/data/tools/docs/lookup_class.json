@@ -1,0 +1,14 @@
+{
+  "name": "lookup_class",
+  "description": "Look up a class or struct by name. Returns brief description, members, inheritance chain, and file location.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Class or struct name to look up (partial match supported)."
+      }
+    },
+    "required": ["name"]
+  }
+}

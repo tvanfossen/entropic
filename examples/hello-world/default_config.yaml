@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Hello World — default configuration.
+#
+# Defines exactly what this example needs: single lead tier,
+# no routing, no tools, no delegation. This file is loaded as
+# the base layer BEFORE global and project-local configs.
+
+app_context: prompts/app_context.md
+
+models:
+  lead:
+    path: primary
+    adapter: qwen35
+    context_length: 16384
+    identity: false
+  default: lead
+
+routing:
+  enabled: false
+  fallback_tier: lead
+
+mcp:
+  enable_filesystem: false
+  enable_bash: false
+  enable_git: false
+  enable_diagnostics: false
+
+ggml_logging: true
+
+lsp:
+  enabled: false

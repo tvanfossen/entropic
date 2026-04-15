@@ -1,0 +1,20 @@
+{
+  "name": "diagnose",
+  "description": "Get a complete snapshot of engine state for self-diagnosis. Returns current configuration, loaded identities, available tools, recent tool call history, engine state, and metrics. Use this when you need to understand why something went wrong or to verify engine state before taking action.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "include_docs": {
+        "type": "boolean",
+        "description": "Include bundled architecture documentation in the snapshot. Default false to save context space.",
+        "default": false
+      },
+      "history_limit": {
+        "type": "integer",
+        "description": "Maximum number of recent tool call history entries to include. Default 20.",
+        "default": 20
+      }
+    },
+    "additionalProperties": false
+  }
+}

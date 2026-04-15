@@ -1,0 +1,51 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# PyChess — default configuration.
+#
+# Two-tier chess engine: thinker analyzes, executor acts.
+# Loaded as consumer defaults before global/project configs.
+
+constitution: prompts/constitution.md
+
+models:
+  thinker:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_thinker.md
+    grammar: data/grammars/chess_thinker.gbnf
+    context_length: 8192
+    auto_chain: true
+    allowed_tools:
+      - entropic.delegate
+
+  executor:
+    path: lightweight
+    adapter: qwen35
+    identity: prompts/identity_executor.md
+    grammar: data/grammars/chess_executor.gbnf
+    context_length: 8192
+    allowed_tools:
+      - chess.make_move
+      - entropic.complete
+
+  default: thinker
+
+routing:
+  enabled: false
+  fallback_tier: thinker
+  handoff_rules:
+    thinker: [executor]
+
+permissions:
+  auto_approve: true
+
+mcp:
+  enable_entropic: true
+  enable_filesystem: false
+  enable_bash: false
+  enable_git: false
+  enable_diagnostics: false
+
+lsp:
+  enabled: false
+
+log_level: INFO

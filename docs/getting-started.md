@@ -1,143 +1,123 @@
 # Getting Started
 
-> Quick start guide for Entropic
+> From zero to running inference in under 10 minutes
 
 ## Prerequisites
 
-- Ubuntu 24.04 (or compatible Linux)
-- NVIDIA GPU with 16GB+ VRAM (or CPU-only with reduced models)
-- CUDA 12.4+ with nvcc
-- Python 3.11+
+- Linux (tested on Ubuntu 24.04)
+- cmake 3.21+, C++20 compiler (gcc 10+ or clang 14+)
+- NVIDIA GPU with 16GB+ VRAM (or CPU-only for smaller models)
+- Python 3.10+ (for build tools and wrapper)
+- ~15 GB disk space for the primary model
 
-## Installation
-
-### From PyPI
-
-```bash
-# TUI application
-pipx install entropic-engine[app]
-
-# CUDA support (after install)
-PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="-DGGML_CUDA=on" \
-  pipx runpip entropic-engine install llama-cpp-python \
-  --force-reinstall --no-cache-dir
-```
-
-### From Source (Development)
+## Step 1: Clone and Build
 
 ```bash
-git clone https://github.com/user/entropic.git
+git clone --recurse-submodules https://github.com/tvanfossen/entropic.git
 cd entropic
 
 python3 -m venv .venv
-source .venv/bin/activate
+.venv/bin/pip install -e .
+.venv/bin/pip install invoke pre-commit
+.venv/bin/pre-commit install
 
-export CUDACXX=/usr/local/cuda/bin/nvcc
-CMAKE_ARGS="-DGGML_CUDA=on" pip install -e ".[dev]"
+# CUDA build (default, recommended)
+inv build --clean
+
+# Or CPU-only (no GPU required, slower inference)
+inv build --cpu
 ```
 
-## Download Models
-
-### Recommended: Qwen3.5-35B-A3B (MoE)
-
-Single model for all roles. MoE architecture keeps only 3B parameters active,
-fitting comfortably in 16GB VRAM.
+## Step 2: Download a Model
 
 ```bash
-mkdir -p ~/models/gguf
-cd ~/models/gguf
+# Recommended (13.1 GB, ~35 tok/s on 16GB GPU)
+entropic download primary
 
-# Primary model — all identity roles use this
-huggingface-cli download unsloth/Qwen3.5-35B-A3B-GGUF \
-  --include "Qwen3.5-35B-A3B-Q4_K_M.gguf" \
-  --local-dir ~/models/gguf
+# Smaller alternatives:
+entropic download mid          # 9.5 GB, 12GB+ VRAM
+entropic download lightweight  # 4.5 GB, 8GB+ VRAM
 ```
 
-### Optional: Router Model
+Models download to `~/models/gguf/`. The engine resolves `path: primary` in
+config to the full path automatically.
 
-Only needed if you enable automatic routing (`routing.enabled: true`):
+## Step 3: Run the Hello World Example
 
 ```bash
-huggingface-cli download bartowski/Qwen3-0.6B-GGUF \
-  --include "Qwen3-0.6B-Q8_0.gguf" \
-  --local-dir ~/models/gguf
+inv example -n hello-world
 ```
 
-## Configure
+This builds the C example, configures the engine from
+`examples/hello-world/default_config.yaml`, loads the model, and starts an
+interactive streaming chat. Type a message and press Enter. Type `quit` to exit.
 
-The bundled default config lives at
-[`src/entropic/data/default_config.yaml`](../src/entropic/data/default_config.yaml)
-and is loaded automatically. To customize, copy it to your global config:
+Session logs appear in `examples/hello-world/.hello-world/`:
+- `session.log` — engine operations
+- `session_model.log` — full user/assistant exchanges
+
+## Step 4: Run the Chess Example
 
 ```bash
-mkdir -p ~/.entropic
-cp src/entropic/data/default_config.yaml ~/.entropic/config.yaml
-# Edit paths to match your model download locations
+inv example -n pychess
 ```
 
-Or create a minimal override (only set what differs from the default):
+This demonstrates the multi-tier pipeline:
+1. **Thinker tier** analyzes the position (grammar-constrained output)
+2. Thinker delegates to **executor tier** via `entropic.delegate`
+3. Executor calls `chess.make_move` on the external chess MCP server
+4. Executor calls `entropic.complete` to signal it's done
+5. Move is applied to the board
+
+You play as White (UCI notation: `e2e4`). The AI plays as Black.
+
+## Step 5: Run Tests
 
 ```bash
-mkdir -p ~/.entropic
-cat > ~/.entropic/config.yaml << 'EOF'
-models:
-  lead:
-    path: ~/models/gguf/Qwen3.5-35B-A3B-Q4_K_M.gguf
-EOF
+# CPU unit + regression tests (673 tests, ~2 seconds)
+inv test --cpu --no-build
+
+# Model tests (GPU required, ~3 minutes)
+inv test --model --no-build
 ```
 
-See [Configuration](configuration.md) for full options and hierarchy.
+## What's Next?
 
-## First Run
+- **Build your own app**: See [Library Consumer Guide](library-consumer-guide.md)
+- **Understand the architecture**: See [Architecture](architecture-cpp.md)
+- **Contribute**: See [CONTRIBUTING.md](../CONTRIBUTING.md)
 
-### Interactive Mode
+## Troubleshooting
+
+### "Model file not found"
+
+The engine validates model paths at configure time. If the model isn't
+downloaded, you'll see:
+
+```
+Model file not found for tier 'lead': /home/user/models/gguf/Qwen3.5-...
+Download with: entropic download primary
+```
+
+### "Unknown server" for tool calls
+
+Ensure the MCP server is enabled in your config:
+
+```yaml
+mcp:
+  enable_entropic: true    # Required for delegation/completion tools
+```
+
+### Build fails with CUDA errors
+
+Try CPU-only build first to verify the non-CUDA parts work:
 
 ```bash
-entropic
+inv build --cpu
+inv test --cpu --no-build
 ```
 
-Starts the TUI. Type your questions and Entropic responds with the lead identity.
+### Session logs are empty
 
-### Single Query
-
-```bash
-entropic ask "Explain what a binary search tree is"
-```
-
-### Initialize a Project
-
-```bash
-cd /path/to/your/project
-entropic init
-```
-
-Creates `.entropic/` with project-specific configuration.
-
-## Basic Commands
-
-| Command | Description |
-|---------|-------------|
-| `/help` | Show available commands |
-| `/clear` | Clear conversation history |
-| `/status` | Show model and VRAM status |
-| `/think on` | Enable thinking mode (`<think>` blocks) |
-| `/think off` | Disable thinking mode |
-| `/exit` | Exit Entropic |
-
-## What Entropic Can Do
-
-- **Read and understand code** — Navigate codebases, explain functions
-- **Write and edit code** — Generate, refactor, debug
-- **Execute commands** — Run tests, build scripts (scoped by role)
-- **Git operations** — Status, diff, log, commit
-- **Delegate work** — Lead orchestrates eng, qa, arch roles
-- **Multi-stage pipelines** — Chain roles (eng → qa) for implementation + review
-- **Search files** — Find files by pattern, search content
-
-## Next Steps
-
-- [Configuration](configuration.md) — Customize for your workflow
-- [Commands](commands.md) — Full command reference
-- [Models](models.md) — Identity system and model tiers
-- [Architecture](architecture.md) — System design overview
-- [Library Consumer Guide](library-consumer-guide.md) — Embed Entropic as a library
+Ensure you're using `entropic_configure_dir()` (not `entropic_configure_from_file()`).
+Only `configure_dir` sets up file logging automatically.

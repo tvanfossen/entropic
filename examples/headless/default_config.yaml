@@ -1,0 +1,33 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Headless example — minimal config for CI validation.
+#
+# Single tier, no routing, no tools (other than what test_server.py
+# provides via .mcp.json discovery). Bypasses constitutional validation
+# and other heavy features for fast deterministic runs.
+
+models:
+  lead:
+    path: primary
+    adapter: qwen35
+    context_length: 8192
+    identity: false
+  default: lead
+
+routing:
+  enabled: false
+  fallback_tier: lead
+
+mcp:
+  enable_entropic: false
+  enable_filesystem: false
+  enable_bash: false
+  enable_git: false
+  enable_diagnostics: false
+  enable_web: false
+
+ggml_logging: false
+
+lsp:
+  enabled: false
+
+log_level: INFO

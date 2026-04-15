@@ -1,17 +1,20 @@
 name: Nightly
 
-# Scheduled GPU run against develop. Exercises the code paths that are
-# too slow or GPU-dependent for PR CI:
+# Scheduled GPU run against develop. Exercises the CUDA code paths
+# that PR CI (CPU build) can't cover:
 #   - Full CUDA build (ENTROPIC_CUDA=ON)
-#   - All unit tests on the CUDA binary
-#   - Model tests (inv test --model) — the x.y.0 gate requirement per
-#     docs/architecture-cpp.md §Test Gating
-#   - Distribution smoke (find_package + CLI RPATH) to confirm the
-#     Phase 1 packaging story still works on CUDA builds
+#   - Unit + regression tests on the CUDA binary
+#   - Distribution smoke (find_package + CLI RPATH) on a CUDA-linked
+#     install, so packaging regressions on the CUDA path can't hide
+#
+# Model tests (`inv test --model`, anything under tests/model/) are
+# DELIBERATELY NOT RUN from CI. They are developer-run at x.y.0 minor
+# version bumps per docs/architecture-cpp.md §Test Gating. Results are
+# checked into test-reports/model/results.json; freshness is verified
+# by the existing model-test-freshness gate, not by CI re-running them.
 #
 # Benchmark regression detection (>10% tok/s, >15% TTFT) is staged as
-# a follow-on — the harness + baseline aren't in the repo yet. Added
-# as a TODO in the workflow for when the benchmark script lands.
+# a Phase 4b follow-on — the harness + baseline aren't in the repo yet.
 #
 # On failure, opens (or refreshes) a `nightly-failure` issue with the
 # failed step, commit SHA, and logs URL so the maintainer gets a
@@ -29,10 +32,10 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  cuda-model-tests:
-    name: CUDA build + full tests + model tests
+  cuda-nightly:
+    name: CUDA build + unit tests + distribution smoke
     runs-on: [self-hosted, gpu, cuda]
-    timeout-minutes: 120
+    timeout-minutes: 90
     outputs:
       commit_sha: ${{ steps.commit.outputs.sha }}
     steps:
@@ -44,23 +47,17 @@ jobs:
       - id: commit
         run: echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
-      # Self-hosted runner has CUDA toolkit + CMake + build-essential
-      # preinstalled per proposal §Secrets & Infrastructure. Still need
-      # a venv for invoke + pre-commit.
-      - name: Bootstrap venv
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install invoke
+      - uses: ./.github/actions/setup-entropic
 
-      - name: Build (full preset, CUDA + model tests)
+      # full preset = CUDA + tests. The preset also turns on model
+      # tests at build time, but we explicitly do NOT run
+      # `inv test --model` from CI — only `inv test` (unit +
+      # regression). Model tests are developer-run at x.y.0 bumps.
+      - name: Build (full preset, CUDA)
         run: .venv/bin/inv build
 
       - name: Unit + regression tests on CUDA build
         run: .venv/bin/inv test
-
-      - name: Model tests (writes test-reports/model/results.json)
-        run: .venv/bin/inv test --model
 
       - name: Distribution smoke on CUDA build
         # Rebuilds a shared CUDA install to a scratch prefix and runs
@@ -86,14 +83,6 @@ jobs:
           build/cuda-smoke/consumer/entropic-smoke
           /tmp/entropic-nightly/bin/entropic version
 
-      - name: Upload model test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: model-results-${{ steps.commit.outputs.sha }}
-          path: test-reports/model/results.json
-          if-no-files-found: ignore
-
       # TODO (Phase 4b): benchmark regression detection. Needs:
       #   - A checked-in benchmark harness that writes comparable
       #     metrics (tok/s, TTFT) to test-reports/benchmark/results.json
@@ -111,9 +100,9 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   on-failure-issue:
     name: Open / refresh nightly-failure issue
-    needs: cuda-model-tests
+    needs: cuda-nightly
     if: failure()
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted]
     permissions:
       issues: write
     steps:
@@ -122,7 +111,7 @@ jobs:
       - name: Create or update failure issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMIT_SHA: ${{ needs.cuda-model-tests.outputs.commit_sha }}
+          COMMIT_SHA: ${{ needs.cuda-nightly.outputs.commit_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -133,9 +122,9 @@ jobs:
           - Commit: \`${COMMIT_SHA}\`
           - Run:    ${RUN_URL}
 
-          The cuda-model-tests job failed — full CUDA build, unit
-          tests, model tests, or distribution smoke. Check the run
-          link for the specific step.
+          The cuda-nightly job failed — CUDA build, unit/regression
+          tests, or distribution smoke. Check the run link for the
+          specific step.
           EOF
           )
 

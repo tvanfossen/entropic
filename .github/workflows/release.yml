@@ -31,7 +31,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   validate-tag:
     name: Validate tag matches CMakeLists VERSION
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted]
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
@@ -55,10 +55,11 @@ jobs:
           echo "version=$TAG" >>"$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────
-  # Backend matrix — currently CPU on a hosted runner. CUDA on
-  # self-hosted GPU (`self-hosted, gpu, cuda` labels) is staged as a
-  # matrix entry but gated on runs-on availability; will activate when
-  # the user registers the runner (proposal step 15).
+  # Backend matrix — both entries on the self-hosted runner (user's
+  # dev laptop, RTX PRO 4000). CPU variant uses just `self-hosted`
+  # labels; CUDA variant asks for the full `[self-hosted, gpu, cuda]`
+  # label set to make the GPU requirement explicit (same machine).
+  # No GitHub-hosted runners anywhere in this workflow.
   # ──────────────────────────────────────────────────────────────────
   build-package:
     name: Build + package (${{ matrix.backend }})
@@ -68,7 +69,7 @@ jobs:
       matrix:
         include:
           - backend: cpu
-            runner: ubuntu-24.04
+            runner: [self-hosted]
             cmake_flags: >-
               -DENTROPIC_CPU_ONLY=ON
               -DENTROPIC_CUDA=OFF
@@ -92,17 +93,6 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/setup-entropic
-        if: ${{ matrix.backend == 'cpu' }}
-
-      # Self-hosted CUDA runner is assumed to have CMake + CUDA toolkit
-      # preinstalled per proposal §Secrets & Infrastructure. We still
-      # need a venv for any python-side tooling.
-      - name: Bootstrap venv (self-hosted CUDA runner)
-        if: ${{ matrix.backend == 'cuda' }}
-        run: |
-          python3 -m venv .venv
-          .venv/bin/pip install --upgrade pip
-          .venv/bin/pip install invoke
 
       - name: Configure
         run: |
@@ -154,7 +144,7 @@ jobs:
   github-release:
     name: Publish GitHub Release
     needs: [validate-tag, build-package]
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted]
     steps:
       - uses: actions/checkout@v4
 

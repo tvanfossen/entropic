@@ -1,0 +1,20 @@
+# CODEOWNERS — default reviewer(s) per path.
+#
+# Entropic is currently a single-maintainer project; @tvanfossen owns
+# the whole tree. Kept per-path-prefixed so this file can grow with
+# additional owners without a mass rewrite.
+
+*                           @tvanfossen
+
+# Packaging infrastructure and release tooling — high-impact; always
+# tag the maintainer.
+/CMakeLists.txt             @tvanfossen
+/cmake/                     @tvanfossen
+/packaging/                 @tvanfossen
+/scripts/                   @tvanfossen
+/.github/                   @tvanfossen
+/extern/                    @tvanfossen
+
+# Interface headers are immutable once written without a new proposal
+# (see CLAUDE.md session protocol).
+/include/entropic/          @tvanfossen

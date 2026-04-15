@@ -116,3 +116,4 @@ docs/api/
 docs/entropic_docs.db
 html/
 latex/
+dist/

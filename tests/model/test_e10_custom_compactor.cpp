@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e10_custom_compactor.cpp
  * @brief E10: Custom compactor invoked instead of default when registered.

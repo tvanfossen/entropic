@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_compactor_registry.cpp
  * @brief CompactorRegistry unit tests.

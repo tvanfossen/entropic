@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file adapter_manager.cpp
  * @brief AdapterManager implementation — LoRA lifecycle and hot-swap.

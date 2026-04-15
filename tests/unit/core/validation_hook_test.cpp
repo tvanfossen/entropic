@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_validation_hook.cpp
  * @brief Validation hook integration tests — registration, dispatch, lifecycle.

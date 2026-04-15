@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # librentropic-mcp.so — base + registry + executor + permissions + manager
 add_library(entropic-mcp OBJECT)
 

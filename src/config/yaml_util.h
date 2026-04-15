@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file yaml_util.h
  * @brief ryml extraction helpers for config parsing.

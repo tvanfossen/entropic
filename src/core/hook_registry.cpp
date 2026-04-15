@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file hook_registry.cpp
  * @brief HookRegistry implementation — registration, dispatch, error handling.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file records.h
  * @brief Typed record structs for storage persistence.

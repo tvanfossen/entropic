@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_adapter_lifecycle.cpp
  * @brief BDD subsystem test — LoRA adapter graceful failure path.

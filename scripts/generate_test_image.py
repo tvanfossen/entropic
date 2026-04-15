@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Generate a minimal test PNG image for unit tests.
 
 Usage:

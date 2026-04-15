@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_error.cpp
  * @brief BDD tests for entropic_error_t and related functions.

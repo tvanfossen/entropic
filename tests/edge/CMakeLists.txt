@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v1.9.14: Edge case tests — malformed inputs, error paths
 #
 # Fast (unit-test speed), run in standard test suite.

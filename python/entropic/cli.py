@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """CLI entry point for Entropic.
 
 Routes all engine operations through the C API wrapper.

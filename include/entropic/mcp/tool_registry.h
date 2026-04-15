@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file tool_registry.h
  * @brief Tool registration, lookup, and dispatch.

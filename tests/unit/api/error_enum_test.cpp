@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_error_enum.cpp
  * @brief Tests for entropic_error_t enum consistency.

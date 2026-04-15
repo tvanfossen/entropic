@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Bundled model registry — single source of truth for download URLs and default paths.
 # Referenced by cli_download.py and default_config.yaml.
 # Update this file when switching models or quantizations.

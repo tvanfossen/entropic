@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e8_mcp_auth.cpp
  * @brief E8: MCP authorization denial propagates through engine.

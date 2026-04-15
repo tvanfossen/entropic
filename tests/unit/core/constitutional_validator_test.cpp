@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_constitutional_validator.cpp
  * @brief ConstitutionalValidator unit tests — critique, parsing, revision.

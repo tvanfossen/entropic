@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file mock_mcp_server.cpp
  * @brief Minimal mock MCP server for integration tests.

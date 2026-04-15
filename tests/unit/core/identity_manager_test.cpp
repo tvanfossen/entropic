@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_identity_manager.cpp
  * @brief IdentityManager unit tests — CRUD, validation, MCP keys, dirty flag.

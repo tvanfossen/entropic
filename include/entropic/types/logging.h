@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file logging.h
  * @brief spdlog initialization and logger access.

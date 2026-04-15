@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # ── Inference library ────────────────────────────────────────
 # Build variant based on compute backend. Links against llama.cpp,
 # nlohmann/json, and spdlog.

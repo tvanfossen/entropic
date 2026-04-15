@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file model_test_context.h
  * @brief Shared infrastructure for model tests (subsystem + engine).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """PyChess — play chess against a local LLM via entropic.
 
 Two-tier chess engine: thinker analyzes, auto-chain hands off to executor.

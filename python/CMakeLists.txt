@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Python ctypes wrapper generation from entropic.h
 #
 # Runs scripts/generate_wrapper.py against the C API header to produce

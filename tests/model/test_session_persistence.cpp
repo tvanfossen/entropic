@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_session_persistence.cpp
  * @brief BDD subsystem test — save and load conversation with real model.

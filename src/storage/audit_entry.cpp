@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file audit_entry.cpp
  * @brief AuditEntry JSON serialization implementation.

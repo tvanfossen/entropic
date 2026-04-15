@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_malformed_tool_calls.cpp
  * @brief Edge case tests for malformed tool call handling.

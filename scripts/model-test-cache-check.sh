@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Check if model tests need to run based on content hash.
 #
 # Computes a hash of all C++ source files that could affect model test

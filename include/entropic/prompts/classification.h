@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file classification.h
  * @brief Auto-generated classification prompt for the router model.

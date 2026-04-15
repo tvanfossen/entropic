@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file env_overrides.cpp
  * @brief ENTROPIC_* environment variable override implementation.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_engine.cpp
  * @brief AgentEngine unit tests — state machine, loop, callbacks.

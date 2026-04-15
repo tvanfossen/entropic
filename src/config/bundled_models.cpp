@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file bundled_models.cpp
  * @brief BundledModels registry implementation.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file identity.h
  * @brief Identity configuration -- shared by static and dynamic identities.

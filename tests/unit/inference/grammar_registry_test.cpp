@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_grammar_registry.cpp
  * @brief Tests for GrammarRegistry — named grammar management.

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Entropic installer — downloads and installs a prebuilt release from
 # the GitHub Releases page.
 #

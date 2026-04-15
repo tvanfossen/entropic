@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v2.0.5 distribution smoke test.
 #
 # Builds entropic (shared, CPU-only, no tests) to a fresh build dir,

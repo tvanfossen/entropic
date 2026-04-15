@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_multimodal_fallback.cpp
  * @brief BDD subsystem test — text-only model handles multimodal input.

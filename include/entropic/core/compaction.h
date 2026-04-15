@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file compaction.h
  * @brief Auto-compaction for context management.

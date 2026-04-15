@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_constitutional_validation.cpp
  * @brief BDD subsystem test — constitutional validation loop with live model.

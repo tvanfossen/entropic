@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_hook_lifecycle.cpp
  * @brief Hook lifecycle: hooks fire in correct order during generation.

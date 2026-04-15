@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # v1.8.7: External MCP integration tests
 add_executable(entropic-integration-tests
     test_external_mcp.cpp

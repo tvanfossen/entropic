@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_c_interface.cpp
  * @brief BDD tests for the storage C boundary interface.

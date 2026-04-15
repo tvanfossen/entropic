@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file compaction.cpp
  * @brief Auto-compaction implementation.

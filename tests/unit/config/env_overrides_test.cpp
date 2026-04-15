@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file env_overrides_test.cpp
  * @brief BDD tests for ENTROPIC_* environment variable overrides.

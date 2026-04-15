@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_bundled_models.cpp
  * @brief BDD tests for BundledModels registry.

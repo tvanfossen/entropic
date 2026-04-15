@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_basic_generation.cpp
  * @brief BDD subsystem test — basic text generation with live model.

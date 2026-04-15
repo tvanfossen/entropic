@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_entropic.cpp
  * @brief EntropicServer unit tests — directive emission, tier gating, duplicate skip.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file transport.h
  * @brief Abstract transport for external MCP server communication.

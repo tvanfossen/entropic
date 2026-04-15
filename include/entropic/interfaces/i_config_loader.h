@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file i_config_loader.h
  * @brief Pure C interface contract for configuration loaders.

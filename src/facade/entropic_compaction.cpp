@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file entropic_compaction.cpp
  * @brief C API facade for compaction operations.

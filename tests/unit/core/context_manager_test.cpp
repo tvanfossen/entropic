@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_context_manager.cpp
  * @brief ContextManager unit tests.

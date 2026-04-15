@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file logging.cpp
  * @brief spdlog initialization, logger factory, and formatting utilities.

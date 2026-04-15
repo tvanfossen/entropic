@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file qwen35_adapter.h
  * @brief Qwen 3.5 chat adapter.

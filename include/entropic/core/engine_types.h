@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file engine_types.h
  * @brief Types for the agentic loop engine.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # PyChess — multi-tier chess example using the entropic C API.
 #
 # Standalone build (not part of the main entropic build):

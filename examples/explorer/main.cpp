@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file main.cpp
  * @brief Entropic Explorer — interactive architecture guide.

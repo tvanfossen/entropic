@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file inference_c_api.cpp
  * @brief C API wrappers for InferenceBackend.

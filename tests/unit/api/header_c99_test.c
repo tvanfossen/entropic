@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_header_c99.c
  * @brief Verifies entropic.h is valid C99.

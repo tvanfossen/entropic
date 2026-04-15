@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # entropic CLI binary — top-level dispatcher with mcp-bridge subcommand.
 #
 # Ships with the engine. Provides the `entropic mcp-bridge` integration

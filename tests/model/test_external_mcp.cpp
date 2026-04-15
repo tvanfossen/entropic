@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_external_mcp.cpp
  * @brief BDD subsystem test — tool call via external MCP server (stdio).

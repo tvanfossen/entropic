@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file hooks.h
  * @brief Hook point enum and callback types for engine lifecycle hooks.

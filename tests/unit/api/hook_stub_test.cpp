@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_hook_stub.cpp
  * @brief Tests for entropic_register_hook() and entropic_deregister_hook().

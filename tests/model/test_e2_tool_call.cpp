@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_e2_tool_call.cpp
  * @brief E2: Tool call cycle — generate, parse, execute, regenerate.

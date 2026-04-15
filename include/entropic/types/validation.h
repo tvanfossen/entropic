@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file validation.h
  * @brief Constitutional validation types — critique results and violations.

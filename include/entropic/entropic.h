@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file entropic.h
  * @brief Public C API for the Entropic inference engine.

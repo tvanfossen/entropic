@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file compactor_registry.cpp
  * @brief Per-identity compactor registration and dispatch.

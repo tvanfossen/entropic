@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_delegation_pipeline.cpp
  * @brief Regression test from test4: lead-to-child delegation.

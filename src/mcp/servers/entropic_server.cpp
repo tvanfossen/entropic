@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file entropic_server.cpp
  * @brief EntropicServer implementation — engine-level directive tools.

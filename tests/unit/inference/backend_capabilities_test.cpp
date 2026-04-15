@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_backend_capabilities.cpp
  * @brief Tests for InferenceBackend capability query system (v1.9.13).

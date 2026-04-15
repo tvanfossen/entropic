@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file i_storage_backend.h
  * @brief Pure C interface contract for storage backends.

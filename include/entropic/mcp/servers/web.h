@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file web.h
  * @brief Web MCP server — web_fetch + web_search.

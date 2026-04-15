@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file constitutional_validator.h
  * @brief Post-generation constitutional compliance validator.

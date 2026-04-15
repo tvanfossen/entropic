@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file main.cpp
  * @brief entropic CLI binary — top-level dispatcher for subcommands.

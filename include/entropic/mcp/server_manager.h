@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file server_manager.h
  * @brief MCP server lifecycle management and tool routing.

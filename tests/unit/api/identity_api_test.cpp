@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_identity_api.cpp
  * @brief Tests for entropic_load_identity() and entropic_get_identity().

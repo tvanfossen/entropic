@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file orchestrator.h
  * @brief ModelOrchestrator — multi-model lifecycle and routing.

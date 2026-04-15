@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file main.c
  * @brief Headless example — scripted conversation for CI validation.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file permission_persister.h
  * @brief Persist permission allow/deny patterns to project config.

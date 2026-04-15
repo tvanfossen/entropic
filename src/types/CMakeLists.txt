@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 add_library(entropic-types OBJECT)
 
 target_sources(entropic-types PRIVATE

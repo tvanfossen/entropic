@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file error.cpp
  * @brief Error type implementations for librentropic-types.

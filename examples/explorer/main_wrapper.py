@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 """Entropic Explorer — interactive architecture guide via Python wrapper.
 
 Three-tier delegation: guide answers questions, analyst does deep research,

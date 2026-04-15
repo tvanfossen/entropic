@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_tool_call_parsing.cpp
  * @brief BDD subsystem test — tool call parsing from model output.

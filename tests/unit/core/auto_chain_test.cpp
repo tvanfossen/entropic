@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_auto_chain.cpp
  * @brief Auto-chain logic unit tests.

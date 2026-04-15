@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file logprob_result.h
  * @brief Per-token log-probability evaluation result.

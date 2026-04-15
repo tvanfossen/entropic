@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file grammar_registry.h
  * @brief GrammarRegistry — named grammar management and validation.

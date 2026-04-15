@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_router_classification.cpp
  * @brief Regression test from test5: router uses complete() not generate().

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file transport_stdio.h
  * @brief Stdio transport for external MCP servers.

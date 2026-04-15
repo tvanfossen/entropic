@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file mcp_bridge.cpp
  * @brief `entropic mcp-bridge` subcommand — exposes engine via MCP/stdio.

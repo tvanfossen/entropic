@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_throughput_tracker.cpp
  * @brief Tests for ThroughputTracker -- EWMA throughput measurement.

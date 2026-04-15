@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file error.h
  * @brief Error types for cross-.so error reporting.

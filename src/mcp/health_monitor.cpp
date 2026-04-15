@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file health_monitor.cpp
  * @brief HealthMonitor implementation.

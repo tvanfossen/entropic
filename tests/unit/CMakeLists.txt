@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 add_executable(entropic-tests
     types/error_test.cpp
     types/config_structs_test.cpp

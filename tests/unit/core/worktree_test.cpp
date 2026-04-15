@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_worktree.cpp
  * @brief WorktreeManager and ScopedWorktree unit tests.

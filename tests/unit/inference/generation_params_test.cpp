@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file test_generation_params.cpp
  * @brief Tests for GenerationParams struct defaults.

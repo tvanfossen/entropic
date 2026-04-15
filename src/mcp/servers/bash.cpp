@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file bash.cpp
  * @brief BashServer implementation — shell command execution with safety.

@@ -89,7 +89,10 @@ set(CONFIG_ENTROPIC_SOURCE_DATA_DIR ${ENTROPIC_SOURCE_DATA_DIR})
 set(ENTROPIC_API_VERSION 2 CACHE STRING "C API version integer")
 
 # ── Generate entropic_config.h ──────────────────────────
-set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"
+# v2.0.5: data is installed directly under share/entropic/ (no nested
+# /data/ subdirectory). Matches install(DIRECTORY data/ DESTINATION
+# share/entropic/) below and the 4-level discovery in data_dir.cpp.
+set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic"
     CACHE PATH "Install path for bundled data files")
 # Source tree data dir for development builds (tools, prompts, grammars)
 set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data"

@@ -58,14 +58,20 @@ jobs:
           echo "version=$TAG" >>"$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────
-  # Backend matrix — both entries on GitHub-hosted ubuntu-24.04.
+  # Backend matrix — both entries on GitHub-hosted ubuntu-24.04
+  # (2 vCPU / 16 GB RAM / 14 GB disk, standard free-tier). The
+  # setup-entropic composite action frees ~30 GB of unused
+  # pre-installed toolchains and installs ccache so repeat runs
+  # don't rebuild llama.cpp from scratch.
   #
-  # The CUDA entry installs NVIDIA's CUDA toolkit via apt; no physical
-  # GPU is needed to *build* CUDA artifacts — nvcc cross-compiles to
-  # target architectures (compute_70/75/80/86/89/90). The post-install
-  # smoke test is limited to non-CUDA-runtime ops (version query,
-  # link-check) since the hosted runner can't execute CUDA code.
+  # The CUDA entry installs only the nvcc + libraries subset of the
+  # CUDA toolkit (no Nsight profilers) and restricts device code to
+  # `compute_80;86;89;90` — modern Ampere/Ada/Hopper only. This cuts
+  # kernel count ~6× vs. the llama.cpp default, which is what made
+  # earlier attempts OOM the hosted runner.
   #
+  # Post-install smoke is limited to non-CUDA-runtime ops (version
+  # query, link-check) since the hosted runner has no GPU.
   # Model tests are developer-run (x.y.0 gate per
   # docs/architecture-cpp.md) — never in CI.
   # ──────────────────────────────────────────────────────────────────
@@ -94,6 +100,7 @@ jobs:
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
+              -DCMAKE_CUDA_ARCHITECTURES=80;86;89;90
 
     steps:
       - uses: actions/checkout@v4
@@ -103,16 +110,30 @@ jobs:
       - uses: ./.github/actions/setup-entropic
         with:
           install-cuda: ${{ matrix.install_cuda }}
+          ccache-key: ${{ matrix.backend }}
 
       - name: Configure
+        # CMAKE_<LANG>_COMPILER_LAUNCHER=ccache prepends ccache to every
+        # compile invocation; per-project cache hit rate is ~95% on
+        # llama.cpp once the submodule SHA is stable.
         run: |
           cmake -B build/release -S . \
             ${{ matrix.cmake_flags }} \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX=stage/entropic
+            -DCMAKE_INSTALL_PREFIX=stage/entropic \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build/release --parallel
+        # Explicit -j2: ubuntu-24.04 standard has 2 vCPU / 16 GB RAM.
+        # Default --parallel can oversubscribe when llama.cpp's CUDA
+        # link step peaks >8 GB RSS, leading to runner OOM-kills.
+        run: cmake --build build/release --parallel 2
+
+      - name: ccache stats (post-build)
+        if: always()
+        run: ccache --show-stats
 
       - name: Install into staging prefix
         run: cmake --install build/release

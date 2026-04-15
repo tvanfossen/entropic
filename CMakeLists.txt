@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 2.0.0
+    VERSION 2.0.5
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )
@@ -8,6 +8,11 @@ project(entropic
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# v2.0.5: sublibs are always built STATIC and absorbed into the single
+# librentropic.so facade. PIC is required so the static archives can
+# be linked into the shared facade regardless of the top-level build mode.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Library type: default to shared unless ENTROPIC_STATIC is set
 if(ENTROPIC_SHARED AND NOT ENTROPIC_STATIC)
@@ -84,7 +89,10 @@ set(CONFIG_ENTROPIC_SOURCE_DATA_DIR ${ENTROPIC_SOURCE_DATA_DIR})
 set(ENTROPIC_API_VERSION 2 CACHE STRING "C API version integer")
 
 # ── Generate entropic_config.h ──────────────────────────
-set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic/data"
+# v2.0.5: data is installed directly under share/entropic/ (no nested
+# /data/ subdirectory). Matches install(DIRECTORY data/ DESTINATION
+# share/entropic/) below and the 4-level discovery in data_dir.cpp.
+set(ENTROPIC_DATA_DIR "${CMAKE_INSTALL_PREFIX}/share/entropic"
     CACHE PATH "Install path for bundled data files")
 # Source tree data dir for development builds (tools, prompts, grammars)
 set(ENTROPIC_SOURCE_DATA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/data"
@@ -125,10 +133,54 @@ if(ENTROPIC_BUILD_DOCS)
 endif()
 
 # ── Install ─────────────────────────────────────────────
+include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
+
+# Public headers (entire tree; internal headers live in src/ not include/)
 install(DIRECTORY include/entropic
-    DESTINATION include
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
     FILES_MATCHING PATTERN "*.h"
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/entropic/entropic_config.h"
-    DESTINATION include/entropic
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/entropic
+)
+
+# Runtime data: bundled models registry, prompts, grammars, tool defs
+install(DIRECTORY data/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/entropic
+)
+
+# License + release README
+install(FILES LICENSE packaging/README.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+
+# ── CMake package config (find_package(entropic) support) ──
+# Exports the entropic::entropic imported target with include dirs, link
+# library, SOVERSION, and C++20 requirement baked in. Matches SONAME
+# scheme: SameMajorVersion → 2.x.y compatible, 3.x breaks.
+set(ENTROPIC_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/entropic")
+
+install(EXPORT entropic-targets
+    FILE entropic-targets.cmake
+    NAMESPACE entropic::
+    DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/entropic-config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config.cmake"
+    INSTALL_DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config-version.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config-version.cmake"
+    DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
 )

@@ -1,4 +1,4 @@
-add_library(entropic-config)
+add_library(entropic-config OBJECT)
 
 target_sources(entropic-config PRIVATE
     yaml_util.cpp
@@ -27,8 +27,6 @@ target_compile_definitions(entropic-config PRIVATE ENTROPIC_BUILDING_DLL)
 
 set_target_properties(entropic-config PROPERTIES
     OUTPUT_NAME "rentropic-config"
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
     CXX_VISIBILITY_PRESET default
     VISIBILITY_INLINES_HIDDEN OFF
 )

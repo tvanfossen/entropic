@@ -1,0 +1,56 @@
+# Composite action: provision an entropic build environment.
+#
+# Installs the system toolchain (cmake, gcc, doxygen, ninja, SQLite3
+# dev headers, gcovr for the coverage hook), sets up Python, and
+# creates a project-local .venv with the invoke + pre-commit tooling
+# that the local pre-commit hooks and tasks.py rely on.
+#
+# Used by ci.yml (PR checks), release.yml (Phase 3), and nightly.yml
+# (Phase 4) so they all start from the same base.
+
+name: Set up entropic build environment
+description: Install toolchain, Python venv (invoke + pre-commit), and pre-commit cache.
+
+inputs:
+  python-version:
+    description: Python version to install
+    default: "3.12"
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Install system dependencies (cmake, build-essential, doxygen, gcovr, sqlite3, ninja)
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          cmake \
+          build-essential \
+          doxygen \
+          gcovr \
+          libsqlite3-dev \
+          ninja-build \
+          pkg-config
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Create venv and install invoke + pre-commit
+      shell: bash
+      run: |
+        python -m venv .venv
+        .venv/bin/pip install --upgrade pip
+        # tasks.py is driven by invoke; pre-commit runs all the quality
+        # gates including the local build/test/coverage hooks.
+        .venv/bin/pip install invoke pre-commit
+
+    - name: Cache pre-commit hook environments
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pre-commit
+        key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+        restore-keys: |
+          pre-commit-${{ runner.os }}-

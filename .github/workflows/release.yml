@@ -31,7 +31,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   validate-tag:
     name: Validate tag matches CMakeLists VERSION
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.extract.outputs.version }}
     steps:
@@ -55,21 +55,28 @@ jobs:
           echo "version=$TAG" >>"$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────
-  # Backend matrix — both entries on the self-hosted runner (user's
-  # dev laptop, RTX PRO 4000). CPU variant uses just `self-hosted`
-  # labels; CUDA variant asks for the full `[self-hosted, gpu, cuda]`
-  # label set to make the GPU requirement explicit (same machine).
-  # No GitHub-hosted runners anywhere in this workflow.
+  # Backend matrix — both entries on GitHub-hosted ubuntu-24.04.
+  #
+  # The CUDA entry installs NVIDIA's CUDA toolkit via apt; no physical
+  # GPU is needed to *build* CUDA artifacts — nvcc cross-compiles to
+  # target architectures (compute_70/75/80/86/89/90). The post-install
+  # smoke test is limited to non-CUDA-runtime ops (version query,
+  # link-check) since the hosted runner can't execute CUDA code.
+  #
+  # Model tests are developer-run (x.y.0 gate per
+  # docs/architecture-cpp.md) — never in CI.
   # ──────────────────────────────────────────────────────────────────
   build-package:
     name: Build + package (${{ matrix.backend }})
     needs: validate-tag
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
         include:
           - backend: cpu
-            runner: [self-hosted]
+            install_cuda: "false"
             cmake_flags: >-
               -DENTROPIC_CPU_ONLY=ON
               -DENTROPIC_CUDA=OFF
@@ -77,15 +84,13 @@ jobs:
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
           - backend: cuda
-            runner: [self-hosted, gpu, cuda]
+            install_cuda: "true"
             cmake_flags: >-
               -DENTROPIC_CUDA=ON
               -DENTROPIC_CPU_ONLY=OFF
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
 
     steps:
       - uses: actions/checkout@v4
@@ -93,6 +98,8 @@ jobs:
           submodules: recursive
 
       - uses: ./.github/actions/setup-entropic
+        with:
+          install-cuda: ${{ matrix.install_cuda }}
 
       - name: Configure
         run: |
@@ -144,7 +151,7 @@ jobs:
   github-release:
     name: Publish GitHub Release
     needs: [validate-tag, build-package]
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 

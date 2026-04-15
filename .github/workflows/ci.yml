@@ -7,10 +7,10 @@ name: CI
 # the per-library coverage check. That keeps the CI signal identical
 # to what contributors see locally before committing.
 #
-# Runs on the self-hosted runner (same machine as CUDA + release +
-# nightly). No GitHub-hosted runners anywhere in this repo. CPU build
-# + unit tests + distribution smoke is the PR gate; CUDA build
-# verification lives in nightly.yml.
+# Runs on GitHub-hosted ubuntu-24.04. There is no self-hosted runner
+# registered on this repo. CPU build + unit tests + distribution smoke
+# is the PR gate; CUDA artifact builds live in release.yml (also on
+# ubuntu-24.04, with the CUDA toolkit installed inline).
 #
 # Model tests do not run in CI — they are developer-run at x.y.0 bumps
 # per docs/architecture-cpp.md §Test Gating.
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   pre-commit:
     name: Pre-commit (knots, flake8, doxygen-guard, build, tests, coverage)
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -51,7 +51,7 @@ jobs:
 
   distribution-smoke:
     name: Distribution smoke (find_package + CLI RPATH)
-    runs-on: [self-hosted]
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     needs: pre-commit
     steps:

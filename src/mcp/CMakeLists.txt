@@ -1,5 +1,5 @@
 # librentropic-mcp.so — base + registry + executor + permissions + manager
-add_library(entropic-mcp)
+add_library(entropic-mcp STATIC)
 
 target_sources(entropic-mcp PRIVATE
     tool_base.cpp
@@ -47,7 +47,5 @@ target_compile_definitions(entropic-mcp PRIVATE ENTROPIC_BUILDING_DLL)
 
 set_target_properties(entropic-mcp PROPERTIES
     OUTPUT_NAME "rentropic-mcp"
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
     CXX_VISIBILITY_PRESET default
 )

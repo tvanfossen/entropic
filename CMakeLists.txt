@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 2.0.0
+    VERSION 2.0.5
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )
@@ -8,6 +8,11 @@ project(entropic
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# v2.0.5: sublibs are always built STATIC and absorbed into the single
+# librentropic.so facade. PIC is required so the static archives can
+# be linked into the shared facade regardless of the top-level build mode.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Library type: default to shared unless ENTROPIC_STATIC is set
 if(ENTROPIC_SHARED AND NOT ENTROPIC_STATIC)

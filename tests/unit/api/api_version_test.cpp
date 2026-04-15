@@ -28,7 +28,7 @@ SCENARIO("Library version matches build", "[api][version]") {
 
             THEN("it returns the expected version string") {
                 REQUIRE(ver != nullptr);
-                REQUIRE(std::strcmp(ver, "2.0.0") == 0);
+                REQUIRE(std::strcmp(ver, "2.0.5") == 0);
             }
 
             THEN("the returned pointer is valid for the process lifetime") {

@@ -1,0 +1,9 @@
+root       ::= question options answer-key
+question   ::= "Question: " sentence "\n"
+options    ::= option-a option-b option-c option-d
+option-a   ::= "  A) " sentence "\n"
+option-b   ::= "  B) " sentence "\n"
+option-c   ::= "  C) " sentence "\n"
+option-d   ::= "  D) " sentence "\n"
+answer-key ::= "Correct: " [A-D] "\n"
+sentence   ::= [A-Z] [^.\n]+ "."

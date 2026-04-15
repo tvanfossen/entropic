@@ -1,0 +1,14 @@
+{
+  "name": "list_files",
+  "description": "List documented source files matching a glob-style pattern.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "pattern": {
+        "type": "string",
+        "description": "Glob-style pattern for file paths (e.g. 'src/core/*', 'entropic/*.h')."
+      }
+    },
+    "required": ["pattern"]
+  }
+}

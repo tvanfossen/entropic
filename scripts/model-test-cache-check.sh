@@ -1,12 +1,15 @@
 #!/bin/bash
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Check if model tests need to run based on content hash.
 #
-# Computes a hash of all files that could affect model test behavior.
-# If nothing changed since the last successful run, writes SKIP flag.
-# Otherwise, writes RUN flag so the actual test hook knows to execute.
+# Computes a hash of all C++ source files that could affect model test
+# behavior. If nothing changed since the last successful run, writes
+# SKIP flag. Otherwise, writes RUN flag.
 #
 # Cache file: test-reports/model-tests.hash
 # Flag file:  test-reports/model-tests.flag
+#
+# v1.10.2: Updated to hash C++ sources (not deleted Python files).
 
 set -euo pipefail
 
@@ -17,10 +20,13 @@ FLAG_FILE="$CACHE_DIR/model-tests.flag"
 mkdir -p "$CACHE_DIR"
 
 # Compute content hash of all files that affect model test behavior.
-# Includes: source code, test code, config, test fixtures.
+# Includes: C++ source, headers, test code, CMake config, YAML config.
 compute_hash() {
-    find src/ tests/model/ tests/conftest.py .entropic/config.local.yaml \
-        -type f \( -name '*.py' -o -name '*.yaml' \) 2>/dev/null \
+    find src/ include/ tests/model/ CMakeLists.txt \
+        .entropic/config.local.yaml \
+        -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.hpp' \
+                   -o -name '*.cmake' -o -name 'CMakeLists.txt' \
+                   -o -name '*.yaml' \) 2>/dev/null \
         | sort \
         | xargs sha256sum 2>/dev/null \
         | sha256sum \

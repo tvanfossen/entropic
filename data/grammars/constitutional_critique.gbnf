@@ -1,0 +1,18 @@
+# Constitutional critique output grammar (v1.9.8)
+# Constrains model output to valid JSON matching CritiqueResult schema.
+# Registered under key "constitutional_critique" in GrammarRegistry.
+
+root          ::= "{" ws compliant-kv "," ws violations-kv "," ws revised-kv ws "}"
+compliant-kv  ::= "\"compliant\"" ws ":" ws boolean
+violations-kv ::= "\"violations\"" ws ":" ws "[" ws violation-list ws "]"
+revised-kv    ::= "\"revised\"" ws ":" ws string
+
+violation-list ::= "" | violation ("," ws violation)*
+violation      ::= "{" ws rule-kv "," ws excerpt-kv "," ws explanation-kv ws "}"
+rule-kv        ::= "\"rule\"" ws ":" ws string
+excerpt-kv     ::= "\"excerpt\"" ws ":" ws string
+explanation-kv ::= "\"explanation\"" ws ":" ws string
+
+boolean ::= "true" | "false"
+string  ::= "\"" ([^"\\] | "\\" .)* "\""
+ws      ::= [ \t\n]*

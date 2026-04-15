@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+name: Sanitizers
+
+on:
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  asan-ubsan:
+    name: ASan + UBSan
+    runs-on: ubuntu-24.04
+    env:
+      ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1:print_stats=1"
+      UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure (ASan + UBSan preset)
+        run: cmake --preset asan-ubsan
+
+      - name: Build
+        run: cmake --build --preset asan-ubsan --parallel
+
+      - name: Test
+        run: ctest --preset asan-ubsan --parallel 4
+
+  tsan:
+    name: TSan
+    runs-on: ubuntu-24.04
+    env:
+      TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure (TSan preset)
+        run: cmake --preset tsan
+
+      - name: Build
+        run: cmake --build --preset tsan --parallel
+
+      - name: Test
+        run: ctest --preset tsan --parallel 4
+
+  msan:
+    name: MSan (scoped subset)
+    runs-on: ubuntu-24.04
+    env:
+      MSAN_OPTIONS: "halt_on_error=1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential clang libc++-dev libc++abi-dev
+
+      - name: Configure (MSan preset, clang required)
+        run: |
+          cmake --preset msan \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build --preset msan --parallel
+
+      - name: Test (scoped — may exclude inference tests if llama.cpp uninstrumented)
+        run: ctest --preset msan --parallel 4

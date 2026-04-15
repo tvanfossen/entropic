@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # Test-owned config for routing classification tests.
 # Independent of user/global config — tests control their own environment.
 # All tiers marked routable: true to override identity frontmatter defaults.

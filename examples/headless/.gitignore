@@ -1,0 +1,5 @@
+# Runtime session directory
+.headless/
+
+# Build directory
+build/

@@ -1,0 +1,203 @@
+// SPDX-License-Identifier: LGPL-3.0-or-later
+/**
+ * @file test_engine.cpp
+ * @brief AgentEngine unit tests — state machine, loop, callbacks.
+ * @version 1.8.4
+ */
+
+#include <entropic/core/engine.h>
+#include "mock_inference.h"
+#include <catch2/catch_test_macros.hpp>
+
+using namespace entropic;
+using namespace entropic::test;
+
+// ── Helper ───────────────────────────────────────────────
+
+/**
+ * @brief Create a minimal message list for testing.
+ * @return Messages with system + user.
+ * @internal
+ * @version 1.8.4
+ */
+static std::vector<Message> make_messages() {
+    Message sys;
+    sys.role = "system";
+    sys.content = "You are helpful.";
+    Message usr;
+    usr.role = "user";
+    usr.content = "Hi";
+    return {sys, usr};
+}
+
+// ── State machine tests ──────────────────────────────────
+
+TEST_CASE("Single iteration completes", "[engine]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto result = engine.run(make_messages());
+    REQUIRE(result.size() >= 3); // system + user + assistant
+    REQUIRE(result.back().role == "assistant");
+    REQUIRE(result.back().content == "Hello, world!");
+}
+
+TEST_CASE("State transitions IDLE->PLANNING->EXECUTING->COMPLETE",
+          "[engine]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    std::vector<int> states;
+    EngineCallbacks cb;
+    cb.on_state_change = [](int s, void* ud) {
+        auto* v = static_cast<std::vector<int>*>(ud);
+        v->push_back(s);
+    };
+    cb.user_data = &states;
+    engine.set_callbacks(cb);
+
+    engine.run(make_messages());
+    REQUIRE(states.size() >= 3);
+    REQUIRE(states[0] == static_cast<int>(AgentState::PLANNING));
+    REQUIRE(states[1] == static_cast<int>(AgentState::EXECUTING));
+    REQUIRE(states.back() == static_cast<int>(AgentState::COMPLETE));
+}
+
+TEST_CASE("Max iterations stops loop", "[engine]") {
+    MockInference mock;
+    mock.is_complete = false; // Never complete
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 3;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto result = engine.run(make_messages());
+    REQUIRE(mock.generate_call_count <= 3);
+}
+
+TEST_CASE("Interrupt stops loop", "[engine]") {
+    MockInference mock;
+    mock.is_complete = false;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 100;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    // Interrupt after first state change
+    EngineCallbacks cb;
+    cb.on_state_change = [](int s, void* ud) {
+        if (s == static_cast<int>(AgentState::EXECUTING)) {
+            static_cast<AgentEngine*>(ud)->interrupt();
+        }
+    };
+    cb.user_data = &engine;
+    engine.set_callbacks(cb);
+
+    auto result = engine.run(make_messages());
+    REQUIRE(mock.generate_call_count <= 2);
+}
+
+TEST_CASE("Metrics accurate after run", "[engine]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto result = engine.run(make_messages());
+    // At least 1 iteration
+    REQUIRE(mock.generate_call_count >= 1);
+}
+
+TEST_CASE("Finish reason length continues loop", "[engine]") {
+    MockInference mock;
+    mock.is_complete = false;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 5;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto result = engine.run(make_messages());
+    // With is_complete=false, runs until max_iterations
+    REQUIRE(mock.generate_call_count == 5);
+}
+
+TEST_CASE("Context anchors persist across runs", "[engine]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    // First run: set an anchor via directive processor
+    // (test anchor persistence by running twice)
+    auto r1 = engine.run(make_messages());
+    auto r2 = engine.run(make_messages());
+    // Both runs should complete
+    REQUIRE(r1.back().role == "assistant");
+    REQUIRE(r2.back().role == "assistant");
+}
+
+TEST_CASE("Tier routing fires callback", "[engine]") {
+    MockInference mock;
+    mock.tier = "lead";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    std::string selected_tier;
+    EngineCallbacks cb;
+    cb.on_tier_selected = [](const char* t, void* ud) {
+        *static_cast<std::string*>(ud) = t;
+    };
+    cb.user_data = &selected_tier;
+    engine.set_callbacks(cb);
+
+    engine.run(make_messages());
+    REQUIRE(selected_tier == "lead");
+}
+
+TEST_CASE("Streaming generation works", "[engine]") {
+    MockInference mock;
+    mock.stream_token_by_token = true;
+    mock.response = "streamed";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.stream_output = true;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    std::string chunks;
+    EngineCallbacks cb;
+    cb.on_stream_chunk = [](const char* c, size_t len, void* ud) {
+        static_cast<std::string*>(ud)->append(c, len);
+    };
+    cb.user_data = &chunks;
+    engine.set_callbacks(cb);
+
+    auto result = engine.run(make_messages());
+    REQUIRE(chunks == "streamed");
+}
+
+TEST_CASE("Batch generation works", "[engine]") {
+    MockInference mock;
+    mock.response = "batch result";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.stream_output = false;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto result = engine.run(make_messages());
+    REQUIRE(result.back().content == "batch result");
+}

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 # PyChess Configuration
 # This file seeds .pychess/config.local.yaml on first run.
 # Edit the model paths below if needed, then re-run main.py.
@@ -5,27 +6,26 @@
 constitution: prompts/constitution.md
 
 models:
-  tiers:
-    # Thinker tier: fast analysis + strategic planning
-    thinker:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      identity: prompts/identity_thinker.md
-      grammar: data/grammars/chess_thinker.gbnf
-      context_length: 8192
-      auto_chain: true
-      allowed_tools:
-        - entropic.handoff
+  # Thinker tier: fast analysis + strategic planning
+  thinker:
+    path: primary
+    adapter: qwen35
+    identity: prompts/identity_thinker.md
+    grammar: data/grammars/chess_thinker.gbnf
+    context_length: 8192
+    auto_chain: true
+    allowed_tools:
+      - entropic.handoff
 
-    # Executor tier: action-only with small token budget
-    executor:
-      path: ~/models/gguf/Qwen3.5-4B-Q8_0.gguf
-      adapter: qwen35
-      identity: prompts/identity_executor.md
-      grammar: data/grammars/chess_executor.gbnf
-      context_length: 8192
-      allowed_tools:
-        - chess.make_move
+  # Executor tier: action-only with small token budget
+  executor:
+    path: lightweight
+    adapter: qwen35
+    identity: prompts/identity_executor.md
+    grammar: data/grammars/chess_executor.gbnf
+    context_length: 8192
+    allowed_tools:
+      - chess.make_move
 
   default: thinker
 
@@ -49,3 +49,4 @@ lsp:
   enabled: false
 
 log_level: INFO
+log_dir: .pychess

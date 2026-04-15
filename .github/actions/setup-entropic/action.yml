@@ -1,0 +1,142 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+# Composite action: provision an entropic build environment.
+#
+# Installs the system toolchain (cmake, gcc, doxygen, ninja, SQLite3
+# dev headers, gcovr for the coverage hook), sets up Python, and
+# creates a project-local .venv with the invoke + pre-commit tooling
+# that the local pre-commit hooks and tasks.py rely on.
+#
+# Used by ci.yml (PR checks), release.yml (Phase 3), and nightly.yml
+# (Phase 4) so they all start from the same base.
+
+name: Set up entropic build environment
+description: Install toolchain, optionally CUDA, Python venv (invoke + pre-commit), ccache, and pre-commit cache.
+
+inputs:
+  python-version:
+    description: Python version to install
+    default: "3.12"
+    required: false
+  install-cuda:
+    description: Install NVIDIA CUDA toolkit (for -DENTROPIC_CUDA=ON builds). Does not require a physical GPU — builds only, no runtime execution.
+    default: "false"
+    required: false
+  ccache-key:
+    description: Stable key component for the ccache bucket (e.g. "cpu", "cuda"). Per-backend buckets prevent cross-polluting CPU/CUDA object caches.
+    default: "default"
+    required: false
+
+runs:
+  using: composite
+  steps:
+    # Free ~30 GB of disk that GitHub-hosted ubuntu-24.04 pre-installs
+    # but entropic doesn't use: Android SDK, CodeQL bundles, dotnet SDK,
+    # GHC/ghcup, Haskell toolchain, large Docker images. Without this
+    # the CUDA toolkit (~3 GB) + llama.cpp's multi-arch kernel objects
+    # can exhaust the runner's 14 GB ephemeral disk.
+    - name: Free disk on hosted runner
+      shell: bash
+      run: |
+        echo "Before cleanup:"
+        df -h / | tail -1
+        sudo rm -rf \
+          /opt/hostedtoolcache/CodeQL \
+          /opt/hostedtoolcache/go \
+          /opt/hostedtoolcache/Ruby \
+          /opt/hostedtoolcache/PyPy \
+          /opt/hostedtoolcache/node \
+          /usr/local/lib/android \
+          /usr/local/share/boost \
+          /usr/share/dotnet \
+          /usr/share/swift \
+          /opt/ghc || true
+        sudo docker system prune -af --volumes >/dev/null 2>&1 || true
+        echo "After cleanup:"
+        df -h / | tail -1
+
+    - name: Install system dependencies (cmake, build-essential, doxygen, gcovr, sqlite3, ninja, ccache)
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          cmake \
+          build-essential \
+          ccache \
+          doxygen \
+          gcovr \
+          libsqlite3-dev \
+          ninja-build \
+          pkg-config
+
+    - name: Install NVIDIA CUDA toolkit
+      if: ${{ inputs.install-cuda == 'true' }}
+      shell: bash
+      run: |
+        # nvcc + CUDA runtime headers for compile-time CUDA support.
+        # No GPU needed: nvcc cross-compiles to target architectures.
+        # Using NVIDIA's official apt repo pinned to Ubuntu 24.04.
+        set -euo pipefail
+        wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+        sudo dpkg -i cuda-keyring_1.1-1_all.deb
+        sudo apt-get update
+        # cuda-toolkit-12-6 pulls in nsight-* profilers (~1.2 GB) we
+        # don't need on a no-GPU build runner. Install only the compile
+        # pieces: nvcc, libraries, device-runtime, headers.
+        sudo apt-get install -y --no-install-recommends \
+          cuda-nvcc-12-6 \
+          cuda-cudart-dev-12-6 \
+          cuda-libraries-dev-12-6 \
+          cuda-driver-dev-12-6
+        # Expose nvcc + libs to subsequent steps in the same job.
+        echo "/usr/local/cuda-12.6/bin" >>"$GITHUB_PATH"
+        echo "LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
+        echo "CUDA_HOME=/usr/local/cuda-12.6" >>"$GITHUB_ENV"
+
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Create venv and install invoke + pre-commit
+      shell: bash
+      run: |
+        python -m venv .venv
+        .venv/bin/pip install --upgrade pip
+        # tasks.py is driven by invoke; pre-commit runs all the quality
+        # gates including the local build/test/coverage hooks.
+        .venv/bin/pip install invoke pre-commit
+
+    - name: Cache pre-commit hook environments
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pre-commit
+        key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+        restore-keys: |
+          pre-commit-${{ runner.os }}-
+
+    - name: Cache ccache compiler objects
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        # Keyed by ccache-key (cpu/cuda) + llama.cpp submodule SHA,
+        # since llama.cpp is 90% of the build time and its objects are
+        # stable between our own source changes.
+        key: ccache-${{ inputs.ccache-key }}-${{ runner.os }}-${{ hashFiles('extern/llama.cpp') }}
+        restore-keys: |
+          ccache-${{ inputs.ccache-key }}-${{ runner.os }}-
+
+    - name: Configure ccache
+      shell: bash
+      run: |
+        # 2 GB cache, high compression, no stats output clutter.
+        ccache --max-size=2G
+        ccache --set-config=compression=true
+        ccache --set-config=compression_level=6
+        ccache --zero-stats
+        echo "CCACHE_DIR=$HOME/.cache/ccache" >>"$GITHUB_ENV"
+        # Prepend /usr/lib/ccache to PATH — apt's ccache package puts
+        # compiler symlinks there (gcc, g++, cc, c++). Any downstream
+        # invocation that resolves compilers by name (cmake's auto-
+        # detection, the `inv build` path) picks up ccache
+        # transparently, without needing CMAKE_*_COMPILER_LAUNCHER.
+        echo "/usr/lib/ccache" >>"$GITHUB_PATH"

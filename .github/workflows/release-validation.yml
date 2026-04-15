@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+name: Release Validation
+
+on:
+  push:
+    branches:
+      - 'release/**'
+
+jobs:
+  valgrind:
+    name: Valgrind memcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential valgrind
+
+      - name: Configure (CPU debug)
+        run: cmake --preset dev
+
+      - name: Build
+        run: cmake --build --preset dev --parallel
+
+      - name: Run unit tests under Valgrind
+        run: |
+          cd build/dev
+          valgrind --leak-check=full \
+                   --show-leak-kinds=all \
+                   --errors-for-leak-kinds=definite,indirect \
+                   --error-exitcode=1 \
+                   --suppressions=../../tests/valgrind.supp \
+                   ctest --output-on-failure --parallel 1
+
+  stress-abbreviated:
+    name: Abbreviated stress tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure
+        run: cmake --preset dev
+
+      - name: Build
+        run: cmake --build --preset dev --parallel
+
+      - name: Run stress tests (abbreviated, 100-turn versions)
+        run: |
+          cd build/dev
+          ctest --output-on-failure -L stress
+
+  perf-bench:
+    name: Performance benchmarks
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure
+        run: cmake --preset dev
+
+      - name: Build
+        run: cmake --build --preset dev --parallel
+
+      - name: Run benchmark harness (CPU-only, no model)
+        run: |
+          cd build/dev
+          ctest --output-on-failure -L benchmark

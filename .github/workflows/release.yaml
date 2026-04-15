@@ -1,35 +1,321 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
 name: Release
+
+# Tag-driven release pipeline.
+#
+# Fired on any tag matching v* (e.g., v2.0.5, v2.0.5-rc1). Validates the
+# tag matches CMakeLists.txt project VERSION, builds each target in the
+# backend matrix, packages a .tar.gz per matrix entry, runs the
+# distribution smoke test against each staged install, and attaches all
+# tarballs to a GitHub Release.
+#
+# Python wheel publishing (PyPI via OIDC, scikit-build-core + cibuildwheel)
+# is deliberately NOT wired up in this workflow yet — that lands in the
+# Phase 3b follow-on, gated on local wheel validation. Consumers who
+# want a Python package today fetch the tar.gz and use find_package from
+# C++ or the ctypes wrapper pointing at the installed librentropic.so.
 
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
+
+permissions:
+  contents: write   # for creating the GitHub Release
+  id-token: write   # reserved for Phase 3b PyPI OIDC
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      id-token: write
+  # ──────────────────────────────────────────────────────────────────
+  # Sanity: tag matches CMakeLists.txt project VERSION.
+  # Catches the "tagged v2.0.5 but forgot to bump CMake VERSION" class
+  # of mistakes before any expensive build runs.
+  # ──────────────────────────────────────────────────────────────────
+  validate-tag:
+    name: Validate tag matches CMakeLists VERSION
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - id: extract
+        name: Extract tag + CMake VERSION, assert match
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/v}"
+          # Grab an X.Y.Z triple — rules out cmake_minimum_required(VERSION 3.21)
+          # (only two components) and hits the project()'s VERSION 2.0.5.
+          CMAKE_VERSION=$(grep -oE 'VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt \
+                            | head -1 | awk '{print $2}')
+          echo "tag version:   $TAG"
+          echo "cmake version: $CMAKE_VERSION"
+          # Allow release-candidate suffix on the tag ("-rc1" etc.) without
+          # requiring it in CMakeLists.txt.
+          TAG_BASE="${TAG%%-*}"
+          if [[ "$TAG_BASE" != "$CMAKE_VERSION" ]]; then
+            echo "::error::tag base ($TAG_BASE) does not match CMakeLists.txt VERSION ($CMAKE_VERSION)"
+            exit 1
+          fi
+          echo "version=$TAG" >>"$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────
+  # Backend matrix — both entries on GitHub-hosted ubuntu-24.04
+  # (2 vCPU / 16 GB RAM / 14 GB disk, standard free-tier). The
+  # setup-entropic composite action frees ~30 GB of unused
+  # pre-installed toolchains and installs ccache so repeat runs
+  # don't rebuild llama.cpp from scratch.
+  #
+  # The CUDA entry installs only the nvcc + libraries subset of the
+  # CUDA toolkit (no Nsight profilers) and restricts device code to
+  # `compute_80;86;89;90` — modern Ampere/Ada/Hopper only. This cuts
+  # kernel count ~6× vs. the llama.cpp default, which is what made
+  # earlier attempts OOM the hosted runner.
+  #
+  # Post-install smoke is limited to non-CUDA-runtime ops (version
+  # query, link-check) since the hosted runner has no GPU.
+  # Model tests are developer-run (x.y.0 gate per
+  # docs/architecture-cpp.md) — never in CI.
+  # ──────────────────────────────────────────────────────────────────
+  build-package:
+    name: Build + package (${{ matrix.backend }})
+    needs: validate-tag
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CPU build stays on the free 2-core runner — small artifact
+          # (~4 MB), fast build with ccache, no CUDA toolkit overhead.
+          - backend: cpu
+            runner: ubuntu-24.04
+            install_cuda: "false"
+            cmake_flags: >-
+              -DENTROPIC_CPU_ONLY=ON
+              -DENTROPIC_CUDA=OFF
+              -DENTROPIC_SHARED=ON
+              -DENTROPIC_STATIC=OFF
+              -DENTROPIC_BUILD_TESTS=OFF
+          # CUDA build uses the paid 8-core runner (32 GB RAM, ~300 GB
+          # disk). The 2-core runner can't fit CUDA toolkit + nvcc
+          # multi-arch kernel compilation in its disk/memory envelope.
+          # Estimated cost: ~15 min × $0.032 = ~$0.50 per release.
+          #
+          # CMAKE_CUDA_ARCHITECTURES is passed separately in the
+          # Configure step (the `;` in a cmake list gets interpreted as
+          # a bash command separator if inlined into a folded-block var).
+          - backend: cuda
+            runner: ubuntu-24.04-8-cores
+            install_cuda: "true"
+            cmake_flags: >-
+              -DENTROPIC_CUDA=ON
+              -DENTROPIC_CPU_ONLY=OFF
+              -DENTROPIC_SHARED=ON
+              -DENTROPIC_STATIC=OFF
+              -DENTROPIC_BUILD_TESTS=OFF
+            cuda_archs: "80;86;89;90"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-entropic
+        with:
+          install-cuda: ${{ matrix.install_cuda }}
+          ccache-key: ${{ matrix.backend }}
+
+      - name: Configure
+        # CMAKE_<LANG>_COMPILER_LAUNCHER=ccache prepends ccache to every
+        # compile invocation; per-project cache hit rate is ~95% on
+        # llama.cpp once the submodule SHA is stable.
+        #
+        # CUDA_ARCHS must be quoted because its value contains `;`
+        # (cmake list separator) that bash would otherwise split.
+        env:
+          CUDA_ARCHS: ${{ matrix.cuda_archs }}
+        run: |
+          extra=()
+          if [[ -n "${CUDA_ARCHS:-}" ]]; then
+            extra+=("-DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHS}")
+          fi
+          cmake -B build/release -S . \
+            ${{ matrix.cmake_flags }} \
+            "${extra[@]}" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=stage/entropic \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CUDA_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        # Let cmake auto-detect parallelism from nproc. On the 2-core
+        # CPU runner that's 2 (safe). On the 8-core CUDA runner that's
+        # 8, and its 32 GB RAM absorbs llama.cpp's CUDA link peak
+        # (~8-10 GB RSS) without oversubscription.
+        run: cmake --build build/release --parallel
+
+      - name: ccache stats (post-build)
+        if: always()
+        run: ccache --show-stats
+
+      - name: Install into staging prefix
+        run: cmake --install build/release
+
+      - name: Post-install smoke (find_package + CLI launch)
+        run: |
+          set -euo pipefail
+          # Reuse packaging/smoke-consumer without rebuilding entropic.
+          rm -rf build/release/consumer
+          cmake -B build/release/consumer -S packaging/smoke-consumer \
+            -Dentropic_DIR="$PWD/stage/entropic/lib/cmake/entropic"
+          cmake --build build/release/consumer
+          build/release/consumer/entropic-smoke
+          stage/entropic/bin/entropic version
+
+      - name: Package tar.gz
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          ARTIFACT="entropic-${VERSION}-linux-x86_64-${{ matrix.backend }}.tar.gz"
+          # Tar from inside stage/ so the archive extracts to ./entropic/…
+          tar -C stage -czf "$ARTIFACT" entropic
+          sha256sum "$ARTIFACT" >"$ARTIFACT.sha256"
+          ls -lh "$ARTIFACT"*
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: entropic-${{ matrix.backend }}
+          path: |
+            entropic-*.tar.gz
+            entropic-*.tar.gz.sha256
+
+  # ──────────────────────────────────────────────────────────────────
+  # Collect all matrix artifacts and publish one GitHub Release.
+  # Failure of any build-package job aborts publish (default needs:
+  # semantics — we don't want partial releases).
+  # ──────────────────────────────────────────────────────────────────
+  github-release:
+    name: Publish GitHub Release
+    needs: [validate-tag, build-package]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all tarballs
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/entropic-*.tar.gz
+            artifacts/entropic-*.tar.gz.sha256
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          # Mark RCs as prerelease so pip and consumers don't auto-upgrade.
+          prerelease: ${{ contains(needs.validate-tag.outputs.version, '-') }}
+
+  # ──────────────────────────────────────────────────────────────────
+  # Build the PyPI wheel from the same CPU tarball that was just
+  # published to GitHub Release. One binary, two channels — `pip
+  # install entropic-engine` delivers the exact librentropic.so bytes
+  # that `install.sh --cpu` would have extracted.
+  #
+  # CUDA wheel is not published to PyPI yet — the conventional pattern
+  # is a separate distribution name (entropic-engine-cuda) that isn't
+  # registered. CUDA consumers use install.sh --cuda for now.
+  # ──────────────────────────────────────────────────────────────────
+  build-wheel:
+    name: Build PyPI wheel (CPU)
+    needs: [validate-tag, build-package, github-release]
+    runs-on: ubuntu-24.04
+    outputs:
+      wheel_name: ${{ steps.pack.outputs.wheel_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install build tools
-        run: pip install build
-
-      - name: Build package
-        run: python -m build
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Download CPU tarball artifact
+        uses: actions/download-artifact@v4
         with:
-          files: dist/*
-          generate_release_notes: true
+          name: entropic-cpu
+          path: tarball
 
-      - name: Publish to PyPI
+      - id: pack
+        name: Repackage tarball as wheel
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.validate-tag.outputs.version }}"
+          BARE="${VERSION#v}"
+          TARBALL="tarball/entropic-${BARE}-linux-x86_64-cpu.tar.gz"
+          python3 scripts/pack_wheel.py \
+            --tarball "$TARBALL" \
+            --version "$BARE" \
+            --platform-tag linux_x86_64 \
+            --outdir dist
+          WHEEL=$(ls dist/entropic_engine-*.whl)
+          echo "wheel_name=$(basename "$WHEEL")" >>"$GITHUB_OUTPUT"
+          ls -lh "$WHEEL"
+
+      - name: Smoke-install the wheel and import
+        # Catches "wheel builds but doesn't import" regressions before
+        # we push to PyPI (where yanking is painful).
+        run: |
+          set -euo pipefail
+          python3 -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install dist/entropic_engine-*.whl
+          /tmp/smoke-venv/bin/python -c "import entropic; assert entropic._get_lib() is not None"
+          /tmp/smoke-venv/bin/entropic --help >/dev/null
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: entropic-wheel
+          path: dist/entropic_engine-*.whl
+
+  # ──────────────────────────────────────────────────────────────────
+  # PyPI trusted publishing via OIDC. Uploads the wheel only — no
+  # sdist (source distribution). The distribution model is binary
+  # tarball → wheel re-pack; building from source via `pip install`
+  # would require scikit-build-core integration we don't ship.
+  #
+  # RC tags (e.g., v2.0.5-rc1) skip this job so we never clutter PyPI
+  # with prereleases; developers pip-install RCs from the GitHub
+  # Release tarball via install.sh.
+  # ──────────────────────────────────────────────────────────────────
+  pypi-publish:
+    name: Publish to PyPI
+    needs: [validate-tag, build-wheel]
+    if: ${{ !contains(needs.validate-tag.outputs.version, '-') }}
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write   # OIDC trusted publishing (configured on PyPI
+                        # for tvanfossen/entropic since v1.7.1; keeping
+                        # the workflow filename `release.yaml` preserves
+                        # that config — no environment: block, matching
+                        # v1.7.1).
+    steps:
+      - name: Download wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: entropic-wheel
+          path: dist
+
+      - name: Publish to PyPI via trusted publishing
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+          # skip-existing so re-running the workflow against an existing
+          # tag doesn't fail if PyPI already has the wheel.
+          skip-existing: true

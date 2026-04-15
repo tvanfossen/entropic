@@ -251,11 +251,12 @@ jobs:
     needs: [validate-tag, build-wheel]
     if: ${{ !contains(needs.validate-tag.outputs.version, '-') }}
     runs-on: ubuntu-24.04
-    environment:
-      name: pypi
-      url: https://pypi.org/p/entropic-engine
     permissions:
-      id-token: write   # OIDC
+      id-token: write   # OIDC trusted publishing (configured on PyPI
+                        # for tvanfossen/entropic since v1.7.1; keeping
+                        # the workflow filename `release.yaml` preserves
+                        # that config — no environment: block, matching
+                        # v1.7.1).
     steps:
       - name: Download wheel
         uses: actions/download-artifact@v4

@@ -9,7 +9,7 @@ if(NOT ENTROPIC_STORAGE_SQLITE)
     return()
 endif()
 
-add_library(entropic-storage STATIC
+add_library(entropic-storage OBJECT
     database.cpp
     backend.cpp
     permission_persister.cpp

@@ -1,5 +1,5 @@
 # librentropic-mcp.so — base + registry + executor + permissions + manager
-add_library(entropic-mcp STATIC)
+add_library(entropic-mcp OBJECT)
 
 target_sources(entropic-mcp PRIVATE
     tool_base.cpp

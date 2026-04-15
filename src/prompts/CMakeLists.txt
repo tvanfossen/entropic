@@ -1,4 +1,4 @@
-add_library(entropic-prompts STATIC)
+add_library(entropic-prompts OBJECT)
 
 target_sources(entropic-prompts PRIVATE
     manager.cpp

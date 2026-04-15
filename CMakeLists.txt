@@ -131,6 +131,7 @@ endif()
 
 # ── Install ─────────────────────────────────────────────
 include(GNUInstallDirs)
+include(CMakePackageConfigHelpers)
 
 # Public headers (entire tree; internal headers live in src/ not include/)
 install(DIRECTORY include/entropic
@@ -149,4 +150,34 @@ install(DIRECTORY data/
 # License + release README
 install(FILES LICENSE packaging/README.md
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+
+# ── CMake package config (find_package(entropic) support) ──
+# Exports the entropic::entropic imported target with include dirs, link
+# library, SOVERSION, and C++20 requirement baked in. Matches SONAME
+# scheme: SameMajorVersion → 2.x.y compatible, 3.x breaks.
+set(ENTROPIC_CMAKE_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/entropic")
+
+install(EXPORT entropic-targets
+    FILE entropic-targets.cmake
+    NAMESPACE entropic::
+    DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
+)
+
+configure_package_config_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/entropic-config.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config.cmake"
+    INSTALL_DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
+)
+
+write_basic_package_version_file(
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config-version.cmake"
+    VERSION ${PROJECT_VERSION}
+    COMPATIBILITY SameMajorVersion
+)
+
+install(FILES
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config.cmake"
+    "${CMAKE_CURRENT_BINARY_DIR}/entropic-config-version.cmake"
+    DESTINATION ${ENTROPIC_CMAKE_INSTALL_DIR}
 )

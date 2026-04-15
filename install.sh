@@ -1,225 +1,182 @@
-#!/bin/bash
-# ============================================================================
-# Entropic Installation Script
+#!/usr/bin/env bash
+# Entropic installer — downloads and installs a prebuilt release from
+# the GitHub Releases page.
 #
-# Usage:
-#   ./install.sh              # Core + inference (no TUI)
-#   ./install.sh app          # Full TUI application (recommended)
-#   ./install.sh all          # Everything including voice
-# ============================================================================
+# One-liner:
+#   curl -fsSL https://raw.githubusercontent.com/tvanfossen/entropic/main/install.sh | bash
+#
+# Explicit version / backend / prefix:
+#   curl -fsSL https://raw.githubusercontent.com/tvanfossen/entropic/main/install.sh \
+#       | bash -s -- --version v2.0.5 --cuda --prefix /opt/entropic --yes
+#
+# Detects backend (CPU vs CUDA) by probing for `nvidia-smi`; override with
+# --cpu / --cuda. Default prefix is /usr/local (requires sudo); use
+# --prefix for a user-local install (no sudo needed).
+#
+# Installs with `tar --strip-components=1`, so the contents of the
+# tarball's top-level entropic/ directory land directly in $PREFIX —
+# conventional Unix layout:
+#   $PREFIX/bin/entropic
+#   $PREFIX/lib/librentropic.so.*
+#   $PREFIX/lib/cmake/entropic/entropic-config.cmake
+#   $PREFIX/share/entropic/...
+#   $PREFIX/share/doc/entropic/{LICENSE,README.md}
+#
+# find_package(entropic 2.0 REQUIRED) in a downstream CMake project
+# works against /usr/local and /opt/entropic out of the box.
 
-set -e
+set -euo pipefail
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+REPO="${ENTROPIC_REPO:-tvanfossen/entropic}"
+VERSION=""
+BACKEND=""
+PREFIX="${PREFIX:-/usr/local}"
+ASSUME_YES=""
 
-EXTRAS="${1:-app}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+usage() {
+    cat <<EOF
+Usage: install.sh [options]
 
-echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                    Installing Entropic                          ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo ""
-echo "Extras: $EXTRAS"
-echo ""
+  --version TAG    Release tag to install (e.g. v2.0.5). Default: latest stable.
+  --cpu            Install the CPU tarball.
+  --cuda           Install the CUDA tarball.
+  --prefix DIR     Install prefix. Default: /usr/local (requires sudo).
+                   Use ~/.local or /opt/entropic for a user-local install.
+  --yes | -y       Skip the confirmation prompt.
+  --help | -h      This help.
 
-# --- Step 1: System dependencies (voice extras only) ---
-
-install_voice_deps() {
-    echo "=== Installing Voice Dependencies ==="
-    echo ""
-
-    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
-        if command -v apt-get &> /dev/null; then
-            echo "Installing system packages (requires sudo)..."
-            sudo apt-get update
-            sudo apt-get install -y \
-                python3-dev build-essential \
-                libportaudio2 portaudio19-dev libasound2-dev
-            echo -e "${GREEN}✓${NC} System packages installed"
-        elif command -v dnf &> /dev/null; then
-            echo "Installing system packages (requires sudo)..."
-            sudo dnf install -y \
-                python3-devel gcc \
-                portaudio portaudio-devel alsa-lib-devel
-            echo -e "${GREEN}✓${NC} System packages installed"
-        elif command -v pacman &> /dev/null; then
-            echo "Installing system packages (requires sudo)..."
-            sudo pacman -S --needed python base-devel portaudio alsa-lib
-            echo -e "${GREEN}✓${NC} System packages installed"
-        else
-            echo -e "${YELLOW}⚠${NC} Unknown package manager. Please install manually:"
-            echo "  - portaudio (libportaudio2 / portaudio19-dev)"
-            echo "  - alsa development libraries (libasound2-dev)"
-        fi
-    elif [[ "$OSTYPE" == "darwin"* ]]; then
-        if command -v brew &> /dev/null; then
-            echo "Installing system packages with Homebrew..."
-            brew install portaudio
-            echo -e "${GREEN}✓${NC} System packages installed"
-        else
-            echo -e "${YELLOW}⚠${NC} Homebrew not found. Please install portaudio manually:"
-            echo "  brew install portaudio"
-        fi
-    fi
-    echo ""
+Env overrides:
+  ENTROPIC_REPO    GitHub owner/name. Default: tvanfossen/entropic.
+  PREFIX           Same as --prefix.
+EOF
 }
 
-# Install voice system deps if voice or all extras requested
-if [[ "$EXTRAS" == "voice" || "$EXTRAS" == "all" ]]; then
-    install_voice_deps
-fi
-
-# --- Step 2: Python detection ---
-
-echo "=== Checking Python ==="
-echo ""
-
-PYTHON=""
-for candidate in python3.12 python3.11 python3; do
-    if command -v "$candidate" &> /dev/null; then
-        PYTHON="$candidate"
-        break
-    fi
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --version)     VERSION="$2"; shift 2 ;;
+        --cpu)         BACKEND=cpu; shift ;;
+        --cuda)        BACKEND=cuda; shift ;;
+        --prefix)      PREFIX="$2"; shift 2 ;;
+        --yes|-y)      ASSUME_YES=1; shift ;;
+        --help|-h)     usage; exit 0 ;;
+        *) echo "install.sh: unknown argument: $1" >&2; usage >&2; exit 2 ;;
+    esac
 done
 
-if [ -z "$PYTHON" ]; then
-    echo -e "${RED}ERROR: Python 3.10+ required but not found.${NC}"
+# ── Platform gate ──────────────────────────────────────────────────
+OS=$(uname -s)
+ARCH=$(uname -m)
+if [[ "$OS" != "Linux" || "$ARCH" != "x86_64" ]]; then
+    cat >&2 <<EOF
+install.sh: only linux-x86_64 is supported in the v2.0.x series.
+  detected: $OS / $ARCH
+macOS (arm64), Windows, and Linux aarch64 are on the roadmap. For now,
+build from source (see README in the repo).
+EOF
     exit 1
 fi
 
-PY_VERSION=$("$PYTHON" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
-echo -e "${GREEN}✓${NC} Python: $PYTHON ($PY_VERSION)"
-
-# --- Step 3: Virtual environment ---
-
-echo ""
-echo "=== Setting up Virtual Environment ==="
-echo ""
-
-if [ ! -d "$SCRIPT_DIR/.venv" ]; then
-    echo "Creating virtual environment..."
-    "$PYTHON" -m venv "$SCRIPT_DIR/.venv"
-    echo -e "${GREEN}✓${NC} Virtual environment created"
-else
-    echo -e "${GREEN}✓${NC} Virtual environment exists"
-fi
-
-PIP="$SCRIPT_DIR/.venv/bin/pip"
-
-# Warn about old pip — common on Ubuntu 22 and can cause slow dependency resolution
-PIP_VERSION=$($PIP --version 2>/dev/null | awk '{print $2}' | cut -d. -f1)
-if [ -n "$PIP_VERSION" ] && [ "$PIP_VERSION" -lt 23 ] 2>/dev/null; then
-    echo -e "${YELLOW}⚠${NC} pip $($PIP --version | awk '{print $2}') is old and may resolve dependencies slowly"
-    echo "  Consider: $SCRIPT_DIR/.venv/bin/python -m pip install --upgrade pip"
-    echo ""
-fi
-
-# --- Step 4: GPU detection ---
-
-echo ""
-echo "=== Checking GPU ==="
-echo ""
-
-CMAKE_ARGS=""
-if command -v nvidia-smi &> /dev/null; then
-    GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-    if [ -n "$GPU_NAME" ]; then
-        echo -e "${GREEN}✓${NC} Found GPU: $GPU_NAME"
-        echo "  Building llama-cpp-python with CUDA support"
-        CMAKE_ARGS="-DGGML_CUDA=on"
+# ── Backend auto-detect ────────────────────────────────────────────
+if [[ -z "$BACKEND" ]]; then
+    if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1; then
+        BACKEND=cuda
+        echo "install.sh: NVIDIA GPU detected; selecting CUDA backend."
+    else
+        BACKEND=cpu
+        echo "install.sh: no NVIDIA GPU detected; selecting CPU backend."
     fi
-else
-    echo "No NVIDIA GPU detected — CPU-only mode"
 fi
 
-# --- Step 5: Clone + build llama-cpp-python ---
-
-echo ""
-echo "=== Building llama-cpp-python ==="
-echo ""
-
-# Read pinned versions from build_config.py (single source of truth)
-BUILD_CONFIG="$SCRIPT_DIR/src/entropic/build_config.py"
-LLAMA_CPP_PYTHON_REPO=$(grep 'LLAMA_CPP_PYTHON_REPO' "$BUILD_CONFIG" | head -1 | sed 's/.*= *"//;s/".*//')
-LLAMA_CPP_PYTHON_TAG=$(grep 'LLAMA_CPP_PYTHON_TAG' "$BUILD_CONFIG" | head -1 | sed 's/.*= *"//;s/".*//')
-
-echo "llama-cpp-python: $LLAMA_CPP_PYTHON_TAG"
-echo "  repo: $LLAMA_CPP_PYTHON_REPO"
-
-BUILD_DIR="$SCRIPT_DIR/.build"
-CLONE_DIR="$BUILD_DIR/llama-cpp-python"
-
-if [ -d "$CLONE_DIR" ]; then
-    echo -e "${GREEN}✓${NC} Using cached clone: $CLONE_DIR"
-else
-    echo "Cloning llama-cpp-python $LLAMA_CPP_PYTHON_TAG..."
-    mkdir -p "$BUILD_DIR"
-    git clone --depth=1 \
-        --branch="$LLAMA_CPP_PYTHON_TAG" \
-        --recurse-submodules --shallow-submodules \
-        "$LLAMA_CPP_PYTHON_REPO" \
-        "$CLONE_DIR"
-    echo -e "${GREEN}✓${NC} Clone complete"
+# ── Resolve tag if not explicit ────────────────────────────────────
+if [[ -z "$VERSION" ]]; then
+    echo "install.sh: resolving latest release tag from github.com/$REPO..."
+    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+              | grep -m1 '"tag_name":' \
+              | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/') || true
+    if [[ -z "$VERSION" ]]; then
+        echo "install.sh: failed to resolve latest tag. Pass --version explicitly." >&2
+        exit 1
+    fi
 fi
 
-echo "Building llama-cpp-python..."
-if [ -n "$CMAKE_ARGS" ]; then
-    echo "  CMAKE_ARGS: $CMAKE_ARGS"
-    PIP_CONFIG_FILE=/dev/null CMAKE_ARGS="$CMAKE_ARGS" $PIP install "$CLONE_DIR"
-else
-    $PIP install "$CLONE_DIR"
-fi
-echo -e "${GREEN}✓${NC} llama-cpp-python built and installed"
+BARE_VERSION="${VERSION#v}"
+ASSET="entropic-${BARE_VERSION}-linux-x86_64-${BACKEND}.tar.gz"
+URL="https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+SHA_URL="${URL}.sha256"
 
-# --- Step 6: Install ---
+# ── Summary + confirm ──────────────────────────────────────────────
+cat <<EOF
 
-echo ""
-echo "=== Installing Entropic ==="
-echo ""
+Entropic installer
+  repo:     $REPO
+  tag:      $VERSION
+  backend:  $BACKEND
+  asset:    $ASSET
+  url:      $URL
+  prefix:   $PREFIX
+EOF
 
-echo "Installing entropic-engine[$EXTRAS]..."
-PIP_CONFIG_FILE=/dev/null $PIP install -e "$SCRIPT_DIR[$EXTRAS]"
-
-echo ""
-echo -e "${GREEN}✓${NC} Entropic installed!"
-
-# --- Step 7: Verify ---
-
-echo ""
-echo "=== Verifying Installation ==="
-echo ""
-
-ENTROPIC_BIN="$SCRIPT_DIR/.venv/bin/entropic"
-if [ -f "$ENTROPIC_BIN" ]; then
-    echo -e "${GREEN}✓${NC} entropic command available: $ENTROPIC_BIN"
-else
-    echo -e "${YELLOW}⚠${NC} entropic command not found in venv"
+if [[ -z "$ASSUME_YES" ]]; then
+    read -rp "Proceed? [y/N] " ans
+    if [[ ! "$ans" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
 fi
 
-echo ""
-echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                   Installation Complete!                        ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo ""
-echo "Next steps:"
-echo ""
-echo "  1. Add the entropic command to your PATH (pick one):"
-echo ""
-echo "     # Option A: Symlink into ~/.local/bin/"
-echo "     mkdir -p ~/.local/bin && ln -sf $ENTROPIC_BIN ~/.local/bin/entropic"
-echo ""
-echo "     # Option B: Add venv bin to PATH in your shell profile"
-echo "     echo 'export PATH=\"$SCRIPT_DIR/.venv/bin:\$PATH\"' >> ~/.bashrc"
-echo ""
-echo "     # Or just use the full path: $ENTROPIC_BIN"
-echo ""
-echo "  2. Ensure models are in ~/models/gguf/"
-echo "     (or configure model paths in .entropic/config.local.yaml)"
-echo ""
-echo "  3. Navigate to any project and run: entropic"
-echo "     First run will auto-create .entropic/ config in your project"
-echo ""
+# ── Download, verify, extract ──────────────────────────────────────
+TMPDIR=$(mktemp -d -t entropic-install.XXXXXX)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+echo "install.sh: downloading..."
+curl -fL --progress-bar -o "$TMPDIR/$ASSET"        "$URL"
+curl -fL --progress-bar -o "$TMPDIR/$ASSET.sha256" "$SHA_URL"
+
+echo "install.sh: verifying sha256..."
+(cd "$TMPDIR" && sha256sum --quiet --check "$ASSET.sha256")
+
+SUDO=""
+if [[ ! -w "$PREFIX" ]]; then
+    SUDO=sudo
+    echo "install.sh: $PREFIX is not writable; will use sudo."
+fi
+$SUDO mkdir -p "$PREFIX"
+
+echo "install.sh: extracting to $PREFIX..."
+# tar contents are entropic/{bin,lib,share,include}; --strip-components=1
+# maps them to $PREFIX/{bin,lib,share,include}.
+$SUDO tar -C "$PREFIX" --strip-components=1 -xzf "$TMPDIR/$ASSET"
+
+# ── Post-install ────────────────────────────────────────────────────
+BIN="$PREFIX/bin/entropic"
+echo
+echo "install.sh: installed $VERSION ($BACKEND) to $PREFIX."
+echo
+echo "Verify with:"
+echo "  $BIN version"
+
+# PATH hint for non-conventional prefixes.
+case "$PREFIX" in
+    /usr/local|/usr) ;;
+    *)
+        echo
+        echo "Note: $PREFIX/bin may not be on your PATH. Add it:"
+        echo "  export PATH=\"$PREFIX/bin:\$PATH\""
+        ;;
+esac
+
+cat <<EOF
+
+Next steps:
+  1. Download a GGUF model and point the engine at it:
+       mkdir -p ~/.entropic/models
+       # download your .gguf into that dir, or:
+       # export ENTROPIC_MODEL_DIR=/path/to/dir
+  2. C++ consumer (find_package works out of the box for this prefix):
+       find_package(entropic 2.0 REQUIRED)
+       target_link_libraries(my-app PRIVATE entropic::entropic)
+  3. Python consumer (once published):
+       pip install entropic-engine==${BARE_VERSION}
+
+See $PREFIX/share/doc/entropic/README.md for the full guide.
+EOF

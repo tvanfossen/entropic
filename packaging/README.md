@@ -8,14 +8,41 @@ package contains a single shared library (`librentropic.so`), the
 
 ## Install
 
-Extract into any prefix on your system. `/usr/local` is conventional
-and requires no `LD_LIBRARY_PATH` setup:
+### Recommended: one-line installer
+
+Auto-detects CUDA vs CPU by probing for `nvidia-smi`:
 
 ```
-tar -xf entropic-<version>-linux-x86_64-<backend>.tar.gz -C /usr/local
+curl -fsSL https://raw.githubusercontent.com/tvanfossen/entropic/main/install.sh | bash
 ```
 
-Layout after extraction (relative to the install prefix):
+Flags: `--cpu` / `--cuda` to force a backend, `--prefix DIR` to pick a
+non-standard install location (default `/usr/local`), `--version vX.Y.Z`
+to pin, `--yes` to skip the confirmation prompt.
+
+### Manual
+
+```
+tar -xzf entropic-<version>-linux-x86_64-<backend>.tar.gz -C /usr/local --strip-components=1
+```
+
+`--strip-components=1` maps the tarball's top-level `entropic/` into
+`/usr/local/{bin,lib,share,include}` — the standard Unix layout that
+`find_package` and `ld` search by default.
+
+### Python
+
+```
+pip install entropic-engine
+```
+
+Ships the same `librentropic.so` as the CPU tarball, bundled inside
+the wheel. One binary, two channels. CUDA users: use the installer
+above — there is no CUDA wheel on PyPI at this time.
+
+### Layout
+
+After install (relative to the prefix):
 
 ```
 bin/entropic                          CLI

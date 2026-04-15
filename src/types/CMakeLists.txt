@@ -1,4 +1,4 @@
-add_library(entropic-types)
+add_library(entropic-types STATIC)
 
 target_sources(entropic-types PRIVATE
     error.cpp
@@ -24,7 +24,5 @@ endif()
 
 set_target_properties(entropic-types PROPERTIES
     OUTPUT_NAME "rentropic-types"
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
     CXX_VISIBILITY_PRESET default
 )

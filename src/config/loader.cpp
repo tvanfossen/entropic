@@ -729,6 +729,39 @@ static std::filesystem::path resolve_consumer_defaults(
  * @utility
  * @version 2
  */
+/**
+ * @brief Check whether a YAML file contains a top-level key.
+ * @param path File path.
+ * @param key Key to look for.
+ * @return true if the file parses and has the key at root level.
+ * @utility
+ * @version 2.0.6
+ */
+static bool yaml_has_key(const std::filesystem::path& path,
+                         const char* key) {
+    auto content = read_file(path);
+    if (content.empty()) { return false; }
+    auto tree = ryml::parse_in_arena(
+        ryml::to_csubstr(path.string()),
+        ryml::to_csubstr(content));
+    auto root = tree.rootref();
+    return root.is_map() && root.has_child(ryml::to_csubstr(key));
+}
+
+/**
+ * @brief Load the consumer-defaults layer.
+ *
+ * Consumer config is a complete application config, not a patch.
+ * If the consumer file defines a `models:` block, existing tiers
+ * from prior layers are cleared before parsing so the consumer's
+ * tier set fully replaces the global one. Same for `routing:`.
+ *
+ * @param consumer_defaults_in Consumer defaults path.
+ * @param registry Bundled models registry.
+ * @param[in,out] config Config to overlay onto.
+ * @utility
+ * @version 2.0.6
+ */
 static void load_consumer_layer(
     const std::filesystem::path& consumer_defaults_in,
     const BundledModels& registry, ParsedConfig& config)
@@ -738,6 +771,19 @@ static void load_consumer_layer(
         return;
     }
     s_log->info("Loading consumer defaults: {}", consumer_defaults.string());
+
+    // Replace semantics: if consumer defines models or routing,
+    // clear existing tiers/routing so global ones don't leak through.
+    if (yaml_has_key(consumer_defaults, "models")) {
+        s_log->info("Consumer defines models: — replacing global tiers");
+        config.models.tiers.clear();
+        config.models.router.reset();
+        config.models.default_tier.clear();
+    }
+    if (yaml_has_key(consumer_defaults, "routing")) {
+        config.routing = RoutingConfig{};
+    }
+
     auto err = parse_config_file(consumer_defaults, registry, config);
     if (!err.empty()) {
         s_log->warn("Consumer defaults failed: {}", err);
@@ -750,6 +796,17 @@ static void load_consumer_layer(
  * @return Empty on success or absence; error message on parse failure.
  * @version 1
  */
+/**
+ * @brief Load the project-local layer if present.
+ *
+ * Same replace semantics as consumer layer: if the project config
+ * defines a `models:` or `routing:` block, existing entries from
+ * prior layers are cleared before parsing.
+ *
+ * @utility
+ * @return Empty on success or absence; error message on parse failure.
+ * @version 2.0.6
+ */
 static std::string load_project_layer(
     const std::filesystem::path& project_dir,
     const BundledModels& registry, ParsedConfig& config)
@@ -759,6 +816,15 @@ static std::string load_project_layer(
         auto path = project_dir / "config.local.yaml";
         if (std::filesystem::exists(path)) {
             s_log->info("Loading project config: {}", path.string());
+            if (yaml_has_key(path, "models")) {
+                s_log->info("Project defines models: — replacing prior tiers");
+                config.models.tiers.clear();
+                config.models.router.reset();
+                config.models.default_tier.clear();
+            }
+            if (yaml_has_key(path, "routing")) {
+                config.routing = RoutingConfig{};
+            }
             err = parse_config_file(path, registry, config);
             if (!err.empty()) {
                 err = "project config: " + err;

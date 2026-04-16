@@ -36,17 +36,21 @@ add_custom_command(
 add_custom_target(python_wrapper ALL DEPENDS ${WRAPPER_OUTPUT})
 add_dependencies(python_wrapper entropic-facade)
 
-# Install wrapper alongside .so
-install(
-    DIRECTORY ${CMAKE_BINARY_DIR}/python/entropic_native
-    DESTINATION ${Python3_SITEARCH}
-)
-install(
-    FILES
-        ${CMAKE_SOURCE_DIR}/python/entropic_native/py.typed
-    DESTINATION ${Python3_SITEARCH}/entropic_native
-)
-install(
-    TARGETS entropic-facade
-    LIBRARY DESTINATION ${Python3_SITEARCH}/entropic_native/lib
-)
+# Python wrapper install disabled until v2.1.1 — Python3_SITEARCH
+# resolves to the system interpreter's site-packages, not the venv.
+# Wrapper generation still runs (build-tree only). Tracked in the
+# v2.1.1 proposal as a re-enable item with proper venv detection.
+#
+# install(
+#     DIRECTORY ${CMAKE_BINARY_DIR}/python/entropic_native
+#     DESTINATION ${Python3_SITEARCH}
+# )
+# install(
+#     FILES
+#         ${CMAKE_SOURCE_DIR}/python/entropic_native/py.typed
+#     DESTINATION ${Python3_SITEARCH}/entropic_native
+# )
+# install(
+#     TARGETS entropic-facade
+#     LIBRARY DESTINATION ${Python3_SITEARCH}/entropic_native/lib
+# )

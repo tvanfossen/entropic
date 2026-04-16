@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 
 namespace entropic {
@@ -62,10 +63,33 @@ class WorktreeManager {
 public:
     /**
      * @brief Construct with repository root directory.
+     *
+     * Generates a session id (pid + 8-hex-char random suffix) and
+     * establishes .worktrees/session_id as this manager's worktree
+     * base. Prunes at startup:
+     * - pre-v2.0.6 orphan directories under .worktrees
+     * - session directories whose owner pid is dead
+     * - stale delegation branches
+     *
      * @param repo_dir Path to the git repository root.
-     * @version 1.8.6
+     * @version 2.0.6
      */
     explicit WorktreeManager(const std::filesystem::path& repo_dir);
+
+    /**
+     * @brief Remove this session's worktree base directory.
+     *
+     * Complements per-worktree cleanup: if any delegation directory
+     * leaked past `cleanup()`, it is removed when the session ends.
+     *
+     * @version 2.0.6
+     */
+    ~WorktreeManager();
+
+    WorktreeManager(WorktreeManager&&) = default;
+    WorktreeManager& operator=(WorktreeManager&&) = default;
+    WorktreeManager(const WorktreeManager&) = delete;
+    WorktreeManager& operator=(const WorktreeManager&) = delete;
 
     /**
      * @brief Create develop branch from current HEAD and check it out.
@@ -144,14 +168,29 @@ private:
     std::string find_main_branch() const;
 
     /**
-     * @brief Remove stale delegation branches from prior sessions.
-     * @utility
-     * @version 2.0.4
+     * @brief Remove stale delegation worktrees/branches from prior sessions.
+     * @version 2.0.6
      */
     void prune_stale_worktrees();
 
+    /**
+     * @brief Prune a single `.worktrees/` entry if it is a recognizable orphan.
+     * @param entry Directory entry to evaluate.
+     * @version 2.0.6
+     */
+    void prune_worktrees_entry(
+        const std::filesystem::directory_entry& entry);
+
+    /**
+     * @brief Collect delegation branch names from git.
+     * @return Set of trimmed branch names.
+     * @version 2.0.6
+     */
+    std::set<std::string> collect_delegation_branches() const;
+
     std::filesystem::path repo_dir_;       ///< Repository root
-    std::filesystem::path worktree_base_;  ///< .worktrees/ directory
+    std::string session_id_;               ///< <pid>-<hex8> session identifier
+    std::filesystem::path worktree_base_;  ///< .worktrees/<session_id>/
     bool develop_ready_ = false;           ///< develop branch checked out
 };
 

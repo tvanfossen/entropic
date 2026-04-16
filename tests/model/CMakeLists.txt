@@ -71,6 +71,7 @@ add_model_test(test-backend-capabilities  test_backend_capabilities.cpp)
 add_model_test(test-adapter-lifecycle     test_adapter_lifecycle.cpp)
 add_model_test(test-constitutional-validation test_constitutional_validation.cpp)
 add_model_test(test-multimodal-fallback   test_multimodal_fallback.cpp)
+add_model_test(test-context-bleed         test_delegation_context_bleed.cpp)
 
 # Pass mock server binary path for external MCP test
 if(TARGET mock-mcp-server)
@@ -78,6 +79,11 @@ if(TARGET mock-mcp-server)
         MOCK_MCP_SERVER_PATH="$<TARGET_FILE:mock-mcp-server>")
     add_dependencies(test-external-mcp mock-mcp-server)
 endif()
+
+# test-constitutional-validation baseline is ~68s; under parallel load
+# it can brush the default 120s ctest timeout. Bump to give it headroom.
+set_tests_properties(model/test-constitutional-validation PROPERTIES
+    TIMEOUT 240)
 
 # ── Engine-loop tests (11) — full AgentEngine::run() ────────
 

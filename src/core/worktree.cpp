@@ -14,7 +14,13 @@
 
 #include <array>
 #include <cstdio>
+#include <random>
+#include <set>
 #include <sstream>
+
+#include <signal.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 static auto logger = entropic::log::get("core.worktree");
 
@@ -56,16 +62,180 @@ GitResult run_git(const std::filesystem::path& repo_dir,
 // ── WorktreeManager ──────────────────────────────────────
 
 /**
+ * @brief Generate a session id of the form "<pid>-<hex8>".
+ *
+ * pid is sufficient on its own for liveness detection, but adding
+ * random hex avoids collisions when a stale dir lingers after a
+ * fast pid-recycle.
+ *
+ * @return Session identifier string.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string make_session_id() {
+    std::random_device rd;
+    std::uniform_int_distribution<uint32_t> dist;
+    char hex[9];
+    std::snprintf(hex, sizeof(hex), "%08x", dist(rd));
+    return std::to_string(static_cast<long>(getpid())) + "-" + hex;
+}
+
+/**
  * @brief Construct with repository root directory.
+ *
+ * Creates a session-scoped worktree base at
+ * `.worktrees/<session_id>/` and prunes stale dirs from prior
+ * sessions.
+ *
  * @param repo_dir Path to the git repository root.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6
  */
 WorktreeManager::WorktreeManager(const std::filesystem::path& repo_dir)
     : repo_dir_(repo_dir),
-      worktree_base_(repo_dir / ".worktrees") {
-    logger->info("WorktreeManager: repo={}", repo_dir_.string());
+      session_id_(make_session_id()),
+      worktree_base_(repo_dir / ".worktrees" / session_id_) {
+    logger->info("WorktreeManager: repo={} session={}",
+                 repo_dir_.string(), session_id_);
     prune_stale_worktrees();
+    std::error_code ec;
+    std::filesystem::create_directories(worktree_base_, ec);
+    if (ec) {
+        logger->error("Failed to create worktree base {}: {}",
+                      worktree_base_.string(), ec.message());
+    }
+}
+
+/**
+ * @brief Destructor — remove this session's worktree base directory.
+ *
+ * Complements per-worktree cleanup; any delegation directory that
+ * leaked past `cleanup()` is removed when the session ends.
+ *
+ * @internal
+ * @version 2.0.6
+ */
+WorktreeManager::~WorktreeManager() {
+    std::error_code ec;
+    std::filesystem::remove_all(worktree_base_, ec);
+    if (ec) {
+        logger->warn("Failed to remove session worktree base {}: {}",
+                     worktree_base_.string(), ec.message());
+    } else {
+        logger->info("Removed session worktree base: {}",
+                     worktree_base_.string());
+    }
+}
+
+/**
+ * @brief Check whether the given process id is still alive.
+ *
+ * Uses `kill(pid, 0)`. Returns false only when errno == ESRCH
+ * (owning process is gone). EPERM (different UID) counts as alive —
+ * we do not own that session's dir and must leave it.
+ *
+ * @param pid Process id to probe.
+ * @return true if alive or not ours; false if the owner is gone.
+ * @utility
+ * @version 2.0.6
+ */
+static bool pid_is_alive(long pid) {
+    if (kill(static_cast<pid_t>(pid), 0) == 0) { return true; }
+    return errno != ESRCH;
+}
+
+/**
+ * @brief Remove a directory, logging the outcome.
+ * @param dir Directory to remove.
+ * @param reason Human-readable reason (for log line).
+ * @utility
+ * @version 2.0.6
+ */
+static void remove_orphan_dir(
+    const std::filesystem::path& dir, const std::string& reason) {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    if (ec) {
+        logger->warn("Failed to remove orphan {} ({}): {}",
+                     dir.string(), reason, ec.message());
+    } else {
+        logger->info("Pruned orphan {} ({})", dir.string(), reason);
+    }
+}
+
+/**
+ * @brief Parse "<pid>-<hex>" session-id directory name into a pid.
+ * @param name Directory basename.
+ * @param[out] pid Extracted pid on success.
+ * @return true if `name` matches the session-id pattern.
+ * @utility
+ * @version 2.0.6
+ */
+static bool parse_session_pid(const std::string& name, long& pid) {
+    auto dash = name.find('-');
+    if (dash == std::string::npos || dash == 0) { return false; }
+    try {
+        size_t consumed = 0;
+        pid = std::stol(name.substr(0, dash), &consumed);
+        return consumed == dash && name.size() - dash - 1 == 8;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+/**
+ * @brief Collect delegation branch names currently in git.
+ * @return Set of branch names, trimmed and filtered to delegation/*.
+ * @utility
+ * @version 2.0.6
+ */
+std::set<std::string> WorktreeManager::collect_delegation_branches() const {
+    std::set<std::string> result;
+    auto branches = run_git(repo_dir_, "branch --list 'delegation/*'");
+    if (!branches.success || branches.output.empty()) { return result; }
+
+    std::istringstream iss(branches.output);
+    std::string line;
+    while (std::getline(iss, line)) {
+        auto start = line.find_first_not_of(" *+");
+        if (start == std::string::npos) { continue; }
+        std::string branch = line.substr(start);
+        auto end = branch.find_first_of(" \t");
+        if (end != std::string::npos) { branch = branch.substr(0, end); }
+        if (branch.rfind("delegation/", 0) == 0) {
+            result.insert(std::move(branch));
+        }
+    }
+    return result;
+}
+
+/**
+ * @brief Prune one entry in .worktrees/ if it is a recognizable orphan.
+ * @param entry Directory entry under .worktrees/.
+ * @utility
+ * @version 2.0.6
+ */
+void WorktreeManager::prune_worktrees_entry(
+    const std::filesystem::directory_entry& entry) {
+    if (!entry.is_directory()) { return; }
+    std::string name = entry.path().filename().string();
+    if (name == session_id_) { return; } // our own
+
+    long pid = 0;
+    if (parse_session_pid(name, pid)) {
+        if (!pid_is_alive(pid)) {
+            remove_orphan_dir(entry.path(),
+                              "dead session pid=" + std::to_string(pid));
+        }
+        return;
+    }
+
+    // Pre-v2.0.6 layout: `.worktrees/delegation-<id>/` sat directly
+    // under .worktrees. Anything matching that prefix here is an
+    // orphan from before the session-scoped layout.
+    if (name.rfind("delegation-", 0) == 0) {
+        remove_orphan_dir(entry.path(), "pre-v2.0.6 layout");
+    }
 }
 
 /**
@@ -75,29 +245,34 @@ WorktreeManager::WorktreeManager(const std::filesystem::path& repo_dir)
  * crashed or interrupted sessions. Without this, `worktree add -b` fails
  * with "branch already exists" and blocks all delegation.
  *
+ * Walk order:
+ * 1. `git worktree prune` — sync git admin state with filesystem.
+ * 2. Iterate `.worktrees/*`: remove old-layout and dead-session dirs
+ *    that git doesn't recognize as worktrees.
+ * 3. Delete `delegation/*` branches, after pruning their backing dirs.
+ *
  * @internal
- * @version 2.0.4
+ * @version 2.0.6
  */
 void WorktreeManager::prune_stale_worktrees() {
     run_git(repo_dir_, "worktree prune");
-    auto branches = run_git(repo_dir_, "branch --list 'delegation/*'");
-    if (!branches.success || branches.output.empty()) { return; }
 
-    std::istringstream iss(branches.output);
-    std::string line;
-    int pruned = 0;
-    while (std::getline(iss, line)) {
-        auto start = line.find_first_not_of(" *+");
-        if (start == std::string::npos) { continue; }
-        std::string branch = line.substr(start);
-        auto end = branch.find_first_of(" \t");
-        if (end != std::string::npos) { branch = branch.substr(0, end); }
-        if (branch.rfind("delegation/", 0) != 0) { continue; }
-        run_git(repo_dir_, "branch -D " + branch);
-        pruned++;
+    auto base = repo_dir_ / ".worktrees";
+    std::error_code ec;
+    if (std::filesystem::exists(base, ec)) {
+        for (const auto& entry :
+             std::filesystem::directory_iterator(base, ec)) {
+            prune_worktrees_entry(entry);
+        }
     }
-    if (pruned > 0) {
-        logger->info("Pruned {} stale delegation branch(es)", pruned);
+
+    auto branches = collect_delegation_branches();
+    for (const auto& branch : branches) {
+        run_git(repo_dir_, "branch -D " + branch);
+    }
+    if (!branches.empty()) {
+        logger->info("Pruned {} stale delegation branch(es)",
+                     branches.size());
     }
 }
 
@@ -163,7 +338,7 @@ bool WorktreeManager::ensure_develop() {
  * @param tier Target tier name.
  * @return WorktreeInfo on success, nullopt on failure.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6
  */
 std::optional<WorktreeInfo> WorktreeManager::create_worktree(
     const std::string& delegation_id,
@@ -186,6 +361,8 @@ std::optional<WorktreeInfo> WorktreeManager::create_worktree(
                      r.output);
         run_git(repo_dir_, "worktree remove --force '"
                            + path.string() + "'");
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
         run_git(repo_dir_, "branch -D " + branch);
         r = run_git(repo_dir_, cmd);
         if (!r.success) {
@@ -250,9 +427,23 @@ bool WorktreeManager::merge_worktree(const WorktreeInfo& info) {
  * @internal
  * @version 1.8.6
  */
+/**
+ * @brief Remove worktree directory and delete branch.
+ *
+ * Uses `git worktree remove --force` first, then
+ * `std::filesystem::remove_all` as a belt-and-suspenders fallback —
+ * if git fails silently (locked fd, permissions), the directory is
+ * still removed by the filesystem call.
+ *
+ * @param info Worktree to clean up.
+ * @internal
+ * @version 2.0.6
+ */
 void WorktreeManager::cleanup(const WorktreeInfo& info) {
     run_git(repo_dir_, "worktree remove --force '" +
                        info.path.string() + "'");
+    std::error_code ec;
+    std::filesystem::remove_all(info.path, ec);
     run_git(repo_dir_, "branch -D " + info.branch);
     logger->info("Cleaned up worktree: {}", info.branch);
 }

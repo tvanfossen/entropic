@@ -140,6 +140,7 @@ add_executable(entropic-core-tests
     core/context_manager_test.cpp
     core/engine_test.cpp
     core/worktree_test.cpp
+    core/test_worktree_session_isolation.cpp
     core/delegation_manager_test.cpp
     core/auto_chain_test.cpp
     core/hook_registry_test.cpp

@@ -10,19 +10,25 @@
 
 #include <cstring>
 #include <functional>
+#include <unordered_map>
 
 static auto logger = entropic::log::get("core.response_generator");
 
 namespace entropic {
 
-static size_t s_last_system_hash = 0;
+/// Per-tier system prompt hash for diff detection across delegations.
+static std::unordered_map<std::string, size_t> s_tier_system_hash;
 
 /**
  * @brief Log the full assembled prompt (all messages, no truncation).
+ *
+ * Tracks system prompt hash per-tier so that consecutive delegations
+ * to the same tier correctly detect content drift.
+ *
  * @param messages Message list being sent to inference.
  * @param tier Locked tier name.
  * @utility
- * @version 2.0.2
+ * @version 2.0.6
  */
 static void log_prompt(const std::vector<Message>& messages,
                        const std::string& tier) {
@@ -31,12 +37,16 @@ static void log_prompt(const std::vector<Message>& messages,
     for (size_t i = 0; i < messages.size(); ++i) {
         if (messages[i].role == "system") {
             size_t h = std::hash<std::string>{}(messages[i].content);
-            if (h != s_last_system_hash) {
-                s_last_system_hash = h;
-                logger->info("[{}] role=system\n{}", i, messages[i].content);
+            size_t prev = s_tier_system_hash[tier];
+            s_tier_system_hash[tier] = h;
+            if (h != prev || prev == 0) {
+                logger->info("[{}] role=system hash={:016x} "
+                             "prev={:016x}\n{}",
+                             i, h, prev, messages[i].content);
             } else {
-                logger->info("[{}] role=system [unchanged, {} chars]",
-                             i, messages[i].content.size());
+                logger->info("[{}] role=system [unchanged, {} chars, "
+                             "hash={:016x}]",
+                             i, messages[i].content.size(), h);
             }
         } else {
             logger->info("[{}] role={}\n{}", i, messages[i].role,

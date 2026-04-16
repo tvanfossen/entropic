@@ -242,21 +242,44 @@ protected:
         const GenerationParams& params);
 
     /**
+     * @brief Decode tokens starting at a given offset.
+     * @param tokens Full token sequence.
+     * @param start_offset First token to decode.
+     * @return true on success.
+     * @version 2.0.6
+     */
+    bool decode_tokens_from(
+        const std::vector<llama_token>& tokens, int start_offset);
+
+    /**
      * @brief Restore KV state from cache and decode remaining tokens.
      * @param cached Cache entry to restore.
      * @param tokens Full token sequence.
      * @return true on success, false to fall back to full prefill.
-     * @version 1.8.3
+     * @version 2.0.6
      */
     bool restore_cached_prefix(
         const CacheEntry* cached,
         const std::vector<llama_token>& tokens);
 
     /**
-     * @brief Save system prefix KV state to cache after full prefill.
-     * @param key Cache key.
+     * @brief Two-pass prefill: prefix-only prefill → save → rest.
+     * @param tokens Full token sequence.
      * @param prefix_tokens System prefix token count.
-     * @version 1.8.3
+     * @param key Cache key to store under.
+     * @return true on success.
+     * @version 2.0.6
+     */
+    bool prefill_and_cache_prefix(
+        const std::vector<llama_token>& tokens,
+        int prefix_tokens,
+        const CacheKey& key);
+
+    /**
+     * @brief Capture seq 0 KV state and store under the given key.
+     * @param key Cache key.
+     * @param prefix_tokens Token count to record with the entry.
+     * @version 2.0.6
      */
     void save_prefix_to_cache(const CacheKey& key, int prefix_tokens);
 

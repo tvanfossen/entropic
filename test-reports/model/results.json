@@ -1,190 +1,196 @@
 {
   "schema_version": 1,
-  "version": "2.0.0",
-  "git_sha": "21eb3541fe442b99a2f9e9c35d3e391d6574ac17",
-  "timestamp": "2026-04-07T13:48:43Z",
+  "version": "2.0.5",
+  "git_sha": "c3fea83983294dbf04c7e4298e067c705a179a64",
+  "timestamp": "2026-04-16T18:09:58Z",
   "model": "Qwen3.5-35B-A3B-UD-IQ3_XXS",
   "gpu": "NVIDIA RTX PRO 4000 Blackwell Generation Laptop GPU",
-  "duration_ms": 387730,
+  "duration_ms": 500488,
   "tests": [
     {
       "name": "test-adapter-lifecycle",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 10261
+      "duration_ms": 3921
     },
     {
       "name": "test-audit-log",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2675
+      "duration_ms": 2577
     },
     {
       "name": "test-backend-capabilities",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2736
+      "duration_ms": 2634
     },
     {
       "name": "test-basic-generation",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3390
+      "duration_ms": 3759
     },
     {
       "name": "test-constitutional-validation",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 128828
+      "duration_ms": 143235
+    },
+    {
+      "name": "test-context-bleed",
+      "status": "pass",
+      "retries": 0,
+      "duration_ms": 55170
     },
     {
       "name": "test-context-retention",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 11630
+      "duration_ms": 12265
     },
     {
       "name": "test-custom-compactor",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2500
+      "duration_ms": 3065
     },
     {
       "name": "test-delegation",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 33919
+      "duration_ms": 33486
     },
     {
       "name": "test-dynamic-identity",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2540
+      "duration_ms": 2973
     },
     {
       "name": "test-e0-true-e2e",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 5833
+      "duration_ms": 6348
     },
     {
       "name": "test-e1-single-turn",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3692
+      "duration_ms": 4071
     },
     {
       "name": "test-e2-tool-call",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 7848
+      "duration_ms": 11997
     },
     {
       "name": "test-e3-routing",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 12902
+      "duration_ms": 12735
     },
     {
       "name": "test-e4-multi-turn",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 5264
+      "duration_ms": 20782
     },
     {
       "name": "test-e5-compaction",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 11254
+      "duration_ms": 12355
     },
     {
       "name": "test-e6-state-transitions",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3564
+      "duration_ms": 4332
     },
     {
       "name": "test-e7-delegation",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 75273
+      "duration_ms": 94448
     },
     {
       "name": "test-e8-mcp-auth",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 17083
+      "duration_ms": 14995
     },
     {
       "name": "test-e9-dynamic-identity",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 6160
+      "duration_ms": 6751
     },
     {
       "name": "test-external-mcp",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2408
+      "duration_ms": 3315
     },
     {
       "name": "test-gpu-profile",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3473
+      "duration_ms": 4316
     },
     {
       "name": "test-grammar-constraint",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3943
+      "duration_ms": 5614
     },
     {
       "name": "test-hook-lifecycle",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3443
+      "duration_ms": 4764
     },
     {
       "name": "test-logprob-evaluation",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3611
+      "duration_ms": 4100
     },
     {
       "name": "test-mcp-auth-denial",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 6057
+      "duration_ms": 8499
     },
     {
       "name": "test-multimodal-fallback",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3765
+      "duration_ms": 4589
     },
     {
       "name": "test-session-persistence",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 3928
+      "duration_ms": 4518
     },
     {
       "name": "test-tier-routing",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 2602
+      "duration_ms": 3112
     },
     {
       "name": "test-tool-call-parsing",
       "status": "pass",
       "retries": 0,
-      "duration_ms": 7134
+      "duration_ms": 5747
     }
   ],
   "summary": {
-    "total": 29,
-    "passed": 29,
+    "total": 30,
+    "passed": 30,
     "failed": 0,
     "flaky": 0
   }

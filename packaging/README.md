@@ -30,15 +30,14 @@ tar -xzf entropic-<version>-linux-x86_64-<backend>.tar.gz -C /usr/local --strip-
 `/usr/local/{bin,lib,share,include}` — the standard Unix layout that
 `find_package` and `ld` search by default.
 
-### Python
+### Python bindings
 
-```
-pip install entropic-engine
-```
+Python bindings (ctypes wrapper + `entropic` CLI) are planned for a
+future release. For now, install via the tarball or `install.sh`.
 
-Ships the same `librentropic.so` as the CPU tarball, bundled inside
-the wheel. One binary, two channels. CUDA users: use the installer
-above — there is no CUDA wheel on PyPI at this time.
+See `python/entropic/` in the source tree for the auto-generated
+ctypes wrapper if you're building from source and want to use
+entropic from Python.
 
 ### Layout
 

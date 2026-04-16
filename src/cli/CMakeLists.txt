@@ -9,6 +9,7 @@ add_executable(entropic
     main.cpp
     mcp_bridge.cpp
     version.cpp
+    download.cpp
 )
 
 target_include_directories(entropic

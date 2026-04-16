@@ -37,6 +37,11 @@ target_link_libraries(entropic-facade PRIVATE
     $<LINK_ONLY:nlohmann_json::nlohmann_json>
     $<LINK_ONLY:httplib::httplib>
     $<LINK_ONLY:llama>
+    # libdl for dladdr() — used by config/data_dir.cpp to derive
+    # <prefix>/share/entropic relative to librentropic.so at runtime.
+    # On glibc 2.34+ dlfcn is merged into libc; CMAKE_DL_LIBS keeps
+    # older targets working.
+    $<LINK_ONLY:${CMAKE_DL_LIBS}>
 )
 if(ENTROPIC_STORAGE_SQLITE)
     target_link_libraries(entropic-facade PRIVATE $<LINK_ONLY:SQLite::SQLite3>)

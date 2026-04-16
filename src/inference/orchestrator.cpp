@@ -55,7 +55,7 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 2.0.2
+ * @version 2.0.5
  */
 bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
     for (const auto& [name, tier_config] : config.models.tiers) {
@@ -63,7 +63,11 @@ bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
         if (!std::filesystem::exists(tier_config.path)) {
             logger->error("Model file not found for tier '{}': {}",
                           name, path_key);
-            logger->error("Download with: entropic download {}", path_key);
+            logger->error("Place a GGUF file at the path above, or set "
+                          "ENTROPIC_MODEL_DIR to a directory containing "
+                          "it. Run `entropic download --list` to see "
+                          "bundled model keys, then "
+                          "`entropic download <key>` to fetch one.");
             return false;
         }
         if (model_pool_.find(path_key) == model_pool_.end()) {

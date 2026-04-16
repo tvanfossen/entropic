@@ -56,24 +56,60 @@ share/doc/entropic/README.md          This file
 
 ---
 
+## CUDA runtime prerequisite (CUDA tarball only)
+
+The `entropic-*-cuda.tar.gz` tarball's `librentropic.so` dynamically
+links to the NVIDIA CUDA 12.x runtime libraries:
+
+- `libcudart.so.12` — from the CUDA toolkit (package
+  `cuda-cudart-12-6` on Ubuntu / equivalent on other distros)
+- `libcublas.so.12`, `libcublasLt.so.12` — from the CUDA toolkit
+- `libcuda.so.1` — from the NVIDIA driver
+
+Install the CUDA 12.x runtime before extracting this tarball. On
+Ubuntu 24.04:
+
+```
+wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+sudo apt-get update
+sudo apt-get install -y cuda-cudart-12-6 libcublas-12-6
+```
+
+The CPU tarball (`entropic-*-cpu.tar.gz`) has no CUDA dependency and
+only needs system libc/libstdc++/libssl/libsqlite3.
+
 ## Models
 
-Models are **not** bundled. The registry (`share/entropic/bundled_models.yaml`)
-records filenames; point the engine at a directory holding those files:
+Models are **not** bundled. The engine ships with a registry
+(`share/entropic/bundled_models.yaml`) of vetted GGUF files.
+
+### Fetch a bundled model
 
 ```
-export ENTROPIC_MODEL_DIR=/path/to/your/gguf/dir
+entropic download --list            # show available keys + sizes
+entropic download primary           # fetches to ~/.entropic/models/
 ```
 
-Discovery order:
+This downloads with resume support and stores at the path the engine
+discovers by default. For a custom location:
 
-1. `ENTROPIC_MODEL_DIR` (environment)
+```
+entropic download primary --dir /opt/models
+export ENTROPIC_MODEL_DIR=/opt/models
+```
+
+### Discovery order
+
+The engine resolves model paths in this order at load time:
+
+1. `ENTROPIC_MODEL_DIR` (environment override, always wins)
 2. Absolute path specified in config
 3. `~/.entropic/models/`
 4. `/opt/entropic/models/`
 
-Download the GGUF files listed in `bundled_models.yaml`, drop them in
-one of those directories, and the engine finds them.
+Any GGUF at one of those paths with a name matching a registry entry
+is picked up automatically.
 
 ---
 

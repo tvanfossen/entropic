@@ -511,14 +511,14 @@ def _smoke_staged_install(c, stage_dir, build_dir):
 
 ## @brief Verify installed .so has no unresolved / surprise runtime deps.
 ## @utility
-## @version 1
+## @version 2
 def _check_linkage(stage_dir, backend):
     """Inspect ldd output for the installed facade and CLI.
 
     Fails if librentropic.so has `not found` entries, or if CLI
     doesn't resolve librentropic.so via the $ORIGIN/../lib RPATH.
     """
-    lib = os.path.join(stage_dir, "lib", "librentropic.so.2.0.5")
+    lib = os.path.join(stage_dir, "lib", f"librentropic.so.{_cmake_project_version()}")
     bin_entropic = os.path.join(stage_dir, "bin", "entropic")
 
     lib_ldd = subprocess.check_output(["ldd", lib], text=True)

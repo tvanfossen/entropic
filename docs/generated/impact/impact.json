@@ -1,13 +1,1 @@
-[
-  {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered config merge",
-    "functions": [
-      {
-        "name": "parse_config_file",
-        "file": "src/config/loader.cpp",
-        "version": "1.8.2"
-      }
-    ]
-  }
-]
+[]

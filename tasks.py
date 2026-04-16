@@ -585,29 +585,28 @@ def _build_and_verify_wheel(c, cpu_tarball, version, outdir):
 
 ## @brief Pre-flight the tag-driven release workflow locally (no publish).
 ## @utility
-## @version 1
+## @version 2
 @task(
     help={
         "version": "Artifact version string (default: CMakeLists project VERSION)",
         "skip_cuda": "Skip the CUDA matrix entry (faster iteration)",
-        "skip_wheel": "Skip the wheel build + pip-install smoke step",
-        "outdir": "Output directory for tarballs and wheel (default: dist/)",
+        "outdir": "Output directory for tarballs (default: dist/)",
         "jobs": f"Parallel build jobs (default: {JOBS})",
     }
 )
-def release_check(c, version="", skip_cuda=False, skip_wheel=False, outdir="dist", jobs=JOBS):
+def release_check(c, version="", skip_cuda=False, outdir="dist", jobs=JOBS):
     """Pre-flight the tag-driven release workflow locally.
 
-    Mirrors .github/workflows/release.yaml's build-package + build-wheel
-    jobs on the local machine — no tag push, no publish. Confidence
-    gate for "the release will succeed" before burning hosted-runner
-    minutes on a paid tier or cutting a real tag.
+    Mirrors .github/workflows/release.yaml's build-package jobs on the
+    local machine — no tag push, no publish. Confidence gate for "the
+    release will succeed" before burning hosted-runner minutes on a
+    paid tier or cutting a real tag.
 
-    Produces .tar.gz per backend + optional .whl, verifies:
+    Produces .tar.gz per backend and verifies:
       - CMake install tree is self-contained (no unresolved deps)
       - CLI launches via install RPATH (no LD_LIBRARY_PATH needed)
       - find_package(entropic 2.0 REQUIRED) consumer build+links+runs
-      - Wheel imports + bundled librentropic.so loads + CLI runs
+      - CUDA tarball has libcudart linked (Blackwell native SASS present)
     """
     if not version:
         version = _cmake_project_version()
@@ -628,18 +627,9 @@ def release_check(c, version="", skip_cuda=False, skip_wheel=False, outdir="dist
         tarballs[backend] = _pack_tarball(c, stage_dir, version, backend, outdir)
         print(f"  ✓ {tarballs[backend]}")
 
-    if not skip_wheel and "cpu" in tarballs:
-        print("\n══ Release check: wheel ══")
-        _build_and_verify_wheel(c, tarballs["cpu"], version, outdir)
-        print(f"  ✓ {outdir}/entropic_engine-{version}-py3-none-linux_x86_64.whl")
-
     print("\n══ Release pre-flight: PASSED ══")
     for backend, path in tarballs.items():
         size = os.path.getsize(path) / (1024 * 1024)
         print(f"  {backend:<5} {path}  ({size:.1f} MB)")
-    if not skip_wheel and "cpu" in tarballs:
-        wheel = f"{outdir}/entropic_engine-{version}-py3-none-linux_x86_64.whl"
-        size = os.path.getsize(wheel) / (1024 * 1024)
-        print(f"  wheel {wheel}  ({size:.1f} MB)")
     print(f"\nVersion: {version}")
     print(f"Next: git tag v{version} && git push origin v{version}")

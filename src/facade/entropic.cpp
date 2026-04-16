@@ -513,7 +513,7 @@ entropic_error_t entropic_configure(
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.2
+ * @version 2.0.5
  */
 entropic_error_t entropic_configure_from_file(
     entropic_handle_t handle,
@@ -533,6 +533,14 @@ entropic_error_t entropic_configure_from_file(
         handle->last_error = err;
         s_log->error("configure_from_file: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+
+    // Parity with configure_dir: if the parsed config specifies a
+    // log_dir, start session logging there. Without this, consumers
+    // using the file-based API get no session.log on disk even when
+    // their YAML declares log_dir.
+    if (!handle->config.log_dir.empty()) {
+        entropic::log::setup_session(handle->config.log_dir);
     }
 
     return configure_common(handle);

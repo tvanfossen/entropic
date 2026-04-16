@@ -113,7 +113,26 @@ jobs:
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
-            cuda_archs: "80;86;89;90"
+            # Comprehensive arch coverage — every discrete NVIDIA GPU
+            # generation from Maxwell onward gets native SASS + PTX.
+            # Skipping only the Jetson/embedded variants (sm_53/62/72/87).
+            #
+            #   50, 52  Maxwell   GTX 9xx, Titan X (Maxwell)
+            #   60, 61  Pascal    GTX 10-series, P40/P100
+            #   70      Volta     Titan V, V100
+            #   75      Turing    RTX 20-series, T4
+            #   80      Ampere DC A100
+            #   86      Ampere    RTX 30-series, A40
+            #   89      Ada       RTX 40-series, L40
+            #   90      Hopper    H100, H200
+            #   100     Blackwell DC  B100, B200
+            #   120     Blackwell     RTX PRO 4000, RTX 50-series
+            #
+            # Requires CUDA toolkit >= 12.8 for sm_100/sm_120.
+            # Build takes ~20-30 min on 8-core runner (vs ~10 with the
+            # narrower list) — acceptable since it's paid compute and
+            # runs once per release.
+            cuda_archs: "50;52;60;61;70;75;80;86;89;90;100;120"
 
     steps:
       - uses: actions/checkout@v4

@@ -3,18 +3,18 @@ name: CI
 
 # PR + push checks on develop/main.
 #
-# Runs the project's authoritative quality gate — the full pre-commit
-# suite, which itself invokes `inv build --cpu`, `inv test --cpu`, and
-# the per-library coverage check. That keeps the CI signal identical
-# to what contributors see locally before committing.
+# Three parallel jobs:
+#   1. pre-commit — linters + build + unit tests (SKIP coverage hook;
+#      coverage runs as a separate parallel build to avoid doubling
+#      the build time).
+#   2. coverage — full coverage-preset build + gcovr per-library check.
+#   3. distribution-smoke — find_package consumer + CLI RPATH check.
 #
-# Runs on GitHub-hosted ubuntu-24.04. There is no self-hosted runner
-# registered on this repo. CPU build + unit tests + distribution smoke
-# is the PR gate; CUDA artifact builds live in release.yml (also on
-# ubuntu-24.04, with the CUDA toolkit installed inline).
+# All on GitHub-hosted ubuntu-24.04 (free 2-core). Transitioning to a
+# Docker-based self-hosted runner is planned for better build times.
 #
-# Model tests do not run in CI — they are developer-run at x.y.0 bumps
-# per docs/architecture-cpp.md §Test Gating.
+# Model tests do not run in CI — developer-run at x.y.0 bumps per
+# docs/architecture-cpp.md §Test Gating.
 
 on:
   pull_request:
@@ -28,23 +28,42 @@ concurrency:
 
 jobs:
   pre-commit:
-    name: Pre-commit (knots, flake8, doxygen-guard, build, tests, coverage)
+    name: Pre-commit (knots, flake8, doxygen-guard, build, tests)
     runs-on: ubuntu-24.04
-    # 2-core hosted runner: cold-cache llama.cpp build dominates. First
-    # run fills ccache (~20-30 min); subsequent runs hit it (~5-10 min).
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
-          # llama.cpp submodule is required for the CPU build.
           submodules: recursive
 
       - uses: ./.github/actions/setup-entropic
         with:
           ccache-key: cpu
 
-      - name: Run pre-commit (all hooks, all files)
+      - name: Run pre-commit (skip coverage — runs in parallel job)
+        env:
+          SKIP: coverage-check
         run: .venv/bin/pre-commit run --all-files --show-diff-on-failure
+
+      - name: ccache stats (post-build)
+        if: always()
+        run: ccache --show-stats
+
+  coverage:
+    name: Per-library coverage (gcovr)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup-entropic
+        with:
+          ccache-key: coverage
+
+      - name: Run coverage check
+        run: .venv/bin/pre-commit run coverage-check --all-files
 
       - name: ccache stats (post-build)
         if: always()
@@ -62,7 +81,6 @@ jobs:
     name: Distribution smoke (find_package + CLI RPATH)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    needs: pre-commit
     steps:
       - uses: actions/checkout@v4
         with:
@@ -73,8 +91,4 @@ jobs:
           ccache-key: cpu
 
       - name: Run scripts/smoke_distribution.sh
-        # Builds a clean shared CPU install, stages it to a scratch
-        # prefix, then builds+runs packaging/smoke-consumer against it
-        # via find_package(entropic). Confirms the Phase 1 packaging
-        # story still works for external consumers.
         run: scripts/smoke_distribution.sh

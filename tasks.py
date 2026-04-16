@@ -468,15 +468,17 @@ def _cmake_project_version():
 
 ## @brief Configure + build + install one release backend to a scratch prefix.
 ## @utility
-## @version 1
+## @version 2
 def _build_and_stage(c, backend, build_dir, stage_dir, jobs):
     """Run cmake configure → build → install for one backend."""
     cuda_flag = "-DENTROPIC_CUDA=ON" if backend == "cuda" else "-DENTROPIC_CUDA=OFF"
     cpu_flag = "-DENTROPIC_CPU_ONLY=ON" if backend == "cpu" else "-DENTROPIC_CPU_ONLY=OFF"
     extra = ""
     if backend == "cuda":
-        # Match release.yaml's arch list so the local build approximates CI.
-        extra = ' "-DCMAKE_CUDA_ARCHITECTURES=80;86;89;90"'
+        # Match release.yaml's comprehensive arch list so local pre-flight
+        # mirrors what CI ships. Maxwell through Blackwell; requires
+        # CUDA toolkit >= 12.8 for sm_100/sm_120.
+        extra = ' "-DCMAKE_CUDA_ARCHITECTURES=50;52;60;61;70;75;80;86;89;90;100;120"'
 
     c.run(
         f"cmake -B {build_dir} -S ."

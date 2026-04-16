@@ -59,22 +59,43 @@ share/doc/entropic/README.md          This file
 ## CUDA runtime prerequisite (CUDA tarball only)
 
 The `entropic-*-cuda.tar.gz` tarball's `librentropic.so` dynamically
-links to the NVIDIA CUDA 12.x runtime libraries:
+links to the NVIDIA CUDA 12.8+ runtime libraries:
 
 - `libcudart.so.12` — from the CUDA toolkit (package
-  `cuda-cudart-12-6` on Ubuntu / equivalent on other distros)
+  `cuda-cudart-12-8` on Ubuntu / equivalent on other distros)
 - `libcublas.so.12`, `libcublasLt.so.12` — from the CUDA toolkit
 - `libcuda.so.1` — from the NVIDIA driver
 
-Install the CUDA 12.x runtime before extracting this tarball. On
+Install CUDA 12.8+ runtime before extracting this tarball. On
 Ubuntu 24.04:
 
 ```
 wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
 sudo apt-get update
-sudo apt-get install -y cuda-cudart-12-6 libcublas-12-6
+sudo apt-get install -y cuda-cudart-12-8 libcublas-12-8
 ```
+
+### GPU compatibility
+
+Native SASS kernels are baked in for every discrete NVIDIA GPU
+generation from Maxwell onward:
+
+| Arch       | Compute | Example GPUs                         |
+|------------|---------|--------------------------------------|
+| Maxwell    | 5.0/5.2 | GTX 9xx, Titan X (Maxwell)           |
+| Pascal     | 6.0/6.1 | GTX 10-series, P40, P100             |
+| Volta      | 7.0     | Titan V, V100                        |
+| Turing     | 7.5     | RTX 20-series, T4                    |
+| Ampere DC  | 8.0     | A100                                 |
+| Ampere     | 8.6     | RTX 30-series, A40                   |
+| Ada        | 8.9     | RTX 40-series, L40                   |
+| Hopper     | 9.0     | H100, H200                           |
+| Blackwell  | 10.0    | B100, B200                           |
+| Blackwell  | 12.0    | RTX PRO 4000, RTX 50-series          |
+
+PTX fallback is still available for Jetson/embedded variants
+(sm_53/62/72/87) and any future architectures.
 
 The CPU tarball (`entropic-*-cpu.tar.gz`) has no CUDA dependency and
 only needs system libc/libstdc++/libssl/libsqlite3.

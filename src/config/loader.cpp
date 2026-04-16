@@ -652,7 +652,89 @@ static void discover_mcp_json(
 }
 
 /**
- * @brief Load config with consumer defaults + global + project layers.
+ * @brief Load the global user config layer if present.
+ * @utility
+ * @return Empty on success or absence; error message on parse failure.
+ * @version 1
+ */
+static std::string load_global_layer(
+    const BundledModels& registry, ParsedConfig& config)
+{
+    const char* home = getenv("HOME");
+    std::string err;
+    if (home) {
+        auto path = std::filesystem::path(home) / ".entropic" / "config.yaml";
+        if (std::filesystem::exists(path)) {
+            s_log->info("Loading global config: {}", path.string());
+            err = parse_config_file(path, registry, config);
+            if (!err.empty()) {
+                err = "global config: " + err;
+            }
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Load the consumer/app defaults layer if present (non-fatal).
+ * @utility
+ * @version 1
+ */
+static void load_consumer_layer(
+    const std::filesystem::path& consumer_defaults,
+    const BundledModels& registry, ParsedConfig& config)
+{
+    if (consumer_defaults.empty() || !std::filesystem::exists(consumer_defaults)) {
+        return;
+    }
+    s_log->info("Loading consumer defaults: {}", consumer_defaults.string());
+    auto err = parse_config_file(consumer_defaults, registry, config);
+    if (!err.empty()) {
+        s_log->warn("Consumer defaults failed: {}", err);
+    }
+}
+
+/**
+ * @brief Load the project-local layer if present.
+ * @utility
+ * @return Empty on success or absence; error message on parse failure.
+ * @version 1
+ */
+static std::string load_project_layer(
+    const std::filesystem::path& project_dir,
+    const BundledModels& registry, ParsedConfig& config)
+{
+    std::string err;
+    if (!project_dir.empty()) {
+        auto path = project_dir / "config.local.yaml";
+        if (std::filesystem::exists(path)) {
+            s_log->info("Loading project config: {}", path.string());
+            err = parse_config_file(path, registry, config);
+            if (!err.empty()) {
+                err = "project config: " + err;
+            }
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Load config with global → consumer defaults → project-local layering.
+ *
+ * Later layers override earlier ones (standard config-precedence semantics:
+ * more-specific wins). Order is:
+ *
+ *   1. Global user config (`~/.entropic/config.yaml`) — personal defaults.
+ *   2. Consumer defaults (e.g., an app's bundled `default_config.yaml`) —
+ *      the app knows what it needs; overrides the user's global defaults.
+ *   3. Project-local (`<project_dir>/config.local.yaml`) — most specific.
+ *
+ * Prior to v2.0.6 consumer defaults loaded first and were overridden by
+ * the user's global config. That meant a user's aggressive global
+ * settings (e.g. `context_length: 131072`) would override an app's
+ * deliberate lightweight defaults (e.g. `context_length: 16384`) —
+ * reversing expected precedence semantics. Now consumer defaults win
+ * over global.
  *
  * @param project_dir Project config directory.
  * @param consumer_defaults Path to consumer defaults YAML.
@@ -660,7 +742,7 @@ static void discover_mcp_json(
  * @param config Output config.
  * @return Empty string on success.
  * @internal
- * @version 2.0.3
+ * @version 2.0.6
  */
 std::string load_layered(
     const std::filesystem::path& project_dir,
@@ -668,36 +750,21 @@ std::string load_layered(
     const BundledModels& registry,
     ParsedConfig& config)
 {
-    // Layer 0: consumer-specific defaults
-    if (!consumer_defaults.empty()
-        && std::filesystem::exists(consumer_defaults)) {
-        s_log->info("Loading consumer defaults: {}",
-                     consumer_defaults.string());
-        auto err = parse_config_file(consumer_defaults, registry, config);
-        if (!err.empty()) {
-            s_log->warn("Consumer defaults failed: {}", err);
+    auto err = load_global_layer(registry, config);
+    if (err.empty()) {
+        load_consumer_layer(consumer_defaults, registry, config);
+        if (!project_dir.empty() && config.log_dir.empty()) {
+            config.log_dir = project_dir;
         }
+        err = load_project_layer(project_dir, registry, config);
     }
-
-    // Set log_dir to project_dir by default
-    if (!project_dir.empty() && config.log_dir.empty()) {
-        config.log_dir = project_dir;
+    if (err.empty() && config.models.tiers.empty()) {
+        err = load_bundled_default(std::filesystem::path{}, registry, config);
     }
-
-    // Layers 1-2: global + project local
-    const char* home = getenv("HOME");
-    std::filesystem::path global;
-    if (home) {
-        global = std::filesystem::path(home)
-            / ".entropic" / "config.yaml";
+    if (err.empty()) {
+        apply_env_overrides(config);
+        discover_mcp_json(project_dir, config);
     }
-    std::filesystem::path project;
-    if (!project_dir.empty()) {
-        project = project_dir / "config.local.yaml";
-    }
-
-    auto err = load_config(global, project, registry, config);
-    if (err.empty()) { discover_mcp_json(project_dir, config); }
     return err;
 }
 

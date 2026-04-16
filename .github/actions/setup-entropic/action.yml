@@ -75,22 +75,27 @@ runs:
         # nvcc + CUDA runtime headers for compile-time CUDA support.
         # No GPU needed: nvcc cross-compiles to target architectures.
         # Using NVIDIA's official apt repo pinned to Ubuntu 24.04.
+        #
+        # Toolkit version: 12.8. Required for Blackwell (sm_100 /
+        # sm_120 — RTX PRO 4000, RTX 50-series, B100/B200 data-center
+        # parts). CUDA 12.6 and earlier will PTX-JIT-fallback for these
+        # GPUs, which drops throughput ~2-3× vs. native kernels.
         set -euo pipefail
         wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
         sudo dpkg -i cuda-keyring_1.1-1_all.deb
         sudo apt-get update
-        # cuda-toolkit-12-6 pulls in nsight-* profilers (~1.2 GB) we
-        # don't need on a no-GPU build runner. Install only the compile
-        # pieces: nvcc, libraries, device-runtime, headers.
+        # Install only the compile pieces (nvcc, libraries, device
+        # runtime, headers) — skip the ~1.2 GB nsight-* profilers we
+        # don't need on a no-GPU build runner.
         sudo apt-get install -y --no-install-recommends \
-          cuda-nvcc-12-6 \
-          cuda-cudart-dev-12-6 \
-          cuda-libraries-dev-12-6 \
-          cuda-driver-dev-12-6
+          cuda-nvcc-12-8 \
+          cuda-cudart-dev-12-8 \
+          cuda-libraries-dev-12-8 \
+          cuda-driver-dev-12-8
         # Expose nvcc + libs to subsequent steps in the same job.
-        echo "/usr/local/cuda-12.6/bin" >>"$GITHUB_PATH"
-        echo "LD_LIBRARY_PATH=/usr/local/cuda-12.6/lib64:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
-        echo "CUDA_HOME=/usr/local/cuda-12.6" >>"$GITHUB_ENV"
+        echo "/usr/local/cuda-12.8/bin" >>"$GITHUB_PATH"
+        echo "LD_LIBRARY_PATH=/usr/local/cuda-12.8/lib64:${LD_LIBRARY_PATH:-}" >>"$GITHUB_ENV"
+        echo "CUDA_HOME=/usr/local/cuda-12.8" >>"$GITHUB_ENV"
 
     - name: Set up Python ${{ inputs.python-version }}
       uses: actions/setup-python@v5

@@ -15,6 +15,8 @@
 #include <fstream>
 #include <sstream>
 
+#include <dlfcn.h>
+
 static auto s_log = entropic::log::get("config");
 
 namespace entropic::config {
@@ -676,14 +678,62 @@ static std::string load_global_layer(
 }
 
 /**
- * @brief Load the consumer/app defaults layer if present (non-fatal).
- * @utility
+ * @brief Resolve a relative consumer_defaults path against install prefix.
+ *
+ * The facade passes a bare filename ("default_config.yaml") that
+ * resolves against CWD by default. For tarball-installed consumers
+ * whose CWD isn't the install prefix, the bundled
+ * <prefix>/share/entropic/<filename> is the correct fallback. Uses
+ * the same dladdr-derived discovery as src/config/data_dir.cpp.
+ *
+ * Returns the input unchanged if it's absolute or already exists.
+ * Otherwise attempts <prefix>/share/entropic/<filename>; returns that
+ * if found, else returns the original (so the caller's error
+ * messages remain sensible).
+ *
+ * @internal
+ * @return Path to use for config loading.
  * @version 1
  */
+static std::filesystem::path resolve_consumer_defaults(
+    const std::filesystem::path& consumer_defaults)
+{
+    // Input already usable (empty, absolute, or found at CWD) → passthrough.
+    if (consumer_defaults.empty()
+        || consumer_defaults.is_absolute()
+        || std::filesystem::exists(consumer_defaults)) {
+        return consumer_defaults;
+    }
+    // Fall back to <install-prefix>/share/entropic/<filename>. Uses
+    // the same librentropic.so location trick — dladdr on any address
+    // in this translation unit resolves to the .so's on-disk path.
+    std::filesystem::path result = consumer_defaults;
+    Dl_info info = {};
+    if (dladdr(reinterpret_cast<void*>(&resolve_consumer_defaults), &info) != 0
+        && info.dli_fname != nullptr) {
+        std::error_code ec;
+        auto lib_path = std::filesystem::absolute(info.dli_fname, ec);
+        if (!ec) {
+            auto candidate = lib_path.parent_path().parent_path()
+                / "share" / "entropic" / consumer_defaults.filename();
+            if (std::filesystem::exists(candidate)) {
+                result = candidate;
+            }
+        }
+    }
+    return result;
+}
+
+/**
+ * @brief Load the consumer/app defaults layer if present (non-fatal).
+ * @utility
+ * @version 2
+ */
 static void load_consumer_layer(
-    const std::filesystem::path& consumer_defaults,
+    const std::filesystem::path& consumer_defaults_in,
     const BundledModels& registry, ParsedConfig& config)
 {
+    auto consumer_defaults = resolve_consumer_defaults(consumer_defaults_in);
     if (consumer_defaults.empty() || !std::filesystem::exists(consumer_defaults)) {
         return;
     }

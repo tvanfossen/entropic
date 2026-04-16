@@ -715,18 +715,62 @@ std::string LlamaCppBackend::extract_system_prompt(
 }
 
 /**
- * @brief Restore cached KV prefix and decode remaining tokens.
+ * @brief Decode remaining tokens starting at `start_offset`.
+ *
+ * Assumes `seq_pos_max(0) == start_offset - 1` so that
+ * `llama_batch_get_one` auto-positions tokens at start_offset onward.
+ *
+ * @param tokens Full token sequence.
+ * @param start_offset Index of the first token to decode.
+ * @return true on success, false on decode failure.
+ * @internal
+ * @version 2.0.6
+ */
+bool LlamaCppBackend::decode_tokens_from(
+    const std::vector<llama_token>& tokens, int start_offset)
+{
+    int total = static_cast<int>(tokens.size());
+    if (start_offset >= total) { return true; }
+
+    int n_batch = llama_n_batch(ctx_);
+    int n_remaining = total - start_offset;
+    for (int off = 0; off < n_remaining; off += n_batch) {
+        int chunk = std::min(n_batch, n_remaining - off);
+        llama_batch batch = llama_batch_get_one(
+            const_cast<llama_token*>(tokens.data())
+                + start_offset + off,
+            chunk);
+        if (llama_decode(ctx_, batch) != 0) {
+            logger->error("Decode chunk failed (start={}, off={}, "
+                          "chunk={})", start_offset, off, chunk);
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * @brief Restore cached prefix KV and decode remaining tokens.
+ *
+ * After v2.0.6 the cached state contains ONLY the system prefix
+ * (two-pass prefill saves at the prefix boundary, see
+ * `prefill_and_cache_prefix`). Restore is therefore clean by
+ * construction: `llama_state_seq_set_data` leaves seq 0 with exactly
+ * `cached->token_count` positions filled, and `llama_batch_get_one`
+ * auto-positions subsequent decodes at that boundary.
+ *
  * @param cached Cache entry to restore from.
  * @param tokens Full token sequence.
  * @return true on success, false to fall back to full prefill.
  * @internal
- * @version 2.0.2
+ * @version 2.0.6
  */
 bool LlamaCppBackend::restore_cached_prefix(
     const CacheEntry* cached,
     const std::vector<llama_token>& tokens)
 {
-    llama_memory_clear(llama_get_memory(ctx_), true);
+    auto* mem = llama_get_memory(ctx_);
+    llama_memory_clear(mem, true);
 
     size_t restored = llama_state_seq_set_data(
         ctx_, cached->data.data(), cached->data_size, 0);
@@ -735,33 +779,20 @@ bool LlamaCppBackend::restore_cached_prefix(
         return false;
     }
 
-    int prefix_len = cached->token_count;
-    bool ok = true;
-    if (prefix_len < static_cast<int>(tokens.size())) {
-        int n_batch = llama_n_batch(ctx_);
-        int n_remaining = static_cast<int>(tokens.size()) - prefix_len;
-        for (int off = 0; off < n_remaining; off += n_batch) {
-            int chunk = std::min(n_batch, n_remaining - off);
-            llama_batch batch = llama_batch_get_one(
-                const_cast<llama_token*>(tokens.data()) + prefix_len + off,
-                chunk);
-            if (llama_decode(ctx_, batch) != 0) {
-                logger->error("Decode chunk failed after cache restore "
-                              "(offset={}, chunk={})", off, chunk);
-                ok = false;
-                break;
-            }
-        }
-    }
-    return ok;
+    return decode_tokens_from(tokens, cached->token_count);
 }
 
 /**
- * @brief Save system prefix KV state to the prompt cache.
+ * @brief Capture seq 0 KV state and store under the given key.
+ *
+ * The caller is responsible for ensuring seq 0 currently contains
+ * exactly `prefix_tokens` positions — this function trusts that
+ * contract and serializes whatever is there.
+ *
  * @param key Cache key for the prefix.
- * @param prefix_tokens Number of system prefix tokens.
+ * @param prefix_tokens Number of prefix tokens currently in seq 0.
  * @internal
- * @version 1.8.3
+ * @version 2.0.6
  */
 void LlamaCppBackend::save_prefix_to_cache(
     const CacheKey& key, int prefix_tokens)
@@ -808,10 +839,59 @@ int LlamaCppBackend::compute_prefix_token_count(
 }
 
 /**
+ * @brief Prefill in two passes: prefix → save → remainder.
+ *
+ * The v2.0.6 correctness fix. `llama_state_seq_get_data` has no
+ * range parameter, so any save captures whatever KV state happens
+ * to be in seq 0 at save time. By prefilling ONLY the system prefix
+ * first, saving, and then continuing with the rest of the prompt, we
+ * guarantee the cache entry covers exactly `prefix_tokens` positions
+ * — no residue from later conversation tokens can leak into a
+ * subsequent delegation's cache hit.
+ *
+ * If `prefix_tokens` is 0 or >= total tokens, falls back to a plain
+ * full prefill without caching (nothing meaningful to cache).
+ *
+ * @param tokens Full token sequence.
+ * @param prefix_tokens System prefix token count.
+ * @param key Cache key for the prefix.
+ * @return true on success.
+ * @internal
+ * @version 2.0.6
+ */
+bool LlamaCppBackend::prefill_and_cache_prefix(
+    const std::vector<llama_token>& tokens,
+    int prefix_tokens,
+    const CacheKey& key)
+{
+    int total = static_cast<int>(tokens.size());
+    if (prefix_tokens <= 0 || prefix_tokens >= total) {
+        return run_prefill(tokens);
+    }
+
+    // Pass 1: prefill only the prefix — `run_prefill` calls
+    // llama_memory_clear, so seq 0 ends up holding exactly
+    // prefix_tokens positions.
+    std::vector<llama_token> prefix(
+        tokens.begin(), tokens.begin() + prefix_tokens);
+    if (!run_prefill(prefix)) {
+        return false;
+    }
+
+    // Save now: state contains exactly the prefix.
+    save_prefix_to_cache(key, prefix_tokens);
+
+    // Pass 2: continue prefilling the remainder. No clear — decode
+    // appends after the saved prefix positions.
+    return decode_tokens_from(tokens, prefix_tokens);
+}
+
+/**
  * @brief Run prefill with prompt cache integration.
  *
- * On cache hit: restores KV state, decodes remaining tokens.
- * On cache miss: full prefill, then saves prefix to cache.
+ * On cache hit: restore prefix KV and decode the remainder.
+ * On cache miss: two-pass prefill (prefix → save → remainder) so the
+ * stored cache entry contains prefix-only state.
  *
  * @param tokens Full token sequence.
  * @param system_prompt System prompt text for cache key.
@@ -819,7 +899,7 @@ int LlamaCppBackend::compute_prefix_token_count(
  * @param params Generation parameters.
  * @return true on success.
  * @internal
- * @version 1.8.3
+ * @version 2.0.6
  */
 bool LlamaCppBackend::run_prefill_cached(
     const std::vector<llama_token>& tokens,
@@ -831,39 +911,29 @@ bool LlamaCppBackend::run_prefill_cached(
         && prompt_cache_config_.enabled
         && !system_prompt.empty();
 
-    // Try cache restore if enabled
-    bool restored = false;
-    CacheKey key{0};
+    if (!cache_enabled) {
+        return run_prefill(tokens);
+    }
 
-    if (cache_enabled) {
-        key = PromptCache::make_key(
-            system_prompt, config().path.string());
-        const CacheEntry* cached = prompt_cache_->lookup(key);
+    CacheKey key = PromptCache::make_key(
+        system_prompt, config().path.string());
+    const CacheEntry* cached = prompt_cache_->lookup(key);
 
-        if (cached) {
-            if (prompt_cache_config_.log_hits) {
-                logger->info("Prompt cache HIT: {} bytes, {} prefix tokens",
-                             cached->data_size, cached->token_count);
-            }
-            restored = restore_cached_prefix(cached, tokens);
-        } else if (prompt_cache_config_.log_hits) {
-            logger->info("Prompt cache MISS: processing full prompt");
+    if (cached != nullptr) {
+        if (prompt_cache_config_.log_hits) {
+            logger->info("Prompt cache HIT: {} bytes, {} prefix tokens",
+                         cached->data_size, cached->token_count);
         }
-    }
-
-    // Fall back to full prefill if not restored from cache
-    if (!restored && !run_prefill(tokens)) {
-        return false;
-    }
-
-    // Save prefix to cache on miss
-    if (cache_enabled && !restored) {
-        int prefix_tokens = compute_prefix_token_count(messages, params);
-        if (prefix_tokens > 0) {
-            save_prefix_to_cache(key, prefix_tokens);
+        if (restore_cached_prefix(cached, tokens)) {
+            return true;
         }
+        logger->warn("Cache restore failed, falling back to full prefill");
+    } else if (prompt_cache_config_.log_hits) {
+        logger->info("Prompt cache MISS: processing full prompt");
     }
-    return true;
+
+    int prefix_tokens = compute_prefix_token_count(messages, params);
+    return prefill_and_cache_prefix(tokens, prefix_tokens, key);
 }
 
 // ── Generation entry points ────────────────────────────────

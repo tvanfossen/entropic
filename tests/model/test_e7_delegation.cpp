@@ -27,7 +27,13 @@ SCENARIO("Delegation wiring fires on_delegation_start callback",
         start_test_log("e7_delegation");
         auto iface = make_real_interface();
         LoopConfig lc;
-        lc.max_iterations = 10;
+        // Bumped 10 → 20 at v2.0.6: the prompt-cache bleed fix removed
+        // KV residue that was implicitly nudging the model toward
+        // convergence. With a clean KV, the lead identity explores
+        // more tool-call iterations before emitting a final assistant
+        // message. 20 is enough headroom without turning the test into
+        // a slow marathon.
+        lc.max_iterations = 20;
         lc.stream_output = false;
         CompactionConfig cc;
         AgentEngine engine(iface, lc, cc);

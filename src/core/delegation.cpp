@@ -363,7 +363,7 @@ void DelegationManager::complete_storage_record(
  * @param max_turns Optional turn limit.
  * @return DelegationResult.
  * @internal
- * @version 1.8.8
+ * @version 2.0.6
  */
 DelegationResult DelegationManager::run_child(
     LoopContext& child_ctx,
@@ -383,8 +383,14 @@ DelegationResult DelegationManager::run_child(
     auto delegation_id = create_storage_record(
         child_ctx, target_tier, task, max_turns);
 
-    logger->info("Running child loop: tier={} depth={}",
-                 target_tier, child_ctx.delegation_depth);
+    logger->info("Running child loop: tier={} depth={} msgs={} "
+                 "system_hash={:016x}",
+                 target_tier, child_ctx.delegation_depth,
+                 child_ctx.messages.size(),
+                 std::hash<std::string>{}(
+                     child_ctx.messages.empty()
+                         ? std::string{}
+                         : child_ctx.messages[0].content));
 
     if (run_child_fn_ != nullptr) {
         run_child_fn_(child_ctx, run_child_data_);

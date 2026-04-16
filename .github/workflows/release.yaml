@@ -104,7 +104,7 @@ jobs:
           # Configure step (the `;` in a cmake list gets interpreted as
           # a bash command separator if inlined into a folded-block var).
           - backend: cuda
-            runner: ubuntu-24.04-8-cores
+            runner: ubuntu-24.04
             install_cuda: "true"
             cmake_flags: >-
               -DENTROPIC_CUDA=ON
@@ -112,12 +112,12 @@ jobs:
               -DENTROPIC_SHARED=ON
               -DENTROPIC_STATIC=OFF
               -DENTROPIC_BUILD_TESTS=OFF
-            # Comprehensive arch coverage — every discrete NVIDIA GPU
-            # generation from Maxwell onward gets native SASS + PTX.
-            # Skipping only the Jetson/embedded variants (sm_53/62/72/87).
+            # Trimmed arch list for the free 2-core runner's 14 GB disk
+            # + 16 GB RAM envelope. Covers Volta onward (2017+) —
+            # Maxwell/Pascal GPUs have ≤8 GB VRAM and can't practically
+            # run the 13 GB primary model; PTX JIT fallback is adequate
+            # for those rare users.
             #
-            #   50, 52  Maxwell   GTX 9xx, Titan X (Maxwell)
-            #   60, 61  Pascal    GTX 10-series, P40/P100
             #   70      Volta     Titan V, V100
             #   75      Turing    RTX 20-series, T4
             #   80      Ampere DC A100
@@ -128,10 +128,9 @@ jobs:
             #   120     Blackwell     RTX PRO 4000, RTX 50-series
             #
             # Requires CUDA toolkit >= 12.8 for sm_100/sm_120.
-            # Build takes ~20-30 min on 8-core runner (vs ~10 with the
-            # narrower list) — acceptable since it's paid compute and
-            # runs once per release.
-            cuda_archs: "50;52;60;61;70;75;80;86;89;90;100;120"
+            # When a self-hosted runner is available, expand back to
+            # the full 12-arch list (50;52;60;61;...).
+            cuda_archs: "70;75;80;86;89;90;100;120"
 
     steps:
       - uses: actions/checkout@v4

@@ -462,11 +462,29 @@ static void wire_hooks_and_validator(
 }
 
 /**
+ * @brief Build LoopConfig from parsed config.
+ * @param h Engine handle with config populated.
+ * @return Populated LoopConfig.
+ * @utility
+ * @version 2.0.6
+ */
+static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
+    entropic::LoopConfig lc;
+    lc.stream_output = true;
+    lc.auto_approve_tools = h->config.permissions.auto_approve;
+    auto it = h->config.models.tiers.find(h->config.models.default_tier);
+    if (it != h->config.models.tiers.end()) {
+        lc.context_length = it->second.context_length;
+    }
+    return lc;
+}
+
+/**
  * @brief Post-parse config setup: subsystem construction + wiring.
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -482,18 +500,12 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         entropic::IdentityManagerConfig{});
     init_mcp_servers(h, data_dir);
 
-    auto iface = entropic::build_orchestrator_interface(
+    h->inference_iface = entropic::build_orchestrator_interface(
         h->orchestrator.get(), h->config.models.default_tier);
-    iface.get_tool_prompt = facade_get_tool_prompt;
-    iface.tool_prompt_data = h;
-    entropic::LoopConfig lc;
-    lc.stream_output = true;
-    lc.auto_approve_tools = h->config.permissions.auto_approve;
-    auto default_it = h->config.models.tiers.find(
-        h->config.models.default_tier);
-    if (default_it != h->config.models.tiers.end()) {
-        lc.context_length = default_it->second.context_length;
-    }
+    h->inference_iface.get_tool_prompt = facade_get_tool_prompt;
+    h->inference_iface.tool_prompt_data = h;
+    auto& iface = h->inference_iface;
+    auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
 

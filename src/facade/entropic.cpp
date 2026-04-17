@@ -298,26 +298,36 @@ static void init_persistence(entropic_handle_t h) {
 }
 
 /**
- * @brief Collect tiers reachable through handoff_rules for delegation.
+ * @brief Collect valid delegation targets from handoff_rules.
  *
- * Only tiers that appear as targets in handoff_rules (plus the
- * default tier as source) are included. This prevents global tiers
- * from leaking into consumer-specific delegate/pipeline enums.
+ * Only tiers that appear as TARGETS in handoff_rules are included.
+ * Sources are excluded — a tier should not appear in its own
+ * delegate enum (self-delegation creates a worktree cycle for no
+ * purpose and confuses small models).
+ *
+ * When handoff_rules is empty, falls back to all configured tiers
+ * except the default tier (preserves delegation for simple configs
+ * that define multiple tiers without explicit routing).
  *
  * @param config Parsed engine config.
  * @return Deduplicated tier names for delegate/pipeline schemas.
  * @utility
- * @version 2.0.4
+ * @version 2.0.6
  */
 static std::vector<std::string> collect_delegatable_tiers(
     const entropic::ParsedConfig& config) {
-    std::unordered_set<std::string> reachable;
-    reachable.insert(config.models.default_tier);
-    for (const auto& [source, targets] : config.routing.handoff_rules) {
-        reachable.insert(source);
-        for (const auto& t : targets) { reachable.insert(t); }
+    std::unordered_set<std::string> targets;
+    for (const auto& [source, dests] : config.routing.handoff_rules) {
+        for (const auto& t : dests) { targets.insert(t); }
     }
-    return {reachable.begin(), reachable.end()};
+    if (targets.empty()) {
+        for (const auto& [name, tier] : config.models.tiers) {
+            if (name != config.models.default_tier) {
+                targets.insert(name);
+            }
+        }
+    }
+    return {targets.begin(), targets.end()};
 }
 
 /**

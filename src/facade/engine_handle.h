@@ -81,6 +81,7 @@ struct entropic_engine {
 
     // ── Phase 2: Inference ─────────────────────────────────────
     std::unique_ptr<entropic::ModelOrchestrator> orchestrator; ///< Model pool + routing
+    entropic::InferenceInterface inference_iface;              ///< Stable copy for validator lifetime
 
     // ── Phase 3: MCP + Identity + Authorization ──────────────
     std::unique_ptr<entropic::ServerManager> server_manager;           ///< MCP server lifecycle

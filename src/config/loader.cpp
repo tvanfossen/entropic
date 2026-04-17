@@ -355,11 +355,29 @@ static std::string parse_prompt_cache_config(
 }
 
 /**
+ * @brief Parse constitutional_validation section.
+ * @param node YAML node for "constitutional_validation" section.
+ * @param[out] config Output constitutional validation config.
+ * @internal
+ * @version 2.0.6
+ */
+static void parse_constitutional_validation_config(
+    ryml::ConstNodeRef node,
+    ConstitutionalValidationConfig& config)
+{
+    extract(node, "enabled", config.enabled);
+    extract(node, "max_revisions", config.max_revisions);
+    extract(node, "max_critique_tokens", config.max_critique_tokens);
+    extract(node, "priority", config.priority);
+    extract(node, "grammar_key", config.grammar_key);
+}
+
+/**
  * @brief Parse optional config sections that don't return errors.
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 2.0.2
+ * @version 2.0.6
  */
 static void parse_optional_sections(
     ryml::ConstNodeRef root, ParsedConfig& config)
@@ -377,6 +395,10 @@ static void parse_optional_sections(
     if (root.has_child("inference") && root["inference"].has_child("prompt_cache"))
         parse_prompt_cache_config(root["inference"]["prompt_cache"],
                                   config.prompt_cache);
+    if (root.has_child("constitutional_validation"))
+        parse_constitutional_validation_config(
+            root["constitutional_validation"],
+            config.constitutional_validation);
 
     extract(root, "log_level", config.log_level);
     extract(root, "inject_model_context", config.inject_model_context);

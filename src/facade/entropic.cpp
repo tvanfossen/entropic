@@ -415,11 +415,58 @@ static void wire_tool_executor(entropic_handle_t h) {
 }
 
 /**
+ * @brief Wire hook dispatch and attach the constitutional validator.
+ *
+ * Bridges the handle's HookRegistry to the engine's HookInterface
+ * (function-pointer indirection required by the .so boundary). If
+ * constitutional validation is enabled and constitution text was
+ * loaded, constructs and attaches the validator as a POST_GENERATE
+ * hook.
+ *
+ * @param h Engine handle with engine constructed.
+ * @param iface Inference interface (passed to validator for critique generation).
+ * @param constitution_text Constitution text (may be empty).
+ * @internal
+ * @version 2.0.6
+ */
+static void wire_hooks_and_validator(
+    entropic_handle_t h,
+    entropic::InferenceInterface& iface,
+    const std::string& constitution_text) {
+    entropic::HookInterface hook_iface;
+    hook_iface.registry = &h->hook_registry;
+    hook_iface.fire_pre = [](void* reg, entropic_hook_point_t pt,
+        const char* json, char** out) -> int {
+        return static_cast<entropic::HookRegistry*>(reg)
+            ->fire_pre(pt, json, out);
+    };
+    hook_iface.fire_post = [](void* reg, entropic_hook_point_t pt,
+        const char* json, char** out) {
+        static_cast<entropic::HookRegistry*>(reg)
+            ->fire_post(pt, json, out);
+    };
+    hook_iface.fire_info = [](void* reg, entropic_hook_point_t pt,
+        const char* json) {
+        static_cast<entropic::HookRegistry*>(reg)->fire_info(pt, json);
+    };
+    h->engine->set_hooks(hook_iface);
+
+    if (h->config.constitutional_validation.enabled
+        && !constitution_text.empty()) {
+        h->validator = std::make_unique<entropic::ConstitutionalValidator>(
+            h->config.constitutional_validation, constitution_text);
+        h->validator->attach(&hook_iface, &iface);
+        s_log->info("Constitutional validator attached (max_revisions={})",
+                     h->config.constitutional_validation.max_revisions);
+    }
+}
+
+/**
  * @brief Post-parse config setup: subsystem construction + wiring.
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -464,6 +511,8 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     }
     cache_tier_allowed_tools(h, data_dir);
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
+
+    wire_hooks_and_validator(h, iface, shared_prefix);
 
     init_persistence(h);
 

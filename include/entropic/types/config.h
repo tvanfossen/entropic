@@ -510,6 +510,23 @@ struct LSPConfig {
 };
 
 /**
+ * @brief Constitutional validation pipeline configuration.
+ *
+ * Controls the post-generation validation hook that critiques engine
+ * output against constitutional rules. Default disabled — doubles
+ * inference cost per generation when active.
+ *
+ * @version 1.9.8
+ */
+struct ConstitutionalValidationConfig {
+    bool enabled = false;             ///< Global enable/disable (default OFF)
+    int max_revisions = 2;            ///< Max re-generation attempts (0 = critique only)
+    int max_critique_tokens = 512;    ///< Token budget for critique generation
+    int priority = 100;               ///< Hook priority (higher = later)
+    std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
+};
+
+/**
  * @brief Full parsed configuration.
  *
  * Aggregates all config sections. C++ equivalent of Python's
@@ -550,17 +567,11 @@ struct ParsedConfig {
     /// Enable ggml/llama.cpp logging to llama_ggml.log in log_dir.
     /// Default false — when off, ggml/llama output is silenced entirely.
     bool ggml_logging = false;
+
+    /// Constitutional validation pipeline settings.
+    ConstitutionalValidationConfig constitutional_validation;
 };
 
-/**
- * @brief Constitutional validation pipeline configuration.
- *
- * Controls the post-generation validation hook that critiques engine
- * output against constitutional rules. Default disabled — doubles
- * inference cost per generation when active.
- *
- * @version 1.9.8
- */
 /**
  * @brief Inference parameters for a single identity phase.
  *
@@ -576,14 +587,6 @@ struct PhaseConfig {
     bool enable_thinking = false;        ///< Enable think-block output
     float repeat_penalty = 1.1f;         ///< Repetition penalty
     std::optional<std::vector<std::string>> bash_commands; ///< Phase-specific bash commands
-};
-
-struct ConstitutionalValidationConfig {
-    bool enabled = false;             ///< Global enable/disable (default OFF)
-    int max_revisions = 2;            ///< Max re-generation attempts (0 = critique only)
-    int max_critique_tokens = 512;    ///< Token budget for critique generation
-    int priority = 100;               ///< Hook priority (higher = later)
-    std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
 };
 
 } // namespace entropic

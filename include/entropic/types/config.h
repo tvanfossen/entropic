@@ -521,7 +521,9 @@ struct LSPConfig {
 struct ConstitutionalValidationConfig {
     bool enabled = false;             ///< Global enable/disable (default OFF)
     int max_revisions = 2;            ///< Max re-generation attempts (0 = critique only)
-    int max_critique_tokens = 512;    ///< Token budget for critique generation
+    int max_critique_tokens = 1024;   ///< Token budget for critique generation
+    float temperature = 0.0f;         ///< Critique generation temperature
+    bool enable_thinking = false;     ///< Enable think-blocks for critique (default OFF)
     int priority = 100;               ///< Hook priority (higher = later)
     std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
 };

@@ -114,6 +114,29 @@ public:
                         const std::string& args_json);
 
     /**
+     * @brief Get a registered in-process server by name.
+     * @param name Server name (e.g., "entropic", "filesystem").
+     * @return Server pointer, or nullptr if not found.
+     * @version 2.0.6
+     */
+    MCPServerBase* get_server(const std::string& name) const;
+
+    /**
+     * @brief List registered server names (in-process + external).
+     * @return Server names.
+     * @version 2.0.6
+     */
+    std::vector<std::string> server_names() const;
+
+    /**
+     * @brief Get the project root directory.
+     * @return Project directory path.
+     * @utility
+     * @version 2.0.6
+     */
+    const std::filesystem::path& project_dir() const { return project_dir_; }
+
+    /**
      * @brief Get the JSON Schema for a tool's input parameters.
      * @param tool_name Fully-qualified tool name.
      * @return input_schema JSON string, or empty if tool not found.

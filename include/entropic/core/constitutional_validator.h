@@ -126,6 +126,16 @@ public:
         const std::string& identity_name, bool enabled);
 
     /**
+     * @brief Set per-identity validation rules from frontmatter.
+     * @param identity_name Identity/tier name.
+     * @param rules Validation rules specific to this identity.
+     * @version 2.0.6
+     */
+    void set_tier_rules(
+        const std::string& identity_name,
+        const std::vector<std::string>& rules);
+
+    /**
      * @brief Toggle the global validation gate at runtime.
      *
      * Per-identity overrides set via set_identity_validation() still
@@ -441,7 +451,12 @@ private:
     bool global_enabled_;
     /// @brief Per-identity validation overrides.
     std::unordered_map<std::string, bool> identity_overrides_;
-    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + global_enabled_
+    /// @brief Per-identity validation rules from frontmatter (v2.0.6).
+    std::unordered_map<std::string, std::vector<std::string>> tier_rules_;
+    mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + tier_rules_ + global_enabled_
+
+    /// @brief Current tier being validated (set at validate() entry).
+    std::string current_tier_;
 
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;

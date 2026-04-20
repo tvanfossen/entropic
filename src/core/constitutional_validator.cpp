@@ -122,13 +122,27 @@ void ConstitutionalValidator::set_identity_validation(
 }
 
 /**
+ * @brief Set per-identity validation rules from frontmatter.
+ * @param identity_name Identity/tier name.
+ * @param rules Validation rules for this identity.
+ * @internal
+ * @version 2.0.6
+ */
+void ConstitutionalValidator::set_tier_rules(
+    const std::string& identity_name,
+    const std::vector<std::string>& rules) {
+    std::lock_guard<std::mutex> lock(overrides_mutex_);
+    tier_rules_[identity_name] = rules;
+}
+
+/**
  * @brief Run the full validation pipeline on generated content.
  * @param content The generated text to validate.
  * @param tier The tier/identity that produced the content.
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.0
+ * @version 2.0.6
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -143,6 +157,7 @@ ValidationResult ConstitutionalValidator::validate(
         return result;
     }
 
+    current_tier_ = tier;
     logger->info("Validation start: {} chars, tier='{}'",
                  content.size(), tier);
     result = run_validation_loop(content, tier, messages_json);
@@ -197,7 +212,7 @@ int ConstitutionalValidator::hook_callback(
  * @param content Text to critique.
  * @return Formatted system prompt with constitution + content.
  * @utility
- * @version 1.9.8
+ * @version 2.0.6
  */
 std::string ConstitutionalValidator::build_critique_prompt(
     const std::string& content) const {
@@ -210,6 +225,20 @@ std::string ConstitutionalValidator::build_critique_prompt(
               "structured JSON evaluation.\n\n"
               "Constitutional Rules:\n";
     prompt += constitution_text_;
+
+    // Append per-identity rules if set for the current tier
+    {
+        std::lock_guard<std::mutex> lock(overrides_mutex_);
+        auto it = tier_rules_.find(current_tier_);
+        if (it != tier_rules_.end() && !it->second.empty()) {
+            prompt += "\n\nAdditional rules for this identity ("
+                   + current_tier_ + "):\n";
+            for (const auto& rule : it->second) {
+                prompt += "- " + rule + "\n";
+            }
+        }
+    }
+
     prompt += "\n\nEvaluate this output for constitutional compliance:"
               "\n\n---\n";
     prompt += content;
@@ -266,11 +295,11 @@ void ConstitutionalValidator::store_result(
  * @param messages_json Conversation context.
  * @return ValidationResult after critique/revision.
  * @internal
- * @version 1.9.8
+ * @version 2.0.6
  */
 ValidationResult ConstitutionalValidator::run_validation_loop(
     const std::string& content,
-    const std::string& /*tier*/,
+    const std::string& tier,
     const char* messages_json) {
     ValidationResult result;
     result.content = content;
@@ -397,14 +426,18 @@ std::string ConstitutionalValidator::build_critique_messages(
  * @brief Build params JSON for critique generation.
  * @return JSON string with grammar_key, max_tokens, temperature.
  * @internal
- * @version 1.9.8
+ * @version 2.0.6
  */
 std::string ConstitutionalValidator::build_critique_params() const {
     std::string params = "{\"grammar_key\":\"";
     params += config_.grammar_key;
     params += "\",\"max_tokens\":";
     params += std::to_string(config_.max_critique_tokens);
-    params += ",\"temperature\":0.0}";
+    params += ",\"temperature\":";
+    params += std::to_string(config_.temperature);
+    params += ",\"enable_thinking\":";
+    params += config_.enable_thinking ? "true" : "false";
+    params += "}";
     return params;
 }
 

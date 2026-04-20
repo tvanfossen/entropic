@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "entropic-config-v2.0.6",
+  "title": "Entropic Engine Configuration",
+  "description": "YAML configuration schema for the entropic inference engine. Loaded from ~/.entropic/config.yaml (global), default_config.yaml (consumer), or .entropic/config.local.yaml (project).",
+  "type": "object",
+  "properties": {
+    "models": {
+      "type": "object",
+      "description": "Tier definitions and router configuration.",
+      "properties": {
+        "default": {
+          "type": "string",
+          "description": "Default tier name (used when routing is disabled).",
+          "default": "lead"
+        },
+        "router": {
+          "type": "object",
+          "description": "Router model config (digit-based classification).",
+          "$ref": "#/$defs/model_config"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/tier_config"
+      }
+    },
+    "routing": {
+      "type": "object",
+      "description": "Tier routing configuration.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "Enable digit-based tier routing via router model." },
+        "fallback_tier": { "type": "string", "description": "Tier used when routing fails." },
+        "classification_prompt": { "type": "string", "description": "Custom classification prompt template." },
+        "tier_map": {
+          "type": "object",
+          "description": "Digit → tier name mapping for router output.",
+          "additionalProperties": { "type": "string" }
+        },
+        "handoff_rules": {
+          "type": "object",
+          "description": "Source tier → allowed delegation targets.",
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "properties": {
+        "max_tokens": { "type": "integer", "default": 4096, "minimum": 1 },
+        "default_temperature": { "type": "number", "default": 0.7, "minimum": 0.0, "maximum": 2.0 },
+        "default_top_p": { "type": "number", "default": 0.9, "minimum": 0.0, "maximum": 1.0 }
+      }
+    },
+    "permissions": {
+      "type": "object",
+      "properties": {
+        "auto_approve": { "type": "boolean", "default": false, "description": "Auto-approve all tool calls (skip prompting)." },
+        "allow_patterns": { "type": "array", "items": { "type": "string" }, "description": "Tool permission allow patterns." },
+        "deny_patterns": { "type": "array", "items": { "type": "string" }, "description": "Tool permission deny patterns." }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "description": "MCP server configuration.",
+      "properties": {
+        "enable_entropic": { "type": "boolean", "default": true },
+        "enable_filesystem": { "type": "boolean", "default": true },
+        "enable_bash": { "type": "boolean", "default": true },
+        "enable_git": { "type": "boolean", "default": true },
+        "enable_diagnostics": { "type": "boolean", "default": true },
+        "enable_web": { "type": "boolean", "default": true },
+        "working_dir": { "type": "string", "description": "Working directory for filesystem/bash/git servers. Defaults to CWD." },
+        "filesystem": {
+          "type": "object",
+          "properties": {
+            "max_read_bytes": { "type": "integer", "default": 32768 }
+          }
+        },
+        "external_servers": {
+          "type": "object",
+          "description": "Named external MCP servers.",
+          "additionalProperties": { "$ref": "#/$defs/external_mcp_server" }
+        }
+      }
+    },
+    "compaction": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "threshold_percent": { "type": "number", "default": 80.0, "minimum": 0, "maximum": 100 },
+        "preserve_recent_turns": { "type": "integer", "default": 4, "minimum": 0 }
+      }
+    },
+    "lsp": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "python_enabled": { "type": "boolean", "default": true },
+        "c_enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "inference": {
+      "type": "object",
+      "properties": {
+        "prompt_cache": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean", "default": true },
+            "max_bytes": { "type": "integer", "default": 536870912, "description": "Maximum cache RAM in bytes (default 512 MB)." },
+            "log_hits": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "constitutional_validation": {
+      "type": "object",
+      "description": "Post-generation constitutional compliance validation.",
+      "properties": {
+        "enabled": { "type": "boolean", "default": false, "description": "Enable constitutional validation (doubles inference cost)." },
+        "max_revisions": { "type": "integer", "default": 2, "minimum": 0, "description": "Max re-generation attempts (0 = critique only)." },
+        "max_critique_tokens": { "type": "integer", "default": 1024, "minimum": 64 },
+        "temperature": { "type": "number", "default": 0.0, "minimum": 0.0, "maximum": 2.0 },
+        "enable_thinking": { "type": "boolean", "default": false, "description": "Enable think-blocks for critique generation." },
+        "priority": { "type": "integer", "default": 100 },
+        "grammar_key": { "type": "string", "default": "constitutional_critique" }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "db_path": { "type": "string", "description": "SQLite database path (relative to log_dir)." }
+      }
+    },
+    "log_level": { "type": "string", "default": "INFO", "enum": ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] },
+    "log_dir": { "type": "string", "description": "Session log directory. When set, file sink replaces console." },
+    "config_dir": { "type": "string", "description": "Base directory for bundled data discovery." },
+    "ggml_logging": { "type": "boolean", "default": false, "description": "Enable llama.cpp/ggml logging to llama_ggml.log." },
+    "inject_model_context": { "type": "boolean", "default": true },
+    "vram_reserve_mb": { "type": "integer", "default": 512, "minimum": 0, "maximum": 65536 },
+    "constitution": { "type": ["string", "boolean"], "description": "Path to constitution .md, true for bundled, false to disable." },
+    "app_context": { "type": ["string", "boolean"], "description": "Path to app_context .md, true for bundled, false to disable." }
+  },
+  "$defs": {
+    "model_config": {
+      "type": "object",
+      "properties": {
+        "path": { "type": "string", "description": "Model file path or bundled model key (e.g., 'primary', 'lightweight')." },
+        "adapter": { "type": "string", "default": "qwen35", "description": "Chat adapter name." },
+        "context_length": { "type": "integer", "default": 16384, "minimum": 512, "maximum": 131072 },
+        "gpu_layers": { "type": "integer", "default": -1, "description": "-1 = all layers on GPU." },
+        "keep_warm": { "type": "boolean", "default": false },
+        "use_mlock": { "type": "boolean", "default": true },
+        "reasoning_budget": { "type": "integer", "default": -1, "description": "Think token budget (-1 = unlimited)." },
+        "cache_type_k": { "type": "string", "default": "f16" },
+        "cache_type_v": { "type": "string", "default": "f16" },
+        "n_batch": { "type": "integer", "default": 512 },
+        "n_threads": { "type": "integer", "default": 0, "description": "0 = auto (hardware_concurrency)." },
+        "flash_attn": { "type": "boolean", "default": true }
+      },
+      "required": ["path"]
+    },
+    "tier_config": {
+      "type": "object",
+      "allOf": [{ "$ref": "#/$defs/model_config" }],
+      "properties": {
+        "identity": { "type": ["string", "boolean"], "description": "Path to identity .md, true for auto-resolve, false to disable." },
+        "auto_chain": { "type": "string", "description": "Target tier for automatic chaining." },
+        "allowed_tools": { "type": "array", "items": { "type": "string" }, "description": "Tool filter (empty = all tools)." }
+      }
+    },
+    "external_mcp_server": {
+      "type": "object",
+      "properties": {
+        "command": { "type": "string", "description": "Executable path." },
+        "args": { "type": "array", "items": { "type": "string" }, "description": "Command-line arguments." },
+        "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Environment variables." }
+      },
+      "required": ["command"]
+    }
+  }
+}

@@ -1,20 +1,20 @@
 {
   "name": "inspect",
-  "description": "Query a specific aspect of engine state. Use this for targeted lookups instead of a full diagnose snapshot. Supported targets: 'config', 'identity', 'tool', 'state', 'metrics', 'history', 'docs'.",
+  "description": "Query engine state. Call with no arguments to get a full runtime state dump (working directory, active tiers, registered servers, data directory). Optionally specify a target for a focused query.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "target": {
         "type": "string",
         "enum": ["config", "identity", "tool", "state", "metrics", "history", "docs"],
-        "description": "What to inspect."
+        "description": "What to inspect. Omit for full state dump."
       },
       "key": {
         "type": "string",
-        "description": "Optional key to narrow the query. For 'identity': tier name (e.g., 'eng'). For 'tool': tool name (e.g., 'filesystem.read_file'). For 'config': config section (e.g., 'model', 'loop', 'permissions'). For 'docs': section name. For 'history': number of recent entries as string."
+        "description": "Optional filter key. For 'identity': tier name. For 'tool': tool name. For 'config': config section. For 'docs': section name. For 'history': max entries."
       }
     },
-    "required": ["target"],
+    "required": [],
     "additionalProperties": false
   }
 }

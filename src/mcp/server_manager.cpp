@@ -168,6 +168,35 @@ std::string ServerManager::execute(
 }
 
 /**
+ * @brief Get a registered in-process server by name.
+ * @param name Server name.
+ * @return Server pointer, or nullptr if not found.
+ * @internal
+ * @version 2.0.6
+ */
+MCPServerBase* ServerManager::get_server(const std::string& name) const {
+    auto it = servers_.find(name);
+    return (it != servers_.end()) ? it->second.get() : nullptr;
+}
+
+/**
+ * @brief List all registered server names.
+ * @return Server names (in-process + external).
+ * @internal
+ * @version 2.0.6
+ */
+std::vector<std::string> ServerManager::server_names() const {
+    std::vector<std::string> names;
+    for (const auto& [name, _] : servers_) {
+        names.push_back(name);
+    }
+    for (const auto& [name, _] : external_clients_) {
+        names.push_back(name);
+    }
+    return names;
+}
+
+/**
  * @brief Get the JSON Schema for a tool's input parameters.
  * @param tool_name Fully-qualified tool name.
  * @return input_schema JSON string, or empty if tool not found.

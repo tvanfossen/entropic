@@ -222,7 +222,7 @@ static void extract_benchmark(
  * @brief Extract identity-specific fields from a pre-parsed ryml tree.
  * @param root ryml root node of the frontmatter.
  * @param[out] fm Output identity frontmatter.
- * @version 3
+ * @version 4
  * @internal
  */
 static void extract_identity_fields(
@@ -255,6 +255,7 @@ static void extract_identity_fields(
     extract(root, "routable", fm.routable);
     extract(root, "role_type", fm.role_type);
     extract(root, "explicit_completion", fm.explicit_completion);
+    extract_string_list(root, "validation_rules", fm.validation_rules);
 
     extract_phases(root, fm);
     extract_benchmark(root, fm);

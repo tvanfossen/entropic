@@ -698,7 +698,7 @@ def _gen_callback_types(typedefs: list[TypedefDecl]) -> str:
 ## @brief Emit _find_library() and module-level _lib loading.
 ## @utility
 ## @return Library loader section source string.
-## @version 1
+## @version 2
 def _gen_library_loader(lib_name: str) -> str:
     """Generate library discovery and loading code.
 
@@ -748,20 +748,37 @@ def _gen_library_loader(lib_name: str) -> str:
         # Load library at import time — fail fast if not found
         _lib: ctypes.CDLL | None = None
 
+        # Expected C API version — must match entropic_api_version() from .so
+        _EXPECTED_API_VERSION = 2
+
 
         ## @brief Lazy library loader — defers ImportError until first use.
         ## @utility
         ## @return Loaded ctypes.CDLL handle.
-        ## @version 1
+        ## @version 2
         def _get_lib() -> ctypes.CDLL:
             """Get the loaded library, loading lazily on first access.
 
-            @brief Lazy library loader — defers ImportError until first use.
-            @version 1
+            Performs API version check on first load. Raises ImportError
+            if the loaded .so has a different API version than the wrapper
+            was generated for.
+
+            @brief Lazy library loader with API version check.
+            @version 2
             """
             global _lib  # noqa: PLW0603
             if _lib is None:
                 _lib = _find_library()
+                _lib.entropic_api_version.argtypes = []
+                _lib.entropic_api_version.restype = ctypes.c_int
+                loaded_version = _lib.entropic_api_version()
+                if loaded_version != _EXPECTED_API_VERSION:
+                    raise ImportError(
+                        f"entropic API version mismatch: wrapper expects "
+                        f"v{{_EXPECTED_API_VERSION}} but loaded .so reports "
+                        f"v{{loaded_version}}. Regenerate the wrapper or "
+                        f"update librentropic.so."
+                    )
             return _lib
 
 

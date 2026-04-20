@@ -82,6 +82,7 @@ struct IdentityFrontmatter {
     bool routable = true;                      ///< Visible to router
     std::string role_type = "front_office";    ///< front_office|back_office|utility
     bool explicit_completion = false;          ///< Requires explicit completion
+    std::vector<std::string> validation_rules; ///< Per-identity constitutional rules (v2.0.6)
     std::optional<std::unordered_map<std::string, PhaseConfig>> phases; ///< Named phases
     std::optional<BenchmarkSpec> benchmark;    ///< Benchmark definition
 };

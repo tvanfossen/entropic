@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "entropic-mcp-server-registration-v2.0.6",
+  "title": "MCP Server Registration",
+  "description": "JSON format for entropic_register_mcp_server() and the external_servers config section. Defines how to connect an external MCP server to the engine at runtime.",
+  "type": "object",
+  "properties": {
+    "command": {
+      "type": "string",
+      "description": "Executable path for the MCP server process. Can be absolute or resolved via PATH."
+    },
+    "args": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Command-line arguments passed to the server process.",
+      "default": []
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": { "type": "string" },
+      "description": "Environment variables set for the server process. Merged with the parent environment.",
+      "default": {}
+    }
+  },
+  "required": ["command"],
+  "additionalProperties": false,
+  "examples": [
+    {
+      "command": "/path/to/venv/bin/python",
+      "args": ["-m", "my_mcp_server", "--port", "0"],
+      "env": { "DOCS_DB_PATH": "/path/to/docs.db" }
+    },
+    {
+      "command": "node",
+      "args": ["dist/server.js"],
+      "env": { "API_KEY": "sk-..." }
+    }
+  ]
+}

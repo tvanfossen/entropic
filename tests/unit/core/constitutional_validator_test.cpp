@@ -28,6 +28,7 @@ struct MockValidationInference {
     int call_index = 0;                  ///< Next response index
     int generate_count = 0;              ///< Total calls made
     bool should_fail = false;            ///< Simulate failure
+    std::string last_params_json;        ///< Captured params from last call
 };
 
 /**
@@ -60,11 +61,12 @@ void mock_val_free(void* ptr) {
  */
 int mock_val_generate(
     const char* /*messages_json*/,
-    const char* /*params_json*/,
+    const char* params_json,
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockValidationInference*>(user_data);
     mock->generate_count++;
+    if (params_json) { mock->last_params_json = params_json; }
 
     if (mock->should_fail) {
         *result_json = nullptr;
@@ -485,6 +487,79 @@ SCENARIO("Multiple violations parsed correctly", "[validation]") {
                 REQUIRE(result.violations.size() == 2);
                 REQUIRE(result.violations[0].rule == "Privacy");
                 REQUIRE(result.violations[1].rule == "Safety");
+            }
+        }
+    }
+}
+
+// ── Critique params passthrough ─────────────────────────
+
+SCENARIO("Critique params include grammar_key and enable_thinking",
+         "[constitutional_validator][v2.0.6][regression]")
+{
+    GIVEN("a validator with custom config") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.grammar_key = "test_grammar";
+        cfg.temperature = 0.0f;
+        cfg.enable_thinking = false;
+        cfg.max_critique_tokens = 256;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidator v(cfg, "Test rules.");
+        v.attach(nullptr, &iface);
+
+        WHEN("validate is called") {
+            v.validate("Test content", "lead", nullptr);
+
+            THEN("generate received grammar_key in params") {
+                CHECK(mock.last_params_json.find(
+                    "\"grammar_key\":\"test_grammar\"")
+                    != std::string::npos);
+            }
+            THEN("generate received enable_thinking=false") {
+                CHECK(mock.last_params_json.find(
+                    "\"enable_thinking\":false")
+                    != std::string::npos);
+            }
+            THEN("generate received max_tokens=256") {
+                CHECK(mock.last_params_json.find(
+                    "\"max_tokens\":256")
+                    != std::string::npos);
+            }
+        }
+    }
+}
+
+// ── Per-identity validation rules ──────────────────────
+
+SCENARIO("Per-identity rules appended to critique prompt",
+         "[constitutional_validator][v2.0.6]")
+{
+    GIVEN("a validator with tier rules set") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidator v(cfg, "Global rules.");
+        v.attach(nullptr, &iface);
+        v.set_tier_rules("researcher",
+            {"Cite file:line for every claim",
+             "Never assert external dep behavior"});
+
+        WHEN("validate is called for researcher tier") {
+            v.validate("Some content", "researcher", nullptr);
+
+            THEN("generate was called") {
+                REQUIRE(mock.generate_count == 1);
             }
         }
     }

@@ -671,21 +671,46 @@ void ModelOrchestrator::preload_adapters() {
  * each with the grammar registry.
  *
  * @internal
- * @version 1.9.3
+ * @version 2.0.6
  */
 void ModelOrchestrator::load_bundled_grammars() {
     std::filesystem::path grammar_dir;
     if (!config_.config_dir.empty()) {
         grammar_dir = config_.config_dir / "grammars";
     }
-
     if (grammar_dir.empty() || !std::filesystem::is_directory(grammar_dir)) {
+        // Fallback set by facade via load_grammars_from() if config_dir
+        // doesn't have a grammars subdir. Check if already loaded.
         logger->info("No bundled grammar directory found, skipping");
         return;
     }
 
     size_t count = grammar_registry_.load_bundled(grammar_dir);
-    logger->info("Grammar registry: {} grammar(s) loaded", count);
+    logger->info("Grammar registry: {} grammar(s) loaded from {}",
+                 count, grammar_dir.string());
+}
+
+/**
+ * @brief Load grammars from an explicit directory path.
+ *
+ * Called by the facade after data-dir resolution. This is the
+ * fallback path when config_dir doesn't contain a grammars subdir
+ * (e.g., installed layout where grammars live under share/entropic).
+ *
+ * @param grammar_dir Path to directory containing .gbnf files.
+ * @return Number of grammars loaded.
+ * @internal
+ * @version 2.0.6
+ */
+size_t ModelOrchestrator::load_grammars_from(
+    const std::filesystem::path& grammar_dir) {
+    if (!std::filesystem::is_directory(grammar_dir)) {
+        return 0;
+    }
+    auto count = grammar_registry_.load_bundled(grammar_dir);
+    logger->info("Grammar registry: {} grammar(s) loaded from {}",
+                 count, grammar_dir.string());
+    return count;
 }
 
 /**

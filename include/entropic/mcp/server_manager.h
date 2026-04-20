@@ -114,6 +114,14 @@ public:
                         const std::string& args_json);
 
     /**
+     * @brief Get the JSON Schema for a tool's input parameters.
+     * @param tool_name Fully-qualified tool name.
+     * @return input_schema JSON string, or empty if tool not found.
+     * @version 2.0.6
+     */
+    std::string get_tool_schema(const std::string& tool_name) const;
+
+    /**
      * @brief Check if tool is explicitly allowed (skip prompting).
      * @param tool_name Fully-qualified tool name.
      * @param args_json Tool arguments as JSON.

@@ -494,7 +494,7 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6.1
+ * @version 2.0.6.2
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -505,6 +505,12 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     }
 
     auto data_dir = entropic::config::resolve_data_dir(h->config);
+    // Fallback grammar loading: only if initialize() didn't find
+    // grammars via config_dir. Avoids overwriting patched grammars.
+    if (h->orchestrator->grammar_registry().size() == 0) {
+        h->orchestrator->load_grammars_from(data_dir / "grammars");
+    }
+
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
     h->identity_manager = std::make_unique<entropic::IdentityManager>(
         entropic::IdentityManagerConfig{});

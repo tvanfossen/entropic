@@ -193,6 +193,14 @@ public:
      */
     ThroughputTracker& throughput_tracker() { return throughput_tracker_; }
 
+    /**
+     * @brief Load grammars from an explicit directory path.
+     * @param grammar_dir Path containing .gbnf files.
+     * @return Number of grammars loaded.
+     * @version 2.0.6
+     */
+    size_t load_grammars_from(const std::filesystem::path& grammar_dir);
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;

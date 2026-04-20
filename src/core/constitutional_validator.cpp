@@ -223,7 +223,7 @@ std::string ConstitutionalValidator::build_critique_prompt(
  * @return Parsed CritiqueResult. On parse failure, returns default
  *         (compliant=true) with raw_json set for diagnostics.
  * @utility
- * @version 1.9.8
+ * @version 2.0.6
  */
 CritiqueResult ConstitutionalValidator::parse_critique(
     const std::string& json_str) {
@@ -231,6 +231,12 @@ CritiqueResult ConstitutionalValidator::parse_critique(
     result.raw_json = json_str;
 
     if (!extract_compliant_field(json_str, result)) {
+        // Fail-open: if the model produced JSON we can't parse (e.g.,
+        // "constitutional_compliance_status" instead of "compliant"),
+        // treat it as compliant rather than triggering a revision loop
+        // on a parse error. The grammar constraint is the real fix;
+        // this is the safety net when grammar loading fails.
+        result.compliant = true;
         return result;
     }
 
@@ -525,15 +531,22 @@ std::string ConstitutionalValidator::build_feedback_text(
  * @param messages_json Base conversation messages (may be NULL).
  * @return Augmented JSON array with assistant + user feedback appended.
  * @internal
- * @version 1.9.8
+ * @version 2.0.6
  */
 std::string ConstitutionalValidator::inject_feedback_into_messages(
     const std::string& original,
     const std::string& feedback,
     const char* messages_json) const {
-    std::string base = (messages_json != nullptr)
-        ? std::string(messages_json)
-        : "[]";
+    std::string base;
+    if (messages_json != nullptr) {
+        base = std::string(messages_json);
+    } else {
+        // No conversation context passed — inject the constitution as
+        // a system prompt so the revision model stays in character.
+        // Without this, the 4B model reverts to its pretrained persona.
+        base = "[{\"role\":\"system\",\"content\":\""
+             + json_escape(constitution_text_) + "\"}";
+    }
 
     // Strip trailing ]
     if (!base.empty() && base.back() == ']') {
@@ -547,10 +560,66 @@ std::string ConstitutionalValidator::inject_feedback_into_messages(
 
     base += "{\"role\":\"assistant\",\"content\":\"";
     base += json_escape(original);
-    base += "\"},{\"role\":\"user\",\"content\":\"";
-    base += json_escape(feedback);
+    base += "\"},{\"role\":\"system\",\"content\":\"";
+    base += json_escape("[CONSTITUTIONAL REVIEW] " + feedback);
     base += "\"}]";
     return base;
+}
+
+/**
+ * @brief Strip `<think>...</think>` blocks from content.
+ *
+ * The model's internal reasoning is not subject to constitutional
+ * review. Passing think blocks to the critique model causes it to
+ * evaluate planning text as if it were claims about the codebase.
+ *
+ * @param content Raw model output.
+ * @return Content with think blocks removed.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string strip_think_blocks(const std::string& content) {
+    std::string result;
+    size_t pos = 0;
+    while (pos < content.size()) {
+        auto open = content.find("<think>", pos);
+        if (open == std::string::npos) {
+            result.append(content, pos);
+            break;
+        }
+        result.append(content, pos, open - pos);
+        auto close = content.find("</think>", open);
+        pos = (close == std::string::npos)
+            ? content.size()
+            : close + 8;
+    }
+    return result;
+}
+
+/**
+ * @brief Check if content is a pure tool call with no prose.
+ *
+ * Tool-call-only outputs contain no prose claims that constitutional
+ * rules can evaluate. Validating them wastes inference and risks
+ * false non-compliance on XML syntax.
+ *
+ * @param content Content with think blocks already stripped.
+ * @return true if content is only whitespace and tool_call XML.
+ * @utility
+ * @version 2.0.6
+ */
+static bool is_pure_tool_call(const std::string& content) {
+    std::string stripped = content;
+    // Remove all <tool_call>...</tool_call> blocks
+    while (true) {
+        auto open = stripped.find("<tool_call>");
+        if (open == std::string::npos) { break; }
+        auto close = stripped.find("</tool_call>", open);
+        if (close == std::string::npos) { break; }
+        stripped.erase(open, close + 12 - open);
+    }
+    // If only whitespace remains, it was a pure tool call
+    return stripped.find_first_not_of(" \t\n\r") == std::string::npos;
 }
 
 /**
@@ -559,17 +628,21 @@ std::string ConstitutionalValidator::inject_feedback_into_messages(
  * @param modified_json Output: revised JSON or NULL.
  * @return 0 (post-hooks cannot cancel).
  * @internal
- * @version 1.9.8
+ * @version 2.0.6
  */
 int ConstitutionalValidator::handle_hook(
     const char* context_json,
     char** modified_json) {
     *modified_json = nullptr;
 
-    auto content = extract_json_string(context_json, "content");
+    auto raw = extract_json_string(context_json, "content");
     auto tier = extract_json_string(context_json, "tier");
 
-    if (content.empty()) {
+    // Strip think blocks — internal reasoning is not reviewable.
+    auto content = strip_think_blocks(raw);
+
+    // Skip validation on pure tool-call outputs — no prose to review.
+    if (content.empty() || is_pure_tool_call(content)) {
         return 0;
     }
 

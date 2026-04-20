@@ -202,6 +202,134 @@ std::optional<Message> ToolExecutor::check_tier_allowed(
 }
 
 /**
+ * @brief Check required fields are present.
+ * @param schema Parsed JSON Schema object.
+ * @param args Parsed tool arguments.
+ * @return Error string, or empty on pass.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string check_required_fields(
+    const nlohmann::json& schema,
+    const nlohmann::json& args)
+{
+    for (const auto& req : schema.value("required",
+                                         nlohmann::json::array())) {
+        if (!args.contains(req.get<std::string>())) {
+            return "Missing required argument: "
+                 + req.get<std::string>();
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Check one property's enum and type constraints.
+ * @param key Property name.
+ * @param prop Property schema.
+ * @param val Argument value.
+ * @return Error string, or empty on pass.
+ * @utility
+ * @version 2.0.6
+ */
+/**
+ * @brief Check a single value against an enum constraint.
+ * @param key Property name.
+ * @param allowed Enum array from schema.
+ * @param val Argument value.
+ * @return Error string, or empty on pass.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string check_enum(
+    const std::string& key,
+    const nlohmann::json& allowed,
+    const nlohmann::json& val)
+{
+    for (const auto& e : allowed) {
+        if (e == val) { return ""; }
+    }
+    return "Invalid value for '" + key + "': "
+         + val.dump() + ". Must be one of: " + allowed.dump();
+}
+
+/**
+ * @brief Check a single value against a type constraint.
+ * @param key Property name.
+ * @param type Expected JSON Schema type string.
+ * @param val Argument value.
+ * @return Error string, or empty on pass.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string check_type(
+    const std::string& key,
+    const std::string& type,
+    const nlohmann::json& val)
+{
+    bool ok = (type == "string" && val.is_string())
+           || (type == "integer" && val.is_number_integer())
+           || (type == "number" && val.is_number())
+           || (type == "boolean" && val.is_boolean())
+           || (type == "array" && val.is_array())
+           || (type == "object" && val.is_object());
+    return ok ? "" : "Type mismatch for '" + key
+                   + "': expected " + type;
+}
+
+/**
+ * @brief Check one property's enum and type constraints.
+ * @param key Property name.
+ * @param prop Property schema.
+ * @param val Argument value.
+ * @return Error string, or empty on pass.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string check_property_constraints(
+    const std::string& key,
+    const nlohmann::json& prop,
+    const nlohmann::json& val)
+{
+    if (prop.contains("enum")) {
+        auto err = check_enum(key, prop["enum"], val);
+        if (!err.empty()) { return err; }
+    }
+    if (!prop.contains("type")) { return ""; }
+    return check_type(key, prop["type"].get<std::string>(), val);
+}
+
+/**
+ * @brief Validate tool arguments against the tool's JSON Schema.
+ *
+ * Checks required fields, enum constraints, and basic type matching.
+ * Returns an error string on violation, or empty on pass.
+ *
+ * @param schema_json The tool's input_schema (JSON Schema string).
+ * @param args The parsed arguments from the model.
+ * @return Error description, or empty string if valid.
+ * @utility
+ * @version 2.0.6
+ */
+static std::string validate_tool_args(
+    const std::string& schema_json,
+    const nlohmann::json& args)
+{
+    auto schema = nlohmann::json::parse(schema_json, nullptr, false);
+    if (!schema.is_object()) { return ""; }
+
+    auto err = check_required_fields(schema, args);
+    auto props = schema.value("properties", nlohmann::json::object());
+    for (auto it = props.begin(); it != props.end() && err.empty(); ++it) {
+        if (args.contains(it.key())) {
+            err = check_property_constraints(
+                it.key(), it.value(), args[it.key()]);
+        }
+    }
+    return err;
+}
+
+/**
  * @brief Execute a single tool call.
  * @param ctx Loop context.
  * @param call Tool call.
@@ -434,10 +562,42 @@ std::optional<Message> ToolExecutor::check_dup_or_approval(
  * @internal
  * @version 1.9.4
  */
+/**
+ * @brief Validate tool arguments against schema constraints.
+ * @param call Tool call to validate.
+ * @return Rejection message, or nullopt on pass.
+ * @internal
+ * @version 2.0.6
+ */
+std::optional<Message> ToolExecutor::check_schema(
+    const ToolCall& call) {
+    auto schema = server_manager_.get_tool_schema(call.name);
+    if (schema.empty()) { return std::nullopt; }
+    auto args = nlohmann::json::parse(
+        serialize_args(call), nullptr, false);
+    auto err = args.is_discarded()
+        ? std::string{} : validate_tool_args(schema, args);
+    if (err.empty()) { return std::nullopt; }
+    logger->warn("Tool '{}' argument validation failed: {}",
+                 call.name, err);
+    return create_denied_message(call, err);
+}
+
+/**
+ * @brief Run all precondition checks for a tool call.
+ * @param ctx Loop context.
+ * @param call Tool call.
+ * @return Rejection message, or nullopt if all checks pass.
+ * @internal
+ * @version 2.0.6
+ */
 std::optional<Message> ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
-    // Layer 3 (finest) → Layer 2 → duplicate → Layer 1
-    auto result = check_mcp_authorization(ctx, call);
+    // Schema → Layer 3 (finest) → Layer 2 → duplicate → Layer 1
+    auto result = check_schema(call);
+    if (!result.has_value()) {
+        result = check_mcp_authorization(ctx, call);
+    }
     if (!result.has_value()) {
         result = check_tier_allowed(ctx, call);
     }

@@ -168,6 +168,27 @@ std::string ServerManager::execute(
 }
 
 /**
+ * @brief Get the JSON Schema for a tool's input parameters.
+ * @param tool_name Fully-qualified tool name.
+ * @return input_schema JSON string, or empty if tool not found.
+ * @internal
+ * @version 2.0.6
+ */
+std::string ServerManager::get_tool_schema(
+    const std::string& tool_name) const {
+    auto prefix = extract_prefix(tool_name);
+    auto local_name = extract_local_name(tool_name);
+    auto it = servers_.find(prefix);
+    if (it != servers_.end()) {
+        auto* tool = it->second->registry().get_tool(local_name);
+        if (tool != nullptr) {
+            return tool->definition().input_schema;
+        }
+    }
+    return "";
+}
+
+/**
  * @brief Route a tool call to the correct server (in-process or external).
  * @param tool_name Fully-qualified name.
  * @param args_json JSON arguments.

@@ -203,6 +203,14 @@ private:
         LoopContext& ctx, const ToolCall& call);
 
     /**
+     * @brief Validate tool arguments against schema constraints.
+     * @param call Tool call to validate.
+     * @return Rejection message, or nullopt on pass.
+     * @version 2.0.6
+     */
+    std::optional<Message> check_schema(const ToolCall& call);
+
+    /**
      * @brief Check duplicate detection and global approval.
      * @param ctx Loop context.
      * @param call Tool call.

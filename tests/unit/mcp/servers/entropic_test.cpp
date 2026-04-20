@@ -175,3 +175,49 @@ TEST_CASE("test_single_tier_skips_delegate", "[entropic]") {
 
     REQUIRE(result.find("Unknown tool") != std::string::npos);
 }
+
+// ── v2.0.6: Delegate enum filtering ─────────────────────
+
+SCENARIO("Delegate tool enum excludes source tiers",
+         "[entropic_server][v2.0.6]")
+{
+    GIVEN("an entropic server with tiers [researcher, reader]") {
+        // tiers passed to constructor are delegation TARGETS only
+        // (collect_delegatable_tiers excludes sources)
+        std::vector<std::string> tiers = {"researcher", "reader"};
+        EntropicServer server(tiers, TEST_DATA_DIR);
+
+        WHEN("delegate tool schema is inspected") {
+            auto tools_json = server.list_tools();
+            auto tools = json::parse(tools_json);
+
+            // Find delegate tool
+            json delegate_schema;
+            for (const auto& tool : tools) {
+                if (tool.value("name", "") == "delegate") {
+                    delegate_schema = tool;
+                    break;
+                }
+            }
+            REQUIRE(!delegate_schema.is_null());
+
+            auto target_enum = delegate_schema
+                ["inputSchema"]["properties"]["target"]["enum"];
+
+            THEN("researcher and reader are in enum") {
+                auto has = [&](const std::string& v) {
+                    return std::find(target_enum.begin(),
+                        target_enum.end(), v) != target_enum.end();
+                };
+                CHECK(has("researcher"));
+                CHECK(has("reader"));
+            }
+
+            THEN("lead is NOT in enum (self-delegation excluded)") {
+                auto has_lead = std::find(target_enum.begin(),
+                    target_enum.end(), "lead") != target_enum.end();
+                CHECK_FALSE(has_lead);
+            }
+        }
+    }
+}

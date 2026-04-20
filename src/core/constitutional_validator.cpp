@@ -23,6 +23,10 @@ namespace {
 auto logger = entropic::log::get("core.constitutional_validator");
 } // anonymous namespace
 
+// Forward declarations for static helpers used in validate()
+static std::string strip_think_blocks(const std::string& content);
+static bool is_pure_tool_call(const std::string& content);
+
 /**
  * @brief Construct validator with config and constitution text.
  * @param config Validation pipeline configuration.
@@ -142,7 +146,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -157,10 +161,18 @@ ValidationResult ConstitutionalValidator::validate(
         return result;
     }
 
+    // Strip think blocks and skip pure tool-call outputs
+    auto cleaned = strip_think_blocks(content);
+    if (cleaned.empty() || is_pure_tool_call(cleaned)) {
+        logger->info("Validation skipped: pure tool-call or empty");
+        store_result(result);
+        return result;
+    }
+
     current_tier_ = tier;
     logger->info("Validation start: {} chars, tier='{}'",
-                 content.size(), tier);
-    result = run_validation_loop(content, tier, messages_json);
+                 cleaned.size(), tier);
+    result = run_validation_loop(cleaned, tier, messages_json);
     logger->info("Validation {}: {} revision(s)",
                  result.was_revised ? "revised" : "passed",
                  result.revision_count);
@@ -661,23 +673,17 @@ static bool is_pure_tool_call(const std::string& content) {
  * @param modified_json Output: revised JSON or NULL.
  * @return 0 (post-hooks cannot cancel).
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 int ConstitutionalValidator::handle_hook(
     const char* context_json,
     char** modified_json) {
     *modified_json = nullptr;
 
-    auto raw = extract_json_string(context_json, "content");
+    auto content = extract_json_string(context_json, "content");
     auto tier = extract_json_string(context_json, "tier");
 
-    // Strip think blocks — internal reasoning is not reviewable.
-    auto content = strip_think_blocks(raw);
-
-    // Skip validation on pure tool-call outputs — no prose to review.
-    if (content.empty() || is_pure_tool_call(content)) {
-        return 0;
-    }
+    if (content.empty()) { return 0; }
 
     auto result = validate(content, tier, nullptr);
     if (!result.was_revised) {

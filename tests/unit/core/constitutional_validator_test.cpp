@@ -564,3 +564,72 @@ SCENARIO("Per-identity rules appended to critique prompt",
         }
     }
 }
+
+// ── v2.0.6: Tool-call-only skip ─────────────────────────
+
+SCENARIO("Validation skips pure tool-call output",
+         "[constitutional_validator][v2.0.6]")
+{
+    GIVEN("a validator with enabled config") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.attach(nullptr, &iface);
+
+        WHEN("content is only a tool call") {
+            std::string tc_only =
+                "<think>\n</think>\n"
+                "<tool_call>\n<function=entropic.delegate>\n"
+                "<parameter=target>researcher</parameter>\n"
+                "</function>\n</tool_call>";
+            v.validate(tc_only, "lead", nullptr);
+
+            THEN("no critique generation occurs") {
+                CHECK(mock.generate_count == 0);
+            }
+        }
+
+        WHEN("content has prose after tool call") {
+            mock.responses.push_back(
+                R"({"compliant":true,"violations":[],"revised":""})");
+            std::string with_prose =
+                "<tool_call></tool_call>\nHere is my analysis.";
+            v.validate(with_prose, "lead", nullptr);
+
+            THEN("critique generation occurs") {
+                CHECK(mock.generate_count == 1);
+            }
+        }
+    }
+}
+
+// ── v2.0.6: Fail-open on malformed critique ─────────────
+
+SCENARIO("Malformed critique JSON defaults to compliant",
+         "[constitutional_validator][v2.0.6]")
+{
+    GIVEN("a validator whose critique model returns non-standard JSON") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        // Response has no "compliant" key — triggers fail-open path
+        mock.responses.push_back(
+            R"({"status": "pass", "issues": []})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.attach(nullptr, &iface);
+
+        WHEN("validate is called") {
+            auto result = v.validate("Hello!", "lead", nullptr);
+
+            THEN("treated as compliant (fail-open)") {
+                CHECK_FALSE(result.was_revised);
+                CHECK(result.revision_count == 0);
+            }
+        }
+    }
+}

@@ -141,3 +141,41 @@ SCENARIO("Layered merge — project overlays global", "[config][loader]") {
         }
     }
 }
+
+// ── v2.0.6: Consumer models block replace semantics ──────
+
+SCENARIO("Consumer models block replaces global tiers",
+         "[config][loader][v2.0.6]")
+{
+    GIVEN("a global config with eng tier and a consumer with lead+researcher") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        // Load global first (has eng)
+        auto err = entropic::config::parse_config_file(
+            test_data() / "test_config.yaml", registry, config);
+        REQUIRE(err.empty());
+        REQUIRE(config.models.tiers.count("eng") == 1);
+
+        WHEN("consumer config with models: block is overlaid with replace") {
+            // Simulate replace semantics: clear tiers before consumer parse
+            config.models.tiers.clear();
+            config.models.router.reset();
+            config.models.default_tier.clear();
+            err = entropic::config::parse_config_file(
+                test_data() / "consumer_replace_config.yaml",
+                registry, config);
+
+            THEN("only consumer tiers survive") {
+                REQUIRE(err.empty());
+                CHECK(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers.count("researcher") == 1);
+                CHECK(config.models.tiers.count("eng") == 0);
+                CHECK(config.models.tiers.size() == 2);
+            }
+
+            THEN("default tier is set from consumer") {
+                CHECK(config.models.default_tier == "lead");
+            }
+        }
+    }
+}

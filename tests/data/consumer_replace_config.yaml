@@ -1,0 +1,12 @@
+# Consumer config for replace semantics test.
+# When loaded as consumer layer, this models: block should fully replace
+# global tiers. Only lead and researcher should survive; eng from global
+# should be discarded.
+models:
+  default: lead
+  lead:
+    path: primary
+    context_length: 16384
+  researcher:
+    path: primary
+    context_length: 16384

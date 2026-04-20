@@ -44,6 +44,33 @@ public:
 };
 
 /**
+ * @brief Tool with enum constraint for schema validation testing.
+ * @version 2.0.6
+ */
+class EnumTool : public ToolBase {
+public:
+    /**
+     * @brief Construct with enum schema.
+     * @version 2.0.6
+     */
+    EnumTool() : ToolBase(ToolDefinition{
+        "pick",
+        "Pick a color",
+        R"({"type":"object","properties":{"color":{"type":"string","enum":["red","blue","green"]}},"required":["color"]})"
+    }) {}
+
+    /**
+     * @brief Execute: return "ok".
+     * @param args_json Arguments (unused).
+     * @return ServerResponse.
+     * @version 1.8.5
+     */
+    ServerResponse execute(const std::string& /*args_json*/) override {
+        return ServerResponse{"ok", {}};
+    }
+};
+
+/**
  * @brief Test server wrapping OkTool.
  * @version 1.8.5
  */
@@ -58,6 +85,23 @@ public:
     }
 private:
     OkTool tool_; ///< The tool
+};
+
+/**
+ * @brief Test server wrapping EnumTool.
+ * @version 2.0.6
+ */
+class EnumServer : public MCPServerBase {
+public:
+    /**
+     * @brief Construct and register tool.
+     * @version 2.0.6
+     */
+    EnumServer() : MCPServerBase("enum") {
+        register_tool(&tool_);
+    }
+private:
+    EnumTool tool_; ///< The tool
 };
 
 // ── Helper ───────────────────────────────────────────────
@@ -232,4 +276,91 @@ TEST_CASE("Max tool calls per turn", "[tool_executor]") {
     }
     auto results = executor.process_tool_calls(ctx, calls);
     REQUIRE(results.size() <= 2);
+}
+
+// ── v2.0.6: Schema validation ───────────────────────────
+
+/**
+ * @brief Build a ServerManager with both OkServer and EnumServer.
+ * @return Configured ServerManager.
+ * @internal
+ * @version 2.0.6
+ */
+static ServerManager make_enum_manager() {
+    PermissionsConfig perms;
+    ServerManager mgr(perms, "/tmp/test");
+    mgr.register_server(std::make_unique<OkServer>());
+    mgr.register_server(std::make_unique<EnumServer>());
+    mgr.initialize();
+    return mgr;
+}
+
+SCENARIO("Schema validation rejects invalid enum value",
+         "[tool_executor][v2.0.6][schema]")
+{
+    GIVEN("a tool executor with an enum-constrained tool") {
+        auto mgr = make_enum_manager();
+        LoopConfig lc;
+        EngineCallbacks cbs{};
+        ToolExecutor executor(mgr, lc, cbs, {});
+
+        WHEN("tool is called with an invalid enum value") {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-bad";
+            call.name = "enum.pick";
+            call.arguments["color"] = "purple";
+            auto results = executor.process_tool_calls(
+                ctx, {call});
+
+            THEN("call is rejected with an error message") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("Invalid value")
+                      != std::string::npos);
+            }
+        }
+
+        WHEN("tool is called with a valid enum value") {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-good";
+            call.name = "enum.pick";
+            call.arguments["color"] = "red";
+            auto results = executor.process_tool_calls(
+                ctx, {call});
+
+            THEN("call executes successfully (not rejected)") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("Invalid value")
+                      == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Schema validation rejects missing required field",
+         "[tool_executor][v2.0.6][schema]")
+{
+    GIVEN("a tool executor with a required-field tool") {
+        auto mgr = make_enum_manager();
+        LoopConfig lc;
+        EngineCallbacks cbs{};
+        ToolExecutor executor(mgr, lc, cbs, {});
+
+        WHEN("tool is called without required field") {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-missing";
+            call.name = "enum.pick";
+            // no color argument
+            auto results = executor.process_tool_calls(
+                ctx, {call});
+
+            THEN("call is rejected for missing required") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("Missing required")
+                      != std::string::npos);
+            }
+        }
+    }
 }

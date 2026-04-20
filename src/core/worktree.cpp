@@ -26,6 +26,39 @@ static auto logger = entropic::log::get("core.worktree");
 
 namespace entropic {
 
+/**
+ * @brief Safe remove_all that only deletes inside .worktrees/.
+ *
+ * Guards against path miscalculation or corruption that could
+ * delete session state directories (.explorer/, config, databases)
+ * at the repo root. Refuses to delete anything that doesn't
+ * contain ".worktrees" in its path.
+ *
+ * @param target Path to remove.
+ * @param context Human-readable context for logging.
+ * @utility
+ * @version 2.0.6
+ */
+static void safe_remove_all(
+    const std::filesystem::path& target,
+    const std::string& context) {
+    if (target.empty()) { return; }
+    auto canonical = target.string();
+    if (canonical.find(".worktrees") == std::string::npos) {
+        logger->error("BLOCKED remove_all outside .worktrees/: "
+                      "path='{}' context='{}'",
+                      canonical, context);
+        return;
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(target, ec);
+    if (ec) {
+        logger->warn("remove_all failed: path='{}' context='{}' "
+                     "error={}", canonical, context, ec.message());
+    }
+}
+
+
 // ── run_git ──────────────────────────────────────────────
 
 /**
@@ -113,18 +146,12 @@ WorktreeManager::WorktreeManager(const std::filesystem::path& repo_dir)
  * leaked past `cleanup()` is removed when the session ends.
  *
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 WorktreeManager::~WorktreeManager() {
     std::error_code ec;
-    std::filesystem::remove_all(worktree_base_, ec);
-    if (ec) {
-        logger->warn("Failed to remove session worktree base {}: {}",
-                     worktree_base_.string(), ec.message());
-    } else {
-        logger->info("Removed session worktree base: {}",
-                     worktree_base_.string());
-    }
+    safe_remove_all(worktree_base_, "destructor session cleanup");
+    logger->info("Session worktree cleanup: {}", worktree_base_.string());
 }
 
 /**
@@ -149,18 +176,12 @@ static bool pid_is_alive(long pid) {
  * @param dir Directory to remove.
  * @param reason Human-readable reason (for log line).
  * @utility
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 static void remove_orphan_dir(
     const std::filesystem::path& dir, const std::string& reason) {
-    std::error_code ec;
-    std::filesystem::remove_all(dir, ec);
-    if (ec) {
-        logger->warn("Failed to remove orphan {} ({}): {}",
-                     dir.string(), reason, ec.message());
-    } else {
-        logger->info("Pruned orphan {} ({})", dir.string(), reason);
-    }
+    safe_remove_all(dir, "prune orphan: " + reason);
+    logger->info("Pruned orphan {} ({})", dir.string(), reason);
 }
 
 /**
@@ -338,7 +359,7 @@ bool WorktreeManager::ensure_develop() {
  * @param tier Target tier name.
  * @return WorktreeInfo on success, nullopt on failure.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 std::optional<WorktreeInfo> WorktreeManager::create_worktree(
     const std::string& delegation_id,
@@ -361,8 +382,7 @@ std::optional<WorktreeInfo> WorktreeManager::create_worktree(
                      r.output);
         run_git(repo_dir_, "worktree remove --force '"
                            + path.string() + "'");
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
+        safe_remove_all(path, "create_worktree retry cleanup");
         run_git(repo_dir_, "branch -D " + branch);
         r = run_git(repo_dir_, cmd);
         if (!r.success) {
@@ -437,13 +457,12 @@ bool WorktreeManager::merge_worktree(const WorktreeInfo& info) {
  *
  * @param info Worktree to clean up.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 void WorktreeManager::cleanup(const WorktreeInfo& info) {
     run_git(repo_dir_, "worktree remove --force '" +
                        info.path.string() + "'");
-    std::error_code ec;
-    std::filesystem::remove_all(info.path, ec);
+    safe_remove_all(info.path, "cleanup belt-and-suspenders");
     run_git(repo_dir_, "branch -D " + info.branch);
     logger->info("Cleaned up worktree: {}", info.branch);
 }

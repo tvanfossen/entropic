@@ -148,3 +148,41 @@ SCENARIO("Current-session dir survives prune",
         cleanup_repo(repo);
     }
 }
+
+// ── v2.0.6: Path containment guard ─────────────────────
+
+SCENARIO("Worktree cleanup preserves sibling directories",
+         "[worktree][regression][v2.0.6]")
+{
+    GIVEN("a repo with .explorer/ sibling to .worktrees/") {
+        auto repo = create_temp_repo();
+        auto explorer = repo / ".explorer";
+        fs::create_directories(explorer);
+        std::ofstream(explorer / "docs.db") << "data\n";
+        REQUIRE(fs::exists(explorer / "docs.db"));
+
+        WHEN("a WorktreeManager is created and destroyed") {
+            { WorktreeManager mgr(repo); }
+
+            THEN(".explorer/ and its contents survive") {
+                CHECK(fs::exists(explorer));
+                CHECK(fs::exists(explorer / "docs.db"));
+            }
+        }
+
+        WHEN("a worktree is created, used, and discarded") {
+            WorktreeManager mgr(repo);
+            mgr.ensure_develop();
+            auto wt = mgr.create_worktree("test1", "eng");
+            if (wt) {
+                mgr.discard_worktree(*wt);
+            }
+
+            THEN(".explorer/ survives worktree lifecycle") {
+                CHECK(fs::exists(explorer));
+                CHECK(fs::exists(explorer / "docs.db"));
+            }
+        }
+        cleanup_repo(repo);
+    }
+}

@@ -102,4 +102,6 @@ struct entropic_engine {
     // ── Phase 6: Tier metadata (v2.0.4) ───────────────────────
     /// @brief Per-tier allowed_tools from identity frontmatter.
     std::unordered_map<std::string, std::vector<std::string>> tier_allowed_tools;
+    /// @brief Per-tier validation_rules from identity frontmatter (v2.0.6).
+    std::unordered_map<std::string, std::vector<std::string>> tier_validation_rules;
 };

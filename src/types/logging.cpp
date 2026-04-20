@@ -8,6 +8,7 @@
 #include <entropic/types/logging.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <mutex>
@@ -107,11 +108,41 @@ std::shared_ptr<spdlog::logger> get(const std::string& name) {
  * @utility
  * @version 2.0.1
  */
+/**
+ * @brief Remove the console sink from all loggers.
+ *
+ * Called after adding a file sink to ensure logs go to exactly
+ * one destination. Matches by pointer identity against s_sink.
+ *
+ * @utility
+ * @version 2.0.6
+ */
+static void remove_console_sink() {
+    if (!s_sink) { return; }
+    spdlog::apply_all([](std::shared_ptr<spdlog::logger> l) {
+        auto& sinks = l->sinks();
+        sinks.erase(
+            std::remove(sinks.begin(), sinks.end(), s_sink),
+            sinks.end());
+    });
+}
+
+/**
+ * @brief Set up session logging for a project directory.
+ *
+ * Adds a file sink for session.log, removes the console sink so
+ * logs go to exactly one destination. Truncates session_model.log.
+ *
+ * @param log_dir Directory for session log files.
+ * @utility
+ * @version 2.0.6
+ */
 void setup_session(const std::filesystem::path& log_dir) {
     if (log_dir.empty()) { return; }
 
     auto log_file = log_dir / "session.log";
     add_file_sink(log_file);
+    remove_console_sink();
 
     auto model_file = log_dir / "session_model.log";
     std::filesystem::create_directories(model_file.parent_path());

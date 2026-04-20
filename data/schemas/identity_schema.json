@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "entropic-identity-frontmatter-v2.0.6",
+  "title": "Identity Frontmatter",
+  "description": "YAML frontmatter schema for identity .md files. Placed between --- delimiters at the top of an identity markdown file. The body after the frontmatter is the system prompt text.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "identity",
+      "description": "Must be 'identity' for identity files."
+    },
+    "version": {
+      "type": "integer",
+      "default": 1,
+      "description": "Schema version."
+    },
+    "name": {
+      "type": "string",
+      "description": "Tier name (e.g., 'lead', 'researcher'). Must match the tier key in the models config."
+    },
+    "focus": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Focus areas for this identity (used in routing context).",
+      "default": []
+    },
+    "examples": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Few-shot example strings.",
+      "default": []
+    },
+    "grammar": {
+      "type": "string",
+      "description": "Grammar file reference (GBNF key from grammar registry). Constrains all output from this identity."
+    },
+    "auto_chain": {
+      "type": "string",
+      "description": "Target tier for automatic chaining. When set, the engine auto-delegates to this tier after the current identity completes."
+    },
+    "allowed_tools": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Tool filter — only these tools are available to this identity. Empty or absent = all tools. Fully-qualified names (e.g., 'filesystem.read_file', 'entropic.delegate')."
+    },
+    "bash_commands": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Allowed bash commands for this identity (when bash server is enabled)."
+    },
+    "validation_rules": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Per-identity constitutional validation rules. Appended to global constitution rules during critique. Each string is a single rule statement."
+    },
+    "max_output_tokens": {
+      "type": "integer",
+      "default": 1024,
+      "minimum": 1,
+      "description": "Maximum output tokens per generation for this identity."
+    },
+    "temperature": {
+      "type": "number",
+      "default": 0.7,
+      "minimum": 0.0,
+      "maximum": 2.0,
+      "description": "Sampling temperature."
+    },
+    "repeat_penalty": {
+      "type": "number",
+      "default": 1.1,
+      "minimum": 0.0,
+      "description": "Repetition penalty."
+    },
+    "enable_thinking": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable <think> block output for this identity."
+    },
+    "model_preference": {
+      "type": "string",
+      "default": "primary",
+      "description": "Bundled model key preference (e.g., 'primary', 'lightweight', 'mid'). Resolved via bundled_models.yaml."
+    },
+    "interstitial": {
+      "type": "boolean",
+      "default": false,
+      "description": "Interstitial role — runs between other identities (e.g., compactor)."
+    },
+    "routable": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether the router can select this identity. Set false for utility identities that are only reached via explicit delegation."
+    },
+    "role_type": {
+      "type": "string",
+      "default": "front_office",
+      "enum": ["front_office", "back_office", "utility"],
+      "description": "Role classification. front_office = user-facing, back_office = internal specialist, utility = infrastructure."
+    },
+    "explicit_completion": {
+      "type": "boolean",
+      "default": false,
+      "description": "Requires explicit entropic.complete tool call to signal task completion. When false, the engine infers completion from empty tool calls."
+    },
+    "phases": {
+      "type": "object",
+      "description": "Named generation phases with per-phase inference parameters.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "temperature": { "type": "number" },
+          "max_output_tokens": { "type": "integer" },
+          "enable_thinking": { "type": "boolean" },
+          "repeat_penalty": { "type": "number" },
+          "bash_commands": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "description": "Benchmark specification for automated testing.",
+      "properties": {
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "input": { "type": "string" },
+              "expected_contains": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "required": ["type", "name"],
+  "additionalProperties": false
+}

@@ -934,18 +934,36 @@ static std::string dispatch_inspect(
  * @internal
  * @version 1.9.12
  */
+/**
+ * @brief Execute targeted inspection query.
+ *
+ * When called with no target (or empty target), returns the full
+ * runtime state dump so the model can self-orient without knowing
+ * which specific target to query.
+ *
+ * @param args_json JSON with optional "target" and "key".
+ * @return ServerResponse with query result.
+ * @internal
+ * @version 2.0.6
+ */
 ServerResponse InspectTool::execute(const std::string& args_json) {
     if (provider_ == nullptr) {
         logger->error("[inspect] no state provider set");
         return {"Error: engine state provider not configured", {}};
     }
 
-    auto args = nlohmann::json::parse(args_json);
-    std::string target = args.at("target").get<std::string>();
+    auto args = nlohmann::json::parse(args_json, nullptr, false);
+    std::string target = args.value("target", "");
     std::string key = args.value("key", "");
 
-    logger->info("[inspect] target='{}' key='{}'", target, key);
+    if (target.empty()) {
+        logger->info("[inspect] full state dump (no target)");
+        auto state = call_provider(provider_->get_state,
+                                   provider_->user_data);
+        return {state, {}};
+    }
 
+    logger->info("[inspect] target='{}' key='{}'", target, key);
     auto result = dispatch_inspect(*provider_, target, key);
     return {result, {}};
 }

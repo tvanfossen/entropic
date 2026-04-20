@@ -359,7 +359,7 @@ static std::string parse_prompt_cache_config(
  * @param node YAML node for "constitutional_validation" section.
  * @param[out] config Output constitutional validation config.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6.1
  */
 static void parse_constitutional_validation_config(
     ryml::ConstNodeRef node,
@@ -368,6 +368,8 @@ static void parse_constitutional_validation_config(
     extract(node, "enabled", config.enabled);
     extract(node, "max_revisions", config.max_revisions);
     extract(node, "max_critique_tokens", config.max_critique_tokens);
+    extract(node, "temperature", config.temperature);
+    extract(node, "enable_thinking", config.enable_thinking);
     extract(node, "priority", config.priority);
     extract(node, "grammar_key", config.grammar_key);
 }

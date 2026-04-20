@@ -13,6 +13,7 @@
 #include "engine_handle.h"
 
 #include <entropic/config/loader.h>
+#include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/entropic.h>
 #include <entropic/prompts/manager.h>
 #include <entropic/types/logging.h>
@@ -378,7 +379,7 @@ static std::string build_shared_prompt_prefix(
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6
  */
 static void cache_tier_allowed_tools(
     entropic_handle_t h,
@@ -394,9 +395,15 @@ static void cache_tier_allowed_tools(
             continue;
         }
         entropic::prompts::ParsedIdentity id;
-        if (entropic::prompts::load_identity(id_path, id).empty()
-            && id.frontmatter.allowed_tools.has_value()) {
-            h->tier_allowed_tools[name] = *id.frontmatter.allowed_tools;
+        if (entropic::prompts::load_identity(id_path, id).empty()) {
+            if (id.frontmatter.allowed_tools.has_value()) {
+                h->tier_allowed_tools[name] =
+                    *id.frontmatter.allowed_tools;
+            }
+            if (!id.frontmatter.validation_rules.empty()) {
+                h->tier_validation_rules[name] =
+                    id.frontmatter.validation_rules;
+            }
         }
     }
 }
@@ -471,6 +478,145 @@ static void wire_hooks_and_validator(
     }
 }
 
+// ── State provider callbacks ─────────────────────────────
+
+/**
+ * @brief State provider: get_config.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_config(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    nlohmann::json j;
+    j["default_tier"] = h->config.models.default_tier;
+    j["log_level"] = h->config.log_level;
+    j["log_dir"] = h->config.log_dir.string();
+    j["ggml_logging"] = h->config.ggml_logging;
+    return strdup(j.dump().c_str());
+}
+
+/**
+ * @brief State provider: get_identities.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_identities(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& [name, _] : h->config.models.tiers) {
+        arr.push_back(name);
+    }
+    return strdup(arr.dump().c_str());
+}
+
+/**
+ * @brief State provider: get_tools.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_tools(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (!h->server_manager) { return strdup("[]"); }
+    return strdup(h->server_manager->list_tools().c_str());
+}
+
+/**
+ * @brief State provider: get_history.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_history(int max_entries, void* ud) {
+    (void)max_entries;
+    (void)ud;
+    return strdup("[]");
+}
+
+/**
+ * @brief State provider: get_state (runtime environment).
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_state(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    nlohmann::json j;
+    j["engine_state"] = h->configured.load() ? "configured" : "init";
+    j["default_tier"] = h->config.models.default_tier;
+
+    nlohmann::json tiers = nlohmann::json::array();
+    for (const auto& [name, _] : h->config.models.tiers) {
+        tiers.push_back(name);
+    }
+    j["active_tiers"] = tiers;
+
+    if (h->server_manager) {
+        j["working_dir"] = h->server_manager->project_dir().string();
+        j["registered_servers"] = h->server_manager->server_names();
+    }
+    j["data_dir"] = entropic::config::resolve_data_dir(
+        h->config).string();
+    j["log_dir"] = h->config.log_dir.string();
+    return strdup(j.dump().c_str());
+}
+
+/**
+ * @brief State provider: get_metrics.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_metrics(void* ud) {
+    (void)ud;
+    return strdup("{}");
+}
+
+/**
+ * @brief State provider: get_docs.
+ * @callback
+ * @version 2.0.6
+ */
+static char* sp_get_docs(const char* section, void* ud) {
+    (void)section;
+    (void)ud;
+    return strdup("");
+}
+
+/**
+ * @brief Wire state provider to the EntropicServer.
+ * @param h Engine handle with all subsystems constructed.
+ * @internal
+ * @version 2.0.6
+ */
+static void wire_state_provider(entropic_handle_t h) {
+    if (!h->server_manager) { return; }
+    auto* es = dynamic_cast<entropic::EntropicServer*>(
+        h->server_manager->get_server("entropic"));
+    if (es == nullptr) { return; }
+
+    entropic_state_provider_t sp{};
+    sp.get_config = sp_get_config;
+    sp.get_identities = sp_get_identities;
+    sp.get_tools = sp_get_tools;
+    sp.get_history = sp_get_history;
+    sp.get_state = sp_get_state;
+    sp.get_metrics = sp_get_metrics;
+    sp.get_docs = sp_get_docs;
+    sp.user_data = h;
+    es->set_state_provider(sp);
+    s_log->info("State provider wired to entropic server");
+}
+
+/**
+ * @brief Pass per-identity validation rules to the validator.
+ * @param h Engine handle with validator + tier_validation_rules populated.
+ * @internal
+ * @version 2.0.6
+ */
+static void wire_tier_validation_rules(entropic_handle_t h) {
+    if (!h->validator) { return; }
+    for (const auto& [name, rules] : h->tier_validation_rules) {
+        h->validator->set_tier_rules(name, rules);
+    }
+}
+
 /**
  * @brief Build LoopConfig from parsed config.
  * @param h Engine handle with config populated.
@@ -494,7 +640,7 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6.2
+ * @version 2.0.6.3
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -541,8 +687,10 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
 
     wire_hooks_and_validator(h, iface, shared_prefix);
+    wire_tier_validation_rules(h);
 
     init_persistence(h);
+    wire_state_provider(h);
 
     h->engine->set_system_prompt(
         entropic::prompts::assemble(h->config, data_dir));

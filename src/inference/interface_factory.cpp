@@ -64,7 +64,7 @@ static std::vector<Message> parse_msgs(const char* json_str) {
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
  * @utility
- * @version 2.0.1
+ * @version 2.0.6
  */
 static GenerationParams parse_params(const char* json_str) {
     GenerationParams p;
@@ -73,6 +73,17 @@ static GenerationParams parse_params(const char* json_str) {
     if (!j.is_object()) { return p; }
     if (j.contains("max_tokens")) { p.max_tokens = j["max_tokens"]; }
     if (j.contains("temperature")) { p.temperature = j["temperature"]; }
+    if (j.contains("grammar_key")) {
+        p.grammar_key = j["grammar_key"].get<std::string>();
+    }
+    if (j.contains("enable_thinking")) {
+        p.enable_thinking = j["enable_thinking"].get<bool>();
+    }
+    if (j.contains("top_p")) { p.top_p = j["top_p"]; }
+    if (j.contains("top_k")) { p.top_k = j["top_k"]; }
+    if (j.contains("repeat_penalty")) {
+        p.repeat_penalty = j["repeat_penalty"];
+    }
     return p;
 }
 

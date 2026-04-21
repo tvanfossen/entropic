@@ -161,7 +161,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.7
+ * @version 2.0.8
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -237,51 +237,62 @@ int ConstitutionalValidator::hook_callback(
 /**
  * @brief Build the critique prompt string.
  *
- * Prepends a tool call manifest (from current_tool_context_) before
- * the evaluated text so the validator can distinguish grounded claims
- * (preceded by tool calls) from ungrounded assertions. Without this
- * context, valid tool-grounded responses are rejected because the
- * text itself contains no tool calls.
+ * When per-tier validation_rules exist (from identity frontmatter),
+ * those are the PRIMARY evaluation criteria and the constitution is
+ * included as background context. This prevents the validator from
+ * citing global constitution rule numbers ("Rule 2: Tool calls are
+ * mandatory") when the tier has its own specific compliance criteria.
+ *
+ * When no validation_rules exist, falls back to the constitution
+ * as the sole rubric (pre-v2.0.8 behavior).
+ *
+ * Prepends a tool call manifest (from current_tool_context_) when
+ * available so the validator can distinguish grounded claims from
+ * ungrounded assertions.
  *
  * @param content Text to critique (think blocks already stripped).
  * @return Formatted critique prompt string.
  * @utility
- * @version 2.0.7
+ * @version 2.0.8
  */
 std::string ConstitutionalValidator::build_critique_prompt(
     const std::string& content) const {
     std::string prompt;
     prompt.reserve(constitution_text_.size() + content.size() + 512);
 
-    prompt += "You are a constitutional compliance evaluator. "
-              "Evaluate the following output against these "
-              "constitutional rules. Respond ONLY with the "
-              "structured JSON evaluation.\n\n"
-              "Constitutional Rules:\n";
-    prompt += constitution_text_;
+    prompt += "You are a compliance evaluator. "
+              "Respond ONLY with the structured JSON evaluation.\n\n";
 
-    // Append per-identity rules if set for the current tier
+    // When per-tier rules exist: they are the primary rubric,
+    // constitution is background context. When absent: constitution
+    // is the sole rubric.
+    bool has_tier_rules = false;
     {
         std::lock_guard<std::mutex> lock(overrides_mutex_);
         auto it = tier_rules_.find(current_tier_);
-        if (it != tier_rules_.end() && !it->second.empty()) {
-            prompt += "\n\nAdditional rules for this identity ("
-                   + current_tier_ + "):\n";
+        has_tier_rules = (it != tier_rules_.end()
+                          && !it->second.empty());
+        if (has_tier_rules) {
+            prompt += "Evaluate against these rules for the '"
+                   + current_tier_ + "' identity:\n";
             for (const auto& rule : it->second) {
                 prompt += "- " + rule + "\n";
             }
+            prompt += "\nBackground constitutional guidance:\n";
+            prompt += constitution_text_;
+        } else {
+            prompt += "Constitutional Rules:\n";
+            prompt += constitution_text_;
         }
     }
 
-    // Provide tool call manifest so validator can assess grounding.
-    // This prevents false positives on responses that cite tool results.
+    // Provide tool call manifest so validator can assess grounding
     if (!current_tool_context_.empty()) {
         prompt += "\n\nTool calls made this turn:\n";
         prompt += current_tool_context_;
     }
 
-    prompt += "\n\nEvaluate this output for constitutional compliance:"
-              "\n\n---\n";
+    prompt += "\n\nEvaluate this output for compliance:\n\n---\n";
     prompt += content;
     prompt += "\n---";
     return prompt;

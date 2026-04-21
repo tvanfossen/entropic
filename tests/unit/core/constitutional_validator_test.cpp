@@ -29,6 +29,7 @@ struct MockValidationInference {
     int generate_count = 0;              ///< Total calls made
     bool should_fail = false;            ///< Simulate failure
     std::string last_params_json;        ///< Captured params from last call
+    std::string last_messages_json;      ///< Captured messages from last call
 };
 
 /**
@@ -60,13 +61,14 @@ void mock_val_free(void* ptr) {
  * @version 1.9.8
  */
 int mock_val_generate(
-    const char* /*messages_json*/,
+    const char* messages_json,
     const char* params_json,
     char** result_json,
     void* user_data) {
     auto* mock = static_cast<MockValidationInference*>(user_data);
     mock->generate_count++;
     if (params_json) { mock->last_params_json = params_json; }
+    if (messages_json) { mock->last_messages_json = messages_json; }
 
     if (mock->should_fail) {
         *result_json = nullptr;
@@ -120,6 +122,34 @@ const char* CONSTITUTION_TEXT =
     "Privacy First: All processing must be local.\n"
     "Safety: Never suggest harmful actions.";
 
+/// @brief Standard test validation_rules for tiers that should be
+/// validated. Mirrors what identity frontmatter provides at runtime.
+const std::vector<std::string> TEST_RULES = {
+    "All processing must be local",
+    "Never suggest harmful actions"
+};
+
+/**
+ * @brief Set standard test validation rules on a validator.
+ *
+ * After v2.0.8, validation only runs when per-tier validation_rules
+ * are defined. This helper sets TEST_RULES for one or more tiers
+ * so tests exercise the critique pipeline rather than hitting the
+ * "no validation_rules" skip path.
+ *
+ * @param v Validator to configure.
+ * @param tiers Tier names to set rules on.
+ * @utility
+ * @version 2.0.8
+ */
+static void set_test_rules(
+    ConstitutionalValidator& v,
+    std::initializer_list<std::string> tiers) {
+    for (const auto& tier : tiers) {
+        v.set_tier_rules(tier, TEST_RULES);
+    }
+}
+
 } // anonymous namespace
 
 // ── Tests ────────────────────────────────────────────────
@@ -134,6 +164,7 @@ SCENARIO("Compliant output returns unchanged", "[validation]") {
         cfg.enabled = true;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called with safe content") {
             auto result = validator.validate(
@@ -162,6 +193,7 @@ SCENARIO("Non-compliant output triggers revision via Path A",
         cfg.max_revisions = 2;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called with violating content") {
             auto result = validator.validate(
@@ -195,6 +227,7 @@ SCENARIO("Max revisions exhausted returns last output",
         cfg.max_revisions = 1;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called") {
             auto result = validator.validate(
@@ -219,6 +252,7 @@ SCENARIO("Critique-only mode (max_revisions: 0)", "[validation]") {
         cfg.max_revisions = 0;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called with bad content") {
             auto result = validator.validate(
@@ -432,6 +466,7 @@ SCENARIO("Critique generation failure returns original",
         cfg.enabled = true;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called") {
             auto result = validator.validate(
@@ -456,6 +491,7 @@ SCENARIO("Last result is populated after validation",
         cfg.enabled = true;
         ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
         validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
 
         WHEN("validate is called") {
             validator.validate("Test content", "eng", nullptr);
@@ -512,6 +548,7 @@ SCENARIO("Critique params include grammar_key and enable_thinking",
 
         ConstitutionalValidator v(cfg, "Test rules.");
         v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
 
         WHEN("validate is called") {
             // Use researcher (not lead) — lead is in default skip_tiers
@@ -579,6 +616,7 @@ SCENARIO("Validation skips pure tool-call output",
         auto iface = make_val_interface(mock);
         ConstitutionalValidator v(cfg, "Rules.");
         v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
 
         WHEN("content is only a tool call") {
             std::string tc_only =
@@ -625,6 +663,7 @@ SCENARIO("Malformed critique JSON defaults to compliant",
         auto iface = make_val_interface(mock);
         ConstitutionalValidator v(cfg, "Rules.");
         v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
 
         WHEN("validate is called") {
             // Use researcher — lead is in default skip_tiers
@@ -681,6 +720,7 @@ SCENARIO("Non-lead tiers are validated with default skip_tiers",
         auto iface = make_val_interface(mock);
         ConstitutionalValidator v(cfg, "Rules.");
         v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
 
         WHEN("validate is called for researcher tier") {
             v.validate("Some content", "researcher", nullptr);
@@ -787,6 +827,7 @@ SCENARIO("Revision safety valve rejects gutted output",
         auto iface = make_val_interface(mock);
         ConstitutionalValidator v(cfg, "Rules.");
         v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
 
         // 200-char original — "OK." is 3 chars = < 50%
         std::string long_original(200, 'x');
@@ -801,6 +842,79 @@ SCENARIO("Revision safety valve rejects gutted output",
             }
             THEN("was_revised is false (revision was discarded)") {
                 CHECK_FALSE(result.was_revised);
+            }
+        }
+    }
+}
+
+// ── v2.0.8: Validator uses validation_rules, not constitution ──
+
+SCENARIO("Validation falls back to constitution when no tier_rules",
+         "[constitutional_validator][v2.0.8]")
+{
+    GIVEN("a validator with no tier_rules set") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "FALLBACK CONSTITUTION.");
+        v.attach(nullptr, &iface);
+        // No set_tier_rules — constitution is the sole rubric
+
+        WHEN("validate is called for researcher") {
+            v.validate("Some content", "researcher", nullptr);
+
+            THEN("critique generation still runs") {
+                CHECK(mock.generate_count == 1);
+            }
+            THEN("critique prompt uses constitution as primary rubric") {
+                CHECK(mock.last_messages_json.find(
+                    "Constitutional Rules") != std::string::npos);
+                CHECK(mock.last_messages_json.find(
+                    "FALLBACK CONSTITUTION") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Critique prompt prioritizes validation_rules over constitution",
+         "[constitutional_validator][v2.0.8]")
+{
+    GIVEN("a validator with tier_rules and a distinctive constitution") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidator v(cfg, "GLOBAL CONSTITUTION TEXT.");
+        v.attach(nullptr, &iface);
+        v.set_tier_rules("researcher", {
+            "Cite file:line for every claim",
+            "Never assert external dep behavior"});
+
+        WHEN("validate is called for researcher") {
+            v.validate("Test output", "researcher", nullptr);
+
+            THEN("critique messages contain tier validation rules") {
+                CHECK(mock.last_messages_json.find(
+                    "Cite file:line") != std::string::npos);
+                CHECK(mock.last_messages_json.find(
+                    "Never assert external dep") != std::string::npos);
+            }
+            THEN("constitution is background, not primary rubric") {
+                // Constitution is present but labeled as background
+                CHECK(mock.last_messages_json.find(
+                    "Background constitutional guidance") !=
+                    std::string::npos);
+                // NOT labeled as "Constitutional Rules:" (primary)
+                CHECK(mock.last_messages_json.find(
+                    "Constitutional Rules") == std::string::npos);
             }
         }
     }

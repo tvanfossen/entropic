@@ -263,20 +263,26 @@ json dispatch_tool(BridgeState& state, const json& params)
 
 /**
  * @brief Dispatch a single JSON-RPC request and write the response.
+ *
+ * Notifications (no id field) are silently ignored per JSON-RPC 2.0.
+ *
  * @internal
- * @version 2.0.3
+ * @version 2.0.9
  */
 void handle_request(BridgeState& state, const json& req)
 {
-    json id = req.value("id", json(nullptr));
+    // JSON-RPC 2.0: no "id" field = notification → no response
+    if (!req.contains("id")) { return; }
+
+    json id = req["id"];
     std::string method = req.value("method", std::string{});
     json params = req.value("params", json::object());
     json response;
 
     if (method == "initialize") {
         response = rpc_ok(id, {
-            {"protocolVersion", "2024-11-05"},
-            {"serverInfo", {{"name", "entropic"}, {"version", "2.0.3"}}},
+            {"protocolVersion", "2025-06-18"},
+            {"serverInfo", {{"name", "entropic"}, {"version", entropic_version()}}},
             {"capabilities", {{"tools", json::object()}}}
         });
     } else if (method == "tools/list") {

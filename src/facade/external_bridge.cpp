@@ -139,33 +139,81 @@ static std::string extract_final_text(const char* result_json) {
 }
 
 /**
- * @brief Handle entropic.ask — run a prompt through the engine.
+ * @brief Write a JSON-RPC line to a socket fd.
+ * @param fd Socket file descriptor.
+ * @param msg JSON object to serialize and write.
+ * @utility
+ * @version 2.0.10
+ */
+static void write_json_line(int fd, const json& msg) {
+    auto s = msg.dump() + "\n";
+    ::write(fd, s.c_str(), s.size());
+}
+
+/**
+ * @brief Send an MCP progress notification with a text token.
+ * @param fd Client socket fd.
+ * @param token_text Token string to send.
+ * @param progress_token Progress token ID for correlation.
+ * @utility
+ * @version 2.0.10
+ */
+static void send_progress(int fd, const std::string& token_text,
+                          const std::string& progress_token) {
+    json notif = {
+        {"jsonrpc", "2.0"},
+        {"method", "notifications/progress"},
+        {"params", {
+            {"progressToken", progress_token},
+            {"progress", token_text}
+        }}
+    };
+    write_json_line(fd, notif);
+}
+
+/**
+ * @brief Handle entropic.ask — stream tokens then return final text.
  *
- * Uses entropic_run (not run_streaming) to get the final clean text
- * after the full agentic loop completes. Raw streaming tokens, tool-call
- * XML, think blocks, and delegation markers are not included — only
- * the final assistant response.
+ * Uses entropic_run_streaming to send MCP progress notifications
+ * for each token (streaming to client), then extracts the final
+ * clean assistant text from the conversation for the tool result.
  *
  * @param handle Engine handle.
  * @param args Tool arguments.
- * @return MCP tool result JSON.
+ * @param client_fd Socket fd for streaming progress notifications.
+ * @param call_id JSON-RPC request id (for progress token correlation).
+ * @return MCP tool result JSON (final clean text).
  * @internal
- * @version 2.0.10
+ * @version 2.0.11
  */
-static json handle_ask(entropic_handle_t handle, const json& args) {
+static json handle_ask(entropic_handle_t handle, const json& args,
+                       int client_fd, const std::string& call_id) {
     auto it = args.find("prompt");
     if (it == args.end() || !it->is_string()) {
         return tool_text("error: missing 'prompt' argument");
     }
     std::string prompt = it->get<std::string>();
-    char* result_json = nullptr;
-    auto err = entropic_run(handle, prompt.c_str(), &result_json);
+
+    // Stream tokens as progress notifications
+    struct StreamCtx { int fd; std::string token_id; };
+    StreamCtx sctx{client_fd, call_id};
+    auto on_token = [](const char* tok, size_t len, void* ud) {
+        auto* ctx = static_cast<StreamCtx*>(ud);
+        send_progress(ctx->fd, std::string(tok, len), ctx->token_id);
+    };
+    auto err = entropic_run_streaming(
+        handle, prompt.c_str(), on_token, &sctx, nullptr);
     if (err != ENTROPIC_OK) {
         const char* msg = entropic_last_error(handle);
         return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
     }
-    auto text = extract_final_text(result_json);
-    entropic_free(result_json);
+
+    // Extract clean final text from conversation
+    char* msgs_json = nullptr;
+    entropic_context_get(handle, &msgs_json);
+    auto text = (msgs_json != nullptr)
+        ? extract_final_text(msgs_json) : std::string{};
+    entropic_free(msgs_json);
     return tool_text(text.empty() ? "(no response)" : text);
 }
 
@@ -217,18 +265,26 @@ static json handle_count(entropic_handle_t handle) {
 
 /**
  * @brief Dispatch a tools/call to the appropriate handler.
+ *
+ * entropic.ask streams progress notifications to client_fd during
+ * generation, then returns the final clean text as the tool result.
+ *
  * @param handle Engine handle.
  * @param params JSON-RPC params (name + arguments).
+ * @param client_fd Socket fd for streaming (entropic.ask only).
+ * @param call_id JSON-RPC request id for progress correlation.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.8
+ * @version 2.0.10
  */
 static json dispatch_tool(entropic_handle_t handle,
-                          const json& params) {
+                          const json& params,
+                          int client_fd,
+                          const std::string& call_id) {
     std::string name = params.value("name", std::string{});
     json args = params.value("arguments", json::object());
     json result;
-    if      (name == "entropic.ask")           { result = handle_ask(handle, args); }
+    if      (name == "entropic.ask")           { result = handle_ask(handle, args, client_fd, call_id); }
     else if (name == "entropic.status")        { result = handle_status(handle); }
     else if (name == "entropic.context_clear") { result = handle_clear(handle); }
     else if (name == "entropic.context_count") { result = handle_count(handle); }
@@ -384,14 +440,14 @@ static std::string read_line(int fd) {
  *
  * @param client_fd Connected socket file descriptor.
  * @internal
- * @version 2.0.9
+ * @version 2.0.10
  */
 void ExternalBridge::serve_client(int client_fd) {
     while (running_.load()) {
         auto line = read_line(client_fd);
         if (line.empty()) { break; }
 
-        auto response = dispatch(line);
+        auto response = dispatch(line, client_fd);
         if (response.empty()) { continue; }  // notification — no reply
         response += '\n';
 
@@ -401,13 +457,6 @@ void ExternalBridge::serve_client(int client_fd) {
     }
 }
 
-/**
- * @brief Dispatch a JSON-RPC request and return the response.
- * @param request Raw JSON-RPC request string.
- * @return JSON-RPC response string.
- * @internal
- * @version 2.0.8
- */
 /**
  * @brief Build the MCP initialize response payload.
  * @return JSON result object.
@@ -431,11 +480,13 @@ static json initialize_result() {
  * string for notifications so the caller knows not to write back.
  *
  * @param request Raw JSON-RPC request string.
+ * @param client_fd Socket fd for streaming progress (entropic.ask).
  * @return JSON-RPC response string, or empty for notifications.
  * @internal
- * @version 2.0.9
+ * @version 2.0.10
  */
-std::string ExternalBridge::dispatch(const std::string& request) {
+std::string ExternalBridge::dispatch(
+    const std::string& request, int client_fd) {
     auto req = json::parse(request, nullptr, false);
     // Parse error or notification (no id) → no dispatch
     if (req.is_discarded() || !req.contains("id")) {
@@ -451,7 +502,11 @@ std::string ExternalBridge::dispatch(const std::string& request) {
 
     if      (method == "initialize")  { result = initialize_result(); }
     else if (method == "tools/list")  { result = {{"tools", tool_definitions()}}; }
-    else if (method == "tools/call")  { result = dispatch_tool(handle_, params); }
+    else if (method == "tools/call")  {
+        auto id_str = id.is_string() ? id.get<std::string>()
+                                     : id.dump();
+        result = dispatch_tool(handle_, params, client_fd, id_str);
+    }
     else if (method == "shutdown" || method == "exit") { result = json::object(); }
     else { return rpc_err(id, -32601, "Unknown method: " + method); }
     return rpc_ok(id, result);

@@ -107,11 +107,12 @@ private:
     /**
      * @brief Dispatch a JSON-RPC request and return the response.
      * @param request Raw JSON-RPC request string.
-     * @return JSON-RPC response string.
+     * @param client_fd Socket fd for streaming progress notifications.
+     * @return JSON-RPC response string, or empty for notifications.
      * @internal
-     * @version 2.0.8
+     * @version 2.0.10
      */
-    std::string dispatch(const std::string& request);
+    std::string dispatch(const std::string& request, int client_fd);
 
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot

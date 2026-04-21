@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <sstream>
 
@@ -241,7 +242,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.0
+ * @version 2.0.7
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -281,7 +282,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     }
 
     auto result = response_generator_.generate_response(ctx);
-    fire_post_generate_hook(result, ctx.locked_tier);
+    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
     logger->info("[ITER] finish={}, {} tool call(s), {} chars",
                  result.finish_reason, tool_calls.size(),
@@ -816,28 +817,118 @@ bool AgentEngine::fire_pre_hook(
 }
 
 /**
- * @brief Fire POST_GENERATE hook.
- * @param result Generation result.
+ * @brief 256-entry table mapping bytes to JSON escape sequences.
+ *
+ * Non-null entries replace the input byte with the escape string.
+ * Null entries pass the byte through unchanged.
+ *
+ * @return Reference to static lookup table.
+ * @utility
+ * @version 2.0.7
+ */
+static const std::array<const char*, 256>& json_escape_table() {
+    static const auto tbl = []() {
+        std::array<const char*, 256> t{};
+        t[static_cast<unsigned char>('"')]  = "\\\"";
+        t[static_cast<unsigned char>('\\')] = "\\\\";
+        t[static_cast<unsigned char>('\n')] = "\\n";
+        t[static_cast<unsigned char>('\r')] = "\\r";
+        t[static_cast<unsigned char>('\t')] = "\\t";
+        return t;
+    }();
+    return tbl;
+}
+
+/**
+ * @brief JSON-escape a string (no surrounding quotes).
+ * @param s Raw string.
+ * @return Escaped string safe for JSON embedding.
+ * @utility
+ * @version 2.0.7
+ */
+static std::string json_escape_engine(const std::string& s) {
+    const auto& tbl = json_escape_table();
+    std::string out;
+    out.reserve(s.size() + 16);
+    for (char c : s) {
+        const char* esc = tbl[static_cast<unsigned char>(c)];
+        if (esc) { out += esc; }
+        else     { out += c; }
+    }
+    return out;
+}
+
+/**
+ * @brief Build tool call manifest from conversation messages.
+ *
+ * Scans for messages with metadata["tool_name"] (tool results stored
+ * by ToolExecutor) and builds a human-readable summary line per call.
+ *
+ * @param messages Conversation messages.
+ * @return Manifest string, empty if no tool calls.
+ * @utility
+ * @version 2.0.7
+ */
+static std::string build_tool_manifest(
+    const std::vector<Message>& messages) {
+    std::string manifest;
+    for (const auto& msg : messages) {
+        auto it = msg.metadata.find("tool_name");
+        if (it == msg.metadata.end() || it->second.empty()) {
+            continue;
+        }
+        manifest += "- " + it->second
+            + " \xe2\x86\x92 " + std::to_string(msg.content.size())
+            + " chars\n";
+    }
+    return manifest;
+}
+
+/**
+ * @brief Extract the first system message content from messages.
+ * @param messages Conversation messages.
+ * @return System prompt text, or empty string if none found.
+ * @utility
+ * @version 2.0.7
+ */
+static std::string extract_system_prompt(
+    const std::vector<Message>& messages) {
+    for (const auto& msg : messages) {
+        if (msg.role == "system") { return msg.content; }
+    }
+    return {};
+}
+
+/**
+ * @brief Fire POST_GENERATE hook with full context.
+ *
+ * Builds context JSON including content, tier, tool call manifest
+ * (tool names + result sizes from messages), and the tier's system
+ * prompt. The constitutional validator uses these to distinguish
+ * grounded responses from ungrounded ones and to preserve identity
+ * during revision.
+ *
+ * @param result Generation result (mutable — hook may revise content).
+ * @param tier Active tier name at the time of generation.
+ * @param messages Current conversation messages.
  * @internal
- * @version 2.0.0
+ * @version 2.0.7
  */
 void AgentEngine::fire_post_generate_hook(
-    GenerateResult& result, const std::string& tier) {
+    GenerateResult& result,
+    const std::string& tier,
+    const std::vector<Message>& messages) {
     if (hooks_.fire_post == nullptr) {
         return;
     }
-    std::string escaped;
-    escaped.reserve(result.content.size());
-    for (char c : result.content) {
-        if (c == '"') { escaped += "\\\""; }
-        else if (c == '\\') { escaped += "\\\\"; }
-        else if (c == '\n') { escaped += "\\n"; }
-        else { escaped += c; }
-    }
-    std::string json = "{\"finish_reason\":\""
-        + result.finish_reason
-        + "\",\"content\":\"" + escaped
-        + "\",\"tier\":\"" + tier + "\"}";
+    auto manifest = build_tool_manifest(messages);
+    auto sys = extract_system_prompt(messages);
+    std::string json =
+        "{\"finish_reason\":\"" + result.finish_reason
+        + "\",\"content\":\""    + json_escape_engine(result.content)
+        + "\",\"tier\":\""       + tier
+        + "\",\"tool_context\":\"" + json_escape_engine(manifest)
+        + "\",\"system_prompt\":\"" + json_escape_engine(sys) + "\"}";
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_POST_GENERATE, json.c_str(), &out);

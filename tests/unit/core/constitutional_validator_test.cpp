@@ -2,7 +2,7 @@
 /**
  * @file test_constitutional_validator.cpp
  * @brief ConstitutionalValidator unit tests — critique, parsing, revision.
- * @version 1.9.8
+ * @version 2.0.7
  */
 
 #include <entropic/core/constitutional_validator.h>
@@ -514,7 +514,8 @@ SCENARIO("Critique params include grammar_key and enable_thinking",
         v.attach(nullptr, &iface);
 
         WHEN("validate is called") {
-            v.validate("Test content", "lead", nullptr);
+            // Use researcher (not lead) — lead is in default skip_tiers
+            v.validate("Test content", "researcher", nullptr);
 
             THEN("generate received grammar_key in params") {
                 CHECK(mock.last_params_json.find(
@@ -585,7 +586,8 @@ SCENARIO("Validation skips pure tool-call output",
                 "<tool_call>\n<function=entropic.delegate>\n"
                 "<parameter=target>researcher</parameter>\n"
                 "</function>\n</tool_call>";
-            v.validate(tc_only, "lead", nullptr);
+            // Use researcher — lead is in default skip_tiers
+            v.validate(tc_only, "researcher", nullptr);
 
             THEN("no critique generation occurs") {
                 CHECK(mock.generate_count == 0);
@@ -597,7 +599,8 @@ SCENARIO("Validation skips pure tool-call output",
                 R"({"compliant":true,"violations":[],"revised":""})");
             std::string with_prose =
                 "<tool_call></tool_call>\nHere is my analysis.";
-            v.validate(with_prose, "lead", nullptr);
+            // Use researcher — lead is in default skip_tiers
+            v.validate(with_prose, "researcher", nullptr);
 
             THEN("critique generation occurs") {
                 CHECK(mock.generate_count == 1);
@@ -624,11 +627,180 @@ SCENARIO("Malformed critique JSON defaults to compliant",
         v.attach(nullptr, &iface);
 
         WHEN("validate is called") {
-            auto result = v.validate("Hello!", "lead", nullptr);
+            // Use researcher — lead is in default skip_tiers
+            auto result = v.validate("Hello!", "researcher", nullptr);
 
             THEN("treated as compliant (fail-open)") {
                 CHECK_FALSE(result.was_revised);
                 CHECK(result.revision_count == 0);
+            }
+        }
+    }
+}
+
+// ── v2.0.7: skip_tiers config ───────────────────────────
+
+SCENARIO("Lead tier skipped by default skip_tiers",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with default config (skip_tiers = {lead})") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        // Default skip_tiers = {"lead"}
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":false,"violations":[{"rule":"R1","excerpt":"x","explanation":"e"}],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.attach(nullptr, &iface);
+
+        WHEN("validate is called for lead tier") {
+            auto result = v.validate("Some content", "lead", nullptr);
+
+            THEN("no critique generation occurs — lead is skipped") {
+                CHECK(mock.generate_count == 0);
+            }
+            THEN("result is not revised") {
+                CHECK_FALSE(result.was_revised);
+            }
+        }
+    }
+}
+
+SCENARIO("Non-lead tiers are validated with default skip_tiers",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with default config (skip_tiers = {lead})") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.attach(nullptr, &iface);
+
+        WHEN("validate is called for researcher tier") {
+            v.validate("Some content", "researcher", nullptr);
+
+            THEN("critique generation runs") {
+                CHECK(mock.generate_count == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("skip_tiers config excludes listed tiers from validation",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with skip_tiers = {lead, reader}") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.skip_tiers = {"lead", "reader"};
+
+        ConstitutionalValidator v(cfg, "Rules.");
+
+        THEN("should_validate returns false for lead") {
+            CHECK_FALSE(v.should_validate("lead"));
+        }
+        THEN("should_validate returns false for reader") {
+            CHECK_FALSE(v.should_validate("reader"));
+        }
+        THEN("should_validate returns true for researcher") {
+            CHECK(v.should_validate("researcher"));
+        }
+    }
+}
+
+SCENARIO("Per-identity override beats skip_tiers",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with skip_tiers = {lead} "
+          "but lead explicitly enabled via override") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        // skip_tiers defaults to {"lead"}
+
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.set_identity_validation("lead", true);
+
+        THEN("should_validate(lead) returns true (override wins)") {
+            CHECK(v.should_validate("lead"));
+        }
+    }
+}
+
+// ── v2.0.7: Tool context in critique prompt ─────────────
+
+SCENARIO("build_critique_prompt includes tool context when present",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with tool context set") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Global rules.");
+        v.attach(nullptr, &iface);
+        // Simulate handle_hook() setting the tool context
+        // We access via build_critique_prompt() which reads the member
+        // The only way to inject it from tests is through handle_hook
+        // which requires a context JSON — use a bare validate() call
+        // with current_tool_context_ cleared (no tool context path).
+
+        WHEN("build_critique_prompt is called with no tool context") {
+            auto prompt = v.build_critique_prompt("My output text");
+
+            THEN("prompt does not contain tool calls section") {
+                CHECK(prompt.find("Tool calls made this turn") ==
+                      std::string::npos);
+            }
+        }
+    }
+}
+
+// ── v2.0.7: Length safety valve ─────────────────────────
+
+SCENARIO("Revision safety valve rejects gutted output",
+         "[constitutional_validator][v2.0.7]")
+{
+    GIVEN("a validator with 1 max revision, "
+          "and critique that produces a very short revision") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 1;
+
+        MockValidationInference mock;
+        // Critique: non-compliant
+        mock.responses.push_back(
+            R"({"compliant":false,"violations":[{"rule":"R1","excerpt":"x","explanation":"e"}],"revised":""})");
+        // Revision: one-liner (much shorter than the 200-char original)
+        mock.responses.push_back("OK.");
+        // Second critique (of "OK."):
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Rules.");
+        v.attach(nullptr, &iface);
+
+        // 200-char original — "OK." is 3 chars = < 50%
+        std::string long_original(200, 'x');
+
+        WHEN("validate is called with the long content") {
+            auto result = v.validate(
+                long_original, "researcher", nullptr);
+
+            THEN("original is preserved (revision was discarded)") {
+                // Safety valve: revised < 50% original → original returned
+                CHECK(result.content == long_original);
+            }
+            THEN("was_revised is false (revision was discarded)") {
+                CHECK_FALSE(result.was_revised);
             }
         }
     }

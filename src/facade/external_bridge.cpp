@@ -116,12 +116,41 @@ static json tool_definitions() {
 // ── Tool handlers ────────────────────────────────────────
 
 /**
+ * @brief Extract the last assistant message from a run result JSON.
+ *
+ * entropic_run returns a JSON array of messages. This extracts the
+ * content of the last assistant-role message — the final synthesized
+ * answer after all tool calls, delegation, and validation.
+ *
+ * @param result_json JSON array string from entropic_run.
+ * @return Last assistant message content, or empty on parse failure.
+ * @utility
+ * @version 2.0.10
+ */
+static std::string extract_final_text(const char* result_json) {
+    auto arr = json::parse(result_json, nullptr, false);
+    if (!arr.is_array()) { return {}; }
+    for (auto it = arr.rbegin(); it != arr.rend(); ++it) {
+        if (it->value("role", "") == "assistant") {
+            return it->value("content", "");
+        }
+    }
+    return {};
+}
+
+/**
  * @brief Handle entropic.ask — run a prompt through the engine.
+ *
+ * Uses entropic_run (not run_streaming) to get the final clean text
+ * after the full agentic loop completes. Raw streaming tokens, tool-call
+ * XML, think blocks, and delegation markers are not included — only
+ * the final assistant response.
+ *
  * @param handle Engine handle.
  * @param args Tool arguments.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.8
+ * @version 2.0.10
  */
 static json handle_ask(entropic_handle_t handle, const json& args) {
     auto it = args.find("prompt");
@@ -129,17 +158,15 @@ static json handle_ask(entropic_handle_t handle, const json& args) {
         return tool_text("error: missing 'prompt' argument");
     }
     std::string prompt = it->get<std::string>();
-    std::string accumulator;
-    auto on_token = [](const char* tok, size_t len, void* ud) {
-        static_cast<std::string*>(ud)->append(tok, len);
-    };
-    auto err = entropic_run_streaming(
-        handle, prompt.c_str(), on_token, &accumulator, nullptr);
+    char* result_json = nullptr;
+    auto err = entropic_run(handle, prompt.c_str(), &result_json);
     if (err != ENTROPIC_OK) {
         const char* msg = entropic_last_error(handle);
         return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
     }
-    return tool_text(accumulator);
+    auto text = extract_final_text(result_json);
+    entropic_free(result_json);
+    return tool_text(text.empty() ? "(no response)" : text);
 }
 
 /**

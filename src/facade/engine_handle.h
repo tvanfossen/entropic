@@ -108,4 +108,9 @@ struct entropic_engine {
 
     // ── Phase 7: External MCP bridge (v2.0.8) ──────────────────
     std::unique_ptr<entropic::ExternalBridge> external_bridge;   ///< Unix socket MCP bridge
+
+    // ── Stream observer (v2.0.10) ────────────────────────────
+    /// @brief Global stream observer — fires for all streaming output.
+    void (*stream_observer)(const char*, size_t, void*) = nullptr;
+    void* stream_observer_data = nullptr;                        ///< Observer user_data
 };

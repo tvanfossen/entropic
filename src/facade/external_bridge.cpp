@@ -351,9 +351,13 @@ static std::string read_line(int fd) {
 
 /**
  * @brief Serve a single connected client until disconnect.
+ *
+ * Dispatches each line as a JSON-RPC message. Notifications
+ * (no id) produce an empty response — nothing is written back.
+ *
  * @param client_fd Connected socket file descriptor.
  * @internal
- * @version 2.0.8
+ * @version 2.0.9
  */
 void ExternalBridge::serve_client(int client_fd) {
     while (running_.load()) {
@@ -361,6 +365,7 @@ void ExternalBridge::serve_client(int client_fd) {
         if (line.empty()) { break; }
 
         auto response = dispatch(line);
+        if (response.empty()) { continue; }  // notification — no reply
         response += '\n';
 
         ssize_t written = write(client_fd, response.c_str(),
@@ -380,11 +385,11 @@ void ExternalBridge::serve_client(int client_fd) {
  * @brief Build the MCP initialize response payload.
  * @return JSON result object.
  * @utility
- * @version 2.0.8
+ * @version 2.0.9
  */
 static json initialize_result() {
     return {
-        {"protocolVersion", "2024-11-05"},
+        {"protocolVersion", "2025-06-18"},
         {"serverInfo", {{"name", "entropic"},
                         {"version", entropic_version()}}},
         {"capabilities", {{"tools", json::object()}}}
@@ -393,18 +398,26 @@ static json initialize_result() {
 
 /**
  * @brief Dispatch a JSON-RPC request and return the response.
+ *
+ * Per JSON-RPC 2.0 spec, messages without an "id" field are
+ * notifications and MUST NOT receive a response. Returns empty
+ * string for notifications so the caller knows not to write back.
+ *
  * @param request Raw JSON-RPC request string.
- * @return JSON-RPC response string.
+ * @return JSON-RPC response string, or empty for notifications.
  * @internal
- * @version 2.0.8
+ * @version 2.0.9
  */
 std::string ExternalBridge::dispatch(const std::string& request) {
     auto req = json::parse(request, nullptr, false);
-    if (req.is_discarded()) {
-        return rpc_err(nullptr, -32700, "Parse error");
+    // Parse error or notification (no id) → no dispatch
+    if (req.is_discarded() || !req.contains("id")) {
+        return req.is_discarded()
+            ? rpc_err(nullptr, -32700, "Parse error")
+            : std::string{};
     }
 
-    json id = req.value("id", json(nullptr));
+    json id = req["id"];
     std::string method = req.value("method", std::string{});
     json params = req.value("params", json::object());
     json result;

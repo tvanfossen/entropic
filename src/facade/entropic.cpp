@@ -636,11 +636,35 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
 }
 
 /**
+ * @brief Start the external MCP bridge if enabled in config.
+ *
+ * Creates an ExternalBridge listening on a unix domain socket so
+ * external MCP clients (Claude Code, etc.) can talk to the running
+ * engine without spawning a separate process.
+ *
+ * @param h Engine handle (must be fully configured).
+ * @internal
+ * @version 2.0.8
+ */
+static void start_external_bridge(entropic_handle_t h) {
+    if (!h->config.mcp.external.enabled) { return; }
+    auto project_dir = h->config.config_dir.empty()
+        ? std::filesystem::current_path()
+        : h->config.config_dir;
+    h->external_bridge = std::make_unique<entropic::ExternalBridge>(
+        h, h->config.mcp.external, project_dir);
+    if (!h->external_bridge->start()) {
+        s_log->warn("External MCP bridge failed to start");
+        h->external_bridge.reset();
+    }
+}
+
+/**
  * @brief Post-parse config setup: subsystem construction + wiring.
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6.3
+ * @version 2.0.8
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -699,6 +723,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     }
 
     h->configured.store(true);
+    start_external_bridge(h);
     s_log->info("configure complete");
     return ENTROPIC_OK;
 }
@@ -819,13 +844,19 @@ entropic_error_t entropic_configure_dir(
  * handle is invalid.
  *
  * @internal
- * @version 2.0.2
+ * @version 2.0.8
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
         return;
     }
     s_log->info("entropic_destroy()");
+
+    // Stop external bridge FIRST — it holds a raw pointer to handle
+    if (handle->external_bridge) {
+        handle->external_bridge->stop();
+        handle->external_bridge.reset();
+    }
 
     entropic_inference_log_silence();
 

@@ -546,11 +546,19 @@ void AgentEngine::dir_pipeline(
 /**
  * @brief Handle complete directive.
  * @internal
- * @version 1.8.4
+ * @version 2.0.10
  */
 void AgentEngine::dir_complete(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& cd = static_cast<const CompleteDirective&>(d);
+
+    // Fire ON_COMPLETE pre-hook — application can validate/reject
+    if (fire_complete_hook(cd.summary, ctx)) {
+        logger->info("[DIRECTIVE] complete REJECTED by hook");
+        r.stop_processing = false;  // don't stop — model should retry
+        return;
+    }
+
     ctx.metadata["explicit_completion_summary"] = cd.summary;
     set_state(ctx, AgentState::COMPLETE);
     r.stop_processing = true;
@@ -937,6 +945,75 @@ void AgentEngine::fire_post_generate_hook(
         logger->info("POST_GENERATE hook revised content");
         free(out);
     }
+}
+
+/**
+ * @brief Build a JSON array of tool results from context messages.
+ *
+ * Extracts messages with metadata["tool_name"] and serializes them
+ * as [{"name":"...", "content":"..."}] for the ON_COMPLETE hook.
+ *
+ * @param messages Conversation messages.
+ * @return JSON array string.
+ * @utility
+ * @version 2.0.10
+ */
+static std::string build_tool_results_json(
+    const std::vector<Message>& messages) {
+    std::string arr = "[";
+    bool first = true;
+    for (const auto& msg : messages) {
+        auto it = msg.metadata.find("tool_name");
+        if (it == msg.metadata.end() || it->second.empty()) {
+            continue;
+        }
+        if (!first) { arr += ","; }
+        arr += "{\"name\":\"" + json_escape_engine(it->second)
+            + "\",\"content\":\"" + json_escape_engine(msg.content)
+            + "\"}";
+        first = false;
+    }
+    arr += "]";
+    return arr;
+}
+
+/**
+ * @brief Fire ON_COMPLETE pre-hook for citation/summary validation.
+ *
+ * Builds context JSON with the summary text, current tier, and all
+ * tool results from the conversation. The application's hook handler
+ * can validate citations, check format, etc. Returns true if the
+ * hook rejected the completion.
+ *
+ * @param summary The entropic.complete summary text.
+ * @param ctx Loop context with tool results in messages.
+ * @return true if hook cancelled (completion rejected).
+ * @internal
+ * @version 2.0.10
+ */
+bool AgentEngine::fire_complete_hook(
+    const std::string& summary,
+    const LoopContext& ctx) {
+    if (hooks_.fire_pre == nullptr) { return false; }
+
+    auto tool_results = build_tool_results_json(ctx.messages);
+    std::string json =
+        "{\"summary\":\"" + json_escape_engine(summary)
+        + "\",\"tier\":\"" + ctx.locked_tier
+        + "\",\"tool_results\":" + tool_results + "}";
+    char* modified = nullptr;
+    int rc = hooks_.fire_pre(hooks_.registry,
+        ENTROPIC_HOOK_ON_COMPLETE, json.c_str(), &modified);
+    if (modified != nullptr) {
+        // Hook provided rejection feedback — inject as user message
+        Message feedback;
+        feedback.role = "user";
+        feedback.content = std::string("[CITATION VALIDATION] ") + modified;
+        const_cast<LoopContext&>(ctx).messages.push_back(
+            std::move(feedback));
+        free(modified);
+    }
+    return rc != 0;
 }
 
 /**

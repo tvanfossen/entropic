@@ -448,6 +448,21 @@ private:
                                     const std::vector<Message>& messages); ///< @internal
 
     /**
+     * @brief Fire ON_COMPLETE pre-hook for summary validation.
+     *
+     * Fires when entropic.complete is called. Context includes summary,
+     * tier, and tool results. Hook can cancel (reject the completion)
+     * and provide feedback that gets injected as a user message.
+     *
+     * @param summary The entropic.complete summary text.
+     * @param ctx Loop context with tool results.
+     * @return true if hook cancelled (completion rejected).
+     * @version 2.0.10
+     */
+    bool fire_complete_hook(const std::string& summary,
+                            const LoopContext& ctx);                ///< @internal
+
+    /**
      * @brief Fire ON_DELEGATE pre-hook. Returns true if cancelled.
      * @param pending Delegation info.
      * @param depth Current delegation depth.

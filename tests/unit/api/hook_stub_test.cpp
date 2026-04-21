@@ -140,8 +140,8 @@ SCENARIO("Invalid hook point rejected via C API", "[api][hooks]") {
 
 SCENARIO("Hook count sentinel value", "[api][hooks]") {
     GIVEN("the hook enum") {
-        THEN("ENTROPIC_HOOK_COUNT_ is 22") {
-            REQUIRE(ENTROPIC_HOOK_COUNT_ == 22);
+        THEN("ENTROPIC_HOOK_COUNT_ is 23") {
+            REQUIRE(ENTROPIC_HOOK_COUNT_ == 23);
         }
     }
 }

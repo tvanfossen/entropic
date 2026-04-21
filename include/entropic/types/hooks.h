@@ -58,6 +58,9 @@ typedef enum {
     ENTROPIC_HOOK_ON_LOOP_START,        ///< 20: Agentic loop entry
     ENTROPIC_HOOK_ON_LOOP_END,          ///< 21: Agentic loop exit
 
+    /* --- v2.0.10 additions --- */
+    ENTROPIC_HOOK_ON_COMPLETE,          ///< 22: entropic.complete called (pre-hook: can cancel)
+
     ENTROPIC_HOOK_COUNT_                ///< Sentinel — not a valid hook point
 } entropic_hook_point_t;
 

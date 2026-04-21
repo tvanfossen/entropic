@@ -2,7 +2,7 @@
 /**
  * @file logging.cpp
  * @brief spdlog initialization, logger factory, and formatting utilities.
- * @version 1.10.4
+ * @version 2.0.7
  */
 
 #include <entropic/types/logging.h>
@@ -16,17 +16,21 @@
 namespace entropic::log {
 
 static std::once_flag s_init_flag;
-static std::shared_ptr<spdlog::sinks::stdout_color_sink_mt> s_sink;
+static std::shared_ptr<spdlog::sinks::stderr_color_sink_mt> s_sink;
 
 /**
  * @brief Initialize the logging subsystem.
+ *
+ * Uses stderr so that engine diagnostic output does not interleave
+ * with the stdout streaming token callback used by TUI consumers.
+ *
  * @param level spdlog level. Subsequent calls are no-ops.
  * @utility
- * @version 1.8.0
+ * @version 2.0.7
  */
 void init(spdlog::level::level_enum level) {
     std::call_once(s_init_flag, [level]() {
-        s_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+        s_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
         s_sink->set_level(level);
         spdlog::set_default_logger(
             std::make_shared<spdlog::logger>("entropic", s_sink));
@@ -109,13 +113,13 @@ std::shared_ptr<spdlog::logger> get(const std::string& name) {
  * @version 2.0.1
  */
 /**
- * @brief Remove the console sink from all loggers.
+ * @brief Remove the console (stderr) sink from all loggers.
  *
  * Called after adding a file sink to ensure logs go to exactly
  * one destination. Matches by pointer identity against s_sink.
  *
  * @utility
- * @version 2.0.6
+ * @version 2.0.7
  */
 static void remove_console_sink() {
     if (!s_sink) { return; }

@@ -110,9 +110,13 @@ public:
 
     /**
      * @brief Check if validation is enabled for a given identity.
+     *
+     * Returns false if the tier is in config_.skip_tiers (e.g. "lead").
+     * Per-identity overrides (set_identity_validation) take precedence.
+     *
      * @param identity_name Identity name to check.
      * @return true if validation should run for this identity.
-     * @version 1.9.8
+     * @version 2.0.7
      */
     bool should_validate(const std::string& identity_name) const;
 
@@ -455,8 +459,17 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> tier_rules_;
     mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + tier_rules_ + global_enabled_
 
-    /// @brief Current tier being validated (set at validate() entry).
+    /// @brief Current tier being validated (set at handle_hook() entry).
     std::string current_tier_;
+    /// @brief Tool call manifest for this turn (set at handle_hook() entry).
+    /// Summarises tool names + result sizes from the conversation turn.
+    /// Prepended to the critique prompt so the validator knows which
+    /// tool calls preceded the output being evaluated.
+    std::string current_tool_context_;
+    /// @brief Identity system prompt for this tier (set at handle_hook() entry).
+    /// Injected into revision context so the model maintains its persona
+    /// rather than reverting to base behaviour (apology, self-flagellation).
+    std::string current_system_prompt_;
 
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;

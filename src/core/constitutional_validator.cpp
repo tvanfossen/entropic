@@ -6,7 +6,7 @@
  * Post-generation constitutional compliance validation using
  * grammar-constrained critique and automatic revision.
  *
- * @version 1.9.8
+ * @version 2.0.7
  */
 
 #include <entropic/core/constitutional_validator.h>
@@ -86,10 +86,15 @@ void ConstitutionalValidator::detach(HookInterface* hook_iface) {
 
 /**
  * @brief Check if validation is enabled for a given identity.
+ *
+ * Returns false if the tier is in config_.skip_tiers (e.g. "lead",
+ * which streams output before the POST_GENERATE hook fires).
+ * Per-identity overrides take precedence over skip_tiers.
+ *
  * @param identity_name Identity name to check.
  * @return true if validation should run.
  * @internal
- * @version 2.0.4
+ * @version 2.0.7
  */
 bool ConstitutionalValidator::should_validate(
     const std::string& identity_name) const {
@@ -97,6 +102,10 @@ bool ConstitutionalValidator::should_validate(
     auto it = identity_overrides_.find(identity_name);
     if (it != identity_overrides_.end()) {
         return it->second;
+    }
+    // Default skip for tiers that stream before the hook fires
+    for (const auto& skip : config_.skip_tiers) {
+        if (skip == identity_name) { return false; }
     }
     return global_enabled_;
 }
@@ -141,12 +150,18 @@ void ConstitutionalValidator::set_tier_rules(
 
 /**
  * @brief Run the full validation pipeline on generated content.
+ *
+ * When called from handle_hook(), current_tool_context_ and
+ * current_system_prompt_ are set before this call so that
+ * build_critique_prompt() and inject_feedback_into_messages()
+ * have the per-turn context they need.
+ *
  * @param content The generated text to validate.
  * @param tier The tier/identity that produced the content.
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.6.1
+ * @version 2.0.7
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -221,15 +236,22 @@ int ConstitutionalValidator::hook_callback(
 
 /**
  * @brief Build the critique prompt string.
- * @param content Text to critique.
- * @return Formatted system prompt with constitution + content.
+ *
+ * Prepends a tool call manifest (from current_tool_context_) before
+ * the evaluated text so the validator can distinguish grounded claims
+ * (preceded by tool calls) from ungrounded assertions. Without this
+ * context, valid tool-grounded responses are rejected because the
+ * text itself contains no tool calls.
+ *
+ * @param content Text to critique (think blocks already stripped).
+ * @return Formatted critique prompt string.
  * @utility
- * @version 2.0.6
+ * @version 2.0.7
  */
 std::string ConstitutionalValidator::build_critique_prompt(
     const std::string& content) const {
     std::string prompt;
-    prompt.reserve(constitution_text_.size() + content.size() + 256);
+    prompt.reserve(constitution_text_.size() + content.size() + 512);
 
     prompt += "You are a constitutional compliance evaluator. "
               "Evaluate the following output against these "
@@ -249,6 +271,13 @@ std::string ConstitutionalValidator::build_critique_prompt(
                 prompt += "- " + rule + "\n";
             }
         }
+    }
+
+    // Provide tool call manifest so validator can assess grounding.
+    // This prevents false positives on responses that cite tool results.
+    if (!current_tool_context_.empty()) {
+        prompt += "\n\nTool calls made this turn:\n";
+        prompt += current_tool_context_;
     }
 
     prompt += "\n\nEvaluate this output for constitutional compliance:"
@@ -328,25 +357,40 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
 
 /**
  * @brief Apply revision strategy (Path A then Path B).
+ *
+ * Includes a length safety valve: if the revised content is shorter
+ * than 50% of the original, the revision is rejected and the original
+ * is preserved. Small models (e.g. 4B) under revision pressure tend to
+ * collapse the output into apologies or compliance statements — this
+ * guard prevents the lead from receiving empty content in place of a
+ * valid grounded response.
+ *
  * @param result Current validation result (mutated).
  * @param initial_critique First critique result.
  * @param messages_json Conversation context.
  * @return Updated ValidationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.0.7
  */
 ValidationResult ConstitutionalValidator::apply_revisions(
     ValidationResult result,
     const CritiqueResult& initial_critique,
     const char* messages_json) {
-    if (config_.max_revisions <= 0) {
-        return result;
-    }
-
     auto critique = initial_critique;
     for (int i = 0; i < config_.max_revisions; ++i) {
-        auto revised = attempt_revision(
-            result.content, critique, messages_json);
+        const auto& before = result.content;
+        auto revised = attempt_revision(before, critique, messages_json);
+
+        // Length safety valve: reject revisions that gut the content
+        if (revised.size() < before.size() / 2) {
+            logger->warn("Constitutional validation: revision {}/{} "
+                         "shrank content {}→{} chars (>50%); "
+                         "discarding revision, returning original",
+                         i + 1, config_.max_revisions,
+                         before.size(), revised.size());
+            return result;
+        }
+
         result.content = revised;
         result.was_revised = true;
         result.revision_count = i + 1;
@@ -354,14 +398,14 @@ ValidationResult ConstitutionalValidator::apply_revisions(
         critique = run_critique(revised);
         result.final_critique = critique;
 
-        if (critique.compliant) {
-            return result;
-        }
+        if (critique.compliant) { break; }
     }
 
-    logger->warn("Constitutional validation: max revisions ({}) "
-                 "exhausted, returning last output",
-                 config_.max_revisions);
+    if (!critique.compliant) {
+        logger->warn("Constitutional validation: max revisions ({}) "
+                     "exhausted, returning last output",
+                     config_.max_revisions);
+    }
     return result;
 }
 
@@ -455,12 +499,19 @@ std::string ConstitutionalValidator::build_critique_params() const {
 
 /**
  * @brief Re-generate with critique feedback injected.
+ *
+ * Revision generation is intentionally unconstrained (params "{}").
+ * The critique pass uses a grammar-constrained JSON schema to produce
+ * a structured verdict. The revision pass must produce free-form prose,
+ * so grammar constraints are not applied. The identity system prompt
+ * is injected via build_revision_messages() to maintain persona.
+ *
  * @param original The content that was critiqued.
  * @param critique The critique result with violations.
  * @param messages_json Original conversation context.
  * @return Revised content string.
  * @internal
- * @version 2.0.0
+ * @version 2.0.7
  */
 std::string ConstitutionalValidator::revise(
     const std::string& original,
@@ -474,6 +525,8 @@ std::string ConstitutionalValidator::revise(
         original, critique, messages_json);
     char* result_json = nullptr;
 
+    // Unconstrained generation: revision output is free-form prose,
+    // not the structured JSON schema used for the critique pass.
     int rc = inference_->generate(
         augmented.c_str(), "{}", &result_json,
         inference_->backend_data);
@@ -571,12 +624,18 @@ std::string ConstitutionalValidator::build_feedback_text(
 
 /**
  * @brief Inject feedback into the conversation messages.
+ *
+ * When no messages_json is provided (hook-path), builds a fallback
+ * context using the tier's identity system prompt (current_system_prompt_)
+ * rather than just the constitution. This keeps the model in its assigned
+ * persona during revision instead of reverting to base behaviour.
+ *
  * @param original The assistant's original response.
  * @param feedback The feedback message.
  * @param messages_json Base conversation messages (may be NULL).
  * @return Augmented JSON array with assistant + user feedback appended.
  * @internal
- * @version 2.0.6
+ * @version 2.0.7
  */
 std::string ConstitutionalValidator::inject_feedback_into_messages(
     const std::string& original,
@@ -586,11 +645,12 @@ std::string ConstitutionalValidator::inject_feedback_into_messages(
     if (messages_json != nullptr) {
         base = std::string(messages_json);
     } else {
-        // No conversation context passed — inject the constitution as
-        // a system prompt so the revision model stays in character.
-        // Without this, the 4B model reverts to its pretrained persona.
+        // Prefer identity system prompt over bare constitution — keeps
+        // the model in persona during revision (prevents apology spirals).
+        const auto& sys = !current_system_prompt_.empty()
+            ? current_system_prompt_ : constitution_text_;
         base = "[{\"role\":\"system\",\"content\":\""
-             + json_escape(constitution_text_) + "\"}";
+             + json_escape(sys) + "\"}";
     }
 
     // Strip trailing ]
@@ -669,11 +729,17 @@ static bool is_pure_tool_call(const std::string& content) {
 
 /**
  * @brief Handle the POST_GENERATE hook callback.
+ *
+ * Extracts tool_context and system_prompt from the hook context JSON
+ * (provided by the engine since v2.0.7) and stores them as instance
+ * state so build_critique_prompt() and inject_feedback_into_messages()
+ * can use them without signature changes.
+ *
  * @param context_json JSON context from engine.
  * @param modified_json Output: revised JSON or NULL.
  * @return 0 (post-hooks cannot cancel).
  * @internal
- * @version 2.0.6.1
+ * @version 2.0.7
  */
 int ConstitutionalValidator::handle_hook(
     const char* context_json,
@@ -684,6 +750,12 @@ int ConstitutionalValidator::handle_hook(
     auto tier = extract_json_string(context_json, "tier");
 
     if (content.empty()) { return 0; }
+
+    // Store per-call context for build_critique_prompt and revision
+    current_tool_context_ = extract_json_string(
+        context_json, "tool_context");
+    current_system_prompt_ = extract_json_string(
+        context_json, "system_prompt");
 
     auto result = validate(content, tier, nullptr);
     if (!result.was_revised) {

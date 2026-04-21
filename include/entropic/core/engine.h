@@ -432,12 +432,20 @@ private:
 
     /**
      * @brief Fire POST_GENERATE hook.
+     *
+     * Builds a context JSON containing content, tier, a tool call
+     * manifest (names + result sizes from messages), and the tier's
+     * system prompt. The validator uses these to avoid false positives
+     * on grounded responses and to maintain identity during revision.
+     *
      * @param result Generation result (mutable — hooks may transform output).
      * @param tier Active tier name at the time of generation.
-     * @version 1.9.1
+     * @param messages Current conversation messages (for tool manifest + system prompt).
+     * @version 2.0.7
      */
     void fire_post_generate_hook(GenerateResult& result,
-                                    const std::string& tier);          ///< @internal
+                                    const std::string& tier,
+                                    const std::vector<Message>& messages); ///< @internal
 
     /**
      * @brief Fire ON_DELEGATE pre-hook. Returns true if cancelled.

@@ -516,7 +516,13 @@ struct LSPConfig {
  * output against constitutional rules. Default disabled — doubles
  * inference cost per generation when active.
  *
- * @version 1.9.8
+ * @par skip_tiers
+ * Tiers listed here are exempt from validation. Defaults to {"lead"}
+ * because lead's output streams directly to the user — the hook fires
+ * after the stream completes, so modifying lead output has no effect
+ * and wastes inference. Validation applies to delegated child tiers.
+ *
+ * @version 2.0.7
  */
 struct ConstitutionalValidationConfig {
     bool enabled = false;             ///< Global enable/disable (default OFF)
@@ -526,6 +532,8 @@ struct ConstitutionalValidationConfig {
     bool enable_thinking = false;     ///< Enable think-blocks for critique (default OFF)
     int priority = 100;               ///< Hook priority (higher = later)
     std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
+    /// Tiers exempt from validation (default: lead — streams before hook fires)
+    std::vector<std::string> skip_tiers = {"lead"};
 };
 
 /**

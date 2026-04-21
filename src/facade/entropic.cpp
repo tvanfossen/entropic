@@ -958,7 +958,7 @@ entropic_error_t entropic_run(
  * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.3
+ * @version 2.0.10
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -970,15 +970,50 @@ entropic_error_t entropic_run_streaming(
     if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
+
+    // Wrap on_token to also fire the global stream observer
+    struct TokenMux {
+        void (*primary)(const char*, size_t, void*);
+        void* primary_data;
+        void (*observer)(const char*, size_t, void*);
+        void* observer_data;
+    };
+    TokenMux mux{on_token, user_data,
+                 handle->stream_observer, handle->stream_observer_data};
+    auto mux_cb = [](const char* t, size_t l, void* ud) {
+        auto* m = static_cast<TokenMux*>(ud);
+        m->primary(t, l, m->primary_data);
+        if (m->observer) { m->observer(t, l, m->observer_data); }
+    };
+
     try {
         int code = handle->engine->run_streaming(
-            input, on_token, user_data, cancel_flag);
+            input, mux_cb, &mux, cancel_flag);
         return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_streaming: {}", handle->last_error);
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
+}
+
+/**
+ * @brief Set a global stream observer callback.
+ * @param handle Engine handle.
+ * @param observer Token callback (NULL to clear).
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.10
+ */
+entropic_error_t entropic_set_stream_observer(
+    entropic_handle_t handle,
+    void (*observer)(const char* token, size_t len, void* user_data),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->stream_observer = observer;
+    handle->stream_observer_data = user_data;
+    return ENTROPIC_OK;
 }
 
 /**

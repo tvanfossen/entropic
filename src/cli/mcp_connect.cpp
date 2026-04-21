@@ -8,6 +8,10 @@
  * This allows Claude Code and other stdio-based MCP clients to talk
  * to an engine that's already running inside a consumer app.
  *
+ * JSON-RPC 2.0 notifications (messages without an "id" field) are
+ * forwarded to the bridge but no response is expected — the relay
+ * does not block waiting for a reply.
+ *
  * Usage in .mcp.json:
  *   {"mcpServers": {"entropic-explorer": {
  *     "type": "stdio",
@@ -15,13 +19,15 @@
  *     "args": ["mcp-connect", "--socket", "/tmp/entropic-explorer.sock"]
  *   }}}
  *
- * @version 2.0.8
+ * @version 2.0.10
  */
 
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <string>
+
+#include <nlohmann/json.hpp>
 
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -89,16 +95,30 @@ static std::string read_line_fd(int fd) {
 }
 
 /**
+ * @brief Check if a JSON-RPC message is a notification (no "id" field).
+ * @param line Raw JSON string.
+ * @return true if the message has no "id" field.
+ * @utility
+ * @version 2.0.10
+ */
+static bool is_notification(const std::string& line) {
+    auto j = nlohmann::json::parse(line, nullptr, false);
+    return !j.is_discarded() && !j.contains("id");
+}
+
+/**
  * @brief Run the mcp-connect stdio-to-socket relay.
  *
- * Reads JSON-RPC requests from stdin, forwards to the unix socket,
- * reads the response, writes it to stdout. Exits on stdin EOF.
+ * Reads JSON-RPC messages from stdin, forwards to the unix socket.
+ * For requests (messages with "id"), waits for a response and writes
+ * it to stdout. Notifications (no "id") are forwarded but no response
+ * is expected — the relay continues immediately.
  *
  * @param argc Argument count.
  * @param argv Argument vector.
  * @return 0 on clean exit, 1 on error.
  * @internal
- * @version 2.0.8
+ * @version 2.0.10
  */
 int run_mcp_connect(int argc, char* argv[]) {
     auto socket_path = parse_socket_arg(argc, argv);
@@ -119,8 +139,10 @@ int run_mcp_connect(int argc, char* argv[]) {
     std::string line;
     while (std::getline(std::cin, line)) {
         if (line.empty()) { continue; }
+        bool notify = is_notification(line);
         line += '\n';
         if (::write(fd, line.c_str(), line.size()) < 0) { break; }
+        if (notify) { continue; }  // no response expected
         auto response = read_line_fd(fd);
         if (response.empty()) { break; }
         std::cout << response << '\n';

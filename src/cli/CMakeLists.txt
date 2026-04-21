@@ -8,6 +8,7 @@
 add_executable(entropic
     main.cpp
     mcp_bridge.cpp
+    mcp_connect.cpp
     version.cpp
     download.cpp
 )

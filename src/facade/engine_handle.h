@@ -25,6 +25,7 @@
 #include <entropic/core/identity_manager.h>
 #include <entropic/inference/orchestrator.h>
 #include <entropic/mcp/mcp_authorization.h>
+#include <entropic/mcp/external_bridge.h>
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_executor.h>
 #include <entropic/storage/audit_logger.h>
@@ -104,4 +105,7 @@ struct entropic_engine {
     std::unordered_map<std::string, std::vector<std::string>> tier_allowed_tools;
     /// @brief Per-tier validation_rules from identity frontmatter (v2.0.6).
     std::unordered_map<std::string, std::vector<std::string>> tier_validation_rules;
+
+    // ── Phase 7: External MCP bridge (v2.0.8) ──────────────────
+    std::unique_ptr<entropic::ExternalBridge> external_bridge;   ///< Unix socket MCP bridge
 };

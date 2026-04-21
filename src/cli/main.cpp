@@ -29,6 +29,7 @@
 namespace entropic::cli {
 
 int run_mcp_bridge(int argc, char* argv[]);
+int run_mcp_connect(int argc, char* argv[]);
 int run_version();
 int run_download(int argc, char* argv[]);
 
@@ -37,7 +38,7 @@ int run_download(int argc, char* argv[]);
 /**
  * @brief Print top-level usage to stderr.
  * @utility
- * @version 2.0.5
+ * @version 2.0.8
  */
 static void print_usage()
 {
@@ -45,22 +46,26 @@ static void print_usage()
         "Usage: entropic <subcommand> [options]\n"
         "\n"
         "Subcommands:\n"
-        "  mcp-bridge   Run as MCP server over stdio (JSON-RPC 2.0)\n"
+        "  mcp-bridge   Run as standalone MCP server over stdio\n"
+        "  mcp-connect  Connect to a running engine's MCP bridge socket\n"
         "  download     Fetch a bundled GGUF model\n"
         "  version      Print engine version\n"
         "\n"
         "Options for mcp-bridge:\n"
         "  --project-dir DIR   Project config directory (default: cwd)\n"
         "\n"
+        "Options for mcp-connect:\n"
+        "  --socket PATH       Unix socket of the running engine (required)\n"
+        "\n"
         "Options for download:\n"
         "  --list              List available model keys\n"
         "  --dir DIR           Override target directory\n"
         "                      (default: $ENTROPIC_MODEL_DIR or ~/.entropic/models)\n"
         "\n"
-        "Example .mcp.json entry:\n"
-        "  {\"mcpServers\": {\"entropic\": {\n"
+        "Example: connect Claude Code to a running entropic engine:\n"
+        "  {\"mcpServers\": {\"entropic-explorer\": {\n"
         "    \"type\": \"stdio\", \"command\": \"entropic\",\n"
-        "    \"args\": [\"mcp-bridge\"]\n"
+        "    \"args\": [\"mcp-connect\", \"--project-dir\", \"/path/to/.explorer\"]\n"
         "  }}}\n");
 }
 
@@ -85,9 +90,10 @@ int run_version_adapter(int, char*[])
 }
 
 constexpr Subcommand kSubcommands[] = {
-    {"mcp-bridge", entropic::cli::run_mcp_bridge},
-    {"version",    run_version_adapter},
-    {"download",   entropic::cli::run_download},
+    {"mcp-bridge",  entropic::cli::run_mcp_bridge},
+    {"mcp-connect", entropic::cli::run_mcp_connect},
+    {"version",     run_version_adapter},
+    {"download",    entropic::cli::run_download},
 };
 
 } // anonymous namespace

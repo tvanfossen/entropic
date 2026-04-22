@@ -28,6 +28,7 @@
 
 #pragma once
 
+#include <entropic/entropic_export.h>
 #include <entropic/types/config.h>
 
 #include <nlohmann/json_fwd.hpp>
@@ -54,9 +55,10 @@ namespace entropic {
  * to the engine handle — created in configure_common, destroyed
  * before engine teardown.
  *
- * @version 2.0.8
+ * @internal
+ * @version 2.0.11
  */
-class ExternalBridge {
+class ENTROPIC_EXPORT ExternalBridge {
 public:
     /**
      * @brief Construct with engine handle and config.

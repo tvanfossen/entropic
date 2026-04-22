@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
 """
 Auto-generated ctypes wrapper for the Entropic C API.
 
@@ -109,7 +108,8 @@ class HookPoint(enum.IntEnum):
     ON_CUSTOM_DIRECTIVE = 19  # 19: Unrecognized directive type
     ON_LOOP_START = 20  # 20: Agentic loop entry
     ON_LOOP_END = 21  # 21: Agentic loop exit
-    COUNT_ = 22  # Sentinel — not a valid hook point
+    ON_COMPLETE = 22  # 22: entropic.complete called (pre-hook: can cancel)
+    COUNT_ = 23  # Sentinel — not a valid hook point
 
 
 # ── Callback Types ───────────────────────────────────
@@ -162,20 +162,28 @@ def _find_library() -> ctypes.CDLL:
 # Load library at import time — fail fast if not found
 _lib: ctypes.CDLL | None = None
 
+# Expected C API version — must match entropic_api_version() from .so
+_EXPECTED_API_VERSION = 2
 
-## @brief Lazy library loader — defers ImportError until first use.
+
+## @brief Lazy library loader with API version check.
 ## @utility
 ## @return Loaded ctypes.CDLL handle.
-## @version 1
+## @version 2
 def _get_lib() -> ctypes.CDLL:
-    """Get the loaded library, loading lazily on first access.
-
-    @brief Lazy library loader — defers ImportError until first use.
-    @version 1
-    """
     global _lib  # noqa: PLW0603
     if _lib is None:
         _lib = _find_library()
+        _lib.entropic_api_version.argtypes = []
+        _lib.entropic_api_version.restype = ctypes.c_int
+        loaded_version = _lib.entropic_api_version()
+        if loaded_version != _EXPECTED_API_VERSION:
+            raise ImportError(
+                f"entropic API version mismatch: wrapper expects "
+                f"v{_EXPECTED_API_VERSION} but loaded .so reports "
+                f"v{loaded_version}. Regenerate the wrapper or "
+                f"update librentropic.so."
+            )
     return _lib
 
 
@@ -184,13 +192,8 @@ def _get_lib() -> ctypes.CDLL:
 
 ## @brief Set ctypes type signatures for all exported functions.
 ## @utility
-## @version 1
+## @version 2
 def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated
-    """Configure argtypes and restype for all C API functions.
-
-    @brief Set ctypes type signatures for all exported functions.
-    @version 1
-    """
     lib.entropic_create.restype = ctypes.c_int
     lib.entropic_create.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
 
@@ -229,6 +232,9 @@ def _setup_bindings(lib: ctypes.CDLL) -> None:  # noqa: CFQ001  # auto-generated
         ctypes.c_void_p,
         ctypes.POINTER(ctypes.c_int),
     ]
+
+    lib.entropic_set_stream_observer.restype = ctypes.c_int
+    lib.entropic_set_stream_observer.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
 
     lib.entropic_interrupt.restype = ctypes.c_int
     lib.entropic_interrupt.argtypes = [ctypes.c_void_p]

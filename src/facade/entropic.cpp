@@ -375,11 +375,41 @@ static std::string build_shared_prompt_prefix(
 }
 
 /**
- * @brief Cache per-tier allowed_tools from identity frontmatter.
- * @param h Engine handle with config loaded.
+ * @brief Cache per-tier frontmatter fields (allowed_tools, validation_rules, relay).
+ * @param h Engine handle with config + engine constructed.
  * @param data_dir Bundled data directory.
  * @internal
- * @version 2.0.6
+ * @version 2.0.11
+ */
+/**
+ * @brief Apply a parsed identity's frontmatter to the engine handle.
+ * @param h Engine handle.
+ * @param name Tier name.
+ * @param fm Parsed frontmatter.
+ * @internal
+ * @version 2.0.11
+ */
+static void apply_identity_frontmatter(
+    entropic_handle_t h,
+    const std::string& name,
+    const entropic::prompts::IdentityFrontmatter& fm) {
+    if (fm.allowed_tools.has_value()) {
+        h->tier_allowed_tools[name] = *fm.allowed_tools;
+    }
+    if (!fm.validation_rules.empty()) {
+        h->tier_validation_rules[name] = fm.validation_rules;
+    }
+    if (fm.relay_single_delegate) {
+        h->engine->set_relay_single_delegate(name);
+    }
+}
+
+/**
+ * @brief Cache per-tier frontmatter fields from identity files.
+ * @param h Engine handle with config + engine constructed.
+ * @param data_dir Bundled data directory.
+ * @internal
+ * @version 2.0.11
  */
 static void cache_tier_allowed_tools(
     entropic_handle_t h,
@@ -396,14 +426,7 @@ static void cache_tier_allowed_tools(
         }
         entropic::prompts::ParsedIdentity id;
         if (entropic::prompts::load_identity(id_path, id).empty()) {
-            if (id.frontmatter.allowed_tools.has_value()) {
-                h->tier_allowed_tools[name] =
-                    *id.frontmatter.allowed_tools;
-            }
-            if (!id.frontmatter.validation_rules.empty()) {
-                h->tier_validation_rules[name] =
-                    id.frontmatter.validation_rules;
-            }
+            apply_identity_frontmatter(h, name, id.frontmatter);
         }
     }
 }

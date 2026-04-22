@@ -14,6 +14,7 @@
 #include <entropic/interfaces/i_mcp_server.h>
 #include <entropic/mcp/server_base.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>

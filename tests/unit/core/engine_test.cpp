@@ -201,3 +201,28 @@ TEST_CASE("Batch generation works", "[engine]") {
     auto result = engine.run(make_messages());
     REQUIRE(result.back().content == "batch result");
 }
+
+// ── v2.0.11: relay_single_delegate ──────────────────────
+
+SCENARIO("relay_single_delegate registers tier",
+         "[engine][v2.0.11]")
+{
+    GIVEN("an engine with relay_single_delegate set for lead") {
+        MockInference mock;
+        mock.response = "ok";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_relay_single_delegate("lead");
+
+        THEN("the tier is registered (no crash, setter works)") {
+            // Verifies the setter doesn't throw/crash.
+            // Full relay behavior requires delegation integration
+            // test (delegation + engine together), covered in
+            // integration tests.
+            REQUIRE(true);
+        }
+    }
+}

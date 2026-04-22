@@ -1118,7 +1118,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.0.2
+ * @version 2.0.11
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1157,6 +1157,17 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 
     fire_delegation_complete(ctx, pending.target, result);
     fire_delegate_complete_hook(pending.target, result.success);
+
+    // Relay verbatim: if the lead tier has relay_single_delegate set
+    // and a single delegate returned successfully, use its summary
+    // directly as the final output — skip lead's re-generation.
+    if (result.success
+        && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
+        ctx.metadata["explicit_completion_summary"] = result.summary;
+        set_state(ctx, AgentState::COMPLETE);
+        logger->info("Relay: single-delegate result used verbatim");
+        return;
+    }
 
     // Auto-complete unless tier requires explicit completion.
     bool needs_explicit = false;
@@ -1536,6 +1547,16 @@ void AgentEngine::set_tier_info(
     const ChildContextInfo& info)
 {
     tier_info_[name] = info;
+}
+
+/**
+ * @brief Mark a tier as relay-on-single-delegate.
+ * @param name Tier name.
+ * @internal
+ * @version 2.0.11
+ */
+void AgentEngine::set_relay_single_delegate(const std::string& name) {
+    relay_single_delegate_tiers_.insert(name);
 }
 
 /**

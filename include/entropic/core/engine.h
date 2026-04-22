@@ -38,6 +38,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace entropic {
@@ -285,6 +286,19 @@ public:
      */
     void set_tier_info(const std::string& name,
                        const ChildContextInfo& info);
+
+    /**
+     * @brief Mark a tier as relay-on-single-delegate.
+     *
+     * When this tier is the active (lead) tier and exactly one delegate
+     * completes successfully, the delegate's summary is used as the
+     * final output without lead re-generating. Avoids redundant
+     * re-synthesis of already user-ready delegate responses.
+     *
+     * @param name Tier name (typically "lead").
+     * @version 2.0.11
+     */
+    void set_relay_single_delegate(const std::string& name);
 
     /**
      * @brief Store handoff rules for tier delegation.
@@ -545,6 +559,8 @@ private:
     // ── Pre-resolved tier data (v2.0.2) ─────────────────────
     std::unordered_map<std::string, ChildContextInfo> tier_info_;  ///< Tier → context info
     std::unordered_map<std::string, std::vector<std::string>> handoff_rules_; ///< Tier → targets
+    /// @brief Tiers that relay single-delegate results verbatim (v2.0.11).
+    std::unordered_set<std::string> relay_single_delegate_tiers_;
 
     /**
      * @brief Wire internal TierResolutionInterface from stored tier data.

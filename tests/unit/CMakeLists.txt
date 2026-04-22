@@ -238,6 +238,8 @@ add_executable(entropic-api-tests
     api/hook_stub_test.cpp
     api/error_enum_test.cpp
     api/facade_integration_test.cpp
+    # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
+    mcp/external_bridge_test.cpp
 )
 
 target_link_libraries(entropic-api-tests PRIVATE

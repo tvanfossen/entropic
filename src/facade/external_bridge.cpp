@@ -15,9 +15,12 @@
 
 #include <nlohmann/json.hpp>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <sstream>
+#include <thread>
 #include <unordered_map>
 #include <unistd.h>
 #include <sys/socket.h>
@@ -82,21 +85,36 @@ static json tool_text(const std::string& text) {
  * @brief MCP tool definitions exposed by the bridge.
  * @return JSON array of tool schemas.
  * @utility
- * @version 2.0.8
+ * @version 2.0.11
  */
 static json tool_definitions() {
     return json::array({
         {{"name", "entropic.ask"},
          {"description",
-          "Submit a prompt to the running entropic engine. Returns "
-          "the full response. Conversation context is retained."},
+          "Submit a prompt to the running entropic engine. "
+          "Set async=true to return immediately with a task_id; "
+          "the engine pushes a notification when done."},
          {"inputSchema", {
             {"type", "object"},
-            {"properties", {{"prompt", {
-                {"type", "string"},
-                {"description", "User message"}
-            }}}},
+            {"properties", {
+                {"prompt", {{"type", "string"},
+                            {"description", "User message"}}},
+                {"async", {{"type", "boolean"},
+                           {"description", "Run asynchronously"},
+                           {"default", false}}}
+            }},
             {"required", json::array({"prompt"})}
+         }}},
+        {{"name", "entropic.ask_status"},
+         {"description",
+          "Check status of an async entropic.ask task."},
+         {"inputSchema", {
+            {"type", "object"},
+            {"properties", {{"task_id", {
+                {"type", "string"},
+                {"description", "Task ID from async ask"}
+            }}}},
+            {"required", json::array({"task_id"})}
          }}},
         {{"name", "entropic.status"},
          {"description", "Engine version and message count."},
@@ -261,30 +279,102 @@ static json handle_count(entropic_handle_t handle) {
     return tool_text(std::to_string(count));
 }
 
+// ── Async ask status ─────────────────────────────────────
+
+/**
+ * @brief Handle entropic.ask_status — check async task state.
+ * @param args Tool arguments (must contain "task_id").
+ * @return MCP tool result JSON with status/result/error.
+ * @internal
+ * @version 2.0.11
+ */
+json ExternalBridge::handle_ask_status(const json& args) {
+    auto tid = args.value("task_id", std::string{});
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    auto it = tasks_.find(tid);
+    if (it == tasks_.end()) {
+        return tool_text("error: unknown task_id");
+    }
+    json status = {{"status", it->second.status}};
+    if (!it->second.result.empty()) {
+        auto key = (it->second.status == "error") ? "error" : "result";
+        status[key] = it->second.result;
+    }
+    return tool_text(status.dump());
+}
+
+// ── UUID generation ──────────────────────────────────────
+
+/**
+ * @brief Generate a simple UUID-like task ID.
+ * @return Hex string (16 chars from random_device + pid).
+ * @utility
+ * @version 2.0.11
+ */
+static std::string generate_task_id() {
+    static std::atomic<uint64_t> counter{0};
+    auto n = counter.fetch_add(1);
+    auto t = std::chrono::steady_clock::now().time_since_epoch().count();
+    std::ostringstream ss;
+    ss << std::hex << (t ^ (n * 2654435761ULL));
+    return "task-" + ss.str();
+}
+
 // ── Dispatch ─────────────────────────────────────────────
+
+/**
+ * @brief Route entropic.ask — sync (streaming) or async.
+ * @param handle Engine handle.
+ * @param bridge Bridge (for async task registry).
+ * @param args Tool arguments.
+ * @param client_fd Socket fd.
+ * @param call_id Request id.
+ * @return MCP tool result JSON.
+ * @internal
+ * @version 2.0.11
+ */
+static json dispatch_ask(entropic_handle_t handle,
+                         ExternalBridge* bridge,
+                         const json& args,
+                         int client_fd,
+                         const std::string& call_id) {
+    if (args.value("async", false)) {
+        auto task_id = generate_task_id();
+        bridge->run_async_ask(
+            args.value("prompt", ""), task_id, client_fd);
+        return tool_text("async task started: " + task_id);
+    }
+    return handle_ask(handle, args, client_fd, call_id);
+}
 
 /**
  * @brief Dispatch a tools/call to the appropriate handler.
  *
  * entropic.ask streams progress notifications to client_fd during
  * generation, then returns the final clean text as the tool result.
+ * When async=true, spawns a background thread and returns task_id.
  *
  * @param handle Engine handle.
+ * @param bridge Bridge instance (for async task registry).
  * @param params JSON-RPC params (name + arguments).
  * @param client_fd Socket fd for streaming (entropic.ask only).
  * @param call_id JSON-RPC request id for progress correlation.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.10
+ * @version 2.0.11
  */
 static json dispatch_tool(entropic_handle_t handle,
+                          ExternalBridge* bridge,
                           const json& params,
                           int client_fd,
                           const std::string& call_id) {
     std::string name = params.value("name", std::string{});
     json args = params.value("arguments", json::object());
+    if (name == "entropic.ask") {
+        return dispatch_ask(handle, bridge, args, client_fd, call_id);
+    }
     json result;
-    if      (name == "entropic.ask")           { result = handle_ask(handle, args, client_fd, call_id); }
+    if      (name == "entropic.ask_status")    { result = bridge->handle_ask_status(args); }
     else if (name == "entropic.status")        { result = handle_status(handle); }
     else if (name == "entropic.context_clear") { result = handle_clear(handle); }
     else if (name == "entropic.context_count") { result = handle_count(handle); }
@@ -440,9 +530,10 @@ static std::string read_line(int fd) {
  *
  * @param client_fd Connected socket file descriptor.
  * @internal
- * @version 2.0.10
+ * @version 2.0.11
  */
 void ExternalBridge::serve_client(int client_fd) {
+    active_client_fd_.store(client_fd);
     while (running_.load()) {
         auto line = read_line(client_fd);
         if (line.empty()) { break; }
@@ -483,7 +574,7 @@ static json initialize_result() {
  * @param client_fd Socket fd for streaming progress (entropic.ask).
  * @return JSON-RPC response string, or empty for notifications.
  * @internal
- * @version 2.0.10
+ * @version 2.0.11
  */
 std::string ExternalBridge::dispatch(
     const std::string& request, int client_fd) {
@@ -505,11 +596,97 @@ std::string ExternalBridge::dispatch(
     else if (method == "tools/call")  {
         auto id_str = id.is_string() ? id.get<std::string>()
                                      : id.dump();
-        result = dispatch_tool(handle_, params, client_fd, id_str);
+        result = dispatch_tool(handle_, this, params, client_fd, id_str);
     }
     else if (method == "shutdown" || method == "exit") { result = json::object(); }
     else { return rpc_err(id, -32601, "Unknown method: " + method); }
     return rpc_ok(id, result);
+}
+
+// ── Async task support ───────────────────────────────────
+
+/**
+ * @brief Run an async entropic.ask in a detached background thread.
+ *
+ * Creates a task registry entry, runs the engine, stores the result,
+ * and pushes a notifications/ask_complete to the active client fd.
+ *
+ * @param prompt User prompt.
+ * @param task_id Assigned task ID.
+ * @param client_fd Socket fd for completion notification.
+ * @internal
+ * @version 2.0.11
+ */
+void ExternalBridge::run_async_ask(
+    const std::string& prompt,
+    const std::string& task_id,
+    int client_fd) {
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        tasks_[task_id] = {"running", {},
+            std::chrono::steady_clock::now()};
+    }
+
+    std::thread([this, prompt, task_id, client_fd]() {
+        char* result_json = nullptr;
+        auto err = entropic_run(handle_, prompt.c_str(), &result_json);
+
+        std::string text;
+        std::string status = "done";
+        if (err != ENTROPIC_OK) {
+            const char* msg = entropic_last_error(handle_);
+            text = msg ? msg : "unknown error";
+            status = "error";
+        } else {
+            text = extract_final_text(result_json);
+            entropic_free(result_json);
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(tasks_mutex_);
+            auto it = tasks_.find(task_id);
+            if (it != tasks_.end()) {
+                it->second.status = status;
+                it->second.result = text;
+            }
+        }
+
+        // Push completion notification to client
+        int fd = active_client_fd_.load();
+        if (fd >= 0) {
+            json notif = {
+                {"jsonrpc", "2.0"},
+                {"method", "notifications/ask_complete"},
+                {"params", {
+                    {"task_id", task_id},
+                    {"status", status},
+                    {status == "done" ? "result" : "error", text}
+                }}
+            };
+            write_json_line(fd, notif);
+        }
+
+        cleanup_expired_tasks();
+        logger->info("Async task {} completed: {}", task_id, status);
+    }).detach();
+}
+
+/**
+ * @brief Remove tasks older than 15 minutes from the registry.
+ * @internal
+ * @version 2.0.11
+ */
+void ExternalBridge::cleanup_expired_tasks() {
+    auto cutoff = std::chrono::steady_clock::now()
+        - std::chrono::minutes(15);
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    for (auto it = tasks_.begin(); it != tasks_.end(); ) {
+        if (it->second.created < cutoff) {
+            it = tasks_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 } // namespace entropic

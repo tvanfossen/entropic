@@ -234,6 +234,21 @@ public:
      */
     LoopMetrics last_loop_metrics() const { return last_metrics_; }
 
+    /**
+     * @brief Per-tier aggregated metrics since engine start.
+     *
+     * Keys are tier names ("lead", "eng", etc.). Values accumulate
+     * iterations/tool_calls/tokens_used/errors and sum duration_ms
+     * across every run_loop entered with that locked_tier. Empty map
+     * before any run. (P2-15 follow-up, 2.0.6-rc16.2)
+     *
+     * @return Copy of the per-tier metrics map.
+     * @utility
+     * @version 2.0.6-rc16.2
+     */
+    std::unordered_map<std::string, LoopMetrics>
+        per_tier_metrics() const { return per_tier_metrics_; }
+
     // ── Conversation state (v2.0.2) ─────────────────────────
 
     /**
@@ -640,6 +655,8 @@ private:
 
     // ── Members ──────────────────────────────────────────
     LoopMetrics last_metrics_;                           ///< P2-15: last run metrics
+    std::unordered_map<std::string, LoopMetrics>
+        per_tier_metrics_;                               ///< P2-15: per-tier accumulator (2.0.6-rc16.2)
     InferenceInterface inference_;                       ///< Inference contract
     LoopConfig loop_config_;                             ///< Loop config
     EngineCallbacks callbacks_;                          ///< Event callbacks

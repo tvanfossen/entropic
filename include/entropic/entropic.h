@@ -397,6 +397,26 @@ ENTROPIC_EXPORT entropic_error_t entropic_context_count(
     entropic_handle_t handle,
     size_t* count);
 
+/**
+ * @brief Get loop metrics from the most recent run as JSON.
+ *
+ * Populates *out with a malloc'd JSON string containing flat fields
+ * (iterations, tool_calls, tokens_used, errors, duration_ms) and a
+ * per_tier object keyed by tier name. Caller must entropic_free(*out).
+ *
+ * @param handle Engine handle.
+ * @param[out] out Output: malloc'd JSON string. Caller frees via entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — out is NULL.
+ *
+ * @threadsafety Thread-safe (read-only).
+ * @version 2.0.6-rc16.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_metrics_json(
+    entropic_handle_t handle,
+    char** out);
+
 /* ── External MCP Servers (v1.8.7) ───────────────────── */
 
 /**

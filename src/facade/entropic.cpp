@@ -647,14 +647,40 @@ static char* sp_get_tools(void* ud) {
 }
 
 /**
- * @brief State provider: get_history.
+ * @brief State provider: get_history — conversation context snapshot.
+ *
+ * Returns the current conversation as a JSON array of
+ * {role, content_preview, token_count_est} objects, suitable for
+ * context_inspect MCP tool and inspect --target history. (P2-16)
+ *
+ * @param max_entries Maximum messages to return (0 = all).
+ * @param ud Engine handle.
+ * @return JSON array string (caller frees via free()).
  * @callback
- * @version 2.0.6
+ * @version 2.0.6-rc16
  */
 static char* sp_get_history(int max_entries, void* ud) {
-    (void)max_entries;
-    (void)ud;
-    return strdup("[]");
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (!h || !h->engine) { return strdup("[]"); }
+    const auto& msgs = h->engine->get_messages();
+    nlohmann::json arr = nlohmann::json::array();
+    int start = 0;
+    if (max_entries > 0
+        && static_cast<int>(msgs.size()) > max_entries) {
+        start = static_cast<int>(msgs.size()) - max_entries;
+    }
+    for (int i = start; i < static_cast<int>(msgs.size()); ++i) {
+        const auto& m = msgs[static_cast<size_t>(i)];
+        std::string preview = m.content.size() > 200
+            ? m.content.substr(0, 200) + "..."
+            : m.content;
+        arr.push_back({
+            {"role",             m.role},
+            {"content_preview",  preview},
+            {"token_count_est",  m.content.size() / 4u}
+        });
+    }
+    return strdup(arr.dump().c_str());
 }
 
 /**
@@ -687,12 +713,14 @@ static char* sp_get_state(void* ud) {
 /**
  * @brief State provider: get_metrics.
  *
- * Returns LoopMetrics from the most recent run as JSON. Fields:
- *   iterations, tool_calls, tokens_used, errors, duration_ms.
- * All fields are zero when no run has completed yet. (P2-15)
+ * Returns LoopMetrics from the most recent run plus a per-tier
+ * accumulator as JSON. Flat fields: iterations, tool_calls,
+ * tokens_used, errors, duration_ms (all zero before any run).
+ * The `per_tier` object maps tier name → metrics since engine start.
+ * (P2-15 + follow-up)
  *
  * @callback
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 static char* sp_get_metrics(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
@@ -704,6 +732,18 @@ static char* sp_get_metrics(void* ud) {
     j["tokens_used"] = m.tokens_used;
     j["errors"]      = m.errors;
     j["duration_ms"] = m.duration_ms();
+    // Per-tier breakdown (P2-15 follow-up, 2.0.6-rc16.2)
+    nlohmann::json per_tier = nlohmann::json::object();
+    for (auto& [tier, tm] : h->engine->per_tier_metrics()) {
+        per_tier[tier] = {
+            {"iterations",  tm.iterations},
+            {"tool_calls",  tm.tool_calls},
+            {"tokens_used", tm.tokens_used},
+            {"errors",      tm.errors},
+            {"duration_ms", tm.duration_ms()},
+        };
+    }
+    j["per_tier"] = per_tier;
     return strdup(j.dump().c_str());
 }
 
@@ -1058,7 +1098,7 @@ void entropic_free(void* ptr) {
  *                    entropic_free).
  * @return ENTROPIC_OK on success, error code otherwise.
  * @req REQ-API-002
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -1085,6 +1125,16 @@ entropic_error_t entropic_run(
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run: {}", handle->last_error);
+        // P3-19 follow-up (2.0.6-rc16.2): surface partial context on
+        // crash so callers can recover tool_results and any partial
+        // assistant content accumulated before the failure.
+        try {
+            *result_json = alloc_cstr(
+                facade_json::serialize_messages(
+                    handle->engine->get_messages()));
+        } catch (...) {
+            *result_json = nullptr;
+        }
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
 }
@@ -1219,6 +1269,27 @@ entropic_error_t entropic_context_count(
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!count) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     *count = handle->engine->message_count();
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Get loop metrics as JSON (flat + per_tier).
+ *
+ * Reuses the state-provider sp_get_metrics builder so handle_status
+ * and the entropic.inspect tool return the same shape. (P2-15
+ * follow-up, 2.0.6-rc16.2)
+ *
+ * @param handle Engine handle.
+ * @param[out] out Output JSON; caller frees via entropic_free.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.6-rc16.2
+ */
+entropic_error_t entropic_metrics_json(
+    entropic_handle_t handle, char** out) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!out) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    *out = sp_get_metrics(handle);
     return ENTROPIC_OK;
 }
 

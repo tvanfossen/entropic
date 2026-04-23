@@ -242,6 +242,75 @@ SCENARIO("is_response_complete delegates to inference interface",
     }
 }
 
+SCENARIO("stream observer fires for batch generation path",
+         "[core][response_generator][observer]") {
+    GIVEN("a ResponseGenerator with a registered observer") {
+        auto iface = make_mock_inference();
+        auto loop_cfg = make_loop_config();  // stream_output=false
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        struct Sink {
+            std::string buf;
+            int calls = 0;
+        } sink;
+        gen.set_stream_observer(
+            [](const char* t, size_t n, void* ud) {
+                auto* s = static_cast<Sink*>(ud);
+                s->buf.append(t, n);
+                s->calls++;
+            }, &sink);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "default";
+        Message msg;
+        msg.role = "user";
+        msg.content = "ping";
+        ctx.messages.push_back(std::move(msg));
+
+        WHEN("generate_response runs the batch fallback") {
+            auto result = gen.generate_response(ctx);
+            THEN("observer receives the full content exactly once") {
+                REQUIRE(result.content == "Hello from mock");
+                REQUIRE(sink.buf == "Hello from mock");
+                REQUIRE(sink.calls == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("stream observer getters reflect registration",
+         "[core][response_generator][observer]") {
+    GIVEN("a freshly constructed ResponseGenerator") {
+        auto iface = make_mock_inference();
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        THEN("observer is unset by default") {
+            REQUIRE(gen.stream_observer() == nullptr);
+            REQUIRE(gen.stream_observer_data() == nullptr);
+        }
+
+        WHEN("an observer is registered and then cleared") {
+            int sentinel = 0;
+            auto cb = [](const char*, size_t, void*) {};
+            gen.set_stream_observer(cb, &sentinel);
+            REQUIRE(gen.stream_observer() == cb);
+            REQUIRE(gen.stream_observer_data() == &sentinel);
+
+            gen.set_stream_observer(nullptr, nullptr);
+            THEN("getters report the cleared state") {
+                REQUIRE(gen.stream_observer() == nullptr);
+                REQUIRE(gen.stream_observer_data() == nullptr);
+            }
+        }
+    }
+}
+
 SCENARIO("generate_batch returns error on null generate function",
          "[core][response_generator]") {
     GIVEN("an inference interface with no generate function") {

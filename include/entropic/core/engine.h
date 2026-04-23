@@ -115,6 +115,19 @@ public:
     void set_hooks(const HookInterface& hooks);
 
     /**
+     * @brief Set the global stream observer.
+     *
+     * Fires for every token from every generation path — batch
+     * entropic_run, entropic_run_streaming, and delegate child-loop
+     * generations. Persists across per-call EngineCallbacks reassignment.
+     *
+     * @param observer Token callback (nullable clears).
+     * @param user_data Forwarded to observer.
+     * @version 2.0.6-rc16
+     */
+    void set_stream_observer(TokenCallback observer, void* user_data);
+
+    /**
      * @brief Run the engine loop on a pre-built context.
      *
      * Used by DelegationManager for child loops. Public so the

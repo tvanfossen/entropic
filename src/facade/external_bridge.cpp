@@ -530,10 +530,16 @@ static std::string read_line(int fd) {
  *
  * @param client_fd Connected socket file descriptor.
  * @internal
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 void ExternalBridge::serve_client(int client_fd) {
-    active_client_fd_.store(client_fd);
+    subscribe(client_fd);
+    struct Unsub {
+        ExternalBridge* self;
+        int fd;
+        ~Unsub() { self->unsubscribe(fd); }
+    } guard{this, client_fd};
+
     while (running_.load()) {
         auto line = read_line(client_fd);
         if (line.empty()) { break; }
@@ -615,7 +621,7 @@ std::string ExternalBridge::dispatch(
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @internal
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -651,24 +657,74 @@ void ExternalBridge::run_async_ask(
             }
         }
 
-        // Push completion notification to client
-        int fd = active_client_fd_.load();
-        if (fd >= 0) {
-            json notif = {
-                {"jsonrpc", "2.0"},
-                {"method", "notifications/ask_complete"},
-                {"params", {
-                    {"task_id", task_id},
-                    {"status", status},
-                    {status == "done" ? "result" : "error", text}
-                }}
-            };
-            write_json_line(fd, notif);
-        }
+        // Push completion notification to every subscribed client
+        // (P0-2 — replaces v2.0.11 single-fd fanout).
+        json notif = {
+            {"jsonrpc", "2.0"},
+            {"method", "notifications/ask_complete"},
+            {"params", {
+                {"task_id", task_id},
+                {"status", status},
+                {status == "done" ? "result" : "error", text}
+            }}
+        };
+        broadcast_notification(notif);
 
         cleanup_expired_tasks();
         logger->info("Async task {} completed: {}", task_id, status);
     }).detach();
+}
+
+/**
+ * @brief Remove tasks older than 15 minutes from the registry.
+ * @internal
+ * @version 2.0.11
+ */
+/**
+ * @brief Add a connected fd to the subscriber set.
+ * @param fd Client socket fd.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void ExternalBridge::subscribe(int fd) {
+    std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    subscribers_.insert(fd);
+}
+
+/**
+ * @brief Remove an fd from the subscriber set.
+ * @param fd Client socket fd being closed.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void ExternalBridge::unsubscribe(int fd) {
+    std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    subscribers_.erase(fd);
+}
+
+/**
+ * @brief Broadcast a JSON-RPC notification to every subscriber.
+ *
+ * Serialized under subscribers_mutex_ so concurrent broadcasts do
+ * not interleave on the same fd. Fds whose write fails are removed
+ * from the set — broken client connections do not accumulate.
+ *
+ * @param notif JSON-RPC notification object.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void ExternalBridge::broadcast_notification(const json& notif) {
+    auto payload = notif.dump() + "\n";
+    std::lock_guard<std::mutex> lock(subscribers_mutex_);
+    for (auto it = subscribers_.begin(); it != subscribers_.end(); ) {
+        ssize_t rc = ::write(*it, payload.c_str(), payload.size());
+        if (rc < 0) {
+            logger->warn("Subscriber fd {} write failed — dropping", *it);
+            it = subscribers_.erase(it);
+        } else {
+            ++it;
+        }
+    }
 }
 
 /**

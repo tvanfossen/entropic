@@ -141,6 +141,22 @@ void AgentEngine::set_hooks(const HookInterface& hooks) {
 }
 
 /**
+ * @brief Set the global stream observer.
+ *
+ * Delegates to ResponseGenerator which owns the choke point for every
+ * generation path (streaming, batch, and child-loop delegations).
+ *
+ * @param observer Token callback (nullable).
+ * @param user_data Forwarded to observer.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void AgentEngine::set_stream_observer(
+    TokenCallback observer, void* user_data) {
+    response_generator_.set_stream_observer(observer, user_data);
+}
+
+/**
  * @brief Get the tier resolution interface.
  * @return Tier resolution interface.
  * @internal
@@ -1118,7 +1134,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1158,14 +1174,23 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     fire_delegation_complete(ctx, pending.target, result);
     fire_delegate_complete_hook(pending.target, result.success);
 
-    // Relay verbatim: if the lead tier has relay_single_delegate set
-    // and a single delegate returned successfully, use its summary
-    // directly as the final output — skip lead's re-generation.
+    // Relay path: if the lead tier has relay_single_delegate set and a
+    // single delegate returned successfully, the delegate summary is
+    // promoted verbatim. Still run the POST_GENERATE hook so the
+    // constitutional validator checks the summary the user will see.
+    // If the validator revises, the revised text is what ships.
+    // (P0-3, 2.0.6-rc16)
     if (result.success
         && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
-        ctx.metadata["explicit_completion_summary"] = result.summary;
+        GenerateResult relay_result;
+        relay_result.content = result.summary;
+        relay_result.finish_reason = "stop";
+        relay_result.tool_calls_json = "[]";
+        fire_post_generate_hook(relay_result, ctx.locked_tier, ctx.messages);
+
+        ctx.metadata["explicit_completion_summary"] = relay_result.content;
         set_state(ctx, AgentState::COMPLETE);
-        logger->info("Relay: single-delegate result used verbatim");
+        logger->info("Relay: single-delegate result validated & used");
         return;
     }
 

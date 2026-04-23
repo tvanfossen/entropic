@@ -165,6 +165,10 @@ struct StreamAccumulator {
     const HookInterface* hooks;       ///< Hook dispatch (v1.9.1)
     int token_index = 0;              ///< Token counter (v1.9.1)
     bool interrupted = false;         ///< Set when interrupt detected
+    /// @brief Global observer — fires on every token alongside
+    ///        callbacks->on_stream_chunk. (2.0.6-rc16)
+    void (*observer)(const char*, size_t, void*) = nullptr;
+    void* observer_data = nullptr;    ///< Observer user_data
 };
 
 /**
@@ -173,7 +177,7 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @internal
- * @version 1.9.1
+ * @version 2.0.6-rc16
  */
 static void stream_token_callback(
     const char* token,
@@ -191,6 +195,12 @@ static void stream_token_callback(
                                          acc->callbacks->user_data);
     }
 
+    // Global observer — fires on every token regardless of whether
+    // the caller registered on_stream_chunk. (2.0.6-rc16)
+    if (acc->observer != nullptr) {
+        acc->observer(token, len, acc->observer_data);
+    }
+
     // Hook: ON_STREAM_TOKEN (v1.9.1)
     if (acc->hooks != nullptr && acc->hooks->fire_info != nullptr) {
         std::string json = "{\"token_index\":"
@@ -205,7 +215,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6-rc16
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -225,6 +235,11 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     acc.callbacks = &callbacks_;
     acc.events = &events_;
     acc.hooks = &hooks_;
+    // Wire the persistent stream observer so every token — including
+    // batch entropic_run and delegate child-loop generations — reaches
+    // any registered observer. (P0-1, 2.0.6-rc16)
+    acc.observer = stream_observer_;
+    acc.observer_data = stream_observer_data_;
 
     inference_.generate_stream(
         msgs_json.c_str(), params_json.c_str(),
@@ -245,7 +260,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.4
+ * @version 2.0.6-rc16
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -272,6 +287,13 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
         result.tool_calls_json = "[]";
         if (inference_.free_fn != nullptr) {
             inference_.free_fn(result_json);
+        }
+        // Fire observer once with full content so the non-streaming
+        // fallback still reaches registered observers. (2.0.6-rc16)
+        if (stream_observer_ != nullptr && !result.content.empty()) {
+            stream_observer_(result.content.data(),
+                             result.content.size(),
+                             stream_observer_data_);
         }
     } else {
         result.finish_reason = "error";

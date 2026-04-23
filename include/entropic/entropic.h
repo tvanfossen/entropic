@@ -289,20 +289,31 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
 /**
  * @brief Set a global stream observer callback.
  *
- * When registered, fires for every token generated during any
- * entropic_run_streaming() call, alongside the per-call on_token
- * callback. Also fires a synthetic completion token ("\0", len=0)
- * at the end of any entropic_run() call so the observer knows a
- * non-streaming run completed.
+ * Fires for every token generated from every entry point — interactive
+ * entropic_run_streaming(), non-streaming entropic_run(), and delegate
+ * child-loop generations. Runs alongside any per-call on_token callback
+ * registered via entropic_run_streaming(). Registration before
+ * entropic_configure() is allowed — the observer is wired to the engine
+ * when it is constructed.
  *
- * Use case: TUI consumers register this once to observe activity
- * from both interactive input and external MCP bridge requests.
+ * At the end of any entropic_run() or entropic_run_streaming() call,
+ * the observer is invoked once with (token="", len=0) as a synthetic
+ * completion sentinel so consumers can detect end-of-turn regardless
+ * of the entry point.
+ *
+ * Use case: TUI consumers register this once to observe activity from
+ * both interactive input and external MCP bridge requests.
+ *
+ * @threadsafety The observer may be invoked from the engine thread
+ *        servicing the current run (serialized per-handle) and from
+ *        the external-bridge worker thread that drives async MCP
+ *        ask tasks. Consumer callbacks must be thread-safe.
  *
  * @param handle Engine handle.
  * @param observer Token callback (same signature as on_token). NULL to clear.
  * @param user_data Forwarded to observer.
  * @return ENTROPIC_OK on success.
- * @version 2.0.10
+ * @version 2.0.6-rc16
  */
 ENTROPIC_EXPORT entropic_error_t entropic_set_stream_observer(
     entropic_handle_t handle,

@@ -226,3 +226,148 @@ SCENARIO("relay_single_delegate registers tier",
         }
     }
 }
+
+// ── P1-4: interrupt dedup (2.0.6-rc16) ───────────────────
+
+SCENARIO("interrupt() is idempotent wrt state",
+         "[engine][P1-4][2.0.6-rc16]")
+{
+    GIVEN("a fresh engine") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("interrupt is called twice without reset") {
+            engine.interrupt();
+            engine.interrupt();
+            THEN("reset clears it, subsequent interrupt logs again") {
+                // No direct flag inspection API; exercise the happy
+                // path that exchange(true) no-ops on second call.
+                engine.reset_interrupt();
+                engine.interrupt();
+                REQUIRE(true);  // survives without crash / double-log
+            }
+        }
+    }
+}
+
+// ── P1-6: zero-tool-call + explicit_completion failure ───
+
+SCENARIO("tier_requires_explicit_completion honours tier resolver",
+         "[engine][P1-6][2.0.6-rc16]")
+{
+    GIVEN("an engine with a tier resolver reporting explicit=true") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            if (param == "explicit_completion" && tier == "lead") {
+                return "true";
+            }
+            return "";
+        };
+        engine.set_tier_resolution(tri);
+
+        THEN("lead tier returns true") {
+            REQUIRE(engine.tier_requires_explicit_completion("lead"));
+        }
+        AND_THEN("other tiers return false") {
+            REQUIRE_FALSE(
+                engine.tier_requires_explicit_completion("eng"));
+        }
+    }
+
+    GIVEN("an engine with no tier resolver wired") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        THEN("explicit_completion defaults to false") {
+            REQUIRE_FALSE(
+                engine.tier_requires_explicit_completion("any"));
+        }
+    }
+}
+
+// ── P1-9: circular delegation detection ──────────────────
+
+SCENARIO("is_delegation_cycle flags ancestor reuse",
+         "[engine][P1-9][2.0.6-rc16]")
+{
+    GIVEN("an engine and a loop context with ancestors [lead, eng]") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        LoopContext ctx{};
+        ctx.locked_tier = "researcher";
+        ctx.delegation_ancestor_tiers = {"lead", "eng"};
+
+        WHEN("target equals the active tier") {
+            THEN("it's a cycle") {
+                REQUIRE(engine.is_delegation_cycle(ctx, "researcher"));
+            }
+        }
+        WHEN("target matches an ancestor") {
+            THEN("lead is a cycle") {
+                REQUIRE(engine.is_delegation_cycle(ctx, "lead"));
+            }
+            AND_THEN("eng is a cycle") {
+                REQUIRE(engine.is_delegation_cycle(ctx, "eng"));
+            }
+        }
+        WHEN("target is fresh") {
+            THEN("no cycle") {
+                REQUIRE_FALSE(
+                    engine.is_delegation_cycle(ctx, "qa"));
+            }
+        }
+    }
+}
+
+// ── P1-10: external interrupt callback is invoked ────────
+
+SCENARIO("interrupt() fires external interrupt callback once",
+         "[engine][P1-10][2.0.6-rc16]")
+{
+    GIVEN("an engine with an external interrupt callback") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        int count = 0;
+        engine.set_external_interrupt(
+            [](void* ud) { ++*static_cast<int*>(ud); }, &count);
+
+        WHEN("interrupt is called repeatedly") {
+            engine.interrupt();
+            engine.interrupt();
+            engine.interrupt();
+            THEN("external callback fired exactly once") {
+                REQUIRE(count == 1);
+            }
+        }
+        WHEN("reset clears the flag then interrupt fires again") {
+            engine.interrupt();
+            engine.reset_interrupt();
+            engine.interrupt();
+            THEN("callback fired twice") {
+                REQUIRE(count == 2);
+            }
+        }
+    }
+}

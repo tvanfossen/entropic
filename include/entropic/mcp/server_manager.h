@@ -239,6 +239,18 @@ public:
      */
     void set_mcp_config(const MCPConfig& config);
 
+    /**
+     * @brief Abort in-flight tool calls across every external MCP
+     *        client. Invoked from the engine's interrupt path so
+     *        Ctrl+C unwinds docs_server.py / bash etc. within ~100ms
+     *        instead of waiting out the transport timeout.
+     *        (P1-10, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void interrupt_external_tools();
+
 private:
     /**
      * @brief Extract server prefix from fully-qualified tool name.

@@ -335,7 +335,7 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 1.8.5
+ * @version 2.0.6-rc16
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -369,6 +369,21 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
 
     logger->info("[TOOL COMPLETE] {} -> {} chars ({}ms)",
                  call.name, result_text.size(), ms);
+
+    // P1-11 (2.0.6-rc16): stash into history ring buffer so the
+    // constitutional validator revision prompt (and diagnostic tools)
+    // can surface prior-iteration tool calls without re-reading
+    // messages[].
+    ToolCallRecord rec;
+    rec.sequence = ++history_seq_;
+    rec.tool_name = call.name;
+    rec.params_summary = summarize_params(args_json);
+    rec.status = (result_text.rfind("error", 0) == 0)
+        ? "error" : "success";
+    rec.result_summary = truncate_result(result_text, 200);
+    rec.elapsed_ms = static_cast<double>(ms);
+    rec.iteration = ctx.metrics.iterations;
+    history_.record(rec);
 
     fire_tool_complete_callback(call, result_text, ms);
 

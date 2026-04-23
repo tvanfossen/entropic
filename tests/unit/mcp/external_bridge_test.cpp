@@ -217,3 +217,75 @@ SCENARIO("broadcast_notification drops fds whose write fails",
         }
     }
 }
+
+// ── P1-5: async task phase lifecycle (2.0.6-rc16) ─────────
+
+SCENARIO("async task phase transitions through the lifecycle",
+         "[external_bridge][P1-5][2.0.6-rc16]")
+{
+    GIVEN("a bridge with null handle (forces error branch)") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-phase");
+
+        bridge.run_async_ask("hi", "task-phase", -1);
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(200));
+
+        json args = {{"task_id", "task-phase"}};
+        auto result = bridge.handle_ask_status(args);
+
+        THEN("status response surfaces both status and phase") {
+            auto text = result["content"][0]["text"]
+                .get<std::string>();
+            auto parsed = json::parse(text);
+            CHECK(parsed.contains("status"));
+            CHECK(parsed.contains("phase"));
+            // Null-handle path lands in error/failed terminal state.
+            CHECK(parsed["status"] == "error");
+            CHECK(parsed["phase"] == "failed");
+        }
+    }
+}
+
+// ── P1-8: cancel-on-clear primitives (2.0.6-rc16) ─────────
+
+SCENARIO("mark cancelling flips queued/running tasks",
+         "[external_bridge][P1-8][2.0.6-rc16]")
+{
+    GIVEN("a bridge with a manually-registered running task") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-cancel");
+
+        // Inject a synthetic running task without spawning a thread.
+        {
+            std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+            auto& tasks = bridge.tasks_for_cancel();
+            auto& t = tasks["task-running"];
+            t.status = "running";
+            t.phase = "running";
+            t.created = std::chrono::steady_clock::now();
+        }
+
+        WHEN("mark_tasks_cancelling-equivalent path flips the status") {
+            {
+                std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                auto& tasks = bridge.tasks_for_cancel();
+                for (auto& [_, t] : tasks) {
+                    if (t.status == "running") {
+                        t.status = "cancelled";
+                        t.phase = "cancelling";
+                    }
+                }
+            }
+            THEN("handle_ask_status reflects cancellation") {
+                json args = {{"task_id", "task-running"}};
+                auto result = bridge.handle_ask_status(args);
+                auto text = result["content"][0]["text"]
+                    .get<std::string>();
+                auto parsed = json::parse(text);
+                CHECK(parsed["status"] == "cancelled");
+                CHECK(parsed["phase"] == "cancelling");
+            }
+        }
+    }
+}

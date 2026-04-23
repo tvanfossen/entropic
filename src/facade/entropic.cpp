@@ -277,6 +277,26 @@ static int facade_get_tool_prompt(const char* tier, char** result,
 }
 
 /**
+ * @brief Wire engine interrupt propagation into MCP transports (P1-10).
+ *
+ * Extracted from configure_common to keep that function under the
+ * 50-SLOC quality gate.  On first interrupt(), the lambda calls
+ * ServerManager::interrupt_external_tools() which trips the cancel flag
+ * in every StdioTransport so in-flight reads return within ~100ms.
+ *
+ * @param h Engine handle with engine and server_manager constructed.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static void wire_external_interrupt(entropic_handle_t h) {
+    h->engine->set_external_interrupt(
+        [](void* ud) {
+            auto* sm = static_cast<entropic::ServerManager*>(ud);
+            if (sm) { sm->interrupt_external_tools(); }
+        }, h->server_manager.get());
+}
+
+/**
  * @brief Propagate any pre-configure stream observer to the new engine.
  *
  * Handles the edge case where a caller registers a stream observer
@@ -483,6 +503,41 @@ static void cache_tier_allowed_tools(
  * @internal
  * @version 2.0.3
  */
+/**
+ * @brief C-safe accessor for ToolExecutor's history (P1-11).
+ *
+ * Extracted to satisfy the 3-return complexity gate.
+ *
+ * @param count Max entries to serialize.
+ * @param ud ToolExecutor pointer.
+ * @return malloc'd JSON string, or nullptr when empty/unset.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static char* tool_history_json_thunk(size_t count, void* ud) {
+    auto* exec = static_cast<entropic::ToolExecutor*>(ud);
+    if (exec == nullptr) { return nullptr; }
+    auto s = exec->tool_history().to_json(count);
+    if (s.empty() || s == "[]") { return nullptr; }
+    auto* out = static_cast<char*>(std::malloc(s.size() + 1));
+    if (out != nullptr) {
+        std::memcpy(out, s.data(), s.size());
+        out[s.size()] = '\0';
+    }
+    return out;
+}
+
+/**
+ * @brief Wire the ToolExecutor and attach it to the engine.
+ *
+ * Constructs the ToolExecutor from existing subsystems, builds the
+ * ToolExecutionInterface bridge (process_tool_calls + history_json
+ * thunk), and registers it with the AgentEngine.
+ *
+ * @param h Engine handle with engine + server_manager constructed.
+ * @internal
+ * @version 2.0.6-rc16
+ */
 static void wire_tool_executor(entropic_handle_t h) {
     h->tool_executor = std::make_unique<entropic::ToolExecutor>(
         *h->server_manager,
@@ -497,6 +552,8 @@ static void wire_tool_executor(entropic_handle_t h) {
             ->process_tool_calls(ctx, calls);
     };
     tei.user_data = h->tool_executor.get();
+    tei.history_json = tool_history_json_thunk;  // P1-11
+    tei.free_fn = [](char* p) { std::free(p); };
     h->engine->set_tool_executor(tei);
 }
 
@@ -733,7 +790,7 @@ static void start_external_bridge(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.0.6-rc16
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -770,6 +827,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
     rewire_stream_observer(h);
+    wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);
 
     auto shared_prefix = build_shared_prompt_prefix(h, data_dir);

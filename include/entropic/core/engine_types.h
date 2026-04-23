@@ -262,6 +262,19 @@ using ToolExecutionFn = std::vector<Message> (*)(
 struct ToolExecutionInterface {
     ToolExecutionFn process_tool_calls = nullptr; ///< Dispatches tool calls
     void* user_data = nullptr;                     ///< Opaque pointer (ToolExecutor*)
+
+    /**
+     * @brief Optional: return a compact JSON summary of recent tool
+     *        calls (for validator retry enrichment / diagnostics).
+     *
+     * Caller owns the returned C string (free via ToolExecutionFree).
+     * Nullptr means the executor has no history surface.
+     * (P1-11, 2.0.6-rc16)
+     */
+    char* (*history_json)(size_t count, void* user_data) = nullptr;
+
+    /// @brief Free function for strings returned by history_json.
+    void (*free_fn)(char*) = nullptr;
 };
 
 /**

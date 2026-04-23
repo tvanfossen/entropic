@@ -409,13 +409,13 @@ bool AgentEngine::record_explicit_completion_failure(
  * @param tier Tier name.
  * @return true if the tier's explicit_completion flag is set.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 bool AgentEngine::tier_requires_explicit_completion(
     const std::string& tier) const {
     if (tier_res_.get_tier_param == nullptr) { return false; }
     auto val = tier_res_.get_tier_param(
-        tier.c_str(), "explicit_completion", tier_res_.user_data);
+        tier, "explicit_completion", tier_res_.user_data);
     return val == "true" || val == "1";
 }
 
@@ -502,13 +502,36 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
  * (P1-4, 2.0.6-rc16)
  *
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 void AgentEngine::interrupt() {
     if (!interrupt_flag_.exchange(true)) {
         logger->info("Engine interrupted");
+        // P1-10: propagate to external MCP transports so in-flight
+        // tool calls abort alongside the generation loop.
+        if (external_interrupt_cb_ != nullptr) {
+            external_interrupt_cb_(external_interrupt_data_);
+        }
     }
     pause_flag_.store(false);
+}
+
+/**
+ * @brief Register external transport interrupt callback.
+ *
+ * Facade wires this to ServerManager::interrupt_external_tools so
+ * AgentEngine::interrupt() unwinds tool dispatches within ~100ms.
+ * (P1-10, 2.0.6-rc16)
+ *
+ * @param cb Callback (nullable).
+ * @param user_data Forwarded to cb.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void AgentEngine::set_external_interrupt(void (*cb)(void*),
+                                         void* user_data) {
+    external_interrupt_cb_ = cb;
+    external_interrupt_data_ = user_data;
 }
 
 /**
@@ -1000,6 +1023,31 @@ static std::string build_tool_manifest(
 }
 
 /**
+ * @brief Append executor history (if any) to the tool manifest.
+ *
+ * Enriches the validator revision prompt with iteration numbers and
+ * elapsed times pulled from ToolExecutor's ToolCallHistory ring
+ * buffer via the ToolExecutionInterface::history_json callback.
+ * (P1-11, 2.0.6-rc16)
+ *
+ * @param base Existing manifest from messages.
+ * @param tool_exec Tool execution interface.
+ * @return Enriched manifest (base + history lines if available).
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static std::string enrich_manifest_with_history(
+    const std::string& base,
+    const ToolExecutionInterface& tool_exec) {
+    if (tool_exec.history_json == nullptr) { return base; }
+    char* js = tool_exec.history_json(20, tool_exec.user_data);
+    if (js == nullptr) { return base; }
+    std::string out = base + "prior-iteration history: " + js + "\n";
+    if (tool_exec.free_fn != nullptr) { tool_exec.free_fn(js); }
+    return out;
+}
+
+/**
  * @brief Extract the first system message content from messages.
  * @param messages Conversation messages.
  * @return System prompt text, or empty string if none found.
@@ -1027,7 +1075,7 @@ static std::string extract_system_prompt(
  * @param tier Active tier name at the time of generation.
  * @param messages Current conversation messages.
  * @internal
- * @version 2.0.7
+ * @version 2.0.6-rc16
  */
 void AgentEngine::fire_post_generate_hook(
     GenerateResult& result,
@@ -1037,6 +1085,7 @@ void AgentEngine::fire_post_generate_hook(
         return;
     }
     auto manifest = build_tool_manifest(messages);
+    manifest = enrich_manifest_with_history(manifest, tool_exec_);
     auto sys = extract_system_prompt(messages);
     std::string json =
         "{\"finish_reason\":\"" + result.finish_reason

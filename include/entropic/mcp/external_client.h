@@ -102,6 +102,17 @@ public:
      */
     const std::string& name() const { return name_; }
 
+    /**
+     * @brief Abort any pending execute() by interrupting the transport.
+     *
+     * Delegates to Transport::interrupt(). Safe to call concurrently
+     * from the engine's interrupt thread. (P1-10, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void interrupt() { if (transport_) { transport_->interrupt(); } }
+
 private:
     std::string name_;                           ///< Server name (tool prefix)
     std::unique_ptr<Transport> transport_;        ///< Wire transport

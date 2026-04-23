@@ -471,3 +471,40 @@ TEST_CASE("router dirty on update", "[identity_manager]") {
     mgr->update("npc_guard", updated);
     REQUIRE(mgr->is_router_dirty());
 }
+
+// ── P1-7: cache invalidator callback (2.0.6-rc16) ─────────
+
+TEST_CASE("cache invalidator fires on create/update/destroy",
+          "[identity_manager][P1-7][2.0.6-rc16]") {
+    GrammarRegistry grammar_reg;
+    MCPAuthorizationManager auth_mgr;
+    IdentityManagerConfig mgr_cfg;
+    auto mgr = make_mgr(mgr_cfg, grammar_reg, auth_mgr);
+
+    int count = 0;
+    mgr->set_cache_invalidator(
+        [](void* ud) { ++*static_cast<int*>(ud); }, &count);
+
+    mgr->create(make_config("npc_guard"));
+    REQUIRE(count == 1);
+
+    auto updated = make_config("npc_guard");
+    updated.focus = {"ambush"};
+    mgr->update("npc_guard", updated);
+    REQUIRE(count == 2);
+
+    mgr->destroy("npc_guard");
+    REQUIRE(count == 3);
+}
+
+TEST_CASE("cache invalidator unset is safe",
+          "[identity_manager][P1-7][2.0.6-rc16]") {
+    GrammarRegistry grammar_reg;
+    MCPAuthorizationManager auth_mgr;
+    IdentityManagerConfig mgr_cfg;
+    auto mgr = make_mgr(mgr_cfg, grammar_reg, auth_mgr);
+
+    // No invalidator registered — must not crash on mutations.
+    REQUIRE(mgr->create(make_config("npc_guard")) == ENTROPIC_OK);
+    REQUIRE(mgr->destroy("npc_guard") == ENTROPIC_OK);
+}

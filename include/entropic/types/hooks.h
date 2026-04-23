@@ -8,7 +8,7 @@
  * can modify context or cancel operations. Post-hooks can transform
  * results. Failing hooks are logged and skipped — never crash the engine.
  *
- * @version 1.9.1
+ * @version 2.0.6-rc16
  */
 
 #pragma once
@@ -29,7 +29,7 @@ extern "C" {
  *
  * New values are appended only — no renumbering (ABI stable).
  *
- * @version 1.9.1
+ * @version 2.0.6-rc16
  */
 typedef enum {
     /* --- v1.8.9 originals (unchanged) --- */
@@ -59,7 +59,32 @@ typedef enum {
     ENTROPIC_HOOK_ON_LOOP_END,          ///< 21: Agentic loop exit
 
     /* --- v2.0.10 additions --- */
-    ENTROPIC_HOOK_ON_COMPLETE,          ///< 22: entropic.complete called (pre-hook: can cancel)
+    /**
+     * @brief entropic.complete MCP tool called — pre-hook, can cancel.
+     *
+     * Fires before the engine accepts a completion from the active tier.
+     * Non-zero return rejects the completion and injects the modified_json
+     * string back as a user message (citation validation feedback loop).
+     *
+     * Guaranteed context_json schema (all fields always present):
+     * @code{.json}
+     * {
+     *   "summary":      "<complete text from the tool call>",
+     *   "tier":         "<active tier name, e.g. \"lead\">",
+     *   "iteration":    <loop iteration count at call time, integer>,
+     *   "tool_results": [
+     *     { "name": "<tool_name>", "content": "<result text>" },
+     *     ...
+     *   ]
+     * }
+     * @endcode
+     *
+     * modified_json (rejection path): plain text feedback string, wrapped
+     * by the engine as "[CITATION VALIDATION] <text>" user message.
+     *
+     * @version 2.0.6-rc16
+     */
+    ENTROPIC_HOOK_ON_COMPLETE = 22,
 
     ENTROPIC_HOOK_COUNT_                ///< Sentinel — not a valid hook point
 } entropic_hook_point_t;

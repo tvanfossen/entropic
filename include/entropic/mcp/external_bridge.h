@@ -57,7 +57,7 @@ namespace entropic {
  * before engine teardown.
  *
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.0.6-rc16.2
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -113,6 +113,28 @@ public:
      * @internal
      * @version 2.0.11
      */
+    /**
+     * @brief Install VERIFYING-state observer scoped to one task.
+     *
+     * Registers a state-change observer on the handle and records
+     * task_id as the active task. The observer maps VERIFYING
+     * transitions onto phase="validating" (first) or "revising"
+     * (subsequent). Pair with detach_phase_observer().
+     * (P1-5 follow-up, 2.0.6-rc16.2)
+     *
+     * @param task_id Task whose phase will be updated.
+     * @internal
+     * @version 2.0.6-rc16.2
+     */
+    void attach_phase_observer(const std::string& task_id);
+
+    /**
+     * @brief Clear the phase observer installed by attach_phase_observer.
+     * @internal
+     * @version 2.0.6-rc16.2
+     */
+    void detach_phase_observer();
+
     void run_async_ask(const std::string& prompt,
                        const std::string& task_id,
                        int client_fd);
@@ -156,6 +178,16 @@ public:
      */
     std::unordered_map<std::string, AsyncTask>& tasks_for_cancel() {
         return tasks_;
+    }
+
+    /**
+     * @brief Return the currently-active async task_id (if any).
+     * @return Task id or empty string. Caller MUST hold tasks_mutex_.
+     * @utility
+     * @version 2.0.6-rc16.2
+     */
+    const std::string& active_task_id_for_observer() const {
+        return active_task_id_;
     }
 
     /**
@@ -258,6 +290,13 @@ private:
     /// simultaneously. (P0-2, 2.0.6-rc16)
     std::unordered_set<int> subscribers_;
     mutable std::mutex subscribers_mutex_; ///< Guards subscribers_
+
+    /// @brief Currently-executing async task_id (empty if none).
+    /// Set by run_async_ask before entropic_run and cleared on exit.
+    /// Read by the state-change observer so VERIFYING transitions can
+    /// be projected onto the right task's phase. Guarded by tasks_mutex_.
+    /// (P1-5 follow-up, 2.0.6-rc16.2)
+    std::string active_task_id_;
 };
 
 } // namespace entropic

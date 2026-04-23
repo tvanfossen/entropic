@@ -40,6 +40,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 // Forward declaration — bridge holds a raw pointer to the opaque handle.
 struct entropic_engine;
@@ -56,7 +57,7 @@ namespace entropic {
  * before engine teardown.
  *
  * @internal
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -126,6 +127,46 @@ public:
     /// @brief Async task mutex (public for dispatch_tool access).
     mutable std::mutex tasks_mutex_;
 
+    /**
+     * @brief Add a connected fd to the subscriber set.
+     * @param fd Connected client socket fd.
+     * @internal (public for unit test access)
+     * @version 2.0.6-rc16
+     */
+    void subscribe(int fd);
+
+    /**
+     * @brief Remove an fd from the subscriber set.
+     * @param fd Client socket fd being closed.
+     * @internal (public for unit test access)
+     * @version 2.0.6-rc16
+     */
+    void unsubscribe(int fd);
+
+    /**
+     * @brief Write a JSON-RPC notification to every subscribed fd.
+     *
+     * Writes are serialized under subscribers_mutex_ so concurrent
+     * broadcasts do not interleave on the same fd. Fds that fail to
+     * write are removed from the set.
+     *
+     * @param notif JSON-RPC notification object.
+     * @internal (public for unit test access)
+     * @version 2.0.6-rc16
+     */
+    void broadcast_notification(const nlohmann::json& notif);
+
+    /**
+     * @brief Current subscriber count (for diagnostics / testing).
+     * @return Number of connected clients currently subscribed.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    size_t subscriber_count() const {
+        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+        return subscribers_.size();
+    }
+
 private:
     /**
      * @brief Background thread: accept connections and serve.
@@ -172,8 +213,14 @@ private:
 
     /// @brief Async task registry (task_id → state). Guarded by tasks_mutex_.
     std::unordered_map<std::string, AsyncTask> tasks_;
-    /// @brief Active client fd for async notifications (-1 if none).
-    std::atomic<int> active_client_fd_{-1};
+
+    /// @brief Subscribed client fds for broadcast notifications.
+    /// @details Populated on connect, drained on disconnect. Guarded by
+    /// subscribers_mutex_. Replaces the v2.0.11 single-fd scheme so TUI
+    /// and Claude Code can both receive ask_complete / progress events
+    /// simultaneously. (P0-2, 2.0.6-rc16)
+    std::unordered_set<int> subscribers_;
+    mutable std::mutex subscribers_mutex_; ///< Guards subscribers_
 };
 
 } // namespace entropic

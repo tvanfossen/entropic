@@ -9,7 +9,12 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <array>
 #include <chrono>
+#include <string>
 #include <thread>
 
 using namespace entropic;
@@ -127,6 +132,88 @@ SCENARIO("ExternalBridge derives socket_path when not configured",
             CHECK(path.find(".entropic/socks/") !=
                   std::string::npos);
             CHECK(path.find(".sock") != std::string::npos);
+        }
+    }
+}
+
+// ── Subscriber broadcast tests (P0-2, 2.0.6-rc16) ─────────
+
+/**
+ * @brief Drain a socket fd into a string, reading one line at most.
+ * @param fd Readable socket.
+ * @return Line without trailing newline.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+static std::string read_line_until_newline(int fd) {
+    std::string out;
+    char c = 0;
+    while (read(fd, &c, 1) == 1) {
+        if (c == '\n') { break; }
+        out += c;
+    }
+    return out;
+}
+
+SCENARIO("broadcast_notification fans out to every subscriber",
+         "[external_bridge][multi_client][2.0.6-rc16]")
+{
+    GIVEN("a bridge with two subscribed fd pairs") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-sub");
+
+        std::array<int, 2> a{-1, -1};
+        std::array<int, 2> b{-1, -1};
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, a.data()) == 0);
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, b.data()) == 0);
+
+        bridge.subscribe(a[0]);
+        bridge.subscribe(b[0]);
+        REQUIRE(bridge.subscriber_count() == 2);
+
+        WHEN("a notification is broadcast") {
+            json notif = {{"jsonrpc", "2.0"},
+                          {"method", "notifications/test"},
+                          {"params", {{"x", 1}}}};
+            bridge.broadcast_notification(notif);
+
+            THEN("both subscribers receive the same line") {
+                auto la = read_line_until_newline(a[1]);
+                auto lb = read_line_until_newline(b[1]);
+                CHECK(la == notif.dump());
+                CHECK(lb == notif.dump());
+            }
+        }
+
+        bridge.unsubscribe(a[0]);
+        bridge.unsubscribe(b[0]);
+        CHECK(bridge.subscriber_count() == 0);
+        for (int fd : {a[0], a[1], b[0], b[1]}) { close(fd); }
+    }
+}
+
+SCENARIO("broadcast_notification drops fds whose write fails",
+         "[external_bridge][multi_client][2.0.6-rc16]")
+{
+    GIVEN("a bridge with one subscribed fd whose peer is closed") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-drop");
+
+        std::array<int, 2> pair{-1, -1};
+        REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, pair.data()) == 0);
+        bridge.subscribe(pair[0]);
+
+        // Close both ends so the next write() gets EPIPE/EBADF.
+        close(pair[1]);
+        close(pair[0]);
+
+        WHEN("a broadcast is attempted") {
+            json notif = {{"method", "notifications/test"}};
+            bridge.broadcast_notification(notif);
+
+            THEN("the dead fd is removed from subscribers") {
+                CHECK(bridge.subscriber_count() == 0);
+            }
         }
     }
 }

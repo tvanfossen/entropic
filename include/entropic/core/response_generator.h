@@ -12,6 +12,7 @@
 #pragma once
 
 #include <entropic/core/engine_types.h>
+#include <entropic/core/stream_think_filter.h>
 #include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
 
@@ -138,6 +139,12 @@ private:
     EngineCallbacks& callbacks_;       ///< Shared callbacks
     GenerationEvents events_;          ///< Interrupt/pause flags
     HookInterface hooks_;              ///< Hook dispatch (v1.9.1)
+    /// @brief Global stream observer fires on every token from every
+    ///        generation path — batch entropic_run, entropic_run_streaming,
+    ///        and delegate child loops. Persists across EngineCallbacks
+    ///        reassignment in run_streaming (stored separately). (2.0.6-rc16)
+    TokenCallback stream_observer_ = nullptr;
+    void* stream_observer_data_ = nullptr;
 
 public:
     /**
@@ -147,6 +154,40 @@ public:
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }
+
+    /**
+     * @brief Set the global stream observer.
+     *
+     * Fires for every token from every generation path: batch
+     * entropic_run, entropic_run_streaming, and delegate child loops.
+     * Stored separately from EngineCallbacks so it survives the
+     * set_callbacks() reassignment done by run_streaming.
+     *
+     * @param observer Callback invoked with each token (nullable).
+     * @param user_data Forwarded to observer unchanged.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void set_stream_observer(TokenCallback observer, void* user_data) {
+        stream_observer_ = observer;
+        stream_observer_data_ = user_data;
+    }
+
+    /**
+     * @brief Get the registered stream observer callback.
+     * @return Function pointer (nullptr if unset).
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    TokenCallback stream_observer() const { return stream_observer_; }
+
+    /**
+     * @brief Get the observer's user_data pointer.
+     * @return Opaque pointer passed to observer callbacks.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void* stream_observer_data() const { return stream_observer_data_; }
 };
 
 } // namespace entropic

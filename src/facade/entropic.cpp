@@ -276,6 +276,52 @@ static int facade_get_tool_prompt(const char* tier, char** result,
     return 0;
 }
 
+/**
+ * @brief Propagate any pre-configure stream observer to the new engine.
+ *
+ * Handles the edge case where a caller registers a stream observer
+ * before entropic_configure() — the handle stores it on arrival, and
+ * this helper re-binds it when the AgentEngine is constructed so
+ * observers never miss tokens on a late-bound engine. (P0-1)
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static void rewire_stream_observer(entropic_handle_t h) {
+    if (h->stream_observer != nullptr && h->engine) {
+        h->engine->set_stream_observer(
+            h->stream_observer, h->stream_observer_data);
+    }
+}
+
+/**
+ * @brief Register per-tier ChildContextInfo with the engine.
+ *
+ * Extracted from configure_common to keep that function under the
+ * 50-SLOC quality gate. Iterates the configured tiers, resolves each
+ * identity file, and registers the assembled context with the engine.
+ *
+ * @param h Engine handle (engine must be constructed).
+ * @param data_dir Resolved data directory for identity files.
+ * @param shared_prefix Prefix assembled from constitution + app context.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static void populate_tier_info(entropic_handle_t h,
+                               const std::filesystem::path& data_dir,
+                               const std::string& shared_prefix) {
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        entropic::ChildContextInfo info;
+        info.valid = true;
+        auto identity = entropic::prompts::resolve_tier_identity(
+            tier, name, data_dir);
+        info.system_prompt = shared_prefix + identity;
+        info.explicit_completion = !tier.auto_chain.has_value();
+        h->engine->set_tier_info(name, info);
+    }
+}
+
 // ── configure_common ───────────────────────────────────────
 
 /**
@@ -687,7 +733,7 @@ static void start_external_bridge(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.8
+ * @version 2.0.6-rc16
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -717,19 +763,11 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
-
+    rewire_stream_observer(h);
     wire_tool_executor(h);
 
     auto shared_prefix = build_shared_prompt_prefix(h, data_dir);
-    for (const auto& [name, tier] : h->config.models.tiers) {
-        entropic::ChildContextInfo info;
-        info.valid = true;
-        auto identity = entropic::prompts::resolve_tier_identity(
-            tier, name, data_dir);
-        info.system_prompt = shared_prefix + identity;
-        info.explicit_completion = !tier.auto_chain.has_value();
-        h->engine->set_tier_info(name, info);
-    }
+    populate_tier_info(h, data_dir, shared_prefix);
     cache_tier_allowed_tools(h, data_dir);
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
 
@@ -943,7 +981,7 @@ void entropic_free(void* ptr) {
  *                    entropic_free).
  * @return ENTROPIC_OK on success, error code otherwise.
  * @req REQ-API-002
- * @version 2.0.2
+ * @version 2.0.6-rc16
  */
 entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -959,6 +997,13 @@ entropic_error_t entropic_run(
         auto result = handle->engine->run_turn(input);
         *result_json = alloc_cstr(
             facade_json::serialize_messages(result));
+        // Synthetic completion sentinel — lets observers detect the
+        // end of a non-streaming run. Contract: (token="", len=0).
+        // (P0-1, 2.0.6-rc16)
+        if (handle->stream_observer != nullptr) {
+            handle->stream_observer(
+                "", 0, handle->stream_observer_data);
+        }
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
@@ -981,7 +1026,7 @@ entropic_error_t entropic_run(
  * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.10
+ * @version 2.0.6-rc16
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -994,24 +1039,15 @@ entropic_error_t entropic_run_streaming(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
 
-    // Wrap on_token to also fire the global stream observer
-    struct TokenMux {
-        void (*primary)(const char*, size_t, void*);
-        void* primary_data;
-        void (*observer)(const char*, size_t, void*);
-        void* observer_data;
-    };
-    TokenMux mux{on_token, user_data,
-                 handle->stream_observer, handle->stream_observer_data};
-    auto mux_cb = [](const char* t, size_t l, void* ud) {
-        auto* m = static_cast<TokenMux*>(ud);
-        m->primary(t, l, m->primary_data);
-        if (m->observer) { m->observer(t, l, m->observer_data); }
-    };
-
+    // Observer multiplexing is handled inside ResponseGenerator — the
+    // facade passes on_token through untouched. (P0-1, 2.0.6-rc16)
     try {
         int code = handle->engine->run_streaming(
-            input, mux_cb, &mux, cancel_flag);
+            input, on_token, user_data, cancel_flag);
+        if (handle->stream_observer != nullptr) {
+            handle->stream_observer(
+                "", 0, handle->stream_observer_data);
+        }
         return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
@@ -1027,7 +1063,7 @@ entropic_error_t entropic_run_streaming(
  * @param user_data Forwarded to observer.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.10
+ * @version 2.0.6-rc16
  */
 entropic_error_t entropic_set_stream_observer(
     entropic_handle_t handle,
@@ -1036,6 +1072,11 @@ entropic_error_t entropic_set_stream_observer(
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     handle->stream_observer = observer;
     handle->stream_observer_data = user_data;
+    // Propagate to engine so every generation path (streaming, batch,
+    // and child-loop delegations) reaches the observer. (P0-1, 2.0.6-rc16)
+    if (handle->engine) {
+        handle->engine->set_stream_observer(observer, user_data);
+    }
     return ENTROPIC_OK;
 }
 

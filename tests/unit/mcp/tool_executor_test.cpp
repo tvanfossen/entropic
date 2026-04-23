@@ -2,7 +2,7 @@
 /**
  * @file test_tool_executor.cpp
  * @brief ToolExecutor unit tests.
- * @version 1.8.5
+ * @version 2.0.6-rc16
  */
 
 #include <entropic/mcp/server_base.h>
@@ -390,4 +390,54 @@ TEST_CASE("Tool call history records successful executions",
     REQUIRE_FALSE(recent.empty());
     CHECK(recent.front().tool_name == "ok.do_thing");
     CHECK(recent.front().elapsed_ms >= 0.0);
+}
+
+// ── P2-17: consolidated [tool_call] log path (2.0.6-rc16) ────────
+
+SCENARIO("process_single_call completes with locked_tier set",
+         "[tool_executor][P2-17][2.0.6-rc16]")
+{
+    GIVEN("an executor with a locked tier in context") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        LoopContext ctx;
+        ctx.locked_tier = "eng";
+        ctx.metrics.iterations = 3;
+
+        WHEN("a tool call is processed") {
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("result is returned and metrics are updated") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("ok") != std::string::npos);
+                CHECK(ctx.metrics.tool_calls >= 1);
+            }
+        }
+    }
+
+    GIVEN("an executor with no locked tier") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        LoopContext ctx;
+        // locked_tier empty — log path uses "lead" fallback
+
+        WHEN("a tool call is processed") {
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("result is returned without crash") {
+                REQUIRE(results.size() == 1);
+                CHECK(results[0].content.find("ok") != std::string::npos);
+            }
+        }
+    }
 }

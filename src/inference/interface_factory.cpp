@@ -64,7 +64,7 @@ static std::vector<Message> parse_msgs(const char* json_str) {
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
  * @utility
- * @version 2.0.6
+ * @version 2.0.6-rc16
  */
 static GenerationParams parse_params(const char* json_str) {
     GenerationParams p;
@@ -84,6 +84,7 @@ static GenerationParams parse_params(const char* json_str) {
     if (j.contains("repeat_penalty")) {
         p.repeat_penalty = j["repeat_penalty"];
     }
+    if (j.contains("seed")) { p.seed = j["seed"].get<int>(); }
     return p;
 }
 

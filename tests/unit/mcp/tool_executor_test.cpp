@@ -441,3 +441,57 @@ SCENARIO("process_single_call completes with locked_tier set",
         }
     }
 }
+
+// ── P3-18: per-identity max_tool_calls_per_turn override ─────────
+
+SCENARIO("effective_max_tool_calls_per_turn overrides global limit",
+         "[tool_executor][P3-18][2.0.6-rc16]")
+{
+    GIVEN("an executor with global limit=10 and ctx override=1") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        lc.max_tool_calls_per_turn = 10;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        LoopContext ctx;
+        ctx.effective_max_tool_calls_per_turn = 1;
+
+        WHEN("three tool calls are submitted") {
+            ToolCall c1, c2, c3;
+            c1.id = "t1"; c1.name = "ok.do_thing";
+            c2.id = "t2"; c2.name = "ok.do_thing"; c2.arguments["x"] = "a";
+            c3.id = "t3"; c3.name = "ok.do_thing"; c3.arguments["x"] = "b";
+            auto results = executor.process_tool_calls(ctx, {c1, c2, c3});
+
+            THEN("only 1 result returned (truncated to override limit)") {
+                REQUIRE(results.size() == 1);
+            }
+        }
+    }
+
+    GIVEN("an executor with no override (effective=-1 uses global)") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        lc.max_tool_calls_per_turn = 2;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        LoopContext ctx;
+        // effective_max_tool_calls_per_turn = -1 (default, use global)
+
+        WHEN("three distinct tool calls are submitted") {
+            ToolCall c1, c2, c3;
+            c1.id = "t1"; c1.name = "ok.do_thing";
+            c2.id = "t2"; c2.name = "ok.do_thing"; c2.arguments["x"] = "a";
+            c3.id = "t3"; c3.name = "ok.do_thing"; c3.arguments["x"] = "b";
+            auto results = executor.process_tool_calls(ctx, {c1, c2, c3});
+
+            THEN("global limit of 2 is applied") {
+                REQUIRE(results.size() == 2);
+            }
+        }
+    }
+}

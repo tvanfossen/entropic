@@ -678,6 +678,37 @@ private:
      */
     void wire_internal_tier_resolution();
 
+    /**
+     * @brief Apply per-identity overrides to effective limits in the context.
+     *
+     * Reads max_iterations and max_tool_calls_per_turn from the tier
+     * resolution interface and stores them in ctx for use by should_stop
+     * and ToolExecutor::truncate_to_limit. No-op if locked_tier is empty.
+     *
+     * @param ctx Loop context to update.
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    void apply_identity_overrides(LoopContext& ctx);
+
+    /**
+     * @brief Resolve effective max_iterations, honouring per-identity override.
+     * @param ctx Loop context.
+     * @return Override if set (>=0), otherwise LoopConfig default.
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    int resolve_max_iterations(const LoopContext& ctx) const;
+
+    /**
+     * @brief Resolve effective max_tool_calls_per_turn, honouring override.
+     * @param ctx Loop context.
+     * @return Override if set (>=0), otherwise LoopConfig default.
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    int resolve_max_tool_calls(const LoopContext& ctx) const;
+
     /* ── TierResolutionInterface trampolines (static — accept void* ud) ── */
     /**
      * @brief Resolve tier (TierResolutionInterface trampoline).

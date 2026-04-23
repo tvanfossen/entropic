@@ -2,7 +2,7 @@
 /**
  * @file test_engine.cpp
  * @brief AgentEngine unit tests — state machine, loop, callbacks.
- * @version 1.8.4
+ * @version 2.0.6-rc16
  */
 
 #include <entropic/core/engine.h>
@@ -395,6 +395,64 @@ SCENARIO("interrupt() fires external interrupt callback once",
             engine.interrupt();
             THEN("callback fired twice") {
                 REQUIRE(count == 2);
+            }
+        }
+    }
+}
+
+// ── P3-18: per-identity overrides (2.0.6-rc16) ───────────────────
+
+SCENARIO("max_iterations override caps loop before global limit",
+         "[engine][P3-18][2.0.6-rc16]")
+{
+    GIVEN("an engine with global max_iterations=50 and a resolver returning 2") {
+        MockInference mock;
+        mock.is_complete = false;  // never finishes on its own
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 50;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            if (tier == "lead" && param == "max_iterations") {
+                return "2";
+            }
+            return "";
+        };
+        engine.set_tier_resolution(tri);
+
+        WHEN("run_loop is called with locked_tier='lead'") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            THEN("loop stops at 2 iterations, not 50") {
+                REQUIRE(mock.generate_call_count <= 2);
+            }
+        }
+    }
+
+    GIVEN("an engine with no tier resolver (global default applies)") {
+        MockInference mock;
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("run_loop is called without locked_tier") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("loop uses global max_iterations=3") {
+                REQUIRE(mock.generate_call_count <= 3);
             }
         }
     }

@@ -67,6 +67,8 @@ struct IdentityConfig {
     bool explicit_completion = false;           ///< Requires explicit entropic.complete to finish
     std::unordered_map<std::string, PhaseConfig> phases; ///< Named inference phases
     IdentityOrigin origin = IdentityOrigin::DYNAMIC; ///< How this identity was created
+    int max_iterations_override = -1;           ///< Per-identity max_iterations (-1 = global, P3-18)
+    int max_tool_calls_per_turn_override = -1;  ///< Per-identity tool cap (-1 = global, P3-18)
 };
 
 } // namespace entropic

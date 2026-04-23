@@ -123,7 +123,7 @@ struct PendingPipeline {
 
 /**
  * @brief Resolved tier information for building child delegation contexts.
- * @version 1.8.6
+ * @version 2.0.6-rc16
  */
 struct ChildContextInfo {
     std::string system_prompt;              ///< Built for target tier
@@ -131,6 +131,8 @@ struct ChildContextInfo {
     bool explicit_completion = false;       ///< Requires entropic.complete?
     std::string completion_instructions;    ///< Instructions for explicit completion
     bool valid = false;                     ///< False if tier not found
+    int max_iterations_override = -1;          ///< Per-tier max_iterations (-1 = global, P3-18)
+    int max_tool_calls_per_turn_override = -1; ///< Per-tier tool cap (-1 = global, P3-18)
 };
 
 /**
@@ -170,7 +172,7 @@ struct TierResolutionInterface {
  * All mutable loop state lives here. The engine itself is stateless
  * between run() calls (except context_anchors which persist).
  *
- * @version 1.8.6
+ * @version 2.0.6-rc16
  */
 struct LoopContext {
     std::vector<Message> messages;                         ///< Conversation history
@@ -196,6 +198,8 @@ struct LoopContext {
     std::unordered_map<std::string, std::string> recent_tool_calls; ///< Duplicate detection cache (v1.8.5)
     std::optional<PendingDelegation> pending_delegation;  ///< Stored by dir_delegate (v1.8.6)
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
+    int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)
+    int effective_max_tool_calls_per_turn = -1;  ///< Per-identity override (-1 = LoopConfig, P3-18)
 };
 
 /**

@@ -51,11 +51,11 @@ void ToolExecutor::set_permission_persist(
 
 /**
  * @brief Process a batch of tool calls.
- * @param ctx Loop context.
+ * @param ctx Loop context (provides effective_max_tool_calls_per_turn, P3-18).
  * @param tool_calls Tool calls from model output.
  * @return Result messages.
  * @internal
- * @version 1.8.5
+ * @version 2.0.6-rc16
  */
 std::vector<Message> ToolExecutor::process_tool_calls(
     LoopContext& ctx,
@@ -65,7 +65,10 @@ std::vector<Message> ToolExecutor::process_tool_calls(
     fire_state_callback(ctx);
 
     auto limited = sort_tool_calls(tool_calls);
-    truncate_to_limit(limited);
+    int eff_limit = ctx.effective_max_tool_calls_per_turn >= 0
+        ? ctx.effective_max_tool_calls_per_turn
+        : loop_config_.max_tool_calls_per_turn;
+    truncate_to_limit(limited, eff_limit);
 
     std::vector<Message> results;
     for (const auto& call : limited) {
@@ -494,17 +497,18 @@ void ToolExecutor::fire_state_callback(const LoopContext& ctx) {
 }
 
 /**
- * @brief Truncate tool calls to max_tool_calls_per_turn.
+ * @brief Truncate tool calls to the effective per-turn limit.
  * @param calls Tool call vector (mutated).
+ * @param limit Effective limit (after per-identity override, P3-18).
  * @internal
- * @version 1.8.5
+ * @version 2.0.6-rc16
  */
 void ToolExecutor::truncate_to_limit(
-    std::vector<ToolCall>& calls) const {
-    auto limit = static_cast<size_t>(
-        loop_config_.max_tool_calls_per_turn);
-    if (calls.size() > limit) {
-        calls.resize(limit);
+    std::vector<ToolCall>& calls,
+    int limit) const {
+    auto lim = static_cast<size_t>(limit);
+    if (calls.size() > lim) {
+        calls.resize(lim);
     }
 }
 

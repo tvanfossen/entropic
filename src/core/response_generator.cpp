@@ -215,7 +215,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -241,13 +241,22 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     acc.observer = stream_observer_;
     acc.observer_data = stream_observer_data_;
 
-    inference_.generate_stream(
+    int rc = inference_.generate_stream(
         msgs_json.c_str(), params_json.c_str(),
         stream_token_callback, &acc,
         &cancel_flag, inference_.backend_data);
 
     GenerateResult result;
-    result.finish_reason = acc.interrupted ? "interrupted" : "stop";
+    if (rc != 0 && !acc.content.empty()) {
+        logger->warn("Stream failed (rc={}) after {} chars — preserving partial",
+                     rc, acc.content.size());
+        result.finish_reason = "partial";
+    } else if (rc != 0) {
+        logger->error("Stream failed (rc={}) with no partial content", rc);
+        result.finish_reason = "error";
+    } else {
+        result.finish_reason = acc.interrupted ? "interrupted" : "stop";
+    }
     result.content = acc.content;
     result.tool_calls_json = "[]";
     logger->info("Generate complete (stream): finish={}, {} chars",

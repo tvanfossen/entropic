@@ -2,7 +2,7 @@
 /**
  * @file tool_executor.cpp
  * @brief ToolExecutor implementation.
- * @version 1.9.4
+ * @version 2.0.6-rc16
  */
 
 #include <entropic/mcp/tool_executor.h>
@@ -335,13 +335,12 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
 
     auto args_json = serialize_args(call);
-    logger->info("[TOOL CALL] {}", call.name);
 
     if (callbacks_.on_tool_start != nullptr) {
         auto call_json = serialize_tool_call(call);
@@ -367,8 +366,6 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
         result_text = result_json;
     }
 
-    logger->info("[TOOL COMPLETE] {} -> {} chars ({}ms)",
-                 call.name, result_text.size(), ms);
 
     // P1-11 (2.0.6-rc16): stash into history ring buffer so the
     // constitutional validator revision prompt (and diagnostic tools)
@@ -624,11 +621,15 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
 
 /**
  * @brief Process a single tool call (precondition check + execute).
+ *
+ * Emits one consolidated [tool_call] log entry after execution with
+ * iter, tier, tool, elapsed_ms, result_chars, and status.
+ *
  * @param ctx Loop context.
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.2
+ * @version 2.0.6-rc16
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -670,8 +671,13 @@ std::vector<Message> ToolExecutor::process_single_call(
         free(out);
     }
 
-    logger->info("Tool '{}' executed: {:.0f}ms, result={} chars",
-                 call.name, exec_ms, raw_result.size());
+    const bool is_err = msg.content.rfind("error", 0) == 0;
+    logger->info("[tool_call] iter={} tier={} tool={} "
+                 "elapsed_ms={:.0f} result_chars={} status={}",
+                 ctx.metrics.iterations,
+                 ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
+                 call.name, exec_ms,
+                 raw_result.size(), is_err ? "error" : "ok");
 
     // Extract and process directives from ServerResponse (v2.0.1)
     extract_and_process_directives(ctx, raw_result);

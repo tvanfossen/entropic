@@ -222,7 +222,7 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 1.9.3 — added grammar_key
+ * @version 2.0.6-rc16 — added seed
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -230,6 +230,11 @@ struct GenerationParams {
     int top_k = 40;                          ///< Top-K sampling
     float repeat_penalty = 1.1f;             ///< Repetition penalty
     int max_tokens = 4096;                   ///< Maximum tokens to generate
+
+    /// @brief RNG seed for reproducible sampling. -1 = random (default).
+    /// Maps to LLAMA_DEFAULT_SEED when negative. (P2-14)
+    /// @version 2.0.6-rc16
+    int seed = -1;
     int reasoning_budget = -1;               ///< Per-call think budget override (-1 = unlimited)
     bool enable_thinking = true;             ///< Enable <think> blocks (false if reasoning_budget == 0)
     std::string grammar;                     ///< GBNF grammar string (empty = unconstrained)

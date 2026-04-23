@@ -2,7 +2,7 @@
 /**
  * @file test_generation_params.cpp
  * @brief Tests for GenerationParams struct defaults.
- * @version 1.8.2
+ * @version 2.0.6-rc16
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -23,6 +23,29 @@ SCENARIO("GenerationParams defaults", "[params][defaults]") {
             REQUIRE(params.grammar.empty());
             REQUIRE(params.stop.empty());
             REQUIRE(params.logprobs == 0);
+            REQUIRE(params.seed == -1);  // P2-14: -1 = random
+        }
+    }
+}
+
+// ── P2-14: seed field ─────────────────────────────────────
+
+SCENARIO("seed field round-trips through GenerationParams",
+         "[params][seed][P2-14]")
+{
+    GIVEN("a GenerationParams with seed set to 42") {
+        entropic::GenerationParams p;
+        p.seed = 42;
+
+        THEN("seed reads back correctly") {
+            REQUIRE(p.seed == 42);
+        }
+    }
+
+    GIVEN("a default GenerationParams") {
+        entropic::GenerationParams p;
+        THEN("seed defaults to -1 (random)") {
+            REQUIRE(p.seed == -1);
         }
     }
 }

@@ -517,10 +517,12 @@ std::string LlamaCppBackend::apply_chat_template(
  * Chain order per llama.cpp convention:
  * grammar → penalties → temperature → top-k → top-p → dist
  *
+ * seed < 0 maps to LLAMA_DEFAULT_SEED (random). (P2-14)
+ *
  * @param params Generation parameters.
  * @return Sampler chain (caller frees).
  * @internal
- * @version 1.8.2
+ * @version 2.0.6-rc16
  */
 llama_sampler* LlamaCppBackend::create_sampler(
     const GenerationParams& params) const
@@ -562,8 +564,11 @@ llama_sampler* LlamaCppBackend::create_sampler(
             llama_sampler_init_top_p(params.top_p, 1));
     }
 
-    // Final distribution sampler
-    llama_sampler_chain_add(chain, llama_sampler_init_dist(0));
+    // Final distribution sampler — use caller seed or LLAMA_DEFAULT_SEED
+    uint32_t seed = params.seed < 0
+        ? LLAMA_DEFAULT_SEED
+        : static_cast<uint32_t>(params.seed);
+    llama_sampler_chain_add(chain, llama_sampler_init_dist(seed));
 
     return chain;
 }

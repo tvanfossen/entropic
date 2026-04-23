@@ -248,7 +248,35 @@ public:
                                             void* user_data),
                             void* user_data);
 
+    /**
+     * @brief Set a callback invoked whenever an identity changes.
+     *
+     * Fires after create/update/destroy + reload_from_disk. Consumers
+     * use this to invalidate prompt caches keyed on identity content.
+     * (P1-7, 2.0.6-rc16)
+     *
+     * @param cb Callback (nullable).
+     * @param user_data Opaque pointer forwarded to cb.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void set_cache_invalidator(void (*cb)(void* user_data),
+                               void* user_data);
+
 private:
+    /**
+     * @brief Fire the cache invalidator callback if set.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void fire_cache_invalidator();
+
+    void (*cache_invalidator_)(void*) = nullptr;
+    void* cache_invalidator_data_ = nullptr;
+
+    // ── pre-existing private section continues ─────────────
+
+
     /**
      * @brief Validate an identity config.
      * @param config Config to validate.

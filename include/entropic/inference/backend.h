@@ -235,6 +235,19 @@ public:
     int context_length() const { return config_.context_length; }
 
     /**
+     * @brief Invalidate any backend-owned prompt/KV caches.
+     *
+     * Called when identity or prompt-prefix inputs change so stale
+     * cached prefixes are never served against the new system prompt.
+     * Default is a no-op for backends with no cache.
+     * (P1-7, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    virtual void clear_prompt_cache() {}
+
+    /**
      * @brief Stored model config.
      * @return Const reference to the ModelConfig used for this backend.
      * @utility

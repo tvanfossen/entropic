@@ -258,7 +258,146 @@ static json handle_status(entropic_handle_t handle) {
  * @internal
  * @version 2.0.8
  */
-static json handle_clear(entropic_handle_t handle) {
+/**
+ * @brief Cancel any async tasks currently running on the bridge.
+ *
+ * Marks tasks "cancelling", raises engine interrupt so the generation
+ * loop unwinds, and polls up to ~1s for their worker threads to move
+ * into a terminal state. The wait is best-effort — detached workers
+ * may still be in flight when this returns, but the new context clear
+ * will race them cleanly because each run owns its own result_json.
+ *
+ * @param handle Engine handle (for interrupt).
+ * @param bridge Bridge whose tasks_ registry is being canceled.
+ * @internal (P1-8, 2.0.6-rc16)
+ * @version 2.0.6-rc16
+ */
+/**
+ * @brief Final-state projection for an async entropic_run.
+ *
+ * Groups the three status/phase/text outputs so run_async_ask stays
+ * under the 50-SLOC quality gate. (2.0.6-rc16)
+ *
+ * @internal
+ */
+struct AsyncFinalState {
+    std::string status;   ///< done | error | cancelled
+    std::string phase;    ///< done | failed | cancelled
+    std::string text;     ///< result or error message
+};
+
+/**
+ * @brief Translate entropic_run's return code into a final task state.
+ *
+ * On success, extracts the final clean assistant text from result_json
+ * and frees it. On cancellation/error, reports the last-error message.
+ * (P1-5, 2.0.6-rc16)
+ *
+ * @param handle Engine handle (for last-error lookup).
+ * @param err Return code from entropic_run.
+ * @param result_json JSON result (owned; freed on success, else NULL).
+ * @return AsyncFinalState ready to be stored on the task.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static AsyncFinalState derive_async_final_state(
+    entropic_handle_t handle,
+    entropic_error_t err,
+    char* result_json) {
+    AsyncFinalState s;
+    if (err == ENTROPIC_ERROR_CANCELLED
+        || err == ENTROPIC_ERROR_INTERRUPTED) {
+        const char* msg = entropic_last_error(handle);
+        s.text = msg ? msg : "cancelled";
+        s.status = "cancelled";
+        s.phase = "cancelled";
+    } else if (err != ENTROPIC_OK) {
+        const char* msg = entropic_last_error(handle);
+        s.text = msg ? msg : "unknown error";
+        s.status = "error";
+        s.phase = "failed";
+    } else {
+        s.text = extract_final_text(result_json);
+        entropic_free(result_json);
+        s.status = "done";
+        s.phase = "done";
+    }
+    return s;
+}
+
+/**
+ * @brief Mark every queued/running task as cancelling.
+ * @param bridge Bridge holding the task registry.
+ * @return true if any task was still in-flight.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static bool mark_tasks_cancelling(ExternalBridge* bridge) {
+    std::lock_guard<std::mutex> lock(bridge->tasks_mutex_);
+    bool any = false;
+    for (auto& [_, task] : bridge->tasks_for_cancel()) {
+        if (task.status == "queued" || task.status == "running") {
+            task.status = "cancelled";
+            task.phase = "cancelling";
+            any = true;
+        }
+    }
+    return any;
+}
+
+/**
+ * @brief True while any task is still phase=cancelling.
+ * @param bridge Bridge holding the task registry.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+static bool any_cancelling_left(ExternalBridge* bridge) {
+    std::lock_guard<std::mutex> lock(bridge->tasks_mutex_);
+    for (auto& [_, task] : bridge->tasks_for_cancel()) {
+        if (task.phase == "cancelling") { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief Cancel any async tasks currently running on the bridge.
+ *
+ * Raises engine interrupt, flips still-running tasks into
+ * phase="cancelling", and polls up to ~1s for detached workers to
+ * finish. Best-effort — detached workers may still complete after
+ * return, but their results can no longer influence the new context
+ * since each run owns its own result_json. (P1-8, 2.0.6-rc16)
+ *
+ * @param handle Engine handle (for interrupt).
+ * @param bridge Bridge whose tasks_ registry is being canceled.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+static void cancel_inflight_async_tasks(
+    entropic_handle_t handle, ExternalBridge* bridge) {
+    if (bridge == nullptr) { return; }
+    entropic_interrupt(handle);  // idempotent, cheap
+    if (!mark_tasks_cancelling(bridge)) { return; }
+    for (int i = 0; i < 20 && any_cancelling_left(bridge); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+}
+
+/**
+ * @brief entropic.context_clear MCP tool handler.
+ *
+ * Before clearing, cancels any in-flight async ask tasks so they do
+ * not continue running against a stale context. (P1-8, 2.0.6-rc16)
+ *
+ * @param handle Engine handle.
+ * @param bridge Bridge instance (used to reach the task registry).
+ * @return MCP tool result JSON.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+static json handle_clear(entropic_handle_t handle,
+                         ExternalBridge* bridge) {
+    cancel_inflight_async_tasks(handle, bridge);
     auto err = entropic_context_clear(handle);
     if (err != ENTROPIC_OK) {
         return tool_text("error: clear failed");
@@ -283,10 +422,14 @@ static json handle_count(entropic_handle_t handle) {
 
 /**
  * @brief Handle entropic.ask_status — check async task state.
+ *
+ * Returns coarse status + granular phase so pollers see progression
+ * through queued → running → running:<tier> → done|failed|cancelled.
+ *
  * @param args Tool arguments (must contain "task_id").
- * @return MCP tool result JSON with status/result/error.
+ * @return MCP tool result JSON with status/phase/result/error.
  * @internal
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 json ExternalBridge::handle_ask_status(const json& args) {
     auto tid = args.value("task_id", std::string{});
@@ -295,7 +438,8 @@ json ExternalBridge::handle_ask_status(const json& args) {
     if (it == tasks_.end()) {
         return tool_text("error: unknown task_id");
     }
-    json status = {{"status", it->second.status}};
+    json status = {{"status", it->second.status},
+                   {"phase",  it->second.phase}};
     if (!it->second.result.empty()) {
         auto key = (it->second.status == "error") ? "error" : "result";
         status[key] = it->second.result;
@@ -361,7 +505,7 @@ static json dispatch_ask(entropic_handle_t handle,
  * @param call_id JSON-RPC request id for progress correlation.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.11
+ * @version 2.0.6-rc16
  */
 static json dispatch_tool(entropic_handle_t handle,
                           ExternalBridge* bridge,
@@ -376,7 +520,7 @@ static json dispatch_tool(entropic_handle_t handle,
     json result;
     if      (name == "entropic.ask_status")    { result = bridge->handle_ask_status(args); }
     else if (name == "entropic.status")        { result = handle_status(handle); }
-    else if (name == "entropic.context_clear") { result = handle_clear(handle); }
+    else if (name == "entropic.context_clear") { result = handle_clear(handle, bridge); }
     else if (name == "entropic.context_count") { result = handle_count(handle); }
     else { result = tool_text("error: unknown tool '" + name + "'"); }
     return result;
@@ -621,7 +765,7 @@ std::string ExternalBridge::dispatch(
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -629,33 +773,33 @@ void ExternalBridge::run_async_ask(
     int client_fd) {
     {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
-        tasks_[task_id] = {"running", {},
-            std::chrono::steady_clock::now()};
+        AsyncTask t;
+        t.status = "queued";
+        t.phase = "queued";
+        t.created = std::chrono::steady_clock::now();
+        tasks_[task_id] = std::move(t);
     }
 
     std::thread([this, prompt, task_id, client_fd]() {
+        update_task_phase(task_id, "running", "running");
+
         char* result_json = nullptr;
         auto err = entropic_run(handle_, prompt.c_str(), &result_json);
 
-        std::string text;
-        std::string status = "done";
-        if (err != ENTROPIC_OK) {
-            const char* msg = entropic_last_error(handle_);
-            text = msg ? msg : "unknown error";
-            status = "error";
-        } else {
-            text = extract_final_text(result_json);
-            entropic_free(result_json);
-        }
+        auto final_state = derive_async_final_state(
+            handle_, err, result_json);
 
         {
             std::lock_guard<std::mutex> lock(tasks_mutex_);
             auto it = tasks_.find(task_id);
             if (it != tasks_.end()) {
-                it->second.status = status;
-                it->second.result = text;
+                it->second.status = final_state.status;
+                it->second.phase = final_state.phase;
+                it->second.result = final_state.text;
             }
         }
+        auto status = final_state.status;
+        auto text = final_state.text;
 
         // Push completion notification to every subscribed client
         // (P0-2 — replaces v2.0.11 single-fd fanout).
@@ -725,6 +869,24 @@ void ExternalBridge::broadcast_notification(const json& notif) {
             ++it;
         }
     }
+}
+
+/**
+ * @brief Update the status/phase of a tracked task.
+ * @param task_id Task identifier.
+ * @param status New coarse status string.
+ * @param phase New granular phase string.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void ExternalBridge::update_task_phase(const std::string& task_id,
+                                       const std::string& status,
+                                       const std::string& phase) {
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    auto it = tasks_.find(task_id);
+    if (it == tasks_.end()) { return; }
+    it->second.status = status;
+    it->second.phase = phase;
 }
 
 /**

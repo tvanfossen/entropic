@@ -189,6 +189,7 @@ struct LoopContext {
     std::string base_system;                               ///< Base system prompt (pre-tier formatting)
     std::unordered_map<std::string, std::string> metadata; ///< Runtime metadata
     int delegation_depth = 0;                              ///< 0 = root, 1+ = child
+    std::vector<std::string> delegation_ancestor_tiers;    ///< Tier stack from root to this loop (P1-9, 2.0.6-rc16)
     std::string parent_conversation_id;                    ///< Parent conv ID (delegation)
     std::vector<std::string> child_conversation_ids;       ///< Spawned child IDs
     std::string active_phase = "default";                  ///< Active inference phase

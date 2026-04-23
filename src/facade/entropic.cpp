@@ -733,7 +733,7 @@ static void start_external_bridge(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -753,6 +753,12 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
     h->identity_manager = std::make_unique<entropic::IdentityManager>(
         entropic::IdentityManagerConfig{});
+    // P1-7: route identity changes to prompt-cache invalidation.
+    h->identity_manager->set_cache_invalidator(
+        [](void* ud) {
+            auto* orch = static_cast<entropic::ModelOrchestrator*>(ud);
+            if (orch) { orch->clear_all_prompt_caches(); }
+        }, h->orchestrator.get());
     init_mcp_servers(h, data_dir);
 
     h->inference_iface = entropic::build_orchestrator_interface(

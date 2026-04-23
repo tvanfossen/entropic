@@ -9,8 +9,9 @@
  * directives vector carry only the type tag for serialize_response().
  *
  * v1.9.12: Added DiagnoseTool and InspectTool for engine introspection.
+ * v2.0.6-rc16: Added ContextInspectTool for context window inspection (P2-16).
  *
- * @version 1.9.12
+ * @version 2.0.6-rc16
  */
 
 #include <entropic/mcp/servers/entropic_server.h>
@@ -736,6 +737,60 @@ private:
     const entropic_state_provider_t* provider_ = nullptr;
 };
 
+// ── ContextInspectTool ──────────────────────────────────────────
+
+/**
+ * @brief Tool for inspecting the current context window contents.
+ *
+ * Returns each message with role, content preview, and estimated
+ * token count so the model can assess its own context saturation.
+ *
+ * @internal
+ * @version 2.0.6-rc16
+ */
+class ContextInspectTool : public ToolBase {
+public:
+    /**
+     * @brief Construct from tool definition.
+     * @param def Tool definition loaded from entropic/context_inspect.json.
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    explicit ContextInspectTool(ToolDefinition def)
+        : ToolBase(std::move(def)) {}
+
+    /**
+     * @brief Return context window contents as a message array.
+     * @param args_json JSON with optional "max_messages" (0 = all).
+     * @return ServerResponse with [{role, content_preview, token_count_est}].
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    ServerResponse execute(const std::string& args_json) override;
+
+    /**
+     * @brief Read-only tool requires only READ access.
+     * @return MCPAccessLevel::READ.
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /** @brief Set state provider pointer.
+     * @param p Provider pointer.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void set_provider(const entropic_state_provider_t* p) {
+        provider_ = p;
+    }
+
+private:
+    const entropic_state_provider_t* provider_ = nullptr;
+};
+
 /**
  * @brief Collect keys from a JSON object into a vector.
  * @param j JSON object.
@@ -968,6 +1023,33 @@ ServerResponse InspectTool::execute(const std::string& args_json) {
     return {result, {}};
 }
 
+/**
+ * @brief Return context window contents as a message array.
+ *
+ * Delegates to the state provider's get_history callback with the
+ * caller-supplied max_messages limit (0 = all messages).
+ *
+ * @param args_json JSON with optional "max_messages".
+ * @return ServerResponse with JSON array of message entries.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+ServerResponse ContextInspectTool::execute(
+    const std::string& args_json) {
+    if (provider_ == nullptr) {
+        logger->error("[context_inspect] no state provider set");
+        return {"Error: engine state provider not configured", {}};
+    }
+
+    auto args = nlohmann::json::parse(args_json, nullptr, false);
+    int max_messages = args.value("max_messages", 0);
+
+    logger->info("[context_inspect] max_messages={}", max_messages);
+    auto result = call_history_provider(
+        provider_->get_history, max_messages, provider_->user_data);
+    return {result, {}};
+}
+
 // ── EntropicServer ──────────────────────────────────────────────
 
 /**
@@ -1032,11 +1114,11 @@ int EntropicServer::register_delegation_tools(
 }
 
 /**
- * @brief Register introspection tools (diagnose, inspect).
+ * @brief Register introspection tools (diagnose, inspect, context_inspect).
  * @param tools_dir Path to tools directory.
  * @return Number of tools registered.
  * @internal
- * @version 1.9.12
+ * @version 2.0.6-rc16
  */
 int EntropicServer::register_introspection_tools(
     const std::string& tools_dir) {
@@ -1052,7 +1134,13 @@ int EntropicServer::register_introspection_tools(
         std::move(inspect_def));
     register_tool(inspect_.get());
 
-    return 2;
+    auto ctx_def = load_tool_definition(
+        "context_inspect", "entropic", tools_dir);
+    context_inspect_ = std::make_unique<ContextInspectTool>(
+        std::move(ctx_def));
+    register_tool(context_inspect_.get());
+
+    return 3;
 }
 
 /**
@@ -1097,13 +1185,14 @@ bool EntropicServer::skip_duplicate_check(
  * @brief Set the engine state provider for introspection tools.
  * @param provider Callback struct with engine state accessors.
  * @internal
- * @version 1.9.12
+ * @version 2.0.6-rc16
  */
 void EntropicServer::set_state_provider(
     const entropic_state_provider_t& provider) {
     state_provider_ = provider;
     diagnose_->set_provider(&state_provider_);
     inspect_->set_provider(&state_provider_);
+    context_inspect_->set_provider(&state_provider_);
     logger->info("State provider set for introspection tools");
 }
 

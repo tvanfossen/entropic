@@ -2,7 +2,7 @@
 /**
  * @file response_generator_test.cpp
  * @brief BDD tests for ResponseGenerator.
- * @version 1.10.0
+ * @version 2.0.6-rc16
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -334,6 +334,100 @@ SCENARIO("generate_batch returns error on null generate function",
             auto result = gen.generate_response(ctx);
             THEN("finish_reason is error") {
                 REQUIRE(result.finish_reason == "error");
+            }
+        }
+    }
+}
+
+// ── P3-19: Partial-result preservation across mid-stream crash ────
+
+namespace {
+
+/**
+ * @brief Shared control block for streaming mock behaviour.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+struct StreamControl {
+    std::string emit_content;
+    int return_code = 0;
+};
+
+/**
+ * @brief Mock streaming function that emits content then returns rc.
+ * @version 2.0.6-rc16
+ * @internal
+ */
+static int mock_generate_stream_impl(
+    const char* /*msgs*/,
+    const char* /*params*/,
+    void (*on_token)(const char*, size_t, void*),
+    void* cb_data,
+    int* /*cancel*/,
+    void* user_data)
+{
+    auto* ctrl = static_cast<StreamControl*>(user_data);
+    if (on_token && !ctrl->emit_content.empty()) {
+        on_token(ctrl->emit_content.c_str(),
+                 ctrl->emit_content.size(), cb_data);
+    }
+    return ctrl->return_code;
+}
+
+} // namespace
+
+SCENARIO("generate_streaming preserves partial content on non-zero rc",
+         "[core][response_generator][P3-19][2.0.6-rc16]")
+{
+    GIVEN("a ResponseGenerator backed by a streaming mock") {
+        StreamControl ctrl;
+        auto iface = make_mock_inference();
+        iface.generate_stream = mock_generate_stream_impl;
+        iface.backend_data = &ctrl;
+        auto loop_cfg = make_loop_config();
+        loop_cfg.stream_output = true;
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "default";
+        Message msg;
+        msg.role = "user";
+        msg.content = "test";
+        ctx.messages.push_back(std::move(msg));
+
+        WHEN("backend emits partial tokens then returns non-zero") {
+            ctrl.emit_content = "partial response";
+            ctrl.return_code = 1;
+            auto result = gen.generate_response(ctx);
+
+            THEN("finish_reason is 'partial' and content is preserved") {
+                REQUIRE(result.finish_reason == "partial");
+                REQUIRE(result.content == "partial response");
+            }
+        }
+
+        WHEN("backend returns non-zero with no tokens emitted") {
+            ctrl.emit_content = "";
+            ctrl.return_code = 1;
+            auto result = gen.generate_response(ctx);
+
+            THEN("finish_reason is 'error' and content is empty") {
+                REQUIRE(result.finish_reason == "error");
+                REQUIRE(result.content.empty());
+            }
+        }
+
+        WHEN("backend returns 0 (success path)") {
+            ctrl.emit_content = "full response";
+            ctrl.return_code = 0;
+            auto result = gen.generate_response(ctx);
+
+            THEN("finish_reason is 'stop'") {
+                REQUIRE(result.finish_reason == "stop");
+                REQUIRE(result.content == "full response");
             }
         }
     }

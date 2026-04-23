@@ -128,6 +128,24 @@ public:
     void set_stream_observer(TokenCallback observer, void* user_data);
 
     /**
+     * @brief Register a JSON provider for the validation block in
+     *        ON_COMPLETE hook context.
+     *
+     * The callback returns a malloc'd JSON object describing the
+     * validator's most recent result:
+     *   {ran, verdict, violations, revisions_applied}
+     * The engine copies and frees the returned buffer. NULL return
+     * or nullptr callback means no validation block is emitted.
+     * (E3, 2.0.6-rc17)
+     *
+     * @param provider JSON builder (nullable clears).
+     * @param user_data Forwarded to provider.
+     * @version 2.0.6-rc17
+     */
+    void set_validation_provider(char* (*provider)(void*),
+                                 void* user_data);
+
+    /**
      * @brief Register a callback invoked alongside interrupt().
      *
      * Used to propagate Ctrl+C into external MCP transports so
@@ -664,6 +682,8 @@ private:
     std::atomic<bool> pause_flag_{false};                 ///< Pause signal
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
+    char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
+    void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
     ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     TierResolutionInterface tier_res_;                    ///< Tier resolution (v1.8.6)

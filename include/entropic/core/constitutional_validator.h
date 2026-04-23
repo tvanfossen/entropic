@@ -275,6 +275,14 @@ private:
     void store_result(const ValidationResult& result);
 
     /**
+     * @brief Emit a disambiguating log line per verdict.
+     * @param result Validation result with verdict set.
+     * @internal
+     * @version 2.0.6-rc17
+     */
+    void log_verdict(const ValidationResult& result) const;
+
+    /**
      * @brief Run the core validation loop (critique + revise).
      * @param content Original content.
      * @param tier Identity/tier name.

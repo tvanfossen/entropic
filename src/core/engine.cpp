@@ -157,6 +157,19 @@ void AgentEngine::set_stream_observer(
 }
 
 /**
+ * @brief Register validation JSON provider for ON_COMPLETE context.
+ * @param provider JSON builder callback (nullable).
+ * @param user_data Forwarded to provider.
+ * @internal
+ * @version 2.0.6-rc17
+ */
+void AgentEngine::set_validation_provider(
+    char* (*provider)(void*), void* user_data) {
+    validation_provider_ = provider;
+    validation_provider_data_ = user_data;
+}
+
+/**
  * @brief Get the tier resolution interface.
  * @return Tier resolution interface.
  * @internal
@@ -1258,15 +1271,17 @@ static std::string build_tool_results_json(
  *   tier         — active tier that called complete
  *   tool_results — [{name, content}] from conversation messages
  *   iteration    — loop iteration count at completion time
+ *   validation   — null, or {ran, verdict, violations, revisions_applied}
+ *                  populated from the registered validation provider
  *
  * The application's hook handler can validate citations, check format,
- * etc. Returns true if the hook rejected the completion. (P2-12)
+ * etc. Returns true if the hook rejected the completion. (P2-12, E3)
  *
  * @param summary The entropic.complete summary text.
  * @param ctx Loop context with tool results in messages.
  * @return true if hook cancelled (completion rejected).
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc17
  */
 bool AgentEngine::fire_complete_hook(
     const std::string& summary,
@@ -1274,11 +1289,23 @@ bool AgentEngine::fire_complete_hook(
     if (hooks_.fire_pre == nullptr) { return false; }
 
     auto tool_results = build_tool_results_json(ctx.messages);
+    // E3 (2.0.6-rc17): splice validator verdict/violations so
+    // ON_COMPLETE consumers can distinguish clean pass from
+    // reverted-for-length / max-revisions-exhausted.
+    std::string validation_block = ",\"validation\":null";
+    if (validation_provider_ != nullptr) {
+        char* v = validation_provider_(validation_provider_data_);
+        if (v != nullptr) {
+            validation_block = ",\"validation\":" + std::string(v);
+            free(v);
+        }
+    }
     std::string json =
         "{\"summary\":\"" + json_escape_engine(summary)
         + "\",\"tier\":\"" + ctx.locked_tier
         + "\",\"tool_results\":" + tool_results
         + ",\"iteration\":" + std::to_string(ctx.metrics.iterations)
+        + validation_block
         + "}";
     char* modified = nullptr;
     int rc = hooks_.fire_pre(hooks_.registry,

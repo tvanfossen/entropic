@@ -118,6 +118,13 @@ const char* NONCOMPLIANT_NO_REVISION =
     R"("explanation":"Suggests external upload"}],)"
     R"("revised":""})";
 
+// E1 regression: revision that's <50% of the original
+const char* NONCOMPLIANT_WITH_SHORT_REVISION =
+    R"({"compliant":false,"violations":[)"
+    R"({"rule":"Privacy","excerpt":"cloud-uploaded content",)"
+    R"("explanation":"External upload detected"}],)"
+    R"("revised":"ok"})";
+
 const char* CONSTITUTION_TEXT =
     "Privacy First: All processing must be local.\n"
     "Safety: Never suggest harmful actions.";
@@ -915,6 +922,148 @@ SCENARIO("Critique prompt prioritizes validation_rules over constitution",
                 // NOT labeled as "Constitutional Rules:" (primary)
                 CHECK(mock.last_messages_json.find(
                     "Constitutional Rules") == std::string::npos);
+            }
+        }
+    }
+}
+
+// ── E1 regression: length safety valve (2.0.6-rc17) ─────
+
+SCENARIO("Length safety valve marks verdict rejected_reverted_length",
+         "[validation][E1][2.0.6-rc17]") {
+    GIVEN("a revision that shrinks content to <50% of original") {
+        MockValidationInference mock;
+        // critique: non-compliant, suggests revision "ok"
+        mock.responses.push_back(NONCOMPLIANT_WITH_SHORT_REVISION);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 2;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+
+        WHEN("validate is called with long content") {
+            std::string long_content =
+                "This is a long piece of output that exceeds "
+                "sixty characters so the two-char revised field "
+                "triggers the length guard definitively.";
+            auto result = validator.validate(
+                long_content, "eng", nullptr);
+
+            THEN("verdict is rejected_reverted_length") {
+                REQUIRE(result.verdict
+                    == ValidationVerdict::rejected_reverted_length);
+            }
+            AND_THEN("original content is preserved") {
+                REQUIRE(result.content == long_content);
+                REQUIRE_FALSE(result.was_revised);
+            }
+            AND_THEN("violations remain populated") {
+                REQUIRE_FALSE(
+                    result.final_critique.violations.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("Passed verdict set on clean critique",
+         "[validation][E1][2.0.6-rc17]") {
+    GIVEN("compliant critique") {
+        MockValidationInference mock;
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+
+        WHEN("validate is called") {
+            auto result = validator.validate(
+                "Clean content", "eng", nullptr);
+
+            THEN("verdict is passed") {
+                REQUIRE(result.verdict
+                    == ValidationVerdict::passed);
+            }
+        }
+    }
+}
+
+SCENARIO("Revised verdict set when revision applied cleanly",
+         "[validation][E1][2.0.6-rc17]") {
+    GIVEN("non-compliant then compliant with adequate revision length") {
+        MockValidationInference mock;
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION);
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 2;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+
+        WHEN("validate is called") {
+            auto result = validator.validate(
+                "Upload to cloud", "eng", nullptr);
+
+            THEN("verdict is revised") {
+                REQUIRE(result.verdict
+                    == ValidationVerdict::revised);
+                REQUIRE(result.was_revised);
+            }
+        }
+    }
+}
+
+// ── E4 regression: critique_tier routing (2.0.6-rc17) ─────
+
+SCENARIO("critique_tier config flows into params JSON",
+         "[validation][E4][2.0.6-rc17]") {
+    GIVEN("validator with critique_tier='eng'") {
+        MockValidationInference mock;
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.critique_tier = "eng";
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"primary"});
+
+        WHEN("validate runs a critique") {
+            validator.validate("content", "primary", nullptr);
+
+            THEN("params JSON carries tier='eng'") {
+                REQUIRE(mock.last_params_json.find(
+                    "\"tier\":\"eng\"") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("validator with critique_tier empty (default)") {
+        MockValidationInference mock;
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"primary"});
+
+        WHEN("validate runs a critique") {
+            validator.validate("content", "primary", nullptr);
+
+            THEN("params JSON has no tier field") {
+                REQUIRE(mock.last_params_json.find("\"tier\"")
+                    == std::string::npos);
             }
         }
     }

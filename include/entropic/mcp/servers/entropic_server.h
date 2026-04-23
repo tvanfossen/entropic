@@ -29,6 +29,7 @@ class PhaseChangeTool;
 class PruneContextTool;
 class DiagnoseTool;
 class InspectTool;
+class ContextInspectTool;
 
 /**
  * @brief Entropic MCP server for engine-level tools.
@@ -36,9 +37,9 @@ class InspectTool;
  * All tools return ServerResponse with typed directives.
  * delegate and pipeline skip duplicate check.
  * Single-tier configs skip delegate/pipeline registration.
- * Diagnose and inspect provide read-only engine introspection.
+ * Diagnose, inspect, and context_inspect provide read-only introspection.
  *
- * @version 1.9.12
+ * @version 2.0.6-rc16
  */
 class EntropicServer : public MCPServerBase {
 public:
@@ -64,7 +65,7 @@ public:
     /**
      * @brief Set the engine state provider for introspection tools.
      * @param provider Callback struct with engine state accessors.
-     * @version 1.9.12
+     * @version 2.0.6-rc16
      */
     void set_state_provider(const entropic_state_provider_t& provider);
 
@@ -75,8 +76,9 @@ private:
     std::unique_ptr<CompleteTool> complete_;
     std::unique_ptr<PhaseChangeTool> phase_change_;
     std::unique_ptr<PruneContextTool> prune_context_;
-    std::unique_ptr<DiagnoseTool> diagnose_;     ///< v1.9.12 introspection
-    std::unique_ptr<InspectTool> inspect_;        ///< v1.9.12 introspection
+    std::unique_ptr<DiagnoseTool> diagnose_;          ///< v1.9.12 introspection
+    std::unique_ptr<InspectTool> inspect_;             ///< v1.9.12 introspection
+    std::unique_ptr<ContextInspectTool> context_inspect_; ///< v2.0.6 context window
     entropic_state_provider_t state_provider_{};  ///< Stored copy for lifetime
 
     /** @brief Register core tools (todo, complete, phase_change, prune).
@@ -89,8 +91,8 @@ private:
         const std::string& tools_dir,
         const std::vector<std::string>& tier_names);
 
-    /** @brief Register introspection tools (diagnose, inspect).
-     * @internal @version 1.9.12 */
+    /** @brief Register introspection tools (diagnose, inspect, context_inspect).
+     * @internal @version 2.0.6-rc16 */
     int register_introspection_tools(const std::string& tools_dir);
 };
 

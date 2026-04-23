@@ -188,6 +188,8 @@ add_executable(entropic-mcp-tests
     mcp/tool_call_history_test.cpp
     mcp/servers/diagnose_test.cpp
     mcp/servers/inspect_test.cpp
+    # v2.0.6-rc16: Context window inspection (P2-16)
+    mcp/servers/context_inspect_test.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

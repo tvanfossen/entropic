@@ -1,13 +1,1 @@
-[
-  {
-    "req_id": "REQ-API-002",
-    "req_name": "Synchronous agentic run",
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.0.6-rc16"
-      }
-    ]
-  }
-]
+[]

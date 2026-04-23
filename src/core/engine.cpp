@@ -167,14 +167,74 @@ const TierResolutionInterface& AgentEngine::tier_resolution() const {
 }
 
 /**
+ * @brief Apply per-identity max_iterations / max_tool_calls_per_turn overrides.
+ *
+ * Reads override values from TierResolutionInterface.get_tier_param for
+ * "max_iterations" and "max_tool_calls_per_turn". Stores results in ctx so
+ * should_stop and ToolExecutor::truncate_to_limit can respect them without
+ * coupling to the identity layer. No-op when locked_tier is empty or the
+ * tier resolver is unset.
+ *
+ * @param ctx Loop context to update (effective_max_* fields).
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void AgentEngine::apply_identity_overrides(LoopContext& ctx) {
+    if (ctx.locked_tier.empty() || tier_res_.get_tier_param == nullptr) {
+        return;
+    }
+    auto mi = tier_res_.get_tier_param(
+        ctx.locked_tier, "max_iterations", tier_res_.user_data);
+    if (!mi.empty()) {
+        ctx.effective_max_iterations = std::atoi(mi.c_str());
+        logger->info("[override] tier={} max_iterations={}",
+                     ctx.locked_tier, ctx.effective_max_iterations);
+    }
+    auto mt = tier_res_.get_tier_param(
+        ctx.locked_tier, "max_tool_calls_per_turn", tier_res_.user_data);
+    if (!mt.empty()) {
+        ctx.effective_max_tool_calls_per_turn = std::atoi(mt.c_str());
+        logger->info("[override] tier={} max_tool_calls_per_turn={}",
+                     ctx.locked_tier, ctx.effective_max_tool_calls_per_turn);
+    }
+}
+
+/**
+ * @brief Resolve effective max_iterations, honouring per-identity override.
+ * @param ctx Loop context.
+ * @return Per-identity override if set (>=0), otherwise LoopConfig default.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+int AgentEngine::resolve_max_iterations(const LoopContext& ctx) const {
+    return ctx.effective_max_iterations >= 0
+        ? ctx.effective_max_iterations
+        : loop_config_.max_iterations;
+}
+
+/**
+ * @brief Resolve effective max_tool_calls_per_turn, honouring override.
+ * @param ctx Loop context.
+ * @return Per-identity override if set (>=0), otherwise LoopConfig default.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
+    return ctx.effective_max_tool_calls_per_turn >= 0
+        ? ctx.effective_max_tool_calls_per_turn
+        : loop_config_.max_tool_calls_per_turn;
+}
+
+/**
  * @brief Run the engine loop on a pre-built context.
  * @param ctx Loop context to execute.
  * @internal
- * @version 1.8.6
+ * @version 2.0.6-rc16
  */
 void AgentEngine::run_loop(LoopContext& ctx) {
     reset_interrupt();
     pause_flag_.store(false);
+    apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
     set_state(ctx, AgentState::PLANNING);
     loop(ctx);
@@ -211,7 +271,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 1.9.1
+ * @version 2.0.6-rc16
  */
 void AgentEngine::loop(LoopContext& ctx) {
     // Hook: ON_LOOP_START (v1.9.1)
@@ -238,7 +298,7 @@ void AgentEngine::loop(LoopContext& ctx) {
         }
     }
 
-    if (ctx.metrics.iterations >= loop_config_.max_iterations
+    if (ctx.metrics.iterations >= resolve_max_iterations(ctx)
         && ctx.state != AgentState::COMPLETE
         && ctx.state != AgentState::ERROR
         && ctx.state != AgentState::INTERRUPTED) {
@@ -259,12 +319,12 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.7
+ * @version 2.0.7.1
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
                  ctx.metrics.iterations,
-                 loop_config_.max_iterations,
+                 resolve_max_iterations(ctx),
                  agent_state_name(ctx.state),
                  ctx.messages.size());
 
@@ -447,13 +507,13 @@ bool AgentEngine::is_delegation_cycle(
  * @param ctx Loop context.
  * @return true if termination condition met.
  * @internal
- * @version 1.8.4
+ * @version 2.0.6-rc16
  */
 bool AgentEngine::should_stop(const LoopContext& ctx) const {
     bool terminal = ctx.state == AgentState::COMPLETE
                  || ctx.state == AgentState::ERROR
                  || ctx.state == AgentState::INTERRUPTED;
-    bool at_limit = ctx.metrics.iterations >= loop_config_.max_iterations
+    bool at_limit = ctx.metrics.iterations >= resolve_max_iterations(ctx)
                  || ctx.consecutive_duplicate_attempts >= 3;
     return terminal || at_limit;
 }
@@ -1846,13 +1906,35 @@ std::vector<std::string> AgentEngine::tri_get_handoff_targets(
  * @utility
  * @version 2.0.2
  */
+/**
+ * @brief Look up named tier parameter (TierResolutionInterface trampoline).
+ *
+ * Surfaces explicit_completion, max_iterations, and max_tool_calls_per_turn
+ * from pre-resolved ChildContextInfo. Returns empty string when tier or
+ * param is not found, or when a numeric override is unset (-1).
+ *
+ * @param name Tier name.
+ * @param param Parameter key.
+ * @param ud Untyped AgentEngine* pointer.
+ * @return String value, empty if tier or param unknown.
+ * @internal
+ * @version 2.0.6-rc16
+ */
 std::string AgentEngine::tri_get_tier_param(const std::string& name,
     const std::string& param, void* ud) {
     auto* self = static_cast<AgentEngine*>(ud);
     auto it = self->tier_info_.find(name);
+    if (it == self->tier_info_.end()) { return ""; }
+    const auto& info = it->second;
     std::string result;
-    if (it != self->tier_info_.end() && param == "explicit_completion") {
-        result = it->second.explicit_completion ? "true" : "false";
+    if (param == "explicit_completion") {
+        result = info.explicit_completion ? "true" : "false";
+    } else if (param == "max_iterations"
+               && info.max_iterations_override >= 0) {
+        result = std::to_string(info.max_iterations_override);
+    } else if (param == "max_tool_calls_per_turn"
+               && info.max_tool_calls_per_turn_override >= 0) {
+        result = std::to_string(info.max_tool_calls_per_turn_override);
     }
     return result;
 }

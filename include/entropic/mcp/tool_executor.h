@@ -185,12 +185,13 @@ private:
     void fire_state_callback(const LoopContext& ctx);
 
     /**
-     * @brief Truncate to max_tool_calls_per_turn.
+     * @brief Truncate to effective per-turn call limit.
      * @param calls Tool calls (mutated).
+     * @param limit Effective call limit (after per-identity override applied).
      * @internal
-     * @version 1.8.5
+     * @version 2.0.6-rc16
      */
-    void truncate_to_limit(std::vector<ToolCall>& calls) const;
+    void truncate_to_limit(std::vector<ToolCall>& calls, int limit) const;
 
     /**
      * @brief Check preconditions (MCP keys, tier, duplicate, approval).

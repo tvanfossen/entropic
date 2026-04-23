@@ -473,20 +473,37 @@ bool AgentEngine::handle_terminal_finish_reasons(
  * @param finish_reason Generation finish reason (for logging).
  * @return true if the failure was recorded and state transitioned.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason) {
     if (!tier_requires_explicit_completion(ctx.locked_tier)) {
         return false;
     }
+    auto& retries = ctx.metadata["zero_tool_call_retries"];
+    int n = retries.empty() ? 0 : std::atoi(retries.c_str());
     logger->warn("[DECISION] tier '{}' requires explicit completion "
                  "but iteration emitted zero tool calls "
-                 "(finish_reason={})",
-                 ctx.locked_tier, finish_reason);
+                 "(finish_reason={}) retry={}/2",
+                 ctx.locked_tier, finish_reason, n);
     ctx.metadata["failure_reason"] =
         "zero_tool_calls_with_explicit_completion";
     ctx.metadata["failure_tier"] = ctx.locked_tier;
+    if (n >= 2) {
+        logger->error("[DECISION] zero-tool-call retries exhausted "
+                      "(tier={}), failing turn", ctx.locked_tier);
+        set_state(ctx, AgentState::ERROR);
+        return true;
+    }
+    Message correction;
+    correction.role = "user";
+    correction.content =
+        "[SYSTEM] Your previous response contained no tool call. "
+        "You must end every turn with exactly one tool call "
+        "(entropic.complete, entropic.delegate, or entropic.inspect). "
+        "Retry.";
+    ctx.messages.push_back(std::move(correction));
+    retries = std::to_string(n + 1);
     set_state(ctx, AgentState::EXECUTING);
     return true;
 }

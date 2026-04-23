@@ -327,6 +327,47 @@ SCENARIO("tier_requires_explicit_completion honours tier resolver",
     }
 }
 
+// ── P1-6 regression: zero-tool-call loop bounded (2.0.6-rc16.2) ─
+
+SCENARIO("zero-tool-call with explicit_completion halts within retry cap",
+         "[engine][P1-6][regression][2.0.6-rc16.2]")
+{
+    GIVEN("lead tier requires explicit_completion, model emits no tool call") {
+        MockInference mock;
+        mock.response = "Hello!";
+        mock.tier = "lead";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            if (tier == "lead" && param == "explicit_completion") {
+                return "true";
+            }
+            return "";
+        };
+        engine.set_tier_resolution(tri);
+
+        WHEN("the loop runs") {
+            engine.run(make_messages());
+
+            THEN("generation is capped at 3 (initial + 2 corrections)") {
+                REQUIRE(mock.generate_call_count <= 3);
+            }
+            AND_THEN("loop stops well short of max_iterations") {
+                REQUIRE(mock.generate_call_count < 15);
+            }
+        }
+    }
+}
+
 // ── P1-9: circular delegation detection ──────────────────
 
 SCENARIO("is_delegation_cycle flags ancestor reuse",

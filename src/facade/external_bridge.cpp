@@ -240,7 +240,7 @@ static json handle_ask(entropic_handle_t handle, const json& args,
  * @param handle Engine handle.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.8
+ * @version 2.0.6-rc16.2
  */
 static json handle_status(entropic_handle_t handle) {
     size_t count = 0;
@@ -248,6 +248,13 @@ static json handle_status(entropic_handle_t handle) {
     std::ostringstream os;
     os << "entropic " << entropic_version()
        << "\nmessages: " << count;
+    // Metrics + per-tier breakdown (P2-15 follow-up, 2.0.6-rc16.2)
+    char* mjson = nullptr;
+    if (entropic_metrics_json(handle, &mjson) == ENTROPIC_OK
+        && mjson != nullptr) {
+        os << "\nmetrics: " << mjson;
+        entropic_free(mjson);
+    }
     return tool_text(os.str());
 }
 

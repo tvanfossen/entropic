@@ -633,7 +633,7 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -676,11 +676,13 @@ std::vector<Message> ToolExecutor::process_single_call(
     }
 
     const bool is_err = msg.content.rfind("error", 0) == 0;
-    logger->info("[tool_call] iter={} tier={} tool={} "
+    auto args_log = serialize_args(call);
+    if (args_log.size() > 512) { args_log.resize(512); }
+    logger->info("[tool_call] iter={} tier={} tool={} args={} "
                  "elapsed_ms={:.0f} result_chars={} status={}",
                  ctx.metrics.iterations,
                  ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
-                 call.name, exec_ms,
+                 call.name, args_log, exec_ms,
                  raw_result.size(), is_err ? "error" : "ok");
 
     // Extract and process directives from ServerResponse (v2.0.1)

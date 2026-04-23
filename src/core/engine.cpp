@@ -229,15 +229,27 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
  * @brief Run the engine loop on a pre-built context.
  * @param ctx Loop context to execute.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 void AgentEngine::run_loop(LoopContext& ctx) {
     reset_interrupt();
     pause_flag_.store(false);
     apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
+    if (ctx.metrics.start_time == 0.0) {
+        ctx.metrics.start_time = now_seconds();
+    }
     set_state(ctx, AgentState::PLANNING);
     loop(ctx);
+    ctx.metrics.end_time = now_seconds();
+    // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
+    auto& tm = per_tier_metrics_[
+        ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
+    tm.iterations  += ctx.metrics.iterations;
+    tm.tool_calls  += ctx.metrics.tool_calls;
+    tm.tokens_used += ctx.metrics.tokens_used;
+    tm.errors      += ctx.metrics.errors;
+    tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
 }
 
 /**
@@ -245,7 +257,7 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @param messages System + user messages.
  * @return Final messages.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     LoopContext ctx;
@@ -262,6 +274,14 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
 
     ctx.metrics.end_time = now_seconds();
     last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+    // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
+    auto& tm = per_tier_metrics_[
+        ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
+    tm.iterations  += ctx.metrics.iterations;
+    tm.tool_calls  += ctx.metrics.tool_calls;
+    tm.tokens_used += ctx.metrics.tokens_used;
+    tm.errors      += ctx.metrics.errors;
+    tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
     logger->info("Loop complete: {} iterations, {}ms",
                  ctx.metrics.iterations, ctx.metrics.duration_ms());
     return ctx.messages;
@@ -271,7 +291,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.2
  */
 void AgentEngine::loop(LoopContext& ctx) {
     // Hook: ON_LOOP_START (v1.9.1)
@@ -302,7 +322,18 @@ void AgentEngine::loop(LoopContext& ctx) {
         && ctx.state != AgentState::COMPLETE
         && ctx.state != AgentState::ERROR
         && ctx.state != AgentState::INTERRUPTED) {
-        logger->warn("Loop ended due to max iterations");
+        // P3-18 follow-up (2.0.6-rc16.2): force synthetic completion
+        // so the facade returns a proper result when the cap is hit.
+        logger->warn("Loop ended due to max iterations ({}/{}) — "
+                     "forcing synthetic entropic.complete",
+                     ctx.metrics.iterations, resolve_max_iterations(ctx));
+        Message forced;
+        forced.role = "assistant";
+        forced.content = "[iteration cap reached after "
+            + std::to_string(ctx.metrics.iterations)
+            + " iterations — returning current state]";
+        ctx.messages.push_back(std::move(forced));
+        set_state(ctx, AgentState::COMPLETE);
     }
 
     // Hook: ON_LOOP_END (v1.9.1)
@@ -737,15 +768,23 @@ void AgentEngine::dir_pipeline(
 /**
  * @brief Handle complete directive.
  * @internal
- * @version 2.0.10
+ * @version 2.0.6-rc16.2
  */
 void AgentEngine::dir_complete(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& cd = static_cast<const CompleteDirective&>(d);
 
+    // P1-5 follow-up (2.0.6-rc16.2): signal validating phase so async
+    // subscribers can progress queued/running/running:<tier> → validating.
+    auto prior_state = ctx.state;
+    set_state(ctx, AgentState::VERIFYING);
+
     // Fire ON_COMPLETE pre-hook — application can validate/reject
     if (fire_complete_hook(cd.summary, ctx)) {
-        logger->info("[DIRECTIVE] complete REJECTED by hook");
+        logger->info("[DIRECTIVE] complete REJECTED by hook → revising");
+        // Revision path: inform subscribers the validator is rewriting.
+        ctx.metadata["validator_phase"] = "revising";
+        set_state(ctx, prior_state);
         r.stop_processing = false;  // don't stop — model should retry
         return;
     }

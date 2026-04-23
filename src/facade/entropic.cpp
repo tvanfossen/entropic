@@ -686,12 +686,25 @@ static char* sp_get_state(void* ud) {
 
 /**
  * @brief State provider: get_metrics.
+ *
+ * Returns LoopMetrics from the most recent run as JSON. Fields:
+ *   iterations, tool_calls, tokens_used, errors, duration_ms.
+ * All fields are zero when no run has completed yet. (P2-15)
+ *
  * @callback
- * @version 2.0.6
+ * @version 2.0.6-rc16
  */
 static char* sp_get_metrics(void* ud) {
-    (void)ud;
-    return strdup("{}");
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (!h || !h->engine) { return strdup("{}"); }
+    auto m = h->engine->last_loop_metrics();
+    nlohmann::json j;
+    j["iterations"]  = m.iterations;
+    j["tool_calls"]  = m.tool_calls;
+    j["tokens_used"] = m.tokens_used;
+    j["errors"]      = m.errors;
+    j["duration_ms"] = m.duration_ms();
+    return strdup(j.dump().c_str());
 }
 
 /**

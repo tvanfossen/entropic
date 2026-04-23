@@ -161,7 +161,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.8
+ * @version 2.0.6-rc17
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -188,11 +188,38 @@ ValidationResult ConstitutionalValidator::validate(
     logger->info("Validation start: {} chars, tier='{}'",
                  cleaned.size(), tier);
     result = run_validation_loop(cleaned, tier, messages_json);
-    logger->info("Validation {}: {} revision(s)",
-                 result.was_revised ? "revised" : "passed",
-                 result.revision_count);
+    log_verdict(result);
     store_result(result);
     return result;
+}
+
+/**
+ * @brief Emit a disambiguating log line per verdict. (E5, 2.0.6-rc17)
+ * @param result Validation result with verdict set.
+ * @internal
+ * @version 2.0.6-rc17
+ */
+void ConstitutionalValidator::log_verdict(
+    const ValidationResult& result) const {
+    switch (result.verdict) {
+    case ValidationVerdict::passed:
+        logger->info("Validation passed (no violations)");
+        break;
+    case ValidationVerdict::revised:
+        logger->info("Validation revised ({} revision(s) applied)",
+                     result.revision_count);
+        break;
+    case ValidationVerdict::rejected_reverted_length:
+        logger->warn("Validation reverted "
+                     "({} violation(s) found; revision discarded for length)",
+                     result.final_critique.violations.size());
+        break;
+    case ValidationVerdict::rejected_max_revisions:
+        logger->warn("Validation rejected "
+                     "(max revisions exhausted; {} violation(s) remain)",
+                     result.final_critique.violations.size());
+        break;
+    }
 }
 
 /**
@@ -381,7 +408,7 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
  * @param messages_json Conversation context.
  * @return Updated ValidationResult.
  * @internal
- * @version 2.0.7
+ * @version 2.0.6-rc17
  */
 ValidationResult ConstitutionalValidator::apply_revisions(
     ValidationResult result,
@@ -399,6 +426,8 @@ ValidationResult ConstitutionalValidator::apply_revisions(
                          "discarding revision, returning original",
                          i + 1, config_.max_revisions,
                          before.size(), revised.size());
+            result.verdict =
+                ValidationVerdict::rejected_reverted_length;
             return result;
         }
 
@@ -416,6 +445,9 @@ ValidationResult ConstitutionalValidator::apply_revisions(
         logger->warn("Constitutional validation: max revisions ({}) "
                      "exhausted, returning last output",
                      config_.max_revisions);
+        result.verdict = ValidationVerdict::rejected_max_revisions;
+    } else if (result.was_revised) {
+        result.verdict = ValidationVerdict::revised;
     }
     return result;
 }
@@ -491,9 +523,9 @@ std::string ConstitutionalValidator::build_critique_messages(
 
 /**
  * @brief Build params JSON for critique generation.
- * @return JSON string with grammar_key, max_tokens, temperature.
+ * @return JSON string with grammar_key, max_tokens, temperature, tier.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6-rc17
  */
 std::string ConstitutionalValidator::build_critique_params() const {
     std::string params = "{\"grammar_key\":\"";
@@ -504,6 +536,15 @@ std::string ConstitutionalValidator::build_critique_params() const {
     params += std::to_string(config_.temperature);
     params += ",\"enable_thinking\":";
     params += config_.enable_thinking ? "true" : "false";
+    // E4 (2.0.6-rc17): route critique on a dedicated (typically
+    // smaller) tier so grammar-constrained sampling doesn't burn
+    // 35B primary inference. Empty -> default_tier selected by
+    // the inference interface.
+    if (!config_.critique_tier.empty()) {
+        params += ",\"tier\":\"";
+        params += config_.critique_tier;
+        params += "\"";
+    }
     params += "}";
     return params;
 }

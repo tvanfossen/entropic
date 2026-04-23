@@ -539,6 +539,11 @@ struct ConstitutionalValidationConfig {
     std::string grammar_key = "constitutional_critique";  ///< Grammar registry key
     /// Tiers exempt from validation (default: lead — streams before hook fires)
     std::vector<std::string> skip_tiers = {"lead"};
+    /// @brief Tier to route critique generation on. Empty = use the
+    /// active tier (previous behavior). Pointing this at a smaller tier
+    /// (e.g. "eng") avoids burning 35B primary inference on grammar-
+    /// constrained critique work. (E4, 2.0.6-rc17)
+    std::string critique_tier;
 };
 
 /**

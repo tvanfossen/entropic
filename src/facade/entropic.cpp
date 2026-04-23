@@ -558,6 +558,48 @@ static void wire_tool_executor(entropic_handle_t h) {
 }
 
 /**
+ * @brief Return the validator's last verdict as JSON for ON_COMPLETE.
+ *
+ * Shape: {ran, verdict, violations[], revisions_applied}. Verdict
+ * is a string from {passed, revised, rejected_reverted_length,
+ * rejected_max_revisions}. Returns malloc'd buffer; engine frees.
+ * (E3, 2.0.6-rc17)
+ *
+ * @param ud entropic_engine handle.
+ * @return JSON string or NULL if validator not configured.
+ * @callback
+ * @version 2.0.6-rc17
+ */
+static char* sp_get_validation(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (h == nullptr || h->validator == nullptr) { return nullptr; }
+    auto r = h->validator->last_result();
+    nlohmann::json v;
+    v["ran"] = true;
+    switch (r.verdict) {
+    case entropic::ValidationVerdict::passed:
+        v["verdict"] = "passed"; break;
+    case entropic::ValidationVerdict::revised:
+        v["verdict"] = "revised"; break;
+    case entropic::ValidationVerdict::rejected_reverted_length:
+        v["verdict"] = "rejected_reverted_length"; break;
+    case entropic::ValidationVerdict::rejected_max_revisions:
+        v["verdict"] = "rejected_max_revisions"; break;
+    }
+    v["revisions_applied"] = r.revision_count;
+    nlohmann::json violations = nlohmann::json::array();
+    for (const auto& vi : r.final_critique.violations) {
+        violations.push_back({
+            {"rule", vi.rule},
+            {"excerpt", vi.excerpt},
+            {"explanation", vi.explanation},
+        });
+    }
+    v["violations"] = violations;
+    return strdup(v.dump().c_str());
+}
+
+/**
  * @brief Wire hook dispatch and attach the constitutional validator.
  *
  * Bridges the handle's HookRegistry to the engine's HookInterface
@@ -570,7 +612,7 @@ static void wire_tool_executor(entropic_handle_t h) {
  * @param iface Inference interface (passed to validator for critique generation).
  * @param constitution_text Constitution text (may be empty).
  * @internal
- * @version 2.0.6
+ * @version 2.0.6-rc17
  */
 static void wire_hooks_and_validator(
     entropic_handle_t h,
@@ -599,6 +641,9 @@ static void wire_hooks_and_validator(
         h->validator = std::make_unique<entropic::ConstitutionalValidator>(
             h->config.constitutional_validation, constitution_text);
         h->validator->attach(&hook_iface, &iface);
+        // E3 (2.0.6-rc17): expose validator verdict via ON_COMPLETE
+        // hook context.
+        h->engine->set_validation_provider(sp_get_validation, h);
         s_log->info("Constitutional validator attached (max_revisions={})",
                      h->config.constitutional_validation.max_revisions);
     }

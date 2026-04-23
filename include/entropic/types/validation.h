@@ -57,11 +57,30 @@ struct CritiqueResult {
  *
  * @version 1.9.8
  */
+/**
+ * @brief Outcome of a validation pipeline run.
+ *
+ * Lets callers distinguish clean pass from safety-valve revert and
+ * from max-revisions-exhausted. Surfaces through ON_COMPLETE hook
+ * context and async task status so consumers know whether the
+ * returned content is trustworthy. (E1 / 2.0.6-rc17)
+ *
+ * @version 2.0.6-rc17
+ */
+enum class ValidationVerdict {
+    passed = 0,                ///< No violations, content unchanged
+    revised,                   ///< Violations found; revision applied
+    rejected_reverted_length,  ///< Revision gutted content >50%; original preserved
+    rejected_max_revisions,    ///< Revisions exhausted; last output returned as-is
+};
+
 struct ValidationResult {
     std::string content;              ///< Final output (original or revised)
     bool was_revised = false;         ///< true if content differs from original
     int revision_count = 0;           ///< Number of revision attempts made
     CritiqueResult final_critique;    ///< Last critique result
+    ValidationVerdict verdict =
+        ValidationVerdict::passed;    ///< Structured outcome (2.0.6-rc17)
 };
 
 } // namespace entropic

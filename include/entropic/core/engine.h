@@ -349,6 +349,70 @@ private:
                                    const std::string& finish_reason);
 
     /**
+     * @brief Check if a tier requires an explicit entropic.complete /
+     *        entropic.delegate tool call to conclude its turn.
+     *
+     * Falls back to false when no tier resolver is wired.
+     *
+     * @param tier Tier name.
+     * @return true if the tier has explicit_completion=true.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool tier_requires_explicit_completion(
+        const std::string& tier) const;
+
+    /**
+     * @brief Short-circuit for interrupted / length finish reasons.
+     * @param ctx Loop context.
+     * @param finish_reason Generation finish reason.
+     * @return true if handled (caller should return).
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool handle_terminal_finish_reasons(
+        LoopContext& ctx, const std::string& finish_reason);
+
+    /**
+     * @brief Record failure when explicit_completion is required but
+     *        zero tool calls were emitted. (P1-6)
+     * @param ctx Loop context.
+     * @param finish_reason Generation finish reason.
+     * @return true if failure was recorded.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool record_explicit_completion_failure(
+        LoopContext& ctx, const std::string& finish_reason);
+
+    /**
+     * @brief Check whether pending delegation would close a cycle.
+     * @param ctx Loop context.
+     * @param target Pending delegation target tier.
+     * @return true if target is already in the ancestor chain
+     *         or matches the active locked_tier.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool is_delegation_cycle(
+        const LoopContext& ctx, const std::string& target) const;
+
+    /**
+     * @brief Decide post-delegation engine state.
+     *
+     * Runs the relay_single_delegate validator pass when applicable,
+     * then transitions the loop to COMPLETE or EXECUTING based on
+     * delegation success + explicit_completion requirement.
+     *
+     * @param ctx Loop context.
+     * @param result Delegation outcome.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void finalize_delegation_result(
+        LoopContext& ctx, const struct DelegationResult& result);
+
+    /**
      * @brief Check if loop should stop.
      * @param ctx Loop context.
      * @return true if loop should terminate.

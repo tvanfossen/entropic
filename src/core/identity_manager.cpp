@@ -175,7 +175,7 @@ void IdentityManager::set_mcp_interface(const MCPKeyInterface& iface) {
  * @param identities Vector of static identity configs.
  * @return Number of identities loaded.
  * @internal
- * @version 1.9.6
+ * @version 2.0.6-rc16
  */
 size_t IdentityManager::load_static(
     const std::vector<IdentityConfig>& identities) {
@@ -189,6 +189,7 @@ size_t IdentityManager::load_static(
     }
     logger->info("Loaded {} static identities", loaded);
     router_dirty_.store(true, std::memory_order_release);
+    fire_cache_invalidator();  // P1-7: identity change → drop prompt caches
     return loaded;
 }
 
@@ -199,7 +200,7 @@ size_t IdentityManager::load_static(
  * @param config Identity configuration.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.0.6-rc16
  */
 entropic_error_t IdentityManager::create(const IdentityConfig& config) {
     std::unique_lock lock(identities_mutex_);
@@ -216,6 +217,7 @@ entropic_error_t IdentityManager::create(const IdentityConfig& config) {
     register_mcp_keys(cfg);
     identities_[cfg.name] = std::move(cfg);
     router_dirty_.store(true, std::memory_order_release);
+    fire_cache_invalidator();  // P1-7: identity change → drop prompt caches
     logger->info("Identity created: name='{}', routable={}, "
                  "prompt={} chars",
                  config.name, config.routable,
@@ -231,7 +233,7 @@ entropic_error_t IdentityManager::create(const IdentityConfig& config) {
  * @param config New configuration (name field must match).
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.6
+ * @version 2.0.6-rc16
  */
 entropic_error_t IdentityManager::update(
     const std::string& name,
@@ -253,6 +255,7 @@ entropic_error_t IdentityManager::update(
     register_mcp_keys(cfg);
     identities_[name] = std::move(cfg);
     router_dirty_.store(true, std::memory_order_release);
+    fire_cache_invalidator();  // P1-7: identity change → drop prompt caches
     logger->info("Dynamic identity updated: {}", name);
     return ENTROPIC_OK;
 }
@@ -264,7 +267,7 @@ entropic_error_t IdentityManager::update(
  * @param name Identity name to destroy.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 1.9.6
+ * @version 2.0.6-rc16
  */
 entropic_error_t IdentityManager::destroy(const std::string& name) {
     std::unique_lock lock(identities_mutex_);
@@ -278,6 +281,7 @@ entropic_error_t IdentityManager::destroy(const std::string& name) {
     unregister_mcp_keys(name);
     identities_.erase(it);
     router_dirty_.store(true, std::memory_order_release);
+    fire_cache_invalidator();  // P1-7: identity change → drop prompt caches
     logger->info("Dynamic identity destroyed: {}", name);
     return ENTROPIC_OK;
 }
@@ -415,6 +419,35 @@ void IdentityManager::set_in_use_checker(
     void* user_data) {
     in_use_checker_ = checker;
     in_use_user_data_ = user_data;
+}
+
+/**
+ * @brief Register a cache-invalidation callback.
+ *
+ * Fires on every identity create / update / destroy / reload. Facade
+ * wires this to ModelOrchestrator::clear_all_prompt_caches so cached
+ * KV prefixes never outlive a system-prompt change. (P1-7, 2.0.6-rc16)
+ *
+ * @param cb Callback invoked on identity change (nullable).
+ * @param user_data Forwarded to cb.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void IdentityManager::set_cache_invalidator(void (*cb)(void*),
+                                            void* user_data) {
+    cache_invalidator_ = cb;
+    cache_invalidator_data_ = user_data;
+}
+
+/**
+ * @brief Invoke the cache invalidator if registered.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void IdentityManager::fire_cache_invalidator() {
+    if (cache_invalidator_ != nullptr) {
+        cache_invalidator_(cache_invalidator_data_);
+    }
 }
 
 // ── validate ─────────────────────────────────────────────

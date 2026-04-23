@@ -714,6 +714,24 @@ size_t ModelOrchestrator::load_grammars_from(
 }
 
 /**
+ * @brief Invalidate prompt caches across every pooled backend.
+ *
+ * Called on identity content changes so no cached prefix is served
+ * against the new system prompt. (P1-7, 2.0.6-rc16)
+ *
+ * @utility
+ * @version 2.0.6-rc16
+ */
+void ModelOrchestrator::clear_all_prompt_caches() {
+    for (auto& [_, backend] : model_pool_) {
+        if (backend) { backend->clear_prompt_cache(); }
+    }
+    if (router_) { router_->clear_prompt_cache(); }
+    logger->info("Prompt caches invalidated across all backends "
+                 "(identity change)");
+}
+
+/**
  * @brief Normalize a frontmatter grammar value to a registry key.
  *
  * Strips .gbnf extension if present: "compactor.gbnf" → "compactor".

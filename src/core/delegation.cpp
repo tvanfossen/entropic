@@ -238,7 +238,7 @@ DelegationResult DelegationManager::execute_pipeline(
  * @param task Task description.
  * @return Fresh child context.
  * @internal
- * @version 1.8.6
+ * @version 2.0.6-rc16
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
@@ -247,6 +247,12 @@ LoopContext DelegationManager::build_child_context(
 
     LoopContext child;
     child.delegation_depth = parent_ctx.delegation_depth + 1;
+    // P1-9: propagate ancestor chain + append parent tier so the
+    // child can reject cycles (A→B→A) before executing.
+    child.delegation_ancestor_tiers = parent_ctx.delegation_ancestor_tiers;
+    if (!parent_ctx.locked_tier.empty()) {
+        child.delegation_ancestor_tiers.push_back(parent_ctx.locked_tier);
+    }
     child.locked_tier = info.system_prompt.empty()
         ? parent_ctx.locked_tier : "";
     child.all_tools = info.tools;

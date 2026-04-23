@@ -57,7 +57,7 @@ namespace entropic {
  * before engine teardown.
  *
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -128,6 +128,37 @@ public:
     mutable std::mutex tasks_mutex_;
 
     /**
+     * @brief Async task state for background entropic.ask runs.
+     *
+     * Moved to public section in 2.0.6-rc16 so cancel-on-clear can
+     * flip task statuses with the mutex held. (P1-5, P1-8)
+     *
+     * @internal
+     * @version 2.0.6-rc16
+     */
+    struct AsyncTask {
+        std::string status = "queued";   ///< queued | running | done | error | cancelled (2.0.6-rc16)
+        std::string phase = "queued";    ///< queued, running, running:<tier>, done, failed, cancelled (P1-5)
+        std::string result;              ///< Final text or error message
+        std::chrono::steady_clock::time_point created; ///< For TTL cleanup
+    };
+
+    /**
+     * @brief Mutable accessor to the task registry.
+     *
+     * Caller MUST hold tasks_mutex_. Used by the cancel-on-clear
+     * path to flip task statuses atomically with the mutex held.
+     * (P1-8, 2.0.6-rc16)
+     *
+     * @return Reference to task registry.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    std::unordered_map<std::string, AsyncTask>& tasks_for_cancel() {
+        return tasks_;
+    }
+
+    /**
      * @brief Add a connected fd to the subscriber set.
      * @param fd Connected client socket fd.
      * @internal (public for unit test access)
@@ -167,6 +198,23 @@ public:
         return subscribers_.size();
     }
 
+    /**
+     * @brief Update status/phase for a tracked task atomically.
+     *
+     * Used by the async run thread to advance through queued →
+     * running → running:<tier> → done|failed|cancelled. Safe to call
+     * with an unknown task_id (no-op).
+     *
+     * @param task_id Task identifier.
+     * @param status New coarse status string.
+     * @param phase New granular phase string.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void update_task_phase(const std::string& task_id,
+                           const std::string& status,
+                           const std::string& phase);
+
 private:
     /**
      * @brief Background thread: accept connections and serve.
@@ -192,17 +240,6 @@ private:
      * @version 2.0.10
      */
     std::string dispatch(const std::string& request, int client_fd);
-
-    /**
-     * @brief Async task state for background entropic.ask runs.
-     * @internal
-     * @version 2.0.11
-     */
-    struct AsyncTask {
-        std::string status = "running";        ///< "running" | "done" | "error"
-        std::string result;                    ///< Final text or error message
-        std::chrono::steady_clock::time_point created; ///< For TTL cleanup
-    };
 
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot

@@ -201,6 +201,18 @@ public:
      */
     size_t load_grammars_from(const std::filesystem::path& grammar_dir);
 
+    /**
+     * @brief Invalidate prompt/KV caches across every pooled backend.
+     *
+     * Used when identity content (system prompt prefix) changes so
+     * no cached prefix is served against the new prompt.
+     * (P1-7, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void clear_all_prompt_caches();
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;

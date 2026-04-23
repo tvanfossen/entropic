@@ -64,6 +64,20 @@ public:
     }
 
     /**
+     * @brief Drop every cached prefix so the next prefill re-seeds.
+     *
+     * Called by the orchestrator on identity/prompt-prefix changes.
+     * No-op when the cache has not been constructed yet.
+     * (P1-7, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    void clear_prompt_cache() override {
+        if (prompt_cache_) { prompt_cache_->clear(); }
+    }
+
+    /**
      * @brief Tokenize text to token IDs using model vocabulary.
      * @param text Input text.
      * @return Token ID vector with BOS.

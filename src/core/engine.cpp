@@ -328,33 +328,117 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param content Response content.
  * @param finish_reason Finish reason from generation.
  * @internal
- * @version 1.8.6
+ * @version 2.0.6-rc16
  */
 void AgentEngine::evaluate_no_tool_decision(
     LoopContext& ctx,
     const std::string& content,
     const std::string& finish_reason) {
-    if (finish_reason == "interrupted") {
-        logger->info("[DECISION] interrupted");
-        set_state(ctx, AgentState::INTERRUPTED);
-        return;
-    }
-
-    if (finish_reason == "length") {
-        logger->info("[DECISION] length, continuing");
-        return;
-    }
-
-    // Auto-chain check (v1.8.6)
+    if (handle_terminal_finish_reasons(ctx, finish_reason)) { return; }
     if (try_auto_chain(ctx, finish_reason, content)) {
         logger->info("[DECISION] auto-chain triggered");
         return;
     }
-
+    if (record_explicit_completion_failure(ctx, finish_reason)) { return; }
     if (response_generator_.is_response_complete(content, "[]")) {
         logger->info("[DECISION] response complete");
         set_state(ctx, AgentState::COMPLETE);
     }
+}
+
+/**
+ * @brief Short-circuit evaluation for terminal finish reasons.
+ *
+ * Handles "interrupted" and "length" before the tier-specific logic
+ * runs. Keeps evaluate_no_tool_decision under the 3-return cap.
+ * (P1-6, 2.0.6-rc16)
+ *
+ * @param ctx Loop context.
+ * @param finish_reason Generation finish reason.
+ * @return true if a terminal reason was handled (caller returns).
+ * @utility
+ * @version 2.0.6-rc16
+ */
+bool AgentEngine::handle_terminal_finish_reasons(
+    LoopContext& ctx, const std::string& finish_reason) {
+    if (finish_reason == "interrupted") {
+        logger->info("[DECISION] interrupted");
+        set_state(ctx, AgentState::INTERRUPTED);
+        return true;
+    }
+    if (finish_reason == "length") {
+        logger->info("[DECISION] length, continuing");
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Record a structured failure when a tier requires explicit
+ *        completion but returned zero tool calls. (P1-6, 2.0.6-rc16)
+ *
+ * @param ctx Loop context (metadata is mutated).
+ * @param finish_reason Generation finish reason (for logging).
+ * @return true if the failure was recorded and state transitioned.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+bool AgentEngine::record_explicit_completion_failure(
+    LoopContext& ctx, const std::string& finish_reason) {
+    if (!tier_requires_explicit_completion(ctx.locked_tier)) {
+        return false;
+    }
+    logger->warn("[DECISION] tier '{}' requires explicit completion "
+                 "but iteration emitted zero tool calls "
+                 "(finish_reason={})",
+                 ctx.locked_tier, finish_reason);
+    ctx.metadata["failure_reason"] =
+        "zero_tool_calls_with_explicit_completion";
+    ctx.metadata["failure_tier"] = ctx.locked_tier;
+    set_state(ctx, AgentState::EXECUTING);
+    return true;
+}
+
+/**
+ * @brief Check if a tier contractually requires explicit completion.
+ *
+ * Delegates to the TierResolutionInterface, falling back to false
+ * when no resolver is wired (preserves legacy behavior in tests that
+ * omit tier metadata).
+ *
+ * @param tier Tier name.
+ * @return true if the tier's explicit_completion flag is set.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+bool AgentEngine::tier_requires_explicit_completion(
+    const std::string& tier) const {
+    if (tier_res_.get_tier_param == nullptr) { return false; }
+    auto val = tier_res_.get_tier_param(
+        tier.c_str(), "explicit_completion", tier_res_.user_data);
+    return val == "true" || val == "1";
+}
+
+/**
+ * @brief Detect delegation cycles via ancestor chain check.
+ *
+ * Targets already present in delegation_ancestor_tiers or matching
+ * the active locked_tier would re-enter an ancestor loop, which the
+ * depth cap only catches after repeated waste. (P1-9, 2.0.6-rc16)
+ *
+ * @param ctx Loop context.
+ * @param target Pending delegation target tier name.
+ * @return true if target would close a cycle.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+bool AgentEngine::is_delegation_cycle(
+    const LoopContext& ctx, const std::string& target) const {
+    if (target == ctx.locked_tier) { return true; }
+    for (const auto& anc : ctx.delegation_ancestor_tiers) {
+        if (anc == target) { return true; }
+    }
+    return false;
 }
 
 /**
@@ -411,12 +495,19 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
 
 /**
  * @brief Interrupt the running loop.
+ *
+ * Callable from any thread and polled per-token on the generation
+ * path, so interrupt() runs many times for a single Ctrl+C. Log only
+ * on the 0→1 transition to avoid flooding the session log.
+ * (P1-4, 2.0.6-rc16)
+ *
  * @internal
- * @version 1.8.4
+ * @version 2.0.6-rc16
  */
 void AgentEngine::interrupt() {
-    logger->info("Engine interrupted");
-    interrupt_flag_.store(true);
+    if (!interrupt_flag_.exchange(true)) {
+        logger->info("Engine interrupted");
+    }
     pause_flag_.store(false);
 }
 
@@ -1108,6 +1199,35 @@ static void push_delegation_rejected(LoopContext& ctx) {
 }
 
 /**
+ * @brief Append a structured cycle-rejection message to the loop
+ *        context so the model can recover. Names the offending tier
+ *        and the ancestor chain. (P1-9, 2.0.6-rc16)
+ *
+ * @param ctx Loop context.
+ * @param target Target tier that would have closed the cycle.
+ * @internal
+ * @version 2.0.6-rc16
+ */
+static void push_delegation_cycle_rejected(
+    LoopContext& ctx, const std::string& target) {
+    std::string chain;
+    for (const auto& anc : ctx.delegation_ancestor_tiers) {
+        chain += anc + " -> ";
+    }
+    chain += ctx.locked_tier + " -> " + target;
+
+    Message reject;
+    reject.role = "user";
+    reject.content = "[DELEGATION REJECTED] Circular delegation "
+                     "detected: tier '" + target +
+                     "' already in the active delegation chain "
+                     "(" + chain + "). Choose a different target.";
+    ctx.metadata["failure_reason"] = "delegation_cycle";
+    ctx.metadata["failure_target"] = target;
+    ctx.messages.push_back(std::move(reject));
+}
+
+/**
  * @brief Append a delegation result message to the loop context.
  * @param ctx Loop context.
  * @param target Target tier name.
@@ -1134,7 +1254,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc16.1
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1144,6 +1264,14 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
         logger->warn("Delegation rejected: depth {} >= max {}",
                      ctx.delegation_depth, MAX_DELEGATION_DEPTH);
         push_delegation_rejected(ctx);
+        return;
+    }
+
+    // P1-9: reject A→B→A and longer cycles before running a child.
+    if (is_delegation_cycle(ctx, pending.target)) {
+        logger->warn("Delegation rejected: cycle on target tier '{}'",
+                     pending.target);
+        push_delegation_cycle_rejected(ctx, pending.target);
         return;
     }
 
@@ -1174,33 +1302,40 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     fire_delegation_complete(ctx, pending.target, result);
     fire_delegate_complete_hook(pending.target, result.success);
 
-    // Relay path: if the lead tier has relay_single_delegate set and a
-    // single delegate returned successfully, the delegate summary is
-    // promoted verbatim. Still run the POST_GENERATE hook so the
-    // constitutional validator checks the summary the user will see.
-    // If the validator revises, the revised text is what ships.
-    // (P0-3, 2.0.6-rc16)
+    finalize_delegation_result(ctx, result);
+}
+
+/**
+ * @brief Promote relayed delegate output or set next engine state.
+ *
+ * Handles both the relay_single_delegate path (validate + promote)
+ * and the standard explicit_completion transition. Extracted from
+ * execute_pending_delegation to keep that function under the 50-SLOC
+ * / 3-return quality gates. (P0-3, P1-9, 2.0.6-rc16)
+ *
+ * @param ctx Loop context.
+ * @param result Delegation result from DelegationManager.
+ * @utility
+ * @version 2.0.6-rc16
+ */
+void AgentEngine::finalize_delegation_result(
+    LoopContext& ctx, const DelegationResult& result) {
     if (result.success
         && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
         GenerateResult relay_result;
         relay_result.content = result.summary;
         relay_result.finish_reason = "stop";
         relay_result.tool_calls_json = "[]";
-        fire_post_generate_hook(relay_result, ctx.locked_tier, ctx.messages);
-
-        ctx.metadata["explicit_completion_summary"] = relay_result.content;
+        fire_post_generate_hook(
+            relay_result, ctx.locked_tier, ctx.messages);
+        ctx.metadata["explicit_completion_summary"] =
+            relay_result.content;
         set_state(ctx, AgentState::COMPLETE);
         logger->info("Relay: single-delegate result validated & used");
         return;
     }
-
-    // Auto-complete unless tier requires explicit completion.
-    bool needs_explicit = false;
-    if (tier_res_.get_tier_param != nullptr) {
-        auto val = tier_res_.get_tier_param(
-            ctx.locked_tier, "explicit_completion", tier_res_.user_data);
-        needs_explicit = (val == "true" || val == "1");
-    }
+    bool needs_explicit = tier_requires_explicit_completion(
+        ctx.locked_tier);
     set_state(ctx, (result.success && !needs_explicit)
         ? AgentState::COMPLETE : AgentState::EXECUTING);
 }

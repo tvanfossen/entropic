@@ -1136,16 +1136,20 @@ static std::string build_tool_results_json(
 /**
  * @brief Fire ON_COMPLETE pre-hook for citation/summary validation.
  *
- * Builds context JSON with the summary text, current tier, and all
- * tool results from the conversation. The application's hook handler
- * can validate citations, check format, etc. Returns true if the
- * hook rejected the completion.
+ * Builds context JSON with all guaranteed ON_COMPLETE schema fields:
+ *   summary      — entropic.complete summary text
+ *   tier         — active tier that called complete
+ *   tool_results — [{name, content}] from conversation messages
+ *   iteration    — loop iteration count at completion time
+ *
+ * The application's hook handler can validate citations, check format,
+ * etc. Returns true if the hook rejected the completion. (P2-12)
  *
  * @param summary The entropic.complete summary text.
  * @param ctx Loop context with tool results in messages.
  * @return true if hook cancelled (completion rejected).
  * @internal
- * @version 2.0.10
+ * @version 2.0.6-rc16
  */
 bool AgentEngine::fire_complete_hook(
     const std::string& summary,
@@ -1156,7 +1160,9 @@ bool AgentEngine::fire_complete_hook(
     std::string json =
         "{\"summary\":\"" + json_escape_engine(summary)
         + "\",\"tier\":\"" + ctx.locked_tier
-        + "\",\"tool_results\":" + tool_results + "}";
+        + "\",\"tool_results\":" + tool_results
+        + ",\"iteration\":" + std::to_string(ctx.metrics.iterations)
+        + "}";
     char* modified = nullptr;
     int rc = hooks_.fire_pre(hooks_.registry,
         ENTROPIC_HOOK_ON_COMPLETE, json.c_str(), &modified);

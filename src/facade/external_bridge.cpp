@@ -763,6 +763,48 @@ std::string ExternalBridge::dispatch(
 // ── Async task support ───────────────────────────────────
 
 /**
+ * @brief State observer that projects VERIFYING onto task phase.
+ * @internal
+ * @version 2.0.6-rc16.2
+ */
+static void phase_observer_cb(int state, void* ud) {
+    auto* self = static_cast<ExternalBridge*>(ud);
+    if (state != ENTROPIC_AGENT_STATE_VERIFYING) { return; }
+    std::lock_guard<std::mutex> lock(self->tasks_mutex_);
+    auto it = self->tasks_for_cancel().find(self->active_task_id_for_observer());
+    if (it == self->tasks_for_cancel().end()) { return; }
+    // First VERIFYING = "validating"; subsequent VERIFYING transitions
+    // on the same task indicate revision retries → "revising".
+    it->second.phase = (it->second.phase == "validating"
+                         || it->second.phase == "revising")
+        ? "revising" : "validating";
+}
+
+/**
+ * @brief Install phase observer scoped to one task.
+ * @internal
+ * @version 2.0.6-rc16.2
+ */
+void ExternalBridge::attach_phase_observer(const std::string& task_id) {
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        active_task_id_ = task_id;
+    }
+    entropic_set_state_observer(handle_, phase_observer_cb, this);
+}
+
+/**
+ * @brief Clear phase observer and the active-task pointer.
+ * @internal
+ * @version 2.0.6-rc16.2
+ */
+void ExternalBridge::detach_phase_observer() {
+    entropic_set_state_observer(handle_, nullptr, nullptr);
+    std::lock_guard<std::mutex> lock(tasks_mutex_);
+    active_task_id_.clear();
+}
+
+/**
  * @brief Run an async entropic.ask in a detached background thread.
  *
  * Creates a task registry entry, runs the engine, stores the result,
@@ -772,7 +814,7 @@ std::string ExternalBridge::dispatch(
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.0.6-rc16.2
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -789,9 +831,12 @@ void ExternalBridge::run_async_ask(
 
     std::thread([this, prompt, task_id, client_fd]() {
         update_task_phase(task_id, "running", "running");
+        attach_phase_observer(task_id);
 
         char* result_json = nullptr;
         auto err = entropic_run(handle_, prompt.c_str(), &result_json);
+
+        detach_phase_observer();
 
         auto final_state = derive_async_final_state(
             handle_, err, result_json);

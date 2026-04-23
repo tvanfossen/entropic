@@ -113,4 +113,11 @@ struct entropic_engine {
     /// @brief Global stream observer — fires for all streaming output.
     void (*stream_observer)(const char*, size_t, void*) = nullptr;
     void* stream_observer_data = nullptr;                        ///< Observer user_data
+
+    // ── State-change observer (P1-5 follow-up, 2.0.6-rc16.2) ─
+    /// @brief Observer for engine state transitions. Forwarded to
+    /// engine callbacks so bridge async tasks can project
+    /// VERIFYING → "validating"/"revising" phases.
+    void (*state_observer)(int, void*) = nullptr;
+    void* state_observer_data = nullptr;
 };

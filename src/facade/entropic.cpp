@@ -1208,6 +1208,41 @@ entropic_error_t entropic_set_stream_observer(
 }
 
 /**
+ * @brief Register a state-change observer on the handle.
+ *
+ * Updates the engine's EngineCallbacks.on_state_change to forward
+ * transitions to the registered C observer. (P1-5 follow-up,
+ * 2.0.6-rc16.2)
+ *
+ * @param handle Engine handle.
+ * @param observer State observer (NULL to clear).
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.0.6-rc16.2
+ */
+entropic_error_t entropic_set_state_observer(
+    entropic_handle_t handle,
+    void (*observer)(int state, void* user_data),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->state_observer = observer;
+    handle->state_observer_data = user_data;
+    if (handle->engine) {
+        entropic::EngineCallbacks cb{};
+        cb.on_state_change = [](int state, void* ud) {
+            auto* h = static_cast<entropic_engine*>(ud);
+            if (h->state_observer) {
+                h->state_observer(state, h->state_observer_data);
+            }
+        };
+        cb.user_data = handle;
+        handle->engine->set_callbacks(cb);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
  * @brief Interrupt a running generation (thread-safe).
  *
  * @param handle Engine handle returned by entropic_create.

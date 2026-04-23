@@ -321,6 +321,31 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_stream_observer(
     void* user_data);
 
 /**
+ * @brief Register an engine state-change observer.
+ *
+ * Fires on every AgentState transition. State integers map 1:1 to
+ * entropic_agent_state_t. Used by async subscribers (e.g. the external
+ * MCP bridge) to project engine-side phases — PLANNING, EXECUTING,
+ * WAITING_TOOL, VERIFYING, DELEGATING — onto user-visible task status.
+ * Pass observer=NULL to clear.
+ *
+ * @threadsafety Callback may fire from the engine thread or a
+ *        child-loop delegation thread. Must be thread-safe.
+ *
+ * @param handle Engine handle.
+ * @param observer State-change callback (state_int, user_data).
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @version 2.0.6-rc16.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_state_observer(
+    entropic_handle_t handle,
+    void (*observer)(int state, void* user_data),
+    void* user_data);
+
+/**
  * @brief Interrupt a running generation.
  *
  * Signals the engine to abort the current entropic_run() or

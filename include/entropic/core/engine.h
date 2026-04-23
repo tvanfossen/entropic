@@ -221,6 +221,19 @@ public:
      */
     DirectiveProcessor& directive_processor() { return directive_processor_; }
 
+    /**
+     * @brief Get metrics from the most recent completed run.
+     *
+     * Returns a copy of the LoopMetrics snapped at the end of the last
+     * call to run() or run_turn(). Zero-initialized before any run has
+     * completed. Thread-safe: read-only copy is returned. (P2-15)
+     *
+     * @return LoopMetrics from last run.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    LoopMetrics last_loop_metrics() const { return last_metrics_; }
+
     // ── Conversation state (v2.0.2) ─────────────────────────
 
     /**
@@ -626,6 +639,7 @@ private:
                                   const struct DelegationResult& result); ///< @internal
 
     // ── Members ──────────────────────────────────────────
+    LoopMetrics last_metrics_;                           ///< P2-15: last run metrics
     InferenceInterface inference_;                       ///< Inference contract
     LoopConfig loop_config_;                             ///< Loop config
     EngineCallbacks callbacks_;                          ///< Event callbacks

@@ -117,6 +117,34 @@ TEST_CASE("Metrics accurate after run", "[engine]") {
     REQUIRE(mock.generate_call_count >= 1);
 }
 
+// ── P2-15: last_loop_metrics() ──────────────────────────
+
+TEST_CASE("last_loop_metrics returns zero before any run", "[engine][P2-15]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    auto m = engine.last_loop_metrics();
+    REQUIRE(m.iterations == 0);
+    REQUIRE(m.tool_calls == 0);
+    REQUIRE(m.tokens_used == 0);
+}
+
+TEST_CASE("last_loop_metrics populated after run", "[engine][P2-15]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    engine.run(make_messages());
+    auto m = engine.last_loop_metrics();
+    REQUIRE(m.iterations >= 1);
+    REQUIRE(m.duration_ms() >= 0);
+}
+
 TEST_CASE("Finish reason length continues loop", "[engine]") {
     MockInference mock;
     mock.is_complete = false;

@@ -185,7 +185,7 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @param messages System + user messages.
  * @return Final messages.
  * @internal
- * @version 1.8.4
+ * @version 2.0.6-rc16
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     LoopContext ctx;
@@ -201,6 +201,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     loop(ctx);
 
     ctx.metrics.end_time = now_seconds();
+    last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
     logger->info("Loop complete: {} iterations, {}ms",
                  ctx.metrics.iterations, ctx.metrics.duration_ms());
     return ctx.messages;

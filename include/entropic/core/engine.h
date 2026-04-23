@@ -128,6 +128,21 @@ public:
     void set_stream_observer(TokenCallback observer, void* user_data);
 
     /**
+     * @brief Register a callback invoked alongside interrupt().
+     *
+     * Used to propagate Ctrl+C into external MCP transports so
+     * in-flight tool calls do not run to completion. Facade wires
+     * this to ServerManager::interrupt_external_tools().
+     * (P1-10, 2.0.6-rc16)
+     *
+     * @param cb Callback (nullable).
+     * @param user_data Forwarded to cb.
+     * @version 2.0.6-rc16
+     */
+    void set_external_interrupt(void (*cb)(void* user_data),
+                                void* user_data);
+
+    /**
      * @brief Run the engine loop on a pre-built context.
      *
      * Used by DelegationManager for child loops. Public so the
@@ -322,6 +337,33 @@ public:
         const std::unordered_map<std::string,
             std::vector<std::string>>& rules);
 
+    /**
+     * @brief Check if a tier requires an explicit entropic.complete /
+     *        entropic.delegate tool call to conclude its turn.
+     *        Exposed for unit tests. (P1-6, 2.0.6-rc16)
+     *
+     * @param tier Tier name.
+     * @return true if the tier has explicit_completion=true.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool tier_requires_explicit_completion(
+        const std::string& tier) const;
+
+    /**
+     * @brief Check whether pending delegation would close a cycle.
+     *        Exposed for unit tests. (P1-9, 2.0.6-rc16)
+     *
+     * @param ctx Loop context (ancestor chain + locked tier).
+     * @param target Proposed delegation target tier.
+     * @return true if target is already in the ancestor chain
+     *         or matches the active locked_tier.
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    bool is_delegation_cycle(
+        const LoopContext& ctx, const std::string& target) const;
+
 private:
     /**
      * @brief Main loop implementation.
@@ -349,20 +391,6 @@ private:
                                    const std::string& finish_reason);
 
     /**
-     * @brief Check if a tier requires an explicit entropic.complete /
-     *        entropic.delegate tool call to conclude its turn.
-     *
-     * Falls back to false when no tier resolver is wired.
-     *
-     * @param tier Tier name.
-     * @return true if the tier has explicit_completion=true.
-     * @utility
-     * @version 2.0.6-rc16
-     */
-    bool tier_requires_explicit_completion(
-        const std::string& tier) const;
-
-    /**
      * @brief Short-circuit for interrupted / length finish reasons.
      * @param ctx Loop context.
      * @param finish_reason Generation finish reason.
@@ -384,18 +412,6 @@ private:
      */
     bool record_explicit_completion_failure(
         LoopContext& ctx, const std::string& finish_reason);
-
-    /**
-     * @brief Check whether pending delegation would close a cycle.
-     * @param ctx Loop context.
-     * @param target Pending delegation target tier.
-     * @return true if target is already in the ancestor chain
-     *         or matches the active locked_tier.
-     * @utility
-     * @version 2.0.6-rc16
-     */
-    bool is_delegation_cycle(
-        const LoopContext& ctx, const std::string& target) const;
 
     /**
      * @brief Decide post-delegation engine state.
@@ -615,6 +631,8 @@ private:
     EngineCallbacks callbacks_;                          ///< Event callbacks
     std::atomic<bool> interrupt_flag_{false};             ///< Hard interrupt
     std::atomic<bool> pause_flag_{false};                 ///< Pause signal
+    void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
+    void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
     ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     TierResolutionInterface tier_res_;                    ///< Tier resolution (v1.8.6)

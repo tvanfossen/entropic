@@ -455,6 +455,22 @@ void ServerManager::set_mcp_config(const MCPConfig& config) {
 }
 
 /**
+ * @brief Signal every external client to cancel its in-flight tool.
+ *
+ * Called by AgentEngine::interrupt() via a facade-wired callback so
+ * tool dispatches to docs_server.py / bash / git unwind within ~100ms
+ * of Ctrl+C instead of running to completion. (P1-10, 2.0.6-rc16)
+ *
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void ServerManager::interrupt_external_tools() {
+    for (auto& [_, client] : external_clients_) {
+        if (client) { client->interrupt(); }
+    }
+}
+
+/**
  * @brief Initialize external servers from config + .mcp.json.
  * @utility
  * @version 1.8.7

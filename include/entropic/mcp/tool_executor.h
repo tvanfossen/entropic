@@ -16,6 +16,7 @@
 #include <entropic/core/engine_types.h>
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/server_manager.h>
+#include <entropic/mcp/tool_call_history.h>
 
 #include <optional>
 #include <string>
@@ -321,8 +322,19 @@ private:
     ToolExecutorHooks hooks_;             ///< Engine hooks
     PermissionPersistInterface permission_persist_; ///< Permission persistence (v1.8.8)
     HookInterface hook_iface_;            ///< Hook dispatch (v1.9.1)
+    ToolCallHistory history_{100};        ///< Recent tool calls (P1-11, 2.0.6-rc16)
+    std::atomic<size_t> history_seq_{0};  ///< Monotonic sequence for records
 
 public:
+    /**
+     * @brief Access the tool-call history ring buffer.
+     * @return Const reference to history (read-only for validator
+     *         retry enrichment and diagnostic tools).
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    const ToolCallHistory& tool_history() const { return history_; }
+
     /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.

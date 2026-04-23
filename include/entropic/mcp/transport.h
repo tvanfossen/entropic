@@ -60,6 +60,20 @@ public:
      * @version 1.8.7
      */
     virtual bool is_connected() const = 0;
+
+    /**
+     * @brief Abort any in-flight send_request() call ASAP.
+     *
+     * Called from another thread (typically the engine's interrupt
+     * path) so tool dispatches to external MCP servers do not run to
+     * completion after Ctrl+C. Default is a no-op for transports with
+     * no blocking calls. Must wake pending reads within ~100ms.
+     * (P1-10, 2.0.6-rc16)
+     *
+     * @utility
+     * @version 2.0.6-rc16
+     */
+    virtual void interrupt() {}
 };
 
 } // namespace entropic

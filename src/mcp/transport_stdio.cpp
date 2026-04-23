@@ -171,13 +171,13 @@ void StdioTransport::close() {
  * @param timeout_ms Timeout (0 = default).
  * @return Response string, or empty on error.
  * @internal
- * @version 1.8.7
+ * @version 2.0.6-rc16
  */
 std::string StdioTransport::send_request(
     const std::string& request_json,
     uint32_t timeout_ms) {
 
-    if (!connected_) {
+    if (!connected_ || cancel_flag_.load(std::memory_order_acquire)) {
         return "";
     }
 
@@ -212,6 +212,21 @@ bool StdioTransport::is_connected() const {
         return true;
     }
     return false;
+}
+
+/**
+ * @brief Cancel any in-flight read by tripping cancel_flag_.
+ *
+ * read_line / poll_until_ready short-circuit the next poll tick so
+ * the pending send_request returns empty within ~50ms (one poll
+ * slice). Subsequent send_request calls also early-exit until the
+ * flag is cleared implicitly by a successful open(). (P1-10)
+ *
+ * @internal
+ * @version 2.0.6-rc16
+ */
+void StdioTransport::interrupt() {
+    cancel_flag_.store(true, std::memory_order_release);
 }
 
 /**
@@ -319,9 +334,9 @@ bool StdioTransport::create_pipe(int& read_fd, int& write_fd) {
  * @brief Poll fd for readability within remaining deadline.
  * @param fd File descriptor.
  * @param deadline Absolute deadline.
- * @return 1 if ready, 0 on timeout, -1 on error.
+ * @return 1 if ready, 0 on timeout, -1 on error, -2 if slice expired.
  * @utility
- * @version 1.8.8
+ * @version 2.0.6-rc16
  */
 int StdioTransport::poll_until_ready(
     int fd,
@@ -335,17 +350,35 @@ int StdioTransport::poll_until_ready(
         return 0;
     }
 
+    // P1-10 (2.0.6-rc16): cap the single poll slice at 100ms so the
+    // caller's cancel_flag_ is re-checked at least ten times/second.
+    constexpr int kSliceMs = 100;
+    int slice = static_cast<int>(remaining.count());
+    if (slice > kSliceMs) { slice = kSliceMs; }
+
     struct pollfd pfd{fd, POLLIN, 0};
-    return ::poll(&pfd, 1, static_cast<int>(remaining.count()));
+    int rc = ::poll(&pfd, 1, slice);
+    if (rc == 0) {
+        // Slice expired; report 0 only if the full deadline passed.
+        if (std::chrono::steady_clock::now() < deadline) {
+            return -2;  // caller retries after checking cancel_flag
+        }
+    }
+    return rc;
 }
 
 /**
  * @brief Read a single newline-delimited line from fd using poll.
+ *
+ * All early-exit paths (cancel, timeout, read error) break to a single
+ * terminal `return ""` to satisfy the ≤3 return gate.  Only a complete
+ * newline-terminated line returns the accumulated string.
+ *
  * @param fd File descriptor.
  * @param timeout_ms Timeout.
- * @return Line without newline, or empty on error/timeout.
+ * @return Line without newline, or empty on error/timeout/cancel.
  * @utility
- * @version 1.8.8
+ * @version 2.0.6-rc16
  */
 std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
     std::string line;
@@ -353,24 +386,23 @@ std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
                     std::chrono::milliseconds(timeout_ms);
 
     while (true) {
+        // P1-10: short-circuit if the engine interrupted this request.
+        if (cancel_flag_.load(std::memory_order_acquire)) {
+            logger->info("Transport read cancelled by interrupt");
+            break;
+        }
         int ready = poll_until_ready(fd, deadline);
+        if (ready == -2) { continue; }  // slice expired, re-check cancel
         if (ready <= 0) {
-            if (ready == 0) {
-                logger->warn("Read timeout after {}ms", timeout_ms);
-            }
-            return "";
+            if (ready == 0) { logger->warn("Read timeout after {}ms", timeout_ms); }
+            break;
         }
-
         char ch = 0;
-        ssize_t n = ::read(fd, &ch, 1);
-        if (n <= 0) {
-            return "";
-        }
-        if (ch == '\n') {
-            return line;
-        }
+        if (::read(fd, &ch, 1) <= 0) { break; }
+        if (ch == '\n') { return line; }
         line += ch;
     }
+    return "";
 }
 
 /**

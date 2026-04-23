@@ -83,7 +83,20 @@ public:
      */
     bool is_connected() const override;
 
+    /**
+     * @brief Abort any blocking read and mark transport uncancellable.
+     *
+     * Sets cancel_flag_ which poll_until_ready() checks after every
+     * poll tick. The next send_request() returns empty immediately.
+     * (P1-10, 2.0.6-rc16)
+     *
+     * @version 2.0.6-rc16
+     */
+    void interrupt() override;
+
 private:
+    std::atomic<bool> cancel_flag_{false};        ///< Set by interrupt() (P1-10)
+
     std::string command_;                        ///< Executable path
     std::vector<std::string> args_;              ///< Command-line arguments
     std::map<std::string, std::string> env_;     ///< Environment overrides
@@ -136,17 +149,19 @@ private:
      * @utility
      * @version 1.8.8
      */
-    static std::string read_line(int fd, uint32_t timeout_ms);
+    std::string read_line(int fd, uint32_t timeout_ms);
 
     /**
      * @brief Poll fd for readability within remaining deadline.
      * @param fd File descriptor.
      * @param deadline Absolute deadline.
-     * @return 1 if ready, 0 on timeout, -1 on error.
+     * @return 1 if ready, 0 on timeout, -1 on error, -2 if slice
+     *         expired (caller should re-check cancel_flag_).
+     *         Non-static since 2.0.6-rc16 to sample cancel_flag_.
      * @utility
-     * @version 1.8.8
+     * @version 2.0.6-rc16
      */
-    static int poll_until_ready(
+    int poll_until_ready(
         int fd,
         std::chrono::steady_clock::time_point deadline);
 

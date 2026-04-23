@@ -364,3 +364,30 @@ SCENARIO("Schema validation rejects missing required field",
         }
     }
 }
+
+// ── P1-11: tool history recording (2.0.6-rc16) ───────────
+
+TEST_CASE("Tool call history records successful executions",
+          "[tool_executor][P1-11][2.0.6-rc16]") {
+    auto mgr = make_manager();
+    LoopConfig lc;
+    lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    LoopContext ctx;
+    REQUIRE(executor.tool_history().size() == 0);
+
+    executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+    CHECK(executor.tool_history().size() == 1);
+
+    executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+    // duplicate detection may or may not skip based on call_key —
+    // at minimum the first was recorded; history monotone grows.
+    CHECK(executor.tool_history().size() >= 1);
+
+    auto recent = executor.tool_history().recent(5);
+    REQUIRE_FALSE(recent.empty());
+    CHECK(recent.front().tool_name == "ok.do_thing");
+    CHECK(recent.front().elapsed_ms >= 0.0);
+}

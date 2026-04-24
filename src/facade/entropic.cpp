@@ -621,7 +621,7 @@ static char* sp_get_validation(void* ud) {
  * @param iface Inference interface (passed to validator for critique generation).
  * @param constitution_text Constitution text (may be empty).
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.0.6-rc19
  */
 static void wire_hooks_and_validator(
     entropic_handle_t h,
@@ -644,6 +644,13 @@ static void wire_hooks_and_validator(
         static_cast<entropic::HookRegistry*>(reg)->fire_info(pt, json);
     };
     h->engine->set_hooks(hook_iface);
+    // E9 (2.0.6-rc19): forward the same hook dispatch to the tool
+    // executor so PRE_TOOL_CALL / POST_TOOL_CALL actually fire.
+    // Prior wiring only touched the engine; tool_executor_ held a
+    // null HookInterface and silently skipped all tool hooks.
+    if (h->tool_executor) {
+        h->tool_executor->set_hooks(hook_iface);
+    }
 
     if (h->config.constitutional_validation.enabled
         && !constitution_text.empty()) {

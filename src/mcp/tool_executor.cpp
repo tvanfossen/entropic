@@ -603,24 +603,51 @@ std::optional<Message> ToolExecutor::check_schema(
  * @brief Run all precondition checks for a tool call.
  * @param ctx Loop context.
  * @param call Tool call.
- * @return Rejection message, or nullopt if all checks pass.
+ * @return PreconditionCheck with rejection + typed kind on failure.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6-rc19
  */
-std::optional<Message> ToolExecutor::check_call_preconditions(
+PreconditionCheck ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
-    // Schema → Layer 3 (finest) → Layer 2 → duplicate → Layer 1
-    auto result = check_schema(call);
-    if (!result.has_value()) {
-        result = check_mcp_authorization(ctx, call);
+    PreconditionCheck pc;
+    if (auto r = check_schema(call); r.has_value()) {
+        pc.rejection = std::move(r);
+        pc.kind = ToolResultKind::rejected_schema;
+    } else if (auto a = check_mcp_authorization(ctx, call);
+               a.has_value()) {
+        pc.rejection = std::move(a);
+        pc.kind = ToolResultKind::rejected_precondition;
+    } else if (auto t = check_tier_allowed(ctx, call); t.has_value()) {
+        pc.rejection = std::move(t);
+        pc.kind = ToolResultKind::rejected_precondition;
+    } else if (auto dup = check_duplicate(ctx, call); !dup.empty()) {
+        pc.rejection = handle_duplicate(ctx, call, dup);
+        pc.kind = ToolResultKind::rejected_duplicate;
+    } else {
+        pc = check_approval_pc(ctx, call);
     }
-    if (!result.has_value()) {
-        result = check_tier_allowed(ctx, call);
+    return pc;
+}
+
+/**
+ * @brief Terminal approval check extracted to keep the precondition
+ *        chain under the nesting-depth gate.
+ * @param ctx Loop context (mutated: duplicate counter reset).
+ * @param call Tool call.
+ * @return PreconditionCheck with rejection+kind set on denial, empty on pass.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+PreconditionCheck ToolExecutor::check_approval_pc(
+    LoopContext& ctx, const ToolCall& call) {
+    PreconditionCheck pc;
+    ctx.consecutive_duplicate_attempts = 0;
+    if (!check_approval(call)) {
+        pc.rejection = create_denied_message(
+            call, "Permission denied");
+        pc.kind = ToolResultKind::rejected_precondition;
     }
-    if (!result.has_value()) {
-        result = check_dup_or_approval(ctx, call);
-    }
-    return result;
+    return pc;
 }
 
 /**
@@ -633,28 +660,25 @@ std::optional<Message> ToolExecutor::check_call_preconditions(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.0.6-rc19
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
-
-    auto rejection = check_call_preconditions(ctx, call);
-    if (rejection.has_value()) {
-        logger->info("Tool '{}' rejected by precondition", call.name);
-        return {std::move(*rejection)};
+    // Hook: PRE_TOOL_CALL first — fires for every attempt, including
+    // those that a precondition will reject. (E9, 2.0.6-rc19)
+    if (fire_pre_tool_hook(ctx, call)) {
+        auto msg = create_denied_message(call, "Cancelled by hook");
+        fire_post_tool_hook(ctx, call, "", 0.0,
+            ToolResultKind::rejected_precondition);
+        return {std::move(msg)};
     }
 
-    // Hook: PRE_TOOL_CALL — can cancel (v1.9.1)
-    if (hook_iface_.fire_pre != nullptr) {
-        std::string json = "{\"tool_name\":\""
-            + call.name + "\"}";
-        char* mod = nullptr;
-        int rc = hook_iface_.fire_pre(hook_iface_.registry,
-            ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
-        free(mod);
-        if (rc != 0) {
-            return {create_denied_message(call, "Cancelled by hook")};
-        }
+    auto pc = check_call_preconditions(ctx, call);
+    if (pc.rejection.has_value()) {
+        logger->info("Tool '{}' rejected by precondition (kind={})",
+                     call.name, result_kind_to_string(pc.kind));
+        fire_post_tool_hook(ctx, call, "", 0.0, pc.kind);
+        return {std::move(*pc.rejection)};
     }
 
     auto exec_start = std::chrono::steady_clock::now();
@@ -666,16 +690,10 @@ std::vector<Message> ToolExecutor::process_single_call(
         std::to_string(ctx.metrics.iterations);
     record_tool_call(ctx, call, raw_result);
 
-    // Hook: POST_TOOL_CALL — enriched context (v1.9.5)
-    if (hook_iface_.fire_post != nullptr) {
-        auto json = build_post_tool_json(call, raw_result, exec_ms);
-        char* out = nullptr;
-        hook_iface_.fire_post(hook_iface_.registry,
-            ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
-        free(out);
-    }
-
     const bool is_err = msg.content.rfind("error", 0) == 0;
+    auto kind = is_err ? ToolResultKind::error : ToolResultKind::ok;
+    fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind);
+
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
     logger->info("[tool_call] iter={} tier={} tool={} args={} "
@@ -683,14 +701,56 @@ std::vector<Message> ToolExecutor::process_single_call(
                  ctx.metrics.iterations,
                  ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
                  call.name, args_log, exec_ms,
-                 raw_result.size(), is_err ? "error" : "ok");
+                 raw_result.size(), result_kind_to_string(kind));
 
-    // Extract and process directives from ServerResponse (v2.0.1)
     extract_and_process_directives(ctx, raw_result);
-
     run_post_tool_hooks(ctx);
 
     return {std::move(msg)};
+}
+
+/**
+ * @brief Fire PRE_TOOL_CALL hook.
+ * @param ctx Loop context.
+ * @param call Tool call.
+ * @return true if hook cancelled.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+bool ToolExecutor::fire_pre_tool_hook(
+    const LoopContext& ctx, const ToolCall& call) {
+    if (hook_iface_.fire_pre == nullptr) { return false; }
+    auto json = build_pre_tool_json(call, ctx.locked_tier,
+                                    ctx.metrics.iterations);
+    char* mod = nullptr;
+    int rc = hook_iface_.fire_pre(hook_iface_.registry,
+        ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
+    free(mod);
+    return rc != 0;
+}
+
+/**
+ * @brief Fire POST_TOOL_CALL hook with result_kind.
+ * @param ctx Loop context.
+ * @param call Tool call.
+ * @param raw_result Raw server response (may be empty on reject).
+ * @param elapsed_ms Duration.
+ * @param kind Typed outcome.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+void ToolExecutor::fire_post_tool_hook(
+    const LoopContext& ctx, const ToolCall& call,
+    const std::string& raw_result, double elapsed_ms,
+    ToolResultKind kind) {
+    if (hook_iface_.fire_post == nullptr) { return; }
+    auto json = build_post_tool_json(
+        call, raw_result, elapsed_ms, ctx.locked_tier,
+        ctx.metrics.iterations, kind);
+    char* out = nullptr;
+    hook_iface_.fire_post(hook_iface_.registry,
+        ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
+    free(out);
 }
 
 /**
@@ -839,20 +899,29 @@ void ToolExecutor::fire_tool_complete_callback(
 /**
  * @brief Build enriched POST_TOOL_CALL hook context JSON.
  * @param call Tool call that was executed.
- * @param raw_result Raw server response JSON.
+ * @param raw_result Raw server response JSON (may be empty on reject).
  * @param elapsed_ms Execution duration in milliseconds.
- * @return JSON string with tool details for hook consumers.
+ * @param tier Active tier.
+ * @param iteration Loop iteration.
+ * @param kind Typed outcome.
+ * @return JSON: tool_name, args, result, directives, elapsed_ms, tier, iteration, result_kind.
  * @internal
- * @version 1.9.5
+ * @version 2.0.6-rc19
  */
 std::string ToolExecutor::build_post_tool_json(
     const ToolCall& call,
     const std::string& raw_result,
-    double elapsed_ms) {
+    double elapsed_ms,
+    const std::string& tier,
+    int iteration,
+    ToolResultKind kind) {
     nlohmann::json ctx;
     ctx["tool_name"] = call.name;
     ctx["args"] = nlohmann::json::parse(serialize_args(call));
     ctx["elapsed_ms"] = elapsed_ms;
+    ctx["tier"] = tier.empty() ? std::string{"lead"} : tier;
+    ctx["iteration"] = iteration;
+    ctx["result_kind"] = result_kind_to_string(kind);
     try {
         auto sr = nlohmann::json::parse(raw_result);
         ctx["result"] = sr.value("result", raw_result);
@@ -863,6 +932,27 @@ std::string ToolExecutor::build_post_tool_json(
         ctx["directives"] = nlohmann::json::array();
     }
     return ctx.dump();
+}
+
+/**
+ * @brief Build PRE_TOOL_CALL hook context JSON.
+ * @param call Tool call being attempted.
+ * @param tier Active tier.
+ * @param iteration Loop iteration.
+ * @return JSON string.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+std::string ToolExecutor::build_pre_tool_json(
+    const ToolCall& call,
+    const std::string& tier,
+    int iteration) {
+    nlohmann::json j;
+    j["tool_name"] = call.name;
+    j["args"] = nlohmann::json::parse(serialize_args(call));
+    j["tier"] = tier.empty() ? std::string{"lead"} : tier;
+    j["iteration"] = iteration;
+    return j.dump();
 }
 
 /**

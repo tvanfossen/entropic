@@ -72,6 +72,7 @@ enum class ValidationVerdict {
     revised,                   ///< Violations found; revision applied
     rejected_reverted_length,  ///< Revision gutted content >50%; original preserved
     rejected_max_revisions,    ///< Revisions exhausted; last output returned as-is
+    skipped,                   ///< Validation did not run (skip_tiers / pure-tool-call / empty)
 };
 
 struct ValidationResult {

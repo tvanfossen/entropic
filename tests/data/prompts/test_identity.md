@@ -21,6 +21,8 @@ routable: false
 role_type: front_office
 explicit_completion: false
 repeat_penalty: 1.1
+max_iterations: 42
+max_tool_calls_per_turn: 7
 phases:
   default:
     temperature: 0.15

@@ -498,3 +498,36 @@ SCENARIO("max_iterations override caps loop before global limit",
         }
     }
 }
+
+// ── E7 regression: forced synthetic complete marks terminal_reason ─
+
+SCENARIO("Budget-exhausted forced complete sets terminal_reason metadata",
+         "[engine][E7][2.0.6-rc18]")
+{
+    GIVEN("an engine that will hit max_iterations with no real complete") {
+        MockInference mock;
+        mock.response = "working on it";
+        mock.finish_reason = "stop";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("loop runs to the cap") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            engine.run_loop(ctx);
+
+            THEN("terminal_reason metadata is budget_exhausted") {
+                auto it = ctx.metadata.find("terminal_reason");
+                REQUIRE(it != ctx.metadata.end());
+                REQUIRE(it->second == "budget_exhausted");
+            }
+            AND_THEN("final state is COMPLETE (synthetic)") {
+                REQUIRE(ctx.state == AgentState::COMPLETE);
+            }
+        }
+    }
+}

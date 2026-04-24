@@ -326,7 +326,7 @@ static void rewire_stream_observer(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc18
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -334,10 +334,17 @@ static void populate_tier_info(entropic_handle_t h,
     for (const auto& [name, tier] : h->config.models.tiers) {
         entropic::ChildContextInfo info;
         info.valid = true;
-        auto identity = entropic::prompts::resolve_tier_identity(
+        auto parsed = entropic::prompts::resolve_tier_identity_full(
             tier, name, data_dir);
-        info.system_prompt = shared_prefix + identity;
+        info.system_prompt = shared_prefix + parsed.body;
         info.explicit_completion = !tier.auto_chain.has_value();
+        // E6 (2.0.6-rc18): propagate per-identity caps from frontmatter
+        // so AgentEngine::tri_get_tier_param surfaces them to the loop
+        // and tool executor. -1 = "use global loop_config default".
+        info.max_iterations_override =
+            parsed.frontmatter.max_iterations;
+        info.max_tool_calls_per_turn_override =
+            parsed.frontmatter.max_tool_calls_per_turn;
         h->engine->set_tier_info(name, info);
     }
 }
@@ -568,7 +575,7 @@ static void wire_tool_executor(entropic_handle_t h) {
  * @param ud entropic_engine handle.
  * @return JSON string or NULL if validator not configured.
  * @callback
- * @version 2.0.6-rc17
+ * @version 2.0.6-rc18
  */
 static char* sp_get_validation(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
@@ -585,6 +592,8 @@ static char* sp_get_validation(void* ud) {
         v["verdict"] = "rejected_reverted_length"; break;
     case entropic::ValidationVerdict::rejected_max_revisions:
         v["verdict"] = "rejected_max_revisions"; break;
+    case entropic::ValidationVerdict::skipped:
+        v["verdict"] = "skipped"; break;
     }
     v["revisions_applied"] = r.revision_count;
     nlohmann::json violations = nlohmann::json::array();

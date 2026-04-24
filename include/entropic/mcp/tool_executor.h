@@ -17,6 +17,7 @@
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_call_history.h>
+#include <entropic/types/tool_result.h>
 
 #include <optional>
 #include <string>
@@ -25,6 +26,21 @@
 namespace entropic {
 
 /* ToolExecutorHooks moved to engine_types.h — v2.0.2 */
+
+/**
+ * @brief Outcome of precondition checks for a single tool call.
+ *
+ * Binds the rejection message (if any) with the categorical
+ * ToolResultKind so POST_TOOL_CALL hook consumers can branch on the
+ * typed enum instead of grepping engine-authored prose. (E10,
+ * 2.0.6-rc19)
+ *
+ * @version 2.0.6-rc19
+ */
+struct PreconditionCheck {
+    std::optional<Message> rejection;   ///< Rejection message (nullopt if cleared)
+    ToolResultKind kind = ToolResultKind::ok;  ///< Category on rejection
+};
 
 /**
  * @brief Processes tool calls from model output.
@@ -197,11 +213,22 @@ private:
      * @brief Check preconditions (MCP keys, tier, duplicate, approval).
      * @param ctx Loop context.
      * @param call Tool call.
-     * @return Rejection message if blocked, nullopt if clear.
+     * @return PreconditionCheck with rejection + typed kind.
      * @internal
-     * @version 1.9.4
+     * @version 2.0.6-rc19
      */
-    std::optional<Message> check_call_preconditions(
+    PreconditionCheck check_call_preconditions(
+        LoopContext& ctx, const ToolCall& call);
+
+    /**
+     * @brief Terminal approval + duplicate-counter reset step.
+     * @param ctx Loop context.
+     * @param call Tool call.
+     * @return PreconditionCheck with rejection+kind on denial.
+     * @internal
+     * @version 2.0.6-rc19
+     */
+    PreconditionCheck check_approval_pc(
         LoopContext& ctx, const ToolCall& call);
 
     /**
@@ -294,16 +321,67 @@ private:
     /**
      * @brief Build enriched POST_TOOL_CALL hook context JSON.
      * @param call Tool call that was executed.
-     * @param raw_result Raw server response JSON.
+     * @param raw_result Raw server response JSON (may be empty on reject).
      * @param elapsed_ms Execution duration in milliseconds.
-     * @return JSON string with tool_name, args, result, directives, elapsed_ms.
+     * @param tier Active tier (empty → "lead" fallback).
+     * @param iteration Loop iteration at dispatch time.
+     * @param kind Typed outcome category (E10).
+     * @return JSON string with tool_name, args, result, directives,
+     *         elapsed_ms, tier, iteration, result_kind.
      * @internal
-     * @version 1.9.5
+     * @version 2.0.6-rc19
      */
     static std::string build_post_tool_json(
         const ToolCall& call,
         const std::string& raw_result,
-        double elapsed_ms);
+        double elapsed_ms,
+        const std::string& tier,
+        int iteration,
+        ToolResultKind kind);
+
+    /**
+     * @brief Build PRE_TOOL_CALL hook context JSON.
+     * @param call Tool call being attempted.
+     * @param tier Active tier (empty → "lead" fallback).
+     * @param iteration Loop iteration at dispatch time.
+     * @return JSON string with tool_name, args, tier, iteration.
+     * @internal
+     * @version 2.0.6-rc19
+     */
+    static std::string build_pre_tool_json(
+        const ToolCall& call,
+        const std::string& tier,
+        int iteration);
+
+    /**
+     * @brief Fire POST_TOOL_CALL hook (if wired).
+     *
+     * Consolidates post-hook firing for all paths (pre-hook cancel,
+     * precondition reject, executed) so no exit path drops the hook.
+     * @param ctx Loop context.
+     * @param call Tool call.
+     * @param raw_result Raw server response (may be empty).
+     * @param elapsed_ms Duration in ms.
+     * @param kind Typed outcome category.
+     * @internal
+     * @version 2.0.6-rc19
+     */
+    void fire_post_tool_hook(const LoopContext& ctx,
+                             const ToolCall& call,
+                             const std::string& raw_result,
+                             double elapsed_ms,
+                             ToolResultKind kind);
+
+    /**
+     * @brief Fire PRE_TOOL_CALL hook; returns true if cancelled.
+     * @param ctx Loop context.
+     * @param call Tool call.
+     * @return true if hook returned non-zero (cancel).
+     * @internal
+     * @version 2.0.6-rc19
+     */
+    bool fire_pre_tool_hook(const LoopContext& ctx,
+                            const ToolCall& call);
 
     /**
      * @brief Fire tool complete callback.

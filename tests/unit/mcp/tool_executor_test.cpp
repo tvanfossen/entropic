@@ -2,9 +2,10 @@
 /**
  * @file test_tool_executor.cpp
  * @brief ToolExecutor unit tests.
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc19
  */
 
+#include <entropic/core/hook_registry.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/mcp/server_manager.h>
 #include <entropic/mcp/tool_base.h>
@@ -491,6 +492,234 @@ SCENARIO("effective_max_tool_calls_per_turn overrides global limit",
 
             THEN("global limit of 2 is applied") {
                 REQUIRE(results.size() == 2);
+            }
+        }
+    }
+}
+
+// ── E9/E10: PRE/POST_TOOL_CALL firing + result_kind (2.0.6-rc19) ──
+
+namespace {
+
+/**
+ * @brief Event record captured by the per-test hook.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+struct HookEvent {
+    entropic_hook_point_t point;
+    std::string context_json;
+};
+
+/**
+ * @brief Cancelling PRE hook.
+ * @param hp Hook point.
+ * @param ctx Context JSON.
+ * @param mod Out modified JSON (unused).
+ * @param ud Event sink (vector<HookEvent>*).
+ * @return 1 to cancel the call (PRE_TOOL_CALL only).
+ * @internal
+ * @version 2.0.6-rc19
+ */
+static int cancelling_pre_cb(
+    entropic_hook_point_t hp, const char* ctx,
+    char** /*mod*/, void* ud) {
+    auto* sink = static_cast<std::vector<HookEvent>*>(ud);
+    sink->push_back({hp, ctx ? std::string{ctx} : std::string{}});
+    return 1;
+}
+
+/**
+ * @brief Record hook fires into a sink without cancelling.
+ * @return 0 always.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+static int record_hook_cb(
+    entropic_hook_point_t hp, const char* ctx,
+    char** /*mod*/, void* ud) {
+    auto* sink = static_cast<std::vector<HookEvent>*>(ud);
+    sink->push_back({hp, ctx ? std::string{ctx} : std::string{}});
+    return 0;
+}
+
+/**
+ * @brief Wire a fresh HookRegistry onto a ToolExecutor.
+ * @param executor Target executor.
+ * @param reg Registry to wire.
+ * @internal
+ * @version 2.0.6-rc19
+ */
+static void attach_registry(ToolExecutor& executor, HookRegistry& reg) {
+    HookInterface hi;
+    hi.registry = &reg;
+    hi.fire_pre = [](void* r, entropic_hook_point_t pt,
+                     const char* json, char** out) -> int {
+        return static_cast<HookRegistry*>(r)->fire_pre(pt, json, out);
+    };
+    hi.fire_post = [](void* r, entropic_hook_point_t pt,
+                      const char* json, char** out) {
+        static_cast<HookRegistry*>(r)->fire_post(pt, json, out);
+    };
+    hi.fire_info = [](void* r, entropic_hook_point_t pt,
+                      const char* json) {
+        static_cast<HookRegistry*>(r)->fire_info(pt, json);
+    };
+    executor.set_hooks(hi);
+}
+
+} // namespace
+
+SCENARIO("PRE/POST_TOOL_CALL fire for successful calls",
+         "[tool_executor][E9][2.0.6-rc19]") {
+    GIVEN("a ToolExecutor with PRE and POST hooks registered") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a tool call is processed") {
+            LoopContext ctx;
+            ctx.locked_tier = "eng";
+            ctx.metrics.iterations = 4;
+            executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+
+            THEN("both hooks fire in order") {
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0].point == ENTROPIC_HOOK_PRE_TOOL_CALL);
+                REQUIRE(events[1].point == ENTROPIC_HOOK_POST_TOOL_CALL);
+            }
+            AND_THEN("PRE context carries tier, args, iteration") {
+                auto pre = nlohmann::json::parse(events[0].context_json);
+                REQUIRE(pre.at("tool_name").get<std::string>()
+                        == "ok.do_thing");
+                REQUIRE(pre.at("tier").get<std::string>() == "eng");
+                REQUIRE(pre.at("iteration").get<int>() == 4);
+                REQUIRE(pre.contains("args"));
+            }
+            AND_THEN("POST context carries result_kind=ok") {
+                auto post = nlohmann::json::parse(events[1].context_json);
+                REQUIRE(post.at("result_kind").get<std::string>()
+                        == "ok");
+                REQUIRE(post.at("tier").get<std::string>() == "eng");
+                REQUIRE(post.at("iteration").get<int>() == 4);
+            }
+        }
+    }
+}
+
+SCENARIO("POST_TOOL_CALL fires on duplicate rejection with kind",
+         "[tool_executor][E9][E10][2.0.6-rc19]") {
+    GIVEN("an executor with POST hook, after a first call") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        LoopContext ctx;
+        executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+        events.clear();
+
+        WHEN("the identical call is re-submitted") {
+            executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+
+            THEN("POST_TOOL_CALL fires with result_kind=rejected_duplicate") {
+                REQUIRE(events.size() == 1);
+                REQUIRE(events[0].point
+                        == ENTROPIC_HOOK_POST_TOOL_CALL);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                REQUIRE(post.at("result_kind").get<std::string>()
+                        == "rejected_duplicate");
+            }
+        }
+    }
+}
+
+SCENARIO("POST_TOOL_CALL fires on schema rejection with kind",
+         "[tool_executor][E9][E10][2.0.6-rc19]") {
+    GIVEN("an executor with an enum-constrained tool and POST hook") {
+        auto mgr = make_enum_manager();
+        LoopConfig lc;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb, {});
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a tool is called with an invalid enum value") {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-bad";
+            call.name = "enum.pick";
+            call.arguments["color"] = "purple";
+            executor.process_tool_calls(ctx, {call});
+
+            THEN("POST_TOOL_CALL fires with result_kind=rejected_schema") {
+                REQUIRE(events.size() == 1);
+                auto post = nlohmann::json::parse(events[0].context_json);
+                REQUIRE(post.at("result_kind").get<std::string>()
+                        == "rejected_schema");
+            }
+        }
+    }
+}
+
+SCENARIO("PRE_TOOL_CALL cancel short-circuits dispatch and still fires POST",
+         "[tool_executor][E9][2.0.6-rc19]") {
+    GIVEN("an executor with a cancelling PRE hook and a POST recorder") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_PRE_TOOL_CALL,
+                          cancelling_pre_cb, &events, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a tool call is processed") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("rejection message is returned") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("denied")
+                        != std::string::npos);
+            }
+            AND_THEN("PRE fired, then POST fired with "
+                     "rejected_precondition") {
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0].point
+                        == ENTROPIC_HOOK_PRE_TOOL_CALL);
+                REQUIRE(events[1].point
+                        == ENTROPIC_HOOK_POST_TOOL_CALL);
+                auto post = nlohmann::json::parse(events[1].context_json);
+                REQUIRE(post.at("result_kind").get<std::string>()
+                        == "rejected_precondition");
             }
         }
     }

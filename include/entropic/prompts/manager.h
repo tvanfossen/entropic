@@ -84,6 +84,8 @@ struct IdentityFrontmatter {
     bool explicit_completion = false;          ///< Requires explicit completion
     std::vector<std::string> validation_rules; ///< Per-identity constitutional rules (v2.0.6)
     bool relay_single_delegate = false;        ///< Skip re-synthesis when single delegate returns (v2.0.11)
+    int max_iterations = -1;                   ///< Per-identity loop iteration cap; -1 = use global (E6)
+    int max_tool_calls_per_turn = -1;          ///< Per-identity tool call cap; -1 = use global (E6)
     std::optional<std::unordered_map<std::string, PhaseConfig>> phases; ///< Named phases
     std::optional<BenchmarkSpec> benchmark;    ///< Benchmark definition
 };
@@ -200,6 +202,26 @@ ENTROPIC_EXPORT std::string load_app_context(
  * @version 2.0.1
  */
 ENTROPIC_EXPORT std::string resolve_tier_identity(
+    const entropic::TierConfig& tier_config,
+    const std::string& tier_name,
+    const std::filesystem::path& data_dir);
+
+/**
+ * @brief Resolve full parsed identity (body + frontmatter) for a tier.
+ *
+ * Same resolution rules as resolve_tier_identity() but returns the
+ * full ParsedIdentity so callers can read frontmatter fields
+ * (max_iterations, max_tool_calls_per_turn, etc.) that are discarded
+ * by the body-only variant. Returns an empty-body ParsedIdentity if
+ * no identity file is found. (E6, 2.0.6-rc18)
+ *
+ * @param tier_config Tier configuration.
+ * @param tier_name Tier name (for default path convention).
+ * @param data_dir Bundled data directory.
+ * @return ParsedIdentity; body is empty if disabled or not found.
+ * @version 2.0.6-rc18
+ */
+ENTROPIC_EXPORT ParsedIdentity resolve_tier_identity_full(
     const entropic::TierConfig& tier_config,
     const std::string& tier_name,
     const std::filesystem::path& data_dir);

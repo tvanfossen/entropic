@@ -369,7 +369,7 @@ void DelegationManager::complete_storage_record(
  * @param max_turns Optional turn limit.
  * @return DelegationResult.
  * @internal
- * @version 2.0.6
+ * @version 2.0.6-rc18
  */
 DelegationResult DelegationManager::run_child(
     LoopContext& child_ctx,
@@ -407,19 +407,65 @@ DelegationResult DelegationManager::run_child(
         todo_callbacks_.restore(saved_todo, todo_callbacks_.user_data);
     }
 
+    auto result = build_child_result(
+        target_tier, task, child_ctx);
+    complete_storage_record(delegation_id, result);
+    log_child_result(result);
+    return result;
+}
+
+/**
+ * @brief Build DelegationResult from a terminated child loop context.
+ *
+ * Reads terminal_reason metadata (E7) and sets success=true only when
+ * the child reached COMPLETE via a real entropic.complete — never for
+ * a synthetic budget_exhausted termination. Keeps run_child under the
+ * 50-SLOC complexity gate. (2.0.6-rc18)
+ *
+ * @param target_tier Tier that executed.
+ * @param task Task text.
+ * @param child_ctx Terminated child context (messages moved out).
+ * @return Fully-populated DelegationResult.
+ * @internal
+ * @version 2.0.6-rc18
+ */
+DelegationResult DelegationManager::build_child_result(
+    const std::string& target_tier,
+    const std::string& task,
+    LoopContext& child_ctx) {
     DelegationResult result;
     result.target_tier = target_tier;
     result.task = task;
-    result.success = (child_ctx.state == AgentState::COMPLETE);
+    auto tr = child_ctx.metadata.find("terminal_reason");
+    if (tr != child_ctx.metadata.end()) {
+        result.terminal_reason = tr->second;
+    }
+    result.success = (child_ctx.state == AgentState::COMPLETE
+                      && result.terminal_reason.empty());
     result.turns_used = child_ctx.metrics.iterations;
     result.summary = extract_summary(child_ctx);
     result.child_messages = std::move(child_ctx.messages);
-
-    complete_storage_record(delegation_id, result);
-
-    logger->info("Child loop done: tier={} success={} turns={}",
-                 target_tier, result.success, result.turns_used);
     return result;
+}
+
+/**
+ * @brief Emit the "Child loop done:" log with branch on terminal_reason.
+ * @param result Delegation result with terminal_reason populated.
+ * @internal
+ * @version 2.0.6-rc18
+ */
+void DelegationManager::log_child_result(
+    const DelegationResult& result) {
+    if (result.terminal_reason.empty()) {
+        logger->info("Child loop done: tier={} success={} turns={}",
+                     result.target_tier, result.success,
+                     result.turns_used);
+    } else {
+        logger->warn("Child loop done: tier={} success=false "
+                     "turns={} reason={}",
+                     result.target_tier, result.turns_used,
+                     result.terminal_reason);
+    }
 }
 
 /**

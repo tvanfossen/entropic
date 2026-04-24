@@ -304,7 +304,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.0.6-rc18
  */
 void AgentEngine::loop(LoopContext& ctx) {
     // Hook: ON_LOOP_START (v1.9.1)
@@ -337,6 +337,9 @@ void AgentEngine::loop(LoopContext& ctx) {
         && ctx.state != AgentState::INTERRUPTED) {
         // P3-18 follow-up (2.0.6-rc16.2): force synthetic completion
         // so the facade returns a proper result when the cap is hit.
+        // E7 (2.0.6-rc18): mark ctx.metadata with the terminal reason
+        // so delegate result and parent-tier relay can surface that
+        // the child did not complete naturally.
         logger->warn("Loop ended due to max iterations ({}/{}) — "
                      "forcing synthetic entropic.complete",
                      ctx.metrics.iterations, resolve_max_iterations(ctx));
@@ -346,6 +349,7 @@ void AgentEngine::loop(LoopContext& ctx) {
             + std::to_string(ctx.metrics.iterations)
             + " iterations — returning current state]";
         ctx.messages.push_back(std::move(forced));
+        ctx.metadata["terminal_reason"] = "budget_exhausted";
         set_state(ctx, AgentState::COMPLETE);
     }
 
@@ -1515,12 +1519,17 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.0.6-rc18
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
-    if (result.success
-        && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
+    // E7/E8 (2.0.6-rc18): relay only if child hit a real complete;
+    // when a child was synthetically terminated (budget_exhausted),
+    // the summary is not authoritative — skip relay entirely.
+    const bool can_relay = result.success
+        && result.terminal_reason.empty()
+        && relay_single_delegate_tiers_.count(ctx.locked_tier);
+    if (can_relay) {
         GenerateResult relay_result;
         relay_result.content = result.summary;
         relay_result.finish_reason = "stop";
@@ -1530,13 +1539,64 @@ void AgentEngine::finalize_delegation_result(
         ctx.metadata["explicit_completion_summary"] =
             relay_result.content;
         set_state(ctx, AgentState::COMPLETE);
-        logger->info("Relay: single-delegate result validated & used");
+        log_relay_status(ctx);
         return;
+    }
+    if (!result.terminal_reason.empty()
+        && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
+        ctx.metadata["relay_status"] = "budget_exhausted";
+        logger->warn(
+            "Relay: single-delegate result suppressed "
+            "(warning: delegate budget exhausted — reason={})",
+            result.terminal_reason);
     }
     bool needs_explicit = tier_requires_explicit_completion(
         ctx.locked_tier);
     set_state(ctx, (result.success && !needs_explicit)
         ? AgentState::COMPLETE : AgentState::EXECUTING);
+}
+
+/**
+ * @brief Emit a disambiguating log for the relay-took-delegate path.
+ *
+ * Distinguishes three cases: validation actually ran and passed,
+ * validation was skipped (e.g. lead in skip_tiers), or no validator
+ * is configured. Writes ctx.metadata["relay_status"] so downstream
+ * (ON_COMPLETE hook context, ask_complete) can render it.
+ * (E8, 2.0.6-rc18)
+ *
+ * @param ctx Loop context (metadata mutated).
+ * @internal
+ * @version 2.0.6-rc18
+ */
+void AgentEngine::log_relay_status(LoopContext& ctx) {
+    std::string verdict;
+    if (validation_provider_ != nullptr) {
+        char* v = validation_provider_(validation_provider_data_);
+        if (v != nullptr) {
+            std::string jv(v);
+            free(v);
+            auto pos = jv.find("\"verdict\":\"");
+            if (pos != std::string::npos) {
+                pos += 11;
+                auto end = jv.find('"', pos);
+                if (end != std::string::npos) {
+                    verdict = jv.substr(pos, end - pos);
+                }
+            }
+        }
+    }
+    if (verdict == "skipped" || verdict.empty()) {
+        ctx.metadata["relay_status"] = "validation_skipped";
+        logger->info(
+            "Relay: single-delegate result used "
+            "(lead validation skipped per config)");
+    } else {
+        ctx.metadata["relay_status"] = "validated";
+        logger->info(
+            "Relay: single-delegate result used "
+            "(passed lead validation)");
+    }
 }
 
 /**

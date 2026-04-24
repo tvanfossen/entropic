@@ -31,11 +31,17 @@ class AgentEngine; // forward declaration
  */
 struct DelegationResult {
     std::string summary;                  ///< Final summary from child
-    bool success = false;                 ///< Whether child reached COMPLETE
+    bool success = false;                 ///< Whether child reached COMPLETE via real entropic.complete
     std::string target_tier;              ///< Tier that executed
     std::string task;                     ///< Original task text
     int turns_used = 0;                   ///< Iterations consumed
     std::vector<Message> child_messages;  ///< Full child message history
+    /// @brief Non-empty when the child terminated synthetically rather
+    /// than via a real entropic.complete. Current value: "budget_exhausted"
+    /// — set by AgentEngine::loop when max_iterations is hit and a
+    /// forced synthetic complete is injected. Empty string = natural
+    /// completion. (E7, 2.0.6-rc18)
+    std::string terminal_reason;
 };
 
 /**
@@ -184,6 +190,28 @@ private:
         const std::string& target_tier,
         const std::string& task,
         std::optional<int> max_turns);
+
+    /**
+     * @brief Build DelegationResult from a terminated child context.
+     * @param target_tier Tier that executed.
+     * @param task Task text.
+     * @param child_ctx Terminated child context (messages moved out).
+     * @return DelegationResult with terminal_reason/success populated.
+     * @internal
+     * @version 2.0.6-rc18
+     */
+    DelegationResult build_child_result(
+        const std::string& target_tier,
+        const std::string& task,
+        LoopContext& child_ctx);
+
+    /**
+     * @brief Emit "Child loop done:" log branched on terminal_reason.
+     * @param result Delegation result with terminal_reason populated.
+     * @internal
+     * @version 2.0.6-rc18
+     */
+    void log_child_result(const DelegationResult& result);
 
     /**
      * @brief Finalize worktree based on delegation result.

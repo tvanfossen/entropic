@@ -475,6 +475,14 @@ private:
         LoopContext& ctx, const struct DelegationResult& result);
 
     /**
+     * @brief Emit disambiguating log + metadata for relay path.
+     * @param ctx Loop context (metadata mutated).
+     * @internal
+     * @version 2.0.6-rc18
+     */
+    void log_relay_status(LoopContext& ctx);
+
+    /**
      * @brief Check if loop should stop.
      * @param ctx Loop context.
      * @return true if loop should terminate.

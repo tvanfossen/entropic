@@ -134,6 +134,16 @@ SCENARIO("Load identity file", "[prompts][identity]") {
                 REQUIRE(identity.frontmatter.enable_thinking == false);
             }
 
+            // E6 regression: per-identity cap overrides flow through
+            // the parser and land on the frontmatter struct.
+            THEN("per-identity max_iterations parsed") {
+                REQUIRE(identity.frontmatter.max_iterations == 42);
+            }
+            AND_THEN("per-identity max_tool_calls_per_turn parsed") {
+                REQUIRE(identity.frontmatter.max_tool_calls_per_turn
+                        == 7);
+            }
+
             THEN("phases are parsed") {
                 REQUIRE(identity.frontmatter.phases.has_value());
                 REQUIRE(identity.frontmatter.phases->size() == 2);

@@ -222,7 +222,7 @@ static void extract_benchmark(
  * @brief Extract identity-specific fields from a pre-parsed ryml tree.
  * @param root ryml root node of the frontmatter.
  * @param[out] fm Output identity frontmatter.
- * @version 5
+ * @version 2.0.6-rc18
  * @internal
  */
 static void extract_identity_fields(
@@ -256,6 +256,9 @@ static void extract_identity_fields(
     extract(root, "role_type", fm.role_type);
     extract(root, "explicit_completion", fm.explicit_completion);
     extract(root, "relay_single_delegate", fm.relay_single_delegate);
+    // E6 (2.0.6-rc18): per-identity loop + tool-call caps
+    extract(root, "max_iterations", fm.max_iterations);
+    extract(root, "max_tool_calls_per_turn", fm.max_tool_calls_per_turn);
     extract_string_list(root, "validation_rules", fm.validation_rules);
 
     extract_phases(root, fm);
@@ -406,21 +409,21 @@ std::string load_app_context(
 }
 
 /**
- * @brief Resolve the system prompt body for a named tier.
+ * @brief Resolve a full parsed identity (body + frontmatter) for a tier.
  *
  * Path convention:
  * 1. If tier has explicit identity path → use it
  * 2. If identity not disabled → data_dir/prompts/identity_{tier_name}.md
- * 3. If disabled or not found → empty string
+ * 3. If disabled or not found → empty ParsedIdentity
  *
  * @param tier_config Tier configuration.
  * @param tier_name Tier name (for default path convention).
  * @param data_dir Bundled data directory.
- * @return Identity body string (empty if disabled or not found).
+ * @return ParsedIdentity; body empty when no identity resolved.
  * @utility
- * @version 2.0.1
+ * @version 2.0.6-rc18
  */
-std::string resolve_tier_identity(
+ParsedIdentity resolve_tier_identity_full(
     const entropic::TierConfig& tier_config,
     const std::string& tier_name,
     const std::filesystem::path& data_dir)
@@ -432,19 +435,37 @@ std::string resolve_tier_identity(
         id_path = data_dir / "prompts"
             / ("identity_" + tier_name + ".md");
     }
-    if (id_path.empty() || !std::filesystem::exists(id_path)) {
-        return "";
-    }
     ParsedIdentity id;
+    if (id_path.empty() || !std::filesystem::exists(id_path)) {
+        return id;
+    }
     auto err = load_identity(id_path, id);
     if (!err.empty()) {
         s_log->warn("identity load failed for tier '{}': {}",
                      tier_name, err);
-        return "";
+        return ParsedIdentity{};
     }
     s_log->info("identity loaded for tier '{}' from {}",
                  tier_name, id_path.string());
-    return id.body;
+    return id;
+}
+
+/**
+ * @brief Body-only wrapper around resolve_tier_identity_full.
+ * @param tier_config Tier configuration.
+ * @param tier_name Tier name (for default path convention).
+ * @param data_dir Bundled data directory.
+ * @return Identity body string (empty if disabled or not found).
+ * @utility
+ * @version 2.0.6-rc18
+ */
+std::string resolve_tier_identity(
+    const entropic::TierConfig& tier_config,
+    const std::string& tier_name,
+    const std::filesystem::path& data_dir)
+{
+    return resolve_tier_identity_full(
+        tier_config, tier_name, data_dir).body;
 }
 
 /**

@@ -161,7 +161,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.0.6-rc18
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -172,6 +172,7 @@ ValidationResult ConstitutionalValidator::validate(
 
     if (!should_validate(tier)) {
         logger->info("Validation skipped for tier '{}'", tier);
+        result.verdict = ValidationVerdict::skipped;
         store_result(result);
         return result;
     }
@@ -180,6 +181,7 @@ ValidationResult ConstitutionalValidator::validate(
     auto cleaned = strip_think_blocks(content);
     if (cleaned.empty() || is_pure_tool_call(cleaned)) {
         logger->info("Validation skipped: pure tool-call or empty");
+        result.verdict = ValidationVerdict::skipped;
         store_result(result);
         return result;
     }
@@ -197,7 +199,7 @@ ValidationResult ConstitutionalValidator::validate(
  * @brief Emit a disambiguating log line per verdict. (E5, 2.0.6-rc17)
  * @param result Validation result with verdict set.
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.0.6-rc18
  */
 void ConstitutionalValidator::log_verdict(
     const ValidationResult& result) const {
@@ -218,6 +220,9 @@ void ConstitutionalValidator::log_verdict(
         logger->warn("Validation rejected "
                      "(max revisions exhausted; {} violation(s) remain)",
                      result.final_critique.violations.size());
+        break;
+    case ValidationVerdict::skipped:
+        // log-site above already emits "Validation skipped…"
         break;
     }
 }

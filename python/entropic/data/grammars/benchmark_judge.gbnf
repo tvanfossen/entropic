@@ -1,6 +1,0 @@
-root        ::= "{" ws grade-pair ws "," ws reason-pair ws "}"
-grade-pair  ::= "\"grade\":" ws grade
-reason-pair ::= "\"reason\":" ws string
-grade       ::= "\"A\"" | "\"B\"" | "\"C\"" | "\"D\"" | "\"F\""
-string      ::= "\"" ([^"\\] | "\\" .)* "\""
-ws          ::= [ \t\n]*

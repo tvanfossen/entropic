@@ -87,15 +87,10 @@ constexpr int MAX_RETRIES = 2;
  * @brief Resolve bundled_models.yaml path from project source.
  * @return Path to bundled_models.yaml.
  * @utility
- * @version 1.10.2
+ * @version 2.1.0
  */
 inline fs::path bundled_models_path() {
-    fs::path data_dir = fs::path(MODEL_PATH) / "data";
-    if (fs::exists(data_dir / "bundled_models.yaml")) {
-        return data_dir / "bundled_models.yaml";
-    }
-    return fs::path(MODEL_PATH)
-        / "python" / "entropic" / "data" / "bundled_models.yaml";
+    return fs::path(MODEL_PATH) / "data" / "bundled_models.yaml";
 }
 
 /**
@@ -157,12 +152,12 @@ inline bool init_orchestrator(ModelTestContext& ctx) {
 
 /**
  * @brief Resolve path to the bundled prompts directory.
- * @return Path to python/entropic/data/prompts/.
+ * @return Path to data/prompts/.
  * @utility
- * @version 1.10.2
+ * @version 2.1.0
  */
 inline fs::path bundled_prompts_dir() {
-    return fs::path(MODEL_PATH) / "python" / "entropic" / "data" / "prompts";
+    return fs::path(MODEL_PATH) / "data" / "prompts";
 }
 
 /**

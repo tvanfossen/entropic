@@ -1,7 +1,0 @@
-# Install from source (recommended for development):
-#   pip install -e ../../
-#
-# Or from PyPI:
-#   pip install entropic-engine
-
-entropic-engine

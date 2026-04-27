@@ -43,8 +43,8 @@ static char* mock_config(void* /*ud*/) {
  */
 static char* mock_identities(void* /*ud*/) {
     return strdup(R"([
-        {"name":"lead","role_type":"lead"},
-        {"name":"eng","role_type":"back_office"}
+        {"name":"lead"},
+        {"name":"eng"}
     ])");
 }
 

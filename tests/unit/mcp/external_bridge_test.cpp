@@ -2,7 +2,7 @@
 /**
  * @file external_bridge_test.cpp
  * @brief ExternalBridge unit tests — async task lifecycle.
- * @version 2.0.11
+ * @version 2.1.0
  */
 
 #include <entropic/mcp/external_bridge.h>
@@ -248,6 +248,84 @@ SCENARIO("async task phase transitions through the lifecycle",
 }
 
 // ── P1-8: cancel-on-clear primitives (2.0.6-rc16) ─────────
+
+SCENARIO("Phase observer generation counter discards stale post-detach fires (E5+E6)",
+         "[external_bridge][E5][E6][2.1.0]")
+{
+    GIVEN("a bridge with a manually-registered task") {
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test-obsgen");
+        {
+            std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+            auto& t = bridge.tasks_for_cancel()["task-1"];
+            t.status = "running";
+            t.phase = "running";
+            t.created = std::chrono::steady_clock::now();
+        }
+
+        WHEN("attach_phase_observer is called") {
+            // Note: attach calls entropic_set_state_observer(handle_, ...) on
+            // a null handle. The facade tolerates this (no-op on null) per
+            // the existing null-handle test fixtures used elsewhere here.
+            bridge.attach_phase_observer("task-1");
+
+            THEN("a callback fired now is fresh, not stale") {
+                std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                CHECK_FALSE(bridge.observer_call_is_stale());
+            }
+
+            AND_WHEN("detach_phase_observer is called") {
+                bridge.detach_phase_observer();
+
+                THEN("the observer-call gen check now reports stale") {
+                    std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                    CHECK(bridge.observer_call_is_stale());
+                }
+            }
+
+            AND_WHEN("a stale cb thread tries to fire after detach") {
+                bridge.detach_phase_observer();
+
+                // Simulate an in-flight engine callback that already
+                // dispatched before the nullptr-swap. The thread acquires
+                // tasks_mutex_, checks staleness, exits without writing.
+                std::atomic<bool> would_have_written{false};
+                std::thread stale_cb([&] {
+                    std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                    if (bridge.observer_call_is_stale()) { return; }
+                    would_have_written.store(true);
+                });
+                stale_cb.join();
+
+                THEN("the stale callback exits without touching state") {
+                    CHECK_FALSE(would_have_written.load());
+                    // Phase remains the value set at task injection — the
+                    // cb did NOT mutate it onto "validating" or "revising".
+                    std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                    auto& t = bridge.tasks_for_cancel().at("task-1");
+                    CHECK(t.phase == "running");
+                }
+            }
+
+            AND_WHEN("re-attached to a different task after detach") {
+                bridge.detach_phase_observer();
+                {
+                    std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                    auto& t2 = bridge.tasks_for_cancel()["task-2"];
+                    t2.status = "running";
+                    t2.phase = "running";
+                    t2.created = std::chrono::steady_clock::now();
+                }
+                bridge.attach_phase_observer("task-2");
+
+                THEN("staleness clears — fresh callbacks are accepted again") {
+                    std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+                    CHECK_FALSE(bridge.observer_call_is_stale());
+                }
+            }
+        }
+    }
+}
 
 SCENARIO("mark cancelling flips queued/running tasks",
          "[external_bridge][P1-8][2.0.6-rc16]")

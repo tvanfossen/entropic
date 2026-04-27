@@ -6,9 +6,4 @@ primary:
   adapter: qwen35
   description: Primary workhorse
 
-router:
-  name: Qwen3-0.6B-Q8_0
-  url: https://example.com/router.gguf
-  size_gb: 0.6
-  adapter: qwen3
-  description: Classification router
+# router model removed in v2.1.0

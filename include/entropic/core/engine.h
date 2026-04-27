@@ -475,12 +475,23 @@ private:
         LoopContext& ctx, const struct DelegationResult& result);
 
     /**
+     * @brief Shared relay machinery: fire hook, write summary, set COMPLETE.
+     * @param ctx Loop context.
+     * @param summary Content to relay (caller applies any prefix).
+     * @internal
+     * @version 2.1.0
+     */
+    void relay_partial_result(LoopContext& ctx, const std::string& summary);
+
+    /**
      * @brief Emit disambiguating log + metadata for relay path.
      * @param ctx Loop context (metadata mutated).
+     * @param terminal_reason Non-empty when relaying a budget_exhausted child.
      * @internal
-     * @version 2.0.6-rc18
+     * @version 2.1.0
      */
-    void log_relay_status(LoopContext& ctx);
+    void log_relay_status(LoopContext& ctx,
+                          const std::string& terminal_reason = {});
 
     /**
      * @brief Check if loop should stop.

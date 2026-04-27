@@ -250,10 +250,8 @@ static void extract_identity_fields(
     extract(root, "temperature", fm.temperature);
     extract(root, "repeat_penalty", fm.repeat_penalty);
     extract(root, "enable_thinking", fm.enable_thinking);
-    extract(root, "model_preference", fm.model_preference);
     extract(root, "interstitial", fm.interstitial);
     extract(root, "routable", fm.routable);
-    extract(root, "role_type", fm.role_type);
     extract(root, "explicit_completion", fm.explicit_completion);
     extract(root, "relay_single_delegate", fm.relay_single_delegate);
     // E6 (2.0.6-rc18): per-identity loop + tool-call caps

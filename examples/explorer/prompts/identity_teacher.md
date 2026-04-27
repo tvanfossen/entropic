@@ -16,7 +16,6 @@ allowed_tools:
   - docs.get_hierarchy
   - entropic.complete
 explicit_completion: true
-role_type: back_office
 ---
 
 # Teacher — Architecture Educator

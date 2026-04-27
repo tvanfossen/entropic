@@ -24,9 +24,4 @@ lightweight:
   adapter: qwen35
   description: Lightweight alternative (8GB+ VRAM)
 
-router:
-  name: Qwen3-0.6B-Q8_0
-  url: https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf
-  size_gb: 0.6
-  adapter: qwen3
-  description: Classification router
+# router model removed in v2.1.0 — use a dedicated identity for routing instead

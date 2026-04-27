@@ -1509,46 +1509,59 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 }
 
 /**
+ * @brief Shared relay machinery: fire hook, write summary, set COMPLETE.
+ *
+ * Called by both the normal and budget_exhausted relay paths in
+ * finalize_delegation_result. Caller applies any content prefix before
+ * passing summary.
+ *
+ * @param ctx Loop context.
+ * @param summary Content to relay.
+ * @internal
+ * @version 2.1.0
+ */
+void AgentEngine::relay_partial_result(
+    LoopContext& ctx, const std::string& summary) {
+    GenerateResult relay_result;
+    relay_result.content = summary;
+    relay_result.finish_reason = "stop";
+    relay_result.tool_calls_json = "[]";
+    fire_post_generate_hook(
+        relay_result, ctx.locked_tier, ctx.messages);
+    ctx.metadata["explicit_completion_summary"] = relay_result.content;
+    set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
  * @brief Promote relayed delegate output or set next engine state.
  *
- * Handles both the relay_single_delegate path (validate + promote)
- * and the standard explicit_completion transition. Extracted from
- * execute_pending_delegation to keep that function under the 50-SLOC
- * / 3-return quality gates. (P0-3, P1-9, 2.0.6-rc16)
+ * Handles the relay_single_delegate path (validate + promote), the
+ * budget_exhausted relay path (partial tagged relay), and the standard
+ * explicit_completion transition. Extracted from execute_pending_delegation
+ * to keep that function under the 50-SLOC / 3-return quality gates.
+ * (P0-3, P1-9, 2.0.6-rc16; budget_exhausted relay: E2, 2.1.0)
  *
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.0.6-rc18
+ * @version 2.1.0
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
-    // E7/E8 (2.0.6-rc18): relay only if child hit a real complete;
-    // when a child was synthetically terminated (budget_exhausted),
-    // the summary is not authoritative — skip relay entirely.
-    const bool can_relay = result.success
-        && result.terminal_reason.empty()
-        && relay_single_delegate_tiers_.count(ctx.locked_tier);
-    if (can_relay) {
-        GenerateResult relay_result;
-        relay_result.content = result.summary;
-        relay_result.finish_reason = "stop";
-        relay_result.tool_calls_json = "[]";
-        fire_post_generate_hook(
-            relay_result, ctx.locked_tier, ctx.messages);
-        ctx.metadata["explicit_completion_summary"] =
-            relay_result.content;
-        set_state(ctx, AgentState::COMPLETE);
+    // delegation.cpp sets success=false when terminal_reason is non-empty,
+    // so the two relay branches are disjoint — check them independently.
+    const bool in_relay_tier =
+        relay_single_delegate_tiers_.count(ctx.locked_tier) > 0;
+    if (result.success && in_relay_tier) {
+        relay_partial_result(ctx, result.summary);
         log_relay_status(ctx);
         return;
     }
-    if (!result.terminal_reason.empty()
-        && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
-        ctx.metadata["relay_status"] = "budget_exhausted";
-        logger->warn(
-            "Relay: single-delegate result suppressed "
-            "(warning: delegate budget exhausted — reason={})",
-            result.terminal_reason);
+    if (!result.terminal_reason.empty() && in_relay_tier) {
+        relay_partial_result(ctx,
+            "[partial — budget_exhausted] " + result.summary);
+        log_relay_status(ctx, result.terminal_reason);
+        return;
     }
     bool needs_explicit = tier_requires_explicit_completion(
         ctx.locked_tier);
@@ -1559,17 +1572,19 @@ void AgentEngine::finalize_delegation_result(
 /**
  * @brief Emit a disambiguating log for the relay-took-delegate path.
  *
- * Distinguishes three cases: validation actually ran and passed,
- * validation was skipped (e.g. lead in skip_tiers), or no validator
- * is configured. Writes ctx.metadata["relay_status"] so downstream
- * (ON_COMPLETE hook context, ask_complete) can render it.
- * (E8, 2.0.6-rc18)
+ * Distinguishes four cases: budget_exhausted partial relay, validation
+ * ran and passed, validation was skipped (e.g. lead in skip_tiers), or
+ * no validator is configured. Writes ctx.metadata["relay_status"] so
+ * downstream (ON_COMPLETE hook context, ask_complete) can render it.
+ * (E8, 2.0.6-rc18; budget_exhausted path: E2, 2.1.0)
  *
  * @param ctx Loop context (metadata mutated).
+ * @param terminal_reason Non-empty when relaying a budget_exhausted child.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.1.0
  */
-void AgentEngine::log_relay_status(LoopContext& ctx) {
+void AgentEngine::log_relay_status(LoopContext& ctx,
+                                   const std::string& terminal_reason) {
     std::string verdict;
     if (validation_provider_ != nullptr) {
         char* v = validation_provider_(validation_provider_data_);
@@ -1585,6 +1600,14 @@ void AgentEngine::log_relay_status(LoopContext& ctx) {
                 }
             }
         }
+    }
+    if (!terminal_reason.empty()) {
+        ctx.metadata["relay_status"] = "budget_exhausted_relayed";
+        logger->warn(
+            "Relay: single-delegate result used "
+            "(partial — terminal_reason={}, verdict={})",
+            terminal_reason, verdict.empty() ? "none" : verdict);
+        return;
     }
     if (verdict == "skipped" || verdict.empty()) {
         ctx.metadata["relay_status"] = "validation_skipped";

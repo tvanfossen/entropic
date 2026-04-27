@@ -12,10 +12,8 @@ allowed_tools: []
 max_output_tokens: 512
 temperature: 0.2
 enable_thinking: false
-model_preference: primary
 interstitial: true
 routable: false
-role_type: back_office
 phases:
   default:
     temperature: 0.2

@@ -15,7 +15,6 @@ allowed_tools:
   - docs.list_files
   - docs.get_hierarchy
   - entropic.complete
-role_type: back_office
 explicit_completion: true
 ---
 

@@ -57,7 +57,7 @@ namespace entropic {
  * before engine teardown.
  *
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.0
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -170,11 +170,12 @@ public:
      *
      * Caller MUST hold tasks_mutex_. Used by the cancel-on-clear
      * path to flip task statuses atomically with the mutex held.
+     * Contract verified against all call sites for v2.1.0 (E8).
      * (P1-8, 2.0.6-rc16)
      *
      * @return Reference to task registry.
      * @utility
-     * @version 2.0.6-rc16
+     * @version 2.1.0
      */
     std::unordered_map<std::string, AsyncTask>& tasks_for_cancel() {
         return tasks_;
@@ -247,6 +248,23 @@ public:
                            const std::string& status,
                            const std::string& phase);
 
+    /**
+     * @brief Test whether an in-flight observer callback is stale.
+     *
+     * Called from phase_observer_cb (free function) under tasks_mutex_.
+     * Returns true if observer_gen_ has been bumped since this callback's
+     * attach point — indicating detach_phase_observer (or a re-attach
+     * for a different task) has run and the firing callback should
+     * exit without touching state. (E5+E6, 2.1.0)
+     *
+     * @return true if the firing observer call should be discarded.
+     * @utility
+     * @version 2.1.0
+     */
+    bool observer_call_is_stale() const {
+        return observer_gen_.load() != attached_gen_;
+    }
+
 private:
     /**
      * @brief Background thread: accept connections and serve.
@@ -297,6 +315,17 @@ private:
     /// be projected onto the right task's phase. Guarded by tasks_mutex_.
     /// (P1-5 follow-up, 2.0.6-rc16.2)
     std::string active_task_id_;
+
+    /// @brief Monotonically incrementing observer generation counter.
+    /// Incremented under tasks_mutex_ on every attach and detach. The
+    /// phase_observer_cb checks this against attached_gen_ to detect and
+    /// discard stale post-detach callbacks. (E5+E6, 2.1.0)
+    std::atomic<uint64_t> observer_gen_{0};
+
+    /// @brief Generation captured at last attach_phase_observer call.
+    /// Guarded by tasks_mutex_. Compared against observer_gen_ in the
+    /// callback to short-circuit stale fires after detach. (E5+E6, 2.1.0)
+    uint64_t attached_gen_ = 0;
 };
 
 } // namespace entropic

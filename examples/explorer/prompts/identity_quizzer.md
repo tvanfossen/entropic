@@ -12,7 +12,6 @@ allowed_tools:
   - docs.lookup_function
   - docs.search
   - entropic.complete
-role_type: back_office
 explicit_completion: true
 ---
 

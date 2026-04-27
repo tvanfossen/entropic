@@ -6,14 +6,14 @@
 # behavior. If nothing changed since the last successful run, writes
 # SKIP flag. Otherwise, writes RUN flag.
 #
-# Cache file: test-reports/model-tests.hash
-# Flag file:  test-reports/model-tests.flag
+# Cache file: build/test-reports/model-tests.hash
+# Flag file:  build/test-reports/model-tests.flag
 #
 # v1.10.2: Updated to hash C++ sources (not deleted Python files).
 
 set -euo pipefail
 
-CACHE_DIR="test-reports"
+CACHE_DIR="build/test-reports"
 HASH_FILE="$CACHE_DIR/model-tests.hash"
 FLAG_FILE="$CACHE_DIR/model-tests.flag"
 

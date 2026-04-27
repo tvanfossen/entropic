@@ -76,6 +76,11 @@ git tag "${TAG_VERSION}" -m "entropic ${TAG_VERSION}"
 
 # Publish the GitHub Release pointing at the tagged commit. The release
 # is created on the remote without pushing the tag separately.
+#
+# At each x.y.0 minor bump, also attach the model-test snapshot
+# JSON so consumers and reviewers can see the GPU-validated pass/fail
+# matrix that gated the release. test-reports/ is gitignored — the
+# release attachment IS the audit record.
 gh release create "${TAG_VERSION}" \
     --target "$(git rev-parse HEAD)" \
     --title "entropic ${TAG_VERSION}" \
@@ -83,7 +88,8 @@ gh release create "${TAG_VERSION}" \
     dist/entropic-2.1.0-linux-x86_64-cpu.tar.gz \
     dist/entropic-2.1.0-linux-x86_64-cpu.tar.gz.sha256 \
     dist/entropic-2.1.0-linux-x86_64-cuda.tar.gz \
-    dist/entropic-2.1.0-linux-x86_64-cuda.tar.gz.sha256
+    dist/entropic-2.1.0-linux-x86_64-cuda.tar.gz.sha256 \
+    build/test-reports/model/results.json#model-results-${TAG_VERSION}.json
 
 # Add --prerelease for any -rc.N tag.
 ```

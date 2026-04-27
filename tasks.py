@@ -34,7 +34,7 @@ CTEST_EXCLUDE = (
 )
 
 MAX_MODEL_RETRIES = 2
-MODEL_RESULTS_FILE = "test-reports/model/results.json"
+MODEL_RESULTS_FILE = "build/test-reports/model/results.json"
 
 
 ## @brief Configure and build the project via CMake preset.
@@ -182,11 +182,11 @@ def _run_model_tests(build_dir):
     return results, failed
 
 
-## @brief Write test-reports/model/results.json.
+## @brief Write build/test-reports/model/results.json.
 ## @utility
-## @version 1
+## @version 2
 def _write_results_json(test_results, duration_ms):
-    """Write test-reports/model/results.json."""
+    """Write build/test-reports/model/results.json."""
     os.makedirs(os.path.dirname(MODEL_RESULTS_FILE), exist_ok=True)
 
     total = len(test_results)

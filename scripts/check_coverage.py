@@ -28,7 +28,7 @@ THRESHOLDS = {
 }
 
 BUILD_DIR = Path("build/coverage")
-REPORT_DIR = Path("test-reports/coverage")
+REPORT_DIR = Path("build/test-reports/coverage")
 
 
 ## @brief Run a subprocess, exit on failure.

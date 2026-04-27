@@ -77,15 +77,9 @@ examples/pychess/.pychess/
 # Environment files
 .env
 .env.local
-# test-reports — only the developer-run model-test snapshot is tracked
-# (refreshed at each x.y.0 bump per CLAUDE.md test gating). Everything
-# else under here is runtime output: per-test logs, coverage HTML,
-# cache/flag files. Three-rule sandwich excludes everything except
-# model/results.json.
-test-reports/*
-!test-reports/model/
-test-reports/model/*
-!test-reports/model/results.json
+# test-reports/ moved under build/ — already covered by `build/` rule
+# above. Model-test snapshot is published as a GitHub Release artifact
+# at each x.y.0 bump per CLAUDE.md test gating, not committed.
 
 .claude/tmp/
 

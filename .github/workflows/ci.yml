@@ -90,5 +90,5 @@ jobs:
         with:
           ccache-key: cpu
 
-      - name: Run scripts/smoke_distribution.sh
-        run: scripts/smoke_distribution.sh
+      - name: Run distribution smoke
+        run: .venv/bin/inv smoke

@@ -2,7 +2,7 @@
 [project]
 name = "entropic-engine"
 version = "2.1.0"
-description = "Local-first agentic inference engine with tier-based model routing"
+description = "Local-first agentic inference engine — Python wrapper over librentropic.so"
 readme = "README.md"
 license = {text = "LGPL-3.0"}
 requires-python = ">=3.10"
@@ -23,9 +23,10 @@ classifiers = [
     "Topic :: Software Development",
 ]
 
-dependencies = [
-    "click>=8.0.0",
-]
+# v2.1.0 wrapper has no required runtime deps — pure stdlib (ctypes,
+# urllib, hashlib, tarfile). The native engine is fetched on demand by
+# `entropic install-engine`.
+dependencies = []
 
 [project.optional-dependencies]
 dev = [
@@ -43,17 +44,14 @@ entropic = "entropic.cli:main"
 requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# v2.1.0: package source moved to python/src/entropic. The wheel contains
+# only Python — no native artifacts. librentropic.so is fetched at runtime
+# via `entropic install-engine` (playwright pattern).
 [tool.setuptools.packages.find]
-where = ["python"]
+where = ["python/src"]
 
 [tool.setuptools.package-data]
-entropic = [
-    "lib/librentropic.so",
-    "data/*.yaml",
-    "data/prompts/*.md",
-    "data/grammars/*.gbnf",
-    "data/tools/**/*.json",
-]
+entropic = ["py.typed"]
 
 [tool.ruff]
 line-length = 100

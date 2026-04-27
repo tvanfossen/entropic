@@ -55,21 +55,9 @@ where = ["python/src"]
 [tool.setuptools.package-data]
 entropic = ["py.typed"]
 
-[tool.ruff]
-line-length = 100
-extend-exclude = ["vendor"]
-
-[tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
-ignore = ["E501"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-markers = [
-    "unit: Fast tests without external dependencies",
-    "integration: Tests requiring external services",
-    "model: Tests requiring actual model inference (GPU recommended)",
-    "slow: Tests that take a long time to run",
-]
+# Hook-driven tooling (ruff, flake8, pytest) is configured in
+# .pre-commit-config.yaml — pre-commit is the source of truth. This
+# file deliberately carries no [tool.ruff], [tool.mypy], or
+# [tool.pytest.ini_options] sections. If you find yourself wanting
+# one, add it to the pre-commit hook's args list instead so the gate
+# config sits in one place.

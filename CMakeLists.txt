@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
 project(entropic
-    VERSION 2.0.6
+    VERSION 2.1.0
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )

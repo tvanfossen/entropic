@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 [project]
 name = "entropic-engine"
-version = "2.0.5"
+version = "2.1.0"
 description = "Local-first agentic inference engine with tier-based model routing"
 readme = "README.md"
 license = {text = "LGPL-3.0"}

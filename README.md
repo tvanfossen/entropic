@@ -70,12 +70,18 @@ C functions can use the engine.
 
 ## Quick Start
 
+For consumer install paths (tarball or `pip install entropic-engine`),
+read **[GETTING_STARTED.md](GETTING_STARTED.md)** — it covers C/C++ direct
+linking and the Python wrapper end-to-end.
+
+For contributors building from source:
+
 ### Prerequisites
 
 - Linux (tested on Ubuntu 24.04)
 - cmake 3.21+, C++20 compiler
 - NVIDIA GPU with 16GB+ VRAM (or CPU-only for smaller models)
-- Python 3.10+ (for wrapper and build tools)
+- Python 3.10+ (for invoke task runner and pre-commit hooks)
 
 ### Build
 
@@ -84,7 +90,6 @@ git clone --recurse-submodules https://github.com/tvanfossen/entropic.git
 cd entropic
 
 python3 -m venv .venv
-.venv/bin/pip install -e .
 .venv/bin/pip install invoke pre-commit
 .venv/bin/pre-commit install
 
@@ -95,21 +100,12 @@ inv build --clean
 inv build --cpu
 ```
 
-### Download a Model
-
-```bash
-entropic download primary    # Qwen3.5-35B-A3B (13.1 GB, recommended)
-entropic download mid        # Qwen3.5-9B (9.5 GB, 12GB+ VRAM)
-entropic download lightweight # Qwen3.5-4B (4.5 GB, 8GB+ VRAM)
-```
-
 ### Run an Example
 
 ```bash
-inv example -n hello-world          # Minimal streaming chat (C)
-inv example -n hello-world --wrapper # Same, Python wrapper
-inv example -n pychess              # Multi-tier chess (C++)
-inv example -n pychess --wrapper    # Same, Python wrapper
+inv example -n pychess     # Multi-tier chess (C++)
+inv example -n explorer    # Interactive REPL (C++)
+inv example -n headless    # Minimal C harness
 ```
 
 ## Usage
@@ -137,28 +133,30 @@ entropic_context_clear(h);           // New session
 entropic_destroy(h);
 ```
 
-### Python Wrapper
+### Python Wrapper (ctypes)
+
+The Python package is a thin ctypes binding over the C ABI — no OOP
+wrapper. See [GETTING_STARTED.md](GETTING_STARTED.md) for the full
+walkthrough including `entropic install-engine` (downloads the matching
+`librentropic.so` from GitHub Releases).
 
 ```python
-from entropic import EntropicEngine
-
-engine = EntropicEngine()
-engine.configure_dir(".myapp")
-
-# Streaming
-engine.run_streaming(
-    "What is 2+2?",
-    on_token=lambda tok: print(tok, end="", flush=True),
+import ctypes
+from entropic import (
+    entropic_create, entropic_configure_dir,
+    entropic_run_streaming, entropic_destroy,
 )
 
-# Multi-turn
-engine.run_streaming("Explain your reasoning", on_token=print)
+handle = ctypes.c_void_p()
+entropic_create(ctypes.byref(handle))
+entropic_configure_dir(handle, b".myapp")
 
-# Context management
-print(engine.context_count())
-engine.context_clear()
+@ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
+def on_token(tok, n, ud):
+    print(tok.decode("utf-8", errors="replace"), end="", flush=True)
 
-engine.destroy()
+entropic_run_streaming(handle, b"What is 2 + 2?", on_token, None, None)
+entropic_destroy(handle)
 ```
 
 ### Configuration

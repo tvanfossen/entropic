@@ -134,6 +134,34 @@ private:
         const std::vector<Message>& messages,
         const std::string& tier);
 
+    /**
+     * @brief Append an "[engine] iteration N/MAX..." reminder to the
+     *        first system message.
+     *
+     * Demo ask #1 (v2.1.0): models in deep delegations have no view of
+     * their own iteration count or remaining budget. Identity prompts
+     * encode anti-spiral rules ("after 3 calls, pivot") that the model
+     * cannot enforce because it doesn't know its own count. This
+     * helper surfaces the engine-side counters as a system-prompt
+     * augmentation visible to every generation step. No new persistent
+     * messages are appended — the line is added to the system content
+     * for THIS turn only.
+     *
+     * @param messages Caller's message vector (returned augmented copy).
+     * @param ctx Loop context — pulls metrics.iterations and
+     *            metrics.tool_calls; max_iterations is resolved against
+     *            the per-tier override (effective_max_iterations) or
+     *            falls back to LoopConfig.max_iterations.
+     * @return Messages with the reminder line appended to the system
+     *         message; original returned unchanged when no system
+     *         message exists.
+     * @internal
+     * @version 2.1.0
+     */
+    std::vector<Message> inject_engine_state_reminder(
+        const std::vector<Message>& messages,
+        const LoopContext& ctx);
+
     InferenceInterface inference_;     ///< Inference function pointers
     LoopConfig loop_config_;           ///< Loop configuration
     EngineCallbacks& callbacks_;       ///< Shared callbacks

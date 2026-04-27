@@ -432,3 +432,113 @@ SCENARIO("generate_streaming preserves partial content on non-zero rc",
         }
     }
 }
+
+
+// ── Demo ask #1 (v2.1.0): engine state reminder injection ──
+
+/// @brief Module-static capture buffer for the iteration-reminder
+/// SCENARIO; mock_generate_capturing writes the JSON-serialized
+/// messages here so the test can grep for the reminder line.
+static std::string g_captured_msgs;
+
+/**
+ * @brief Mock generate that records its msgs argument before returning.
+ * @internal
+ * @callback
+ * @version 2.1.0
+ */
+static int mock_generate_capturing(
+    const char* msgs, const char* /*params*/,
+    char** result_json, void* /*data*/)
+{
+    g_captured_msgs = msgs != nullptr ? std::string(msgs) : std::string();
+    *result_json = strdup("ok");
+    return 0;
+}
+
+SCENARIO("ResponseGenerator injects iteration / budget reminder into system prompt",
+         "[core][response_generator][2.1.0][demo-ask-1]")
+{
+    GIVEN("a ResponseGenerator and a LoopContext at iteration 7/50, 12 tool calls") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        loop_cfg.max_iterations = 50;
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "lead";
+        ctx.metrics.iterations = 7;
+        ctx.metrics.tool_calls = 12;
+        Message sys{"system", "you are a helpful agent"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "do the thing"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("the captured messages contain the iteration reminder line") {
+                CHECK(g_captured_msgs.find("[engine] iteration 7/50")
+                      != std::string::npos);
+                CHECK(g_captured_msgs.find("tool calls so far: 12")
+                      != std::string::npos);
+            }
+            AND_THEN("the original system content is preserved") {
+                CHECK(g_captured_msgs.find("you are a helpful agent")
+                      != std::string::npos);
+            }
+            AND_THEN("ctx.messages itself is not mutated with the reminder") {
+                // The reminder is per-turn; persistent ctx.messages must
+                // not accumulate iteration tags across turns.
+                CHECK(ctx.messages.front().content
+                      == "you are a helpful agent");
+            }
+        }
+    }
+}
+
+SCENARIO("Engine state reminder honors per-identity max_iterations override",
+         "[core][response_generator][2.1.0][demo-ask-1]")
+{
+    GIVEN("a ResponseGenerator and a context with effective_max_iterations=200") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        loop_cfg.max_iterations = 15;  // global default
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "researcher";
+        ctx.metrics.iterations = 42;
+        ctx.effective_max_iterations = 200;
+        Message sys{"system", "researcher prompt"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "lookup X"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("reminder uses the per-identity override, not the global default") {
+                CHECK(g_captured_msgs.find("iteration 42/200")
+                      != std::string::npos);
+                CHECK(g_captured_msgs.find("/15") == std::string::npos);
+            }
+        }
+    }
+}

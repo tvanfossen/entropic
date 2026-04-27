@@ -215,7 +215,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.1.0
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -224,6 +224,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     }
 
     auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
+    messages = inject_engine_state_reminder(messages, ctx);
     logger->info("Generate (stream): tier={}, {} messages",
                  ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
@@ -269,7 +270,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.0
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -278,6 +279,7 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     }
 
     auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
+    messages = inject_engine_state_reminder(messages, ctx);
     logger->info("Generate (batch): tier={}, {} messages",
                  ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
@@ -442,6 +444,40 @@ std::vector<Message> ResponseGenerator::inject_tool_prompt(
     for (auto& msg : result) {
         if (msg.role == "system") {
             msg.content += "\n\n" + prompt_str;
+            break;
+        }
+    }
+    return result;
+}
+
+/**
+ * @brief Append "[engine] iteration N/MAX, tool calls so far K." to
+ *        the first system message in the input (per-turn reminder).
+ *
+ * Resolves effective max_iterations from ctx.effective_max_iterations
+ * (per-identity override) or falls back to loop_config_.max_iterations.
+ * No persistent state added — line is only present in this turn's
+ * assembled prompt, not the conversation history. (Demo ask #1)
+ *
+ * @internal
+ * @version 2.1.0
+ */
+std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
+    const std::vector<Message>& messages,
+    const LoopContext& ctx) {
+    int max_iter = ctx.effective_max_iterations >= 0
+        ? ctx.effective_max_iterations
+        : loop_config_.max_iterations;
+    std::string reminder = "[engine] iteration "
+        + std::to_string(ctx.metrics.iterations)
+        + "/" + std::to_string(max_iter)
+        + ", tool calls so far: "
+        + std::to_string(ctx.metrics.tool_calls) + ".";
+
+    auto result = messages;
+    for (auto& msg : result) {
+        if (msg.role == "system") {
+            msg.content += "\n\n" + reminder;
             break;
         }
     }

@@ -31,6 +31,8 @@ target_sources(entropic-mcp PRIVATE
     mcp_json_discovery.cpp
     # v2.1.0: UTF-8 sanitizer for inbound tool-result strings (#47)
     utf8_sanitize.cpp
+    # v2.1.0: tool-result content classifiers (#44)
+    tool_result_classify.cpp
 )
 
 target_include_directories(entropic-mcp PUBLIC

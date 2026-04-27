@@ -6,6 +6,7 @@
  */
 
 #include <entropic/mcp/tool_executor.h>
+#include <entropic/mcp/tool_result_classify.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 
@@ -665,7 +666,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.6-rc19
+ * @version 2.1.0
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -695,8 +696,17 @@ std::vector<Message> ToolExecutor::process_single_call(
         std::to_string(ctx.metrics.iterations);
     record_tool_call(ctx, call, raw_result);
 
-    const bool is_err = msg.content.rfind("error", 0) == 0;
-    auto kind = is_err ? ToolResultKind::error : ToolResultKind::ok;
+    // #44 (v2.1.0): honest byte-level signal so identity prompts can
+    // teach pivot-on-empty rules and so error responses don't leak as
+    // ok. Order matters — error trumps empty.
+    ToolResultKind kind;
+    if (mcp::looks_like_tool_error(msg.content)) {
+        kind = ToolResultKind::error;
+    } else if (mcp::is_effectively_empty(msg.content)) {
+        kind = ToolResultKind::ok_empty;
+    } else {
+        kind = ToolResultKind::ok;
+    }
     fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind);
 
     auto args_log = serialize_args(call);

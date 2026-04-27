@@ -192,6 +192,8 @@ add_executable(entropic-mcp-tests
     mcp/servers/context_inspect_test.cpp
     # v2.1.0 #47: UTF-8 sanitizer for inbound tool-result strings
     mcp/utf8_sanitize_test.cpp
+    # v2.1.0 #44: tool-result content classifiers (empty/error)
+    mcp/tool_result_classify_test.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

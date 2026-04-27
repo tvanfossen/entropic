@@ -77,7 +77,6 @@ examples/pychess/.pychess/
 # Environment files
 .env
 .env.local
-hf.env
 # Test reports — committed, latest run only
 # Cache/flag files are ephemeral (not committed)
 test-reports/model-tests.hash
@@ -108,12 +107,17 @@ examples/hello-world/.hello-world/
 # build cache
 .cache/
 
-# CTest artifacts
+# CTest scratch (CMake redirects this under build/, keep root rule as legacy)
 Testing/
 
-# Generated doxygen output (regenerate with: inv docs)
-docs/api/
-docs/entropic_docs.db
+# Generated Doxygen output — Doxyfile OUTPUT_DIRECTORY = build/docs
+# Legacy paths kept so stale generators or bare `doxygen` from CWD
+# don't sneak artifacts into git.
+build/docs/
 html/
 latex/
+sqlite3/
+api/
+
+# Release tarballs
 dist/

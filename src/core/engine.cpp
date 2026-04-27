@@ -407,7 +407,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     }
 
     auto result = response_generator_.generate_response(ctx);
-    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    dispatch_post_generate(ctx, result);
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
     logger->info("[ITER] finish={}, {} tool call(s), {} chars",
                  result.finish_reason, tool_calls.size(),
@@ -1234,6 +1234,64 @@ void AgentEngine::fire_post_generate_hook(
         result.content = out;
         logger->info("POST_GENERATE hook revised content");
         free(out);
+    }
+}
+
+/**
+ * @brief Pull rejection text from validation_provider_ into
+ *        ctx.pending_validation_feedback for the next turn.
+ *
+ * Demo ask #2 (v2.1.0). Called once per iteration after
+ * fire_post_generate_hook. Parses the validation provider's JSON
+ * payload; when verdict starts with "rejected", joins the violations
+ * into a one-line reminder. ResponseGenerator picks it up on the
+ * next turn via inject_engine_state_reminder, then the engine
+ * clears the field at the top of the iteration that consumes it.
+ *
+ * @param ctx Loop context (writes pending_validation_feedback).
+ * @internal
+ * @version 2.1.0
+ */
+/**
+ * @brief Per-iteration post-generate bookkeeping bundle.
+ * @internal
+ * @version 2.1.0
+ */
+void AgentEngine::dispatch_post_generate(
+    LoopContext& ctx, GenerateResult& result) {
+    // The per-turn reminder built from pending_validation_feedback
+    // was just consumed by generate_response — clear so it cannot
+    // leak into a later iteration.
+    ctx.pending_validation_feedback.clear();
+    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    // After POST_GENERATE the validator may have rejected — stash
+    // its reason for the NEXT iteration's system prompt.
+    capture_validation_feedback(ctx);
+}
+
+void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
+    if (validation_provider_ == nullptr) { return; }
+    char* v = validation_provider_(validation_provider_data_);
+    if (v == nullptr) { return; }
+    std::string raw(v);
+    free(v);
+    try {
+        auto j = nlohmann::json::parse(raw);
+        auto verdict = j.value("verdict", "");
+        if (verdict.rfind("rejected", 0) != 0) { return; }
+        std::string joined;
+        if (j.contains("violations") && j["violations"].is_array()) {
+            for (const auto& vio : j["violations"]) {
+                if (!joined.empty()) { joined += "; "; }
+                joined += vio.is_string()
+                    ? vio.get<std::string>()
+                    : vio.dump();
+            }
+        }
+        if (joined.empty()) { joined = verdict; }
+        ctx.pending_validation_feedback = joined;
+    } catch (const nlohmann::json::exception&) {
+        // Malformed provider output is non-fatal; just skip.
     }
 }
 

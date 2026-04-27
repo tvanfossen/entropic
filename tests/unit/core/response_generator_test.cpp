@@ -542,3 +542,75 @@ SCENARIO("Engine state reminder honors per-identity max_iterations override",
         }
     }
 }
+
+SCENARIO("Engine state reminder surfaces pending validation feedback",
+         "[core][response_generator][2.1.0][demo-ask-2]")
+{
+    GIVEN("a context with pending_validation_feedback set") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "researcher";
+        ctx.metrics.iterations = 5;
+        ctx.pending_validation_feedback =
+            "every codebase claim must cite file:line";
+        Message sys{"system", "researcher prompt"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "summarize"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("the previous-turn rejection line appears in the system prompt") {
+                CHECK(g_captured_msgs.find(
+                          "previous turn rejected: every codebase claim must cite file:line")
+                      != std::string::npos);
+            }
+            AND_THEN("the iteration line is still present alongside the rejection line") {
+                CHECK(g_captured_msgs.find("iteration 5/")
+                      != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a context with empty pending_validation_feedback") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.metrics.iterations = 3;
+        Message sys{"system", "prompt"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "go"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("no rejection line is emitted") {
+                CHECK(g_captured_msgs.find("previous turn rejected")
+                      == std::string::npos);
+            }
+        }
+    }
+}

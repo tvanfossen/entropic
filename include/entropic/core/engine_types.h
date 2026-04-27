@@ -200,6 +200,12 @@ struct LoopContext {
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
     int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)
     int effective_max_tool_calls_per_turn = -1;  ///< Per-identity override (-1 = LoopConfig, P3-18)
+    /// @brief One-shot reminder text consumed by the next per-turn
+    /// system prompt assembly. Engine populates after a rejected
+    /// validation; ResponseGenerator emits as a "[engine] previous
+    /// turn rejected: …" line and the engine clears it post-emit.
+    /// (Demo ask #2, v2.1.0)
+    std::string pending_validation_feedback;
 };
 
 /**

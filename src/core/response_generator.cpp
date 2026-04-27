@@ -474,6 +474,15 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
         + ", tool calls so far: "
         + std::to_string(ctx.metrics.tool_calls) + ".";
 
+    // Demo ask #2 (v2.1.0): if the previous turn was validator-rejected,
+    // surface the reason so the model knows WHY it's being asked again.
+    // Engine clears pending_validation_feedback after this turn — the
+    // line is one-shot.
+    if (!ctx.pending_validation_feedback.empty()) {
+        reminder += "\n[engine] previous turn rejected: "
+                  + ctx.pending_validation_feedback;
+    }
+
     auto result = messages;
     for (auto& msg : result) {
         if (msg.role == "system") {

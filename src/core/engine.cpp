@@ -367,7 +367,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.7.1
+ * @version 2.1.0
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -1269,6 +1269,11 @@ void AgentEngine::dispatch_post_generate(
     capture_validation_feedback(ctx);
 }
 
+/**
+ * @brief Stash next-turn rejection text on ctx.pending_validation_feedback.
+ * @internal
+ * @version 2.1.0
+ */
 void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
     if (validation_provider_ == nullptr) { return; }
     char* v = validation_provider_(validation_provider_data_);

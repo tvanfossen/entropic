@@ -32,7 +32,7 @@ repos:
       - id: ruff-format
         args:
           - --line-length=100
-          - --extend-exclude=vendor
+          - --exclude=vendor
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0

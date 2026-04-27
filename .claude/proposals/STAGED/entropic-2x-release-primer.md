@@ -1,5 +1,11 @@
 # Entropic 2.x Release Primer
 
+> **2026-04-27 — absorbed into v2.1.0**: the metadata + README drift
+> work landed as part of B5 in `ACTIVE/v2.1.0-formal-release.md`
+> (version bumps, README rewrite, GETTING_STARTED.md, RELEASING.md).
+> Repository description / topics edits via `gh repo edit` are pending
+> the release maintainer.
+
 > Working document for a Claude Code session. Target repo: `tvanfossen/entropic`.
 > Audience: Claude Code executing via `gh` CLI and local edits.
 > Goal: close repo metadata gaps, fix documentation drift, and reconcile CI config against current reality before tagging v2.0.6.

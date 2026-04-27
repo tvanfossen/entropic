@@ -6,6 +6,7 @@
  */
 
 #include <entropic/mcp/tool_executor.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 
 #include <nlohmann/json.hpp>
@@ -338,7 +339,7 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.1.0
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -352,8 +353,12 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     }
 
     auto start = std::chrono::steady_clock::now();
-    auto result_json = server_manager_.execute(
-        call.name, args_json);
+    // v2.1.0 (#47): scrub invalid UTF-8 at the inbound boundary so
+    // downstream nlohmann::json::dump() sites (storage, model adapter,
+    // bridge stream observer) cannot throw type_error 316 on bytes that
+    // came from a server reading legacy-codepage source files.
+    auto result_json = mcp::sanitize_utf8(
+        server_manager_.execute(call.name, args_json));
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<
         std::chrono::milliseconds>(end - start).count();

@@ -29,6 +29,8 @@ target_sources(entropic-mcp PRIVATE
     reconnect_policy.cpp
     health_monitor.cpp
     mcp_json_discovery.cpp
+    # v2.1.0: UTF-8 sanitizer for inbound tool-result strings (#47)
+    utf8_sanitize.cpp
 )
 
 target_include_directories(entropic-mcp PUBLIC

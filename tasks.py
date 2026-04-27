@@ -16,13 +16,16 @@ Usage:
     inv clean              # remove build dirs
 """
 
+import glob
 import json
 import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from invoke import task
 
@@ -35,6 +38,14 @@ CTEST_EXCLUDE = (
 
 MAX_MODEL_RETRIES = 2
 MODEL_RESULTS_FILE = "build/test-reports/model/results.json"
+
+# Per-library coverage paths (used by the check-coverage gate).
+COVERAGE_BUILD_DIR = Path("build/coverage")
+COVERAGE_REPORT_DIR = Path("build/test-reports/coverage")
+# gcovr lives next to the python running invoke (i.e. inside .venv/bin
+# when invoke is launched from the venv). Resolve it explicitly so the
+# pre-commit hook works regardless of the caller's PATH.
+GCOVR_BIN = str(Path(sys.executable).parent / "gcovr")
 
 
 ## @brief Configure and build the project via CMake preset.
@@ -633,3 +644,120 @@ def release_check(c, version="", skip_cuda=False, outdir="dist", jobs=JOBS):
         print(f"  {backend:<5} {path}  ({size:.1f} MB)")
     print(f"\nVersion: {version}")
     print(f"Next: git tag v{version} && git push origin v{version}")
+
+
+## @brief Parse a coverage threshold spec into a tuple.
+## @utility
+## @version 1
+def _parse_coverage_threshold(spec):
+    """Parse a "name:source_filter:percent" spec into (name, filter, int)."""
+    name, filt, pct = spec.rsplit(":", 2)
+    return name, filt, int(pct)
+
+
+## @brief True if .gcda files exist from a prior coverage run.
+## @utility
+## @version 1
+def _has_gcov_data():
+    """True if .gcda files exist from a prior coverage run."""
+    pattern = str(COVERAGE_BUILD_DIR / "**" / "*.gcda")
+    return bool(glob.glob(pattern, recursive=True))
+
+
+## @brief Configure, build, and run tests under the coverage preset.
+## @utility
+## @version 1
+def _run_coverage_build(c):
+    """Configure + build + run tests under the coverage preset."""
+    c.run("cmake --preset coverage")
+    c.run(f"cmake --build {COVERAGE_BUILD_DIR} --parallel")
+    # ctest exit code is not fatal here — failed tests still produce
+    # gcov data for the libraries that did run, and the gate is
+    # coverage, not pass/fail.
+    c.run(
+        f"ctest --test-dir {COVERAGE_BUILD_DIR} --output-on-failure "
+        f'--parallel 4 -E "{CTEST_EXCLUDE}"',
+        warn=True,
+    )
+
+
+## @brief gcovr one source filter; print PASS/FAIL/SKIP; return ok bool.
+## @utility
+## @version 1
+def _check_library_coverage(name, source_filter, pct_min):
+    """gcovr one filter; print PASS/FAIL/SKIP; return ok bool."""
+    out = subprocess.run(
+        [
+            GCOVR_BIN,
+            "-r",
+            ".",
+            "--object-directory",
+            str(COVERAGE_BUILD_DIR),
+            "--filter",
+            source_filter,
+            "--print-summary",
+        ],
+        capture_output=True,
+        text=True,
+    ).stdout
+    m = re.search(r"lines:\s+([0-9.]+)%", out)
+    if m is None:
+        print(f"  SKIP  {name} — no coverage data")
+        return True
+    pct = float(m.group(1))
+    status = "PASS" if pct >= pct_min else "FAIL"
+    print(f"  {status}  {name}: {pct:.1f}% vs {pct_min}%")
+    return pct >= pct_min
+
+
+## @brief Generate the gcovr HTML report under build/test-reports/coverage.
+## @utility
+## @version 1
+def _generate_coverage_report():
+    """Generate the gcovr HTML report under build/test-reports/coverage."""
+    COVERAGE_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            GCOVR_BIN,
+            "-r",
+            ".",
+            "--object-directory",
+            str(COVERAGE_BUILD_DIR),
+            "--html-details",
+            str(COVERAGE_REPORT_DIR / "index.html"),
+            "--exclude",
+            r"extern/.*",
+            "--exclude",
+            r"build/.*",
+            "--exclude",
+            r"tests/.*",
+            "--print-summary",
+        ],
+        capture_output=True,
+    )
+
+
+## @brief Per-library coverage gate via gcovr. Pre-commit entry.
+## @utility
+## @version 1
+@task(iterable=["threshold"])
+def check_coverage(c, threshold):
+    """Per-library coverage gate via gcovr.
+
+    Each --threshold is "name:source_filter:percent". Thresholds live
+    in .pre-commit-config.yaml so the coverage gate config sits next
+    to the rest of pre-commit's hook config. If .gcda files are
+    already present from a prior coverage run, build+test is skipped.
+    """
+    if not _has_gcov_data():
+        _run_coverage_build(c)
+    print("Per-library coverage check")
+    print("==========================")
+    parsed = [_parse_coverage_threshold(t) for t in threshold]
+    all_pass = all(_check_library_coverage(*p) for p in parsed)
+    print("==========================")
+    _generate_coverage_report()
+    if not all_pass:
+        print(f"Coverage FAILED. See {COVERAGE_REPORT_DIR}/index.html")
+        sys.exit(1)
+    print("All libraries meet coverage thresholds.")

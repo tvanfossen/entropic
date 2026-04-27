@@ -35,6 +35,8 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
+    "gcovr>=7.0",  # used by the inv check-coverage gate
+    "invoke>=2.0",
 ]
 
 [project.scripts]

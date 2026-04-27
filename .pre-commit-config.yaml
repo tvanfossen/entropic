@@ -76,8 +76,26 @@ repos:
 
       - id: coverage-check
         name: Per-library coverage (gcovr)
-        entry: scripts/check_coverage.py
-        language: python
-        additional_dependencies: ['gcovr']
+        # Per-library minimum line-coverage thresholds for librentropic
+        # sub-targets. Format: "name:source_filter:percent". Adjust
+        # numbers here, not in tasks.py — pre-commit-config.yaml is the
+        # source of truth for hook gates.
+        entry: .venv/bin/inv check-coverage
+        language: system
         always_run: true
         pass_filenames: false
+        args:
+          - '--threshold'
+          - 'librentropic-types:src/types/:95'
+          - '--threshold'
+          - 'librentropic-config:src/config/:90'
+          - '--threshold'
+          - 'librentropic-core:src/core/:85'
+          - '--threshold'
+          - 'librentropic-mcp:src/mcp/:85'
+          - '--threshold'
+          - 'librentropic-storage:src/storage/:85'
+          - '--threshold'
+          - 'librentropic-inference:src/inference/:70'
+          - '--threshold'
+          - 'librentropic-facade:src/facade/:80'

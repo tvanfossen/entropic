@@ -4,10 +4,17 @@
 Two paths:
     * ``entropic install-engine [--version V] [--backend cpu|cuda]`` —
       handled in-process by :mod:`entropic.install_engine`.
-    * Anything else (``entropic ask "..."``, ``entropic version``, …) —
-      ``execvp``'d to the ``bin/entropic`` binary that ``install-engine``
-      laid down. The Python process is replaced; the native binary
+    * Everything else (``entropic version``, ``entropic mcp-bridge``,
+      ``entropic mcp-connect``, ``entropic download``) — ``execvp``'d
+      to the ``bin/entropic`` binary that ``install-engine`` laid
+      down. The Python process is replaced; the native binary
       receives stdin/stdout/stderr verbatim.
+
+The native binary's full subcommand surface is documented in
+``docs/cli-install-routes.md``. There is no ``entropic ask`` — that
+example was a doc-bug from earlier drafts; the engine drives a
+conversation loop via the MCP bridge or via direct ctypes use, not
+via a one-shot ``ask`` subcommand.
 
 If the binary cannot be located, the user is told to run
 ``entropic install-engine`` and the process exits with code 2.

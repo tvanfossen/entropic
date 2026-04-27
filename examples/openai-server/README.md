@@ -15,7 +15,7 @@ internal headers required, no C++ ABI crossing.
 ## Build
 
 Prerequisites: a working `librentropic.so` install (see
-[../../GETTING_STARTED.md](../../GETTING_STARTED.md)).
+[../../docs/getting-started.md](../../docs/getting-started.md)).
 
 ```bash
 cd examples/openai-server

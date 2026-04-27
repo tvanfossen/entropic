@@ -71,7 +71,7 @@ C functions can use the engine.
 ## Quick Start
 
 For consumer install paths (tarball or `pip install entropic-engine`),
-read **[GETTING_STARTED.md](GETTING_STARTED.md)** — it covers C/C++ direct
+read **[docs/getting-started.md](docs/getting-started.md)** — it covers C/C++ direct
 linking and the Python wrapper end-to-end.
 
 For contributors building from source:
@@ -136,7 +136,7 @@ entropic_destroy(h);
 ### Python Wrapper (ctypes)
 
 The Python package is a thin ctypes binding over the C ABI — no OOP
-wrapper. See [GETTING_STARTED.md](GETTING_STARTED.md) for the full
+wrapper. See [docs/getting-started.md](docs/getting-started.md) for the full
 walkthrough including `entropic install-engine` (downloads the matching
 `librentropic.so` from GitHub Releases).
 
@@ -322,6 +322,15 @@ Entropic runs AI models locally on your hardware. AI-generated outputs may be
 inaccurate, biased, or inappropriate. Users are solely responsible for
 evaluating and using any generated content. This software does not provide
 professional, legal, medical, or financial advice.
+
+## Documentation
+
+- [docs/getting-started.md](docs/getting-started.md) — install + first call
+- [docs/architecture-cpp.md](docs/architecture-cpp.md) — library design
+- [docs/roadmap.md](docs/roadmap.md) — version targeting
+- [docs/contributing.md](docs/contributing.md) — dev setup, gates, branching
+- [docs/releasing.md](docs/releasing.md) — release workflow
+- [docs/security.md](docs/security.md) — vulnerability reporting
 
 ## License
 

@@ -61,22 +61,6 @@ extend-exclude = ["vendor"]
 select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 ignore = ["E501"]
 
-[tool.mypy]
-python_version = "3.12"
-strict = true
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "tests.*"
-strict = false
-disallow_untyped_defs = false
-disallow_untyped_calls = false
-disallow_incomplete_defs = false
-
-[[tool.mypy.overrides]]
-module = ["entropic.cli", "entropic.cli_download"]
-disallow_untyped_decorators = false
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]

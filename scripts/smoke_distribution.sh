@@ -4,7 +4,7 @@
 #
 # Builds entropic (shared, CPU-only, no tests) to a fresh build dir,
 # installs it to a temporary prefix, and builds+runs
-# packaging/smoke-consumer against it using find_package(entropic).
+# tests/distribution-smoke-consumer against it using find_package(entropic).
 #
 # Exits non-zero on any failure. Prints a short status line at the end.
 #
@@ -48,7 +48,7 @@ cmake --install "$BUILD_DIR" >/dev/null
 echo "== consumer: configure + build against find_package(entropic) =="
 CONSUMER_BUILD="$BUILD_DIR/consumer"
 rm -rf "$CONSUMER_BUILD"
-cmake -B "$CONSUMER_BUILD" -S packaging/smoke-consumer \
+cmake -B "$CONSUMER_BUILD" -S tests/distribution-smoke-consumer \
     -Dentropic_DIR="$PREFIX/lib/cmake/entropic" >/dev/null
 cmake --build "$CONSUMER_BUILD" >/dev/null
 

@@ -495,13 +495,13 @@ def _build_and_stage(c, backend, build_dir, stage_dir, jobs):
 
 ## @brief Validate a staged install via find_package + CLI launch.
 ## @utility
-## @version 1
+## @version 2
 def _smoke_staged_install(c, stage_dir, build_dir):
-    """Run packaging/smoke-consumer + bin/entropic version against stage."""
+    """Run tests/distribution-smoke-consumer + bin/entropic version against stage."""
     consumer_build = os.path.join(build_dir, "consumer")
     shutil.rmtree(consumer_build, ignore_errors=True)
     c.run(
-        f"cmake -B {consumer_build} -S packaging/smoke-consumer"
+        f"cmake -B {consumer_build} -S tests/distribution-smoke-consumer"
         f" -Dentropic_DIR={stage_dir}/lib/cmake/entropic"
     )
     c.run(f"cmake --build {consumer_build}")

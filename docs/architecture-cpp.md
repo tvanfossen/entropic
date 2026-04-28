@@ -742,7 +742,8 @@ adds delegation responses).
 - Each version owns its own test files — tests do not depend on each other
 - Mock infrastructure is shared — all tests use the same mock headers
 - Integration tests span subsystems but use mocks for inference
-- Model tests (GPU-required) are separate from unit/integration tests
+- Model tests (GPU recommended; CPU works but is impractically slow)
+  are separate from unit/integration tests
 
 ---
 

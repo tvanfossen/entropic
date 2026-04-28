@@ -56,7 +56,7 @@ inv build --cpu --no-clean
 # CPU unit + regression tests (~750 tests, pre-commit gate)
 inv test --cpu --no-build
 
-# Model tests (GPU required, writes results.json)
+# Model tests (GPU recommended, writes results.json)
 inv test --model --no-build
 ```
 

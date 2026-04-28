@@ -382,8 +382,8 @@ Hook semantics:
 ### Quality / Testing
 
 - 16 pre-commit hooks: trim whitespace, end-of-file, ruff, ruff-format, flake8, knots, doxygen-guard, build, unit tests, per-library coverage, plus standard pre-commit checks — `.pre-commit-config.yaml`
-- 751 unit + regression tests (Catch2 v3 BDD style) — `tests/unit/`
-- 30 model tests, GPU-required, developer-run; results attached to the GitHub Release as `model-results-vX.Y.Z.json` at each x.y.0 — `tests/model/`, `tasks.py::test`
+- Unit + regression tests (Catch2 v3 BDD style) — `tests/unit/`
+- Model tests, GPU-recommended (CPU works but is impractically slow), developer-run; results attached to the GitHub Release as `model-results-vX.Y.Z.json` at each x.y.0 — `tests/model/`, `tasks.py::test`
 - `tests/distribution-smoke-consumer/` exercises the `find_package(entropic)` consumer experience end-to-end — `tests/distribution-smoke-consumer/`
 - Test gating per CLAUDE.md:
 
@@ -424,8 +424,8 @@ to the full model path via the bundled registry.
 ```bash
 inv build --clean              # full (CUDA)
 inv build --cpu                # dev (CPU)
-inv test --cpu --no-build      # 751 unit + regression tests
-inv test --model --no-build    # 30 model tests (GPU required)
+inv test --cpu --no-build      # unit + regression tests
+inv test --model --no-build    # model tests (GPU recommended)
 ```
 
 ## Examples

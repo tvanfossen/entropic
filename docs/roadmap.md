@@ -13,9 +13,9 @@ and validation criteria.
 ## Current State (v2.1.0)
 
 - C++20 engine, pure C ABI at every `.so` boundary
-- 751 unit + regression tests (CPU pre-commit gate)
-- 30 model tests (developer-run, GPU; results attached as a GitHub
-  Release artifact at each x.y.0 bump)
+- Unit + regression tests (CPU pre-commit gate)
+- Model tests (developer-run, GPU recommended; results attached as
+  a GitHub Release artifact at each x.y.0 bump)
 - Per-library coverage gates enforced via gcovr
 - Single shared library `librentropic.so` plus `entropic` CLI binary
   plus pure-Python ctypes wrapper (`pip install entropic-engine`)
@@ -357,7 +357,7 @@ what exists, validate parity. Each subsystem is independently verifiable.
   grammar, compaction, logprob evaluation, dynamic identity routing, GPU profile
   constrained generation, MCP authorization denial
 - 2 deferred tests (LoRA swap — no adapter fixture, constitutional — v1.9.8 wiring incomplete)
-- GPU-required, developer-run, results checked into test-reports/model/results.json
+- GPU recommended (CPU works but is impractically slow), developer-run, results checked into test-reports/model/results.json
 - CI staleness gate: version + git_sha freshness check, fails if stale or missing
 - Target runtime under 5 minutes on reference hardware
 - Interactive — thresholds and assertions tuned hands-on with actual model

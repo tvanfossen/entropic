@@ -2,6 +2,8 @@
 
 > Local-first agentic inference engine — your models, your hardware, your control
 
+**API reference:** [tvanfossen.github.io/entropic](https://tvanfossen.github.io/entropic/) — auto-generated from doxygen on every release
+
 ## What Is Entropic?
 
 Entropic is a **C inference engine** that turns a local GGUF model into a

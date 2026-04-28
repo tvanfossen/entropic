@@ -1,0 +1,72 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+name: Docs — Doxygen → GitHub Pages
+
+# Builds and deploys the doxygen API reference for the engine on every
+# published GitHub Release. Triggering on `release.published` (rather
+# than `push: branches: [main]`) version-aligns the published docs with
+# what was actually shipped: the Pages site reflects the most recent
+# release's headers and source, not in-progress changes mid-merge.
+#
+# Pages source must be set to "GitHub Actions" in repo settings
+# (Settings → Pages → Source). One-time setup; afterwards every release
+# rebuilds and re-deploys automatically.
+#
+# Public URL: https://tvanfossen.github.io/entropic/
+#
+# Doxyfile lives at the repo root. It scans `include/entropic` and `src`
+# recursively, generates HTML only (no LaTeX), and writes to
+# `build/docs/html/`.
+
+on:
+  release:
+    types: [published]
+  # Allow a manual rebuild without cutting a new release. Useful when
+  # the workflow itself changes or when re-deploying after a Pages
+  # configuration tweak.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one Pages deploy can be in flight at a time.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build doxygen + deploy to Pages
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # On release events, check out the tagged ref so the docs
+          # match the release. On workflow_dispatch, fall back to the
+          # default ref (main).
+          ref: ${{ github.event.release.tag_name || github.ref }}
+          submodules: recursive
+
+      - name: Install doxygen
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends doxygen graphviz
+
+      - name: Run doxygen
+        run: doxygen Doxyfile
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/docs/html
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

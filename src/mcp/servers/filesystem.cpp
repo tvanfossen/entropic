@@ -1163,11 +1163,14 @@ int FilesystemServer::max_read_bytes() const {
  * checks that the result does not escape root. Throws on escape
  * unless allow_outside_root is configured.
  *
+ * Containment uses lexically_relative so that "/home/user/project"
+ * does not falsely contain "/home/user/projectile" via string-prefix.
+ *
  * @param requested User-requested path string.
  * @return Resolved canonical path.
  * @throws std::runtime_error if path escapes root.
  * @internal
- * @version 1.8.5
+ * @version 2.1.1-rc1
  */
 fs::path FilesystemServer::resolve_path(
     const std::string& requested) const {
@@ -1177,17 +1180,16 @@ fs::path FilesystemServer::resolve_path(
         ? fs::weakly_canonical(req_path)
         : fs::weakly_canonical(root_dir_ / req_path);
 
-    auto root_str = root_dir_.string();
-    auto resolved_str = resolved.string();
-
-    bool under_root =
-        resolved_str.rfind(root_str, 0) == 0;
+    fs::path rel = resolved.lexically_relative(root_dir_);
+    bool under_root = !rel.empty()
+        && *rel.begin() != fs::path("..")
+        && rel != fs::path("..");
 
     if (!under_root && !config_.allow_outside_root) {
         logger->error("Path escape blocked: {} (root: {})",
-                      resolved_str, root_str);
+                      resolved.string(), root_dir_.string());
         throw std::runtime_error(
-            "Path escapes project root: " + resolved_str);
+            "Path escapes project root: " + resolved.string());
     }
     return resolved;
 }

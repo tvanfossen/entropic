@@ -22,51 +22,31 @@ static auto logger = entropic::log::get("mcp.bash");
 
 namespace entropic {
 
-// ── dangerous command patterns ──────────────────────────────────
+// ── working_dir validation ──────────────────────────────────────
 
 /**
- * @brief Check if a command matches a dangerous pattern.
- * @param cmd Command string to check.
- * @return true if the command is blocked.
+ * @brief Reject working_dir values that would smuggle shell syntax.
+ *
+ * The bash tool's security model is operator approval (the engine's
+ * tool-call gate), not pattern matching against the command. But
+ * `working_dir` is concatenated into a shell `cd` clause, so any
+ * shell metacharacter in cwd would escape the approval surface (the
+ * operator approves `command`, not the constructed shell string).
+ * This check rejects the obvious smuggling vectors and requires the
+ * cwd be an existing directory.
+ *
+ * @param cwd Caller-supplied working directory string.
+ * @return true if cwd is safe to inline into the shell command.
  * @internal
- * @version 1.8.5
+ * @version 2.1.1-rc1
  */
-static bool is_dangerous(const std::string& cmd) {
-    static const std::array<std::string, 6> blocked = {
-        "rm -rf /",
-        "rm -rf /*",
-        "dd if=/dev/zero",
-        ":(){:|:&};:",
-        "> /dev/sda",
-        "mkfs",
-    };
-    for (const auto& pattern : blocked) {
-        if (cmd.find(pattern) != std::string::npos) {
-            return true;
-        }
+static bool is_safe_cwd(const std::string& cwd) {
+    static constexpr const char* unsafe_chars = ";&|`$<>\n\r\\\"'*?(){}[]";
+    if (cwd.find_first_of(unsafe_chars) != std::string::npos) {
+        return false;
     }
-    return false;
-}
-
-/**
- * @brief Check additional prefix patterns for dangerous commands.
- * @param cmd Command string to check.
- * @return true if the command matches a dangerous prefix.
- * @internal
- * @version 1.8.5
- */
-static bool matches_dangerous_prefix(const std::string& cmd) {
-    static const std::array<std::string, 3> prefixes = {
-        "> /dev/",
-        "mkfs.",
-        "dd if=",
-    };
-    for (const auto& prefix : prefixes) {
-        if (cmd.find(prefix) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
+    std::error_code ec;
+    return std::filesystem::is_directory(cwd, ec);
 }
 
 /**
@@ -128,11 +108,20 @@ private:
 };
 
 /**
- * @brief Execute a shell command after safety checks.
+ * @brief Execute a shell command. Operator approval is the gate.
+ *
+ * Security model: the engine's tool-call approval flow gates whether
+ * this method runs at all. There is no command-content allowlist or
+ * denylist here; the operator approves a specific `command` value
+ * shown in the prompt, and that's what runs. The only validation we
+ * do is on `working_dir`, because that field is concatenated into a
+ * shell `cd` clause and could smuggle commands the operator never
+ * saw.
+ *
  * @param args_json JSON with "command" and optional "working_dir".
  * @return ServerResponse with output or error.
  * @internal
- * @version 2.0.0
+ * @version 2.1.1-rc1
  */
 ServerResponse ExecuteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -143,9 +132,10 @@ ServerResponse ExecuteTool::execute(const std::string& args_json) {
 
     logger->info("[bash.execute] cmd='{}' cwd='{}'", command, cwd);
 
-    if (is_dangerous(command) || matches_dangerous_prefix(command)) {
-        logger->warn("Blocked dangerous command: {}", command);
-        return {"Error: command blocked by safety filter", {}};
+    if (!is_safe_cwd(cwd)) {
+        logger->warn("Rejected unsafe working_dir: '{}'", cwd);
+        return {"Error: working_dir is not an existing directory or "
+                "contains shell metacharacters", {}};
     }
 
     std::string full_cmd =

@@ -46,14 +46,46 @@ def _exec_native(argv: list[str]) -> int:
     return 1  # unreachable; execvp does not return on success
 
 
+## @brief One-line summary of the wrapper-only install-engine subcommand.
+## @utility
+## @version 2.1.1-rc1
+_INSTALL_ENGINE_HELP = (
+    "  install-engine          Fetch and install librentropic.so from "
+    "GitHub Releases\n"
+    "                          (handled by the pip wrapper, not the native "
+    "binary).\n"
+    "                          Usage: entropic install-engine [--version V] "
+    "[--backend cpu|cuda]\n"
+)
+
+
 ## @brief Console-script entry point. argv excludes the program name.
 ## @utility
-## @version 2.1.0
+## @version 2.1.1-rc1
 def main(argv: list[str] | None = None) -> int:
     """Console-script entry point. argv excludes the program name."""
     args = list(sys.argv[1:] if argv is None else argv)
     if args and args[0] == "install-engine":
+        if any(a in ("-h", "--help") for a in args[1:]):
+            print(
+                "Usage: entropic install-engine [--version V] [--backend cpu|cuda]\n"
+                "\n"
+                "  Fetch and verify the librentropic.so + entropic CLI tarball\n"
+                "  for this wrapper version (or the version specified by\n"
+                "  --version) from GitHub Releases, and extract under\n"
+                "  ~/.entropic/ (override via $ENTROPIC_HOME).\n"
+                "\n"
+                "  --version V        Engine version to install (default: this\n"
+                "                     wrapper's version).\n"
+                "  --backend cpu|cuda Force a backend; default auto-detects\n"
+                "                     CUDA via nvidia-smi."
+            )
+            return 0
         return install_engine.main(args[1:])
+    if args and args[0] in ("-h", "--help"):
+        # Surface the wrapper-only subcommand alongside the native binary's help.
+        print(_INSTALL_ENGINE_HELP)
+        sys.stdout.flush()
     return _exec_native(args)
 
 

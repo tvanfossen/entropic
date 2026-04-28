@@ -51,7 +51,8 @@ include/entropic/entropic.h           Public C API
 lib/librentropic.so                   Shared library (SOVERSION-linked)
 lib/cmake/entropic/                   find_package support
 share/entropic/                       Runtime data (models.yaml, prompts, grammars, tools)
-share/doc/entropic/LICENSE            LGPL-3.0
+share/doc/entropic/LICENSE            LGPL-3.0 (canonical)
+share/doc/entropic/NOTICE             Linking exception + attribution
 share/doc/entropic/README.md          This file
 ```
 
@@ -163,13 +164,14 @@ isn't appropriate.
 
 ## Licensing
 
-Entropic is **LGPL-3.0-or-later**. See `share/doc/entropic/LICENSE`.
+Entropic is **LGPL-3.0-or-later** with a linking exception. See
+`share/doc/entropic/LICENSE` (canonical LGPL-3.0 text) and
+`share/doc/entropic/NOTICE` (linking exception + attribution).
 
-Dynamic linking against `librentropic.so` imposes minimal obligations
-on your application: you must allow end users to replace the entropic
-library (this is automatic when linking against the shared `.so`) and
-include the LGPL notice with your distribution. Your own source code
-does not need to be open-sourced.
+The linking exception explicitly permits applications to link
+`librentropic.so` (statically or dynamically) without becoming
+LGPL-covered themselves. Modifications to entropic itself remain
+subject to LGPL section 4d.
 
 Bundled inference runtime (`llama.cpp`) is **MIT-licensed**; see its
 upstream repository for attribution text.

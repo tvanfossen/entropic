@@ -464,4 +464,14 @@ professional, legal, medical, or financial advice.
 
 ## License
 
-LGPL-3.0 (v2.0.0+; prior releases were Apache-2.0)
+LGPL-3.0-or-later, with a linking exception that lets applications
+dynamically or statically link `librentropic.so` without being
+themselves required to ship under LGPL.
+
+- [`LICENSE`](LICENSE) — canonical LGPL-3.0 text
+- [`NOTICE`](NOTICE) — project-specific additions: the linking
+  exception, dual-license / version history, and third-party
+  attribution
+
+Versions prior to 2.0.0 were released under Apache-2.0; that
+license continues to apply to the version you received.

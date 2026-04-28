@@ -154,7 +154,7 @@ install(DIRECTORY data/
 # License + release README (the README shipped with the tarball lives
 # under docs/dist-README.md; the repo's primary README.md is for
 # contributors).
-install(FILES LICENSE docs/dist-README.md
+install(FILES LICENSE NOTICE docs/dist-README.md
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 

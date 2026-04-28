@@ -1,0 +1,65 @@
+Entropic — local-first agentic inference engine
+Copyright (C) 2026 Tristan VanFossen
+
+Entropic is licensed under the GNU Lesser General Public License,
+version 3 or (at your option) any later version. The full text of
+that license is in the LICENSE file alongside this notice.
+
+The notices below are project-specific additions to LGPL-3.0. They
+do not modify the LGPL itself; they clarify its application to this
+project and document the project's licensing history.
+
+======================================================================
+
+LINKING EXCEPTION
+======================================================================
+
+Linking this library statically or dynamically with independent
+modules to produce an executable does not by itself cause the
+resulting executable to be covered by the GNU Lesser General Public
+License. Such independent modules, and the combination of this
+library with independent modules, are a "Combined Work" as defined
+in section 4 of LGPL-3.0. The LGPL requirements (section 4d) apply
+only to the portions of the Combined Work that are derived from
+this library.
+
+In plain terms: applications that link against librentropic.so —
+statically or dynamically — are not themselves required to be
+licensed under the LGPL. Only modifications to the entropic library
+itself are subject to LGPL section 4d's source-availability
+requirements.
+
+This exception is granted by the copyright holder and is permitted
+under section 7 of LGPL-3.0 ("Additional Permissions").
+
+======================================================================
+
+DUAL-LICENSE / VERSION HISTORY
+======================================================================
+
+Versions of Entropic prior to 2.0.0 were released under the Apache
+License, Version 2.0. The license change to LGPL-3.0-or-later (with
+the linking exception above) applies to version 2.0.0 and all
+subsequent releases.
+
+If you obtained this software under the Apache-2.0 license (v1.x),
+that license continues to apply to the version you received. The
+re-licensing is not retroactive.
+
+======================================================================
+
+THIRD-PARTY COMPONENTS
+======================================================================
+
+Entropic bundles or links against third-party software with their
+own licenses. See the upstream projects for full attribution text:
+
+  - llama.cpp           MIT
+  - nlohmann::json      MIT
+  - spdlog              MIT
+  - sqlite3             Public domain
+  - rapidyaml (ryml)    MIT
+  - cpp-httplib         MIT (examples/openai-server only)
+
+These notices satisfy attribution requirements where required by
+the respective upstream licenses.

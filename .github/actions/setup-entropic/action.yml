@@ -2,9 +2,10 @@
 # Composite action: provision an entropic build environment.
 #
 # Installs the system toolchain (cmake, gcc, doxygen, ninja, SQLite3
-# dev headers, gcovr for the coverage hook), sets up Python, and
-# creates a project-local .venv with the invoke + pre-commit tooling
-# that the local pre-commit hooks and tasks.py rely on.
+# dev headers), sets up Python, and creates a project-local .venv
+# matching the local dev environment exactly via `pip install -e ".[dev]"`
+# (invoke, pre-commit, gcovr, mypy, ruff, pytest, …). pyproject.toml is
+# the single source of truth for dev tooling versions.
 #
 # Used by ci.yml (PR checks), release.yml (Phase 3), and nightly.yml
 # (Phase 4) so they all start from the same base.
@@ -54,7 +55,7 @@ runs:
         echo "After cleanup:"
         df -h / | tail -1
 
-    - name: Install system dependencies (cmake, build-essential, doxygen, gcovr, sqlite3, ninja, ccache)
+    - name: Install system dependencies (cmake, build-essential, doxygen, sqlite3, ninja, ccache)
       shell: bash
       run: |
         sudo apt-get update
@@ -63,7 +64,6 @@ runs:
           build-essential \
           ccache \
           doxygen \
-          gcovr \
           libsqlite3-dev \
           ninja-build \
           pkg-config
@@ -102,14 +102,18 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - name: Create venv and install invoke + pre-commit
+    - name: Create venv and install dev dependencies from pyproject
       shell: bash
       run: |
         python -m venv .venv
         .venv/bin/pip install --upgrade pip
-        # tasks.py is driven by invoke; pre-commit runs all the quality
-        # gates including the local build/test/coverage hooks.
-        .venv/bin/pip install invoke pre-commit
+        # Install the package + the [dev] optional-dependencies group
+        # declared in pyproject.toml. This puts invoke, pre-commit,
+        # gcovr, mypy, ruff, and pytest in the venv — matching the
+        # local dev environment that pre-commit hooks and tasks.py
+        # assume (e.g. tasks.py resolves gcovr next to the python that
+        # ran invoke, i.e. .venv/bin/gcovr).
+        .venv/bin/pip install -e ".[dev]"
 
     - name: Cache pre-commit hook environments
       uses: actions/cache@v4

@@ -340,6 +340,28 @@ private:
         ToolResultKind kind);
 
     /**
+     * @brief Update anti-spiral tracking for a just-dispatched tool.
+     *
+     * Increments ctx.consecutive_same_tool_calls when @p tool_name
+     * matches ctx.last_tool_name; resets to 1 (and updates
+     * last_tool_name) otherwise. When the count reaches
+     * loop_config_.max_consecutive_same_tool, populates
+     * ctx.pending_anti_spiral_warning so the next turn's system
+     * reminder tells the model to pivot tools or complete. The
+     * warning is one-shot — engine clears post-emit (same lifecycle
+     * as pending_validation_feedback).
+     *
+     * Demo ask #5, v2.1.0.
+     *
+     * @param ctx Loop context (mutates anti-spiral fields).
+     * @param tool_name Name of the tool that just executed.
+     * @internal
+     * @version 2.1.0
+     */
+    void update_anti_spiral_tracking(LoopContext& ctx,
+                                     const std::string& tool_name);
+
+    /**
      * @brief Build PRE_TOOL_CALL hook context JSON.
      * @param call Tool call being attempted.
      * @param tier Active tier (empty → "lead" fallback).

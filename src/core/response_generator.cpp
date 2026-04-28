@@ -215,7 +215,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -270,7 +270,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -460,7 +460,7 @@ std::vector<Message> ResponseGenerator::inject_tool_prompt(
  * assembled prompt, not the conversation history. (Demo ask #1)
  *
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     const std::vector<Message>& messages,
@@ -481,6 +481,14 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     if (!ctx.pending_validation_feedback.empty()) {
         reminder += "\n[engine] previous turn rejected: "
                   + ctx.pending_validation_feedback;
+    }
+    // Demo ask #5 (v2.1.0): anti-spiral primitive. ToolExecutor
+    // populated this when consecutive_same_tool_calls hit
+    // max_consecutive_same_tool. Same one-shot lifecycle as the
+    // validation feedback above; engine clears after this turn.
+    if (!ctx.pending_anti_spiral_warning.empty()) {
+        reminder += "\n[engine] anti-spiral: "
+                  + ctx.pending_anti_spiral_warning;
     }
 
     auto result = messages;

@@ -340,7 +340,7 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -666,7 +666,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -709,6 +709,14 @@ std::vector<Message> ToolExecutor::process_single_call(
     }
     fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind);
 
+    // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive
+    // calls of the same tool regardless of arg similarity (exact-arg
+    // duplicates are caught earlier by recent_tool_calls). When the
+    // count reaches the configured threshold, populate
+    // pending_anti_spiral_warning so the next turn's system reminder
+    // tells the model to pivot tools or complete.
+    update_anti_spiral_tracking(ctx, call.name);
+
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
     logger->info("[tool_call] iter={} tier={} tool={} args={} "
@@ -742,6 +750,32 @@ bool ToolExecutor::fire_pre_tool_hook(
         ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
     free(mod);
     return rc != 0;
+}
+
+/**
+ * @brief Update anti-spiral tracking after a tool dispatch.
+ *
+ * Demo ask #5 (v2.1.0). See header for full contract.
+ *
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void ToolExecutor::update_anti_spiral_tracking(
+    LoopContext& ctx, const std::string& tool_name) {
+    if (tool_name == ctx.last_tool_name) {
+        ++ctx.consecutive_same_tool_calls;
+    } else {
+        ctx.last_tool_name = tool_name;
+        ctx.consecutive_same_tool_calls = 1;
+    }
+    if (ctx.consecutive_same_tool_calls
+            >= loop_config_.max_consecutive_same_tool) {
+        ctx.pending_anti_spiral_warning =
+            tool_name + " has been called "
+            + std::to_string(ctx.consecutive_same_tool_calls)
+            + " times consecutively; pivot to a different tool or "
+              "complete the task next turn.";
+    }
 }
 
 /**

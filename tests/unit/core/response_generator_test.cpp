@@ -614,3 +614,83 @@ SCENARIO("Engine state reminder surfaces pending validation feedback",
         }
     }
 }
+
+SCENARIO("Engine state reminder surfaces anti-spiral warning",
+         "[core][response_generator][2.1.0][demo-ask-5]")
+{
+    GIVEN("a context with pending_anti_spiral_warning set") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "researcher";
+        ctx.metrics.iterations = 8;
+        ctx.pending_anti_spiral_warning =
+            "filesystem.grep has been called 5 times consecutively; "
+            "pivot to a different tool or complete the task next turn.";
+        Message sys{"system", "researcher prompt"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "find foo"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("the anti-spiral line appears in the system prompt") {
+                CHECK(g_captured_msgs.find(
+                          "anti-spiral: filesystem.grep has been called 5 times")
+                      != std::string::npos);
+            }
+            AND_THEN("the anti-spiral line co-exists with the iteration line") {
+                CHECK(g_captured_msgs.find("iteration 8/")
+                      != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a context with both validation feedback AND anti-spiral pending") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.metrics.iterations = 4;
+        ctx.pending_validation_feedback =
+            "every claim cites file:line";
+        ctx.pending_anti_spiral_warning =
+            "lookup_function has been called 5 times consecutively; "
+            "pivot to a different tool or complete the task next turn.";
+        Message sys{"system", "prompt"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "go"};
+        ctx.messages.push_back(std::move(user));
+
+        g_captured_msgs.clear();
+
+        WHEN("generate_response runs") {
+            gen.generate_response(ctx);
+
+            THEN("both reminder lines appear in the system prompt") {
+                CHECK(g_captured_msgs.find("previous turn rejected")
+                      != std::string::npos);
+                CHECK(g_captured_msgs.find("anti-spiral")
+                      != std::string::npos);
+            }
+        }
+    }
+}

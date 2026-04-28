@@ -80,6 +80,13 @@ struct LoopConfig {
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
+    /// @brief Anti-spiral threshold: after N consecutive calls of the
+    /// SAME tool (regardless of arg similarity, since exact-arg
+    /// duplicates are already handled by recent_tool_calls), the
+    /// engine populates pending_anti_spiral_warning so the next turn's
+    /// system reminder tells the model to pivot tools or complete.
+    /// (Demo ask #5, v2.1.0)
+    int max_consecutive_same_tool = 5;
 };
 
 /**
@@ -206,6 +213,27 @@ struct LoopContext {
     /// turn rejected: …" line and the engine clears it post-emit.
     /// (Demo ask #2, v2.1.0)
     std::string pending_validation_feedback;
+
+    /// @brief One-shot anti-spiral reminder for the next per-turn
+    /// system prompt. Populated by ToolExecutor when
+    /// consecutive_same_tool_calls reaches LoopConfig
+    /// .max_consecutive_same_tool; ResponseGenerator emits as a
+    /// "[engine] anti-spiral: <tool> called N times consecutively;
+    /// pivot or complete next turn." line; engine clears post-emit.
+    /// (Demo ask #5, v2.1.0)
+    std::string pending_anti_spiral_warning;
+
+    /// @brief Name of the most recently dispatched tool. Used to
+    /// detect runs of the same tool for the anti-spiral primitive.
+    /// Reset to "" when a different tool runs.
+    /// (Demo ask #5, v2.1.0)
+    std::string last_tool_name;
+
+    /// @brief Count of CONSECUTIVE successful calls to the same tool
+    /// (last_tool_name). Reset to 0 when a different tool runs.
+    /// Compared against LoopConfig::max_consecutive_same_tool.
+    /// (Demo ask #5, v2.1.0)
+    int consecutive_same_tool_calls = 0;
 };
 
 /**

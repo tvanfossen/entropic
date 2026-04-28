@@ -58,8 +58,10 @@ PRs without DCO sign-off on every commit will not be merged.
 You retain copyright in your contributions. By submitting a change
 under DCO sign-off, you license your contribution to the project
 under LGPL-3.0-or-later (with the linking exception described in
-`NOTICE`). The `AUTHORS` file lists the project's copyright holders;
-significant contributors may be added on request.
+`NOTICE`). The canonical record of who contributed what is the git
+commit history; the `AUTHORS` file identifies the original copyright
+holder of the project as a whole and is not maintained as an
+exhaustive contributor list.
 
 This project does not require copyright assignment. The DCO is the
 only attestation you need to make.

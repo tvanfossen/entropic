@@ -1,19 +1,14 @@
 Entropic — copyright holders
 
-This file lists the copyright holders of Entropic. Copyright in the
-project as a whole rests with the holders below; individual file
-contributions remain attributable through the git commit history.
+The original copyright holder of Entropic is:
 
-To submit a change to Entropic, see CONTRIBUTING.md. Contributors
-retain copyright in their own contributions and license them to the
-project under LGPL-3.0-or-later via the Developer Certificate of
-Origin (DCO) sign-off on each commit.
+  Tristan VanFossen <vanfosst@gmail.com>
 
-------------------------------------------------------------------
-Copyright holders
-------------------------------------------------------------------
+Contributors retain copyright in their own contributions and license
+those contributions to the project under LGPL-3.0-or-later (with the
+linking exception in NOTICE) via the Developer Certificate of Origin
+sign-off described in CONTRIBUTING.md.
 
-Tristan VanFossen <vanfosst@gmail.com>
-  - Sole copyright in Entropic as of v2.1.0
-  - Engine consolidated from prior personal projects (see NOTICE,
-    "Provenance and Origin")
+The canonical record of who has contributed what is the git commit
+history. This file is not exhaustive; it identifies the original
+copyright holder of the project as a whole.

@@ -25,6 +25,7 @@
 
 #include <entropic/entropic_export.h>
 
+#include <string>
 #include <string_view>
 
 namespace entropic::mcp {
@@ -52,5 +53,23 @@ ENTROPIC_EXPORT bool is_effectively_empty(std::string_view s);
  * @version 2.1.0
  */
 ENTROPIC_EXPORT bool looks_like_tool_error(std::string_view content);
+
+/**
+ * @brief Truncate tool-result content in place when it exceeds cap.
+ *
+ * Demo ask #6 (v2.1.0). When @p cap is 0, no-op. When content size
+ * exceeds @p cap, the content is shrunk to ``cap - tail.size()``
+ * bytes followed by a trailing
+ * ``\\n[... truncated, N more bytes]`` marker so downstream
+ * consumers (the model, classification, the duplicate cache) see the
+ * bounded form with a clear signal that bytes were lost. Final size
+ * is ≤ cap.
+ *
+ * @param content Mutable string; truncated in place when exceeded.
+ * @param cap Maximum byte length. 0 disables.
+ * @utility
+ * @version 2.1.1-rc1
+ */
+ENTROPIC_EXPORT void truncate_to_cap(std::string& content, int cap);
 
 } // namespace entropic::mcp

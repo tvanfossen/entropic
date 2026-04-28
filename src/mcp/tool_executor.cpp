@@ -666,7 +666,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.1.1-rc2
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -691,6 +691,15 @@ std::vector<Message> ToolExecutor::process_single_call(
     auto [msg, raw_result] = execute_tool(ctx, call);
     auto exec_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - exec_start).count();
+    // #46 (v2.1.0): cap result content at LoopConfig.max_tool_result_bytes
+    // so a single runaway tool can't exhaust the context budget. Cap=0
+    // disables. Truncated form retains a "[... truncated, N more bytes]"
+    // tail so downstream classification (#44) and identity prompts can
+    // see that output was lost rather than the tool actually returning
+    // a short result. Applied BEFORE classification so kind reflects
+    // the bounded form, and BEFORE record_tool_call so the duplicate
+    // cache stores what the model actually saw.
+    apply_result_size_cap(msg.content);
     ctx.effective_tool_calls++;
     msg.metadata["added_at_iteration"] =
         std::to_string(ctx.metrics.iterations);
@@ -750,6 +759,18 @@ bool ToolExecutor::fire_pre_tool_hook(
         ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
     free(mod);
     return rc != 0;
+}
+
+/**
+ * @brief Cap tool-result content at LoopConfig.max_tool_result_bytes.
+ *
+ * Demo ask #6 (v2.1.0). See header for full contract.
+ *
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void ToolExecutor::apply_result_size_cap(std::string& content) const {
+    mcp::truncate_to_cap(content, loop_config_.max_tool_result_bytes);
 }
 
 /**

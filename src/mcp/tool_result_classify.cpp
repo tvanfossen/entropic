@@ -69,6 +69,24 @@ inline bool starts_with_json_error(std::string_view trimmed) {
 }
 
 /**
+ * @brief Truncate content in place when it exceeds the byte cap.
+ * @utility
+ * @version 2.1.1-rc1
+ */
+void truncate_to_cap(std::string& content, int cap) {
+    if (cap <= 0) { return; }
+    auto cap_sz = static_cast<size_t>(cap);
+    if (content.size() <= cap_sz) { return; }
+    size_t lost = content.size() - cap_sz;
+    std::string tail = "\n[... truncated, "
+        + std::to_string(lost) + " more bytes]";
+    size_t keep = (cap_sz > tail.size())
+        ? cap_sz - tail.size() : 0;
+    content.resize(keep);
+    content += tail;
+}
+
+/**
  * @brief Heuristic match for an error-shaped tool result string.
  * @utility
  * @version 2.1.0

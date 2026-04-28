@@ -362,6 +362,25 @@ private:
                                      const std::string& tool_name);
 
     /**
+     * @brief Truncate @p content in-place if it exceeds the byte cap.
+     *
+     * Reads loop_config_.max_tool_result_bytes; when 0, no-op. When
+     * the cap is positive and content exceeds it, content is shrunk
+     * to (cap - tail.size()) bytes followed by a
+     * "[... truncated, N more bytes]" tail so downstream consumers
+     * (the model, classification, history) see the bounded form
+     * with a clear marker that bytes were lost. Applied at the
+     * inbound boundary — before classification (#44) and recording.
+     *
+     * Demo ask #6, v2.1.0.
+     *
+     * @param content Tool-result text to bound (mutated in place).
+     * @internal
+     * @version 2.1.1-rc1
+     */
+    void apply_result_size_cap(std::string& content) const;
+
+    /**
      * @brief Build PRE_TOOL_CALL hook context JSON.
      * @param call Tool call being attempted.
      * @param tier Active tier (empty → "lead" fallback).

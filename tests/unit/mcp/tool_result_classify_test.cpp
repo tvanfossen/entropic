@@ -97,3 +97,66 @@ SCENARIO("ToolResultKind::ok_empty round-trips through string form",
     CHECK(std::string(result_kind_to_string(ToolResultKind::error))
           == "error");
 }
+
+// ── Demo ask #6 (v2.1.0): tool result size cap ─────────────────
+
+SCENARIO("truncate_to_cap is a no-op when cap is 0",
+         "[mcp][tool_result_classify][2.1.0][demo-ask-6]")
+{
+    GIVEN("cap=0 and a long input") {
+        std::string s(10000, 'x');
+        const auto before = s.size();
+        WHEN("truncate_to_cap runs with cap=0") {
+            entropic::mcp::truncate_to_cap(s, 0);
+            THEN("string is unchanged") { CHECK(s.size() == before); }
+        }
+    }
+}
+
+SCENARIO("truncate_to_cap is a no-op when content is already within cap",
+         "[mcp][tool_result_classify][2.1.0][demo-ask-6]")
+{
+    GIVEN("a short string and a generous cap") {
+        std::string s = "hello world";
+        WHEN("truncate_to_cap runs") {
+            entropic::mcp::truncate_to_cap(s, 1024);
+            THEN("string is unchanged") { CHECK(s == "hello world"); }
+        }
+    }
+
+    GIVEN("a string exactly at cap") {
+        std::string s(64, 'a');
+        WHEN("truncate_to_cap runs at cap=64") {
+            entropic::mcp::truncate_to_cap(s, 64);
+            THEN("string is unchanged") {
+                CHECK(s.size() == 64);
+                CHECK(s.find("truncated") == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("truncate_to_cap shrinks oversized content with a marker tail",
+         "[mcp][tool_result_classify][2.1.0][demo-ask-6]")
+{
+    GIVEN("a 10 KB string and a 100-byte cap") {
+        std::string s(10000, 'x');
+        const auto before = s.size();
+        WHEN("truncate_to_cap runs") {
+            entropic::mcp::truncate_to_cap(s, 100);
+            THEN("final size is at or below cap") {
+                CHECK(s.size() <= 100);
+            }
+            AND_THEN("the truncation marker reports lost bytes") {
+                CHECK(s.find("[... truncated,") != std::string::npos);
+                CHECK(s.find("more bytes]") != std::string::npos);
+                // Lost = before - cap (within tail rounding).
+                CHECK(s.find(std::to_string(before - 100))
+                      != std::string::npos);
+            }
+            AND_THEN("kept prefix is the original head") {
+                CHECK(s.front() == 'x');
+            }
+        }
+    }
+}

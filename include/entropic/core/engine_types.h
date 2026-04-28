@@ -87,6 +87,14 @@ struct LoopConfig {
     /// system reminder tells the model to pivot tools or complete.
     /// (Demo ask #5, v2.1.0)
     int max_consecutive_same_tool = 5;
+    /// @brief Maximum byte length for a single tool's result content
+    /// before the engine truncates with a "[... truncated, N more
+    /// bytes]" tail. Single global cap; per-tool overrides not yet
+    /// supported. 0 disables truncation. Default 16 KB — large enough
+    /// for typical filesystem.read_file / git.diff returns, small
+    /// enough that runaway tool output cannot exhaust the context
+    /// budget alone. (Demo ask #6, v2.1.0)
+    int max_tool_result_bytes = 16384;
 };
 
 /**

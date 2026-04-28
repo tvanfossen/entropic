@@ -6,9 +6,9 @@ repos:
     rev: v4.5.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^(test-reports/|vendor/)
+        exclude: ^vendor/
       - id: end-of-file-fixer
-        exclude: ^(test-reports/|vendor/)
+        exclude: ^vendor/
       - id: check-yaml
       - id: check-json
       - id: check-toml
@@ -20,9 +20,19 @@ repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.3.4
     hooks:
+      # ruff lint config lives here, not pyproject.toml — pre-commit
+      # is the source of truth for hooks. Adjust here if rules change.
       - id: ruff
-        args: ['--fix']
+        args:
+          - --fix
+          - --line-length=100
+          - --select=E,F,W,I,N,UP,B,C4
+          - --ignore=E501
+          - --extend-exclude=vendor
       - id: ruff-format
+        args:
+          - --line-length=100
+          - --exclude=vendor
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
@@ -76,8 +86,26 @@ repos:
 
       - id: coverage-check
         name: Per-library coverage (gcovr)
-        entry: scripts/check_coverage.py
-        language: python
-        additional_dependencies: ['gcovr']
+        # Per-library minimum line-coverage thresholds for librentropic
+        # sub-targets. Format: "name:source_filter:percent". Adjust
+        # numbers here, not in tasks.py — pre-commit-config.yaml is the
+        # source of truth for hook gates.
+        entry: .venv/bin/inv check-coverage
+        language: system
         always_run: true
         pass_filenames: false
+        args:
+          - '--threshold'
+          - 'librentropic-types:src/types/:95'
+          - '--threshold'
+          - 'librentropic-config:src/config/:90'
+          - '--threshold'
+          - 'librentropic-core:src/core/:85'
+          - '--threshold'
+          - 'librentropic-mcp:src/mcp/:85'
+          - '--threshold'
+          - 'librentropic-storage:src/storage/:85'
+          - '--threshold'
+          - 'librentropic-inference:src/inference/:70'
+          - '--threshold'
+          - 'librentropic-facade:src/facade/:80'

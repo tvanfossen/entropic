@@ -138,12 +138,19 @@ via `$ENTROPIC_LIB`.
 ### 3. Use it
 
 ```bash
-entropic ask "What is 2 + 2?"
+entropic version            # confirm install
+entropic mcp-bridge         # run as MCP server over stdio (Claude Code etc.)
+entropic download primary   # fetch the recommended GGUF model
+entropic mcp-connect --socket /tmp/entropic.sock   # connect to running engine
 ```
 
-`entropic ask` dispatches to `bin/entropic` from the installed tarball
-via `os.execvp` — there is no Python wrapper around the conversation
-loop.
+The wrapper handles `install-engine` in-process; every other
+subcommand `os.execvp`s into the native `bin/entropic` from the
+installed tarball, so argv passes through verbatim.
+
+> See [cli-install-routes.md](cli-install-routes.md) for the full
+> subcommand surface, install-route matrix, and known
+> consumer-experience gaps.
 
 For programmatic use:
 

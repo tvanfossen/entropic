@@ -33,7 +33,9 @@ set(MODEL_TEST_LIBS
 )
 
 set(MODEL_TEST_DEFS
-    TEST_REPORTS_DIR="${PROJECT_SOURCE_DIR}/test-reports/model"
+    # Model-test artifacts land under build/test-reports/ (gitignored)
+    # consistent with tasks.py:MODEL_RESULTS_FILE.
+    TEST_REPORTS_DIR="${PROJECT_SOURCE_DIR}/build/test-reports/model"
     MODEL_PATH="${PROJECT_SOURCE_DIR}"
 )
 

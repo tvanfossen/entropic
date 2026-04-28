@@ -683,15 +683,80 @@ static char* sp_get_config(void* ud) {
 }
 
 /**
+ * @brief Build the assembled system prompt the engine would send for
+ *        a given tier (constitution + app_context + identity body +
+ *        tool defs). Returns "" on any failure.
+ *
+ * Demo ask #3 (v2.1.0). Static parts only — does NOT include the
+ * per-turn iteration / validation reminders, since those are
+ * runtime-dependent. Runtime augmentations live in
+ * ResponseGenerator::inject_engine_state_reminder.
+ *
+ * @utility
+ * @version 2.1.0
+ */
+static std::string build_assembled_prompt_for_tier(
+    entropic_engine* h, const std::string& tier_name) {
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
+    std::string constitution, app_ctx;
+    entropic::prompts::load_constitution(
+        h->config.constitution, h->config.constitution_disabled,
+        data_dir, constitution);
+    entropic::prompts::load_app_context(
+        h->config.app_context, h->config.app_context_disabled,
+        data_dir, app_ctx);
+    std::string identity_body;
+    auto it = h->config.models.tiers.find(tier_name);
+    if (it != h->config.models.tiers.end()) {
+        identity_body = entropic::prompts::resolve_tier_identity(
+            it->second, tier_name, data_dir);
+    }
+    std::string out;
+    if (!constitution.empty()) { out += constitution + "\n\n"; }
+    if (!app_ctx.empty()) { out += app_ctx + "\n\n"; }
+    if (!identity_body.empty()) { out += identity_body; }
+
+    // Tool defs from the inference adapter (matches inject_tool_prompt).
+    if (h->inference_iface.get_tool_prompt != nullptr) {
+        char* tp = nullptr;
+        int rc = h->inference_iface.get_tool_prompt(
+            tier_name.c_str(), &tp,
+            h->inference_iface.tool_prompt_data);
+        if (rc == 0 && tp != nullptr) {
+            out += "\n\n";
+            out += tp;
+            if (h->inference_iface.free_fn) {
+                h->inference_iface.free_fn(tp);
+            }
+        }
+    }
+    return out;
+}
+
+/**
  * @brief State provider: get_identities.
+ *
+ * Returns an array of objects per tier:
+ *   [{"name":"lead","assembled_prompt":"…"}, ...]
+ *
+ * The assembled_prompt is the static system prompt the engine would
+ * send for that tier (constitution + app_context + identity body +
+ * tool defs), excluding per-turn runtime augmentations. Demo ask #3:
+ * lets `entropic.inspect identity <tier>` return what the model
+ * actually sees, without running inference. (v2.1.0)
+ *
  * @callback
- * @version 2.0.6
+ * @version 2.1.0
  */
 static char* sp_get_identities(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& [name, _] : h->config.models.tiers) {
-        arr.push_back(name);
+        nlohmann::json entry;
+        entry["name"] = name;
+        entry["assembled_prompt"] =
+            build_assembled_prompt_for_tier(h, name);
+        arr.push_back(std::move(entry));
     }
     return strdup(arr.dump().c_str());
 }

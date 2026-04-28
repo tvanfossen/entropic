@@ -80,6 +80,21 @@ struct LoopConfig {
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
+    /// @brief Anti-spiral threshold: after N consecutive calls of the
+    /// SAME tool (regardless of arg similarity, since exact-arg
+    /// duplicates are already handled by recent_tool_calls), the
+    /// engine populates pending_anti_spiral_warning so the next turn's
+    /// system reminder tells the model to pivot tools or complete.
+    /// (Demo ask #5, v2.1.0)
+    int max_consecutive_same_tool = 5;
+    /// @brief Maximum byte length for a single tool's result content
+    /// before the engine truncates with a "[... truncated, N more
+    /// bytes]" tail. Single global cap; per-tool overrides not yet
+    /// supported. 0 disables truncation. Default 16 KB — large enough
+    /// for typical filesystem.read_file / git.diff returns, small
+    /// enough that runaway tool output cannot exhaust the context
+    /// budget alone. (Demo ask #6, v2.1.0)
+    int max_tool_result_bytes = 16384;
 };
 
 /**
@@ -200,6 +215,33 @@ struct LoopContext {
     std::optional<PendingPipeline> pending_pipeline;      ///< Stored by dir_pipeline (v1.8.6)
     int effective_max_iterations = -1;           ///< Per-identity override (-1 = LoopConfig, P3-18)
     int effective_max_tool_calls_per_turn = -1;  ///< Per-identity override (-1 = LoopConfig, P3-18)
+    /// @brief One-shot reminder text consumed by the next per-turn
+    /// system prompt assembly. Engine populates after a rejected
+    /// validation; ResponseGenerator emits as a "[engine] previous
+    /// turn rejected: …" line and the engine clears it post-emit.
+    /// (Demo ask #2, v2.1.0)
+    std::string pending_validation_feedback;
+
+    /// @brief One-shot anti-spiral reminder for the next per-turn
+    /// system prompt. Populated by ToolExecutor when
+    /// consecutive_same_tool_calls reaches LoopConfig
+    /// .max_consecutive_same_tool; ResponseGenerator emits as a
+    /// "[engine] anti-spiral: <tool> called N times consecutively;
+    /// pivot or complete next turn." line; engine clears post-emit.
+    /// (Demo ask #5, v2.1.0)
+    std::string pending_anti_spiral_warning;
+
+    /// @brief Name of the most recently dispatched tool. Used to
+    /// detect runs of the same tool for the anti-spiral primitive.
+    /// Reset to "" when a different tool runs.
+    /// (Demo ask #5, v2.1.0)
+    std::string last_tool_name;
+
+    /// @brief Count of CONSECUTIVE successful calls to the same tool
+    /// (last_tool_name). Reset to 0 when a different tool runs.
+    /// Compared against LoopConfig::max_consecutive_same_tool.
+    /// (Demo ask #5, v2.1.0)
+    int consecutive_same_tool_calls = 0;
 };
 
 /**

@@ -620,6 +620,44 @@ private:
                                     const std::vector<Message>& messages); ///< @internal
 
     /**
+     * @brief Pull rejection text from validation_provider_ into
+     *        ctx.pending_validation_feedback for the next turn.
+     *
+     * Queries the validation_provider_ callback (if wired); when
+     * verdict starts with "rejected", joins violations into a
+     * one-line summary stashed on the loop context. No-op when
+     * validation_provider_ is not wired or the verdict is clean.
+     *
+     * @param ctx Loop context (mutates pending_validation_feedback).
+     * @internal
+     * @version 2.1.0
+     */
+    void capture_validation_feedback(LoopContext& ctx);
+
+    /**
+     * @brief Run post-generate bookkeeping in one call.
+     *
+     * Per-iteration housekeeping bundled to keep
+     * execute_iteration knots-clean:
+     *   1. Clear ctx.pending_validation_feedback (just consumed by
+     *      generate_response via inject_engine_state_reminder).
+     *   2. Fire ENTROPIC_HOOK_POST_GENERATE (validator may revise
+     *      result.content here).
+     *   3. capture_validation_feedback(ctx) — stash next-turn
+     *      feedback if the validator rejected.
+     *
+     * Demo ask #2 (v2.1.0).
+     *
+     * @param ctx Loop context.
+     * @param result Generation result (content may be revised by
+     *               POST_GENERATE hook).
+     * @internal
+     * @version 2.1.0
+     */
+    void dispatch_post_generate(LoopContext& ctx,
+                                GenerateResult& result);
+
+    /**
      * @brief Fire ON_COMPLETE pre-hook for summary validation.
      *
      * Fires when entropic.complete is called. Context includes summary,

@@ -30,8 +30,11 @@ Each layer answers a different question.
 - Live model on GPU (Qwen3.5-35B-A3B-UD-IQ3_XXS)
 - BDD format (SCENARIO/GIVEN/WHEN/THEN)
 - NOT a pre-commit hook -- manual developer run
-- Results committed to `test-reports/model/results.json`
-- CI validates freshness (version + git_sha match)
+- Results written to `build/test-reports/model/results.json` (gitignored);
+  attached to the GitHub Release as `model-results-vX.Y.Z.json` per
+  `docs/releasing.md`
+- CI validates freshness (version + git_sha match) against the release
+  artifact, not against an in-tree file
 
 ### Subsystem Tests (10) — `entropic-subsystem-tests`
 

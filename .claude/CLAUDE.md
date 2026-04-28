@@ -68,11 +68,16 @@ Python coding standards apply to any Python that remains (wrapper, CLI).
 | Gate | When | What runs |
 |------|------|-----------|
 | Pre-commit | Every commit | Unit tests (fast, CPU, no GPU) |
-| Minor version | Each x.y.0 bump | Full model/benchmark suite (developer-run, GPU, results checked in) |
+| Minor version | Each x.y.0 bump | Full model/benchmark suite (developer-run, GPU; results attached to the GitHub Release as `model-results-vX.Y.Z.json`) |
 | Patch version | Each x.y.z bump | Unit tests only |
 
 Model tests and benchmarks are merged into one suite at v1.10.0.
 No model tests in pre-commit — too slow, GPU-dependent.
+
+Model-test output lands under `build/test-reports/` (gitignored via the
+generic `build/` rule). The release-time model-results JSON is the
+audit record; capture it via the manual release workflow in
+`docs/releasing.md`.
 
 ## Configuration
 

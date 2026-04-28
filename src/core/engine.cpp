@@ -367,7 +367,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.7.1
+ * @version 2.1.1-rc1
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -407,7 +407,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     }
 
     auto result = response_generator_.generate_response(ctx);
-    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    dispatch_post_generate(ctx, result);
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
     logger->info("[ITER] finish={}, {} tool call(s), {} chars",
                  result.finish_reason, tool_calls.size(),
@@ -1238,6 +1238,71 @@ void AgentEngine::fire_post_generate_hook(
 }
 
 /**
+ * @brief Pull rejection text from validation_provider_ into
+ *        ctx.pending_validation_feedback for the next turn.
+ *
+ * Demo ask #2 (v2.1.0). Called once per iteration after
+ * fire_post_generate_hook. Parses the validation provider's JSON
+ * payload; when verdict starts with "rejected", joins the violations
+ * into a one-line reminder. ResponseGenerator picks it up on the
+ * next turn via inject_engine_state_reminder, then the engine
+ * clears the field at the top of the iteration that consumes it.
+ *
+ * @param ctx Loop context (writes pending_validation_feedback).
+ * @internal
+ * @version 2.1.1-rc1
+ */
+/**
+ * @brief Per-iteration post-generate bookkeeping bundle.
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void AgentEngine::dispatch_post_generate(
+    LoopContext& ctx, GenerateResult& result) {
+    // The per-turn reminders built from pending_validation_feedback
+    // and pending_anti_spiral_warning were just consumed by
+    // generate_response — clear both so neither leaks into a later
+    // iteration. (#42, #45 — both one-shot.)
+    ctx.pending_validation_feedback.clear();
+    ctx.pending_anti_spiral_warning.clear();
+    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    // After POST_GENERATE the validator may have rejected — stash
+    // its reason for the NEXT iteration's system prompt.
+    capture_validation_feedback(ctx);
+}
+
+/**
+ * @brief Stash next-turn rejection text on ctx.pending_validation_feedback.
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
+    if (validation_provider_ == nullptr) { return; }
+    char* v = validation_provider_(validation_provider_data_);
+    if (v == nullptr) { return; }
+    std::string raw(v);
+    free(v);
+    try {
+        auto j = nlohmann::json::parse(raw);
+        auto verdict = j.value("verdict", "");
+        if (verdict.rfind("rejected", 0) != 0) { return; }
+        std::string joined;
+        if (j.contains("violations") && j["violations"].is_array()) {
+            for (const auto& vio : j["violations"]) {
+                if (!joined.empty()) { joined += "; "; }
+                joined += vio.is_string()
+                    ? vio.get<std::string>()
+                    : vio.dump();
+            }
+        }
+        if (joined.empty()) { joined = verdict; }
+        ctx.pending_validation_feedback = joined;
+    } catch (const nlohmann::json::exception&) {
+        // Malformed provider output is non-fatal; just skip.
+    }
+}
+
+/**
  * @brief Build a JSON array of tool results from context messages.
  *
  * Extracts messages with metadata["tool_name"] and serializes them
@@ -1518,7 +1583,7 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param summary Content to relay.
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 void AgentEngine::relay_partial_result(
     LoopContext& ctx, const std::string& summary) {
@@ -1544,7 +1609,7 @@ void AgentEngine::relay_partial_result(
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
@@ -1581,7 +1646,7 @@ void AgentEngine::finalize_delegation_result(
  * @param ctx Loop context (metadata mutated).
  * @param terminal_reason Non-empty when relaying a budget_exhausted child.
  * @internal
- * @version 2.1.0
+ * @version 2.1.1-rc1
  */
 void AgentEngine::log_relay_status(LoopContext& ctx,
                                    const std::string& terminal_reason) {

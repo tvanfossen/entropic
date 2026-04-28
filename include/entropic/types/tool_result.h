@@ -29,11 +29,12 @@ namespace entropic {
  * @version 2.0.6-rc19
  */
 enum class ToolResultKind {
-    ok = 0,                 ///< Tool dispatched, returned content
+    ok = 0,                 ///< Tool dispatched, returned non-empty content
     error,                  ///< Tool server returned an error payload
     rejected_duplicate,     ///< Precondition: duplicate in recent history
     rejected_schema,        ///< Precondition: argument schema violation
     rejected_precondition,  ///< Any other precondition reject (auth, tier, hook-cancel)
+    ok_empty,               ///< Tool dispatched cleanly but returned no content (v2.1.0, #44)
 };
 
 /**
@@ -41,12 +42,13 @@ enum class ToolResultKind {
  * @param kind Enum value.
  * @return Static null-terminated string. Never NULL.
  * @utility
- * @version 2.0.6-rc19
+ * @version 2.1.0
  */
 inline const char* result_kind_to_string(ToolResultKind kind) {
     const char* s = "ok";
     switch (kind) {
     case ToolResultKind::ok:                    s = "ok"; break;
+    case ToolResultKind::ok_empty:              s = "ok_empty"; break;
     case ToolResultKind::error:                 s = "error"; break;
     case ToolResultKind::rejected_duplicate:    s = "rejected_duplicate"; break;
     case ToolResultKind::rejected_schema:       s = "rejected_schema"; break;

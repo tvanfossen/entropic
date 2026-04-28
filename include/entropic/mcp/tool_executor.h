@@ -340,6 +340,47 @@ private:
         ToolResultKind kind);
 
     /**
+     * @brief Update anti-spiral tracking for a just-dispatched tool.
+     *
+     * Increments ctx.consecutive_same_tool_calls when @p tool_name
+     * matches ctx.last_tool_name; resets to 1 (and updates
+     * last_tool_name) otherwise. When the count reaches
+     * loop_config_.max_consecutive_same_tool, populates
+     * ctx.pending_anti_spiral_warning so the next turn's system
+     * reminder tells the model to pivot tools or complete. The
+     * warning is one-shot — engine clears post-emit (same lifecycle
+     * as pending_validation_feedback).
+     *
+     * Demo ask #5, v2.1.0.
+     *
+     * @param ctx Loop context (mutates anti-spiral fields).
+     * @param tool_name Name of the tool that just executed.
+     * @internal
+     * @version 2.1.0
+     */
+    void update_anti_spiral_tracking(LoopContext& ctx,
+                                     const std::string& tool_name);
+
+    /**
+     * @brief Truncate @p content in-place if it exceeds the byte cap.
+     *
+     * Reads loop_config_.max_tool_result_bytes; when 0, no-op. When
+     * the cap is positive and content exceeds it, content is shrunk
+     * to (cap - tail.size()) bytes followed by a
+     * "[... truncated, N more bytes]" tail so downstream consumers
+     * (the model, classification, history) see the bounded form
+     * with a clear marker that bytes were lost. Applied at the
+     * inbound boundary — before classification (#44) and recording.
+     *
+     * Demo ask #6, v2.1.0.
+     *
+     * @param content Tool-result text to bound (mutated in place).
+     * @internal
+     * @version 2.1.1-rc1
+     */
+    void apply_result_size_cap(std::string& content) const;
+
+    /**
      * @brief Build PRE_TOOL_CALL hook context JSON.
      * @param call Tool call being attempted.
      * @param tier Active tier (empty → "lead" fallback).

@@ -151,8 +151,10 @@ install(DIRECTORY data/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/entropic
 )
 
-# License + release README
-install(FILES LICENSE packaging/README.md
+# License + release README (the README shipped with the tarball lives
+# under docs/dist-README.md; the repo's primary README.md is for
+# contributors).
+install(FILES LICENSE docs/dist-README.md
     DESTINATION ${CMAKE_INSTALL_DOCDIR}
 )
 

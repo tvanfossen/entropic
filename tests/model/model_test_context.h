@@ -183,11 +183,11 @@ inline std::string load_identity_prompt(const std::string& tier_name) {
  * @brief Load the bundled constitution text.
  * @return Constitution body, or empty string on failure.
  * @utility
- * @version 1.10.2
+ * @version 2.1.0
  */
 inline std::string load_constitution_prompt() {
     std::string body;
-    auto data_dir = fs::path(MODEL_PATH) / "python" / "entropic" / "data";
+    auto data_dir = fs::path(MODEL_PATH) / "data";
     auto err = entropic::prompts::load_constitution(
         std::nullopt, false, data_dir, body);
     if (!err.empty()) {
@@ -201,11 +201,11 @@ inline std::string load_constitution_prompt() {
  * @brief Load the bundled app_context text.
  * @return App context body, or empty string on failure.
  * @utility
- * @version 1.10.2
+ * @version 2.1.0
  */
 inline std::string load_app_context_prompt() {
     std::string body;
-    auto data_dir = fs::path(MODEL_PATH) / "python" / "entropic" / "data";
+    auto data_dir = fs::path(MODEL_PATH) / "data";
     auto path = data_dir / "prompts" / "app_context.md";
     auto err = entropic::prompts::load_app_context(
         path, false, data_dir, body);

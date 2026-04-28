@@ -7,9 +7,9 @@ header verbatim (``entropic_create``, ``entropic_run_streaming``, etc.).
 
 Bindings are intentionally a hand-curated subset of the full surface
 declared in ``include/entropic/entropic.h``. The full surface can be
-regenerated via ``scripts/gen_python_bindings.py``; this hand-written
-file pins the symbols most consumers need at v2.1.0 release time and
-keeps the wheel small (~50 KB).
+regenerated via ``inv gen-bindings``; this hand-written file pins the
+symbols most consumers need at v2.1.0 release time and keeps the
+wheel small (~50 KB).
 
 For symbols not exposed here, load librentropic.so directly:
 

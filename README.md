@@ -473,15 +473,13 @@ LGPL.
 
 - [`LICENSE`](LICENSE) — canonical LGPL-3.0 text
 - [`NOTICE`](NOTICE) — copyright, provenance, the BISSELL Homecare
-  Inc. Linking Exception, BISSELL acknowledgment, trademark, version
-  history, third-party attribution
+  Inc. Linking Exception, BISSELL acknowledgment, version history,
+  third-party attribution
 - [`AUTHORS`](AUTHORS) — copyright holders
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — DCO sign-off requirement
   for all contributions
 
 The Linking Exception is the only additional permission attached to
-Entropic; no entity-specific carve-outs or side grants exist. The
-project name "Entropic" is an unregistered trademark of Tristan
-VanFossen and is not granted by the code license. Versions prior to
-2.0.0 were released under Apache-2.0; that license continues to
-apply to the version you received.
+Entropic; no entity-specific carve-outs or side grants exist.
+Versions prior to 2.0.0 were released under Apache-2.0; that
+license continues to apply to the version you received.

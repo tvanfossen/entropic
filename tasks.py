@@ -631,11 +631,21 @@ def _has_gcov_data():
 
 ## @brief Configure, build, and run tests under the coverage preset.
 ## @utility
-## @version 1
+## @version 2
 def _run_coverage_build(c):
-    """Configure + build + run tests under the coverage preset."""
+    """Configure + build + run tests under the coverage preset.
+
+    Build parallelism is capped at 2 because the coverage preset is
+    debug + gcov-instrumented: each compile peaks ~1.5 GB and the
+    librentropic.so link step (debug + coverage symbols + statically
+    absorbed llama.cpp) peaks 4-8 GB. Unlimited --parallel on a
+    16 GB hosted runner OOM-kills the linker (exit 143 / SIGTERM)
+    when 4 compiles are mid-flight as the link step starts. Local
+    builds with 24+ cores and 64+ GB are unaffected; the cap matters
+    only for CI.
+    """
     c.run("cmake --preset coverage")
-    c.run(f"cmake --build {COVERAGE_BUILD_DIR} --parallel")
+    c.run(f"cmake --build {COVERAGE_BUILD_DIR} --parallel 2")
     # ctest exit code is not fatal here — failed tests still produce
     # gcov data for the libraries that did run, and the gate is
     # coverage, not pass/fail.

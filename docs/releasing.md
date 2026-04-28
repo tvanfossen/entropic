@@ -1,9 +1,17 @@
 # Releasing entropic
 
-This document describes the **manual release workflow**. Releases are not
-tag-driven via CI — the free GitHub-hosted runners cannot fit a CUDA build,
-and self-hosted runners are out of scope. Instead, the maintainer builds
-each backend tarball locally and publishes them via `gh release create`.
+This document describes the **release workflow**. The native CUDA + CPU
+tarballs are hand-built and hand-published — the free GitHub-hosted
+runners cannot fit a CUDA build and self-hosted runners are out of scope.
+The maintainer builds each backend tarball locally and uploads them via
+`gh release create`.
+
+The pure-Python wrapper wheel (`entropic-engine` on PyPI) **is** automated:
+the `release-pypi.yml` workflow fires on the GitHub Release `published`
+event, builds the wheel + sdist on `ubuntu-24.04`, and publishes to PyPI
+via the OIDC trusted-publisher relationship. The wrapper has no native
+build dependencies, so the OOM concern that killed the old `release.yaml`
+does not apply here.
 
 CI (`.github/workflows/ci.yml`) covers per-PR validation only:
 pre-commit + unit tests + per-library coverage + distribution smoke. CUDA
@@ -98,6 +106,20 @@ gh release create "${TAG_VERSION}" \
 the tag on the remote. There is no separate `git push origin <tag>` step
 unless you tagged earlier and now want to backfill.
 
+The `release.published` event from this `gh release create` call also
+fires `.github/workflows/release-pypi.yml`, which runs on a hosted
+runner: it checks out the tag, asserts `pyproject.toml` version matches,
+runs `python -m build` (sdist + wheel), and publishes to PyPI via the
+trusted-publisher OIDC relationship. The wheel becomes installable as
+`pip install entropic-engine==X.Y.Z` within a couple minutes of the
+release going live.
+
+This sequencing is important: the workflow assumes the tarballs are
+already attached to the release, because `entropic install-engine`
+fetches them from the same release page. Triggering on `release.published`
+(rather than tag push) guarantees the assets exist before the wheel is
+published.
+
 ---
 
 ## RELEASE_NOTES.md template
@@ -136,9 +158,11 @@ Keep it short — full per-commit narrative belongs in `git log`.
 
 1. **Verify** the release page lists all four artifacts and that
    `gh release download "${TAG_VERSION}"` recovers them by hash.
-2. **Smoke the wrapper**: `pip install entropic-engine==X.Y.Z` in a
-   fresh venv, run `entropic install-engine`, confirm `~/.entropic/lib/`
-   was populated and `entropic version` works.
+2. **Smoke the wrapper** (depends on `release-pypi.yml` having succeeded
+   — check `gh run list --workflow release-pypi.yml --limit 1`):
+   `pip install entropic-engine==X.Y.Z` in a fresh venv, run
+   `entropic install-engine`, confirm `~/.entropic/` was populated
+   and `entropic version` works.
 3. **Bump `develop`** to the next development version (e.g., `2.1.1-dev0`)
    only if there's immediate work staged; otherwise leave at `X.Y.Z` until
    the next feature lands.
@@ -148,7 +172,7 @@ Keep it short — full per-commit narrative belongs in `git log`.
 
 ---
 
-## Why no tag-driven CI release
+## Why no tag-driven CI release for native tarballs
 
 Earlier versions of this repo carried a `release.yaml` workflow that
 attempted CUDA builds on hosted runners. The free 2-core GitHub runner
@@ -159,6 +183,11 @@ list to Volta+ helped but did not solve OOM consistently. The paid
 relationship for releases the maintainer would otherwise produce free
 of cost on local hardware.
 
-The release workflow was deleted in v2.1.0. Local-build + manual
-publish is the documented path going forward. If hosted-runner CUDA
-quotas ever change materially, this decision can be revisited.
+That workflow was deleted in v2.1.0. Local-build + manual `gh release
+create` is the documented path for the native tarballs going forward.
+If hosted-runner CUDA quotas ever change materially, this decision can
+be revisited.
+
+This constraint applies **only to the native CUDA build**. The pure-Python
+wrapper wheel has no native build dependency and publishes via
+`release-pypi.yml` on every release without OOM concerns.

@@ -559,26 +559,6 @@ def _pack_tarball(c, stage_dir, version, backend, outdir):
     return artifact_path
 
 
-## @brief Build + smoke-install a wheel from a CPU release tarball.
-## @utility
-## @version 1
-def _build_and_verify_wheel(c, cpu_tarball, version, outdir):
-    """Run pack_wheel.py, pip-install into a fresh venv, import-check."""
-    c.run(
-        f".venv/bin/python scripts/pack_wheel.py"
-        f" --tarball {cpu_tarball}"
-        f" --version {version}"
-        f" --platform-tag linux_x86_64"
-        f" --outdir {outdir}"
-    )
-    venv = os.path.join(outdir, "smoke-venv")
-    shutil.rmtree(venv, ignore_errors=True)
-    c.run(f"python3 -m venv {venv}")
-    c.run(f"{venv}/bin/pip install {outdir}/entropic_engine-{version}-*.whl")
-    c.run(f'{venv}/bin/python -c "import entropic; assert entropic._get_lib() is not None"')
-    c.run(f"{venv}/bin/entropic --help >/dev/null")
-
-
 ## @brief Pre-flight the tag-driven release workflow locally (no publish).
 ## @utility
 ## @version 2

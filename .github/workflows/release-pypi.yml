@@ -1,0 +1,59 @@
+# SPDX-License-Identifier: LGPL-3.0-or-later
+name: Release — Python wheel to PyPI
+
+# Fires when the maintainer publishes a GitHub Release (after the local
+# CUDA + CPU tarball build and `gh release create`). The pure-Python
+# wrapper wheel is built on a hosted runner and pushed to PyPI via the
+# OIDC trusted-publisher relationship configured at PyPI side.
+#
+# Sequencing: native tarballs MUST be uploaded by `gh release create`
+# first, because the wrapper's `entropic install-engine` subcommand
+# fetches them from the matching release. The release-published event
+# guarantees this ordering — the workflow only fires once the release
+# (with assets) is live.
+#
+# Tarball/native release stays manual (see docs/releasing.md). Only the
+# pure-Python wheel uses CI; it has no CUDA dependency and runs trivially
+# on the free 2-core runner.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    name: Build wheel + publish to PyPI
+    runs-on: ubuntu-24.04
+    environment: pypi
+    permissions:
+      id-token: write   # required by pypa/gh-action-pypi-publish OIDC
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tooling
+        run: pip install --upgrade build
+
+      - name: Verify pyproject.toml version matches release tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/v}"
+          PYPROJECT=$(grep -E '^version\s*=' pyproject.toml | head -1 | cut -d'"' -f2)
+          echo "tag:        $TAG"
+          echo "pyproject:  $PYPROJECT"
+          if [[ "$TAG" != "$PYPROJECT" ]]; then
+            echo "::error::release tag ($TAG) does not match pyproject.toml version ($PYPROJECT)"
+            exit 1
+          fi
+
+      - name: Build sdist + wheel
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

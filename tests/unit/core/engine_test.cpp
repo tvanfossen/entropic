@@ -6,6 +6,8 @@
  */
 
 #include <entropic/core/engine.h>
+#include <entropic/core/delegation.h>
+#include <entropic/core/engine_types.h>
 #include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
 
@@ -527,6 +529,102 @@ SCENARIO("Budget-exhausted forced complete sets terminal_reason metadata",
             }
             AND_THEN("final state is COMPLETE (synthetic)") {
                 REQUIRE(ctx.state == AgentState::COMPLETE);
+            }
+        }
+    }
+}
+
+// ── E2: budget_exhausted relay to lead (2.1.0) ───────────
+
+/**
+ * @brief State passed to inject_delegation via user_data.
+ * @internal
+ * @version 2.1.0
+ */
+struct DelegInjector {
+    bool fired = false;  ///< Prevents double-injection.
+};
+
+/**
+ * @brief Tool executor that injects a delegation on first call.
+ * @param ctx Loop context (pending_delegation set as side effect).
+ * @param calls Tool calls (unused — just need non-empty to be called).
+ * @param ud DelegInjector pointer.
+ * @return Empty message list.
+ * @internal
+ * @version 2.1.0
+ */
+static std::vector<Message> inject_delegation_once(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& /*calls*/,
+    void* ud) {
+    auto* inj = static_cast<DelegInjector*>(ud);
+    if (!inj->fired) {
+        inj->fired = true;
+        // Delegate to "eng" (not "lead") to avoid cycle-detection rejection.
+        ctx.pending_delegation = PendingDelegation{"eng", "budget test", -1};
+    }
+    Message m;
+    m.role = "tool";
+    m.content = "injected delegation";
+    return {m};
+}
+
+SCENARIO("budget_exhausted child is relayed partial to lead (E2)",
+         "[engine][E2][2.1.0]")
+{
+    GIVEN("an engine with relay_single_delegate for lead") {
+        MockInference mock;
+        mock.is_complete = false;
+        // First parse: non-empty tool call (triggers process_tool_results).
+        // Subsequent parses: empty (child loop generates no tools).
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 3;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_relay_single_delegate("lead");
+
+        // Tier resolver must return valid info so delegation proceeds.
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string& /*tier*/,
+                               void* /*ud*/) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = true;
+            info.system_prompt = "child agent";
+            return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        // Tool executor injects delegation on first call only.
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("parent loop runs with locked_tier=lead") {
+            LoopContext ctx;
+            ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+
+            THEN("relay_status is budget_exhausted_relayed") {
+                auto it = ctx.metadata.find("relay_status");
+                REQUIRE(it != ctx.metadata.end());
+                REQUIRE(it->second == "budget_exhausted_relayed");
+            }
+            AND_THEN("state is COMPLETE via relay") {
+                REQUIRE(ctx.state == AgentState::COMPLETE);
+            }
+            AND_THEN("explicit_completion_summary has budget_exhausted prefix") {
+                auto it = ctx.metadata.find(
+                    "explicit_completion_summary");
+                REQUIRE(it != ctx.metadata.end());
+                REQUIRE(it->second.substr(0, 8) == "[partial");
             }
         }
     }

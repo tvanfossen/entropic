@@ -14,7 +14,6 @@ allowed_tools:
   - docs.search
   - git.diff
   - entropic.complete
-role_type: back_office
 explicit_completion: true
 ---
 

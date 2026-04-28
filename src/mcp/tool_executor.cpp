@@ -6,6 +6,8 @@
  */
 
 #include <entropic/mcp/tool_executor.h>
+#include <entropic/mcp/tool_result_classify.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 
 #include <nlohmann/json.hpp>
@@ -338,7 +340,7 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.0.6-rc16.1
+ * @version 2.1.1-rc1
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -352,8 +354,12 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     }
 
     auto start = std::chrono::steady_clock::now();
-    auto result_json = server_manager_.execute(
-        call.name, args_json);
+    // v2.1.0 (#47): scrub invalid UTF-8 at the inbound boundary so
+    // downstream nlohmann::json::dump() sites (storage, model adapter,
+    // bridge stream observer) cannot throw type_error 316 on bytes that
+    // came from a server reading legacy-codepage source files.
+    auto result_json = mcp::sanitize_utf8(
+        server_manager_.execute(call.name, args_json));
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<
         std::chrono::milliseconds>(end - start).count();
@@ -660,7 +666,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.0.6-rc19
+ * @version 2.1.1-rc2
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -685,14 +691,40 @@ std::vector<Message> ToolExecutor::process_single_call(
     auto [msg, raw_result] = execute_tool(ctx, call);
     auto exec_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - exec_start).count();
+    // #46 (v2.1.0): cap result content at LoopConfig.max_tool_result_bytes
+    // so a single runaway tool can't exhaust the context budget. Cap=0
+    // disables. Truncated form retains a "[... truncated, N more bytes]"
+    // tail so downstream classification (#44) and identity prompts can
+    // see that output was lost rather than the tool actually returning
+    // a short result. Applied BEFORE classification so kind reflects
+    // the bounded form, and BEFORE record_tool_call so the duplicate
+    // cache stores what the model actually saw.
+    apply_result_size_cap(msg.content);
     ctx.effective_tool_calls++;
     msg.metadata["added_at_iteration"] =
         std::to_string(ctx.metrics.iterations);
     record_tool_call(ctx, call, raw_result);
 
-    const bool is_err = msg.content.rfind("error", 0) == 0;
-    auto kind = is_err ? ToolResultKind::error : ToolResultKind::ok;
+    // #44 (v2.1.0): honest byte-level signal so identity prompts can
+    // teach pivot-on-empty rules and so error responses don't leak as
+    // ok. Order matters — error trumps empty.
+    ToolResultKind kind;
+    if (mcp::looks_like_tool_error(msg.content)) {
+        kind = ToolResultKind::error;
+    } else if (mcp::is_effectively_empty(msg.content)) {
+        kind = ToolResultKind::ok_empty;
+    } else {
+        kind = ToolResultKind::ok;
+    }
     fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind);
+
+    // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive
+    // calls of the same tool regardless of arg similarity (exact-arg
+    // duplicates are caught earlier by recent_tool_calls). When the
+    // count reaches the configured threshold, populate
+    // pending_anti_spiral_warning so the next turn's system reminder
+    // tells the model to pivot tools or complete.
+    update_anti_spiral_tracking(ctx, call.name);
 
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
@@ -727,6 +759,44 @@ bool ToolExecutor::fire_pre_tool_hook(
         ENTROPIC_HOOK_PRE_TOOL_CALL, json.c_str(), &mod);
     free(mod);
     return rc != 0;
+}
+
+/**
+ * @brief Cap tool-result content at LoopConfig.max_tool_result_bytes.
+ *
+ * Demo ask #6 (v2.1.0). See header for full contract.
+ *
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void ToolExecutor::apply_result_size_cap(std::string& content) const {
+    mcp::truncate_to_cap(content, loop_config_.max_tool_result_bytes);
+}
+
+/**
+ * @brief Update anti-spiral tracking after a tool dispatch.
+ *
+ * Demo ask #5 (v2.1.0). See header for full contract.
+ *
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void ToolExecutor::update_anti_spiral_tracking(
+    LoopContext& ctx, const std::string& tool_name) {
+    if (tool_name == ctx.last_tool_name) {
+        ++ctx.consecutive_same_tool_calls;
+    } else {
+        ctx.last_tool_name = tool_name;
+        ctx.consecutive_same_tool_calls = 1;
+    }
+    if (ctx.consecutive_same_tool_calls
+            >= loop_config_.max_consecutive_same_tool) {
+        ctx.pending_anti_spiral_warning =
+            tool_name + " has been called "
+            + std::to_string(ctx.consecutive_same_tool_calls)
+            + " times consecutively; pivot to a different tool or "
+              "complete the task next turn.";
+    }
 }
 
 /**

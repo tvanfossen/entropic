@@ -77,10 +77,8 @@ struct IdentityFrontmatter {
     float temperature = 0.7f;                  ///< Default temperature
     float repeat_penalty = 1.1f;               ///< Default repetition penalty
     bool enable_thinking = false;              ///< Default thinking mode
-    std::string model_preference = "primary";  ///< Model preference key
     bool interstitial = false;                 ///< Interstitial role
     bool routable = true;                      ///< Visible to router
-    std::string role_type = "front_office";    ///< front_office|back_office|utility
     bool explicit_completion = false;          ///< Requires explicit completion
     std::vector<std::string> validation_rules; ///< Per-identity constitutional rules (v2.0.6)
     bool relay_single_delegate = false;        ///< Skip re-synthesis when single delegate returns (v2.0.11)

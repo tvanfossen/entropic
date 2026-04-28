@@ -371,14 +371,15 @@ static bool any_cancelling_left(ExternalBridge* bridge) {
  *
  * Raises engine interrupt, flips still-running tasks into
  * phase="cancelling", and polls up to ~1s for detached workers to
- * finish. Best-effort — detached workers may still complete after
- * return, but their results can no longer influence the new context
- * since each run owns its own result_json. (P1-8, 2.0.6-rc16)
+ * finish. After the poll, unconditionally bumps the observer generation
+ * via detach_phase_observer() so any post-poll callbacks from a still-
+ * running worker are silently discarded. (P1-8, 2.0.6-rc16;
+ * observer-gen force-detach: E5+E6, 2.1.0)
  *
  * @param handle Engine handle (for interrupt).
  * @param bridge Bridge whose tasks_ registry is being canceled.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.0
  */
 static void cancel_inflight_async_tasks(
     entropic_handle_t handle, ExternalBridge* bridge) {
@@ -388,6 +389,7 @@ static void cancel_inflight_async_tasks(
     for (int i = 0; i < 20 && any_cancelling_left(bridge); ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
+    bridge->detach_phase_observer();  // bump gen; silences any stale observer
 }
 
 /**
@@ -765,12 +767,15 @@ std::string ExternalBridge::dispatch(
 /**
  * @brief State observer that projects VERIFYING onto task phase.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.0
  */
 static void phase_observer_cb(int state, void* ud) {
     auto* self = static_cast<ExternalBridge*>(ud);
     if (state != ENTROPIC_AGENT_STATE_VERIFYING) { return; }
     std::lock_guard<std::mutex> lock(self->tasks_mutex_);
+    // E5+E6 (2.1.0): discard stale callbacks fired after detach_phase_observer
+    // incremented observer_gen_. attached_gen_ was captured at attach time.
+    if (self->observer_call_is_stale()) { return; }
     auto it = self->tasks_for_cancel().find(self->active_task_id_for_observer());
     if (it == self->tasks_for_cancel().end()) { return; }
     // First VERIFYING = "validating"; subsequent VERIFYING transitions
@@ -782,26 +787,43 @@ static void phase_observer_cb(int state, void* ud) {
 
 /**
  * @brief Install phase observer scoped to one task.
+ *
+ * Increments observer_gen_ under tasks_mutex_ and captures it as
+ * attached_gen_ so phase_observer_cb can detect stale post-detach
+ * fires via a simple generation comparison. (E5+E6, 2.1.0)
+ *
+ * @param task_id Task whose phase transitions the observer tracks.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.0
  */
 void ExternalBridge::attach_phase_observer(const std::string& task_id) {
     {
         std::lock_guard<std::mutex> lock(tasks_mutex_);
         active_task_id_ = task_id;
+        attached_gen_ = ++observer_gen_;
     }
     entropic_set_state_observer(handle_, phase_observer_cb, this);
 }
 
 /**
  * @brief Clear phase observer and the active-task pointer.
+ *
+ * Increments observer_gen_ under the lock before clearing
+ * active_task_id_ — any in-flight phase_observer_cb will see a
+ * generation mismatch and return immediately without accessing
+ * stale state. entropic_set_state_observer(nullptr) is called after
+ * the lock is released. (E5+E6, 2.1.0)
+ *
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.0
  */
 void ExternalBridge::detach_phase_observer() {
+    {
+        std::lock_guard<std::mutex> lock(tasks_mutex_);
+        ++observer_gen_;
+        active_task_id_.clear();
+    }
     entropic_set_state_observer(handle_, nullptr, nullptr);
-    std::lock_guard<std::mutex> lock(tasks_mutex_);
-    active_task_id_.clear();
 }
 
 /**
@@ -901,25 +923,38 @@ void ExternalBridge::unsubscribe(int fd) {
 /**
  * @brief Broadcast a JSON-RPC notification to every subscriber.
  *
- * Serialized under subscribers_mutex_ so concurrent broadcasts do
- * not interleave on the same fd. Fds whose write fails are removed
- * from the set — broken client connections do not accumulate.
+ * Snapshots the subscriber set under the lock, releases the lock before
+ * writing, then re-acquires to remove dead fds. This prevents one
+ * blocked or slow client from stalling all other broadcasts (E9, 2.1.0).
+ *
+ * Subscribers added between snapshot and dead-fd cleanup miss this
+ * broadcast — correct, as they subscribed after the message was initiated.
  *
  * @param notif JSON-RPC notification object.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.0
  */
 void ExternalBridge::broadcast_notification(const json& notif) {
     auto payload = notif.dump() + "\n";
-    std::lock_guard<std::mutex> lock(subscribers_mutex_);
-    for (auto it = subscribers_.begin(); it != subscribers_.end(); ) {
-        ssize_t rc = ::write(*it, payload.c_str(), payload.size());
+
+    std::vector<int> snapshot;
+    {
+        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+        snapshot.assign(subscribers_.begin(), subscribers_.end());
+    }
+
+    std::vector<int> dead;
+    for (int fd : snapshot) {
+        ssize_t rc = ::write(fd, payload.c_str(), payload.size());
         if (rc < 0) {
-            logger->warn("Subscriber fd {} write failed — dropping", *it);
-            it = subscribers_.erase(it);
-        } else {
-            ++it;
+            logger->warn("Subscriber fd {} write failed — dropping", fd);
+            dead.push_back(fd);
         }
+    }
+
+    if (!dead.empty()) {
+        std::lock_guard<std::mutex> lock(subscribers_mutex_);
+        for (int fd : dead) { subscribers_.erase(fd); }
     }
 }
 

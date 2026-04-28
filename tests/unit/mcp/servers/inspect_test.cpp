@@ -42,9 +42,14 @@ static char* mock_config(void* /*ud*/) {
  * @version 1.9.12
  */
 static char* mock_identities(void* /*ud*/) {
+    // Demo ask #3 (v2.1.0): identities now ship with assembled_prompt
+    // per tier so `inspect identity <name>` returns what the model
+    // would actually see as its system prompt.
     return strdup(R"([
-        {"name":"lead","role_type":"lead"},
-        {"name":"eng","role_type":"back_office"}
+        {"name":"lead",
+         "assembled_prompt":"CONSTITUTION...\n\nAPP_CTX...\n\nLEAD IDENTITY"},
+        {"name":"eng",
+         "assembled_prompt":"CONSTITUTION...\n\nAPP_CTX...\n\nENG IDENTITY"}
     ])");
 }
 
@@ -204,6 +209,25 @@ TEST_CASE("test_inspect_identity_by_name", "[inspect]") {
             R"({"target":"identity","key":"eng"})"));
     auto j = json::parse(r);
     REQUIRE(j["name"] == "eng");
+}
+
+// Demo ask #3 (v2.1.0): identity entry now carries an
+// assembled_prompt field — what the engine would send to the model
+// for this tier (constitution + app_context + identity body + tool
+// defs, excluding per-turn runtime augmentations).
+TEST_CASE("test_inspect_identity_includes_assembled_prompt", "[inspect][2.1.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto prov = make_provider();
+    server.set_state_provider(prov);
+
+    auto r = get_result(
+        server.execute("inspect",
+            R"({"target":"identity","key":"eng"})"));
+    auto j = json::parse(r);
+    REQUIRE(j["name"] == "eng");
+    REQUIRE(j.contains("assembled_prompt"));
+    auto p = j["assembled_prompt"].get<std::string>();
+    REQUIRE(p.find("ENG IDENTITY") != std::string::npos);
 }
 
 TEST_CASE("test_inspect_identity_unknown", "[inspect]") {

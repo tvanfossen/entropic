@@ -1,123 +1,194 @@
-# Getting Started
+# Getting Started with entropic
 
-> From zero to running inference in under 10 minutes
+This guide covers two consumer paths: linking against the C/C++ library
+directly, and using the Python wrapper. Both paths start from the same
+GitHub release artifact — pick whichever fits your project.
+
+> **Looking for the architecture overview?** Read `docs/architecture-cpp.md`.
+> **Looking for the version roadmap?** Read `docs/roadmap.md`.
+
+---
 
 ## Prerequisites
 
-- Linux (tested on Ubuntu 24.04)
-- cmake 3.21+, C++20 compiler (gcc 10+ or clang 14+)
-- NVIDIA GPU with 16GB+ VRAM (or CPU-only for smaller models)
-- Python 3.10+ (for build tools and wrapper)
-- ~15 GB disk space for the primary model
+- **Linux x86_64** (Ubuntu 22.04+ tested; other distros likely fine)
+- **CMake ≥ 3.21**
+- **A GGUF model file** — anything `llama.cpp` accepts. The default
+  registry resolves the alias `primary` to a Qwen3.5-35B IQ3_XXS quant
+  (13 GB, ~15 GB VRAM). Smaller models work for tighter envelopes.
+- **CUDA toolkit** (optional) — required only for the GPU tarball. CPU
+  builds run on any modern x86_64.
 
-## Step 1: Clone and Build
+---
 
-```bash
-git clone --recurse-submodules https://github.com/tvanfossen/entropic.git
-cd entropic
+## Path 1 — C / C++ direct usage
 
-python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/pip install invoke pre-commit
-.venv/bin/pre-commit install
-
-# CUDA build (default, recommended)
-inv build --clean
-
-# Or CPU-only (no GPU required, slower inference)
-inv build --cpu
-```
-
-## Step 2: Download a Model
+### 1. Download a release
 
 ```bash
-# Recommended (13.1 GB, ~35 tok/s on 16GB GPU)
-entropic download primary
-
-# Smaller alternatives:
-entropic download mid          # 9.5 GB, 12GB+ VRAM
-entropic download lightweight  # 4.5 GB, 8GB+ VRAM
+VERSION=2.1.0
+BACKEND=cpu     # or: cuda
+curl -L -O https://github.com/tvanfossen/entropic/releases/download/v${VERSION}/entropic-${VERSION}-linux-x86_64-${BACKEND}.tar.gz
+curl -L -O https://github.com/tvanfossen/entropic/releases/download/v${VERSION}/entropic-${VERSION}-linux-x86_64-${BACKEND}.tar.gz.sha256
+sha256sum -c entropic-${VERSION}-linux-x86_64-${BACKEND}.tar.gz.sha256
 ```
 
-Models download to `~/models/gguf/`. The engine resolves `path: primary` in
-config to the full path automatically.
-
-## Step 3: Run the Hello World Example
+Extract anywhere on disk:
 
 ```bash
-inv example -n hello-world
+mkdir -p ~/.local && tar -C ~/.local -xzf entropic-${VERSION}-linux-x86_64-${BACKEND}.tar.gz
+# Tarball contents extract to ~/.local/entropic/{bin,lib,include,share}
 ```
 
-This builds the C example, configures the engine from
-`examples/hello-world/default_config.yaml`, loads the model, and starts an
-interactive streaming chat. Type a message and press Enter. Type `quit` to exit.
+### 2. Consume from CMake
 
-Session logs appear in `examples/hello-world/.hello-world/`:
-- `session.log` — engine operations
-- `session_model.log` — full user/assistant exchanges
+```cmake
+cmake_minimum_required(VERSION 3.21)
+project(my-app LANGUAGES CXX)
 
-## Step 4: Run the Chess Example
+# Point CMake at the install prefix from step 1.
+list(APPEND CMAKE_PREFIX_PATH "$ENV{HOME}/.local/entropic")
+
+find_package(entropic 2.1 REQUIRED)
+
+add_executable(my-app main.cpp)
+target_link_libraries(my-app PRIVATE entropic::entropic)
+```
+
+`find_package(entropic 2.1 REQUIRED)` resolves to the package config at
+`<prefix>/lib/cmake/entropic/entropic-config.cmake`. The imported target
+`entropic::entropic` carries the include directories, the SONAME, and
+all transitive system-library link flags.
+
+### 3. Minimal C example
+
+```c
+#include <entropic/entropic.h>
+#include <stdio.h>
+
+static void on_token(const char* tok, size_t /*n*/, void* /*ud*/) {
+    fputs(tok, stdout);
+    fflush(stdout);
+}
+
+int main(void) {
+    entropic_handle_t h = NULL;
+    if (entropic_create(&h) != ENTROPIC_OK) { return 1; }
+
+    // Layered config: compiled defaults, then ~/.entropic/config.yaml,
+    // then ./config.local.yaml, then ENTROPIC_* env vars. Pass "" to
+    // skip the project-local layer entirely.
+    if (entropic_configure_dir(h, "") != ENTROPIC_OK) {
+        entropic_destroy(h);
+        return 1;
+    }
+
+    entropic_run_streaming(h, "What is 2 + 2?", on_token, NULL, NULL);
+    fputc('\n', stdout);
+
+    entropic_destroy(h);
+    return 0;
+}
+```
+
+Build with the CMake snippet from step 2, then run. The first call
+loads the model registered as `primary` (configurable via
+`~/.entropic/config.yaml`).
+
+For a fuller C example, see `examples/headless/main.c`.
+For a multi-tier C++ example with grammar + MCP wiring, see
+`examples/pychess/`.
+
+---
+
+## Path 2 — Python wrapper
+
+The wrapper is a thin pure-Python ctypes shim plus an `install-engine`
+subcommand that fetches the matching tarball from GitHub Releases.
+
+> **Status:** the Python wrapper is shipping in v2.1.0 alongside the
+> C library. Earlier versions of `entropic-engine` on PyPI shipped a
+> separate Python engine — that namespace is being repurposed.
+
+### 1. Install the wrapper
 
 ```bash
-inv example -n pychess
+pip install entropic-engine==2.1.0
 ```
 
-This demonstrates the multi-tier pipeline:
-1. **Thinker tier** analyzes the position (grammar-constrained output)
-2. Thinker delegates to **executor tier** via `entropic.delegate`
-3. Executor calls `chess.make_move` on the external chess MCP server
-4. Executor calls `entropic.complete` to signal it's done
-5. Move is applied to the board
+This installs ~50 KB of Python: a CLI entry point, a `ctypes` binding
+module generated from `entropic.h`, and the install-engine subcommand.
+No native code is included in the wheel.
 
-You play as White (UCI notation: `e2e4`). The AI plays as Black.
-
-## Step 5: Run Tests
+### 2. Install the engine
 
 ```bash
-# CPU unit + regression tests (673 tests, ~2 seconds)
-inv test --cpu --no-build
-
-# Model tests (GPU required, ~3 minutes)
-inv test --model --no-build
+entropic install-engine
 ```
 
-## What's Next?
+The subcommand detects whether `nvidia-smi` is present, downloads the
+matching tarball (`cpu` or `cuda`) for the wrapper version, verifies
+`.sha256`, and extracts to `~/.entropic/lib/`. Re-running is idempotent —
+matching checksums short-circuit the download.
 
-- **Build your own app**: See [Library Consumer Guide](library-consumer-guide.md)
-- **Understand the architecture**: See [Architecture](architecture-cpp.md)
-- **Contribute**: See [CONTRIBUTING.md](../CONTRIBUTING.md)
+Override the install location via `$ENTROPIC_HOME` (writes to
+`$ENTROPIC_HOME/lib/`), or point at an arbitrary `librentropic.so`
+via `$ENTROPIC_LIB`.
 
-## Troubleshooting
-
-### "Model file not found"
-
-The engine validates model paths at configure time. If the model isn't
-downloaded, you'll see:
-
-```
-Model file not found for tier 'lead': /home/user/models/gguf/Qwen3.5-...
-Download with: entropic download primary
-```
-
-### "Unknown server" for tool calls
-
-Ensure the MCP server is enabled in your config:
-
-```yaml
-mcp:
-  enable_entropic: true    # Required for delegation/completion tools
-```
-
-### Build fails with CUDA errors
-
-Try CPU-only build first to verify the non-CUDA parts work:
+### 3. Use it
 
 ```bash
-inv build --cpu
-inv test --cpu --no-build
+entropic version            # confirm install
+entropic mcp-bridge         # run as MCP server over stdio (Claude Code etc.)
+entropic download primary   # fetch the recommended GGUF model
+entropic mcp-connect --socket /tmp/entropic.sock   # connect to running engine
 ```
 
-### Session logs are empty
+The wrapper handles `install-engine` in-process; every other
+subcommand `os.execvp`s into the native `bin/entropic` from the
+installed tarball, so argv passes through verbatim.
 
-Ensure you're using `entropic_configure_dir()` (not `entropic_configure_from_file()`).
-Only `configure_dir` sets up file logging automatically.
+> See [cli-install-routes.md](cli-install-routes.md) for the full
+> subcommand surface, install-route matrix, and known
+> consumer-experience gaps.
+
+For programmatic use:
+
+```python
+from entropic import (
+    entropic_create, entropic_configure_dir,
+    entropic_run_streaming, entropic_destroy,
+)
+import ctypes
+
+handle = ctypes.c_void_p()
+entropic_create(ctypes.byref(handle))
+entropic_configure_dir(handle, b"")
+
+@ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
+def on_token(tok, n, ud):
+    print(tok.decode("utf-8", errors="replace"), end="", flush=True)
+
+entropic_run_streaming(handle, b"What is 2 + 2?", on_token, None, None)
+entropic_destroy(handle)
+```
+
+The Python surface is the C ABI verbatim. There is no `EntropicEngine`
+class — the v1.7.x OOP wrapper has been retired.
+
+---
+
+## Next steps
+
+- `examples/headless/` — C-only minimal harness suitable for CI smoke testing.
+- `examples/pychess/` — C++ example exercising tier delegation, GBNF grammar,
+  and MCP tool registration. Best showcase of the v2.x feature set.
+- `examples/explorer/` — interactive C++ REPL for poking at the engine.
+- `docs/architecture-cpp.md` — library decomposition, design rules,
+  decision log.
+- `docs/roadmap.md` — version-by-version feature targeting.
+
+If the engine misbehaves: enable trace logging via
+`ENTROPIC_LOG_LEVEL=trace`, or set `[logging] level: trace` in
+`~/.entropic/config.yaml`. Bug reports go to
+<https://github.com/tvanfossen/entropic/issues>.

@@ -350,7 +350,10 @@ struct ModelsConfig {
 
 /**
  * @brief Configuration for model routing.
- * @version 1.8.1
+ * @deprecated Since v2.1.0 — router model removed; use a dedicated identity
+ *             as the lead/router instead. This struct is retained for ABI
+ *             compatibility only and will be removed in v2.2.0.
+ * @version 2.1.0
  */
 struct RoutingConfig {
     bool enabled = false;                                          ///< Enable routing

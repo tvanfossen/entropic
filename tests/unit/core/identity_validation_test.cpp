@@ -195,32 +195,6 @@ TEST_CASE("valid grammar_id accepted", "[identity_validation]") {
     REQUIRE(mgr->create(cfg) == ENTROPIC_OK);
 }
 
-// ── Role type validation ─────────────────────────────────
-
-TEST_CASE("invalid role_type rejected", "[identity_validation]") {
-    GrammarRegistry grammar_reg;
-    auto mgr = make_mgr(grammar_reg);
-
-    auto cfg = make_config("npc_guard");
-    cfg.role_type = "invalid_role";
-    REQUIRE(mgr->create(cfg) == ENTROPIC_ERROR_INVALID_CONFIG);
-}
-
-TEST_CASE("valid role types accepted", "[identity_validation]") {
-    GrammarRegistry grammar_reg;
-    auto mgr = make_mgr(grammar_reg);
-
-    for (const auto& [name, role] :
-         std::vector<std::pair<std::string, std::string>>{
-             {"a", "front_office"},
-             {"b", "back_office"},
-             {"c", "utility"}}) {
-        auto cfg = make_config(name);
-        cfg.role_type = role;
-        REQUIRE(mgr->create(cfg) == ENTROPIC_OK);
-    }
-}
-
 // ── Phase validation ─────────────────────────────────────
 
 TEST_CASE("phase empty name rejected", "[identity_validation]") {

@@ -34,7 +34,7 @@ SCENARIO("BundledModels loads registry from YAML", "[config][bundled_models]") {
 
             THEN("registry contains expected entries") {
                 REQUIRE(registry.contains("primary"));
-                REQUIRE(registry.contains("router"));
+                REQUIRE_FALSE(registry.contains("router"));
                 REQUIRE_FALSE(registry.contains("nonexistent"));
             }
 
@@ -44,12 +44,6 @@ SCENARIO("BundledModels loads registry from YAML", "[config][bundled_models]") {
                 REQUIRE(entry->name == "Qwen3.5-35B-A3B-UD-IQ3_XXS");
                 REQUIRE(entry->adapter == "qwen35");
                 REQUIRE(entry->size_gb == 13.1);
-            }
-
-            THEN("router entry has correct size") {
-                auto* entry = registry.get("router");
-                REQUIRE(entry != nullptr);
-                REQUIRE(entry->size_gb == 0.6);
             }
         }
     }

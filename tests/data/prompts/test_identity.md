@@ -15,10 +15,8 @@ allowed_tools:
 max_output_tokens: 8192
 temperature: 0.15
 enable_thinking: false
-model_preference: primary
 interstitial: false
 routable: false
-role_type: front_office
 explicit_completion: false
 repeat_penalty: 1.1
 max_iterations: 42

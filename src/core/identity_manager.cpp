@@ -20,10 +20,6 @@ static auto logger = log::get("identity_manager");
 static const std::vector<std::string> s_reserved_names = {
     "default", "none", "all", "router"};
 
-/// @brief Valid role_type values.
-static const std::vector<std::string> s_valid_role_types = {
-    "front_office", "back_office", "utility"};
-
 /**
  * @brief Compiled regex for identity name validation.
  * @internal
@@ -58,19 +54,13 @@ static std::string validate_phases(
 // ── Field validation ─────────────────────────────────────
 
 /**
- * @brief Validate role_type, phases, and adapter_path fields.
+ * @brief Validate phases and adapter_path fields.
  * @param config Config to validate.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.9.6
+ * @version 2.1.0
  */
 static std::string validate_fields(const IdentityConfig& config) {
-    auto rt = std::find(
-        s_valid_role_types.begin(), s_valid_role_types.end(),
-        config.role_type);
-    if (rt == s_valid_role_types.end()) {
-        return "Invalid role_type: " + config.role_type;
-    }
     auto phase_err = validate_phases(config.phases);
     if (!phase_err.empty()) { return phase_err; }
     bool bad_adapter = !config.adapter_path.empty()

@@ -367,7 +367,7 @@ void AgentEngine::loop(LoopContext& ctx) {
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.7.1
+ * @version 2.1.1-rc1
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -407,7 +407,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
     }
 
     auto result = response_generator_.generate_response(ctx);
-    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    dispatch_post_generate(ctx, result);
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
     logger->info("[ITER] finish={}, {} tool call(s), {} chars",
                  result.finish_reason, tool_calls.size(),
@@ -1238,6 +1238,71 @@ void AgentEngine::fire_post_generate_hook(
 }
 
 /**
+ * @brief Pull rejection text from validation_provider_ into
+ *        ctx.pending_validation_feedback for the next turn.
+ *
+ * Demo ask #2 (v2.1.0). Called once per iteration after
+ * fire_post_generate_hook. Parses the validation provider's JSON
+ * payload; when verdict starts with "rejected", joins the violations
+ * into a one-line reminder. ResponseGenerator picks it up on the
+ * next turn via inject_engine_state_reminder, then the engine
+ * clears the field at the top of the iteration that consumes it.
+ *
+ * @param ctx Loop context (writes pending_validation_feedback).
+ * @internal
+ * @version 2.1.1-rc1
+ */
+/**
+ * @brief Per-iteration post-generate bookkeeping bundle.
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void AgentEngine::dispatch_post_generate(
+    LoopContext& ctx, GenerateResult& result) {
+    // The per-turn reminders built from pending_validation_feedback
+    // and pending_anti_spiral_warning were just consumed by
+    // generate_response — clear both so neither leaks into a later
+    // iteration. (#42, #45 — both one-shot.)
+    ctx.pending_validation_feedback.clear();
+    ctx.pending_anti_spiral_warning.clear();
+    fire_post_generate_hook(result, ctx.locked_tier, ctx.messages);
+    // After POST_GENERATE the validator may have rejected — stash
+    // its reason for the NEXT iteration's system prompt.
+    capture_validation_feedback(ctx);
+}
+
+/**
+ * @brief Stash next-turn rejection text on ctx.pending_validation_feedback.
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void AgentEngine::capture_validation_feedback(LoopContext& ctx) {
+    if (validation_provider_ == nullptr) { return; }
+    char* v = validation_provider_(validation_provider_data_);
+    if (v == nullptr) { return; }
+    std::string raw(v);
+    free(v);
+    try {
+        auto j = nlohmann::json::parse(raw);
+        auto verdict = j.value("verdict", "");
+        if (verdict.rfind("rejected", 0) != 0) { return; }
+        std::string joined;
+        if (j.contains("violations") && j["violations"].is_array()) {
+            for (const auto& vio : j["violations"]) {
+                if (!joined.empty()) { joined += "; "; }
+                joined += vio.is_string()
+                    ? vio.get<std::string>()
+                    : vio.dump();
+            }
+        }
+        if (joined.empty()) { joined = verdict; }
+        ctx.pending_validation_feedback = joined;
+    } catch (const nlohmann::json::exception&) {
+        // Malformed provider output is non-fatal; just skip.
+    }
+}
+
+/**
  * @brief Build a JSON array of tool results from context messages.
  *
  * Extracts messages with metadata["tool_name"] and serializes them
@@ -1509,46 +1574,59 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 }
 
 /**
+ * @brief Shared relay machinery: fire hook, write summary, set COMPLETE.
+ *
+ * Called by both the normal and budget_exhausted relay paths in
+ * finalize_delegation_result. Caller applies any content prefix before
+ * passing summary.
+ *
+ * @param ctx Loop context.
+ * @param summary Content to relay.
+ * @internal
+ * @version 2.1.1-rc1
+ */
+void AgentEngine::relay_partial_result(
+    LoopContext& ctx, const std::string& summary) {
+    GenerateResult relay_result;
+    relay_result.content = summary;
+    relay_result.finish_reason = "stop";
+    relay_result.tool_calls_json = "[]";
+    fire_post_generate_hook(
+        relay_result, ctx.locked_tier, ctx.messages);
+    ctx.metadata["explicit_completion_summary"] = relay_result.content;
+    set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
  * @brief Promote relayed delegate output or set next engine state.
  *
- * Handles both the relay_single_delegate path (validate + promote)
- * and the standard explicit_completion transition. Extracted from
- * execute_pending_delegation to keep that function under the 50-SLOC
- * / 3-return quality gates. (P0-3, P1-9, 2.0.6-rc16)
+ * Handles the relay_single_delegate path (validate + promote), the
+ * budget_exhausted relay path (partial tagged relay), and the standard
+ * explicit_completion transition. Extracted from execute_pending_delegation
+ * to keep that function under the 50-SLOC / 3-return quality gates.
+ * (P0-3, P1-9, 2.0.6-rc16; budget_exhausted relay: E2, 2.1.0)
  *
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.0.6-rc18
+ * @version 2.1.1-rc1
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
-    // E7/E8 (2.0.6-rc18): relay only if child hit a real complete;
-    // when a child was synthetically terminated (budget_exhausted),
-    // the summary is not authoritative — skip relay entirely.
-    const bool can_relay = result.success
-        && result.terminal_reason.empty()
-        && relay_single_delegate_tiers_.count(ctx.locked_tier);
-    if (can_relay) {
-        GenerateResult relay_result;
-        relay_result.content = result.summary;
-        relay_result.finish_reason = "stop";
-        relay_result.tool_calls_json = "[]";
-        fire_post_generate_hook(
-            relay_result, ctx.locked_tier, ctx.messages);
-        ctx.metadata["explicit_completion_summary"] =
-            relay_result.content;
-        set_state(ctx, AgentState::COMPLETE);
+    // delegation.cpp sets success=false when terminal_reason is non-empty,
+    // so the two relay branches are disjoint — check them independently.
+    const bool in_relay_tier =
+        relay_single_delegate_tiers_.count(ctx.locked_tier) > 0;
+    if (result.success && in_relay_tier) {
+        relay_partial_result(ctx, result.summary);
         log_relay_status(ctx);
         return;
     }
-    if (!result.terminal_reason.empty()
-        && relay_single_delegate_tiers_.count(ctx.locked_tier)) {
-        ctx.metadata["relay_status"] = "budget_exhausted";
-        logger->warn(
-            "Relay: single-delegate result suppressed "
-            "(warning: delegate budget exhausted — reason={})",
-            result.terminal_reason);
+    if (!result.terminal_reason.empty() && in_relay_tier) {
+        relay_partial_result(ctx,
+            "[partial — budget_exhausted] " + result.summary);
+        log_relay_status(ctx, result.terminal_reason);
+        return;
     }
     bool needs_explicit = tier_requires_explicit_completion(
         ctx.locked_tier);
@@ -1559,17 +1637,19 @@ void AgentEngine::finalize_delegation_result(
 /**
  * @brief Emit a disambiguating log for the relay-took-delegate path.
  *
- * Distinguishes three cases: validation actually ran and passed,
- * validation was skipped (e.g. lead in skip_tiers), or no validator
- * is configured. Writes ctx.metadata["relay_status"] so downstream
- * (ON_COMPLETE hook context, ask_complete) can render it.
- * (E8, 2.0.6-rc18)
+ * Distinguishes four cases: budget_exhausted partial relay, validation
+ * ran and passed, validation was skipped (e.g. lead in skip_tiers), or
+ * no validator is configured. Writes ctx.metadata["relay_status"] so
+ * downstream (ON_COMPLETE hook context, ask_complete) can render it.
+ * (E8, 2.0.6-rc18; budget_exhausted path: E2, 2.1.0)
  *
  * @param ctx Loop context (metadata mutated).
+ * @param terminal_reason Non-empty when relaying a budget_exhausted child.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.1.1-rc1
  */
-void AgentEngine::log_relay_status(LoopContext& ctx) {
+void AgentEngine::log_relay_status(LoopContext& ctx,
+                                   const std::string& terminal_reason) {
     std::string verdict;
     if (validation_provider_ != nullptr) {
         char* v = validation_provider_(validation_provider_data_);
@@ -1585,6 +1665,14 @@ void AgentEngine::log_relay_status(LoopContext& ctx) {
                 }
             }
         }
+    }
+    if (!terminal_reason.empty()) {
+        ctx.metadata["relay_status"] = "budget_exhausted_relayed";
+        logger->warn(
+            "Relay: single-delegate result used "
+            "(partial — terminal_reason={}, verdict={})",
+            terminal_reason, verdict.empty() ? "none" : verdict);
+        return;
     }
     if (verdict == "skipped" || verdict.empty()) {
         ctx.metadata["relay_status"] = "validation_skipped";

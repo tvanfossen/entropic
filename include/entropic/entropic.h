@@ -1179,8 +1179,8 @@ ENTROPIC_EXPORT entropic_error_t entropic_audit_read(
  *        Optional fields: "examples", "grammar_id", "auto_chain",
  *        "allowed_tools", "bash_commands", "mcp_keys", "adapter_path",
  *        "max_output_tokens", "temperature", "repeat_penalty",
- *        "enable_thinking", "model_preference", "interstitial",
- *        "routable", "role_type", "explicit_completion", "phases".
+ *        "enable_thinking", "interstitial",
+ *        "routable", "explicit_completion", "phases".
  * @return ENTROPIC_OK on success.
  *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
  *         - ENTROPIC_ERROR_INVALID_ARGUMENT — config_json is NULL.

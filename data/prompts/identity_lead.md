@@ -21,10 +21,8 @@ allowed_tools:
 max_output_tokens: 4096
 temperature: 0.3
 enable_thinking: true
-model_preference: primary
 interstitial: false
 routable: true
-role_type: front_office
 explicit_completion: true
 phases:
   default:

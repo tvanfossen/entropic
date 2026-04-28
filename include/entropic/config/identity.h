@@ -60,10 +60,8 @@ struct IdentityConfig {
     float temperature = 0.7f;                   ///< Default temperature
     float repeat_penalty = 1.1f;                ///< Default repeat penalty
     bool enable_thinking = false;               ///< Default enable_thinking
-    std::string model_preference = "primary";   ///< Model key from registry
     bool interstitial = false;                  ///< Interstitial (non-routable, triggered by tools)
     bool routable = true;                       ///< Participates in tier routing
-    std::string role_type = "front_office";     ///< "front_office", "back_office", or "utility"
     bool explicit_completion = false;           ///< Requires explicit entropic.complete to finish
     std::unordered_map<std::string, PhaseConfig> phases; ///< Named inference phases
     IdentityOrigin origin = IdentityOrigin::DYNAMIC; ///< How this identity was created

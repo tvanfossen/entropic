@@ -10,11 +10,52 @@ alongside this notice.
 The notices below are project-specific additions to LGPL-3.0. They
 do not modify the LGPL itself; they document one (and only one)
 additional permission granted under LGPL-3.0 section 7, the
-project's licensing history, and third-party attribution.
+project's licensing history, its provenance, BISSELL Homecare Inc.'s
+role in the project's development, the project name as a trademark,
+and third-party attribution.
 
 This NOTICE describes the *only* additional permission attached to
 Entropic. No other carve-outs, exceptions, side letters, or grants
 exist for any other entity.
+
+======================================================================
+
+PROVENANCE AND ORIGIN
+======================================================================
+
+Entropic was authored by Tristan VanFossen, who retains sole
+copyright in the work. Entropic was consolidated from prior personal
+projects developed outside working hours on the author's personal
+hardware. The publicly visible predecessors include:
+
+  - github.com/tvanfossen/local-llm-mcp
+    (created 2025-08-27; description: "Predecessor to entropi.")
+
+  - github.com/tvanfossen/pathfinder-society-scribe
+    (created 2025-08-17; Discord bot using local LLM models with
+    BDD-validated behavioral flows)
+
+  - tvanfossen/homeschool-assistant
+    (private repo; one of the original application contexts that
+    motivated consolidation into a reusable engine)
+
+The public commit histories on the personal account establish prior
+art and timeline: foundational LLM-orchestration work on these
+predecessor projects predates the genesis commit of Entropic
+(2025-12-19) by four months or more. Entropic itself is the
+consolidation of patterns and code that emerged across those earlier
+personal projects.
+
+The author subsequently extended Entropic during employment at
+BISSELL Homecare Inc. — see "BISSELL HOMECARE INC. ACKNOWLEDGMENT"
+below for the relationship and how the linking exception
+acknowledges it.
+
+Copyright in the consolidated engine rests with Tristan VanFossen
+personally. The engine is intended for both personal and corporate
+use; the licensing structure of this project (LGPL-3.0-or-later +
+BISSELL Linking Exception) is designed so that both contexts have
+unambiguous, on-record terms of use.
 
 ======================================================================
 
@@ -24,19 +65,20 @@ BISSELL HOMECARE INC. LINKING EXCEPTION
 Background
 ----------
 
-Entropic was authored by Tristan VanFossen, who retains sole
-copyright in the work. Development began on the author's personal
-time and continues independently. The author anticipates that
-Entropic may be incorporated into products and internal tooling
-developed at BISSELL Homecare Inc. ("BISSELL"), and grants this
+Entropic's engine was authored personally; corporate-applied
+extensions (including parts of the `examples/explorer/` reference
+example and other application code that may follow) were developed
+during the author's employment at BISSELL Homecare Inc. ("BISSELL").
+The author anticipates that Entropic will continue to be incorporated
+into products and internal tooling at BISSELL, and grants this
 exception in advance so that BISSELL — and any other licensee — has
 unambiguous, on-record permission to link Entropic into proprietary
 applications without the recursive obligations LGPL §4d would
 otherwise impose.
 
-The exception is named for BISSELL in recognition of that
-anticipated use. The grant itself, however, runs to every licensee
-of Entropic. It is not exclusive to BISSELL.
+The exception is named for BISSELL in recognition of that ongoing
+working relationship. The grant itself, however, runs to every
+licensee of Entropic. It is not exclusive to BISSELL.
 
 Grant
 -----
@@ -72,6 +114,56 @@ Entropic. No private side agreements, no entity-specific waivers,
 no further carve-outs exist. The grant above is the complete
 universe of additional permissions, and applies equally to every
 licensee.
+
+======================================================================
+
+BISSELL HOMECARE INC. ACKNOWLEDGMENT
+======================================================================
+
+The author wishes to acknowledge BISSELL Homecare Inc. as the
+employment context in which several corporate-application uses of
+Entropic were developed and matured. Application code shaped during
+that employment — including portions of `examples/explorer/` and
+related corporate-use tooling — benefited from BISSELL's environment
+and the author's role there.
+
+This acknowledgment is offered in recognition and as a record of the
+working relationship under which mixed-context development occurred.
+It is the practical complement to the legal grant above:
+
+  - Tristan VanFossen retains sole copyright in Entropic and grants
+    BISSELL (and all other licensees) the unrestricted Linking
+    Exception above; in turn,
+
+  - BISSELL is acknowledged for providing the corporate-application
+    context that motivated specific extensions and examples that
+    have flowed back into the engine under the project's license.
+
+This acknowledgment does not constitute, imply, or effect a transfer
+of copyright, a work-for-hire claim, or any other ownership interest
+of BISSELL in Entropic. Copyright assignment under U.S. law
+(17 U.S.C. §204(a)) requires a separate signed writing; nothing in
+this NOTICE is such an assignment.
+
+======================================================================
+
+TRADEMARK
+======================================================================
+
+"Entropic" (as the name of this project), the Entropic project name
+and any associated logos or marks are unregistered trademarks of
+Tristan VanFossen. The LGPL-3.0 license and the BISSELL Linking
+Exception cover copyright in the source code only; they do not grant
+any right to use the project name, logos, or branding to identify or
+promote derivative or downstream products without separate written
+permission from the trademark holder.
+
+In plain terms: you may freely use, link, modify, and redistribute
+the code under the license terms above, but if you ship a fork or
+derivative under a name that includes "Entropic" or that suggests
+endorsement by this project, you need permission for the name. This
+is standard open-source practice and follows the pattern of similar
+LGPL/MPL projects.
 
 ======================================================================
 

@@ -11,7 +11,7 @@ Usage:
     inv build --cpu        # dev preset (CPU debug)
     inv test               # unit + regression (CUDA build)
     inv test --cpu         # unit + regression (CPU, used by pre-commit)
-    inv test --model       # + model tests (GPU required, writes results.json)
+    inv test --model       # + model tests (GPU recommended, writes results.json)
     inv test --coverage    # coverage preset + gcovr report
     inv clean              # remove build dirs
 """
@@ -233,7 +233,7 @@ def _write_results_json(test_results, duration_ms):
 ## @version 1
 @task(
     help={
-        "model": "Include model tests (GPU required, writes results.json)",
+        "model": "Include model tests (GPU recommended, writes results.json)",
         "cpu": "CPU-only (dev preset, used by pre-commit hook)",
         "coverage": "Run under coverage preset with gcovr report",
         "preset": "CMake preset (default: auto-selected)",
@@ -287,12 +287,38 @@ def test(  # noqa: CFQ002
         c.run(".venv/bin/python scripts/check_coverage.py")
 
 
-EXAMPLES = {
-    "hello-world": {"lang": "c", "binary": "hello-world"},
-    "pychess": {"lang": "cxx", "binary": "pychess"},
-    "explorer": {"lang": "cxx", "binary": "explorer"},
-    "headless": {"lang": "c", "binary": "headless"},
-}
+## @brief Discover example directories under examples/.
+## @utility
+## @return Sorted list of example directory names that have a CMakeLists.txt.
+## @version 1
+def _discover_examples():
+    """Discover example directories under examples/."""
+    root = os.path.abspath("examples")
+    if not os.path.isdir(root):
+        return []
+    return sorted(
+        entry
+        for entry in os.listdir(root)
+        if os.path.isdir(os.path.join(root, entry))
+        and os.path.isfile(os.path.join(root, entry, "CMakeLists.txt"))
+    )
+
+
+## @brief Find the built executable inside an example's build directory.
+## @utility
+## @return Absolute path to the executable, or None if not found.
+## @version 1
+def _find_example_binary(example_dir):
+    """Find the built binary in <example_dir>/build/."""
+    build_dir = os.path.join(example_dir, "build")
+    if not os.path.isdir(build_dir):
+        return None
+    for entry in sorted(os.listdir(build_dir)):
+        full = os.path.join(build_dir, entry)
+        if os.path.isfile(full) and os.access(full, os.X_OK):
+            return full
+    return None
+
 
 # v2.0.5: the distribution is a single librentropic.so — sublibs (types,
 # core, config, prompts, inference, mcp, storage) are OBJECT libraries
@@ -351,23 +377,29 @@ def _build_c_example(c, name, preset, jobs):
     c.run(f"cmake --build {build_dir} --parallel {jobs}")
 
 
-## @brief Build and run an example. Builds engine first if needed.
+## @brief Build (and optionally run) an example discovered under examples/.
 ## @utility
-## @version 1
+## @version 2
 @task(
     help={
-        "name": "Example name: hello-world, pychess",
-        "wrapper": "Run Python wrapper version instead of C/C++",
+        "name": "Example name (omit to list discovered examples)",
+        "build_only": "Build but do not run (useful for server-style examples)",
         "cpu": "Use CPU dev build instead of full CUDA",
         "preset": "CMake preset (overrides --cpu)",
         "jobs": f"Parallel build jobs (default: {JOBS})",
     }
 )
-def example(c, name, wrapper=False, cpu=False, preset="", jobs=JOBS):
-    """Build and run an example. Builds engine first if needed."""
-    if name not in EXAMPLES:
-        names = ", ".join(EXAMPLES)
-        raise SystemExit(f"Unknown example '{name}'. Available: {names}")
+def example(c, name="", build_only=False, cpu=False, preset="", jobs=JOBS):
+    """Build (and optionally run) an example. Builds engine first if needed."""
+    discovered = _discover_examples()
+    if not name:
+        if not discovered:
+            raise SystemExit("No examples found under examples/")
+        print("Available examples: " + ", ".join(discovered))
+        return
+
+    if name not in discovered:
+        raise SystemExit(f"Unknown example '{name}'. Available: {', '.join(discovered)}")
 
     if not preset:
         preset = "dev" if cpu else "full"
@@ -378,71 +410,24 @@ def example(c, name, wrapper=False, cpu=False, preset="", jobs=JOBS):
         build(c, cpu=cpu, preset=preset, jobs=jobs)
 
     example_dir = os.path.abspath(os.path.join("examples", name))
-    env = {**os.environ, "LD_LIBRARY_PATH": _ld_library_path(preset)}
-
-    if wrapper:
-        _run_wrapper(c, name, example_dir, lib_so, env)
-    else:
-        _run_native(c, name, example_dir, preset, jobs, env)
-
-
-## @brief Run the Python wrapper version of an example.
-## @utility
-## @version 1
-def _run_wrapper(c, name, example_dir, lib_so, env):
-    """Run the Python wrapper version of an example."""
-    script = os.path.join(example_dir, "main_wrapper.py")
-    if not os.path.isfile(script):
-        raise SystemExit(f"No wrapper script: {script}")
-
-    env["ENTROPIC_LIB_PATH"] = lib_so
-    python = os.path.abspath(".venv/bin/python")
-    print(f"Running {name} (Python wrapper)...")
-    c.run(f"cd {example_dir} && {python} main_wrapper.py", env=env, pty=True)
-
-
-## @brief Build and run the C/C++ version of an example.
-## @utility
-## @version 1
-def _run_native(c, name, example_dir, preset, jobs, env):
-    """Build and run the C/C++ version of an example."""
     _build_c_example(c, name, preset, jobs)
-    binary = os.path.abspath(os.path.join(example_dir, "build", EXAMPLES[name]["binary"]))
-    if not os.path.isfile(binary):
-        raise SystemExit(f"Build succeeded but binary not found: {binary}")
 
-    print(f"Running {name} (C/C++)...")
+    binary = _find_example_binary(example_dir)
+    if not binary:
+        raise SystemExit(f"Build succeeded but no binary found in {example_dir}/build/")
+
+    if build_only:
+        print(f"Built: {binary}")
+        return
+
+    env = {**os.environ, "LD_LIBRARY_PATH": _ld_library_path(preset)}
+    print(f"Running {name}...")
     c.run(f"cd {example_dir} && {binary}", env=env, pty=True)
-
-
-## @brief Generate doxygen SQLite knowledge database from engine source.
-## @utility
-## @version 2
-@task(
-    help={
-        "enrich": "Also populate architecture_topics from YAML",
-        "verbose": "Enable verbose logging",
-    }
-)
-def docs(c, enrich=False, verbose=False):
-    """Generate doxygen SQLite database (docs/entropic_docs.db)."""
-    python = os.path.abspath(".venv/bin/python")
-    script = os.path.abspath("examples/explorer/scripts/build_docs_db.py")
-    doxyfile = os.path.abspath("docs/Doxyfile")
-    output = os.path.abspath("docs/entropic_docs.db")
-    enrich_yaml = os.path.abspath("examples/explorer/data/architecture_topics.yaml")
-
-    cmd = f"{python} {script} --doxyfile {doxyfile} --output {output}"
-    if enrich and os.path.isfile(enrich_yaml):
-        cmd += f" --enrich {enrich_yaml}"
-    if verbose:
-        cmd += " --verbose"
-    c.run(cmd)
 
 
 ## @brief Remove all build directories.
 ## @utility
-## @version 1
+## @version 2
 @task
 def clean(c):
     """Remove all build directories."""
@@ -453,8 +438,8 @@ def clean(c):
         "build/minimal-static",
         "build/game",
     ]
-    # Also clean example build dirs
-    for name in EXAMPLES:
+    # Also clean example build dirs (discovered dynamically)
+    for name in _discover_examples():
         dirs.append(os.path.join("examples", name, "build"))
 
     for d in dirs:

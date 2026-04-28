@@ -2,35 +2,76 @@ Entropic — local-first agentic inference engine
 Copyright (C) 2026 Tristan VanFossen
 
 Entropic is licensed under the GNU Lesser General Public License,
-version 3 or (at your option) any later version. The full text of
-that license is in the LICENSE file alongside this notice.
+version 3 or (at your option) any later version, with the single
+additional permission named below ("BISSELL Homecare Inc. Linking
+Exception"). The full text of the LGPL is in the LICENSE file
+alongside this notice.
 
 The notices below are project-specific additions to LGPL-3.0. They
-do not modify the LGPL itself; they clarify its application to this
-project and document the project's licensing history.
+do not modify the LGPL itself; they document one (and only one)
+additional permission granted under LGPL-3.0 section 7, the
+project's licensing history, and third-party attribution.
+
+This NOTICE describes the *only* additional permission attached to
+Entropic. No other carve-outs, exceptions, side letters, or grants
+exist for any other entity.
 
 ======================================================================
 
-LINKING EXCEPTION
+BISSELL HOMECARE INC. LINKING EXCEPTION
 ======================================================================
 
-Linking this library statically or dynamically with independent
-modules to produce an executable does not by itself cause the
-resulting executable to be covered by the GNU Lesser General Public
-License. Such independent modules, and the combination of this
-library with independent modules, are a "Combined Work" as defined
-in section 4 of LGPL-3.0. The LGPL requirements (section 4d) apply
-only to the portions of the Combined Work that are derived from
-this library.
+Background
+----------
 
-In plain terms: applications that link against librentropic.so —
-statically or dynamically — are not themselves required to be
-licensed under the LGPL. Only modifications to the entropic library
-itself are subject to LGPL section 4d's source-availability
-requirements.
+Entropic was authored by Tristan VanFossen, who retains sole
+copyright in the work. Development began on the author's personal
+time and continues independently. The author anticipates that
+Entropic may be incorporated into products and internal tooling
+developed at BISSELL Homecare Inc. ("BISSELL"), and grants this
+exception in advance so that BISSELL — and any other licensee — has
+unambiguous, on-record permission to link Entropic into proprietary
+applications without the recursive obligations LGPL §4d would
+otherwise impose.
 
-This exception is granted by the copyright holder and is permitted
-under section 7 of LGPL-3.0 ("Additional Permissions").
+The exception is named for BISSELL in recognition of that
+anticipated use. The grant itself, however, runs to every licensee
+of Entropic. It is not exclusive to BISSELL.
+
+Grant
+-----
+
+As an additional permission under LGPL-3.0 section 7, the copyright
+holder grants every licensee of Entropic the following:
+
+    Linking this library, statically or dynamically, with
+    independent modules to produce an executable or other combined
+    work does not by itself cause that combined work to be governed
+    by the GNU Lesser General Public License. Such independent
+    modules — and the combination of this library with them — are
+    a "Combined Work" within the meaning of LGPL-3.0 section 4. The
+    requirements of section 4d (delivery of source for the Library
+    portion in re-linkable form, or use of a suitable shared library
+    mechanism) apply only to portions of the Combined Work that are
+    derived from this library.
+
+In plain terms: applications that link librentropic.so — statically
+or dynamically — are not themselves required to be licensed under
+the LGPL. Only modifications to the Entropic library itself remain
+subject to LGPL section 4d's source-availability requirements.
+
+This exception is permitted under LGPL-3.0 section 7 ("Additional
+Permissions") and is granted by Tristan VanFossen as the sole
+copyright holder of Entropic.
+
+Scope
+-----
+
+This is the only additional permission granted in connection with
+Entropic. No private side agreements, no entity-specific waivers,
+no further carve-outs exist. The grant above is the complete
+universe of additional permissions, and applies equally to every
+licensee.
 
 ======================================================================
 
@@ -39,8 +80,8 @@ DUAL-LICENSE / VERSION HISTORY
 
 Versions of Entropic prior to 2.0.0 were released under the Apache
 License, Version 2.0. The license change to LGPL-3.0-or-later (with
-the linking exception above) applies to version 2.0.0 and all
-subsequent releases.
+the BISSELL Homecare Inc. Linking Exception above) applies to
+version 2.0.0 and all subsequent releases.
 
 If you obtained this software under the Apache-2.0 license (v1.x),
 that license continues to apply to the version you received. The

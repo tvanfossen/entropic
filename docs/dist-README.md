@@ -164,14 +164,16 @@ isn't appropriate.
 
 ## Licensing
 
-Entropic is **LGPL-3.0-or-later** with a linking exception. See
-`share/doc/entropic/LICENSE` (canonical LGPL-3.0 text) and
-`share/doc/entropic/NOTICE` (linking exception + attribution).
+Entropic is **LGPL-3.0-or-later** with the **BISSELL Homecare Inc.
+Linking Exception** — the only additional permission granted under
+LGPL-3.0 §7. See `share/doc/entropic/LICENSE` (canonical LGPL-3.0
+text) and `share/doc/entropic/NOTICE` (the exception, version
+history, and third-party attribution).
 
-The linking exception explicitly permits applications to link
-`librentropic.so` (statically or dynamically) without becoming
-LGPL-covered themselves. Modifications to entropic itself remain
-subject to LGPL section 4d.
+The linking exception runs to every licensee. It explicitly permits
+applications to link `librentropic.so` (statically or dynamically)
+without becoming LGPL-covered themselves. Modifications to Entropic
+itself remain subject to LGPL section 4d.
 
 Bundled inference runtime (`llama.cpp`) is **MIT-licensed**; see its
 upstream repository for attribution text.

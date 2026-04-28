@@ -4,7 +4,7 @@
 
 - Linux (tested on Ubuntu 24.04)
 - cmake 3.21+
-- C++17 compiler (gcc 10+ or clang 14+)
+- C++20 compiler (gcc 11+ or clang 15+)
 - Python 3.10+
 - CUDA toolkit (optional, for GPU inference)
 - Git with submodule support
@@ -16,10 +16,10 @@
 git clone --recurse-submodules https://github.com/tvanfossen/entropic.git
 cd entropic
 
-# Create venv and install tools
+# Create venv and install dev tools (invoke, pre-commit, gcovr, ruff,
+# mypy, pytest — everything the pre-commit gates need).
 python3 -m venv .venv
-.venv/bin/pip install -e .
-.venv/bin/pip install invoke pre-commit
+.venv/bin/pip install -e ".[dev]"
 .venv/bin/pre-commit install
 ```
 
@@ -53,7 +53,7 @@ inv build --cpu --no-clean
 ## Testing
 
 ```bash
-# CPU unit + regression tests (673+ tests, pre-commit gate)
+# CPU unit + regression tests (~750 tests, pre-commit gate)
 inv test --cpu --no-build
 
 # Model tests (GPU required, writes results.json)

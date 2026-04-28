@@ -1,12 +1,16 @@
-# Entropic 2.0.0 — C++ Architecture Design
+# Entropic — C++ Architecture Design
 
-Reference architecture for the C++ engine rewrite. This document defines
-the library decomposition, dependency graph, interface contracts, class
+Reference architecture for the C++ engine. This document defines the
+library decomposition, dependency graph, interface contracts, class
 hierarchy patterns, plugin architecture, and build configuration that
-guide the v1.8.x port.
+constrain feature work.
 
-The Python codebase (v1.7.x) is the behavioral specification. This document
-defines HOW to implement it in C++, not WHAT to implement.
+> **Status**: living design document. The original C++ rewrite from
+> the v1.7.x Python prototype completed at v2.0.0; this file now
+> guides v2.x evolution. Port-era notes referencing the Python
+> behavioral spec have been retained where they document a decision
+> (so the rationale stays visible) but no longer describe in-flight
+> work.
 
 ---
 

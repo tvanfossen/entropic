@@ -116,9 +116,11 @@ subcommand that fetches the matching tarball from GitHub Releases.
 pip install entropic-engine==2.1.0
 ```
 
-This installs ~50 KB of Python: a CLI entry point, a `ctypes` binding
-module generated from `entropic.h`, and the install-engine subcommand.
-No native code is included in the wheel.
+This installs ~50 KB of Python: a CLI entry point, a curated `ctypes`
+binding for the most-used C ABI symbols, and the `install-engine`
+subcommand. No native code is included in the wheel. The full binding
+surface can be regenerated from `include/entropic/entropic.h` via
+`inv gen-bindings` at release time.
 
 ### 2. Install the engine
 
@@ -128,12 +130,15 @@ entropic install-engine
 
 The subcommand detects whether `nvidia-smi` is present, downloads the
 matching tarball (`cpu` or `cuda`) for the wrapper version, verifies
-`.sha256`, and extracts to `~/.entropic/lib/`. Re-running is idempotent —
-matching checksums short-circuit the download.
+`.sha256`, and extracts under `~/.entropic/`. The tarball lays out as
+`~/.entropic/entropic/{bin,lib,include,share}` so the loader can
+discover both the shared library and the bundled CLI binary in one
+place. Re-running is idempotent — matching checksums short-circuit
+the download.
 
-Override the install location via `$ENTROPIC_HOME` (writes to
-`$ENTROPIC_HOME/lib/`), or point at an arbitrary `librentropic.so`
-via `$ENTROPIC_LIB`.
+Override the install root via `$ENTROPIC_HOME` (writes the same
+`entropic/{bin,lib,…}` tree under that path), or point at an
+arbitrary `librentropic.so` via `$ENTROPIC_LIB`.
 
 ### 3. Use it
 
@@ -184,9 +189,14 @@ class — the v1.7.x OOP wrapper has been retired.
 - `examples/pychess/` — C++ example exercising tier delegation, GBNF grammar,
   and MCP tool registration. Best showcase of the v2.x feature set.
 - `examples/explorer/` — interactive C++ REPL for poking at the engine.
+- `examples/openai-server/` — OpenAI-compatible HTTP front-end. Drop-in for
+  clients that already speak the OpenAI Chat Completions API
+  (LangChain, llama-index, the `openai` Python SDK).
 - `docs/architecture-cpp.md` — library decomposition, design rules,
   decision log.
 - `docs/roadmap.md` — version-by-version feature targeting.
+- `docs/cli-install-routes.md` — `entropic` CLI subcommand surface
+  and install-route matrix.
 
 If the engine misbehaves: enable trace logging via
 `ENTROPIC_LOG_LEVEL=trace`, or set `[logging] level: trace` in

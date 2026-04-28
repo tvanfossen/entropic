@@ -77,13 +77,12 @@ examples/pychess/.pychess/
 # Environment files
 .env
 .env.local
-# test-reports/ moved under build/ — already covered by `build/` rule
-# above. Model-test snapshot is published as a GitHub Release artifact
-# at each x.y.0 bump per CLAUDE.md test gating, not committed.
+# test-reports/ — runtime path is build/test-reports/ (covered by `build/`
+# above). The root-level rule below is a belt-and-suspenders guard in
+# case something writes there from cwd; nothing in current code does.
+test-reports/
 
 .claude/tmp/
-
-examples/hello-world/.hello-world/
 
 # Git worktrees for delegation isolation
 .worktrees/

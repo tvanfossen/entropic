@@ -48,7 +48,7 @@ AI-powered software that needs to run locally:
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Your Application                                       │
-│  C/C++ (direct linkage) · Python (auto-generated wrapper)│
+│  C/C++ (direct linkage) · Python (ctypes wrapper)       │
 ├─────────────────────────────────────────────────────────┤
 │  librentropic.so — C API                                │
 │                                                         │
@@ -90,7 +90,7 @@ git clone --recurse-submodules https://github.com/tvanfossen/entropic.git
 cd entropic
 
 python3 -m venv .venv
-.venv/bin/pip install invoke pre-commit
+.venv/bin/pip install -e ".[dev]"     # invoke + pre-commit + gcovr + ruff + mypy
 .venv/bin/pre-commit install
 
 # CUDA build (default)
@@ -249,7 +249,7 @@ ship as plugins:
 
 | Server | Tools |
 |--------|-------|
-| `entropic` | delegate, pipeline, complete, diagnose, inspect |
+| `entropic` | delegate, pipeline, complete, diagnose, inspect, context_inspect |
 | `filesystem` | read_file, write_file, edit_file, glob, grep |
 | `bash` | execute |
 | `git` | status, diff, log, commit, branch, checkout |
@@ -276,7 +276,6 @@ from cache in milliseconds instead of re-processed.
 | `primary` | Qwen3.5-35B-A3B-UD-IQ3_XXS | 13.1 GB | 15+ GB |
 | `mid` | Qwen3.5-9B-Q8_0 | 9.5 GB | 12+ GB |
 | `lightweight` | Qwen3.5-4B-Q8_0 | 4.5 GB | 8+ GB |
-| `router` | Qwen3-0.6B-Q8_0 | 0.6 GB | 1 GB |
 
 Use `path: primary` (or `mid`, `lightweight`) in config — the engine resolves
 to the full model path via the bundled registry.
@@ -294,18 +293,18 @@ to the full model path via the bundled registry.
 ```bash
 inv build --clean              # full (CUDA)
 inv build --cpu                # dev (CPU)
-inv test --cpu --no-build      # 673 unit + regression tests
-inv test --model --no-build    # 29 model tests (GPU required)
+inv test --cpu --no-build      # 751 unit + regression tests
+inv test --model --no-build    # 30 model tests (GPU required)
 ```
 
 ## Examples
 
 | Example | Demonstrates | Language |
 |---------|-------------|----------|
-| `hello-world/main.c` | Single tier, streaming, app context | C |
-| `hello-world/main_wrapper.py` | Same via Python wrapper | Python |
+| `headless/main.c` | Pure-C minimal harness — CI smoke target | C |
 | `pychess/main.cpp` | Multi-tier pipeline, grammar, delegation, external MCP | C++ |
-| `pychess/main_wrapper.py` | Same via Python wrapper | Python |
+| `explorer/main.cpp` | Interactive C++ REPL for poking at the engine | C++ |
+| `openai-server/src/main.cpp` | OpenAI-compat HTTP front-end (chat/completions, models, SSE streaming) | C++ |
 
 Each example has its own `default_config.yaml` (consumer defaults) and
 `.{name}/` directory (session logs, local config).

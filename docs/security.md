@@ -4,8 +4,10 @@
 
 | Version | Supported |
 |---------|-----------|
-| 1.x     | Yes       |
-| < 1.0   | No        |
+| 2.1.x   | Yes — current release |
+| 2.0.x   | Best-effort fixes for critical issues |
+| 1.7.x   | PyPI fallback, frozen — no security backports |
+| < 1.7   | No |
 
 ## Reporting a Vulnerability
 
@@ -29,8 +31,8 @@ Entropic is a local inference engine. The following are in scope:
 
 The following are **out of scope**:
 
-- Vulnerabilities in upstream dependencies (llama-cpp-python, Textual, etc.) —
-  report these to the respective projects
+- Vulnerabilities in upstream dependencies (llama.cpp, nlohmann::json,
+  spdlog, sqlite3, ryml, etc.) — report these to the respective projects
 - Model behavior (bias, hallucination, unsafe outputs) — these are properties
   of the loaded model, not the engine
 - Issues requiring physical access to the host machine

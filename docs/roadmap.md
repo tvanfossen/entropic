@@ -1,23 +1,38 @@
-# Entropic Roadmap: v1.7.1 → v2.0.0
+# Entropic Roadmap
 
 Master roadmap for the Entropic engine. Each version has a corresponding
-proposal in `.claude/proposals/ACTIVE/` with detailed implementation plans.
+proposal in `.claude/proposals/{ACTIVE,STAGED,COMPLETE}/` with detailed
+implementation plans and post-hoc implementation logs.
 
-This document is the source of truth for version targeting and feature scope.
-Individual proposals contain implementation details, examples, and validation
-criteria.
+This document is the source of truth for version targeting and feature
+scope. Individual proposals contain implementation details, examples,
+and validation criteria.
 
 ---
 
-## Current State (v1.7.1)
+## Current State (v2.1.0)
 
-- Python engine: 878 unit tests, 42 model tests, 13/13 identity benchmarks
-- 11 bundled identities (7 front office + 3 back office + 1 utility)
-- Single model architecture: Qwen3.5-35B-A3B-UD-IQ3_XXS on 16GB Blackwell
-- Lead delegates via pipeline/delegate (3 tools only)
-- Minimal child tool: `entropic.todo` replaces `todo_write` god tool
-- Bundled model registry (`bundled_models.yaml`) with download CLI
-- Identity-aware benchmarks with tool injection
+- C++20 engine, pure C ABI at every `.so` boundary
+- 751 unit + regression tests (CPU pre-commit gate)
+- 30 model tests (developer-run, GPU; results attached as a GitHub
+  Release artifact at each x.y.0 bump)
+- Per-library coverage gates enforced via gcovr
+- Single shared library `librentropic.so` plus `entropic` CLI binary
+  plus pure-Python ctypes wrapper (`pip install entropic-engine`)
+- MCP servers built-in: filesystem, bash, git, web, diagnostics,
+  entropic (delegate / pipeline / complete / diagnose / inspect /
+  context_inspect)
+- External MCP plugins via stdio + SSE transports
+- Identity-based delegation, GBNF grammar constraints, prompt caching,
+  constitutional validation with revision sub-loop
+- Three consumer surfaces validated: tarball + find_package, pip
+  wrapper, OpenAI-compat HTTP example
+
+> **Status sections below**: v1.7.x → v2.0.0 are SHIPPED. They are
+> retained as the historical decision log — the "why" behind each
+> design choice — not as in-flight work. The v2.1.0 section reflects
+> what actually shipped (different from the original "Fine-Tuning
+> Pipeline" plan, which moves to v2.2 candidate).
 
 ---
 
@@ -391,14 +406,83 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ---
 
-## v2.1.0 — Fine-Tuning Pipeline
+## v2.0.x — Post-2.0.0 Hardening (SHIPPED)
 
-- Bundled toolchain: `entropic train` CLI
-- QLoRA + DPO from session logs
-- Synthetic data generation with grammar constraints + constitutional filtering
-- LoRA adapter training orchestration
-- Adapter quality validation against test set
-- Programmatic API alongside CLI
+Iterative hardening on top of the v2.0.0 release. Each minor patch
+absorbs a focused proposal:
+
+- **v2.0.1** Developer onboarding: contributing.md, getting-started
+  flow, build presets matrix.
+- **v2.0.2** Doxygen traceability: every public function carries
+  `@req`, `@version`, exemption tags; doxygen-guard pre-commit hook
+  enforces.
+- **v2.0.3** MCP bridge: `entropic mcp-bridge` subcommand exposes the
+  engine as an MCP server over stdio so Claude Code / VSCode / other
+  tool-protocol clients can use it without code.
+- **v2.0.4** Entropic explorer example.
+- **v2.0.5** Distribution: tarball layout, install rules,
+  `find_package(entropic)` consumer experience, GitHub Release flow.
+- **v2.0.6** Multi-rc series of demo-driven hardenings (rc16–rc19):
+  external bridge multi-client subscriptions, validator verdict +
+  critique tier, ON_COMPLETE validation hook, identity caps,
+  synthetic-termination plumbing, relay log disambiguation,
+  PRE/POST_TOOL_CALL hook firing, typed result_kind.
+
+## v2.1.0 — Formal Release Bundle (SHIPPED)
+
+Bundles four streams of work into the first formally-tagged minor:
+
+- **A1–A5: Engine bug bundle** — six verified bugs from the demo
+  session, scoped down from ten reports after independent
+  verification (E1 dead frontmatter fields removed, E2
+  budget-exhausted children validated-and-relayed, E5+E6 phase
+  observer generation counter, E8 `tasks_for_cancel` lock contract,
+  E9 broadcast head-of-line elimination).
+- **B1–B6: Release infrastructure** — CI/CD rescoped to free
+  hosted runners, `RELEASING.md` manual flow, Python wrapper
+  (playwright pattern), OpenAI-compat HTTP example, getting-started
+  guide, version sync to 2.1.0, unified proposal consolidating four
+  absorbed asks.
+- **A6–A10 + #44–#46: Engine signal honesty** (demo asks): UTF-8
+  facade sanitization (#47), iteration count exposure (#41),
+  validation rule visibility on retry (#42), tier-scoped
+  assembled-prompt inspection (#43), empty-vs-failed tool result
+  classification + tightened error detection (#44), anti-spiral
+  primitive (#45), tool result preview length cap (#46).
+- **C1–C6: Pre-release cleanup** — Python-era dead code removed,
+  test-reports relocated under build/, scripts/→inv tasks,
+  pyproject.toml [tool.*] stripped (pre-commit owns hooks).
+
+The original "Fine-Tuning Pipeline" plan that previously occupied
+this slot was de-prioritised in favour of release-readiness work and
+moves to v2.2 candidate (below).
+
+---
+
+## v2.2 candidates (not committed)
+
+Candidate scope for the next minor, awaiting prioritisation:
+
+- **Fine-tuning pipeline**: bundled `entropic train` CLI, QLoRA + DPO
+  from session logs, synthetic data generation with grammar
+  constraints + constitutional filtering, adapter training
+  orchestration, programmatic API alongside CLI. Original v2.1.0
+  scope; now postponed.
+- **`RoutingConfig` removal**: deprecated in v2.1.0 (router model
+  unused in practice; identity-based routing replaced
+  classifier-based). Full struct removal + orchestrator simplify is
+  a follow-up.
+- **`entropic where` / `--locate` introspection**: lets users with
+  multiple installs verify which binary they're running. Surfaced by
+  the v2.1.0 CLI install-route audit (`docs/cli-install-routes.md`).
+- **Wrapper-side `--help` interception**: prepend `install-engine`
+  before delegating to the native binary's usage banner (also from
+  the install-route audit).
+- Anti-spiral STRONG interpretation: forced synthetic completion
+  when consecutive-same-tool counts keep climbing past the
+  threshold + N. v2.1.0 ships the MILD interpretation (system
+  reminder, model self-corrects). Escalate only if field experience
+  shows models routinely ignore the warning.
 
 ---
 

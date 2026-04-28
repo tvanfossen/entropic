@@ -8,21 +8,22 @@ package contains a single shared library (`librentropic.so`), the
 
 ## Install
 
-### Recommended: one-line installer
-
-Auto-detects CUDA vs CPU by probing for `nvidia-smi`:
+### Recommended: pip wrapper + install-engine
 
 ```
-curl -fsSL https://raw.githubusercontent.com/tvanfossen/entropic/main/install.sh | bash
+pip install entropic-engine
+entropic install-engine
 ```
 
-Flags: `--cpu` / `--cuda` to force a backend, `--prefix DIR` to pick a
-non-standard install location (default `/usr/local`), `--version vX.Y.Z`
-to pin, `--yes` to skip the confirmation prompt.
+The wrapper detects CUDA vs CPU by probing for `nvidia-smi`, fetches
+the matching tarball from the matching GitHub Release, verifies
+`.sha256`, and extracts under `~/.entropic/`. Override the location
+via `$ENTROPIC_HOME`. Re-running is idempotent.
 
-### Manual
+### Manual tarball
 
 ```
+# Strip the leading `entropic/` to lay out under the prefix directly:
 tar -xzf entropic-<version>-linux-x86_64-<backend>.tar.gz -C /usr/local --strip-components=1
 ```
 
@@ -32,12 +33,13 @@ tar -xzf entropic-<version>-linux-x86_64-<backend>.tar.gz -C /usr/local --strip-
 
 ### Python bindings
 
-Python bindings (ctypes wrapper + `entropic` CLI) are planned for a
-future release. For now, install via the tarball or `install.sh`.
-
-See `python/entropic/` in the source tree for the auto-generated
-ctypes wrapper if you're building from source and want to use
-entropic from Python.
+`pip install entropic-engine` (above) ships a thin pure-Python
+ctypes wrapper plus the `entropic` CLI. The wrapper imports symbols
+from `librentropic.so` directly — no native code in the wheel; the
+shared library is fetched separately by `entropic install-engine`.
+There is no `EntropicEngine` class — bindings mirror the C ABI
+verbatim. See the source repo's `docs/getting-started.md` for the
+full walkthrough.
 
 ### Layout
 
@@ -139,7 +141,7 @@ is picked up automatically.
 cmake_minimum_required(VERSION 3.21)
 project(my-app CXX)
 
-find_package(entropic 2.0 REQUIRED)
+find_package(entropic 2.1 REQUIRED)
 
 add_executable(my-app src/main.cpp)
 target_link_libraries(my-app PRIVATE entropic::entropic)

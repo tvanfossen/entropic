@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.1.0)
+## Current State (v2.1.1)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -456,6 +456,51 @@ Bundles four streams of work into the first formally-tagged minor:
 The original "Fine-Tuning Pipeline" plan that previously occupied
 this slot was de-prioritised in favour of release-readiness work and
 moves to v2.2 candidate (below).
+
+---
+
+## v2.1.1 — Consumer-reported regressions (SHIPPED)
+
+Three issues filed by the entropic-demo session against v2.1.0,
+each with a verifying regression test added in the same change so
+the class of bug is caught next time it appears:
+
+- **#1: pip wrapper `AgentState` IntEnum drift** — the hand-curated
+  Python enum had 7 states against the C ABI's 10, silently
+  mislabelling every state from 1 onward (`PLANNING`/`WAITING_TOOL`/
+  `DELEGATING`/`PAUSED` not represented). The same drift had also
+  rotted `EntropicError` (11 entries vs 47). Both regenerated to
+  match the canonical C headers; conformance test
+  (`tests/unit/test_bindings_abi.py`) parses `types/enums.h` and
+  `types/error.h` via AST and asserts forward + reverse coverage so
+  future drift fails CI.
+- **#2: `POST_TOOL_CALL` hook output discarded** — the engine fired
+  the hook, captured `*modified_json`, and `free()`d it without
+  applying. Documented contract said "transform the result"; the
+  implementation never honoured it, silently breaking redaction /
+  enrichment / DLP / observability hooks. Fixed by routing the
+  hook output into `Message::content` at every callsite (success,
+  duplicate-rejection, schema-rejection, pre-cancel). Contract
+  pinned in `types/hooks.h`: replacement is plain text (mirrors
+  `POST_GENERATE`); chaining is last-write-wins per registry
+  semantics. Five new SCENARIOs in `tool_executor_test.cpp` cover
+  the four firing paths plus chaining.
+- **#3: UTF-8 sanitizer leak past the v2.1.0 boundary** — the
+  v2.1.0 sanitize step at the MCP inbound boundary was correct but
+  insufficient: bytes also entered via the model token stream and
+  the audit-replay path, reaching `nlohmann::json::dump()` in the
+  facade and crashing `entropic_run` with `type_error 316`.
+  Generalised to a boundary policy: sanitize at every system seam
+  where bytes change ownership (MCP inbound, model-stream
+  finalization, audit read-back, C-API outbound). Policy documented
+  in `include/entropic/mcp/utf8_sanitize.h`. Three new SCENARIOs
+  pin `serialize_messages` against malformed-input regressions.
+
+Layering note: `utf8_sanitize.cpp` compilation moved from
+`entropic-mcp` to `entropic-core` so that `response_generator` can
+sanitize at the inbound model boundary without inverting the
+core → mcp dependency. Header location and `entropic::mcp::`
+namespace are unchanged for ABI compatibility.
 
 ---
 

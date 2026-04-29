@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.1.1)
+## Current State (v2.1.2)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -456,6 +456,67 @@ Bundles four streams of work into the first formally-tagged minor:
 The original "Fine-Tuning Pipeline" plan that previously occupied
 this slot was de-prioritised in favour of release-readiness work and
 moves to v2.2 candidate (below).
+
+---
+
+## v2.1.2 — External bridge async-task deadlock + single-source version (SHIPPED)
+
+Two unrelated cleanups merged into one patch release:
+
+### Issue #4: external_bridge async-task notification deadlocks
+
+A consumer (entropic-explorer ↔ Claude Code MCP) hit a kernel-level
+deadlock against v2.1.1. Forensic `ss -x` showed bytes stuck in the
+bridge's send queue with the peer's recv queue undrained — caused by
+three independently-real bugs ganged together. Fixed all four
+contributing causes in this release; v2.2 proposal
+`P2-20260429-001-async-bridge-io-architecture.md` captures the
+broader concurrency rework (per-subscriber outbound queues, executor
+pool, admission control) that's deferred until api_mutex is liftable
+under `P2-20260421-001`.
+
+- **A. Spec-defined notification method.** Replaced non-spec
+  `notifications/ask_complete` with `notifications/progress`
+  (MCP 2025-06-18 spec) carrying `progressToken=task_id`. Compliant
+  clients are now obligated to drain it; previously some silently
+  buffered the unknown method, fueling the deadlock.
+- **B. Drop inline result body.** Notification no longer ships the
+  full result/error text — caps notification size at ~200 bytes
+  regardless of generated output, eliminating a real DoS surface
+  (a 50KB result would otherwise flood every subscriber's recv
+  buffer on every async completion). Consumers fetch via
+  `entropic.ask_status`.
+- **C. Non-blocking broadcast write.** `broadcast_notification`
+  switched from blocking `write()` to `send(MSG_DONTWAIT)`; drops
+  slow subscribers on `EAGAIN/EWOULDBLOCK` the same as
+  `EBADF/EPIPE`. The async-task thread can no longer be wedged
+  by a non-draining consumer.
+- **D. Multi-client accept loop.** `accept_loop` now spawns a
+  per-client thread instead of inline `serve_client`. Pre-2.1.2
+  one wedged client also blocked every other operator's recovery
+  attempt; now multiple MCP clients (e.g. TUI + Claude Code) can
+  be connected simultaneously. `stop()` rewired to
+  `shutdown(fd, SHUT_RDWR)` every connected client and join
+  per-client threads cleanly; `accept_loop` reaps finished
+  threads after each new connection so the tracking vector stays
+  bounded.
+
+Five new SCENARIOs in `tests/unit/mcp/external_bridge_test.cpp`
+pin each part of the contract: spec-method assertion against the
+documented allowlist, no-inline-result negation, sub-50ms broadcast
+under a slow peer, parallel-connect acceptance, sub-2s stop()
+join.
+
+### Single-source project version
+
+`VERSION` file at repo root is now the canonical project version.
+`CMakeLists.txt`, `pyproject.toml`, `python/src/entropic/__init__.py`,
+the doxygen workflow, and `tests/unit/api/api_version_test.cpp` all
+read from it. Bumping the project version is a single edit:
+`echo X.Y.Z > VERSION`. Same drift class as the IntEnum issue fixed
+in v2.1.1 (multiple sources for one fact); the v2.1.1 docs site
+showed "2.1.0" because `Doxyfile` carried a stale literal — that
+class of bug can't recur post-2.1.2.
 
 ---
 

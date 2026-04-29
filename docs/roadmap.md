@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.1.2)
+## Current State (v2.1.3)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -456,6 +456,82 @@ Bundles four streams of work into the first formally-tagged minor:
 The original "Fine-Tuning Pipeline" plan that previously occupied
 this slot was de-prioritised in favour of release-readiness work and
 moves to v2.2 candidate (below).
+
+---
+
+## v2.1.3 — Context pruning + validator evidence + release tooling (SHIPPED)
+
+Two consumer-reported bugs in the context-management path, plus a
+release-tooling cleanup that surfaced when v2.1.2 hit PyPI publish.
+
+### Issue #6: prune fires regardless of context fill
+
+`ContextManager::prune_old_tool_results` ran on every iteration
+regardless of actual context fill. A 25-minute session against a
+32K-token context window observed 78 prune events at peak fill 29% —
+dropping evidence that wasn't crowding anything out and forcing the
+tier to re-issue duplicate tool calls (16 `Duplicate tool call`
+warnings in the affected session).
+
+Fix: gate prune on `warning_threshold_percent` (the same threshold
+`inject_context_warning` uses). Below the threshold, prune is a
+no-op. At/above, prune by TTL as before. Operators wanting the
+pre-2.1.3 always-prune behaviour can set
+`warning_threshold_percent: 0` — documented escape hatch, tested.
+
+Also cleaned up the `tool_result_ttl` doc comment (was misleadingly
+"(1–20)" but never validated). Now reads `>= 1` and validates the
+lower bound; upper bound is unbounded — operators on large context
+windows can set arbitrarily high TTLs.
+
+### Issue #5: validator runs against pruned context, false-flags valid citations
+
+Companion to #6. When prune legitimately engaged (long delegations
+on full context windows), the constitutional validator's critique
+pass had no way to verify `file:line` citations against actual
+content because the manifest stub was the only evidence visible.
+Reporter's session showed 4 critique passes fire and 3 reverted by
+the >50% shrink safety check, eating ~40s per false positive.
+
+Fix: prune now stashes pre-stub content into
+`msg.metadata["original_content"]` before stubbing
+`msg.content`. The model adapter still sees the stub on next
+inference (preserving why prune exists in the first place — saving
+agent context), but a side-channel keeps the real evidence
+reachable. Engine surfaces it via a new optional `tool_evidence`
+field in the POST_GENERATE hook JSON; validator parses it and
+prepends to the critique prompt under "Tool result evidence (verify
+citations against this):". Bounded at 20 most-recent results × 800
+chars/each (~16KB max evidence) so long delegations don't blow up
+the critique-prompt budget.
+
+Pre-2.1.3 engine compatibility preserved — `tool_evidence` is
+optional on the hook contract; engines that don't surface it give
+empty evidence and the validator falls back to manifest-only
+critique as before.
+
+### Release tooling fixes
+
+Three follow-up fixes to v2.1.2's single-VERSION refactor — all
+casualties of changing `pyproject.toml`'s version field from
+literal to `dynamic = ["version"]`:
+
+- `inv release-check` (`_cmake_project_version`) regex'd
+  `CMakeLists.txt` for `VERSION X.Y.Z`. Post-single-source there's
+  no literal triple to match; v2.1.2's release-check would have
+  exited "Could not extract project VERSION from CMakeLists.txt".
+  Fixed: reads VERSION file directly.
+- The model-test `results.json` schema-writer (`_get_version`) had
+  the same bug — would have written `"version": "unknown"` on
+  every minor-bump model run. Fixed: same single-source read.
+- `release-pypi.yml`'s "Verify pyproject.toml version matches
+  release tag" step grep'd `^version\s*=` and read "VERSION" as
+  the version (matching `version = {file = "VERSION"}`). **The
+  v2.1.2 PyPI publish failed for exactly this reason**; v2.1.2
+  shipped tarballs only on GitHub Releases, the wheel re-publishes
+  cleanly via v2.1.3's fixed flow. Workflow also gained a
+  `workflow_dispatch` trigger so transient publish failures can be
+  retried against the same release without delete + recreate.
 
 ---
 

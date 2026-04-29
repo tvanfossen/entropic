@@ -102,6 +102,20 @@ typedef enum {
  *   - *modified_json != NULL:  transform the result
  *   - *modified_json == NULL:  no transformation
  *
+ * For POST_TOOL_CALL specifically (since v2.1.1, issue #2): the engine
+ * treats *modified_json as the replacement string for the tool result's
+ * Message::content — NOT as a JSON context object to be deconstructed.
+ * Mirrors POST_GENERATE's "raw text in / raw text out" semantic. Hook
+ * authors wanting to inspect the structured pre-hook context (tool_name,
+ * args, raw result, directives, result_kind) read those from the input
+ * ``context_json``; the output is just the replacement content. When
+ * multiple POST_TOOL_CALL hooks are registered, last-write-wins per
+ * registry semantics — each hook receives the same ``context_json``;
+ * the final ``*modified_json`` (whichever hook wrote it last) is what
+ * the engine applies. Pre-2.1.1 the engine called free() on
+ * *modified_json without applying the transform — silently breaking
+ * redaction/enrichment/normalization hooks.
+ *
  * The engine frees *modified_json after consuming it. The callback
  * MUST allocate it with entropic_alloc() (not malloc, not new, not stack).
  *
@@ -115,7 +129,7 @@ typedef enum {
  * @return 0 to continue, non-zero to cancel (pre-hooks only).
  *
  * @callback
- * @version 1.9.1
+ * @version 2.1.1
  */
 typedef int (*entropic_hook_callback_t)(
     entropic_hook_point_t hook_point,

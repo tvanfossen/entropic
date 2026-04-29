@@ -1,24 +1,42 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file utf8_sanitize.h
- * @brief UTF-8 validation + replacement for inbound tool-result strings.
+ * @brief UTF-8 validation + replacement at every system boundary where
+ *        bytes change ownership.
  *
- * MCP server subprocesses can produce JSON-RPC tool results whose
- * string content (file bytes, command output, scraped HTML) carries
- * invalid UTF-8 sequences — legacy codepage source comments, mojibake,
- * incomplete trailing bytes from truncation. nlohmann::json::dump()
- * throws json::type_error 316 on such bytes, which aborts the
- * agent loop downstream of any place that re-serializes the message.
+ * Bytes carrying invalid UTF-8 (legacy-codepage source comments, mojibake,
+ * truncated multi-byte runs, model-stream desyncs under XML-tool-call
+ * pressure) crash any downstream ``nlohmann::json::dump()`` with
+ * ``json::type_error 316``. v2.1.0 introduced the sanitizer at the MCP
+ * inbound boundary on the assumption that "sanitize once at inbound, trust
+ * downstream" was sufficient. v2.1.1 (issue #3) generalized that to a
+ * boundary-of-ownership policy after the demo session showed bytes
+ * reaching ``json::dump()`` from paths that bypassed the inbound boundary.
  *
- * The remedy lives at the inbound boundary: scrub bytes the moment
- * they arrive from the subprocess, before the engine handles them as
- * "valid string content". sanitize_utf8() walks the input as a
- * byte sequence, validates each codepoint per RFC 3629, and writes
- * U+FFFD (REPLACEMENT CHARACTER, 0xEF 0xBF 0xBD) in place of any
- * malformed sequence. ASCII and well-formed multi-byte input pass
- * through verbatim with no allocations beyond the output string.
+ * @par Policy: sanitize at every external boundary where bytes change
+ *      ownership.
+ *   - Inbound from MCP servers      → ``src/mcp/tool_executor.cpp``
+ *   - Inbound from llama_cpp stream → ``src/core/response_generator.cpp``
+ *     (sanitize once at message-finalization, NEVER per-token — a
+ *     multi-byte codepoint can split across token boundaries)
+ *   - Inbound from audit-log files  → ``src/facade/entropic_audit.cpp``
+ *   - Outbound to C-API consumers   → ``src/facade/json_serializers.h``
  *
- * @version 2.1.0
+ * Interior code (engine memory, hook contexts, dedup cache, per-tier
+ * routing) trusts the bytes — once a string has crossed an inbound
+ * boundary, no further sanitize call is needed. Conversely, do NOT add
+ * sanitize calls inside loops or hot interior paths; they belong at the
+ * outermost system seam each direction.
+ *
+ * sanitize_utf8() walks the input as a byte sequence, validates each
+ * codepoint per RFC 3629, and writes U+FFFD (REPLACEMENT CHARACTER,
+ * 0xEF 0xBF 0xBD) in place of any malformed sequence. ASCII and
+ * well-formed multi-byte input pass through verbatim. The namespace is
+ * ``entropic::mcp`` for legacy reasons (v2.1.0 introduced it as an
+ * MCP-only utility); relocation to a generic namespace would change the
+ * exported C++ symbol and is deferred to a future major release.
+ *
+ * @version 2.1.1
  */
 
 #pragma once

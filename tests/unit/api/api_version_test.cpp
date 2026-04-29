@@ -2,7 +2,7 @@
 /**
  * @file test_api_version.cpp
  * @brief Tests for entropic_api_version() and entropic_version().
- * @version 2.1.0
+ * @version 2.1.1
  */
 
 #include <catch2/catch_test_macros.hpp>
@@ -29,7 +29,7 @@ SCENARIO("Library version matches build", "[api][version]") {
 
             THEN("it returns the expected version string") {
                 REQUIRE(ver != nullptr);
-                REQUIRE(std::strcmp(ver, "2.1.0") == 0);
+                REQUIRE(std::strcmp(ver, "2.1.1") == 0);
             }
 
             THEN("the returned pointer is valid for the process lifetime") {

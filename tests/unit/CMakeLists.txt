@@ -244,8 +244,16 @@ add_executable(entropic-api-tests
     api/hook_stub_test.cpp
     api/error_enum_test.cpp
     api/facade_integration_test.cpp
+    # v2.1.1 (#3): UTF-8 sanitization at the C-API outbound boundary.
+    api/serialize_messages_utf8_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
+)
+
+# v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private
+# json_serializers.h header from src/facade.
+target_include_directories(entropic-api-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/facade
 )
 
 target_link_libraries(entropic-api-tests PRIVATE

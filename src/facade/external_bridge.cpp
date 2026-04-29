@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <functional>
@@ -615,9 +616,24 @@ bool ExternalBridge::start() {
 }
 
 /**
- * @brief Stop the accept loop and close the socket.
+ * @brief Stop the accept loop, drain client threads, and close the socket.
+ *
+ * Issue #4 (v2.1.2, part D): pre-2.1.2 stop() only joined the accept
+ * thread because serve_client ran inline. Now each connected client
+ * has its own thread blocking in read(); we wake them via
+ * shutdown(SHUT_RDWR) on the client fd (which causes the pending
+ * read to return EOF) and then join. Order matters:
+ *   1. running_ = false  (accept_loop will exit on next poll cycle)
+ *   2. close(listen_fd_) (stops new connections; in-flight clients
+ *      are unaffected)
+ *   3. join accept_thread_ (no more clients spawn after this)
+ *   4. shutdown each client fd to wake blocking read()s
+ *   5. join each client thread
+ *   6. close client fds (the threads' RAII guards do this too, but
+ *      we run it again as a defensive measure on shutdown errors)
+ *
  * @internal
- * @version 2.0.8
+ * @version 2.1.2
  */
 void ExternalBridge::stop() {
     running_.store(false);
@@ -628,15 +644,74 @@ void ExternalBridge::stop() {
     if (accept_thread_.joinable()) {
         accept_thread_.join();
     }
+
+    // Wake every connected client's blocking read so the per-client
+    // thread can observe the disconnect and exit. shutdown(SHUT_RDWR)
+    // on a connected socket returns EOF to the peer; the read in
+    // serve_client returns 0 and read_line returns "" → exits.
+    std::vector<std::unique_ptr<ClientThread>> drained;
+    {
+        std::lock_guard<std::mutex> lock(client_threads_mutex_);
+        drained = std::move(client_threads_);
+        client_threads_.clear();
+    }
+    for (auto& ct : drained) {
+        if (ct->fd >= 0) { ::shutdown(ct->fd, SHUT_RDWR); }
+    }
+    for (auto& ct : drained) {
+        if (ct->thread.joinable()) { ct->thread.join(); }
+    }
+
     // Clean up socket file
     std::error_code ec;
     std::filesystem::remove(socket_path_, ec);
 }
 
 /**
- * @brief Background thread: accept connections and serve.
+ * @brief Reap finished client threads (called under client_threads_mutex_).
+ *
+ * Long-running bridges can see many connect/disconnect cycles. Without
+ * reaping, the vector grows indefinitely with finished but
+ * still-joinable thread handles. Each per-client thread sets its own
+ * ``finished`` flag right before exit; the accept loop calls this
+ * after every new connection to harvest exited entries.
+ *
  * @internal
- * @version 2.0.8
+ * @version 2.1.2
+ */
+void ExternalBridge::reap_finished_clients_locked() {
+    auto it = client_threads_.begin();
+    while (it != client_threads_.end()) {
+        if ((*it)->finished.load()) {
+            if ((*it)->thread.joinable()) { (*it)->thread.join(); }
+            it = client_threads_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+/**
+ * @brief Background thread: accept connections and dispatch to per-client
+ *        serve threads.
+ *
+ * Issue #4 (v2.1.2, part D): pre-2.1.2 this called ``serve_client(fd)``
+ * inline on the accept thread. While one client was connected, the
+ * loop blocked here and no further ``accept()`` happened — so a
+ * single wedged client also blocked every other operator's recovery
+ * attempt and made it impossible for two MCP clients (e.g. TUI +
+ * Claude Code) to be connected simultaneously. Now each accepted
+ * connection gets its own thread and the accept loop returns
+ * immediately to ``poll`` for the next.
+ *
+ * Lifecycle: the per-client thread closes its fd before exit and
+ * sets ``finished``; ``reap_finished_clients_locked()`` then joins
+ * and erases. ``stop()`` covers the race where shutdown happens
+ * mid-serve by ``shutdown(fd, SHUT_RDWR)`` to wake any blocking
+ * read.
+ *
+ * @internal
+ * @version 2.1.2
  */
 void ExternalBridge::accept_loop() {
     while (running_.load()) {
@@ -650,10 +725,24 @@ void ExternalBridge::accept_loop() {
         int client_fd = accept(listen_fd_, nullptr, nullptr);
         if (client_fd < 0) { continue; }
 
-        logger->info("External MCP client connected");
-        serve_client(client_fd);
-        ::close(client_fd);
-        logger->info("External MCP client disconnected");
+        logger->info("External MCP client connected (fd={})", client_fd);
+
+        auto ct = std::make_unique<ClientThread>();
+        ct->fd = client_fd;
+        // Capture a raw pointer for the thread body so the unique_ptr
+        // can stay in client_threads_ without aliasing.
+        ClientThread* raw = ct.get();
+        ct->thread = std::thread([this, raw]() {
+            serve_client(raw->fd);
+            ::close(raw->fd);
+            raw->fd = -1;
+            logger->info("External MCP client disconnected");
+            raw->finished.store(true);
+        });
+
+        std::lock_guard<std::mutex> lock(client_threads_mutex_);
+        client_threads_.push_back(std::move(ct));
+        reap_finished_clients_locked();
     }
 }
 
@@ -836,7 +925,7 @@ void ExternalBridge::detach_phase_observer() {
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.2
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -873,17 +962,36 @@ void ExternalBridge::run_async_ask(
             }
         }
         auto status = final_state.status;
-        auto text = final_state.text;
 
-        // Push completion notification to every subscribed client
-        // (P0-2 — replaces v2.0.11 single-fd fanout).
+        // Issue #4 (v2.1.2, parts A+B): emit the spec-defined
+        // ``notifications/progress`` method instead of the previous
+        // non-spec ``notifications/ask_complete``. MCP-compliant
+        // clients are obligated to drain ``notifications/progress``
+        // (it's in the documented set); some clients silently
+        // buffered or stalled on the unknown method name, which
+        // combined with the bridge's blocking broadcast (fixed in
+        // part C of this release) produced the deadlock observed
+        // against entropic-explorer ↔ Claude Code in the field.
+        //
+        // ``progressToken`` is the ``task_id`` so the consumer can
+        // correlate the notification back to the originating
+        // ``entropic.ask`` response (which carried the same
+        // ``task_id``). The result body is NO LONGER shipped inline
+        // — consumers fetch via ``entropic.ask_status``. This caps
+        // notification size at ~200 bytes regardless of generated
+        // output, eliminating a real DoS surface (a 50KB result
+        // would otherwise flood the broadcast write path on every
+        // subscriber). ``status`` rides in ``message`` so consumers
+        // can branch on done / error / cancelled without an extra
+        // round-trip just to learn which result kind to fetch.
         json notif = {
             {"jsonrpc", "2.0"},
-            {"method", "notifications/ask_complete"},
+            {"method", "notifications/progress"},
             {"params", {
-                {"task_id", task_id},
-                {"status", status},
-                {status == "done" ? "result" : "error", text}
+                {"progressToken", task_id},
+                {"progress", 100},
+                {"total", 100},
+                {"message", status}
             }}
         };
         broadcast_notification(notif);
@@ -925,14 +1033,33 @@ void ExternalBridge::unsubscribe(int fd) {
  *
  * Snapshots the subscriber set under the lock, releases the lock before
  * writing, then re-acquires to remove dead fds. This prevents one
- * blocked or slow client from stalling all other broadcasts (E9, 2.1.0).
+ * blocked or slow client from stalling all other broadcasts.
+ *
+ * Issue #4 (v2.1.2, part C): write is non-blocking via
+ * ``send(MSG_DONTWAIT)``. A subscriber whose recv buffer is full
+ * (slow / non-draining consumer) returns ``EAGAIN``/``EWOULDBLOCK``
+ * and is dropped on the same path as ``EBADF``/``EPIPE``. Pre-2.1.2
+ * the broadcast used blocking ``write()``, which let one stalled
+ * consumer wedge the async-task thread that emitted the notification
+ * (the field-observed deadlock against entropic-explorer ↔ Claude
+ * Code; see issue #4 reproduction).
+ *
+ * A partial write is also treated as a drop. The dropped subscriber
+ * loses the in-flight notification — acceptable because (a) post-#4
+ * notifications are tiny progress signals (consumers fetch state via
+ * ``ask_status``, not from the notification body), and (b) a
+ * subscriber that can't accept ~200 bytes of buffered notification is
+ * unhealthy anyway. The longer-term replacement is a per-subscriber
+ * outbound queue + writer thread (see proposal
+ * ``.claude/proposals/BACKLOG/P2-20260429-001-async-bridge-io-architecture.md``).
  *
  * Subscribers added between snapshot and dead-fd cleanup miss this
- * broadcast — correct, as they subscribed after the message was initiated.
+ * broadcast — correct, as they subscribed after the message was
+ * initiated.
  *
  * @param notif JSON-RPC notification object.
  * @internal
- * @version 2.1.0
+ * @version 2.1.2
  */
 void ExternalBridge::broadcast_notification(const json& notif) {
     auto payload = notif.dump() + "\n";
@@ -945,9 +1072,19 @@ void ExternalBridge::broadcast_notification(const json& notif) {
 
     std::vector<int> dead;
     for (int fd : snapshot) {
-        ssize_t rc = ::write(fd, payload.c_str(), payload.size());
+        ssize_t rc = ::send(fd, payload.c_str(), payload.size(),
+                            MSG_DONTWAIT | MSG_NOSIGNAL);
         if (rc < 0) {
-            logger->warn("Subscriber fd {} write failed — dropping", fd);
+            // EAGAIN / EWOULDBLOCK: peer recv buffer full (slow consumer).
+            // EBADF / EPIPE / ECONNRESET: peer closed or otherwise dead.
+            // All collapse to "drop" — the long-term per-subscriber
+            // queue lives in proposal P2-20260429-001.
+            logger->warn("Subscriber fd {} send failed (errno={}) — dropping",
+                         fd, errno);
+            dead.push_back(fd);
+        } else if (static_cast<size_t>(rc) < payload.size()) {
+            logger->warn("Subscriber fd {} partial send ({}/{}) — dropping",
+                         fd, rc, payload.size());
             dead.push_back(fd);
         }
     }

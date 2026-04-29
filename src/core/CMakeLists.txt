@@ -15,6 +15,11 @@ target_sources(entropic-core PRIVATE
     identity_manager.cpp
     constitutional_validator.cpp
     stream_think_filter.cpp
+    # v2.1.1 (#3): UTF-8 sanitizer. Source moved here from src/mcp/ so
+    # that response_generator.cpp (inbound model boundary) can call it
+    # without introducing a core → mcp dependency. Header stays at
+    # include/entropic/mcp/utf8_sanitize.h for ABI compatibility.
+    ${PROJECT_SOURCE_DIR}/src/mcp/utf8_sanitize.cpp
 )
 
 target_include_directories(entropic-core PUBLIC

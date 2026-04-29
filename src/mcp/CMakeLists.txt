@@ -29,11 +29,17 @@ target_sources(entropic-mcp PRIVATE
     reconnect_policy.cpp
     health_monitor.cpp
     mcp_json_discovery.cpp
-    # v2.1.0: UTF-8 sanitizer for inbound tool-result strings (#47)
-    utf8_sanitize.cpp
     # v2.1.0: tool-result content classifiers (#44)
     tool_result_classify.cpp
 )
+# v2.1.1 (#3): utf8_sanitize.cpp relocated to entropic-core's source list.
+# It was originally added in v2.1.0 (#47) as an MCP-only utility, but the
+# v2.1.1 boundary policy (see include/entropic/mcp/utf8_sanitize.h) makes
+# it a callsite for entropic-core (response_generator) and entropic-facade
+# (json_serializers, audit replay) too. Compiling it in entropic-core
+# keeps the layering clean — core does not depend on mcp; mcp depends on
+# core. Header location and the entropic::mcp:: namespace are preserved
+# for ABI/source compatibility.
 
 target_include_directories(entropic-mcp PUBLIC
     ${PROJECT_SOURCE_DIR}/include

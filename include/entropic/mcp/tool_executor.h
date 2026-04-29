@@ -395,23 +395,38 @@ private:
         int iteration);
 
     /**
-     * @brief Fire POST_TOOL_CALL hook (if wired).
+     * @brief Fire POST_TOOL_CALL hook (if wired) and apply any transform.
      *
      * Consolidates post-hook firing for all paths (pre-hook cancel,
      * precondition reject, executed) so no exit path drops the hook.
+     *
+     * If the hook writes ``*modified_json`` (per the contract in
+     * ``types/hooks.h``), the engine treats that string as the new
+     * ``Message::content`` for the result this tool call produced.
+     * Issue #2 (v2.1.1): pre-2.1.1 the engine called free() on
+     * ``*modified_json`` without applying it, silently breaking
+     * redaction/enrichment hooks. Note: ``kind`` is computed BEFORE
+     * the hook fires (and is passed into ``ctx_json`` so the hook can
+     * react to it), so a transformed ``msg.content`` may not match
+     * the kind that downstream code carries — this is intentional;
+     * kind is an INPUT to the hook, not an output of the message.
+     *
      * @param ctx Loop context.
      * @param call Tool call.
-     * @param raw_result Raw server response (may be empty).
+     * @param raw_result Raw server response (may be empty on reject paths).
      * @param elapsed_ms Duration in ms.
      * @param kind Typed outcome category.
+     * @param msg The message this call produced; ``msg.content`` is
+     *            replaced if the hook returns a non-null transformation.
      * @internal
-     * @version 2.0.6-rc19
+     * @version 2.1.1
      */
     void fire_post_tool_hook(const LoopContext& ctx,
                              const ToolCall& call,
                              const std::string& raw_result,
                              double elapsed_ms,
-                             ToolResultKind kind);
+                             ToolResultKind kind,
+                             Message& msg);
 
     /**
      * @brief Fire PRE_TOOL_CALL hook; returns true if cancelled.

@@ -11,6 +11,7 @@
 
 #pragma once
 
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/config.h>
 #include <entropic/types/message.h>
 #include <nlohmann/json.hpp>
@@ -21,16 +22,26 @@ namespace facade_json {
 
 /**
  * @brief Serialize messages to JSON array string.
+ *
+ * Sanitizes ``content`` through ``entropic::mcp::sanitize_utf8`` before
+ * each push so that any bytes which slipped past the inbound sanitize
+ * boundaries (model-stream desync, pre-2.1.1 audit-replayed history,
+ * pre-2.1.1 stored conversation state) cannot reach ``arr.dump()`` and
+ * raise ``json::type_error 316``. This is the C-API outbound boundary;
+ * see ``include/entropic/mcp/utf8_sanitize.h`` for the full boundary
+ * policy. Issue #3 (v2.1.1).
+ *
  * @param messages Message vector.
  * @return JSON array string.
  * @utility
- * @version 2.0.1
+ * @version 2.1.1
  */
 inline std::string serialize_messages(
     const std::vector<entropic::Message>& messages) {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& m : messages) {
-        arr.push_back({{"role", m.role}, {"content", m.content}});
+        arr.push_back({{"role", m.role},
+                       {"content", entropic::mcp::sanitize_utf8(m.content)}});
     }
     return arr.dump();
 }

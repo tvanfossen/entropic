@@ -13,6 +13,7 @@
 #include "engine_handle.h"
 
 #include <entropic/entropic.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 #include "json_serializers.h"
 #include <fstream>
@@ -60,7 +61,7 @@ entropic_audit_count(entropic_handle_t handle, size_t* count) {
  * @param result_json Out-param: newly allocated JSON string (caller owns; free with entropic_free).
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.0
+ * @version 2.1.1
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_audit_read(
@@ -79,7 +80,14 @@ entropic_audit_read(
         std::string line;
         while (std::getline(file, line)) {
             if (line.empty()) { continue; }
-            arr.push_back(nlohmann::json::parse(line));
+            // Issue #3 (v2.1.1): inbound boundary from disk. Audit files
+            // written by pre-2.1.1 engine versions (or by future writers
+            // that miss a sanitize step) may contain bytes that parse
+            // fine but throw on the arr.dump() below. Sanitize before
+            // ingestion so the dump cannot fail. See
+            // include/entropic/mcp/utf8_sanitize.h for the boundary policy.
+            arr.push_back(nlohmann::json::parse(
+                entropic::mcp::sanitize_utf8(line)));
         }
         *result_json = strdup(arr.dump().c_str());
         return ENTROPIC_OK;

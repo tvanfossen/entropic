@@ -724,3 +724,248 @@ SCENARIO("PRE_TOOL_CALL cancel short-circuits dispatch and still fires POST",
         }
     }
 }
+
+// ── Issue #2 (v2.1.1): POST_TOOL_CALL hook can transform Message::content ──
+//
+// Pre-2.1.1 the engine called free() on *modified_json without applying it
+// to the resulting Message::content. The four SCENARIOs above only assert
+// that the hook FIRES (and reads context); none verify that a transforming
+// hook's output reaches the model. These tests close that gap.
+
+namespace {
+
+/**
+ * @brief Allocate a C string copy on the heap (matches entropic_alloc).
+ *
+ * The engine free()s ``*modified_json`` after consuming it, so this hook's
+ * output must be malloc-allocated. Mirrors the helper in
+ * tests/unit/core/hook_registry_test.cpp.
+ *
+ * @param s Source string.
+ * @return Heap-allocated copy.
+ * @internal
+ * @version 2.1.1
+ */
+static char* dup_to_heap(const char* s) {
+    size_t len = strlen(s) + 1;
+    auto* p = static_cast<char*>(malloc(len));
+    memcpy(p, s, len);
+    return p;
+}
+
+/**
+ * @brief Hook that wraps the tool result text with a [TRANSFORMED] marker.
+ *
+ * Reads ``result`` from the post-tool context JSON and writes
+ * ``"[TRANSFORMED] " + result`` as ``*modified_json``. Matches the
+ * pattern recommended in issue #2.
+ *
+ * @internal
+ * @version 2.1.1
+ */
+static int transform_post_cb(
+    entropic_hook_point_t /*hp*/, const char* ctx,
+    char** mod, void* /*ud*/) {
+    auto j = nlohmann::json::parse(ctx);
+    auto wrapped = std::string{"[TRANSFORMED] "}
+                 + j.value("result", std::string{});
+    *mod = dup_to_heap(wrapped.c_str());
+    return 0;
+}
+
+/**
+ * @brief Hook that emits a fixed marker regardless of input result.
+ *
+ * Used to verify last-write-wins chaining order alongside
+ * ``transform_post_cb``: when both are registered, only the marker
+ * from whichever ran last reaches the message.
+ *
+ * @internal
+ * @version 2.1.1
+ */
+static int fixed_marker_post_cb(
+    entropic_hook_point_t /*hp*/, const char* /*ctx*/,
+    char** mod, void* ud) {
+    const char* marker = static_cast<const char*>(ud);
+    *mod = dup_to_heap(marker);
+    return 0;
+}
+
+/**
+ * @brief Hook that fires (so we know it ran) but writes no transformation.
+ *
+ * Used to verify the ``*modified_json == NULL`` no-op path preserves
+ * the original ``Message::content``.
+ *
+ * @internal
+ * @version 2.1.1
+ */
+static int noop_post_cb(
+    entropic_hook_point_t /*hp*/, const char* /*ctx*/,
+    char** /*mod*/, void* ud) {
+    auto* fired = static_cast<bool*>(ud);
+    *fired = true;
+    return 0;
+}
+
+} // namespace
+
+SCENARIO("POST_TOOL_CALL hook transforms successful tool result content",
+         "[tool_executor][hooks][regression][2.1.1]") {
+    GIVEN("an executor with a transforming POST_TOOL_CALL hook") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          transform_post_cb, nullptr, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a successful tool call is processed") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("the result message carries the hook's transform") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("[TRANSFORMED]")
+                        != std::string::npos);
+                REQUIRE(results[0].content.find("ok")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("POST_TOOL_CALL hook transforms duplicate-rejection content",
+         "[tool_executor][hooks][regression][2.1.1]") {
+    GIVEN("an executor with a transforming POST hook, after one call") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          transform_post_cb, nullptr, 0);
+        attach_registry(executor, reg);
+
+        LoopContext ctx;
+        executor.process_tool_calls(ctx, {make_call("ok.do_thing")});
+
+        WHEN("the identical call is re-submitted") {
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("the rejection message carries the hook's transform") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("[TRANSFORMED]")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("POST_TOOL_CALL hook transforms schema-rejection content",
+         "[tool_executor][hooks][regression][2.1.1]") {
+    GIVEN("an enum-tool executor with a transforming POST hook") {
+        auto mgr = make_enum_manager();
+        LoopConfig lc;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb, {});
+
+        HookRegistry reg;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          transform_post_cb, nullptr, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a tool is called with an invalid enum value") {
+            LoopContext ctx;
+            ToolCall call;
+            call.id = "tc-bad";
+            call.name = "enum.pick";
+            call.arguments["color"] = "purple";
+            auto results = executor.process_tool_calls(ctx, {call});
+
+            THEN("the rejection message carries the hook's transform") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("[TRANSFORMED]")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("POST_TOOL_CALL with *modified_json == NULL leaves content untouched",
+         "[tool_executor][hooks][regression][2.1.1]") {
+    GIVEN("an executor with a no-op POST hook (does not write *mod)") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        bool fired = false;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          noop_post_cb, &fired, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a tool call is processed") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("the hook fires but content is unchanged") {
+                REQUIRE(fired);
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("[TRANSFORMED]")
+                        == std::string::npos);
+                // OkTool returns "ok"; ServerResponse wraps it in a JSON
+                // envelope and the executor unwraps "result" → "ok".
+                REQUIRE(results[0].content == "ok");
+            }
+        }
+    }
+}
+
+SCENARIO("Chained POST_TOOL_CALL hooks: last write wins",
+         "[tool_executor][hooks][regression][2.1.1]") {
+    GIVEN("two POST hooks: a transforming hook then a fixed-marker hook") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        // Registration order = firing order. Both write *modified_json;
+        // the registry semantics (hook_registry_test.cpp::"out_json is the
+        // last modification") say each hook gets the same context_json,
+        // and the LAST hook's output is what fire_post returns.
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          transform_post_cb, nullptr, 0);
+        const char* second_marker = "FINAL_HOOK_OUTPUT";
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          fixed_marker_post_cb,
+                          const_cast<char*>(second_marker), 1);
+        attach_registry(executor, reg);
+
+        WHEN("a tool call is processed") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("only the second hook's output reaches the message") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content == "FINAL_HOOK_OUTPUT");
+                REQUIRE(results[0].content.find("[TRANSFORMED]")
+                        == std::string::npos);
+            }
+        }
+    }
+}

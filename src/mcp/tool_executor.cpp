@@ -340,7 +340,7 @@ static std::string validate_tool_args(
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.1.1
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -354,10 +354,12 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     }
 
     auto start = std::chrono::steady_clock::now();
-    // v2.1.0 (#47): scrub invalid UTF-8 at the inbound boundary so
-    // downstream nlohmann::json::dump() sites (storage, model adapter,
-    // bridge stream observer) cannot throw type_error 316 on bytes that
-    // came from a server reading legacy-codepage source files.
+    // Inbound boundary from MCP server subprocess. v2.1.0 (#47) introduced
+    // this; v2.1.1 (#3) generalized it as one of several boundary-policy
+    // sanitize sites — see include/entropic/mcp/utf8_sanitize.h for the
+    // full policy. The earlier "trust downstream" assumption was wrong:
+    // bytes also enter via the model token stream and the audit-replay
+    // path; both now sanitize at their own boundaries.
     auto result_json = mcp::sanitize_utf8(
         server_manager_.execute(call.name, args_json));
     auto end = std::chrono::steady_clock::now();
@@ -666,7 +668,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.1.1-rc2
+ * @version 2.1.1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -675,7 +677,7 @@ std::vector<Message> ToolExecutor::process_single_call(
     if (fire_pre_tool_hook(ctx, call)) {
         auto msg = create_denied_message(call, "Cancelled by hook");
         fire_post_tool_hook(ctx, call, "", 0.0,
-            ToolResultKind::rejected_precondition);
+            ToolResultKind::rejected_precondition, msg);
         return {std::move(msg)};
     }
 
@@ -683,7 +685,7 @@ std::vector<Message> ToolExecutor::process_single_call(
     if (pc.rejection.has_value()) {
         logger->info("Tool '{}' rejected by precondition (kind={})",
                      call.name, result_kind_to_string(pc.kind));
-        fire_post_tool_hook(ctx, call, "", 0.0, pc.kind);
+        fire_post_tool_hook(ctx, call, "", 0.0, pc.kind, *pc.rejection);
         return {std::move(*pc.rejection)};
     }
 
@@ -716,7 +718,7 @@ std::vector<Message> ToolExecutor::process_single_call(
     } else {
         kind = ToolResultKind::ok;
     }
-    fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind);
+    fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind, msg);
 
     // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive
     // calls of the same tool regardless of arg similarity (exact-arg
@@ -800,19 +802,27 @@ void ToolExecutor::update_anti_spiral_tracking(
 }
 
 /**
- * @brief Fire POST_TOOL_CALL hook with result_kind.
+ * @brief Fire POST_TOOL_CALL hook with result_kind; apply any transform.
+ *
+ * If the registered hook (or the last hook in a chain — last-write-wins
+ * per registry semantics, see hook_registry_test.cpp::"Post-hook transforms
+ * result") writes a non-null ``*modified_json``, that string replaces
+ * ``msg.content``. Issue #2 (v2.1.1): pre-2.1.1 this freed the output
+ * without ever applying it.
+ *
  * @param ctx Loop context.
  * @param call Tool call.
  * @param raw_result Raw server response (may be empty on reject).
  * @param elapsed_ms Duration.
  * @param kind Typed outcome.
+ * @param msg Message produced by this call; mutated if hook transforms.
  * @internal
- * @version 2.0.6-rc19
+ * @version 2.1.1
  */
 void ToolExecutor::fire_post_tool_hook(
     const LoopContext& ctx, const ToolCall& call,
     const std::string& raw_result, double elapsed_ms,
-    ToolResultKind kind) {
+    ToolResultKind kind, Message& msg) {
     if (hook_iface_.fire_post == nullptr) { return; }
     auto json = build_post_tool_json(
         call, raw_result, elapsed_ms, ctx.locked_tier,
@@ -820,7 +830,10 @@ void ToolExecutor::fire_post_tool_hook(
     char* out = nullptr;
     hook_iface_.fire_post(hook_iface_.registry,
         ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
-    free(out);
+    if (out != nullptr) {
+        msg.content = out;
+        free(out);
+    }
 }
 
 /**

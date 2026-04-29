@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 [project]
 name = "entropic-engine"
-version = "2.1.1"
+# v2.1.2 (#4): version is read from the repo-root VERSION file at sdist /
+# wheel build time. Single source of truth shared with CMakeLists.txt,
+# the doxygen workflow, and the api_version_test runtime check.
+dynamic = ["version"]
 description = "Local-first agentic inference engine — Python wrapper over librentropic.so"
 readme = "README.md"
 license = "LGPL-3.0-or-later"
@@ -53,6 +56,12 @@ where = ["python/src"]
 
 [tool.setuptools.package-data]
 entropic = ["py.typed"]
+
+# v2.1.2 (#4): dynamic version reads the single-source VERSION file.
+# setuptools strips trailing whitespace, so the trailing newline in
+# VERSION (POSIX-correct) is fine.
+[tool.setuptools.dynamic]
+version = {file = "VERSION"}
 
 # Hook-driven tooling (ruff, flake8, pytest) is configured in
 # .pre-commit-config.yaml — pre-commit is the source of truth. This

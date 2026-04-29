@@ -57,9 +57,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends doxygen graphviz
 
       - name: Run doxygen
+        # v2.1.2 (#4): PROJECT_NUMBER is injected from the repo-root
+        # VERSION file (single source of truth shared with CMakeLists.txt
+        # and pyproject.toml). Doxygen's stdin override pattern: cat the
+        # checked-in Doxyfile, append a PROJECT_NUMBER assignment, pipe
+        # to ``doxygen -``. This avoids carrying a versioned literal in
+        # the Doxyfile that would drift on every release bump (the v2.1.1
+        # docs site rendered "2.1.0" because of exactly that drift).
         run: |
           mkdir -p build/docs
-          doxygen Doxyfile
+          ENTROPIC_VERSION="$(cat VERSION)"
+          ( cat Doxyfile ; echo "PROJECT_NUMBER=${ENTROPIC_VERSION}" ) | doxygen -
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

@@ -256,6 +256,14 @@ target_include_directories(entropic-api-tests PRIVATE
     ${PROJECT_SOURCE_DIR}/src/facade
 )
 
+# v2.1.2 (#4): api_version_test.cpp reads the repo-root VERSION file at
+# test time to verify that runtime entropic_version() matches the
+# canonical declared version. Inject the absolute path here so the test
+# stays portable across out-of-tree builds.
+target_compile_definitions(entropic-api-tests PRIVATE
+    ENTROPIC_VERSION_FILE_PATH="${PROJECT_SOURCE_DIR}/VERSION"
+)
+
 target_link_libraries(entropic-api-tests PRIVATE
     entropic-facade
     entropic-core

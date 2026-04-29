@@ -1,7 +1,15 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 cmake_minimum_required(VERSION 3.21)
+
+# v2.1.2 (#4): single source of truth. The repo-root VERSION file is the
+# canonical project version — CMake reads it here, pyproject.toml's
+# dynamic version reads it for wheel metadata, docs.yml injects it as
+# doxygen's PROJECT_NUMBER, and tests/unit/api/api_version_test.cpp
+# reads it at test time to verify the runtime entropic_version() string
+# matches. Bumping the version is one edit: update VERSION.
+file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" ENTROPIC_VERSION LIMIT_COUNT 1)
 project(entropic
-    VERSION 2.1.1
+    VERSION ${ENTROPIC_VERSION}
     LANGUAGES C CXX
     DESCRIPTION "Entropic inference engine"
 )

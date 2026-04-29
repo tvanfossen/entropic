@@ -811,6 +811,113 @@ SCENARIO("build_critique_prompt includes tool context when present",
     }
 }
 
+// ── Issue #5 (v2.1.3): un-pruned tool-result evidence ───
+
+SCENARIO("handle_hook surfaces tool_evidence into critique prompt (#5)",
+         "[constitutional_validator][regression][2.1.3][issue-5]")
+{
+    // Issue #5 regression: pre-2.1.3 the validator's critique prompt
+    // received only a manifest (tool name + result size). On long
+    // delegations where ContextManager had pruned older results, the
+    // critique pass had no way to verify file:line citations against
+    // actual evidence and false-flagged valid citations as
+    // hallucinated. v2.1.3 plumbs un-pruned content via the new
+    // ``tool_evidence`` POST_GENERATE hook field; this test pins
+    // that the validator surfaces that string into the critique
+    // messages_json the model receives.
+    GIVEN("a validator wired to a mock and a POST_GENERATE context "
+          "carrying tool_evidence") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Global rules.");
+        v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
+
+        const char* ctx_json = R"({
+            "finish_reason": "stop",
+            "content": "src/foo.cpp:42 — load_config returns ENTROPIC_OK",
+            "tier": "researcher",
+            "tool_context": "- fs.read → 4096 chars\n",
+            "tool_evidence": "## fs.read [iter 3]\nint load_config()\n",
+            "system_prompt": "You are a researcher."
+        })";
+
+        WHEN("handle_hook is invoked with tool_evidence") {
+            // handle_hook is private; go through the public static
+            // hook_callback that the engine actually uses, the same
+            // way the production HookRegistry would dispatch.
+            ValidationContext vc{&v, &iface};
+            char* modified = nullptr;
+            ConstitutionalValidator::hook_callback(
+                ENTROPIC_HOOK_POST_GENERATE, ctx_json, &modified, &vc);
+            if (modified) { free(modified); }
+
+            THEN("the mock-captured critique prompt contains the evidence") {
+                // The validator's critique pass calls inference.generate
+                // with messages_json containing the critique prompt.
+                // last_messages_json captures the JSON sent to the mock.
+                CHECK(mock.last_messages_json.find(
+                    "Tool result evidence") != std::string::npos);
+                CHECK(mock.last_messages_json.find(
+                    "fs.read [iter 3]") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("handle_hook with empty tool_evidence falls back to manifest only "
+         "(pre-2.1.3 engine compatibility)",
+         "[constitutional_validator][regression][2.1.3][issue-5]")
+{
+    // The tool_evidence field is OPTIONAL on the POST_GENERATE
+    // contract. Pre-2.1.3 engines don't surface it; the validator
+    // must still function (manifest-only critique) without it. This
+    // pins backward compatibility.
+    GIVEN("a POST_GENERATE context without the tool_evidence field") {
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+
+        MockValidationInference mock;
+        mock.responses.push_back(
+            R"({"compliant":true,"violations":[],"revised":""})");
+        auto iface = make_val_interface(mock);
+        ConstitutionalValidator v(cfg, "Global rules.");
+        v.attach(nullptr, &iface);
+        set_test_rules(v, {"researcher"});
+
+        const char* ctx_json = R"({
+            "finish_reason": "stop",
+            "content": "Some output text.",
+            "tier": "researcher",
+            "tool_context": "- fs.read → 4096 chars\n",
+            "system_prompt": "You are a researcher."
+        })";
+
+        WHEN("handle_hook is invoked") {
+            // handle_hook is private; go through the public static
+            // hook_callback that the engine actually uses, the same
+            // way the production HookRegistry would dispatch.
+            ValidationContext vc{&v, &iface};
+            char* modified = nullptr;
+            ConstitutionalValidator::hook_callback(
+                ENTROPIC_HOOK_POST_GENERATE, ctx_json, &modified, &vc);
+            if (modified) { free(modified); }
+
+            THEN("critique prompt contains manifest but no evidence section") {
+                CHECK(mock.last_messages_json.find(
+                    "Tool calls made this turn") != std::string::npos);
+                CHECK(mock.last_messages_json.find(
+                    "Tool result evidence") == std::string::npos);
+            }
+        }
+    }
+}
+
 // ── v2.0.7: Length safety valve ─────────────────────────
 
 SCENARIO("Revision safety valve rejects gutted output",

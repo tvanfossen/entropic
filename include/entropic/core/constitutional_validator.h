@@ -474,6 +474,17 @@ private:
     /// Prepended to the critique prompt so the validator knows which
     /// tool calls preceded the output being evaluated.
     std::string current_tool_context_;
+
+    /// @brief Un-pruned tool-result evidence for this turn (v2.1.3 #5).
+    /// Set at handle_hook() entry from the POST_GENERATE hook context's
+    /// optional ``tool_evidence`` field. Carries the actual content of
+    /// recent tool results (truncated per-entry, bounded at 20 results)
+    /// so the critique pass can verify ``file:line`` citations against
+    /// real evidence rather than the stubs that ``ContextManager::
+    /// prune_old_tool_results`` leaves in the message stream. Empty
+    /// when running against pre-2.1.3 engines that don't surface this
+    /// field — critique falls back to manifest-only as before.
+    std::string current_tool_evidence_;
     /// @brief Identity system prompt for this tier (set at handle_hook() entry).
     /// Injected into revision context so the model maintains its persona
     /// rather than reverting to base behaviour (apology, self-flagellation).

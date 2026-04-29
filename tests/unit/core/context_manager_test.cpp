@@ -169,6 +169,41 @@ TEST_CASE("prune_old_tool_results engages once fill crosses threshold",
     REQUIRE(ctx.messages[1].content == "result B");           // kept
 }
 
+TEST_CASE("prune_old_tool_results preserves original_content in metadata "
+          "for validator evidence (#5)",
+          "[context_manager][regression][2.1.3][issue-5]") {
+    // Issue #5: validator runs against post-prune messages and
+    // false-flags valid file:line citations as hallucinated because
+    // the prune stub is the only evidence visible to it. The fix
+    // preserves the un-pruned content in ``msg.metadata
+    // ["original_content"]`` so the engine can surface it via the
+    // POST_GENERATE hook's tool_evidence field.
+    TokenCounter tc(10);  // tiny budget — forces prune to engage
+    CompactionConfig cfg;
+    cfg.tool_result_ttl = 1;
+    cfg.warning_threshold_percent = 0.6f;
+    EngineCallbacks cb;
+    CompactionManager cm(cfg, tc);
+    ContextManager ctxm(cm, cb);
+
+    LoopContext ctx;
+    ctx.metrics.iterations = 10;
+    const std::string original = "src/foo.cpp:42 — load_config returns ENTROPIC_OK";
+    ctx.messages.push_back(make_tool_msg("fs.read", original, 1));
+
+    ctxm.prune_old_tool_results(ctx);
+
+    // Content is replaced with the stub (model adapter still saves
+    // budget on next inference)
+    REQUIRE(ctx.messages[0].content.find("[Previous:") == 0);
+    REQUIRE(ctx.messages[0].content.find(original) == std::string::npos);
+
+    // But original survives in metadata for the validator
+    auto& meta = ctx.messages[0].metadata;
+    REQUIRE(meta.find("original_content") != meta.end());
+    REQUIRE(meta["original_content"] == original);
+}
+
 TEST_CASE("prune_old_tool_results respects warning_threshold_percent=0 "
           "(restores pre-2.1.3 always-prune)",
           "[context_manager][regression][2.1.3][issue-6]") {

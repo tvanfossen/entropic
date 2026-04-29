@@ -26,9 +26,23 @@ exists on disk — can succeed without triggering library load.
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-__version__ = "2.1.1"
+# v2.1.2 (#4): single source of truth for version is the repo-root
+# VERSION file, which pyproject.toml reads via dynamic version. After
+# install (wheel or editable), importlib.metadata returns that same
+# value. The except branch handles the rare case of running directly
+# from the source tree without an install (e.g. ``PYTHONPATH=python/src
+# python -c "import entropic"``); we fall back to reading VERSION
+# directly so __version__ is never silently wrong.
+try:
+    __version__ = version("entropic-engine")
+except PackageNotFoundError:  # pragma: no cover — uninstalled source-tree run
+    from pathlib import Path
+
+    _version_file = Path(__file__).resolve().parents[3] / "VERSION"
+    __version__ = _version_file.read_text().strip() if _version_file.exists() else "0.0.0+local"
 
 _LAZY_EXPORTS = frozenset(
     {

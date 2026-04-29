@@ -1,6 +1,14 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 PROJECT_NAME           = "Entropic"
-PROJECT_NUMBER         = 2.1.0
+# v2.1.2 (#4): PROJECT_NUMBER is injected at build time from the repo-root
+# VERSION file (single source of truth shared with CMakeLists.txt and
+# pyproject.toml). docs.yml and any local docs build pipe an override
+# line after this Doxyfile via doxygen's stdin-update mechanism, e.g.:
+#   ( cat Doxyfile ; echo "PROJECT_NUMBER=$(cat VERSION)" ) | doxygen -
+# Leaving PROJECT_NUMBER unset here so a forgotten injection step shows
+# as a missing version string in the rendered docs (loud failure) rather
+# than silently rendering a stale literal (the v2.1.1 docs site still
+# renders 2.1.0 because of exactly that drift).
 PROJECT_BRIEF          = "Local-first agentic inference engine"
 OUTPUT_DIRECTORY       = build/docs
 INPUT                  = README.md include/entropic src

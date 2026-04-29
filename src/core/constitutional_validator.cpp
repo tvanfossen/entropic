@@ -285,7 +285,7 @@ int ConstitutionalValidator::hook_callback(
  * @param content Text to critique (think blocks already stripped).
  * @return Formatted critique prompt string.
  * @utility
- * @version 2.0.8
+ * @version 2.1.3
  */
 std::string ConstitutionalValidator::build_critique_prompt(
     const std::string& content) const {
@@ -322,6 +322,17 @@ std::string ConstitutionalValidator::build_critique_prompt(
     if (!current_tool_context_.empty()) {
         prompt += "\n\nTool calls made this turn:\n";
         prompt += current_tool_context_;
+    }
+
+    // Issue #5 (v2.1.3): un-pruned tool-result content. Lets the
+    // critique pass verify file:line citations against actual
+    // evidence rather than the manifest-plus-stubs that pre-2.1.3
+    // produced. Engine surfaces this when the messages have been
+    // partially pruned (#6 limits when this happens, but legitimate
+    // long-context delegations still trigger it).
+    if (!current_tool_evidence_.empty()) {
+        prompt += "\n\nTool result evidence (verify citations against this):\n";
+        prompt += current_tool_evidence_;
     }
 
     prompt += "\n\nEvaluate this output for compliance:\n\n---\n";
@@ -796,7 +807,7 @@ static bool is_pure_tool_call(const std::string& content) {
  * @param modified_json Output: revised JSON or NULL.
  * @return 0 (post-hooks cannot cancel).
  * @internal
- * @version 2.0.7
+ * @version 2.1.3
  */
 int ConstitutionalValidator::handle_hook(
     const char* context_json,
@@ -811,6 +822,13 @@ int ConstitutionalValidator::handle_hook(
     // Store per-call context for build_critique_prompt and revision
     current_tool_context_ = extract_json_string(
         context_json, "tool_context");
+    // Issue #5 (v2.1.3): un-pruned tool-result content surfaced by the
+    // engine so the validator can verify citations against actual
+    // evidence rather than post-prune stubs. Optional field — pre-2.1.3
+    // engines that don't send it give an empty string, falling back to
+    // the manifest-only behaviour.
+    current_tool_evidence_ = extract_json_string(
+        context_json, "tool_evidence");
     current_system_prompt_ = extract_json_string(
         context_json, "system_prompt");
 

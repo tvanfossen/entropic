@@ -118,7 +118,7 @@ std::pair<int, int> ContextManager::prune_tool_results(
  *
  * @param ctx Loop context.
  * @internal
- * @version 2.1.3
+ * @version 2.1.3-rc2
  */
 void ContextManager::prune_old_tool_results(LoopContext& ctx) {
     // Gate on context fill — below the warning threshold, pruning has
@@ -155,6 +155,17 @@ void ContextManager::prune_old_tool_results(LoopContext& ctx) {
         if (current - added < ttl) {
             continue;
         }
+        // Issue #5 (v2.1.3, companion fix): preserve the original
+        // content in metadata before stubbing. The model adapter still
+        // sees the stub (which is the whole point of pruning — save
+        // context for the agent's next inference), but the
+        // constitutional validator's POST_GENERATE hook can read
+        // original_content to verify citations against actual evidence
+        // instead of the stub. Without this, a long delegation that
+        // legitimately fills the context window has its file:line
+        // citations false-flagged as hallucinations because the stub
+        // is the only evidence the validator sees.
+        msg.metadata["original_content"] = msg.content;
         int chars = static_cast<int>(msg.content.size());
         msg.content = "[Previous: " + tn->second + " result — "
                     + std::to_string(chars) + " chars, pruned]";

@@ -103,11 +103,36 @@ std::pair<int, int> ContextManager::prune_tool_results(
 
 /**
  * @brief Auto-prune tool results older than TTL iterations.
+ *
+ * Issue #6 (v2.1.3): pre-2.1.3 this fired on every iteration regardless
+ * of context fill. A 25-minute session against a 32K-token context
+ * window observed 78 prune events even though peak fill was 29% —
+ * dropping evidence that wasn't crowding anything out and forcing the
+ * tier to re-issue duplicate tool calls for data it already had (16
+ * `Duplicate tool call` warnings in the affected session). Now gated
+ * on context fill: below ``warning_threshold_percent`` (the same
+ * threshold ``inject_context_warning`` uses) prune is a no-op. At/above
+ * the threshold, prune by TTL as before. Companion fix to issue #5
+ * (validator runs against post-prune context) — fixing this issue
+ * eliminates the bug class entirely whenever context has headroom.
+ *
  * @param ctx Loop context.
  * @internal
- * @version 1.8.4
+ * @version 2.1.3-rc2
  */
 void ContextManager::prune_old_tool_results(LoopContext& ctx) {
+    // Gate on context fill — below the warning threshold, pruning has
+    // no benefit and only loses evidence the validator + dedup cache
+    // depend on. Same threshold ``inject_context_warning`` uses so
+    // operators see the warning at exactly the fill where pruning
+    // starts engaging. Set ``warning_threshold_percent`` to 0 in
+    // config to restore the pre-2.1.3 always-prune behaviour.
+    float threshold = compaction_.config.warning_threshold_percent;
+    float usage = compaction_.counter.usage_percent(ctx.messages);
+    if (usage < threshold) {
+        return;
+    }
+
     int ttl = compaction_.config.tool_result_ttl;
     int current = ctx.metrics.iterations;
     int pruned = 0;
@@ -130,6 +155,17 @@ void ContextManager::prune_old_tool_results(LoopContext& ctx) {
         if (current - added < ttl) {
             continue;
         }
+        // Issue #5 (v2.1.3, companion fix): preserve the original
+        // content in metadata before stubbing. The model adapter still
+        // sees the stub (which is the whole point of pruning — save
+        // context for the agent's next inference), but the
+        // constitutional validator's POST_GENERATE hook can read
+        // original_content to verify citations against actual evidence
+        // instead of the stub. Without this, a long delegation that
+        // legitimately fills the context window has its file:line
+        // citations false-flagged as hallucinations because the stub
+        // is the only evidence the validator sees.
+        msg.metadata["original_content"] = msg.content;
         int chars = static_cast<int>(msg.content.size());
         msg.content = "[Previous: " + tn->second + " result — "
                     + std::to_string(chars) + " chars, pruned]";

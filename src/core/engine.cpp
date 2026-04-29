@@ -1139,7 +1139,7 @@ static std::string json_escape_engine(const std::string& s) {
  * @param messages Conversation messages.
  * @return Manifest string, empty if no tool calls.
  * @utility
- * @version 2.0.7
+ * @version 2.1.3
  */
 static std::string build_tool_manifest(
     const std::vector<Message>& messages) {
@@ -1149,11 +1149,95 @@ static std::string build_tool_manifest(
         if (it == msg.metadata.end() || it->second.empty()) {
             continue;
         }
+        // Issue #5 (v2.1.3): when prune has stubbed this message, the
+        // original (pre-stub) content size is preserved in
+        // metadata["original_content"]. Report the real size so the
+        // validator sees accurate evidence sizes instead of the stub
+        // length (which is always ~50 chars regardless of original).
+        auto orig = msg.metadata.find("original_content");
+        size_t real_size = (orig != msg.metadata.end())
+                         ? orig->second.size()
+                         : msg.content.size();
         manifest += "- " + it->second
-            + " \xe2\x86\x92 " + std::to_string(msg.content.size())
+            + " \xe2\x86\x92 " + std::to_string(real_size)
             + " chars\n";
     }
     return manifest;
+}
+
+/**
+ * @brief Build un-pruned tool-result evidence for the validator.
+ *
+ * Issue #5 (v2.1.3): the validator's critique prompt previously
+ * received only a manifest (tool name + result size). For long
+ * delegations whose tool results had been pruned, the validator had
+ * no way to verify ``file:line`` citations against actual evidence
+ * — and false-flagged valid citations as hallucinated. This builds
+ * a separate evidence block that surfaces the un-pruned content (or
+ * the still-live content for un-pruned messages), bounded so the
+ * critique prompt doesn't blow up on a long delegation:
+ *
+ *   - Most-recent ``max_results`` tool-result messages only
+ *   - Each entry truncated to ``chars_per_result`` characters
+ *   - Older messages aggregated into a tail "(N earlier results
+ *     elided)" line so the validator knows evidence is bounded
+ *
+ * Format is human-readable (mirrors ``build_tool_manifest``) since
+ * it lands in a critique prompt consumed by the model.
+ *
+ * @param messages Conversation messages.
+ * @param max_results Most-recent N tool-result messages to include.
+ * @param chars_per_result Per-result truncation budget.
+ * @return Evidence block, empty if no tool results in messages.
+ * @utility
+ * @version 2.1.3
+ */
+static std::string build_tool_evidence(
+    const std::vector<Message>& messages,
+    size_t max_results,
+    size_t chars_per_result) {
+    std::vector<const Message*> tool_msgs;
+    for (const auto& msg : messages) {
+        auto it = msg.metadata.find("tool_name");
+        if (it == msg.metadata.end() || it->second.empty()) {
+            continue;
+        }
+        tool_msgs.push_back(&msg);
+    }
+    if (tool_msgs.empty()) { return {}; }
+
+    size_t elided = (tool_msgs.size() > max_results)
+                  ? (tool_msgs.size() - max_results) : 0;
+    size_t start = elided;
+    std::string out;
+    if (elided > 0) {
+        out += "(" + std::to_string(elided)
+             + " earlier tool results elided for length)\n";
+    }
+    for (size_t i = start; i < tool_msgs.size(); ++i) {
+        const auto& msg = *tool_msgs[i];
+        auto orig = msg.metadata.find("original_content");
+        const std::string& src = (orig != msg.metadata.end())
+                               ? orig->second
+                               : msg.content;
+        auto iter = msg.metadata.find("added_at_iteration");
+        out += "## ";
+        out += msg.metadata.at("tool_name");
+        if (iter != msg.metadata.end()) {
+            out += " [iter " + iter->second + "]";
+        }
+        out += "\n";
+        if (src.size() <= chars_per_result) {
+            out += src;
+        } else {
+            out += src.substr(0, chars_per_result);
+            out += "\n[... truncated, "
+                 + std::to_string(src.size() - chars_per_result)
+                 + " more chars]";
+        }
+        out += "\n\n";
+    }
+    return out;
 }
 
 /**
@@ -1209,7 +1293,7 @@ static std::string extract_system_prompt(
  * @param tier Active tier name at the time of generation.
  * @param messages Current conversation messages.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.3
  */
 void AgentEngine::fire_post_generate_hook(
     GenerateResult& result,
@@ -1221,11 +1305,20 @@ void AgentEngine::fire_post_generate_hook(
     auto manifest = build_tool_manifest(messages);
     manifest = enrich_manifest_with_history(manifest, tool_exec_);
     auto sys = extract_system_prompt(messages);
+    // Issue #5 (v2.1.3): include un-pruned tool-result evidence so the
+    // constitutional validator can verify file:line citations against
+    // actual content rather than the stubs that prune leaves behind.
+    // Bounded at 20 most-recent results × 800 chars each (~16KB max
+    // evidence), well within any sane critique-prompt budget. The
+    // field is OPTIONAL on the hook contract — pre-2.1.3 consumers
+    // ignore it; v2.1.3 validator augments its critique prompt.
+    auto evidence = build_tool_evidence(messages, 20, 800);
     std::string json =
         "{\"finish_reason\":\"" + result.finish_reason
         + "\",\"content\":\""    + json_escape_engine(result.content)
         + "\",\"tier\":\""       + tier
         + "\",\"tool_context\":\"" + json_escape_engine(manifest)
+        + "\",\"tool_evidence\":\"" + json_escape_engine(evidence)
         + "\",\"system_prompt\":\"" + json_escape_engine(sys) + "\"}";
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,

@@ -78,7 +78,7 @@ std::string validate(const ModelsConfig& config)
  * @param config Compaction config to validate.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.3
  */
 std::string validate(const CompactionConfig& config)
 {
@@ -98,6 +98,17 @@ std::string validate(const CompactionConfig& config)
                || config.preserve_recent_turns > 10) {
         err = "compaction.preserve_recent_turns must be in [1, 10], got "
               + std::to_string(config.preserve_recent_turns);
+    } else if (config.tool_result_ttl < 1) {
+        // v2.1.3 #6 / TTL clamp removal: tool_result_ttl was previously
+        // documented as "1–20" but never actually validated. The upper
+        // bound was always advisory — consumers can pick whatever
+        // makes sense for their workload (long delegations on large
+        // context windows benefit from large TTLs). Lower bound IS
+        // enforced because TTL=0 would prune every result on the next
+        // iteration, which is nonsensical and almost certainly a
+        // misconfiguration rather than an intent.
+        err = "compaction.tool_result_ttl must be >= 1, got "
+              + std::to_string(config.tool_result_ttl);
     }
 
     return err;

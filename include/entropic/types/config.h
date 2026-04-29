@@ -482,7 +482,7 @@ struct CompactionConfig {
     int summary_max_tokens = 1500;             ///< Summary max tokens (500–4000)
     bool notify_user = true;                   ///< Notify user on compaction
     bool save_full_history = true;             ///< Save full history before compaction
-    int tool_result_ttl = 10;                  ///< Tool result TTL in turns (1–20)
+    int tool_result_ttl = 10;                  ///< Tool result TTL in turns (>= 1; v2.1.3 #6: gated on fill, no upper bound)
     float warning_threshold_percent = 0.6f;    ///< Warning trigger (0.3–0.9)
 };
 

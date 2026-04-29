@@ -36,11 +36,13 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 // Forward declaration — bridge holds a raw pointer to the opaque handle.
 struct entropic_engine;
@@ -57,7 +59,7 @@ namespace entropic {
  * before engine teardown.
  *
  * @internal
- * @version 2.1.0
+ * @version 2.1.2
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -291,12 +293,40 @@ private:
      */
     std::string dispatch(const std::string& request, int client_fd);
 
+    /**
+     * @brief Reap finished client threads from client_threads_.
+     *
+     * Called from accept_loop after each accepted connection so the
+     * vector doesn't grow unbounded over a long-running bridge. Joins
+     * any thread whose ``finished`` flag is set, then erases the
+     * entry. Must be called with client_threads_mutex_ held.
+     * @internal
+     * @version 2.1.2
+     */
+    void reap_finished_clients_locked();
+
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot
     std::filesystem::path socket_path_;        ///< Unix socket path
     int listen_fd_ = -1;                       ///< Listening socket fd
     std::atomic<bool> running_{false};         ///< Accept loop running
     std::thread accept_thread_;                ///< Background accept thread
+
+    /// @brief Per-client serve threads. v2.1.2 (#4 part D): pre-2.1.2
+    /// the accept loop called serve_client() inline — only one client
+    /// could be connected at a time, and a wedged client also blocked
+    /// every other operator's recovery attempt. Now each accepted
+    /// connection gets a dedicated thread; the accept loop returns
+    /// immediately to accept the next. Tracked here so stop() can
+    /// shutdown(fd) to wake their blocking reads and join cleanly.
+    /// Guarded by client_threads_mutex_.
+    struct ClientThread {
+        int fd;                          ///< Connected client socket
+        std::atomic<bool> finished{false}; ///< Set by the thread itself before exit
+        std::thread thread;
+    };
+    std::vector<std::unique_ptr<ClientThread>> client_threads_;
+    mutable std::mutex client_threads_mutex_;
 
     /// @brief Async task registry (task_id → state). Guarded by tasks_mutex_.
     std::unordered_map<std::string, AsyncTask> tasks_;

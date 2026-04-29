@@ -19,6 +19,16 @@ name: Release — Python wheel to PyPI
 on:
   release:
     types: [published]
+  # v2.1.2: allow manual re-trigger so a transient publish failure
+  # (e.g. CI version-extraction bug, OIDC blip) can be re-run against
+  # the same release without deleting + recreating it. Reads the
+  # release tag from the input.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build (e.g. v2.1.2)"
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -31,7 +41,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          # On a release event the tag is github.event.release.tag_name;
+          # on a manual workflow_dispatch the user supplies it.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       - uses: actions/setup-python@v5
         with:
@@ -40,15 +52,21 @@ jobs:
       - name: Install build tooling
         run: pip install --upgrade build
 
-      - name: Verify pyproject.toml version matches release tag
+      - name: Verify VERSION file matches release tag
+        # v2.1.2 single-VERSION refactor: ``pyproject.toml`` no longer
+        # carries a literal version (it declares ``dynamic = ["version"]``
+        # and reads from the repo-root VERSION file). The CI assertion
+        # therefore reads VERSION directly — same single source CMake,
+        # the wheel, doxygen, and the runtime version test all use.
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF#refs/tags/v}"
-          PYPROJECT=$(grep -E '^version\s*=' pyproject.toml | head -1 | cut -d'"' -f2)
-          echo "tag:        $TAG"
-          echo "pyproject:  $PYPROJECT"
-          if [[ "$TAG" != "$PYPROJECT" ]]; then
-            echo "::error::release tag ($TAG) does not match pyproject.toml version ($PYPROJECT)"
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          TAG="${TAG#v}"
+          VERSION_FILE=$(cat VERSION | tr -d '[:space:]')
+          echo "tag:     $TAG"
+          echo "VERSION: $VERSION_FILE"
+          if [[ "$TAG" != "$VERSION_FILE" ]]; then
+            echo "::error::release tag ($TAG) does not match VERSION file ($VERSION_FILE)"
             exit 1
           fi
 

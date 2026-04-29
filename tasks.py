@@ -72,18 +72,24 @@ def build(c, cpu=False, preset="", jobs=JOBS, clean=False):
     c.run(f"cmake --build {build_dir} --parallel {jobs}")
 
 
-## @brief Extract project version from CMakeLists.txt.
+## @brief Read the canonical project version from the repo-root VERSION file.
 ## @utility
 ## @return Version string or "unknown".
-## @version 1
+## @version 2
 def _get_version():
-    """Extract project version from CMakeLists.txt."""
-    with open("CMakeLists.txt") as f:
-        for line in f:
-            m = re.search(r"VERSION\s+(\d+\.\d+\.\d+)", line)
-            if m:
-                return m.group(1)
-    return "unknown"
+    """Read the canonical project version (post-2.1.2 single-source).
+
+    Sibling of ``_cmake_project_version`` — both read the same VERSION
+    file. This variant is non-fatal (returns ``"unknown"`` on read
+    error) since it's used to populate the model-test results.json
+    schema where a missing version shouldn't abort a 30-minute test
+    run.
+    """
+    try:
+        version = Path("VERSION").read_text().strip()
+        return version if re.fullmatch(r"\d+\.\d+\.\d+", version) else "unknown"
+    except OSError:
+        return "unknown"
 
 
 ## @brief Get current git HEAD sha.
@@ -448,18 +454,27 @@ def clean(c):
             shutil.rmtree(d)
 
 
-## @brief Extract project VERSION from CMakeLists.txt (X.Y.Z triple).
+## @brief Read the canonical project version from the repo-root VERSION file.
 ## @utility
-## @return Version string (e.g. "2.0.5").
-## @version 1
+## @return Version string (e.g. "2.1.2").
+## @version 2
 def _cmake_project_version():
-    """Return the X.Y.Z from project(... VERSION <triple> ...)."""
-    with open("CMakeLists.txt") as f:
-        for line in f:
-            m = re.search(r"VERSION\s+(\d+\.\d+\.\d+)", line)
-            if m and "cmake_minimum_required" not in line:
-                return m.group(1)
-    raise SystemExit("Could not extract project VERSION from CMakeLists.txt")
+    """Return the X.Y.Z from the repo-root VERSION file.
+
+    v2.1.2 (#4 / single-VERSION refactor): version moved out of
+    ``CMakeLists.txt`` into ``VERSION`` at the repo root. ``CMakeLists.txt``
+    now reads VERSION via ``file(STRINGS ...)`` and feeds it to
+    ``project(... VERSION ${ENTROPIC_VERSION} ...)``. The release tooling
+    must also read VERSION directly so it agrees with what CMake configured
+    the binary with.
+    """
+    path = Path("VERSION")
+    if not path.exists():
+        raise SystemExit("VERSION file missing at repo root")
+    version = path.read_text().strip()
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
+        raise SystemExit(f"VERSION file content {version!r} is not a valid X.Y.Z triple")
+    return version
 
 
 ## @brief Configure + build + install one release backend to a scratch prefix.

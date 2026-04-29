@@ -6,6 +6,7 @@
  */
 
 #include <entropic/core/response_generator.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 
 #include <cstring>
@@ -215,7 +216,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.1.1
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -258,7 +259,13 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     } else {
         result.finish_reason = acc.interrupted ? "interrupted" : "stop";
     }
-    result.content = acc.content;
+    // Issue #3 (v2.1.1): inbound boundary from llama_cpp. Models can emit
+    // malformed UTF-8 mid-stream (partial multi-byte runs under XML-tool-call
+    // pressure, decoder desyncs). Sanitize ONCE at message-finalization,
+    // never per-token — a multi-byte codepoint may split across token
+    // boundaries and per-token sanitize would corrupt valid output.
+    // See include/entropic/mcp/utf8_sanitize.h for the boundary policy.
+    result.content = mcp::sanitize_utf8(acc.content);
     result.tool_calls_json = "[]";
     logger->info("Generate complete (stream): finish={}, {} chars",
                  result.finish_reason, result.content.size());
@@ -270,7 +277,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.1.1
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -293,7 +300,9 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
 
     GenerateResult result;
     if (rc == 0 && result_json != nullptr) {
-        result.content = result_json;
+        // Issue #3 (v2.1.1): inbound boundary, batch path. See the
+        // streaming branch above for rationale; same policy applies.
+        result.content = mcp::sanitize_utf8(result_json);
         result.finish_reason = "stop";
         result.tool_calls_json = "[]";
         if (inference_.free_fn != nullptr) {

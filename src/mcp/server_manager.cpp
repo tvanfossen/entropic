@@ -560,44 +560,54 @@ void ServerManager::connect_and_register_external(
 }
 
 /**
- * @brief Connect to an external MCP server at runtime.
- * @param name Server name.
- * @param command Stdio command.
- * @param args Stdio args.
- * @param url SSE URL.
- * @return Registered tool names.
+ * @brief Construct a Transport from a spec (single source of truth).
+ *
+ * Issue #9 (v2.1.4): consolidates transport construction. SSE if
+ * `transport=="sse"` OR `url` is non-empty AND `command` is empty,
+ * Stdio otherwise. Stdio transport receives env verbatim (caller is
+ * responsible for env blocklist enforcement before populating spec).
+ *
  * @internal
- * @version 1.8.7
+ * @version 2.1.4
+ */
+std::unique_ptr<Transport> ServerManager::make_transport(
+    const ExternalServerConfig& spec) {
+    bool prefer_sse = (spec.transport == "sse")
+        || (!spec.url.empty() && spec.command.empty());
+    if (prefer_sse) {
+        return std::make_unique<SSETransport>(spec.url);
+    }
+    return std::make_unique<StdioTransport>(
+        spec.command, spec.args, spec.env);
+}
+
+/**
+ * @brief Connect (canonical spec-based) — Issue #9, v2.1.4.
+ *
+ * The full ExternalServerConfig is honored. Replaces the pre-2.1.4
+ * runtime path which silently dropped env (and any future spec field).
+ *
+ * @internal
+ * @version 2.1.4
  */
 std::vector<std::string> ServerManager::connect_external_server(
-    const std::string& name,
-    const std::string& command,
-    const std::vector<std::string>& args,
-    const std::string& url) {
+    const ExternalServerConfig& spec) {
 
-    if (servers_.count(name) > 0 ||
-        external_clients_.count(name) > 0) {
-        logger->warn("Server '{}' already registered", name);
+    if (servers_.count(spec.name) > 0 ||
+        external_clients_.count(spec.name) > 0) {
+        logger->warn("Server '{}' already registered", spec.name);
         return {};
     }
 
-    std::unique_ptr<Transport> transport;
-    if (!url.empty()) {
-        transport = std::make_unique<SSETransport>(url);
-    } else {
-        transport = std::make_unique<StdioTransport>(
-            command, args);
-    }
-
     auto client = std::make_unique<ExternalMCPClient>(
-        name, std::move(transport));
+        spec.name, make_transport(spec));
 
-    connect_and_register_external(name, std::move(client),
-                                  "runtime", url, command);
+    connect_and_register_external(spec.name, std::move(client),
+                                  "runtime", spec.url, spec.command);
 
-    auto& registered = external_clients_[name];
+    auto& registered = external_clients_[spec.name];
     if (health_monitor_) {
-        health_monitor_->watch(name, registered.get());
+        health_monitor_->watch(spec.name, registered.get());
     }
 
     // Parse tool names from cached list
@@ -611,6 +621,28 @@ std::vector<std::string> ServerManager::connect_external_server(
     } catch (...) {}
 
     return tool_names;
+}
+
+/**
+ * @brief Legacy primitive-args overload — forwards to spec-based API.
+ *
+ * Retained for in-tree callers that pre-date #9. New code should use
+ * the spec-based overload.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+std::vector<std::string> ServerManager::connect_external_server(
+    const std::string& name,
+    const std::string& command,
+    const std::vector<std::string>& args,
+    const std::string& url) {
+    ExternalServerConfig spec;
+    spec.name = name;
+    spec.command = command;
+    spec.args = args;
+    spec.url = url;
+    return connect_external_server(spec);
 }
 
 /**
@@ -676,50 +708,49 @@ void ServerManager::process_health_events() {
 
 /**
  * @brief Create ExternalMCPClient from YAML config entry.
+ *
+ * Issue #9 (v2.1.4): adapts the YAML-style ExternalServerEntry into the
+ * canonical ExternalServerConfig and delegates to make_transport so the
+ * three pre-existing transport-construction sites all share one
+ * implementation.
+ *
  * @param name Server name.
  * @param entry Config entry.
  * @return Client instance.
  * @utility
- * @version 1.8.7
+ * @version 2.1.4
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(
     const std::string& name,
     const ExternalServerEntry& entry) {
-
-    std::unique_ptr<Transport> transport;
-    if (!entry.url.empty()) {
-        transport = std::make_unique<SSETransport>(entry.url);
-    } else {
-        std::map<std::string, std::string> env(
-            entry.env.begin(), entry.env.end());
-        transport = std::make_unique<StdioTransport>(
-            entry.command, entry.args, std::move(env));
-    }
+    ExternalServerConfig spec;
+    spec.name = name;
+    spec.command = entry.command;
+    spec.args = entry.args;
+    spec.env = std::map<std::string, std::string>(
+        entry.env.begin(), entry.env.end());
+    spec.url = entry.url;
+    spec.transport = entry.url.empty() ? "stdio" : "sse";
     return std::make_unique<ExternalMCPClient>(
-        name, std::move(transport));
+        name, make_transport(spec));
 }
 
 /**
  * @brief Create ExternalMCPClient from discovery config.
+ *
+ * Issue #9 (v2.1.4): now a thin wrapper over make_transport.
+ *
  * @param config Discovery config.
  * @return Client instance.
  * @utility
- * @version 1.8.7
+ * @version 2.1.4
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(
     const ExternalServerConfig& config) {
-
-    std::unique_ptr<Transport> transport;
-    if (config.transport == "sse") {
-        transport = std::make_unique<SSETransport>(config.url);
-    } else {
-        transport = std::make_unique<StdioTransport>(
-            config.command, config.args, config.env);
-    }
     return std::make_unique<ExternalMCPClient>(
-        config.name, std::move(transport));
+        config.name, make_transport(config));
 }
 
 /**

@@ -42,6 +42,18 @@ struct DelegationResult {
     /// forced synthetic complete is injected. Empty string = natural
     /// completion. (E7, 2.0.6-rc18)
     std::string terminal_reason;
+    /// @brief Issue #10 (v2.1.4): coverage_gap signal from the child's
+    /// entropic.complete call. When true, the parent engine SUPPRESSES
+    /// auto-relay and instead injects a `[COVERAGE GAP]` user message
+    /// into the lead context so lead can chain to a follow-up specialist.
+    bool coverage_gap = false;
+    /// @brief Issue #10 (v2.1.4): concrete description of what the
+    /// child's answer DOES NOT cover. Required when coverage_gap=true
+    /// (validated at the tool boundary in CompleteTool::execute).
+    std::string gap_description;
+    /// @brief Issue #10 (v2.1.4): file paths the lead should inspect
+    /// to fill the coverage gap. Only populated when coverage_gap=true.
+    std::vector<std::string> suggested_files;
 };
 
 /**

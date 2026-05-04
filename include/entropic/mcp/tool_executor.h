@@ -362,6 +362,41 @@ private:
                                      const std::string& tool_name);
 
     /**
+     * @brief Compute the effective hard-block threshold.
+     *
+     * Reads loop_config_.max_consecutive_same_tool_hard_block. When
+     * negative (sentinel), derives as max_consecutive_same_tool + 2.
+     * When non-negative, returns it verbatim — set to a very large
+     * value to effectively disable the hard block while keeping the
+     * soft advisory warning.
+     *
+     * @return Effective hard-block threshold (>=1 in practice).
+     * @internal
+     * @version 2.1.4
+     */
+    int effective_hard_block_threshold() const;
+
+    /**
+     * @brief Check whether @p tool_name should be hard-blocked by the
+     *        anti-spiral primitive given the current consecutive-call
+     *        counter on @p ctx.
+     *
+     * Distinct from update_anti_spiral_tracking (post-execute, populates
+     * the soft advisory warning): this fires PRE-execute and produces a
+     * typed rejected_anti_spiral result without dispatching the tool.
+     * Issue #14, v2.1.4.
+     *
+     * @param ctx Loop context (read-only).
+     * @param call Tool call about to be dispatched.
+     * @return PreconditionCheck with rejection + kind=rejected_anti_spiral
+     *         when blocked; default-constructed (no rejection) otherwise.
+     * @internal
+     * @version 2.1.4
+     */
+    PreconditionCheck check_anti_spiral_hard_block(
+        const LoopContext& ctx, const ToolCall& call) const;
+
+    /**
      * @brief Truncate @p content in-place if it exceeds the byte cap.
      *
      * Reads loop_config_.max_tool_result_bytes; when 0, no-op. When

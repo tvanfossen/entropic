@@ -969,3 +969,90 @@ SCENARIO("Chained POST_TOOL_CALL hooks: last write wins",
         }
     }
 }
+
+// ── Anti-spiral hard block (#14, v2.1.4) ─────────────────────
+
+SCENARIO("Anti-spiral hard block stops dispatch and emits "
+         "rejected_anti_spiral",
+         "[tool_executor][anti-spiral][2.1.4][issue-14]") {
+    GIVEN("an executor with auto_approve and a low anti-spiral threshold") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        lc.max_consecutive_same_tool = 2;          // soft warning at 2
+        lc.max_consecutive_same_tool_hard_block = 4;// hard block at 4
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("the same tool is dispatched four times in a row "
+             "(with non-duplicate args so the duplicate path is bypassed)") {
+            LoopContext ctx;
+            // Use distinct call.id and arg payloads to avoid the
+            // duplicate-recent-history shortcut; the anti-spiral check
+            // is independent of arg similarity.
+            for (int i = 0; i < 4; ++i) {
+                ToolCall call = make_call("ok.do_thing");
+                call.id = "call-" + std::to_string(i);
+                call.arguments["i"] = std::to_string(i);
+                executor.process_tool_calls(ctx, {call});
+            }
+
+            THEN("the fourth POST hook reports kind=rejected_anti_spiral") {
+                REQUIRE(events.size() == 4);
+                auto post4 = nlohmann::json::parse(
+                    events[3].context_json);
+                CHECK(post4.at("result_kind").get<std::string>()
+                      == "rejected_anti_spiral");
+            }
+            AND_THEN("earlier calls were dispatched normally as ok") {
+                auto post1 = nlohmann::json::parse(
+                    events[0].context_json);
+                CHECK(post1.at("result_kind").get<std::string>()
+                      == "ok");
+            }
+        }
+    }
+}
+
+SCENARIO("Anti-spiral hard block uses derived default when sentinel set",
+         "[tool_executor][anti-spiral][2.1.4][issue-14]") {
+    GIVEN("a config with soft=2 and hard threshold = -1 (sentinel)") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        lc.max_consecutive_same_tool = 2;
+        lc.max_consecutive_same_tool_hard_block = -1;
+        // Effective hard threshold should be soft + 2 = 4.
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        std::vector<HookEvent> events;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          record_hook_cb, &events, 0);
+        attach_registry(executor, reg);
+
+        WHEN("the same tool is dispatched four times") {
+            LoopContext ctx;
+            for (int i = 0; i < 4; ++i) {
+                ToolCall call = make_call("ok.do_thing");
+                call.id = "call-" + std::to_string(i);
+                call.arguments["i"] = std::to_string(i);
+                executor.process_tool_calls(ctx, {call});
+            }
+            THEN("the fourth call is hard-blocked") {
+                REQUIRE(events.size() == 4);
+                auto post4 = nlohmann::json::parse(
+                    events[3].context_json);
+                CHECK(post4.at("result_kind").get<std::string>()
+                      == "rejected_anti_spiral");
+            }
+        }
+    }
+}

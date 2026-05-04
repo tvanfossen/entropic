@@ -13,6 +13,8 @@
 #include <entropic/core/engine_types.h>
 #include <entropic/types/logging.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 
 static auto logger = entropic::log::get("core.delegation");
@@ -138,33 +140,58 @@ DelegationResult DelegationManager::execute_delegation(
 
 /**
  * @brief Build pipeline context prefix for a stage.
+ *
+ * Issue #11 (v2.1.4): the optional `prior_output` argument carries
+ * the previous stage's result forward as part of the next stage's
+ * task message. Pre-2.1.4 each stage ran in isolation against the
+ * ORIGINAL task only — surprising for prompt authors who reasonably
+ * expected `pipeline` to mean "Unix-style chained pipeline" and
+ * caused the multi-stage flow (e.g. researcher → reader) to lose
+ * intermediate output. The intent was always forward-carry; the
+ * isolation behavior was a bug.
+ *
  * @param stage_idx Zero-based stage index.
  * @param total Total number of stages.
  * @param stages Stage tier names.
+ * @param prior_output Previous stage's summary/result (empty for
+ *                    stage 0).
  * @return Context string prepended to the task.
- * @version 1.8.6
+ * @version 2.1.4
  * @internal
  */
 static std::string pipeline_context(
     size_t stage_idx, size_t total,
-    const std::vector<std::string>& stages) {
+    const std::vector<std::string>& stages,
+    const std::string& prior_output) {
     std::string ctx = "[PIPELINE CONTEXT]\n";
     ctx += "Stage " + std::to_string(stage_idx + 1) +
            " of " + std::to_string(total) + "\n";
     ctx += "Role: " + stages[stage_idx] + "\n";
     ctx += "Stay within your role. Do not perform work "
-           "outside your stage's responsibility.\n\n";
+           "outside your stage's responsibility.\n";
+    if (!prior_output.empty()) {
+        ctx += "\n[PRIOR STAGE OUTPUT]\n";
+        ctx += prior_output;
+        ctx += "\n";
+    }
+    ctx += "\n";
     return ctx;
 }
 
 /**
  * @brief Run a multi-stage delegation pipeline sequentially.
+ *
+ * Issue #11 (v2.1.4): each stage now receives the prior stage's
+ * output as a `[PRIOR STAGE OUTPUT]` block in its task message
+ * (forward-carry semantics — the original intent that pre-2.1.4
+ * was lost to per-stage isolation).
+ *
  * @param parent_ctx Parent loop context.
  * @param stages Ordered list of tier names.
  * @param task Task description.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 2.0.2
+ * @version 2.1.4
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -184,8 +211,11 @@ DelegationResult DelegationManager::execute_pipeline(
     last_result.task = task;
 
     for (size_t i = 0; i < stages.size(); ++i) {
+        // Issue #11 (v2.1.4): forward prior stage's output to the
+        // next stage's context. Stage 0 sees empty prior_output.
+        std::string prior = (i == 0) ? std::string{} : last_result.summary;
         std::string stage_task =
-            pipeline_context(i, stages.size(), stages) + task;
+            pipeline_context(i, stages.size(), stages, prior) + task;
 
         auto info = tier_res_.resolve_tier
             ? tier_res_.resolve_tier(stages[i], tier_res_.user_data)
@@ -422,12 +452,17 @@ DelegationResult DelegationManager::run_child(
  * a synthetic budget_exhausted termination. Keeps run_child under the
  * 50-SLOC complexity gate. (2.0.6-rc18)
  *
+ * Issue #10 (v2.1.4): also hoists coverage_gap / gap_description /
+ * suggested_files from child metadata onto the typed
+ * DelegationResult so the parent's finalize_delegation_result can
+ * branch on it.
+ *
  * @param target_tier Tier that executed.
  * @param task Task text.
  * @param child_ctx Terminated child context (messages moved out).
  * @return Fully-populated DelegationResult.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.1.4
  */
 DelegationResult DelegationManager::build_child_result(
     const std::string& target_tier,
@@ -444,6 +479,28 @@ DelegationResult DelegationManager::build_child_result(
                       && result.terminal_reason.empty());
     result.turns_used = child_ctx.metrics.iterations;
     result.summary = extract_summary(child_ctx);
+    // Issue #10 (v2.1.4): hoist coverage_gap signal from child
+    // metadata onto DelegationResult so the parent's
+    // finalize_delegation_result can branch on it without re-parsing
+    // ctx.metadata. dir_complete writes these keys when the child
+    // calls entropic.complete with coverage_gap=true.
+    auto cg = child_ctx.metadata.find("coverage_gap");
+    if (cg != child_ctx.metadata.end() && cg->second == "true") {
+        result.coverage_gap = true;
+        auto gd = child_ctx.metadata.find("gap_description");
+        if (gd != child_ctx.metadata.end()) {
+            result.gap_description = gd->second;
+        }
+        auto sf = child_ctx.metadata.find("suggested_files_json");
+        if (sf != child_ctx.metadata.end()) {
+            auto parsed = nlohmann::json::parse(
+                sf->second, nullptr, false);
+            if (parsed.is_array()) {
+                result.suggested_files =
+                    parsed.get<std::vector<std::string>>();
+            }
+        }
+    }
     result.child_messages = std::move(child_ctx.messages);
     return result;
 }

@@ -41,20 +41,25 @@ def _parse_c_enum(header_text: str, c_typedef_name: str) -> dict[str, int]:
     The C side uses ``ENTROPIC_<FAMILY>_<MEMBER>`` and the Python side
     drops the family prefix (e.g. ``ENTROPIC_AGENT_STATE_IDLE`` → ``IDLE``);
     callers that compare enums apply the prefix-strip themselves.
+
+    Comments are stripped BEFORE the enum-body regex matches, so that
+    doc-block content containing literal ``{`` / ``}`` braces (e.g.
+    @code{.json} examples in hooks.h) does not break the body capture.
     """
+    # Strip comments globally first so brace-balanced doc blocks inside
+    # the typedef body don't terminate the regex prematurely. (#8 v2.1.4)
+    cleaned = re.sub(r"//.*?$", "", header_text, flags=re.MULTILINE)
+    cleaned = re.sub(r"/\*.*?\*/", "", cleaned, flags=re.DOTALL)
     pattern = re.compile(
         r"typedef\s+enum\s*\{([^}]*)\}\s*" + re.escape(c_typedef_name) + r"\s*;",
         re.DOTALL,
     )
-    m = pattern.search(header_text)
+    m = pattern.search(cleaned)
     if m is None:
         raise AssertionError(f"typedef enum {c_typedef_name} not found in header")
     body = m.group(1)
     members: dict[str, int] = {}
     next_value = 0
-    # Strip line/block comments and split on commas.
-    body = re.sub(r"//.*?$", "", body, flags=re.MULTILINE)
-    body = re.sub(r"/\*.*?\*/", "", body, flags=re.DOTALL)
     for raw in body.split(","):
         entry = raw.strip()
         if not entry:
@@ -248,3 +253,97 @@ class TestEntropicErrorAbiConformance:
         assert not wrong_value, (
             "EntropicError value drift (name, c_value, py_value): " f"{wrong_value}"
         )
+
+
+# ── EntropicHookPoint (#8, v2.1.4) ──────────────────────
+
+
+class TestEntropicHookPointAbiConformance:
+    """Pin Python EntropicHookPoint IntEnum to entropic_hook_point_t.
+
+    Same regression class as AgentState/EntropicError. Issue #8 (v2.1.4).
+    Excludes the sentinel `ENTROPIC_HOOK_COUNT_` — it's not a valid hook
+    point, just a count marker.
+
+    @version 2.1.4
+    """
+
+    @pytest.fixture(scope="class")
+    def c_members(self) -> dict[str, int]:
+        text = (_TYPES_DIR / "hooks.h").read_text()
+        all_members = _parse_c_enum(text, "entropic_hook_point_t")
+        # Drop the sentinel — Python intentionally does NOT mirror it.
+        return {k: v for k, v in all_members.items() if k != "ENTROPIC_HOOK_COUNT_"}
+
+    @pytest.fixture(scope="class")
+    def py_members(self, bindings_source: str) -> dict[str, int]:
+        return _parse_python_intenum(bindings_source, "EntropicHookPoint")
+
+    def test_every_c_value_has_python_entry(
+        self, c_members: dict[str, int], py_members: dict[str, int]
+    ) -> None:
+        """Each C hook value/name appears in the Python IntEnum.
+
+        @version 2.1.4
+        """
+        missing: list[str] = []
+        wrong_value: list[tuple[str, int, int]] = []
+        for c_name, c_val in c_members.items():
+            py_name = _strip_prefix(c_name, "ENTROPIC_HOOK_")
+            if py_name not in py_members:
+                missing.append(py_name)
+            elif py_members[py_name] != c_val:
+                wrong_value.append((py_name, c_val, py_members[py_name]))
+        assert not missing, f"EntropicHookPoint missing C points: {missing}"
+        assert not wrong_value, (
+            "EntropicHookPoint value drift (name, c_value, py_value): " f"{wrong_value}"
+        )
+
+    def test_no_extra_python_entries(
+        self, c_members: dict[str, int], py_members: dict[str, int]
+    ) -> None:
+        """Python IntEnum has no entries absent from the C ABI.
+
+        @version 2.1.4
+        """
+        c_short = {_strip_prefix(n, "ENTROPIC_HOOK_") for n in c_members}
+        extra = set(py_members) - c_short
+        assert not extra, f"EntropicHookPoint has Python-only entries: {extra}"
+
+
+# ── #8 (v2.1.4): missing-symbol presence test ───────────
+
+
+class TestPipWrapperSymbols:
+    """Pin the four 2.1.4 ABI symbols + their CFUNCTYPEs to _bindings.py.
+
+    Issue #8: pre-2.1.4 the pip wrapper didn't expose entropic_alloc /
+    entropic_set_stream_observer / entropic_register_mcp_server /
+    entropic_register_hook (or HOOK_CB / STREAM_OBSERVER_CB). This test
+    asserts they are now declared so a future refactor doesn't silently
+    drop them.
+
+    @version 2.1.4
+    """
+
+    REQUIRED_SYMBOLS = (
+        "entropic_alloc",
+        "entropic_set_stream_observer",
+        "entropic_register_mcp_server",
+        "entropic_register_hook",
+        "STREAM_OBSERVER_CB",
+        "HOOK_CB",
+        "EntropicHookPoint",
+    )
+
+    def test_all_2_1_4_symbols_declared(self, bindings_source: str) -> None:
+        """Every required v2.1.4 symbol must appear in _bindings.py.
+
+        Uses simple string presence (each symbol shows up once at
+        declaration). Avoids importing _bindings (which requires
+        librentropic.so).
+
+        @version 2.1.4
+        """
+        missing = [sym for sym in self.REQUIRED_SYMBOLS if sym not in bindings_source]
+        assert not missing, "_bindings.py missing v2.1.4 symbols (#8): " f"{missing}"

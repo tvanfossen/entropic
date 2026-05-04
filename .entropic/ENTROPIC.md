@@ -123,6 +123,51 @@ extern/                   Vendored deps (llama.cpp, etc.).
   do not change without a new proposal under
   `.claude/proposals/ACTIVE/`.
 
+## Tool semantics: delegate vs pipeline (#11, v2.1.4)
+
+These two tools both run a child tier, but with very different
+context-flow behavior. Picking the wrong one is a common source of
+"why did the next stage not see what the previous stage produced?"
+confusion.
+
+### `entropic.delegate`
+
+- Creates a **fresh child context** loaded with the target tier's
+  full system prompt (identity + constitution + tools).
+- Child does NOT inherit the parent's conversation history.
+- Filesystem state IS shared via the parent's worktree.
+- The child's final result is returned to the lead context as a
+  `[DELEGATION COMPLETE: <tier>] <summary>` user message for
+  re-synthesis by the lead.
+- If the active tier has `relay_single_delegate` configured, the
+  child's result is auto-relayed to the parent without
+  re-synthesis. The child can also signal `coverage_gap=true` via
+  `entropic.complete` to **suppress the auto-relay** (the lead
+  receives a `[COVERAGE GAP]` message containing
+  `gap_description` and `suggested_files` instead, and may chain
+  to a follow-up specialist). #10 v2.1.4.
+
+### `entropic.pipeline`
+
+- Runs a sequence of stages, each in its own fresh child context.
+- Stage 0 sees the ORIGINAL task.
+- Stage N (N > 0) sees the original task **plus** a
+  `[PRIOR STAGE OUTPUT]` block containing stage N-1's summary.
+  This forward-carry is the documented intent (#11 v2.1.4 fixed
+  the pre-2.1.4 isolation bug where each stage saw only the
+  original task).
+- All stages share a single **shared worktree** so a `generate →
+  review` flow can read what the prior stage wrote.
+- Only the final stage's result is returned to the caller.
+
+### Decision rule
+
+- One specialist's answer needed → `delegate`.
+- Two or more specialists, each consuming the prior one's output
+  → `pipeline`.
+- One specialist whose answer might be incomplete → `delegate`
+  with `coverage_gap` plumbing on the child side.
+
 ## Current target
 
 v2.1.0 release in flight on `feature/repo-structure-cleanup`

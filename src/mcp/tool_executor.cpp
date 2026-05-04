@@ -609,15 +609,27 @@ std::optional<Message> ToolExecutor::check_schema(
 
 /**
  * @brief Run all precondition checks for a tool call.
+ *
+ * Issue #14 (v2.1.4): the anti-spiral hard block fires FIRST, before
+ * schema/auth/duplicate checks. Cheaper and short-circuits any tool
+ * the engine has decided to refuse regardless of other outcomes.
+ *
  * @param ctx Loop context.
  * @param call Tool call.
  * @return PreconditionCheck with rejection + typed kind on failure.
  * @internal
- * @version 2.0.6-rc19
+ * @version 2.1.4
  */
 PreconditionCheck ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
-    PreconditionCheck pc;
+    // Issue #14 (v2.1.4): anti-spiral hard block fires FIRST. Cheaper
+    // than schema/auth checks and short-circuits a tool that the
+    // engine has decided to refuse, regardless of whether the call
+    // would otherwise pass other preconditions.
+    PreconditionCheck pc = check_anti_spiral_hard_block(ctx, call);
+    if (pc.rejection.has_value()) {
+        return pc;
+    }
     if (auto r = check_schema(call); r.has_value()) {
         pc.rejection = std::move(r);
         pc.kind = ToolResultKind::rejected_schema;
@@ -799,6 +811,57 @@ void ToolExecutor::update_anti_spiral_tracking(
             + " times consecutively; pivot to a different tool or "
               "complete the task next turn.";
     }
+}
+
+/**
+ * @brief Compute the effective hard-block threshold (sentinel-aware).
+ *
+ * See declaration. Issue #14, v2.1.4.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+int ToolExecutor::effective_hard_block_threshold() const {
+    int configured = loop_config_.max_consecutive_same_tool_hard_block;
+    if (configured < 0) {
+        configured = loop_config_.max_consecutive_same_tool + 2;
+    }
+    return configured;
+}
+
+/**
+ * @brief Pre-dispatch anti-spiral hard block.
+ *
+ * Triggered when consecutive_same_tool_calls (already covering THIS
+ * call, since it would be incremented by update_anti_spiral_tracking
+ * after dispatch) would meet or exceed the effective hard threshold.
+ * Computes the projected counter (+1 if same as last, else 1) without
+ * mutating ctx. Returns a rejected_anti_spiral PreconditionCheck on
+ * trip, default-constructed (no rejection) otherwise.
+ *
+ * Issue #14, v2.1.4.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+PreconditionCheck ToolExecutor::check_anti_spiral_hard_block(
+    const LoopContext& ctx, const ToolCall& call) const {
+    PreconditionCheck pc;
+    int projected = (call.name == ctx.last_tool_name)
+        ? (ctx.consecutive_same_tool_calls + 1)
+        : 1;
+    int threshold = effective_hard_block_threshold();
+    if (projected >= threshold) {
+        std::string text =
+            "[anti-spiral] tool '" + call.name + "' blocked after "
+            + std::to_string(projected)
+            + " consecutive calls (threshold "
+            + std::to_string(threshold)
+            + "); pivot to a different tool or complete the task.";
+        pc.rejection = create_denied_message(call, text);
+        pc.kind = ToolResultKind::rejected_anti_spiral;
+    }
+    return pc;
 }
 
 /**
@@ -1069,11 +1132,16 @@ static std::vector<std::string> extract_pipeline_stages(
 
 /**
  * @brief Build a typed Directive from a directive-descriptor JSON.
+ *
+ * Issue #10 (v2.1.4): the "complete" branch now extracts
+ * coverage_gap / gap_description / suggested_files from the result
+ * JSON and populates the typed CompleteDirective fields.
+ *
  * @param d Directive JSON ("type": ...).
  * @param result_json Parsed result JSON for parameter lookup.
  * @return Owned Directive (nullptr if type is unrecognized).
  * @internal
- * @version 2.0.2
+ * @version 2.1.4
  */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
@@ -1087,8 +1155,20 @@ static std::unique_ptr<Directive> build_directive(
             result_json.value("task", ""),
             result_json.value("max_turns", -1));
     } else if (type_str == "complete") {
-        result = std::make_unique<CompleteDirective>(
+        // Issue #10 (v2.1.4): coverage_gap + gap_description +
+        // suggested_files extend CompleteDirective so consumers can
+        // branch on typed fields.
+        auto cd = std::make_unique<CompleteDirective>(
             result_json.value("summary", ""));
+        cd->coverage_gap = result_json.value("coverage_gap", false);
+        cd->gap_description = result_json.value("gap_description", "");
+        if (result_json.contains("suggested_files")
+            && result_json["suggested_files"].is_array()) {
+            cd->suggested_files =
+                result_json["suggested_files"]
+                    .get<std::vector<std::string>>();
+        }
+        result = std::move(cd);
     } else if (type_str == "pipeline") {
         result = std::make_unique<PipelineDirective>(
             extract_pipeline_stages(result_json),

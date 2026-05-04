@@ -158,3 +158,50 @@ TEST_CASE("Clean shutdown terminates child processes",
     auto info = mgr.list_server_info();
     REQUIRE(info.empty());
 }
+
+// ── Issue #9 (v2.1.4): runtime API forwards env to spawned child ──
+
+TEST_CASE("connect_external_server(spec) forwards env to child process",
+          "[external_mcp][integration][2.1.4][issue-9]") {
+    // Pre-2.1.4 the runtime registration path silently dropped env;
+    // child got an empty environment. The unified make_transport now
+    // honors spec.env. Verify by spawning the mock with a custom env
+    // variable and asking it to echo getenv() back.
+    PermissionsConfig perms;
+    ServerManager mgr(perms, "/tmp");
+
+    ExternalServerConfig spec;
+    spec.name = "mock";
+    spec.command = mock_server_path();
+    spec.transport = "stdio";
+    spec.env["ENTROPIC_TEST_VAR"] = "forwarded-2.1.4";
+
+    auto tools = mgr.connect_external_server(spec);
+    REQUIRE_FALSE(tools.empty());
+
+    auto result = mgr.execute("mock.echo",
+        R"({"env_key":"ENTROPIC_TEST_VAR"})");
+    auto j = json::parse(result);
+    std::string r = j["result"];
+    REQUIRE(r.find("forwarded-2.1.4") != std::string::npos);
+
+    mgr.disconnect_external_server("mock");
+}
+
+TEST_CASE("Legacy 4-arg connect_external_server still works "
+          "(zero-env back-compat)",
+          "[external_mcp][integration][2.1.4][issue-9]") {
+    // Pre-2.1.4 callers (4-arg form) keep working — the legacy overload
+    // forwards to the spec-based path with empty env. Child gets PATH
+    // from parent because StdioTransport's build_env() merges parent
+    // environ unless an env override is present. (transport_stdio.cpp)
+    PermissionsConfig perms;
+    ServerManager mgr(perms, "/tmp");
+
+    auto tools = mgr.connect_external_server(
+        "mock", mock_server_path());
+    REQUIRE_FALSE(tools.empty());
+    REQUIRE(tools[0] == "mock.echo");
+
+    mgr.disconnect_external_server("mock");
+}

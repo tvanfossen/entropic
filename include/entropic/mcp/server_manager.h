@@ -198,13 +198,35 @@ public:
     /* ── v1.8.7: External server methods ───────────────── */
 
     /**
-     * @brief Connect to an external MCP server at runtime.
+     * @brief Connect to an external MCP server at runtime (canonical
+     *        spec-based API).
+     *
+     * Issue #9 (v2.1.4): unifies the runtime API and config-file paths.
+     * The full ExternalServerConfig is honored — including env, which
+     * pre-2.1.4 was silently dropped from the 4-arg path. The
+     * ServerConfig.name field is required.
+     *
+     * @param spec Full server config (transport/command/args/env/url).
+     * @return List of tool names registered from the server.
+     * @version 2.1.4
+     */
+    std::vector<std::string> connect_external_server(
+        const ExternalServerConfig& spec);
+
+    /**
+     * @brief Connect by primitive parameters (legacy convenience).
+     *
+     * Forwards to the spec-based overload above; provided for
+     * backwards-compat with in-tree callers. Pre-2.1.4 callers that
+     * passed only command/args/url get default-empty env. Prefer the
+     * spec-based overload for new code. (#9, v2.1.4)
+     *
      * @param name Unique server name.
      * @param command Stdio command (mutually exclusive with url).
      * @param args Stdio command arguments.
      * @param url SSE endpoint URL (mutually exclusive with command).
      * @return List of tool names registered from the server.
-     * @version 1.8.7
+     * @version 2.1.4
      */
     std::vector<std::string> connect_external_server(
         const std::string& name,
@@ -359,6 +381,23 @@ private:
      */
     std::unique_ptr<ExternalMCPClient> create_external_client(
         const ExternalServerConfig& config);
+
+    /**
+     * @brief Construct a Transport from a spec (single source of truth).
+     *
+     * Issue #9 (v2.1.4): consolidates the three pre-existing transport
+     * construction sites (runtime API, YAML config-entry, discovery
+     * config). Future fields (timeout, working_dir, headers, ...) added
+     * to ExternalServerConfig flow through here automatically.
+     *
+     * @param spec Full server config.
+     * @return Owned Transport (Stdio for command-set specs, SSE
+     *         otherwise).
+     * @utility
+     * @version 2.1.4
+     */
+    static std::unique_ptr<Transport> make_transport(
+        const ExternalServerConfig& spec);
 
     /**
      * @brief Build error response JSON for disconnected server.

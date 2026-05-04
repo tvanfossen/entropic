@@ -58,8 +58,12 @@ namespace entropic {
  * to the engine handle — created in configure_common, destroyed
  * before engine teardown.
  *
+ * Issue #12 (v2.1.4): also writes per-task sentinel files at
+ * `<log_dir>/async/<task_id>.{done,failed,cancelled}` so external
+ * monitors can use inotify rather than parsing log output.
+ *
  * @internal
- * @version 2.1.2
+ * @version 2.1.4
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -140,6 +144,61 @@ public:
     void run_async_ask(const std::string& prompt,
                        const std::string& task_id,
                        int client_fd);
+
+    /**
+     * @brief Write the sentinel file for an async task completion.
+     *
+     * Issue #12 (v2.1.4): persistent on-disk completion signal so
+     * external monitors (CLI scripts, watchdogs) can `inotifywait`
+     * on the async sentinel directory without parsing log output or
+     * subscribing to MCP notifications. Sentinel filename encodes
+     * the terminal status: `<task_id>.done`, `.failed`, `.cancelled`.
+     *
+     * Caller MUST hold tasks_mutex_. The sentinel write happens
+     * under-lock together with the status update so that any external
+     * monitor reacting to the sentinel sees a consistent registry
+     * state on a follow-up `entropic.ask_status` query.
+     *
+     * @param task_id Task identifier.
+     * @param status  Terminal status string (`done` | `error` |
+     *                `cancelled`). `error` maps to `.failed`.
+     * @utility
+     * @version 2.1.4
+     */
+    void write_sentinel(const std::string& task_id,
+                        const std::string& status);
+
+    /**
+     * @brief Sentinel directory (lazy: returns empty path until the
+     *        engine's log_dir is configured).
+     *
+     * Issue #12 (v2.1.4). Lives at `<log_dir>/async/` by default
+     * (or `<override>/async/` if set_async_sentinel_root was called).
+     * The bridge does not own log_dir lifetime — the path is
+     * recomputed each call so working-dir swaps via configure_dir
+     * take effect on the next async task.
+     *
+     * @return Absolute sentinel directory path. Empty if neither
+     *         log_dir nor an override is configured.
+     * @utility
+     * @version 2.1.4
+     */
+    std::filesystem::path async_sentinel_dir() const;
+
+    /**
+     * @brief Override the async sentinel root directory.
+     *
+     * Issue #12 (v2.1.4): primarily a testability hook so unit
+     * tests can exercise the sentinel write path without setting up
+     * a full engine handle. Production code receives the path from
+     * the engine handle's log_dir; passing an empty path here clears
+     * the override and restores log_dir resolution.
+     *
+     * @param root New sentinel root (the bridge appends `/async`).
+     * @utility
+     * @version 2.1.4
+     */
+    void set_async_sentinel_root(const std::filesystem::path& root);
 
     /**
      * @brief Remove tasks older than TTL from the registry.
@@ -356,6 +415,11 @@ private:
     /// Guarded by tasks_mutex_. Compared against observer_gen_ in the
     /// callback to short-circuit stale fires after detach. (E5+E6, 2.1.0)
     uint64_t attached_gen_ = 0;
+
+    /// @brief Async sentinel root override (#12, v2.1.4). Empty means
+    /// "fall back to handle_->config.log_dir". Set via
+    /// set_async_sentinel_root for testability.
+    std::filesystem::path async_sentinel_root_override_;
 };
 
 } // namespace entropic

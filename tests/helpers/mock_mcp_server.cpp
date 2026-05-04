@@ -14,6 +14,7 @@
  * @version 1.8.7
  */
 
+#include <cstdlib>
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -82,11 +83,25 @@ static json build_tools_list(int id,
  */
 static json build_tools_call(int id, const json& params) {
     std::string text = "echo: ";
-    if (params.contains("arguments") &&
-        params["arguments"].contains("text")) {
-        text += params["arguments"]["text"].get<std::string>();
-    } else {
-        text += "(no text)";
+    bool handled_env = false;
+    if (params.contains("arguments")
+        && params["arguments"].contains("env_key")) {
+        // Issue #9 (v2.1.4) test surface: read an env var from the
+        // child process so integration tests can verify env was
+        // forwarded by the parent's transport spawn.
+        auto key = params["arguments"]["env_key"].get<std::string>();
+        const char* v = std::getenv(key.c_str());
+        text = "env[" + key + "]=";
+        text += v != nullptr ? v : "(unset)";
+        handled_env = true;
+    }
+    if (!handled_env) {
+        if (params.contains("arguments")
+            && params["arguments"].contains("text")) {
+            text += params["arguments"]["text"].get<std::string>();
+        } else {
+            text += "(no text)";
+        }
     }
 
     json resp;

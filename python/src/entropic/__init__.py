@@ -48,8 +48,13 @@ _LAZY_EXPORTS = frozenset(
     {
         "AgentState",
         "EntropicError",
+        # Issue #8 (v2.1.4): EntropicHookPoint enum + 4 new ABI symbols.
+        "EntropicHookPoint",
+        "HOOK_CB",
         "STATE_OBSERVER_CB",
+        "STREAM_OBSERVER_CB",
         "TOKEN_CB",
+        "entropic_alloc",
         "entropic_api_version",
         "entropic_configure_dir",
         "entropic_context_clear",
@@ -59,23 +64,54 @@ _LAZY_EXPORTS = frozenset(
         "entropic_free",
         "entropic_handle_t",
         "entropic_interrupt",
+        "entropic_register_hook",
+        "entropic_register_mcp_server",
         "entropic_run",
         "entropic_run_streaming",
         "entropic_set_state_observer",
+        "entropic_set_stream_observer",
         "entropic_version",
     }
 )
 
-__all__ = ["__version__", *sorted(_LAZY_EXPORTS)]
+# Issue #8 (v2.1.4): Pythonic facade — top-level re-exports of the
+# decorator + helpers from the per-module surfaces. Keeps `entropic`
+# the canonical import for application code while preserving the
+# per-module imports for advanced consumers.
+_FACADE_EXPORTS = frozenset(
+    {
+        # entropic.hooks
+        "hook",
+        "register_hooks",
+        # entropic.streams
+        "register_token_observer",
+        # entropic.mcp
+        "register_server",
+    }
+)
+
+__all__ = ["__version__", *sorted(_LAZY_EXPORTS | _FACADE_EXPORTS)]
+
+
+_FACADE_MODULE_FOR = {
+    "hook": "entropic.hooks",
+    "register_hooks": "entropic.hooks",
+    "register_token_observer": "entropic.streams",
+    "register_server": "entropic.mcp",
+}
 
 
 ## @brief PEP 562 lazy attribute lookup importing _bindings on demand.
 ## @utility
-## @version 2.1.0
+## @version 2.1.4
 def __getattr__(name: str) -> Any:
     """PEP 562 lazy attribute lookup that imports _bindings on demand."""
     if name in _LAZY_EXPORTS:
         from entropic import _bindings
 
         return getattr(_bindings, name)
+    if name in _FACADE_MODULE_FOR:
+        from importlib import import_module
+
+        return getattr(import_module(_FACADE_MODULE_FOR[name]), name)
     raise AttributeError(f"module 'entropic' has no attribute {name!r}")

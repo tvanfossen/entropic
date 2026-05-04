@@ -119,6 +119,40 @@ class AgentState(enum.IntEnum):
     PAUSED = 9
 
 
+class EntropicHookPoint(enum.IntEnum):
+    """Mirrors ``entropic_hook_point_t`` from include/entropic/types/hooks.h.
+
+    Issue #8 (v2.1.4). ``ENTROPIC_HOOK_COUNT_`` (the sentinel) is
+    intentionally NOT included — it's not a valid hook point. The
+    ABI conformance test pins every (name, value) pair against the
+    canonical header.
+    """
+
+    PRE_GENERATE = 0
+    POST_GENERATE = 1
+    ON_STREAM_TOKEN = 2
+    PRE_TOOL_CALL = 3
+    POST_TOOL_CALL = 4
+    ON_LOOP_ITERATION = 5
+    ON_STATE_CHANGE = 6
+    ON_ERROR = 7
+    ON_DELEGATE = 8
+    ON_DELEGATE_COMPLETE = 9
+    ON_CONTEXT_ASSEMBLE = 10
+    ON_PRE_COMPACT = 11
+    ON_POST_COMPACT = 12
+    ON_MODEL_LOAD = 13
+    ON_MODEL_UNLOAD = 14
+    ON_PERMISSION_CHECK = 15
+    ON_ADAPTER_SWAP = 16
+    ON_VRAM_PRESSURE = 17
+    ON_DIRECTIVE = 18
+    ON_CUSTOM_DIRECTIVE = 19
+    ON_LOOP_START = 20
+    ON_LOOP_END = 21
+    ON_COMPLETE = 22
+
+
 # ── Callback signatures (CFUNCTYPE) ──────────────────────────────────────
 # Each named here has a stable address; reusing the same CFUNCTYPE across
 # bindings ensures function pointers we hand to C remain alive as long
@@ -128,6 +162,29 @@ TOKEN_CB = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_voi
 
 STATE_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
 """State observer: (state: AgentState, user_data: void*) -> None."""
+
+# Issue #8 (v2.1.4): stream observer + hook callback signatures.
+STREAM_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
+"""Stream observer: (token: bytes, len: size_t, user_data: void*) -> None.
+
+Same shape as TOKEN_CB; lives in a distinct CFUNCTYPE so streams.py can
+keep its observer registry independent of the per-call streaming path.
+"""
+
+HOOK_CB = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # return: int (0=ok, !=0=cancel)
+    ctypes.c_int,  # hook_point: entropic_hook_point_t
+    ctypes.c_char_p,  # context_json: const char*
+    ctypes.POINTER(ctypes.c_char_p),  # modified_json: char**
+    ctypes.c_void_p,  # user_data: void*
+)
+"""Hook callback signature.
+
+Maps to ``entropic_hook_callback_t`` in include/entropic/types/hooks.h.
+The callback receives the hook context as JSON, may write a transformed
+result via ``*modified_json`` (allocate with malloc — engine free()s),
+and returns 0 for OK or non-zero to cancel/reject.
+"""
 
 
 ## @brief Pin restype/argtypes on a symbol from the loaded library.
@@ -200,4 +257,50 @@ entropic_set_state_observer = _bind(
     entropic_handle_t,
     STATE_OBSERVER_CB,
     ctypes.c_void_p,
+)
+
+# Issue #8 (v2.1.4): persistent stream observer (fires for ALL streaming
+# output regardless of which entry point invoked the model — vs. the
+# per-call TOKEN_CB on entropic_run_streaming). Wired by streams.py.
+entropic_set_stream_observer = _bind(
+    "entropic_set_stream_observer",
+    ctypes.c_int,
+    entropic_handle_t,
+    STREAM_OBSERVER_CB,
+    ctypes.c_void_p,
+)
+
+
+# ── Memory ───────────────────────────────────────────────────────────────
+# Issue #8 (v2.1.4): heap allocator that pairs with entropic_free. Hook
+# callbacks use this when writing modified_json (engine free()s on
+# consumption — a Python `bytes` reference would be freed by Python's
+# refcounter long before the engine reads it).
+entropic_alloc = _bind("entropic_alloc", ctypes.c_void_p, ctypes.c_size_t)
+
+
+# ── MCP server registration ──────────────────────────────────────────────
+# Issue #8 (v2.1.4): runtime MCP server registration (vs. config-file
+# discovery). Pythonic wrapper in entropic.mcp.register_server.
+entropic_register_mcp_server = _bind(
+    "entropic_register_mcp_server",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_char_p,  # name
+    ctypes.c_char_p,  # config_json
+)
+
+
+# ── Hook registration ────────────────────────────────────────────────────
+# Issue #8 (v2.1.4): low-level hook registration. Pythonic @hook
+# decorator in entropic.hooks; that module owns the CFUNCTYPE-keepalive
+# registry so callbacks aren't garbage-collected mid-call.
+entropic_register_hook = _bind(
+    "entropic_register_hook",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_int,  # hook_point
+    HOOK_CB,  # callback
+    ctypes.c_void_p,  # user_data
+    ctypes.c_int,  # priority
 )

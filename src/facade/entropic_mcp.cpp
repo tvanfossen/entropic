@@ -12,6 +12,7 @@
 #include "engine_handle.h"
 
 #include <entropic/entropic.h>
+#include <entropic/mcp/mcp_json_discovery.h>
 #include <entropic/types/logging.h>
 
 #include "json_serializers.h"
@@ -36,15 +37,26 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
 /**
  * @brief Register an external MCP server at runtime.
  *
- * Parses config_json for "command", "args", and "url" fields
- * to determine transport type (stdio or SSE).
+ * Issue #9 (v2.1.4): parses the FULL ExternalServerConfig from
+ * config_json — including `env` and explicit `transport`. Pre-2.1.4
+ * the runtime path silently dropped env, leaving spawned children
+ * with an empty environment (not even PATH). Env keys are filtered
+ * through the same blocklist used by .mcp.json discovery
+ * (is_blocked_env_var) so PATH/LD_PRELOAD/etc. cannot be injected.
+ *
+ * Recognized config_json fields:
+ *   - "command" (string)         — stdio executable
+ *   - "args"    (string[])       — stdio arguments
+ *   - "env"     (object)         — stdio environment (block-filtered)
+ *   - "url"     (string)         — SSE endpoint (mutually exclusive)
+ *   - "transport" (string)       — "stdio" | "sse"; auto-inferred if absent
  *
  * @param handle Engine handle returned by entropic_create.
  * @param name MCP server name (must be unique).
  * @param config_json JSON-serialized MCP server configuration.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.0
+ * @version 2.1.4
  */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_register_mcp_server(
@@ -59,15 +71,31 @@ entropic_register_mcp_server(
 
     try {
         auto j = nlohmann::json::parse(config_json);
-        auto cmd = j.value("command", "");
-        auto url = j.value("url", "");
-        std::vector<std::string> args;
+        entropic::ExternalServerConfig spec;
+        spec.name = name;
+        spec.command = j.value("command", "");
+        spec.url = j.value("url", "");
+        spec.transport = j.value("transport",
+            spec.url.empty() ? "stdio" : "sse");
         if (j.contains("args") && j["args"].is_array()) {
-            args = j["args"].get<std::vector<std::string>>();
+            spec.args = j["args"].get<std::vector<std::string>>();
         }
-        handle->server_manager->connect_external_server(
-            name, cmd, args, url);
-        logger->info("register_mcp_server: name='{}'", name);
+        if (j.contains("env") && j["env"].is_object()) {
+            for (auto& [key, val] : j["env"].items()) {
+                if (entropic::is_blocked_env_var(key)) {
+                    logger->warn(
+                        "register_mcp_server '{}': blocked env var "
+                        "'{}' — skipping", name, key);
+                    continue;
+                }
+                if (val.is_string()) {
+                    spec.env[key] = val.get<std::string>();
+                }
+            }
+        }
+        handle->server_manager->connect_external_server(spec);
+        logger->info("register_mcp_server: name='{}' env_keys={}",
+                     name, spec.env.size());
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();

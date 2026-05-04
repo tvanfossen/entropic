@@ -17,6 +17,7 @@ target_sources(entropic-mcp PRIVATE
     tool_call_history.cpp
     # Built-in servers (compiled into mcp.so for now; individual .so later)
     servers/filesystem.cpp
+    servers/ignore_matcher.cpp
     servers/bash.cpp
     servers/git.cpp
     servers/diagnostics.cpp

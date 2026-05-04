@@ -460,16 +460,23 @@ std::vector<Message> ResponseGenerator::inject_tool_prompt(
 }
 
 /**
- * @brief Append "[engine] iteration N/MAX, tool calls so far K." to
- *        the first system message in the input (per-turn reminder).
+ * @brief Append "[engine] iteration N/MAX, tool calls so far K." as a
+ *        NEW user message at the end of the prompt (per-turn reminder).
  *
  * Resolves effective max_iterations from ctx.effective_max_iterations
  * (per-identity override) or falls back to loop_config_.max_iterations.
- * No persistent state added — line is only present in this turn's
- * assembled prompt, not the conversation history. (Demo ask #1)
+ *
+ * Issue #16 (v2.1.4): the reminder is injected as a fresh user message
+ * rather than appended to the first system message's content. This keeps
+ * the system message stable across turns so PromptCache hits actually
+ * fire — pre-2.1.4 the per-turn reminder mutated the system message,
+ * driving 100% miss rate (the cache key AND prefix_tokens both varied
+ * each turn). The reminder lands at the END of the message list — the
+ * most-recent context the model sees before generating — and is not
+ * persisted into ctx.messages. (#16)
  *
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.1.4
  */
 std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     const std::vector<Message>& messages,
@@ -501,12 +508,10 @@ std::vector<Message> ResponseGenerator::inject_engine_state_reminder(
     }
 
     auto result = messages;
-    for (auto& msg : result) {
-        if (msg.role == "system") {
-            msg.content += "\n\n" + reminder;
-            break;
-        }
-    }
+    Message reminder_msg;
+    reminder_msg.role = "user";
+    reminder_msg.content = std::move(reminder);
+    result.push_back(std::move(reminder_msg));
     return result;
 }
 

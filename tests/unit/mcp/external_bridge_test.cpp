@@ -104,6 +104,116 @@ SCENARIO("Cleanup removes expired tasks but keeps fresh ones",
     }
 }
 
+// ── Issue #12 (v2.1.4): async sentinel files ─────────────
+
+SCENARIO("async_sentinel_dir is empty when handle is null",
+         "[external_bridge][2.1.4][issue-12]")
+{
+    // Bridge constructed with nullptr handle (test harness path)
+    // returns an empty sentinel directory and write_sentinel is a
+    // no-op. Verifies the public API is safe in headless tests.
+    ExternalMCPConfig cfg;
+    ExternalBridge bridge(nullptr, cfg, "/tmp/test");
+
+    CHECK(bridge.async_sentinel_dir().empty());
+
+    // Should not throw or crash with no handle.
+    bridge.write_sentinel("any-id", "done");
+}
+
+SCENARIO("write_sentinel writes one file per terminal status, "
+         "with the correct suffix",
+         "[external_bridge][2.1.4][issue-12]")
+{
+    // Use set_async_sentinel_root to drive the sentinel write path
+    // without needing a fully-configured engine handle.
+    GIVEN("a bridge with a temp sentinel root") {
+        namespace fs = std::filesystem;
+        auto root = fs::temp_directory_path()
+            / ("entropic_sentinel_" +
+               std::to_string(static_cast<long>(::getpid())));
+        fs::remove_all(root);
+        fs::create_directories(root);
+
+        ExternalMCPConfig cfg;
+        ExternalBridge bridge(nullptr, cfg, "/tmp/test");
+        bridge.set_async_sentinel_root(root);
+
+        WHEN("write_sentinel is called for each terminal status") {
+            bridge.write_sentinel("t-done", "done");
+            bridge.write_sentinel("t-err", "error");
+            bridge.write_sentinel("t-can", "cancelled");
+
+            THEN("each maps to its expected suffix") {
+                CHECK(fs::exists(root / "async" / "t-done.done"));
+                CHECK(fs::exists(root / "async" / "t-err.failed"));
+                CHECK(fs::exists(root / "async" /
+                                 "t-can.cancelled"));
+            }
+        }
+        fs::remove_all(root);
+    }
+}
+
+SCENARIO("run_async_ask writes a sentinel atomically with status",
+         "[external_bridge][2.1.4][issue-12]")
+{
+    // End-to-end: dispatch an async task with a null handle (will
+    // fail with INVALID_HANDLE → final status "error" → sentinel
+    // suffix .failed) and verify the sentinel exists once the
+    // task thread settles.
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path()
+        / ("entropic_sentinel_e2e_" +
+           std::to_string(static_cast<long>(::getpid())));
+    fs::remove_all(root);
+    fs::create_directories(root);
+
+    ExternalMCPConfig cfg;
+    ExternalBridge bridge(nullptr, cfg, "/tmp/test");
+    bridge.set_async_sentinel_root(root);
+
+    bridge.run_async_ask("any prompt", "task-e2e", -1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    CHECK(fs::exists(root / "async" / "task-e2e.failed"));
+    fs::remove_all(root);
+}
+
+SCENARIO("cleanup_expired_tasks removes sentinel files for "
+         "expired tasks",
+         "[external_bridge][2.1.4][issue-12]")
+{
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path()
+        / ("entropic_sentinel_cleanup_" +
+           std::to_string(static_cast<long>(::getpid())));
+    fs::remove_all(root);
+    fs::create_directories(root / "async");
+
+    ExternalMCPConfig cfg;
+    ExternalBridge bridge(nullptr, cfg, "/tmp/test");
+    bridge.set_async_sentinel_root(root);
+
+    // Pre-seed an expired task with sentinel + registry entry.
+    {
+        std::lock_guard<std::mutex> lock(bridge.tasks_mutex_);
+        ExternalBridge::AsyncTask t;
+        t.status = "done";
+        t.phase = "done";
+        t.created = std::chrono::steady_clock::now()
+            - std::chrono::minutes(20);
+        bridge.tasks_for_cancel()["expired-task"] = std::move(t);
+        bridge.write_sentinel("expired-task", "done");
+    }
+    REQUIRE(fs::exists(root / "async" / "expired-task.done"));
+
+    bridge.cleanup_expired_tasks();
+
+    CHECK_FALSE(fs::exists(root / "async" / "expired-task.done"));
+    fs::remove_all(root);
+}
+
 // ── relay_single_delegate setter test ────────────────────
 
 SCENARIO("ExternalBridge constructs with explicit socket_path",

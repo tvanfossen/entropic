@@ -98,6 +98,30 @@ SCENARIO("ToolResultKind::ok_empty round-trips through string form",
           == "error");
 }
 
+SCENARIO("delegation_failed and rejected_anti_spiral round-trip "
+         "(#7, #14)",
+         "[types][tool_result][2.1.4]")
+{
+    // Wire-stable strings — consumers branch on these. Issue #7 (#14)
+    // adds the typed kinds; older kinds stay untouched.
+    CHECK(std::string(result_kind_to_string(
+              ToolResultKind::delegation_failed))
+          == "delegation_failed");
+    CHECK(std::string(result_kind_to_string(
+              ToolResultKind::rejected_anti_spiral))
+          == "rejected_anti_spiral");
+    // Pre-2.1.4 kinds still serialise to their canonical strings.
+    CHECK(std::string(result_kind_to_string(
+              ToolResultKind::rejected_duplicate))
+          == "rejected_duplicate");
+    CHECK(std::string(result_kind_to_string(
+              ToolResultKind::rejected_schema))
+          == "rejected_schema");
+    CHECK(std::string(result_kind_to_string(
+              ToolResultKind::rejected_precondition))
+          == "rejected_precondition");
+}
+
 // ── Demo ask #6 (v2.1.0): tool result size cap ─────────────────
 
 SCENARIO("truncate_to_cap is a no-op when cap is 0",

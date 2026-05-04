@@ -9,6 +9,7 @@
 #include <entropic/core/delegation.h>
 #include <entropic/core/worktree.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/tool_result.h>
 
 #include <nlohmann/json.hpp>
 
@@ -1510,19 +1511,34 @@ bool AgentEngine::fire_delegate_pre_hook(
 
 /**
  * @brief Fire ON_DELEGATE_COMPLETE post-hook.
+ *
+ * Issue #7 (v2.1.4): JSON context now includes a typed `result_kind`
+ * ("ok" or "delegation_failed") so consumers no longer need to
+ * content-prefix-match `[DELEGATION FAILED:]` from the model context.
+ * Adds `summary` so the consumer can surface the failure reason
+ * without parsing the user message.
+ *
  * @param target Target tier.
  * @param success Whether delegation succeeded.
+ * @param summary Child-loop-produced summary or terminal_reason
+ *                (passed verbatim; may be empty).
  * @internal
- * @version 1.9.1
+ * @version 2.1.4
  */
 void AgentEngine::fire_delegate_complete_hook(
-    const std::string& target, bool success) {
+    const std::string& target, bool success,
+    const std::string& summary) {
     if (hooks_.fire_post == nullptr) {
         return;
     }
-    std::string json = "{\"target_tier\":\""
-        + target + "\",\"success\":"
-        + (success ? "true" : "false") + "}";
+    nlohmann::json j;
+    j["target_tier"] = target;
+    j["success"] = success;
+    j["result_kind"] = result_kind_to_string(success
+        ? ToolResultKind::ok
+        : ToolResultKind::delegation_failed);
+    j["summary"] = summary;
+    std::string json = j.dump();
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_ON_DELEGATE_COMPLETE, json.c_str(), &out);
@@ -1615,7 +1631,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.0.6-rc16.1
+ * @version 2.1.4
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1661,7 +1677,8 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     push_delegation_result(ctx, pending.target, result);
 
     fire_delegation_complete(ctx, pending.target, result);
-    fire_delegate_complete_hook(pending.target, result.success);
+    fire_delegate_complete_hook(pending.target, result.success,
+                                result.summary);
 
     finalize_delegation_result(ctx, result);
 }

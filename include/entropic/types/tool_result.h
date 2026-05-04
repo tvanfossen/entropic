@@ -35,6 +35,8 @@ enum class ToolResultKind {
     rejected_schema,        ///< Precondition: argument schema violation
     rejected_precondition,  ///< Any other precondition reject (auth, tier, hook-cancel)
     ok_empty,               ///< Tool dispatched cleanly but returned no content (v2.1.0, #44)
+    delegation_failed,      ///< entropic.delegate child failed (terminal_reason or budget). (#7, v2.1.4)
+    rejected_anti_spiral,   ///< Anti-spiral hard threshold crossed; tool blocked. (#14, v2.1.4)
 };
 
 /**
@@ -42,7 +44,7 @@ enum class ToolResultKind {
  * @param kind Enum value.
  * @return Static null-terminated string. Never NULL.
  * @utility
- * @version 2.1.0
+ * @version 2.1.4
  */
 inline const char* result_kind_to_string(ToolResultKind kind) {
     const char* s = "ok";
@@ -53,6 +55,8 @@ inline const char* result_kind_to_string(ToolResultKind kind) {
     case ToolResultKind::rejected_duplicate:    s = "rejected_duplicate"; break;
     case ToolResultKind::rejected_schema:       s = "rejected_schema"; break;
     case ToolResultKind::rejected_precondition: s = "rejected_precondition"; break;
+    case ToolResultKind::delegation_failed:     s = "delegation_failed"; break;
+    case ToolResultKind::rejected_anti_spiral:  s = "rejected_anti_spiral"; break;
     }
     return s;
 }

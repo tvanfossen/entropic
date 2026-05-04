@@ -684,12 +684,18 @@ private:
 
     /**
      * @brief Fire ON_DELEGATE_COMPLETE post-hook.
+     *
+     * Issue #7 (v2.1.4): JSON now includes typed `result_kind` and
+     * `summary` so consumers don't have to content-prefix-match.
+     *
      * @param target Target tier.
      * @param success Whether delegation succeeded.
-     * @version 1.9.1
+     * @param summary Child summary or terminal_reason (verbatim; empty OK).
+     * @version 2.1.4
      */
     void fire_delegate_complete_hook(const std::string& target,
-                                     bool success);                 ///< @internal
+                                     bool success,
+                                     const std::string& summary = "");///< @internal
 
     /**
      * @brief Get or discover the project git repository.

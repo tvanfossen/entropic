@@ -802,8 +802,13 @@ void AgentEngine::dir_pipeline(
 
 /**
  * @brief Handle complete directive.
+ *
+ * Issue #10 (v2.1.4): also persists coverage_gap / gap_description /
+ * suggested_files into ctx.metadata so DelegationManager can hoist
+ * them onto the typed DelegationResult that flows back to the parent.
+ *
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.4
  */
 void AgentEngine::dir_complete(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
@@ -825,9 +830,22 @@ void AgentEngine::dir_complete(
     }
 
     ctx.metadata["explicit_completion_summary"] = cd.summary;
+    // Issue #10 (v2.1.4): persist coverage_gap signal in metadata so
+    // delegation.cpp::build_child_result can hoist it onto the
+    // DelegationResult that flows back to the parent. The metadata
+    // path is the only channel that survives between the child loop
+    // (which sees the directive) and the parent's
+    // finalize_delegation_result (which reads the result).
+    if (cd.coverage_gap) {
+        ctx.metadata["coverage_gap"] = "true";
+        ctx.metadata["gap_description"] = cd.gap_description;
+        nlohmann::json files_arr = cd.suggested_files;
+        ctx.metadata["suggested_files_json"] = files_arr.dump();
+    }
     set_state(ctx, AgentState::COMPLETE);
     r.stop_processing = true;
-    logger->info("[DIRECTIVE] complete");
+    logger->info("[DIRECTIVE] complete coverage_gap={}",
+                 cd.coverage_gap);
 }
 
 /**
@@ -1708,6 +1726,27 @@ void AgentEngine::relay_partial_result(
 }
 
 /**
+ * @brief Build the [COVERAGE GAP] message body that goes back to lead
+ *        when a relay-tier child returns coverage_gap=true (#10, v2.1.4).
+ * @internal
+ * @version 2.1.4
+ */
+static std::string build_coverage_gap_message(
+    const std::string& tier, const DelegationResult& result) {
+    std::string body =
+        "[COVERAGE GAP from " + tier + "]\n"
+        "Summary so far: " + result.summary + "\n"
+        "What's missing: " + result.gap_description;
+    if (!result.suggested_files.empty()) {
+        body += "\nSuggested files to inspect:";
+        for (const auto& f : result.suggested_files) {
+            body += "\n  - " + f;
+        }
+    }
+    return body;
+}
+
+/**
  * @brief Promote relayed delegate output or set next engine state.
  *
  * Handles the relay_single_delegate path (validate + promote), the
@@ -1716,10 +1755,16 @@ void AgentEngine::relay_partial_result(
  * to keep that function under the 50-SLOC / 3-return quality gates.
  * (P0-3, P1-9, 2.0.6-rc16; budget_exhausted relay: E2, 2.1.0)
  *
+ * Issue #10 (v2.1.4): if the relay-tier child set coverage_gap=true,
+ * SUPPRESS auto-relay and instead inject a typed [COVERAGE GAP]
+ * message into the lead context (with summary, gap_description,
+ * suggested_files), then return to EXECUTING so lead can chain to a
+ * follow-up specialist.
+ *
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.1.1-rc1
+ * @version 2.1.4
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
@@ -1727,6 +1772,20 @@ void AgentEngine::finalize_delegation_result(
     // so the two relay branches are disjoint — check them independently.
     const bool in_relay_tier =
         relay_single_delegate_tiers_.count(ctx.locked_tier) > 0;
+    if (in_relay_tier && result.coverage_gap) {
+        Message gap;
+        gap.role = "user";
+        gap.content = build_coverage_gap_message(
+            result.target_tier, result);
+        ctx.messages.push_back(std::move(gap));
+        ctx.metadata["relay_status"] = "coverage_gap_suppressed";
+        logger->info(
+            "[COVERAGE GAP] suppressing auto-relay for tier={} "
+            "({} suggested files)",
+            result.target_tier, result.suggested_files.size());
+        set_state(ctx, AgentState::EXECUTING);
+        return;
+    }
     if (result.success && in_relay_tier) {
         relay_partial_result(ctx, result.summary);
         log_relay_status(ctx);

@@ -363,3 +363,109 @@ TEST_CASE("delegation result captures turn count",
     REQUIRE(result.turns_used == 3);
     REQUIRE(result.target_tier == "eng");
 }
+
+// ── Issue #11 (v2.1.4): pipeline forwards stage output ───
+
+TEST_CASE("pipeline forwards prior stage output as context",
+          "[delegation][2.1.4][issue-11]") {
+    // Stage 0 records "stage 0 output" as its summary; stage 1's
+    // task should now contain "[PRIOR STAGE OUTPUT]" + "stage 0
+    // output" — verifying the new forward-carry semantics.
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    struct PipelineCapture {
+        int stage = 0;
+        std::vector<std::string> seen_user_content;
+    } cap;
+
+    auto loop_fn = [](LoopContext& ctx, void* ud) {
+        auto* c = static_cast<PipelineCapture*>(ud);
+        for (const auto& m : ctx.messages) {
+            if (m.role == "user") {
+                c->seen_user_content.push_back(m.content);
+            }
+        }
+        Message a;
+        a.role = "assistant";
+        a.content = "stage " + std::to_string(c->stage)
+            + " output";
+        ctx.metadata["explicit_completion_summary"] = a.content;
+        ctx.messages.push_back(std::move(a));
+        ctx.state = AgentState::COMPLETE;
+        ++c->stage;
+    };
+
+    DelegationManager mgr(loop_fn, &cap, tier_res);
+    LoopContext parent;
+    auto result = mgr.execute_pipeline(
+        parent, {"eng", "qa"}, "do the thing");
+
+    REQUIRE(result.success);
+    REQUIRE(cap.seen_user_content.size() == 2);
+    // Stage 0 sees the original task without prior output.
+    CHECK(cap.seen_user_content[0].find("[PIPELINE CONTEXT]") !=
+          std::string::npos);
+    CHECK(cap.seen_user_content[0].find("[PRIOR STAGE OUTPUT]") ==
+          std::string::npos);
+    CHECK(cap.seen_user_content[0].find("do the thing") !=
+          std::string::npos);
+    // Stage 1 sees the prior stage's output.
+    CHECK(cap.seen_user_content[1].find("[PRIOR STAGE OUTPUT]") !=
+          std::string::npos);
+    CHECK(cap.seen_user_content[1].find("stage 0 output") !=
+          std::string::npos);
+}
+
+// ── Issue #10 (v2.1.4): coverage_gap propagation ─────────
+
+TEST_CASE("coverage_gap signal propagates from child metadata to "
+          "DelegationResult",
+          "[delegation][2.1.4][issue-10]") {
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    auto loop_fn = [](LoopContext& ctx, void*) {
+        // Simulate dir_complete writing the metadata keys.
+        ctx.metadata["explicit_completion_summary"] =
+            "researched the docs but need source inspection";
+        ctx.metadata["coverage_gap"] = "true";
+        ctx.metadata["gap_description"] =
+            "docs only describe the API; the bug is in the impl";
+        ctx.metadata["suggested_files_json"] =
+            R"(["src/foo.cpp","include/foo.h"])";
+        Message a;
+        a.role = "assistant";
+        a.content = "researched the docs but need source inspection";
+        ctx.messages.push_back(std::move(a));
+        ctx.state = AgentState::COMPLETE;
+    };
+
+    DelegationManager mgr(loop_fn, nullptr, tier_res);
+    LoopContext parent;
+
+    auto result = mgr.execute_delegation(
+        parent, "researcher", "investigate bug");
+    REQUIRE(result.success);
+    CHECK(result.coverage_gap);
+    CHECK(result.gap_description.find("bug is in the impl") !=
+          std::string::npos);
+    REQUIRE(result.suggested_files.size() == 2);
+    CHECK(result.suggested_files[0] == "src/foo.cpp");
+    CHECK(result.suggested_files[1] == "include/foo.h");
+}
+
+TEST_CASE("coverage_gap absent → result fields stay default",
+          "[delegation][2.1.4][issue-10]") {
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    MockChildLoop loop_mock;
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    LoopContext parent;
+
+    auto result = mgr.execute_delegation(parent, "eng", "task");
+    CHECK_FALSE(result.coverage_gap);
+    CHECK(result.gap_description.empty());
+    CHECK(result.suggested_files.empty());
+}

@@ -1132,11 +1132,16 @@ static std::vector<std::string> extract_pipeline_stages(
 
 /**
  * @brief Build a typed Directive from a directive-descriptor JSON.
+ *
+ * Issue #10 (v2.1.4): the "complete" branch now extracts
+ * coverage_gap / gap_description / suggested_files from the result
+ * JSON and populates the typed CompleteDirective fields.
+ *
  * @param d Directive JSON ("type": ...).
  * @param result_json Parsed result JSON for parameter lookup.
  * @return Owned Directive (nullptr if type is unrecognized).
  * @internal
- * @version 2.0.2
+ * @version 2.1.4
  */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
@@ -1150,8 +1155,20 @@ static std::unique_ptr<Directive> build_directive(
             result_json.value("task", ""),
             result_json.value("max_turns", -1));
     } else if (type_str == "complete") {
-        result = std::make_unique<CompleteDirective>(
+        // Issue #10 (v2.1.4): coverage_gap + gap_description +
+        // suggested_files extend CompleteDirective so consumers can
+        // branch on typed fields.
+        auto cd = std::make_unique<CompleteDirective>(
             result_json.value("summary", ""));
+        cd->coverage_gap = result_json.value("coverage_gap", false);
+        cd->gap_description = result_json.value("gap_description", "");
+        if (result_json.contains("suggested_files")
+            && result_json["suggested_files"].is_array()) {
+            cd->suggested_files =
+                result_json["suggested_files"]
+                    .get<std::vector<std::string>>();
+        }
+        result = std::move(cd);
     } else if (type_str == "pipeline") {
         result = std::make_unique<PipelineDirective>(
             extract_pipeline_stages(result_json),

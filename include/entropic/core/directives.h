@@ -120,10 +120,23 @@ struct PipelineDirective : Directive {
 
 /**
  * @brief Signal explicit completion.
- * @version 1.8.4
+ *
+ * Issue #10 (v2.1.4): adds two optional fields used by relay-aware
+ * tiers. When a delegate completes but recognizes its answer is
+ * incomplete (e.g. researcher consulted only the docs DB and a
+ * follow-up source-file inspection is needed), it sets
+ * `coverage_gap=true` and lists the suggested files. The engine
+ * suppresses auto-relay for that completion and instead injects a
+ * `[COVERAGE GAP]` user message into the lead context so lead can
+ * chain to a specialist (typically reader).
+ *
+ * @version 2.1.4
  */
 struct CompleteDirective : Directive {
     std::string summary; ///< Completion summary
+    bool coverage_gap = false; ///< Suppresses auto-relay (#10, v2.1.4)
+    std::string gap_description; ///< What the gap IS (#10, v2.1.4)
+    std::vector<std::string> suggested_files; ///< Files for lead to inspect (#10, v2.1.4)
 
     /**
      * @brief Construct a Complete directive.

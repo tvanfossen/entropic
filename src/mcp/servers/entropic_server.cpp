@@ -363,20 +363,58 @@ public:
 
 /**
  * @brief Parse summary and emit completion directives.
- * @param args_json JSON with "summary".
+ *
+ * Issue #10 (v2.1.4): also forwards `coverage_gap` and
+ * `suggested_files` into the result JSON so the engine's directive
+ * builder can populate the typed CompleteDirective fields. The
+ * engine then suppresses auto-relay when coverage_gap is set,
+ * injecting a `[COVERAGE GAP]` user message into the lead context
+ * instead.
+ *
+ * @param args_json JSON with "summary" and optional "coverage_gap" /
+ *                  "suggested_files".
  * @return ServerResponse with summary and directives.
  * @internal
- * @version 1.8.5
+ * @version 2.1.4
  */
 ServerResponse CompleteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
     std::string summary = args.at("summary").get<std::string>();
+    bool coverage_gap = args.value("coverage_gap", false);
+    std::string gap_description =
+        args.value("gap_description", std::string{});
+    std::vector<std::string> suggested;
+    if (args.contains("suggested_files")
+        && args["suggested_files"].is_array()) {
+        suggested = args["suggested_files"]
+            .get<std::vector<std::string>>();
+    }
 
-    logger->info("[complete] summary='{}'", summary);
+    // Issue #10 (v2.1.4): coverage_gap=true REQUIRES a non-empty
+    // gap_description so the lead context's [COVERAGE GAP] message
+    // tells the next specialist what to fill in. An empty
+    // gap_description with coverage_gap=true would be a bare
+    // "I don't know" with no signal — refuse it at the tool boundary.
+    if (coverage_gap && gap_description.empty()) {
+        nlohmann::json err;
+        err["error"] = "missing_gap_description";
+        err["message"] =
+            "coverage_gap=true requires a non-empty gap_description "
+            "(what's missing from this answer and why).";
+        return {err.dump(), {}};
+    }
+
+    logger->info("[complete] summary='{}' coverage_gap={} "
+                 "gap_description_len={} suggested_files={}",
+                 summary, coverage_gap,
+                 gap_description.size(), suggested.size());
 
     nlohmann::json result;
     result["action"] = "complete";
     result["summary"] = summary;
+    result["coverage_gap"] = coverage_gap;
+    result["gap_description"] = gap_description;
+    result["suggested_files"] = suggested;
 
     Directive complete_d;
     complete_d.type = ENTROPIC_DIRECTIVE_COMPLETE;

@@ -13,12 +13,16 @@
 #include <entropic/entropic.h>
 #include <entropic/types/logging.h>
 
+#include "engine_handle.h"
+
 #include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <sstream>
 #include <thread>
@@ -919,13 +923,14 @@ void ExternalBridge::detach_phase_observer() {
  * @brief Run an async entropic.ask in a detached background thread.
  *
  * Creates a task registry entry, runs the engine, stores the result,
- * and pushes a notifications/ask_complete to the active client fd.
+ * writes the per-task sentinel file (#12, v2.1.4), and broadcasts
+ * notifications/progress to subscribed clients.
  *
  * @param prompt User prompt.
  * @param task_id Assigned task ID.
  * @param client_fd Socket fd for completion notification.
  * @internal
- * @version 2.1.2
+ * @version 2.1.4
  */
 void ExternalBridge::run_async_ask(
     const std::string& prompt,
@@ -960,6 +965,11 @@ void ExternalBridge::run_async_ask(
                 it->second.phase = final_state.phase;
                 it->second.result = final_state.text;
             }
+            // Issue #12 (v2.1.4): write sentinel UNDER tasks_mutex_,
+            // before the MCP notification fires. Any external monitor
+            // reacting to the sentinel can immediately call
+            // entropic.ask_status and see the same terminal state.
+            write_sentinel(task_id, final_state.status);
         }
         auto status = final_state.status;
 
@@ -1114,21 +1124,116 @@ void ExternalBridge::update_task_phase(const std::string& task_id,
 }
 
 /**
- * @brief Remove tasks older than 15 minutes from the registry.
+ * @brief Remove tasks older than 15 minutes from the registry, AND
+ *        delete their sentinel files if present.
+ *
+ * Issue #12 (v2.1.4): sentinel files would otherwise accumulate in
+ * `<log_dir>/async/` indefinitely. Cleanup uses the same TTL as the
+ * in-memory registry so an external monitor that consumed the
+ * sentinel within 15 minutes still sees a consistent picture.
+ *
  * @internal
- * @version 2.0.11
+ * @version 2.1.4
  */
 void ExternalBridge::cleanup_expired_tasks() {
     auto cutoff = std::chrono::steady_clock::now()
         - std::chrono::minutes(15);
+    auto sentinel_dir = async_sentinel_dir();
     std::lock_guard<std::mutex> lock(tasks_mutex_);
     for (auto it = tasks_.begin(); it != tasks_.end(); ) {
         if (it->second.created < cutoff) {
+            if (!sentinel_dir.empty()) {
+                for (const char* suffix :
+                     {".done", ".failed", ".cancelled"}) {
+                    std::error_code ec;
+                    std::filesystem::remove(
+                        sentinel_dir / (it->first + suffix), ec);
+                }
+            }
             it = tasks_.erase(it);
         } else {
             ++it;
         }
     }
+}
+
+/**
+ * @brief Resolve the async sentinel directory.
+ *
+ * Override (set via set_async_sentinel_root) takes precedence; falls
+ * back to `<handle_->config.log_dir>/async`. Returns an empty path if
+ * neither source is configured. Issue #12 (v2.1.4).
+ *
+ * @internal
+ * @version 2.1.4
+ */
+std::filesystem::path ExternalBridge::async_sentinel_dir() const {
+    std::filesystem::path root = async_sentinel_root_override_;
+    if (root.empty() && handle_ != nullptr) {
+        root = handle_->config.log_dir;
+    }
+    return root.empty() ? std::filesystem::path{} : (root / "async");
+}
+
+/**
+ * @brief Override the async sentinel root directory. Issue #12 (v2.1.4).
+ * @internal
+ * @version 2.1.4
+ */
+void ExternalBridge::set_async_sentinel_root(
+    const std::filesystem::path& root) {
+    async_sentinel_root_override_ = root;
+}
+
+/**
+ * @brief Map a terminal status string to a sentinel filename suffix.
+ * @internal
+ * @version 2.1.4
+ */
+static const char* sentinel_suffix_for_status(
+    const std::string& status) {
+    const char* suffix = ".done";
+    if (status == "error") {
+        suffix = ".failed";
+    } else if (status == "cancelled") {
+        suffix = ".cancelled";
+    }
+    return suffix;
+}
+
+/**
+ * @brief Write the sentinel file for an async task completion.
+ *
+ * Issue #12 (v2.1.4). Caller MUST hold tasks_mutex_ — this is invoked
+ * inside run_async_ask's terminal critical section so external
+ * monitors observe a consistent sentinel + registry pair.
+ *
+ * Failure to create the parent directory or open the file is logged
+ * at WARN and swallowed; the MCP notification path remains the
+ * primary signal and a missing sentinel is non-fatal for callers
+ * that don't depend on it.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+void ExternalBridge::write_sentinel(const std::string& task_id,
+                                    const std::string& status) {
+    auto dir = async_sentinel_dir();
+    if (dir.empty()) { return; }
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        logger->warn("write_sentinel: mkdir {} failed: {}",
+                     dir.string(), ec.message());
+        return;
+    }
+    auto path = dir / (task_id + sentinel_suffix_for_status(status));
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        logger->warn("write_sentinel: open {} failed", path.string());
+        return;
+    }
+    out << status << '\n';
 }
 
 } // namespace entropic

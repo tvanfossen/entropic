@@ -80,13 +80,22 @@ struct LoopConfig {
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
-    /// @brief Anti-spiral threshold: after N consecutive calls of the
-    /// SAME tool (regardless of arg similarity, since exact-arg
+    /// @brief Anti-spiral SOFT threshold: after N consecutive calls of
+    /// the SAME tool (regardless of arg similarity, since exact-arg
     /// duplicates are already handled by recent_tool_calls), the
     /// engine populates pending_anti_spiral_warning so the next turn's
     /// system reminder tells the model to pivot tools or complete.
+    /// Advisory only — the engine does NOT block the call.
     /// (Demo ask #5, v2.1.0)
     int max_consecutive_same_tool = 5;
+    /// @brief Anti-spiral HARD threshold: when consecutive same-tool
+    /// calls exceed this, the engine blocks the call BEFORE dispatch
+    /// and returns a rejected_anti_spiral typed result. Negative
+    /// (default sentinel -1) means derive at config-load time as
+    /// (max_consecutive_same_tool + 2). Set to a large value to
+    /// effectively disable the hard block while keeping the soft
+    /// advisory warning. (#14, v2.1.4)
+    int max_consecutive_same_tool_hard_block = -1;
     /// @brief Maximum byte length for a single tool's result content
     /// before the engine truncates with a "[... truncated, N more
     /// bytes]" tail. Single global cap; per-tool overrides not yet

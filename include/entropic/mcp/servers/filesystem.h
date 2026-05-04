@@ -12,6 +12,7 @@
 #pragma once
 
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/servers/ignore_matcher.h>
 #include <entropic/types/config.h>
 
 #include <filesystem>
@@ -140,11 +141,24 @@ public:
      */
     std::filesystem::path resolve_path(const std::string& requested) const;
 
+    /**
+     * @brief Get the ignore matcher (#15, v2.1.4).
+     *
+     * Loaded from `.gitignore` (recursive) + `.explorerignore` at
+     * server construction and on `set_working_dir`. Used by glob,
+     * grep, and read_file to filter results / refuse access.
+     *
+     * @return Matcher reference.
+     * @version 2.1.4
+     */
+    const IgnoreMatcher& ignore() const;
+
 private:
     std::filesystem::path root_dir_;  ///< Project root
     FilesystemConfig config_;         ///< Filesystem config
     int max_read_bytes_ = 0;          ///< Size gate limit
     FileAccessTracker tracker_;       ///< Read tracking
+    IgnoreMatcher ignore_;            ///< gitignore + explorerignore (#15)
 
     // Owned tool instances
     std::unique_ptr<ReadFileTool> read_file_;

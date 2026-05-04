@@ -201,11 +201,17 @@ std::string build_read_result(const std::string& path,
  *
  * Supports '*' (any chars) and '?' (single char) wildcards.
  *
+ * Issue #13 (v2.1.4): regex construction is wrapped in try/catch so
+ * malformed patterns produce a "no match" result instead of throwing
+ * an unhandled exception that kills the session. Brace expansion
+ * (handled by expand_braces upstream) means the pattern reaching here
+ * is single-alternative and almost always well-formed.
+ *
  * @param filename Filename to test.
- * @param pattern Glob pattern.
+ * @param pattern Glob pattern (already brace-expanded).
  * @return true if filename matches.
  * @internal
- * @version 1.8.5
+ * @version 2.1.4
  */
 bool glob_match(const std::string& filename,
                 const std::string& pattern) {
@@ -224,8 +230,110 @@ bool glob_match(const std::string& filename,
         }
     }
 
-    std::regex re(regex_str, std::regex::icase);
-    return std::regex_match(filename, re);
+    try {
+        std::regex re(regex_str, std::regex::icase);
+        return std::regex_match(filename, re);
+    } catch (const std::regex_error& e) {
+        logger->warn(
+            "glob_match: malformed pattern '{}' → {} — treated as "
+            "non-match", pattern, e.what());
+        return false;
+    }
+}
+
+/**
+ * @brief Expand brace alternatives in a glob pattern.
+ *
+ * Issue #13 (v2.1.4): pre-2.1.4 a pattern like `**\/*.{c,h}` threw
+ * `std::regex_error` ("Invalid range in '{}'") which propagated as an
+ * unhandled exception that killed the entire MCP session. Models
+ * trained on shell glob conventions emit this syntax routinely; the
+ * graceful fix is to support it.
+ *
+ * `{a,b,c}` expands to three patterns. Multiple brace groups multiply:
+ *   `**\/*.{c,h}.{old,new}`  →  4 patterns (c.old, c.new, h.old, h.new).
+ *
+ * Nested braces are NOT supported (rare in glob usage); a malformed
+ * input produces a single pass-through pattern with the literal braces.
+ *
+ * @param pattern Source pattern.
+ * @return Vector of brace-expanded patterns. At minimum a single entry
+ *         (the input verbatim) when no braces are present.
+ * @internal
+ * @version 2.1.4
+ */
+/**
+ * @brief Split the body of a `{a,b,c}` group into alternatives.
+ * @param body Text between the braces (no `{` or `}`).
+ * @return Vector of alternative strings. At least one entry.
+ * @internal
+ * @version 2.1.4
+ */
+std::vector<std::string> split_brace_alternatives(
+    const std::string& body) {
+    std::vector<std::string> out;
+    std::string current;
+    for (char c : body) {
+        if (c == ',') {
+            out.push_back(std::move(current));
+            current.clear();
+        } else {
+            current += c;
+        }
+    }
+    out.push_back(std::move(current));
+    return out;
+}
+
+/**
+ * @brief Multiply existing patterns by alternatives.
+ * @internal
+ * @version 2.1.4
+ */
+std::vector<std::string> multiply_alternatives(
+    const std::vector<std::string>& bases,
+    const std::vector<std::string>& alternatives) {
+    std::vector<std::string> next;
+    next.reserve(bases.size() * alternatives.size());
+    for (const auto& base : bases) {
+        for (const auto& alt : alternatives) {
+            next.push_back(base + alt);
+        }
+    }
+    return next;
+}
+
+/**
+ * @brief Expand `{a,b,c}` brace alternatives in a glob pattern.
+ *
+ * Issue #13 (v2.1.4). Returns at minimum a single entry equal to the
+ * input when no braces are present. Multiple groups multiply
+ * (`*.{c,h}.{old,new}` → 4 patterns). Nested braces are not supported;
+ * unbalanced braces pass through verbatim.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+std::vector<std::string> expand_braces(const std::string& pattern) {
+    std::vector<std::string> out{""};
+    size_t i = 0;
+    while (i < pattern.size()) {
+        char c = pattern[i];
+        auto close = (c == '{')
+            ? pattern.find('}', i + 1)
+            : std::string::npos;
+        bool is_group = (c == '{') && (close != std::string::npos);
+        if (!is_group) {
+            for (auto& s : out) { s += c; }
+            ++i;
+            continue;
+        }
+        auto body = pattern.substr(i + 1, close - i - 1);
+        out = multiply_alternatives(
+            out, split_brace_alternatives(body));
+        i = close + 1;
+    }
+    return out;
 }
 
 /**
@@ -312,11 +420,13 @@ apply_str_replace(const std::string& content, const std::string& old_str, const 
  * @param new_str Text to insert.
  * @return Modified content.
  * @internal
- * @version 1.8.5
+ * @version 2.1.4
  */
 std::string apply_insert(const std::string& content,
                          int line_num,
                          const std::string& new_str) {
+    // (#13/#15 v2.1.4: function body unchanged; doxygen-guard parser
+    // re-evaluates the position after surrounding helpers were added.)
     std::istringstream stream(content);
     std::ostringstream out;
     std::string line;
@@ -336,20 +446,113 @@ std::string apply_insert(const std::string& content,
     return out.str();
 }
 
+
 /**
- * @brief Collect files matching glob, skipping ignored directories.
- * @param root Starting directory for traversal.
- * @param pattern Glob pattern to match filenames.
- * @param max_results Maximum number of results.
- * @return Vector of matching path strings.
+ * @brief Test whether a filename matches any of the brace-expanded patterns.
+ * @param filename Filename to test.
+ * @param patterns Patterns (post brace expansion).
+ * @return true if any pattern matches.
  * @internal
- * @version 1.8.5
+ * @version 2.1.4
+ */
+bool any_glob_match(const std::string& filename,
+                    const std::vector<std::string>& patterns) {
+    for (const auto& p : patterns) {
+        if (glob_match(filename, p)) { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief Collect files matching glob, honoring IgnoreMatcher and
+ *        brace-expanded patterns.
+ *
+ * Issue #13/#15 (v2.1.4): brace expansion + path-relative gitignore
+ * filtering. Pre-2.1.4 brace expansion raised regex_error and killed
+ * the session; build artifacts leaked into results.
+ *
+ * @param root Starting directory for traversal.
+ * @param pattern Glob pattern (may contain `{a,b,c}`).
+ * @param max_results Maximum number of results.
+ * @param ignore Optional ignore matcher (nullptr disables filtering).
+ * @return Vector of matching absolute path strings (deduped).
+ * @internal
+ * @version 2.1.4
+ */
+/**
+ * @brief Disposition for a single recursive-iterator entry.
+ *
+ * Encapsulates the decision tree for "skip me / prune below / take me"
+ * so collect_glob_matches can stay flat and within the complexity gate.
+ *
+ * @internal
+ * @version 2.1.4
+ */
+enum class EntryAction {
+    kSkip,         ///< Not a regular file or doesn't match — skip
+    kSkipPrune,    ///< Skip AND don't descend into this directory
+    kTake          ///< Add to results
+};
+
+/**
+ * @brief Classify a directory_iterator entry against ignore rules and
+ *        the brace-expanded glob patterns.
+ *
+ * @param entry Recursive-iterator entry.
+ * @param root Workspace root (for path relativization).
+ * @param patterns Brace-expanded glob patterns.
+ * @param ignore Optional ignore matcher.
+ * @return One of EntryAction values.
+ * @internal
+ * @version 2.1.4
+ */
+EntryAction classify_glob_entry(
+    const fs::directory_entry& entry,
+    const fs::path& root,
+    const std::vector<std::string>& patterns,
+    const IgnoreMatcher* ignore) {
+    bool is_dir = entry.is_directory();
+    EntryAction result = EntryAction::kSkip;
+    bool hardcoded_skip = is_dir
+        && should_skip_dir(entry.path().filename().string());
+    bool ignore_hit = false;
+    if (!hardcoded_skip && ignore != nullptr) {
+        auto rel = fs::relative(entry.path(), root)
+                     .generic_string();
+        ignore_hit = !rel.empty()
+            && ignore->is_ignored(rel, is_dir);
+    }
+    if (hardcoded_skip || (ignore_hit && is_dir)) {
+        result = EntryAction::kSkipPrune;
+    } else if (ignore_hit) {
+        result = EntryAction::kSkip;
+    } else if (entry.is_regular_file()
+               && any_glob_match(
+                      entry.path().filename().string(), patterns)) {
+        result = EntryAction::kTake;
+    }
+    return result;
+}
+
+/**
+ * @brief Collect files matching a glob, honoring IgnoreMatcher and
+ *        brace-expanded patterns.
+ *
+ * Issues #13/#15 (v2.1.4). Pre-2.1.4 brace expansion threw
+ * regex_error and killed the session; build artifacts also leaked
+ * into results. This single function now handles both fixes via the
+ * expand_braces + classify_glob_entry helpers.
+ *
+ * @internal
+ * @version 2.1.4
  */
 std::vector<std::string> collect_glob_matches(
     const fs::path& root,
     const std::string& pattern,
-    int max_results) {
+    int max_results,
+    const IgnoreMatcher* ignore = nullptr) {
 
+    auto patterns = expand_braces(pattern);
     std::vector<std::string> matches;
     auto it = fs::recursive_directory_iterator(
         root, fs::directory_options::skip_permission_denied);
@@ -358,17 +561,11 @@ std::vector<std::string> collect_glob_matches(
         if (static_cast<int>(matches.size()) >= max_results) {
             break;
         }
-        if (entry.is_directory() &&
-            should_skip_dir(
-                entry.path().filename().string())) {
+        auto action = classify_glob_entry(entry, root, patterns,
+                                          ignore);
+        if (action == EntryAction::kSkipPrune) {
             it.disable_recursion_pending();
-            continue;
-        }
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        auto fname = entry.path().filename().string();
-        if (glob_match(fname, pattern)) {
+        } else if (action == EntryAction::kTake) {
             matches.push_back(entry.path().string());
         }
     }
@@ -620,30 +817,65 @@ private:
  * @internal
  * @version 1.8.5
  */
+/**
+ * @brief Run pre-read gates (existence, ignore, size cap).
+ *
+ * Returns a non-empty error JSON when any gate denies. Path-relative
+ * ignore matching uses the server's IgnoreMatcher (#15, v2.1.4).
+ *
+ * @internal
+ * @version 2.1.4
+ */
+std::string check_read_gates(FilesystemServer& server,
+                             const fs::path& resolved,
+                             const std::string& path_str) {
+    std::string err;
+    if (!fs::exists(resolved)) {
+        err = make_error("not_found",
+            "File not found: " + path_str);
+    } else {
+        auto rel = fs::relative(resolved, server.root_dir())
+                     .generic_string();
+        bool ignored = !rel.empty()
+            && server.ignore().is_ignored(rel, /*is_dir=*/false);
+        int size = static_cast<int>(fs::file_size(resolved));
+        int limit = server.max_read_bytes();
+        if (ignored) {
+            err = make_error("ignored",
+                "Path '" + rel + "' is excluded by .gitignore or "
+                ".explorerignore.");
+        } else if (limit > 0 && size > limit) {
+            err = make_error("size_exceeded",
+                "File " + path_str + " is " +
+                std::to_string(size) + " bytes (limit: " +
+                std::to_string(limit) + ")");
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Execute read_file: resolve, gate, read, hash, track.
+ *
+ * Issue #15 (v2.1.4): pre-read gating moved into check_read_gates so
+ * the ignore-matcher refusal lives next to existence + size checks.
+ *
+ * @internal
+ * @version 2.1.4
+ */
 ServerResponse ReadFileTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto requested = args.at("path").get<std::string>();
     auto resolved = server_.resolve_path(requested);
     auto path_str = resolved.string();
 
-    if (!fs::exists(resolved)) {
-        return {make_error("not_found",
-            "File not found: " + path_str), {}};
-    }
-
-    auto size = static_cast<int>(fs::file_size(resolved));
-    int limit = server_.max_read_bytes();
-    if (limit > 0 && size > limit) {
-        return {make_error("size_exceeded",
-            "File " + path_str + " is " +
-            std::to_string(size) + " bytes (limit: " +
-            std::to_string(limit) + ")"), {}};
-    }
+    auto err = check_read_gates(server_, resolved, path_str);
+    if (!err.empty()) { return {err, {}}; }
 
     auto content = read_file_contents(resolved);
     server_.tracker().record_read(path_str,
                                   hash_content(content));
-
+    auto size = static_cast<int>(fs::file_size(resolved));
     logger->info("Read file: {} ({} bytes)", path_str, size);
     return {build_read_result(path_str, content), {}};
 }
@@ -825,21 +1057,30 @@ private:
 
 /**
  * @brief Execute glob: find files matching pattern.
+ *
+ * Issues #13/#15 (v2.1.4): brace expansion in the pattern, ignore-
+ * matcher filtering on results.
+ *
  * @param args_json JSON arguments.
  * @return ServerResponse with matched paths.
  * @internal
- * @version 2.0.4
+ * @version 2.1.4
  */
 ServerResponse GlobTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto pattern = args.at("pattern").get<std::string>();
     constexpr int MAX_GLOB_RESULTS = 500;
 
+    // Issue #15 (v2.1.4): pass server's IgnoreMatcher so build/, vendor/,
+    // doxygen/, and anything else listed in .gitignore + .explorerignore
+    // is filtered out. Pre-2.1.4 only the hardcoded SKIP_DIRS were honored.
+    // Issue #13 (v2.1.4): brace expansion handled inside.
     auto matches = collect_glob_matches(
-        server_.root_dir(), pattern, MAX_GLOB_RESULTS);
+        server_.root_dir(), pattern, MAX_GLOB_RESULTS,
+        &server_.ignore());
 
-    logger->info("Glob '{}': {} matches", pattern,
-                 matches.size());
+    logger->info("Glob '{}': {} matches (after ignore filtering)",
+                 pattern, matches.size());
     json result = matches;
     return {result.dump(), {}};
 }
@@ -857,12 +1098,12 @@ public:
      * @brief Construct from data directory.
      * @param data_dir Path to bundled data directory.
      * @internal
-     * @version 2.0.4
+     * @version 2.1.4
      */
     GrepTool(FilesystemServer& server, const std::string& data_dir)
         : ToolBase(load_tool_definition(
               "grep", "filesystem",
-              data_dir + "/tools")),
+              /* tools dir: */ data_dir + "/tools")),
           server_(server) {}
 
     /**
@@ -889,22 +1130,49 @@ private:
 };
 
 /**
- * @brief Execute grep: search files for pattern matches.
- * @param args_json JSON arguments.
- * @return ServerResponse with matches.
+ * @brief Compile a regex or return a structured tool error.
+ *
+ * @param pattern Regex source.
+ * @param[out] err Set to a non-empty JSON error string on failure.
+ * @return Compiled regex on success; the error path leaves `err`
+ *         populated and returns a never-match regex.
  * @internal
- * @version 2.0.4
+ * @version 2.1.4
+ */
+std::regex compile_grep_or_error(const std::string& pattern,
+                                 std::string& err) {
+    try {
+        return std::regex(pattern);
+    } catch (const std::regex_error& e) {
+        err = make_error("invalid_regex", e.what());
+        return std::regex("(?!)");
+    }
+}
+
+/**
+ * @brief Execute grep: brace-expand the file glob, compile the
+ *        content regex (error-safe), iterate the tree applying the
+ *        same classify_glob_entry filter glob uses.
+ *
+ * Issues #13/#15 (v2.1.4).
+ *
+ * @internal
+ * @version 2.1.4
  */
 ServerResponse GrepTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
     auto pattern = args.at("pattern").get<std::string>();
     auto file_glob = args.value("glob", std::string("*"));
 
-    std::regex re(pattern);
+    std::string err;
+    auto re = compile_grep_or_error(pattern, err);
+    if (!err.empty()) { return {err, {}}; }
+
+    auto file_patterns = expand_braces(file_glob);
     constexpr int MAX_GREP_RESULTS = 100;
     std::vector<json> matches;
-
     auto root = server_.root_dir();
+    const auto& ignore = server_.ignore();
     auto it = fs::recursive_directory_iterator(
         root, fs::directory_options::skip_permission_denied);
 
@@ -913,25 +1181,17 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
             MAX_GREP_RESULTS) {
             break;
         }
-        if (entry.is_directory() &&
-            should_skip_dir(
-                entry.path().filename().string())) {
+        auto action = classify_glob_entry(entry, root, file_patterns,
+                                          &ignore);
+        if (action == EntryAction::kSkipPrune) {
             it.disable_recursion_pending();
-            continue;
+        } else if (action == EntryAction::kTake) {
+            grep_file(entry.path(), re, matches, MAX_GREP_RESULTS);
         }
-        if (!entry.is_regular_file()) {
-            continue;
-        }
-        auto fname = entry.path().filename().string();
-        if (!glob_match(fname, file_glob)) {
-            continue;
-        }
-        grep_file(entry.path(), re, matches,
-                  MAX_GREP_RESULTS);
     }
 
-    logger->info("Grep '{}': {} matches", pattern,
-                 matches.size());
+    logger->info("Grep '{}': {} matches (after ignore filtering)",
+                 pattern, matches.size());
     json result = matches;
     return {result.dump(), {}};
 }
@@ -1039,12 +1299,16 @@ static int compute_max_read_bytes(const FilesystemConfig& config,
 
 /**
  * @brief Construct filesystem server, create and register all tools.
+ *
+ * Issue #15 (v2.1.4): also loads .gitignore + .explorerignore via the
+ * IgnoreMatcher member so glob/grep/read filter ignored paths.
+ *
  * @param root_dir Project root directory.
  * @param config Filesystem configuration.
  * @param data_dir Path to bundled data directory.
  * @param model_context_bytes Model context window in bytes.
  * @internal
- * @version 2.0.4
+ * @version 2.1.4
  */
 FilesystemServer::FilesystemServer(
     const fs::path& root_dir,
@@ -1072,9 +1336,16 @@ FilesystemServer::FilesystemServer(
     register_tool(grep_.get());
     register_tool(list_dir_.get());
 
+    // Issue #15 (v2.1.4): load .gitignore + .explorerignore so glob,
+    // grep, and read_file can filter out build artifacts and vendor
+    // blobs that pre-2.1.4 leaked into results.
+    ignore_.load(root_dir_);
+
     logger->info("FilesystemServer initialized: root={}, "
-                 "max_read_bytes={}", root_dir_.string(),
-                 max_read_bytes_);
+                 "max_read_bytes={}, ignore_rules={}",
+                 root_dir_.string(),
+                 max_read_bytes_,
+                 ignore_.rule_count());
 }
 
 /**
@@ -1098,10 +1369,14 @@ bool FilesystemServer::skip_duplicate_check(
 
 /**
  * @brief Set working directory by updating root_dir.
+ *
+ * Issue #15 (v2.1.4): also reloads IgnoreMatcher rules so the new
+ * root's .gitignore + .explorerignore take effect immediately.
+ *
  * @param path New root directory.
  * @return true on success, false if path is not a directory.
  * @internal
- * @version 1.8.5
+ * @version 2.1.4
  */
 bool FilesystemServer::set_working_dir(const std::string& path) {
     auto canonical = fs::weakly_canonical(path);
@@ -1111,8 +1386,10 @@ bool FilesystemServer::set_working_dir(const std::string& path) {
         return false;
     }
     root_dir_ = canonical;
-    logger->info("Working directory changed to: {}",
-                 root_dir_.string());
+    // Issue #15 (v2.1.4): reload ignore rules for the new root.
+    ignore_.load(root_dir_);
+    logger->info("Working directory changed to: {} (ignore_rules={})",
+                 root_dir_.string(), ignore_.rule_count());
     return true;
 }
 
@@ -1134,6 +1411,16 @@ const fs::path& FilesystemServer::root_dir() const {
  */
 FileAccessTracker& FilesystemServer::tracker() {
     return tracker_;
+}
+
+/**
+ * @brief Get the ignore matcher (#15, v2.1.4).
+ * @return Read-only matcher reference.
+ * @internal
+ * @version 2.1.4
+ */
+const IgnoreMatcher& FilesystemServer::ignore() const {
+    return ignore_;
 }
 
 /**

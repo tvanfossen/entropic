@@ -1,6 +1,6 @@
 {
   "name": "delegate",
-  "description": "Delegate a task to a different identity tier.\n\nUse this to assign work to a tier whose specialty matches the task. Provide a clear task description so the receiving tier has full context.\n\nThe available tiers are listed in the `target` enum. Choose based on the tier whose specialty matches the work that needs to be done.",
+  "description": "Delegate a task to a different identity tier.\n\nUse this to assign work to a tier whose specialty matches the task. Provide a clear task description so the receiving tier has full context.\n\nSemantics:\n- Creates a FRESH child context loaded with the target tier's full system prompt (identity + constitution + tools).\n- Child context does NOT inherit the parent's conversation history.\n- Filesystem state IS shared via the parent's worktree (no isolation).\n- The child's final result is returned to the lead context as a `[DELEGATION COMPLETE: <tier>] <summary>` user message for re-synthesis.\n- If the active tier has `relay_single_delegate` configured, the child's result is auto-relayed to the parent without re-synthesis. The child can also signal `coverage_gap=true` via entropic.complete to SUPPRESS the auto-relay (the lead then receives a [COVERAGE GAP] message instead, with `gap_description` and `suggested_files`, and may chain to a follow-up specialist). #10 v2.1.4.\n\nThe available tiers are listed in the `target` enum. Choose based on the tier whose specialty matches the work that needs to be done.",
   "inputSchema": {
     "type": "object",
     "properties": {

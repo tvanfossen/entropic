@@ -456,8 +456,8 @@ static int mock_generate_capturing(
     return 0;
 }
 
-SCENARIO("ResponseGenerator injects iteration / budget reminder into system prompt",
-         "[core][response_generator][2.1.0][demo-ask-1]")
+SCENARIO("ResponseGenerator injects iteration / budget reminder as user message",
+         "[core][response_generator][2.1.4][issue-16]")
 {
     GIVEN("a ResponseGenerator and a LoopContext at iteration 7/50, 12 tool calls") {
         InferenceInterface iface{};
@@ -689,6 +689,101 @@ SCENARIO("Engine state reminder surfaces anti-spiral warning",
                 CHECK(g_captured_msgs.find("previous turn rejected")
                       != std::string::npos);
                 CHECK(g_captured_msgs.find("anti-spiral")
+                      != std::string::npos);
+            }
+        }
+    }
+}
+
+/**
+ * @brief Pull the system message content out of the captured messages JSON.
+ *
+ * The mock_generate_capturing callback stores the JSON-serialized message
+ * array in g_captured_msgs. Each message is encoded as
+ *     {"role":"system","content":"...","tool_calls":[]}
+ * (the tool_calls field is added by the engine's serializer). We only care
+ * about the system one for cache-stability assertions.
+ *
+ * @param msgs_json Captured JSON.
+ * @return System message content, or empty if not found / parse error.
+ * @utility
+ * @version 2.1.4
+ */
+static std::string extract_system_content(const std::string& msgs_json) {
+    std::string out;
+    auto sys_pos = msgs_json.find("\"role\":\"system\"");
+    auto content_pos = (sys_pos == std::string::npos)
+        ? std::string::npos
+        : msgs_json.find("\"content\":\"", sys_pos);
+    if (content_pos != std::string::npos) {
+        content_pos += std::string("\"content\":\"").size();
+        out.reserve(64);
+        for (size_t i = content_pos;
+             i < msgs_json.size() && msgs_json[i] != '"';
+             ++i) {
+            char c = msgs_json[i];
+            if (c == '\\' && i + 1 < msgs_json.size()) {
+                out.push_back(c);
+                out.push_back(msgs_json[i + 1]);
+                ++i;
+            } else {
+                out.push_back(c);
+            }
+        }
+    }
+    return out;
+}
+
+SCENARIO("System message stays bit-stable across turns (prompt cache)",
+         "[core][response_generator][2.1.4][issue-16]")
+{
+    // Issue #16 cache-correctness invariant: per-turn engine reminders
+    // must NOT mutate the system message; otherwise PromptCache key and
+    // prefix_tokens vary every turn → 100% cache miss + 179MB eviction.
+    GIVEN("two consecutive generate_response calls with different metrics") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        auto loop_cfg = make_loop_config();
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "lead";
+        Message sys{"system", "you are a helpful agent"};
+        ctx.messages.push_back(std::move(sys));
+        Message user{"user", "do the thing"};
+        ctx.messages.push_back(std::move(user));
+
+        WHEN("turn 1 fires (iteration=1) and turn 2 fires (iteration=2)") {
+            ctx.metrics.iterations = 1;
+            ctx.metrics.tool_calls = 0;
+            g_captured_msgs.clear();
+            gen.generate_response(ctx);
+            std::string sys_t1 = extract_system_content(g_captured_msgs);
+
+            ctx.metrics.iterations = 2;
+            ctx.metrics.tool_calls = 1;
+            g_captured_msgs.clear();
+            gen.generate_response(ctx);
+            std::string sys_t2 = extract_system_content(g_captured_msgs);
+
+            THEN("system content is byte-identical across the two turns") {
+                CHECK_FALSE(sys_t1.empty());
+                CHECK(sys_t1 == sys_t2);
+            }
+            AND_THEN("system content does NOT contain per-turn iteration text") {
+                CHECK(sys_t1.find("iteration 1/") == std::string::npos);
+                CHECK(sys_t2.find("iteration 2/") == std::string::npos);
+            }
+            AND_THEN("the per-turn reminder still reaches the model "
+                     "(as a separate user message)") {
+                CHECK(g_captured_msgs.find("iteration 2/")
+                      != std::string::npos);
+                CHECK(g_captured_msgs.find("tool calls so far: 1")
                       != std::string::npos);
             }
         }

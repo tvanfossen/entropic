@@ -171,6 +171,7 @@ add_executable(entropic-mcp-tests
     mcp/tool_calling_loop_test.cpp
     # Per-server behavioral tests
     mcp/servers/filesystem_test.cpp
+    mcp/servers/ignore_matcher_test.cpp
     mcp/servers/bash_test.cpp
     mcp/servers/git_test.cpp
     mcp/servers/diagnostics_test.cpp

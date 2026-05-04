@@ -1,12 +1,25 @@
 {
   "name": "complete",
-  "description": "Signal that your delegated task is finished.\n\nCall this tool when you have completed the work assigned to you. Provide a summary of what was accomplished.\n\nThis tool is only available during delegation (child contexts). It explicitly signals completion to the parent context.",
+  "description": "Signal that your delegated task is finished.\n\nCall this tool when you have completed the work assigned to you. Provide a summary of what was accomplished.\n\nThis tool is only available during delegation (child contexts). It explicitly signals completion to the parent context.\n\nIssue #10 (v2.1.4): set `coverage_gap=true` if your answer is incomplete because the work requires sources you cannot access (e.g. a researcher consulted only the docs DB but the answer also requires source-file inspection). When set, the engine SUPPRESSES auto-relay for this completion and instead injects a `[COVERAGE GAP]` message into the lead context so lead can chain to a follow-up specialist (e.g. a reader). YOU MUST also describe the gap concretely in `gap_description` (what's missing and why) so the lead knows what to investigate. List the file paths the lead should inspect in `suggested_files`.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "summary": {
         "type": "string",
         "description": "Summary of what was accomplished during this delegation"
+      },
+      "coverage_gap": {
+        "type": "boolean",
+        "description": "Set true if your answer is incomplete due to missing source access. Suppresses auto-relay and returns control to the lead. Requires gap_description when true. (#10, v2.1.4)"
+      },
+      "gap_description": {
+        "type": "string",
+        "description": "Concrete description of what your answer DOES NOT cover and why — the part that the next specialist needs to fill in. Required when coverage_gap=true. (#10, v2.1.4)"
+      },
+      "suggested_files": {
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "File paths the lead should inspect to fill the gap. Only meaningful when coverage_gap=true. (#10, v2.1.4)"
       }
     },
     "required": ["summary"]

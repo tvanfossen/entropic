@@ -15,6 +15,8 @@
 #include <entropic/types/config.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
+#include <unistd.h>
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 
@@ -38,12 +40,17 @@ public:
      * @version 1.8.5
      */
     TempDir() {
+        // CTest runs each Catch2 SCENARIO as a separate process via
+        // catch2-discovery; a per-process counter races on shared
+        // /tmp/entropic_test_0. Include PID + a per-instance counter
+        // for uniqueness across processes AND multiple instances in
+        // the same process.
+        static std::atomic<int> instance_counter{0};
         auto base = fs::temp_directory_path() / "entropic_test";
-        int counter = 0;
-        do {
-            path_ = base.string() + "_" +
-                     std::to_string(counter++);
-        } while (fs::exists(path_));
+        int idx = instance_counter.fetch_add(1);
+        path_ = base.string() + "_p"
+              + std::to_string(static_cast<long>(::getpid()))
+              + "_i" + std::to_string(idx);
         fs::create_directories(path_);
     }
 
@@ -416,13 +423,11 @@ TEST_CASE("test_glob_finds_files", "[filesystem]") {
     REQUIRE(result.size() == 2);
 }
 
-TEST_CASE("test_glob_brace_expansion", "[filesystem]") {
+TEST_CASE("test_glob_simple_pattern", "[filesystem]") {
     /**
-     * @brief Verify glob with simple wildcard pattern works.
-     *        (std::regex glob does not support brace expansion,
-     *        so test *.txt as functional equivalent.)
+     * @brief Single wildcard pattern still works post-#13 brace expansion.
      * @internal
-     * @version 1.8.5
+     * @version 2.1.4
      */
     TempDir tmp;
     write_test_file(tmp.path(), "x.txt", "x");
@@ -442,6 +447,239 @@ TEST_CASE("test_glob_brace_expansion", "[filesystem]") {
 
     REQUIRE(result.is_array());
     REQUIRE(result.size() == 2);
+}
+
+TEST_CASE("test_glob_brace_expansion_real", "[filesystem][2.1.4][issue-13]") {
+    /**
+     * @brief Issue #13: brace expansion is now actually supported.
+     *        Pattern `*.{txt,md}` matches BOTH x.txt and y.md.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), "x.txt", "x");
+    write_test_file(tmp.path(), "y.md", "y");
+    write_test_file(tmp.path(), "z.cpp", "z");
+
+    auto server = make_server(tmp.path());
+    auto prev_cwd = fs::current_path();
+    fs::current_path(tmp.path());
+
+    json args;
+    args["pattern"] = "*.{txt,md}";
+    auto envelope = server.execute("glob", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    fs::current_path(prev_cwd);
+
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 2);
+}
+
+TEST_CASE("test_glob_brace_expansion_three_alternatives",
+          "[filesystem][2.1.4][issue-13]") {
+    /**
+     * @brief Issue #13: `*.{c,h,py}` produces three patterns.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), "a.c", "a");
+    write_test_file(tmp.path(), "b.h", "b");
+    write_test_file(tmp.path(), "c.py", "c");
+    write_test_file(tmp.path(), "d.md", "d");
+
+    auto server = make_server(tmp.path());
+    auto prev_cwd = fs::current_path();
+    fs::current_path(tmp.path());
+
+    json args;
+    args["pattern"] = "*.{c,h,py}";
+    auto envelope = server.execute("glob", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    fs::current_path(prev_cwd);
+
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 3);
+}
+
+TEST_CASE("test_grep_brace_expansion_in_glob",
+          "[filesystem][2.1.4][issue-13]") {
+    /**
+     * @brief Issue #13: grep's `glob` arg also supports brace
+     *        expansion. Pre-2.1.4 `*.{c,h}` killed the session with
+     *        regex_error.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), "a.c", "needle here\n");
+    write_test_file(tmp.path(), "b.h", "needle there\n");
+    write_test_file(tmp.path(), "c.py", "needle ignored\n");
+
+    auto server = make_server(tmp.path());
+    auto prev_cwd = fs::current_path();
+    fs::current_path(tmp.path());
+
+    json args;
+    args["pattern"] = "needle";
+    args["glob"] = "*.{c,h}";
+    auto envelope = server.execute("grep", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    fs::current_path(prev_cwd);
+
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 2);
+}
+
+TEST_CASE("test_grep_invalid_regex_returns_structured_error",
+          "[filesystem][2.1.4][issue-13]") {
+    /**
+     * @brief Issue #13: malformed regex returns a structured tool
+     *        error (`{"error":"invalid_regex",...}`) rather than
+     *        propagating an unhandled exception.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), "a.c", "hello\n");
+
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["pattern"] = "[unclosed";
+    auto envelope = server.execute("grep", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    REQUIRE(result.is_object());
+    REQUIRE(result.at("error").get<std::string>() == "invalid_regex");
+}
+
+// ── Issue #15: gitignore + explorerignore ────────────────
+
+TEST_CASE("test_glob_respects_gitignore",
+          "[filesystem][2.1.4][issue-15]") {
+    /**
+     * @brief Issue #15: a `.gitignore` listing `build/` excludes
+     *        `build/foo.o` from glob results. Pre-2.1.4 only the
+     *        hardcoded SKIP_DIRS list was honored.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), ".gitignore", "build/\n*.log\n");
+    write_test_file(tmp.path(), "src/main.cpp", "int main(){}");
+    write_test_file(tmp.path(), "build/main.o", "obj");
+    write_test_file(tmp.path(), "build/x/y/z.o", "obj");
+    write_test_file(tmp.path(), "logs/error.log", "boom");
+
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["pattern"] = "*";
+    auto envelope = server.execute("glob", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    REQUIRE(result.is_array());
+    bool saw_build = false;
+    bool saw_log = false;
+    bool saw_main = false;
+    for (const auto& p : result) {
+        auto s = p.get<std::string>();
+        if (s.find("/build/") != std::string::npos) saw_build = true;
+        if (s.find(".log") != std::string::npos) saw_log = true;
+        if (s.find("main.cpp") != std::string::npos) saw_main = true;
+    }
+    CHECK_FALSE(saw_build);
+    CHECK_FALSE(saw_log);
+    CHECK(saw_main);
+}
+
+TEST_CASE("test_glob_respects_explorerignore_supplementary",
+          "[filesystem][2.1.4][issue-15]") {
+    /**
+     * @brief Issue #15: .explorerignore is supplementary — it can
+     *        add patterns on top of .gitignore.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), ".gitignore", "build/\n");
+    // .gitignore covers build/, .explorerignore adds *.xml exclusion
+    write_test_file(tmp.path(), ".explorerignore",
+                    "*.xml\ndocs/doxygen/\n");
+    write_test_file(tmp.path(), "src/main.cpp", "x");
+    write_test_file(tmp.path(), "data.xml", "x");
+    write_test_file(tmp.path(), "docs/doxygen/index.html", "x");
+    write_test_file(tmp.path(), "build/x.o", "x");
+
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["pattern"] = "*";
+    auto envelope = server.execute("glob", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    REQUIRE(result.is_array());
+    for (const auto& p : result) {
+        auto s = p.get<std::string>();
+        CHECK(s.find(".xml") == std::string::npos);
+        CHECK(s.find("doxygen") == std::string::npos);
+        CHECK(s.find("/build/") == std::string::npos);
+    }
+}
+
+TEST_CASE("test_explorerignore_negation_re_includes_path",
+          "[filesystem][2.1.4][issue-15]") {
+    /**
+     * @brief Issue #15: gitignore `!pattern` re-includes a path
+     *        previously excluded.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), ".gitignore", "*.log\n!keep.log\n");
+    write_test_file(tmp.path(), "x.log", "noise");
+    write_test_file(tmp.path(), "keep.log", "important");
+
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["pattern"] = "*.log";
+    auto envelope = server.execute("glob", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 1);
+    auto only = result[0].get<std::string>();
+    REQUIRE(only.find("keep.log") != std::string::npos);
+}
+
+TEST_CASE("test_read_file_refuses_ignored_path",
+          "[filesystem][2.1.4][issue-15]") {
+    /**
+     * @brief Issue #15: read_file returns a structured "ignored"
+     *        error when asked to read a path excluded by
+     *        .gitignore / .explorerignore.
+     * @internal
+     * @version 2.1.4
+     */
+    TempDir tmp;
+    write_test_file(tmp.path(), ".gitignore", "secret/\n");
+    write_test_file(tmp.path(), "secret/api_key.txt", "sk-...");
+    write_test_file(tmp.path(), "public/readme.md", "hi");
+
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["path"] = (tmp.path() / "secret/api_key.txt").string();
+    auto envelope = server.execute("read_file", args.dump());
+    auto result = json::parse(raw_result(envelope));
+
+    REQUIRE(result.is_object());
+    REQUIRE(result.at("error").get<std::string>() == "ignored");
 }
 
 TEST_CASE("test_glob_skips_directories", "[filesystem]") {

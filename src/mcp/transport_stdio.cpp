@@ -49,14 +49,42 @@ namespace entropic {
  * @param env Environment variable overrides.
  * @param default_timeout_ms Default request timeout.
  * @internal
- * @version 1.8.7
+ * @version 2.1.5
  */
 StdioTransport::StdioTransport(
     std::string command,
     std::vector<std::string> args,
     std::map<std::string, std::string> env,
     uint32_t default_timeout_ms)
-    : command_(std::move(command)),
+    : display_name_(command),
+      command_(std::move(command)),
+      args_(std::move(args)),
+      env_(std::move(env)),
+      default_timeout_ms_(default_timeout_ms) {}
+
+/**
+ * @brief Construct with explicit display name (gh#19, v2.1.5).
+ *
+ * Use this overload when registering an MCP server so stderr lines
+ * carry the registered server name instead of the resolved spawn
+ * command.
+ *
+ * @param display_name Bracketed label for stderr/lifecycle logs.
+ * @param command Executable to spawn.
+ * @param args Command-line arguments.
+ * @param env Environment variable overrides.
+ * @param default_timeout_ms Default request timeout.
+ * @internal
+ * @version 2.1.5
+ */
+StdioTransport::StdioTransport(
+    std::string display_name,
+    std::string command,
+    std::vector<std::string> args,
+    std::map<std::string, std::string> env,
+    uint32_t default_timeout_ms)
+    : display_name_(display_name.empty() ? command : std::move(display_name)),
+      command_(std::move(command)),
       args_(std::move(args)),
       env_(std::move(env)),
       default_timeout_ms_(default_timeout_ms) {}
@@ -92,7 +120,7 @@ bool StdioTransport::create_all_pipes(int (&fds)[6]) {
  * @brief Spawn child process and open pipes.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.1.5
  */
 bool StdioTransport::open() {
     if (connected_) {
@@ -107,8 +135,8 @@ bool StdioTransport::open() {
     stderr_thread_ = std::thread(
         &StdioTransport::stderr_reader_loop, this);
 
-    logger->info("Spawned child process PID {} for '{}'",
-                 child_pid_, command_);
+    logger->info("Spawned child process PID {} for '{}' (cmd: {})",
+                 child_pid_, display_name_, command_);
     return true;
 }
 
@@ -148,7 +176,7 @@ bool StdioTransport::open_child_process() {
 /**
  * @brief Send SIGTERM, reap child, close pipes.
  * @internal
- * @version 1.8.7
+ * @version 2.1.5
  */
 void StdioTransport::close() {
     connected_ = false;
@@ -162,7 +190,7 @@ void StdioTransport::close() {
         stderr_thread_.join();
     }
 
-    logger->info("Closed stdio transport for '{}'", command_);
+    logger->info("Closed stdio transport for '{}'", display_name_);
 }
 
 /**
@@ -237,7 +265,7 @@ void StdioTransport::interrupt() {
  * @param env_strs Merged environment strings.
  * @return true on success, child_pid_ set.
  * @utility
- * @version 1.8.7
+ * @version 2.1.5
  */
 bool StdioTransport::spawn_child(
     int stdin_r, int stdout_w, int stderr_w,
@@ -271,8 +299,8 @@ bool StdioTransport::spawn_child(
     posix_spawn_file_actions_destroy(&actions);
 
     if (err != 0) {
-        logger->error("posix_spawnp failed for '{}': {}",
-                      command_, strerror(err));
+        logger->error("posix_spawnp failed for '{}' (cmd: {}): {}",
+                      display_name_, command_, strerror(err));
         child_pid_ = -1;
         return false;
     }
@@ -408,7 +436,7 @@ std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
 /**
  * @brief Forward child stderr to spdlog WARNING.
  * @callback
- * @version 1.8.7
+ * @version 2.1.5
  */
 void StdioTransport::stderr_reader_loop() {
     constexpr int poll_timeout_ms = 500;
@@ -425,7 +453,7 @@ void StdioTransport::stderr_reader_loop() {
             break;
         }
         buf[n] = '\0';
-        logger->warn("[{}] {}", command_, buf);
+        logger->warn("[{}] {}", display_name_, buf);
     }
 }
 

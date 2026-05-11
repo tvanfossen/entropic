@@ -51,6 +51,9 @@ _LAZY_EXPORTS = frozenset(
         # Issue #8 (v2.1.4): EntropicHookPoint enum + 4 new ABI symbols.
         "EntropicHookPoint",
         "HOOK_CB",
+        # gh#22 (v2.1.5): C-ABI-documentation-spelled CFUNCTYPE aliases.
+        "HOOK_CALLBACK_CB",
+        "TOKEN_STREAM_CB",
         "STATE_OBSERVER_CB",
         "STREAM_OBSERVER_CB",
         "TOKEN_CB",
@@ -59,6 +62,8 @@ _LAZY_EXPORTS = frozenset(
         "entropic_configure_dir",
         "entropic_context_clear",
         "entropic_context_count",
+        # gh#22 (v2.1.5): closes gh#8 partial gap.
+        "entropic_context_get",
         "entropic_create",
         "entropic_destroy",
         "entropic_free",

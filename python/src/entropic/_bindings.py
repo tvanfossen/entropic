@@ -186,6 +186,18 @@ result via ``*modified_json`` (allocate with malloc — engine free()s),
 and returns 0 for OK or non-zero to cancel/reject.
 """
 
+# gh#22 (v2.1.5): C-ABI-documentation-spelled aliases for the CFUNCTYPE
+# typedefs. The wrapper picked terse names internally (HOOK_CB, TOKEN_CB,
+# STREAM_OBSERVER_CB); the C header documents them as
+# entropic_hook_callback_t, entropic_token_callback_t, etc. Consumers
+# coming from the C ABI docs expect the spelled-out names. Keep both
+# spellings; old code continues to work.
+HOOK_CALLBACK_CB = HOOK_CB
+"""Alias for :data:`HOOK_CB` matching the C ABI docs (gh#22)."""
+
+TOKEN_STREAM_CB = TOKEN_CB
+"""Alias for :data:`TOKEN_CB` matching the C ABI docs (gh#22)."""
+
 
 ## @brief Pin restype/argtypes on a symbol from the loaded library.
 ## @utility
@@ -249,6 +261,22 @@ entropic_context_count = _bind(
     entropic_handle_t,
     ctypes.POINTER(ctypes.c_size_t),
 )
+
+# gh#22 (v2.1.5): closes the gh#8 partial gap. The C ABI exposes
+# entropic_context_get(handle, char** out_messages_json) — the engine
+# allocates *out_messages_json via malloc and the caller must free it
+# via entropic_free.
+entropic_context_get = _bind(
+    "entropic_context_get",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.POINTER(ctypes.c_char_p),
+)
+"""(handle, out_messages_json) -> entropic_error_t.
+
+Returns the current conversation as a JSON array string in
+``*out_messages_json``. Caller frees with :data:`entropic_free`.
+"""
 
 # ── Observers ────────────────────────────────────────────────────────────
 entropic_set_state_observer = _bind(

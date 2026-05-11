@@ -7,7 +7,7 @@
 
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
-#include <entropic/core/worktree.h>
+#include <entropic/core/sandbox.h>
 #include <entropic/types/logging.h>
 #include <entropic/types/tool_result.h>
 
@@ -2004,53 +2004,29 @@ bool AgentEngine::try_auto_chain(
     return !target.empty();
 }
 
-// ── Repo init (v1.8.6) ──────────────────────────────────
+// ── Project dir (v2.1.5, gh#29) ─────────────────────────
 
 /**
- * @brief Get or discover the project git repository.
- * @return Repo directory, or empty if not found.
+ * @brief Get the project directory used as sandbox snapshot source.
+ *
+ * Caches `std::filesystem::current_path()` on first call. No git
+ * inspection, no repo initialization, no writes to the user's
+ * directory. `SandboxManager` handles both git and non-git projects
+ * — the engine is purely a reader of this path.
+ *
+ * @return Project directory path.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
     repo_dir_checked_ = true;
-
     auto cwd = std::filesystem::current_path();
-    bool found = std::filesystem::exists(cwd / ".git");
-    bool inited = !found && init_project_repo(cwd);
-
-    if (found || inited) {
-        cached_repo_dir_ = cwd;
-        logger->info("Git repo at: {}", cwd.string());
-    } else {
-        logger->warn("No git repo found or initialized");
-    }
-    return cached_repo_dir_.value_or(std::filesystem::path{});
-}
-
-/**
- * @brief Initialize a git repo if none exists.
- * @param project_dir Directory to init.
- * @return true if repo now exists.
- * @internal
- * @version 2.0.2
- */
-bool AgentEngine::init_project_repo(
-    const std::filesystem::path& project_dir) {
-    auto r1 = run_git(project_dir, "init");
-    if (!r1.success) {
-        return false;
-    }
-    auto r2 = run_git(project_dir, "add -A");
-    if (!r2.success) {
-        return false;
-    }
-    run_git(project_dir, "commit --allow-empty -m 'Initial commit'");
-    logger->info("Initialized git repo at: {}", project_dir.string());
-    return true;
+    cached_repo_dir_ = cwd;
+    logger->info("Project dir for sandbox snapshots: {}", cwd.string());
+    return cwd;
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────

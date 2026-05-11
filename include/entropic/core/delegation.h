@@ -4,16 +4,16 @@
  * @brief DelegationManager — child loop creation and execution.
  *
  * Ports Python's DelegationManager. Orchestrates child inference loop
- * creation, worktree lifecycle, pipeline execution, and todo list
+ * creation, sandbox lifecycle, pipeline execution, and todo list
  * save/restore across delegation boundaries.
  *
- * @version 1.8.6
+ * @version 2.1.5
  */
 
 #pragma once
 
 #include <entropic/core/engine_types.h>
-#include <entropic/core/worktree.h>
+#include <entropic/core/sandbox.h>
 #include <entropic/types/message.h>
 
 #include <functional>
@@ -124,12 +124,12 @@ public:
     void set_todo_callbacks(const TodoCallbacks& callbacks);
 
     /**
-     * @brief Set directory swap callback for ScopedWorktree.
+     * @brief Set directory swap callback for ScopedSandbox.
      * @param swap_fn Directory swap callback.
      * @param user_data Opaque pointer for swap_fn.
-     * @version 1.8.6
+     * @version 2.1.5
      */
-    void set_dir_swap(ScopedWorktree::SwapDirFn swap_fn, void* user_data);
+    void set_dir_swap(ScopedSandbox::SwapDirFn swap_fn, void* user_data);
 
     /**
      * @brief Set storage interface for delegation record persistence.
@@ -226,13 +226,20 @@ private:
     void log_child_result(const DelegationResult& result);
 
     /**
-     * @brief Finalize worktree based on delegation result.
-     * @param wt_info Worktree to finalize (nullopt if no worktree).
-     * @param result Delegation result determining merge/discard.
-     * @version 1.8.6
+     * @brief Finalize sandbox based on delegation result.
+     *
+     * On success, generates a unified-diff patch via the sandbox
+     * manager. The patch is currently discarded after logging — the
+     * 2.1.5 fix removes the previous auto-merge-to-parent behavior
+     * (gh#29). Consumer-facing delivery of the patch will land via
+     * the delegation-complete C ABI callback (also 2.1.5).
+     *
+     * @param sb_info Sandbox to finalize (nullopt if no sandbox).
+     * @param result Delegation result (success/failure governs cleanup).
+     * @version 2.1.5
      */
-    void finalize_worktree(
-        const std::optional<WorktreeInfo>& wt_info,
+    void finalize_sandbox_for(
+        const std::optional<SandboxInfo>& sb_info,
         const DelegationResult& result);
 
     /**
@@ -262,10 +269,10 @@ private:
     void* run_child_data_;                             ///< Engine instance
     TierResolutionInterface tier_res_;                 ///< Tier lookup callbacks
     TodoCallbacks todo_callbacks_;                     ///< Todo save/restore
-    ScopedWorktree::SwapDirFn swap_dir_fn_ = nullptr;  ///< Dir swap callback
+    ScopedSandbox::SwapDirFn swap_dir_fn_ = nullptr;   ///< Dir swap callback
     void* swap_dir_data_ = nullptr;                    ///< Dir swap user data
-    std::optional<WorktreeManager> worktree_mgr_;      ///< Git worktree manager
-    std::filesystem::path repo_dir_;                   ///< Repository root
+    std::optional<SandboxManager> sandbox_mgr_;        ///< Filesystem sandbox (2.1.5, gh#29)
+    std::filesystem::path repo_dir_;                   ///< Project root
     const struct StorageInterface* storage_ = nullptr; ///< Nullable storage (v1.8.8)
 };
 

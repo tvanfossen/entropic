@@ -3,10 +3,14 @@
  * @file delegation.cpp
  * @brief DelegationManager implementation.
  *
- * Ports Python's DelegationManager. Child loop creation, worktree
+ * Ports Python's DelegationManager. Child loop creation, sandbox
  * lifecycle, pipeline execution, todo list save/restore.
  *
- * @version 1.8.6
+ * v2.1.5 (gh#29): sandbox replaces worktree. The engine no longer
+ * touches the user's git repo. Delegation output flows back via a
+ * unified-diff patch produced by SandboxManager::finalize_sandbox().
+ *
+ * @version 2.1.5
  */
 
 #include <entropic/core/delegation.h>
@@ -28,9 +32,9 @@ namespace entropic {
  * @param run_child Callback to run child engine loop.
  * @param run_child_data Opaque pointer for run_child.
  * @param tier_resolution Tier resolution interface.
- * @param repo_dir Optional repo root for worktree isolation.
+ * @param repo_dir Optional project root for sandbox isolation (gh#29).
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 DelegationManager::DelegationManager(
     RunChildLoopFn run_child,
@@ -42,7 +46,7 @@ DelegationManager::DelegationManager(
       tier_res_(tier_resolution),
       repo_dir_(repo_dir) {
     if (!repo_dir_.empty()) {
-        worktree_mgr_.emplace(repo_dir_);
+        sandbox_mgr_.emplace(repo_dir_);
     }
 }
 
@@ -57,14 +61,14 @@ void DelegationManager::set_todo_callbacks(const TodoCallbacks& callbacks) {
 }
 
 /**
- * @brief Set directory swap callback for ScopedWorktree.
+ * @brief Set directory swap callback for ScopedSandbox.
  * @param swap_fn Directory swap callback.
  * @param user_data Opaque pointer for swap_fn.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 void DelegationManager::set_dir_swap(
-    ScopedWorktree::SwapDirFn swap_fn, void* user_data) {
+    ScopedSandbox::SwapDirFn swap_fn, void* user_data) {
     swap_dir_fn_ = swap_fn;
     swap_dir_data_ = user_data;
 }
@@ -89,7 +93,7 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @internal
- * @version 2.0.2
+ * @version 2.1.5
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -112,27 +116,25 @@ DelegationResult DelegationManager::execute_delegation(
     auto child_ctx = build_child_context(parent_ctx, info, task);
     child_ctx.locked_tier = target_tier;
 
-    // Create per-delegation worktree
-    std::optional<WorktreeInfo> wt_info;
-    if (worktree_mgr_) {
-        worktree_mgr_->ensure_develop();
-        wt_info = worktree_mgr_->create_worktree(
-            "d" + std::to_string(parent_ctx.delegation_depth + 1),
-            target_tier);
+    // Create per-delegation filesystem sandbox (gh#29: was a git
+    // worktree, now an isolated copy under ~/.entropic/sandbox/).
+    std::optional<SandboxInfo> sb_info;
+    if (sandbox_mgr_) {
+        sb_info = sandbox_mgr_->create_sandbox(
+            "d" + std::to_string(parent_ctx.delegation_depth + 1));
     }
 
     DelegationResult result;
 
-    // Scoped worktree swap (RAII restores on exit)
-    if (wt_info && swap_dir_fn_ != nullptr) {
-        ScopedWorktree scope(swap_dir_fn_, swap_dir_data_,
-                             wt_info->path, repo_dir_);
+    if (sb_info && swap_dir_fn_ != nullptr) {
+        ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                            sb_info->path, repo_dir_);
         result = run_child(child_ctx, target_tier, task, max_turns);
     } else {
         result = run_child(child_ctx, target_tier, task, max_turns);
     }
 
-    finalize_worktree(wt_info, result);
+    finalize_sandbox_for(sb_info, result);
     return result;
 }
 
@@ -191,7 +193,7 @@ static std::string pipeline_context(
  * @param task Task description.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 2.1.4
+ * @version 2.1.5
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -200,11 +202,12 @@ DelegationResult DelegationManager::execute_pipeline(
 
     logger->info("Pipeline: {} stages, task='{}'", stages.size(), task);
 
-    // Create shared worktree for entire pipeline
-    std::optional<WorktreeInfo> shared_wt;
-    if (worktree_mgr_) {
-        worktree_mgr_->ensure_develop();
-        shared_wt = worktree_mgr_->create_worktree("pipeline", "shared");
+    // Shared sandbox for the entire pipeline (gh#29). Each stage runs
+    // inside the same directory so later stages observe earlier stages'
+    // file edits — preserving the v2.1.4 forward-carry behavior.
+    std::optional<SandboxInfo> shared_sb;
+    if (sandbox_mgr_) {
+        shared_sb = sandbox_mgr_->create_sandbox("pipeline");
     }
 
     DelegationResult last_result;
@@ -232,9 +235,9 @@ DelegationResult DelegationManager::execute_pipeline(
         auto child_ctx = build_child_context(parent_ctx, info, stage_task);
         child_ctx.locked_tier = stages[i];
 
-        if (shared_wt && swap_dir_fn_ != nullptr) {
-            ScopedWorktree scope(swap_dir_fn_, swap_dir_data_,
-                                 shared_wt->path, repo_dir_);
+        if (shared_sb && swap_dir_fn_ != nullptr) {
+            ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                                shared_sb->path, repo_dir_);
             last_result = run_child(
                 child_ctx, stages[i], stage_task, std::nullopt);
         } else {
@@ -251,10 +254,11 @@ DelegationResult DelegationManager::execute_pipeline(
         }
     }
 
-    // Pipeline always merges (even on partial failure)
-    if (shared_wt && worktree_mgr_) {
-        worktree_mgr_->merge_worktree(*shared_wt);
-    }
+    // Pipeline always finalizes — generates the patch artifact for
+    // logging and (future) delivery via the delegation-complete C ABI
+    // callback. Cleanup happens unconditionally (gh#29: engine never
+    // merges to parent).
+    finalize_sandbox_for(shared_sb, last_result);
 
     return last_result;
 }
@@ -526,24 +530,41 @@ void DelegationManager::log_child_result(
 }
 
 /**
- * @brief Finalize worktree based on delegation result.
- * @param wt_info Worktree to finalize.
+ * @brief Finalize sandbox based on delegation result.
+ *
+ * On success, generates a unified-diff patch describing the agent's
+ * edits and logs a summary (size, file count). The patch is currently
+ * dropped after logging — the consumer-facing delivery path lands via
+ * the delegation-complete C ABI callback in 2.1.5 as a follow-up
+ * commit on this branch. Regardless of result, the sandbox directory
+ * is removed: the engine never merges to the user's repo (gh#29).
+ *
+ * @param sb_info Sandbox to finalize.
  * @param result Delegation result.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
-void DelegationManager::finalize_worktree(
-    const std::optional<WorktreeInfo>& wt_info,
+void DelegationManager::finalize_sandbox_for(
+    const std::optional<SandboxInfo>& sb_info,
     const DelegationResult& result) {
-    if (!wt_info || !worktree_mgr_) {
+    if (!sb_info || !sandbox_mgr_) {
         return;
     }
 
     if (result.success) {
-        worktree_mgr_->merge_worktree(*wt_info);
+        auto patch_result = sandbox_mgr_->finalize_sandbox(*sb_info);
+        if (patch_result) {
+            logger->info("Delegation {} produced patch: "
+                         "{} files, {} bytes",
+                         sb_info->delegation_id,
+                         patch_result->files_touched.size(),
+                         patch_result->patch.size());
+        }
     } else {
-        worktree_mgr_->discard_worktree(*wt_info);
+        logger->info("Delegation {} failed: discarding sandbox without "
+                     "generating patch", sb_info->delegation_id);
     }
+    sandbox_mgr_->discard_sandbox(*sb_info);
 }
 
 } // namespace entropic

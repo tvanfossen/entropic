@@ -133,14 +133,14 @@ target_link_libraries(entropic-cap-tests PRIVATE
 
 # v1.8.4: Core engine tests
 # v1.8.6: Added delegation, worktree, auto-chain tests
+# v2.1.5: worktree replaced by sandbox (gh#29)
 add_executable(entropic-core-tests
     core/compaction_test.cpp
     core/compactor_registry_test.cpp
     core/directives_test.cpp
     core/context_manager_test.cpp
     core/engine_test.cpp
-    core/worktree_test.cpp
-    core/test_worktree_session_isolation.cpp
+    core/sandbox_test.cpp
     core/delegation_manager_test.cpp
     core/auto_chain_test.cpp
     core/hook_registry_test.cpp

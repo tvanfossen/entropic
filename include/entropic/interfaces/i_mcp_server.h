@@ -90,8 +90,9 @@ entropic_error_t entropic_mcp_server_configure(
  * @version 1.8.5
  *
  * Base class default is no-op. Directory-aware servers (filesystem,
- * bash, git) implement this. Enables v1.8.6 ScopedWorktree to swap
- * directories across .so boundaries without breaking isolation.
+ * bash, git) implement this. Enables ScopedSandbox (v2.1.5; formerly
+ * ScopedWorktree) to swap directories across .so boundaries without
+ * breaking isolation.
  */
 entropic_error_t entropic_mcp_server_set_working_dir(
     entropic_mcp_server_t server,

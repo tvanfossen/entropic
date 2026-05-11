@@ -698,19 +698,18 @@ private:
                                      const std::string& summary = "");///< @internal
 
     /**
-     * @brief Get or discover the project git repository.
-     * @return Repo directory, or empty if not found.
-     * @version 1.8.6
+     * @brief Get the project root used as sandbox snapshot source.
+     *
+     * Returns the current working directory. Unlike the v1.8.6–v2.1.4
+     * implementation, this method does NOT initialize a git repo if
+     * none exists — `SandboxManager` handles non-git projects natively
+     * (gh#29, v2.1.5). The engine no longer mutates the user's
+     * project directory under any circumstance.
+     *
+     * @return Project directory path.
+     * @version 2.1.5
      */
     std::filesystem::path get_repo_dir();                       ///< @internal
-
-    /**
-     * @brief Initialize a git repo if none exists.
-     * @param project_dir Directory to init.
-     * @return true if repo now exists.
-     * @version 1.8.6
-     */
-    bool init_project_repo(const std::filesystem::path& project_dir); ///< @internal
 
     /**
      * @brief Fire on_delegation_start callback.

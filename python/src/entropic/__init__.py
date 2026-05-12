@@ -57,6 +57,13 @@ _LAZY_EXPORTS = frozenset(
         "STATE_OBSERVER_CB",
         "STREAM_OBSERVER_CB",
         "TOKEN_CB",
+        # gh#29 (v2.1.5): delegation callbacks — replaces auto-merge.
+        "DELEGATION_START_CB",
+        "DELEGATION_COMPLETE_CB",
+        "EntDecision",
+        "EntDelegationRequest",
+        "EntDelegationResult",
+        "entropic_set_delegation_callbacks",
         "entropic_alloc",
         "entropic_api_version",
         "entropic_configure_dir",

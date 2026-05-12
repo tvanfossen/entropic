@@ -1334,6 +1334,29 @@ entropic_error_t entropic_set_stream_observer(
 }
 
 /**
+ * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+ * @param handle Engine handle.
+ * @param on_start Pre-delegation gate (nullable clears).
+ * @param on_complete Post-delegation result (nullable clears).
+ * @param user_data Forwarded to both callbacks.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_set_delegation_callbacks(
+    entropic_handle_t handle,
+    ent_delegation_start_cb on_start,
+    ent_delegation_complete_cb on_complete,
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->engine) {
+        handle->engine->set_delegation_callbacks(
+            on_start, on_complete, user_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
  * @brief Register a state-change observer on the handle.
  *
  * Updates the engine's EngineCallbacks.on_state_change to forward

@@ -158,6 +158,23 @@ void AgentEngine::set_stream_observer(
 }
 
 /**
+ * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+ * @param on_start Pre-delegation gate (nullable).
+ * @param on_complete Post-delegation result (nullable).
+ * @param user_data Forwarded to both callbacks.
+ * @internal
+ * @version 2.1.5
+ */
+void AgentEngine::set_delegation_callbacks(
+    ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+    ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+    void* user_data) {
+    delegation_start_cb_ = on_start;
+    delegation_complete_cb_ = on_complete;
+    delegation_cb_data_ = user_data;
+}
+
+/**
  * @brief Register validation JSON provider for ON_COMPLETE context.
  * @param provider JSON builder callback (nullable).
  * @param user_data Forwarded to provider.
@@ -1649,7 +1666,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.1.4
+ * @version 2.1.5-cb
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1689,6 +1706,11 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
+    // gh#29 (v2.1.5): forward consumer-registered start/complete
+    // callbacks so the manager can gate and deliver patches.
+    mgr.set_delegation_callbacks(
+        delegation_start_cb_, delegation_complete_cb_,
+        delegation_cb_data_);
 
     auto result = mgr.execute_delegation(
         ctx, pending.target, pending.task, max_turns);
@@ -1860,7 +1882,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 1.8.8
+ * @version 2.1.5-cb
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -1885,6 +1907,11 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
+    // gh#29 (v2.1.5): forward consumer-registered start/complete
+    // callbacks so the manager can gate and deliver patches.
+    mgr.set_delegation_callbacks(
+        delegation_start_cb_, delegation_complete_cb_,
+        delegation_cb_data_);
     auto result = mgr.execute_pipeline(
         ctx, pending.stages, pending.task);
 

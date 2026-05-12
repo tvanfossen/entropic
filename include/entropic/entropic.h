@@ -442,6 +442,136 @@ ENTROPIC_EXPORT entropic_error_t entropic_metrics_json(
     entropic_handle_t handle,
     char** out);
 
+/* ── Delegation Callbacks (v2.1.5, gh#29) ──────────────── */
+
+/**
+ * @brief Consumer decision returned from delegation callbacks.
+ *
+ * Used by both `ent_delegation_start_cb` (gate the delegation before it
+ * runs) and `ent_delegation_complete_cb` (decide what to do with the
+ * resulting patch).
+ *
+ * @version 2.1.5
+ */
+typedef enum {
+    ENT_DECISION_ACCEPT = 0,
+    ENT_DECISION_REJECT = 1
+} ent_decision_t;
+
+/**
+ * @brief Request describing a delegation that is about to run.
+ *
+ * Passed to `ent_delegation_start_cb`. All pointers are owned by the
+ * engine and valid only for the callback's duration — copy any string
+ * the consumer needs to retain.
+ *
+ * @version 2.1.5
+ */
+typedef struct {
+    const char* delegation_id;   ///< Short id ("d1", "d2", "pipeline")
+    const char* target_tier;     ///< Tier name (e.g. "researcher")
+    const char* task;            ///< Task description text
+    int depth;                   ///< Delegation depth (1 = top-level child)
+    int is_pipeline;             ///< 1 for pipeline stages, 0 for single
+} ent_delegation_request_t;
+
+/**
+ * @brief Result of a finalized delegation, delivered to the consumer.
+ *
+ * Passed to `ent_delegation_complete_cb`. The engine NEVER applies the
+ * patch — that is the consumer's responsibility (typically through
+ * `entropic.helpers.apply_patch` on the Python side, or `git apply` in
+ * the consumer's own logic, with the user's explicit consent).
+ *
+ * All pointers are owned by the engine and valid only for the
+ * callback's duration. The patch buffer is a unified diff produced by
+ * `git diff --no-index --binary` and is suitable for `git apply` in any
+ * tree. `files_touched` is a NULL-terminated array of relative paths.
+ *
+ * @version 2.1.5
+ */
+typedef struct {
+    const char* delegation_id;   ///< Short id (matches request)
+    const char* target_tier;     ///< Tier that executed
+    int success;                 ///< 1 if child reached COMPLETE, 0 otherwise
+    const char* summary;         ///< Final summary text from the child
+    const char* patch;           ///< Unified diff (may be empty string)
+    size_t patch_len;            ///< Byte length of patch (excluding NUL)
+    const char* const* files_touched; ///< NULL-terminated array of relpaths
+    size_t files_touched_len;    ///< Count (excluding the NULL terminator)
+} ent_delegation_result_t;
+
+/**
+ * @brief Callback fired before a delegation runs.
+ *
+ * The consumer can return `ENT_DECISION_REJECT` to abort the delegation
+ * before any child loop runs (defense-in-depth gate for user consent or
+ * policy enforcement). On REJECT the engine records a failure result
+ * and returns control to the parent loop without spawning a child.
+ *
+ * @param req Request descriptor (engine-owned, callback-scoped).
+ * @param user_data Pointer passed to `entropic_set_delegation_callbacks`.
+ * @return ENT_DECISION_ACCEPT to proceed, ENT_DECISION_REJECT to abort.
+ * @version 2.1.5
+ */
+typedef ent_decision_t (*ent_delegation_start_cb)(
+    const ent_delegation_request_t* req, void* user_data);
+
+/**
+ * @brief Callback fired after a delegation produces a patch.
+ *
+ * Invoked once per delegation (and once per pipeline as a whole — the
+ * pipeline shares a single sandbox). The engine discards the sandbox
+ * directory regardless of the consumer's return value.
+ *
+ * @par Default-deny behavior
+ * If no callback is registered (NULL), the engine writes the patch to
+ * `~/.entropic/sandbox/<session-id>/pending/<delegation-id>.patch` and
+ * logs at WARN — a diagnostic fallback, not a delivery channel
+ * (path is session-scoped). Same path is used when the registered
+ * callback returns `ENT_DECISION_REJECT`.
+ *
+ * @param res Result descriptor (engine-owned, callback-scoped).
+ * @param user_data Pointer passed to `entropic_set_delegation_callbacks`.
+ * @return ENT_DECISION_ACCEPT if the consumer took responsibility for
+ *         the patch (the engine simply discards the sandbox);
+ *         ENT_DECISION_REJECT to dump the patch to the pending dir for
+ *         later inspection.
+ * @version 2.1.5
+ */
+typedef ent_decision_t (*ent_delegation_complete_cb)(
+    const ent_delegation_result_t* res, void* user_data);
+
+/**
+ * @brief Register start/complete callbacks for delegations.
+ *
+ * Both callbacks are optional. Passing NULL for either clears that
+ * slot. A typical consumer registers `on_complete` to receive patches
+ * and (optionally) `on_start` to gate or audit delegations before they
+ * run.
+ *
+ * Replaces the pre-2.1.5 silent auto-merge-to-`develop` behavior that
+ * caused gh#29 (engine corrupting the user's repo state). The engine
+ * never writes to the user's project directory; the consumer applies
+ * patches with user consent.
+ *
+ * @param handle Engine handle.
+ * @param on_start Pre-delegation gate callback (NULL to clear).
+ * @param on_complete Post-delegation result callback (NULL to clear).
+ * @param user_data Pointer forwarded to both callbacks.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle. Callbacks may fire from the
+ *        engine thread or a child-loop delegation thread.
+ * @version 2.1.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_delegation_callbacks(
+    entropic_handle_t handle,
+    ent_delegation_start_cb on_start,
+    ent_delegation_complete_cb on_complete,
+    void* user_data);
+
 /* ── External MCP Servers (v1.8.7) ───────────────────── */
 
 /**

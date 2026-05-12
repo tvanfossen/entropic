@@ -454,7 +454,7 @@ static bool capture_diff(
  * @param head Final sandbox directory.
  * @return Vector of relative paths.
  * @utility
- * @version 2.1.5
+ * @version 2.1.5-cb
  */
 static std::vector<std::filesystem::path> diff_files(
     const std::filesystem::path& base,
@@ -464,14 +464,25 @@ static std::vector<std::filesystem::path> diff_files(
                       + shell_quote(base) + " " + shell_quote(head);
     std::string out;
     run_capture(cmd, out);
+    auto trim_one = [](std::string& line, std::string p) {
+        if (!p.empty() && p.back() != '/') { p += '/'; }
+        size_t n = 0;
+        if (line.rfind(p, 0) == 0) {
+            n = p.size();
+        } else if (!p.empty() && p.front() == '/'
+                   && line.rfind(p.substr(1), 0) == 0) {
+            n = p.size() - 1;
+        }
+        if (n > 0) { line.erase(0, n); }
+    };
     std::istringstream iss(out);
     std::string line;
+    auto base_s = base.string();
+    auto head_s = head.string();
     while (std::getline(iss, line)) {
         if (line.empty()) { continue; }
-        auto pos = line.find('/');
-        if (pos != std::string::npos) {
-            line = line.substr(pos + 1);
-        }
+        trim_one(line, base_s);
+        trim_one(line, head_s);
         changed.emplace_back(line);
     }
     return changed;
@@ -515,6 +526,50 @@ void SandboxManager::discard_sandbox(const SandboxInfo& info) {
     safe_remove(info.path);
     logger->info("Discarded sandbox {}: {}",
                  info.delegation_id, info.path.string());
+}
+
+/**
+ * @brief Persist a patch under the session's `pending/` directory.
+ *
+ * Default-deny fallback path (gh#29, v2.1.5). Used when no
+ * delegation-complete callback is registered or the consumer returns
+ * REJECT. Refuses to write to anything outside `session_base_`.
+ *
+ * @param delegation_id Short id (basename for the .patch file).
+ * @param patch         Unified-diff text.
+ * @return Path written, or `std::nullopt` on failure.
+ * @internal
+ * @version 2.1.5
+ */
+std::optional<std::filesystem::path> SandboxManager::write_pending_patch(
+    const std::string& delegation_id,
+    const std::string& patch) {
+    auto pending_dir = session_base_ / "pending";
+    auto out_path = pending_dir / (delegation_id + ".patch");
+    std::error_code ec;
+    bool contained = path_in_session_base(pending_dir)
+                  && path_in_session_base(out_path);
+    if (!contained) {
+        logger->error("Refusing write_pending_patch: {} not in session base",
+                      out_path.string());
+        return std::nullopt;
+    }
+    std::filesystem::create_directories(pending_dir, ec);
+    bool dir_ok = !ec;
+    FILE* f = dir_ok ? std::fopen(out_path.c_str(), "wb") : nullptr;
+    bool write_ok = false;
+    if (f != nullptr) {
+        write_ok = std::fwrite(patch.data(), 1, patch.size(), f)
+                   == patch.size();
+        std::fclose(f);
+    }
+    if (!dir_ok || f == nullptr || !write_ok) {
+        logger->error("write_pending_patch failed for {} (mkdir={} open={} "
+                      "write={})", out_path.string(), dir_ok,
+                      f != nullptr, write_ok);
+        return std::nullopt;
+    }
+    return out_path;
 }
 
 /**

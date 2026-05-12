@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <entropic/entropic.h>  // for ent_decision_t and ent_delegation_* (gh#29, v2.1.5)
 #include <entropic/core/compaction.h>
 #include <entropic/core/context_manager.h>
 #include <entropic/core/directives.h>
@@ -144,6 +145,26 @@ public:
      */
     void set_validation_provider(char* (*provider)(void*),
                                  void* user_data);
+
+    /**
+     * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+     *
+     * Replaces the pre-2.1.5 silent auto-merge-to-parent behavior. The
+     * engine stores these C-style function pointers and forwards them
+     * into every `DelegationManager` it constructs (one per pending
+     * delegation or pipeline). Null callbacks are honored: `on_start`
+     * null = always ACCEPT; `on_complete` null = default-deny (write
+     * patch to `~/.entropic/sandbox/<session>/pending/<id>.patch`).
+     *
+     * @param on_start    Pre-delegation gate (nullable clears).
+     * @param on_complete Post-delegation result (nullable clears).
+     * @param user_data   Forwarded to both callbacks.
+     * @version 2.1.5
+     */
+    void set_delegation_callbacks(
+        ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+        ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+        void* user_data);
 
     /**
      * @brief Register a callback invoked alongside interrupt().
@@ -744,6 +765,12 @@ private:
     std::atomic<bool> pause_flag_{false};                 ///< Pause signal
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
+    // ── Delegation callbacks (gh#29, v2.1.5) ────────────────
+    ent_decision_t (*delegation_start_cb_)(
+        const ent_delegation_request_t*, void*) = nullptr;    ///< Pre-delegation gate
+    ent_decision_t (*delegation_complete_cb_)(
+        const ent_delegation_result_t*, void*) = nullptr;     ///< Post-delegation result
+    void* delegation_cb_data_ = nullptr;                       ///< Forwarded to both
     char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
     void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors

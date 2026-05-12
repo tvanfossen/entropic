@@ -183,6 +183,25 @@ public:
     void discard_sandbox(const SandboxInfo& info);
 
     /**
+     * @brief Write a patch to the session's `pending/` directory.
+     *
+     * Default-deny fallback: invoked by `DelegationManager` when no
+     * complete callback is registered, or when the consumer's callback
+     * returned `ENT_DECISION_REJECT`. The pending dir is created on
+     * demand under `session_base_/pending/`. Path containment is
+     * enforced by `path_in_session_base()`.
+     *
+     * @param delegation_id Short id (becomes the basename).
+     * @param patch         Unified-diff text to persist.
+     * @return Path to the written file on success, `std::nullopt` on
+     *         failure (logged at ERROR).
+     * @version 2.1.5
+     */
+    std::optional<std::filesystem::path> write_pending_patch(
+        const std::string& delegation_id,
+        const std::string& patch);
+
+    /**
      * @brief Get the project directory this manager snapshots from.
      * @return Project root path.
      * @version 2.1.5

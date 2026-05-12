@@ -299,6 +299,81 @@ entropic_set_stream_observer = _bind(
 )
 
 
+# ── Delegation callbacks (v2.1.5, gh#29) ─────────────────────────────────
+# Replaces the silent auto-merge-to-develop behavior. Consumers register
+# on_start (pre-delegation gate) and on_complete (patch delivery). The
+# engine NEVER applies patches; the consumer does it with user consent
+# (see entropic.helpers.apply_patch). See include/entropic/entropic.h for
+# the C ABI documentation.
+
+
+class EntDecision(enum.IntEnum):
+    """Mirrors ``ent_decision_t`` from entropic.h (gh#29, v2.1.5)."""
+
+    ACCEPT = 0
+    REJECT = 1
+
+
+class EntDelegationRequest(ctypes.Structure):
+    """Mirrors ``ent_delegation_request_t`` from entropic.h.
+
+    All pointers are owned by the engine and valid only for the
+    callback's duration. Copy any string the Python side needs to retain.
+    """
+
+    _fields_ = [
+        ("delegation_id", ctypes.c_char_p),
+        ("target_tier", ctypes.c_char_p),
+        ("task", ctypes.c_char_p),
+        ("depth", ctypes.c_int),
+        ("is_pipeline", ctypes.c_int),
+    ]
+
+
+class EntDelegationResult(ctypes.Structure):
+    """Mirrors ``ent_delegation_result_t`` from entropic.h.
+
+    ``files_touched`` is a NULL-terminated array of relative path
+    strings; iterate by index up to ``files_touched_len``. The patch
+    buffer is a unified diff suitable for ``git apply``.
+    """
+
+    _fields_ = [
+        ("delegation_id", ctypes.c_char_p),
+        ("target_tier", ctypes.c_char_p),
+        ("success", ctypes.c_int),
+        ("summary", ctypes.c_char_p),
+        ("patch", ctypes.c_char_p),
+        ("patch_len", ctypes.c_size_t),
+        ("files_touched", ctypes.POINTER(ctypes.c_char_p)),
+        ("files_touched_len", ctypes.c_size_t),
+    ]
+
+
+DELEGATION_START_CB = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # ent_decision_t
+    ctypes.POINTER(EntDelegationRequest),
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_delegation_start_cb`` (gh#29, v2.1.5)."""
+
+DELEGATION_COMPLETE_CB = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # ent_decision_t
+    ctypes.POINTER(EntDelegationResult),
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_delegation_complete_cb`` (gh#29, v2.1.5)."""
+
+entropic_set_delegation_callbacks = _bind(
+    "entropic_set_delegation_callbacks",
+    ctypes.c_int,
+    entropic_handle_t,
+    DELEGATION_START_CB,
+    DELEGATION_COMPLETE_CB,
+    ctypes.c_void_p,
+)
+
+
 # ── Memory ───────────────────────────────────────────────────────────────
 # Issue #8 (v2.1.4): heap allocator that pairs with entropic_free. Hook
 # callbacks use this when writing modified_json (engine free()s on

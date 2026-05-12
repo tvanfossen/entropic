@@ -43,20 +43,48 @@ static auto logger = entropic::log::get("mcp.transport.stdio");
 namespace entropic {
 
 /**
+ * @brief Sanitize a display_name for use as a log-line bracket label.
+ *
+ * Rich-based TUI consumers (and any markdown renderer) interpret
+ * substrings of the shape `[/foo]` as BBCode close tags and strip
+ * surrounding markup. A registered server name that started with
+ * `/` (e.g. by accident or by a path-like identifier) would
+ * therefore corrupt the consumer's terminal output. We also strip
+ * `[`, `]`, and control characters that could confuse downstream
+ * loggers. Falls back to "server" if the input sanitizes to empty.
+ *
+ * @param raw Caller-supplied display name (or command for fallback).
+ * @return Sanitized name safe to embed in `[<name>]` log prefixes.
+ * @utility
+ * @version 2.1.5
+ */
+static std::string sanitize_display_name(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (char c : raw) {
+        if (out.empty() && c == '/') { continue; }
+        if (c == '[' || c == ']') { continue; }
+        if (static_cast<unsigned char>(c) < 0x20 || c == 0x7f) { continue; }
+        out.push_back(c);
+    }
+    return out.empty() ? std::string{"server"} : out;
+}
+
+/**
  * @brief Construct with command, arguments, and environment.
  * @param command Executable to spawn.
  * @param args Command-line arguments.
  * @param env Environment variable overrides.
  * @param default_timeout_ms Default request timeout.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 StdioTransport::StdioTransport(
     std::string command,
     std::vector<std::string> args,
     std::map<std::string, std::string> env,
     uint32_t default_timeout_ms)
-    : display_name_(command),
+    : display_name_(sanitize_display_name(command)),
       command_(std::move(command)),
       args_(std::move(args)),
       env_(std::move(env)),
@@ -75,7 +103,7 @@ StdioTransport::StdioTransport(
  * @param env Environment variable overrides.
  * @param default_timeout_ms Default request timeout.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 StdioTransport::StdioTransport(
     std::string display_name,
@@ -83,7 +111,8 @@ StdioTransport::StdioTransport(
     std::vector<std::string> args,
     std::map<std::string, std::string> env,
     uint32_t default_timeout_ms)
-    : display_name_(display_name.empty() ? command : std::move(display_name)),
+    : display_name_(sanitize_display_name(
+          display_name.empty() ? command : std::move(display_name))),
       command_(std::move(command)),
       args_(std::move(args)),
       env_(std::move(env)),

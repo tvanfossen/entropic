@@ -114,7 +114,7 @@ void DelegationManager::set_delegation_callbacks(
  * @param is_pipeline   True for pipeline stages.
  * @return Decision from callback (or ACCEPT if null).
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 ent_decision_t DelegationManager::fire_start_cb(
     const std::string& delegation_id,
@@ -131,7 +131,19 @@ ent_decision_t DelegationManager::fire_start_cb(
     req.task         = task.c_str();
     req.depth        = depth;
     req.is_pipeline  = is_pipeline ? 1 : 0;
-    return delegation_start_cb_(&req, delegation_cb_data_);
+    // Exception shield: per docs/architecture-cpp.md design rule #6,
+    // exceptions do not cross .so boundaries. A buggy consumer
+    // throwing a C++ exception out of the callback would otherwise
+    // unwind through the engine's stack with undefined cleanup. Fail
+    // safe by treating a throw as REJECT (gh#29 hardening).
+    try {
+        return delegation_start_cb_(&req, delegation_cb_data_);
+    } catch (...) {
+        logger->warn("delegation_start_cb threw for {}; treating as "
+                     "REJECT (gh#29 exception shield)",
+                     delegation_id);
+        return ENT_DECISION_REJECT;
+    }
 }
 
 /**
@@ -148,7 +160,7 @@ ent_decision_t DelegationManager::fire_start_cb(
  * @param sandbox_result Patch artifact.
  * @param result         Original delegation result.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 void DelegationManager::deliver_sandbox_result(
     const SandboxInfo& sb_info,
@@ -181,7 +193,19 @@ void DelegationManager::deliver_sandbox_result(
     res.files_touched     = files_c.data();
     res.files_touched_len = files_owned.size();
 
-    auto decision = delegation_complete_cb_(&res, delegation_cb_data_);
+    // Exception shield: a buggy consumer must never unwind through
+    // the engine. Treat throw as REJECT so the patch is preserved on
+    // disk for inspection (gh#29 hardening — same policy as
+    // fire_start_cb).
+    ent_decision_t decision;
+    try {
+        decision = delegation_complete_cb_(&res, delegation_cb_data_);
+    } catch (...) {
+        logger->warn("delegation_complete_cb threw for {}; treating as "
+                     "REJECT (patch preserved to pending/)",
+                     sb_info.delegation_id);
+        decision = ENT_DECISION_REJECT;
+    }
     if (decision == ENT_DECISION_REJECT) {
         persist_pending_patch(sb_info, sandbox_result,
                               "consumer REJECTED");

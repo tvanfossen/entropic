@@ -10,6 +10,44 @@ user's project directory via ``git apply``.
 The engine NEVER applies patches itself; that is intentional (see
 gh#29). Consumers are responsible for showing the diff to the user and
 calling :func:`apply_patch` only after explicit user consent.
+
+Example — wiring the gh#29 delegation-complete callback::
+
+    import ctypes
+    from entropic import (
+        DELEGATION_COMPLETE_CB, EntDecision, EntDelegationResult,
+        entropic_set_delegation_callbacks,
+    )
+    from entropic.helpers import apply_patch
+
+    REPO = "/path/to/users/project"
+
+    # ctypes callbacks must return plain ints (not IntEnum members).
+    # ``int(EntDecision.ACCEPT)`` is the idiomatic form; bare integer
+    # literals also work but lose the symbolic intent.
+    def on_complete(res_ptr, _ud):
+        res = res_ptr.contents
+        patch = ctypes.string_at(res.patch, res.patch_len).decode("utf-8")
+        if not ask_user_to_accept(patch):
+            return int(EntDecision.REJECT)  # engine writes patch to pending/
+        outcome = apply_patch(REPO, patch)
+        return int(EntDecision.ACCEPT if outcome.applied
+                   else EntDecision.REJECT)
+
+    # Hold the CFUNCTYPE wrapper for the engine's lifetime — Python
+    # would otherwise garbage-collect the trampoline.
+    _CB = DELEGATION_COMPLETE_CB(on_complete)
+    entropic_set_delegation_callbacks(handle, None, _CB, None)
+
+Example — wiring the gh#30 attempt-boundary callback::
+
+    from entropic import ATTEMPT_BOUNDARY_CB, entropic_set_attempt_boundary_cb
+
+    def on_boundary(attempt_n, _ud):
+        ui.split_section(f"--- attempt {attempt_n} ---")
+
+    _BCB = ATTEMPT_BOUNDARY_CB(on_boundary)  # keep alive
+    entropic_set_attempt_boundary_cb(handle, _BCB, None)
 """
 
 from __future__ import annotations

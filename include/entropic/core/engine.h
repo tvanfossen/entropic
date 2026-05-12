@@ -72,6 +72,24 @@ public:
                 const CompactionConfig& compaction_config);
 
     /**
+     * @brief Grouped consumer-registered delegation callbacks (gh#29).
+     *
+     * Public so `delegation_callbacks_snapshot()` can return it. The
+     * struct mirrors the C ABI surface: a start gate, a complete
+     * delivery, and a shared user_data pointer. Snapshotted under
+     * `delegation_cb_mutex_` to avoid torn reads.
+     *
+     * @version 2.1.5
+     */
+    struct DelegationCallbacks {
+        ent_decision_t (*start)(const ent_delegation_request_t*, void*)
+            = nullptr;
+        ent_decision_t (*complete)(const ent_delegation_result_t*, void*)
+            = nullptr;
+        void* user_data = nullptr;
+    };
+
+    /**
      * @brief Run the engine on a set of messages.
      * @param messages Initial messages (system + user).
      * @return Final messages including all generated content.
@@ -165,6 +183,21 @@ public:
         ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
         ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
         void* user_data);
+
+    /**
+     * @brief Atomically snapshot the registered delegation callbacks.
+     *
+     * Hot path is `execute_pending_delegation` / `execute_pending_pipeline`:
+     * they grab the triple under the mutex once and pass it forward to
+     * the per-call DelegationManager. Prevents a torn read where the
+     * consumer reassigns the callbacks mid-delegation. (Hardening
+     * landed alongside the 2.1.5 verification pass.)
+     *
+     * @return Copy of the current callback struct.
+     * @utility
+     * @version 2.1.5
+     */
+    DelegationCallbacks delegation_callbacks_snapshot() const;
 
     /**
      * @brief Register a callback invoked alongside interrupt().
@@ -766,11 +799,12 @@ private:
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
     // ── Delegation callbacks (gh#29, v2.1.5) ────────────────
-    ent_decision_t (*delegation_start_cb_)(
-        const ent_delegation_request_t*, void*) = nullptr;    ///< Pre-delegation gate
-    ent_decision_t (*delegation_complete_cb_)(
-        const ent_delegation_result_t*, void*) = nullptr;     ///< Post-delegation result
-    void* delegation_cb_data_ = nullptr;                       ///< Forwarded to both
+    /// @brief Held under `delegation_cb_mutex_` so set + snapshot
+    /// can atomically swap all three fields without tearing. Bundled
+    /// to prevent a race where a consumer reassigns callbacks while a
+    /// delegation is in flight.
+    DelegationCallbacks delegation_cb_;
+    mutable std::mutex delegation_cb_mutex_;
     char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
     void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors

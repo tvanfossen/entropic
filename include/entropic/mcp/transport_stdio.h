@@ -125,6 +125,21 @@ public:
      */
     void interrupt() override;
 
+    /**
+     * @brief Get the sanitized display name used for stderr labeling.
+     *
+     * Exposed for unit tests (gh#19) and consumer diagnostics. The
+     * value is the bracketed label that appears in log lines from
+     * the stderr pump and lifecycle events. Sanitization (leading
+     * `/` stripped, bracket / control chars removed) is applied at
+     * construction.
+     *
+     * @return Reference to the sanitized display name.
+     * @utility
+     * @version 2.1.5
+     */
+    const std::string& display_name() const { return display_name_; }
+
 private:
     std::atomic<bool> cancel_flag_{false};        ///< Set by interrupt() (P1-10)
 

@@ -207,12 +207,13 @@ entropic_error_t ConstitutionalValidator::accept_last() {
  * @param cb Callback fn pointer.
  * @param user_data Forwarded to cb.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 void ConstitutionalValidator::set_attempt_boundary_cb(
     void (*cb)(int, void*), void* user_data) {
-    attempt_boundary_cb_ = cb;
-    attempt_boundary_data_ = user_data;
+    std::lock_guard<std::mutex> lock(attempt_boundary_mutex_);
+    attempt_boundary_.cb = cb;
+    attempt_boundary_.user_data = user_data;
 }
 
 /**
@@ -545,7 +546,7 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
  * @param messages_json Conversation context.
  * @return Updated ValidationResult.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 ValidationResult ConstitutionalValidator::apply_revisions(
     ValidationResult result,
@@ -556,8 +557,21 @@ ValidationResult ConstitutionalValidator::apply_revisions(
         const auto& before = result.content;
         // gh#30 (v2.1.5): fire attempt-boundary callback before the
         // revision so consumers can split rendered output cleanly.
-        if (attempt_boundary_cb_ != nullptr) {
-            attempt_boundary_cb_(i + 1, attempt_boundary_data_);
+        // Snapshot under the mutex first so a concurrent
+        // set_attempt_boundary_cb() cannot tear the {cb, user_data}
+        // pair mid-call (post-2.1.5 verification hardening).
+        AttemptBoundaryCb cb_snap;
+        {
+            std::lock_guard<std::mutex> lk(attempt_boundary_mutex_);
+            cb_snap = attempt_boundary_;
+        }
+        if (cb_snap.cb != nullptr) {
+            try {
+                cb_snap.cb(i + 1, cb_snap.user_data);
+            } catch (...) {
+                logger->warn("attempt_boundary_cb threw; swallowed at "
+                             ".so boundary (gh#30)");
+            }
         }
         auto revised = attempt_revision(before, critique, messages_json);
 

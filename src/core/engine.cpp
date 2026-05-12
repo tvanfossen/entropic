@@ -163,15 +163,28 @@ void AgentEngine::set_stream_observer(
  * @param on_complete Post-delegation result (nullable).
  * @param user_data Forwarded to both callbacks.
  * @internal
- * @version 2.1.5
+ * @version 2.1.5-hard
  */
 void AgentEngine::set_delegation_callbacks(
     ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
     ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
     void* user_data) {
-    delegation_start_cb_ = on_start;
-    delegation_complete_cb_ = on_complete;
-    delegation_cb_data_ = user_data;
+    std::lock_guard<std::mutex> lock(delegation_cb_mutex_);
+    delegation_cb_.start = on_start;
+    delegation_cb_.complete = on_complete;
+    delegation_cb_.user_data = user_data;
+}
+
+/**
+ * @brief Atomically snapshot the registered delegation callbacks.
+ * @return Copy of the current callback triple.
+ * @internal
+ * @version 2.1.5
+ */
+AgentEngine::DelegationCallbacks
+AgentEngine::delegation_callbacks_snapshot() const {
+    std::lock_guard<std::mutex> lock(delegation_cb_mutex_);
+    return delegation_cb_;
 }
 
 /**
@@ -1666,7 +1679,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.1.5-cb
+ * @version 2.1.5-hard
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1706,11 +1719,12 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
-    // gh#29 (v2.1.5): forward consumer-registered start/complete
-    // callbacks so the manager can gate and deliver patches.
+    // gh#29 (v2.1.5): snapshot consumer-registered callbacks under
+    // the mutex once at delegation entry so a concurrent setter call
+    // cannot tear the {start, complete, user_data} triple mid-call.
+    auto cb_snap = delegation_callbacks_snapshot();
     mgr.set_delegation_callbacks(
-        delegation_start_cb_, delegation_complete_cb_,
-        delegation_cb_data_);
+        cb_snap.start, cb_snap.complete, cb_snap.user_data);
 
     auto result = mgr.execute_delegation(
         ctx, pending.target, pending.task, max_turns);
@@ -1882,7 +1896,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 2.1.5-cb
+ * @version 2.1.5-hard
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -1907,11 +1921,12 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
-    // gh#29 (v2.1.5): forward consumer-registered start/complete
-    // callbacks so the manager can gate and deliver patches.
+    // gh#29 (v2.1.5): snapshot under the mutex (see execute_pending_
+    // delegation comment); avoids a torn read against a concurrent
+    // set_delegation_callbacks call.
+    auto cb_snap = delegation_callbacks_snapshot();
     mgr.set_delegation_callbacks(
-        delegation_start_cb_, delegation_complete_cb_,
-        delegation_cb_data_);
+        cb_snap.start, cb_snap.complete, cb_snap.user_data);
     auto result = mgr.execute_pipeline(
         ctx, pending.stages, pending.task);
 

@@ -580,9 +580,22 @@ private:
     std::optional<PendingValidationState> pending_state_;
     mutable std::mutex pending_mutex_;        ///< Guards pending_state_
 
-    /// @brief Attempt-boundary callback fired between revisions.
-    void (*attempt_boundary_cb_)(int, void*) = nullptr;
-    void* attempt_boundary_data_ = nullptr;
+    /**
+     * @brief Attempt-boundary callback + user_data, guarded together.
+     *
+     * Held under `attempt_boundary_mutex_` so a consumer reassigning
+     * the callback mid-revision cannot race with the firing site in
+     * `apply_revisions()`. Snapshotted into a local before invocation
+     * to release the lock before calling consumer code.
+     *
+     * @version 2.1.5
+     */
+    struct AttemptBoundaryCb {
+        void (*cb)(int, void*) = nullptr;
+        void* user_data = nullptr;
+    };
+    AttemptBoundaryCb attempt_boundary_;
+    mutable std::mutex attempt_boundary_mutex_;
 };
 
 } // namespace entropic

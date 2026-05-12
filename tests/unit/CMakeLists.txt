@@ -195,6 +195,8 @@ add_executable(entropic-mcp-tests
     mcp/utf8_sanitize_test.cpp
     # v2.1.0 #44: tool-result content classifiers (empty/error)
     mcp/tool_result_classify_test.cpp
+    # v2.1.5 gh#19: StdioTransport display_name sanitization
+    mcp/stdio_transport_test.cpp
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE

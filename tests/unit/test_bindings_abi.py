@@ -347,3 +347,125 @@ class TestPipWrapperSymbols:
         """
         missing = [sym for sym in self.REQUIRED_SYMBOLS if sym not in bindings_source]
         assert not missing, "_bindings.py missing v2.1.4 symbols (#8): " f"{missing}"
+
+
+## @brief Parse the _LAZY_EXPORTS frozenset literal from __init__.py.
+##
+## Returns the set of string members declared on the Python side
+## without importing the module (which would trigger librentropic.so
+## loading). Uses ast to walk the assignment target.
+## @utility
+## @version 2.1.5
+def _frozenset_arg_strings(call: ast.Call) -> set[str]:
+    """Extract string members from a `frozenset({...})` Call node."""
+    is_fs = isinstance(call.func, ast.Name) and call.func.id == "frozenset"
+    if not is_fs or not call.args:
+        raise AssertionError("expected frozenset(...) call with one arg")
+    arg = call.args[0]
+    if not isinstance(arg, ast.Set):
+        raise AssertionError("frozenset arg is not a set literal")
+    out: set[str] = set()
+    for elt in arg.elts:
+        if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+            raise AssertionError("non-string element in set literal")
+        out.add(elt.value)
+    return out
+
+
+def _find_named_frozenset(tree: ast.AST, name: str) -> ast.Call:
+    """Locate a `<name> = frozenset({...})` top-level assignment."""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        target_match = (
+            len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == name
+        )
+        if target_match and isinstance(node.value, ast.Call):
+            return node.value
+    raise AssertionError(f"{name} assignment not found")
+
+
+def _parse_lazy_exports() -> set[str]:
+    init_path = _REPO_ROOT / "python" / "src" / "entropic" / "__init__.py"
+    tree = ast.parse(init_path.read_text())
+    call = _find_named_frozenset(tree, "_LAZY_EXPORTS")
+    return _frozenset_arg_strings(call)
+
+
+class TestV215LazyExports:
+    """Static export drift guard for v2.1.5 ABI surface additions.
+
+    Three issues added new public symbols this release. A silent drop
+    from ``_LAZY_EXPORTS`` would not be caught by any other unit test
+    (the existing fixture only enforces enum drift), so this test
+    locks the membership down statically.
+
+    - gh#22 (validator + CFUNCTYPE alias gap): entropic_context_get,
+      HOOK_CALLBACK_CB, TOKEN_STREAM_CB.
+    - gh#29 (filesystem sandbox + delegation callbacks):
+      DELEGATION_START_CB, DELEGATION_COMPLETE_CB, EntDecision,
+      EntDelegationRequest, EntDelegationResult,
+      entropic_set_delegation_callbacks.
+    - gh#30 (validation retry controls): ATTEMPT_BOUNDARY_CB,
+      entropic_validation_set_auto_retry,
+      entropic_validation_resume_retry,
+      entropic_validation_accept_last,
+      entropic_set_attempt_boundary_cb.
+
+    @version 2.1.5
+    """
+
+    GH22_SYMBOLS = (
+        "entropic_context_get",
+        "HOOK_CALLBACK_CB",
+        "TOKEN_STREAM_CB",
+    )
+    GH29_SYMBOLS = (
+        "DELEGATION_START_CB",
+        "DELEGATION_COMPLETE_CB",
+        "EntDecision",
+        "EntDelegationRequest",
+        "EntDelegationResult",
+        "entropic_set_delegation_callbacks",
+    )
+    GH30_SYMBOLS = (
+        "ATTEMPT_BOUNDARY_CB",
+        "entropic_validation_set_auto_retry",
+        "entropic_validation_resume_retry",
+        "entropic_validation_accept_last",
+        "entropic_set_attempt_boundary_cb",
+    )
+
+    @pytest.fixture(scope="class")
+    def lazy_exports(self) -> set[str]:
+        return _parse_lazy_exports()
+
+    @pytest.fixture(scope="class")
+    def bindings_text(self, bindings_source: str) -> str:
+        return bindings_source
+
+    def test_gh22_symbols_in_lazy_exports(self, lazy_exports: set[str]) -> None:
+        missing = [s for s in self.GH22_SYMBOLS if s not in lazy_exports]
+        assert not missing, f"_LAZY_EXPORTS missing gh#22 symbols: {missing}"
+
+    def test_gh29_symbols_in_lazy_exports(self, lazy_exports: set[str]) -> None:
+        missing = [s for s in self.GH29_SYMBOLS if s not in lazy_exports]
+        assert not missing, f"_LAZY_EXPORTS missing gh#29 symbols: {missing}"
+
+    def test_gh30_symbols_in_lazy_exports(self, lazy_exports: set[str]) -> None:
+        missing = [s for s in self.GH30_SYMBOLS if s not in lazy_exports]
+        assert not missing, f"_LAZY_EXPORTS missing gh#30 symbols: {missing}"
+
+    def test_gh22_symbols_declared_in_bindings(self, bindings_text: str) -> None:
+        missing = [s for s in self.GH22_SYMBOLS if s not in bindings_text]
+        assert not missing, f"_bindings.py missing gh#22 declarations: {missing}"
+
+    def test_gh29_symbols_declared_in_bindings(self, bindings_text: str) -> None:
+        missing = [s for s in self.GH29_SYMBOLS if s not in bindings_text]
+        assert not missing, f"_bindings.py missing gh#29 declarations: {missing}"
+
+    def test_gh30_symbols_declared_in_bindings(self, bindings_text: str) -> None:
+        missing = [s for s in self.GH30_SYMBOLS if s not in bindings_text]
+        assert not missing, f"_bindings.py missing gh#30 declarations: {missing}"

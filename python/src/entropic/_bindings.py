@@ -374,6 +374,46 @@ entropic_set_delegation_callbacks = _bind(
 )
 
 
+# ── Validation retry controls (v2.1.5, gh#30) ────────────────────────────
+# Lets consumers gate the constitutional revision loop instead of having
+# the engine race them with auto-revision. See entropic.h for the full
+# behavior contract.
+
+ATTEMPT_BOUNDARY_CB = ctypes.CFUNCTYPE(
+    None,  # void
+    ctypes.c_int,  # attempt_n
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_validation_attempt_boundary_cb`` (gh#30, v2.1.5)."""
+
+entropic_validation_set_auto_retry = _bind(
+    "entropic_validation_set_auto_retry",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_int,  # enabled
+)
+
+entropic_validation_resume_retry = _bind(
+    "entropic_validation_resume_retry",
+    ctypes.c_int,
+    entropic_handle_t,
+)
+
+entropic_validation_accept_last = _bind(
+    "entropic_validation_accept_last",
+    ctypes.c_int,
+    entropic_handle_t,
+)
+
+entropic_set_attempt_boundary_cb = _bind(
+    "entropic_set_attempt_boundary_cb",
+    ctypes.c_int,
+    entropic_handle_t,
+    ATTEMPT_BOUNDARY_CB,
+    ctypes.c_void_p,
+)
+
+
 # ── Memory ───────────────────────────────────────────────────────────────
 # Issue #8 (v2.1.4): heap allocator that pairs with entropic_free. Hook
 # callbacks use this when writing modified_json (engine free()s on

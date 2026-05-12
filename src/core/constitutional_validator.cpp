@@ -121,6 +121,100 @@ void ConstitutionalValidator::set_global_enabled(bool enabled) {
     global_enabled_ = enabled;
 }
 
+// ── gh#30 (v2.1.5): consumer-driven retry controls ───────
+
+/**
+ * @brief Toggle auto-revision.
+ * @param enabled True to enable auto-revision.
+ * @internal
+ * @version 2.1.5
+ */
+void ConstitutionalValidator::set_auto_retry(bool enabled) {
+    auto_retry_enabled_.store(enabled);
+}
+
+/**
+ * @brief Read auto-revision flag.
+ * @return Current state.
+ * @utility
+ * @version 2.1.5
+ */
+bool ConstitutionalValidator::auto_retry_enabled() const {
+    return auto_retry_enabled_.load();
+}
+
+/**
+ * @brief Resume the revision loop after a paused validation.
+ *
+ * Pops the cached pending state, runs `apply_revisions()` against it
+ * ignoring the auto_retry_enabled_ flag for this call, and stores the
+ * final result. Returns INVALID_STATE if no pending state exists.
+ *
+ * @return ENTROPIC_OK on success, INVALID_STATE if nothing paused.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t ConstitutionalValidator::resume_retry() {
+    std::optional<PendingValidationState> state;
+    {
+        std::lock_guard lock(pending_mutex_);
+        state = std::move(pending_state_);
+        pending_state_.reset();
+    }
+    if (!state) {
+        return ENTROPIC_ERROR_INVALID_STATE;
+    }
+    auto result = apply_revisions(
+        state->result, state->critique,
+        state->messages_json.empty() ? nullptr
+                                     : state->messages_json.c_str());
+    store_result(result);
+    logger->info("Constitutional validation resumed (gh#30): "
+                 "final verdict={}", static_cast<int>(result.verdict));
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Finalize the paused attempt as the consumer-accepted answer.
+ *
+ * Marks verdict as `passed_consumer_override` and clears pending state.
+ * Returns INVALID_STATE if no pending state exists.
+ *
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t ConstitutionalValidator::accept_last() {
+    std::optional<PendingValidationState> state;
+    {
+        std::lock_guard lock(pending_mutex_);
+        state = std::move(pending_state_);
+        pending_state_.reset();
+    }
+    if (!state) {
+        return ENTROPIC_ERROR_INVALID_STATE;
+    }
+    ValidationResult result = std::move(state->result);
+    result.verdict = ValidationVerdict::passed_consumer_override;
+    store_result(result);
+    logger->info("Constitutional validation accepted by consumer "
+                 "(gh#30): attempt_n={}", result.attempt_n);
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register the attempt-boundary callback.
+ * @param cb Callback fn pointer.
+ * @param user_data Forwarded to cb.
+ * @internal
+ * @version 2.1.5
+ */
+void ConstitutionalValidator::set_attempt_boundary_cb(
+    void (*cb)(int, void*), void* user_data) {
+    attempt_boundary_cb_ = cb;
+    attempt_boundary_data_ = user_data;
+}
+
 /**
  * @brief Set per-identity validation override.
  * @param identity_name Identity name.
@@ -199,7 +293,7 @@ ValidationResult ConstitutionalValidator::validate(
  * @brief Emit a disambiguating log line per verdict. (E5, 2.0.6-rc17)
  * @param result Validation result with verdict set.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.1.5
  */
 void ConstitutionalValidator::log_verdict(
     const ValidationResult& result) const {
@@ -223,6 +317,15 @@ void ConstitutionalValidator::log_verdict(
         break;
     case ValidationVerdict::skipped:
         // log-site above already emits "Validation skipped…"
+        break;
+    case ValidationVerdict::paused_pending_consumer:
+        logger->info("Validation paused (gh#30): "
+                     "{} violation(s); awaiting consumer",
+                     result.final_critique.violations.size());
+        break;
+    case ValidationVerdict::passed_consumer_override:
+        logger->info("Validation accepted by consumer (gh#30): "
+                     "attempt_n={}", result.attempt_n);
         break;
     }
 }
@@ -390,7 +493,7 @@ void ConstitutionalValidator::store_result(
  * @param messages_json Conversation context.
  * @return ValidationResult after critique/revision.
  * @internal
- * @version 2.0.6
+ * @version 2.1.5
  */
 ValidationResult ConstitutionalValidator::run_validation_loop(
     const std::string& content,
@@ -403,6 +506,24 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
     result.final_critique = critique;
 
     if (critique.compliant) {
+        return result;
+    }
+
+    // gh#30 (v2.1.5): when the consumer has disabled auto-retry, stop
+    // here and stash enough state for resume_retry()/accept_last() to
+    // continue.
+    if (!auto_retry_enabled_.load()) {
+        result.verdict = ValidationVerdict::paused_pending_consumer;
+        result.attempt_n = 0;
+        {
+            std::lock_guard lock(pending_mutex_);
+            pending_state_ = PendingValidationState{
+                result, critique,
+                messages_json ? std::string(messages_json) : std::string{},
+                tier};
+        }
+        logger->info("Constitutional validation paused (gh#30): "
+                     "auto_retry disabled, awaiting consumer decision");
         return result;
     }
 
@@ -424,7 +545,7 @@ ValidationResult ConstitutionalValidator::run_validation_loop(
  * @param messages_json Conversation context.
  * @return Updated ValidationResult.
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.1.5
  */
 ValidationResult ConstitutionalValidator::apply_revisions(
     ValidationResult result,
@@ -433,6 +554,11 @@ ValidationResult ConstitutionalValidator::apply_revisions(
     auto critique = initial_critique;
     for (int i = 0; i < config_.max_revisions; ++i) {
         const auto& before = result.content;
+        // gh#30 (v2.1.5): fire attempt-boundary callback before the
+        // revision so consumers can split rendered output cleanly.
+        if (attempt_boundary_cb_ != nullptr) {
+            attempt_boundary_cb_(i + 1, attempt_boundary_data_);
+        }
         auto revised = attempt_revision(before, critique, messages_json);
 
         // Length safety valve: reject revisions that gut the content
@@ -444,12 +570,14 @@ ValidationResult ConstitutionalValidator::apply_revisions(
                          before.size(), revised.size());
             result.verdict =
                 ValidationVerdict::rejected_reverted_length;
+            result.attempt_n = i + 1;
             return result;
         }
 
         result.content = revised;
         result.was_revised = true;
         result.revision_count = i + 1;
+        result.attempt_n = i + 1;
 
         critique = run_critique(revised);
         result.final_critique = critique;

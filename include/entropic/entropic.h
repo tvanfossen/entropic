@@ -572,6 +572,109 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_delegation_callbacks(
     ent_delegation_complete_cb on_complete,
     void* user_data);
 
+/* ── Validation Retry Controls (v2.1.5, gh#30) ───────── */
+
+/**
+ * @brief Stream-side callback fired between constitutional revision passes.
+ *
+ * Lets consumers split rendered output between attempt N and attempt N+1
+ * cleanly instead of inferring boundaries from rejection timing. Fires
+ * immediately before the engine begins re-streaming a revised attempt.
+ *
+ * @param attempt_n Index of the attempt about to start (1-based — the
+ *        first revision pass after the original generation is N=1).
+ * @param user_data Pointer passed to `entropic_set_attempt_boundary_cb`.
+ * @version 2.1.5
+ */
+typedef void (*ent_validation_attempt_boundary_cb)(
+    int attempt_n, void* user_data);
+
+/**
+ * @brief Toggle automatic constitutional revision after rejection.
+ *
+ * When `enabled` is true (the default), the engine immediately injects
+ * critique feedback into the conversation and re-streams attempt N+1
+ * after each failing constitutional pass. When `enabled` is false, the
+ * engine instead stops after the first failing critique and surfaces
+ * the rejection through `entropic_validation_last_result()` with
+ * verdict `paused_pending_consumer`. The consumer is then expected to
+ * call either `entropic_validation_resume_retry()` (opt into revision)
+ * or `entropic_validation_accept_last()` (treat the rejected attempt as
+ * the final answer).
+ *
+ * @param handle Engine handle.
+ * @param enabled True to restore default auto-revision (the pre-2.1.5
+ *        behavior); false to disable it.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Thread-safe.
+ * @version 2.1.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_validation_set_auto_retry(
+    entropic_handle_t handle,
+    int enabled);
+
+/**
+ * @brief Opt the engine into running the constitutional revision pass.
+ *
+ * Resumes auto-revision for the currently paused validation state (set
+ * by the most recent `entropic_run()` when auto-retry was disabled and
+ * a critique failed). Runs synchronously and updates the conversation
+ * with the revised content. If no validation is paused this is a no-op.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — no paused validation.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_validation_resume_retry(
+    entropic_handle_t handle);
+
+/**
+ * @brief Finalize the last attempt as the turn's response.
+ *
+ * Used after `entropic_validation_set_auto_retry(handle, false)` has
+ * paused the engine on a critique rejection: instructs the engine to
+ * keep the rejected attempt as-is (i.e. the user overrode the
+ * validator). Clears the paused validation state and updates the last
+ * validation result to verdict `passed_consumer_override`.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — no paused validation.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_validation_accept_last(
+    entropic_handle_t handle);
+
+/**
+ * @brief Register an attempt-boundary callback for the validator.
+ *
+ * Fires once per revision pass with the upcoming attempt number. Pass
+ * NULL to clear. The callback runs on the engine's generation thread —
+ * keep it short and non-blocking.
+ *
+ * @param handle Engine handle.
+ * @param cb Attempt-boundary callback (NULL to clear).
+ * @param user_data Pointer forwarded to `cb`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.5
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_attempt_boundary_cb(
+    entropic_handle_t handle,
+    ent_validation_attempt_boundary_cb cb,
+    void* user_data);
+
 /* ── External MCP Servers (v1.8.7) ───────────────────── */
 
 /**

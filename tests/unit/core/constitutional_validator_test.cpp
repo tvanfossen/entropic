@@ -1175,3 +1175,153 @@ SCENARIO("critique_tier config flows into params JSON",
         }
     }
 }
+
+// ── gh#30 (v2.1.5): consumer-driven retry controls ────────
+
+SCENARIO("set_auto_retry(false) pauses validation on rejection",
+         "[validation][gh30][v2.1.5]") {
+    GIVEN("validator with auto-retry disabled and a non-compliant response") {
+        MockValidationInference mock;
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION);
+        // No second response is needed; we expect validation to pause.
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 3;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+        validator.set_auto_retry(false);
+
+        WHEN("validate runs against violating content") {
+            auto result = validator.validate(
+                "Upload to cloud", "eng", nullptr);
+
+            THEN("verdict is paused_pending_consumer with no revision") {
+                REQUIRE(result.verdict
+                        == ValidationVerdict::paused_pending_consumer);
+                CHECK(result.was_revised == false);
+                CHECK(result.revision_count == 0);
+                CHECK(result.attempt_n == 0);
+                // Only one critique call ran (no revisions attempted).
+                CHECK(mock.generate_count == 1);
+            }
+        }
+    }
+}
+
+SCENARIO("accept_last() finalizes paused attempt as consumer-override",
+         "[validation][gh30][v2.1.5]") {
+    GIVEN("paused validation from set_auto_retry(false)") {
+        MockValidationInference mock;
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+        validator.set_auto_retry(false);
+
+        auto result = validator.validate(
+            "Upload to cloud", "eng", nullptr);
+        REQUIRE(result.verdict
+                == ValidationVerdict::paused_pending_consumer);
+
+        WHEN("consumer calls accept_last()") {
+            auto rc = validator.accept_last();
+
+            THEN("last_result is consumer-override and pending clears") {
+                REQUIRE(rc == ENTROPIC_OK);
+                auto last = validator.last_result();
+                CHECK(last.verdict
+                      == ValidationVerdict::passed_consumer_override);
+                // Second accept_last with no pending state → INVALID_STATE.
+                CHECK(validator.accept_last()
+                      == ENTROPIC_ERROR_INVALID_STATE);
+            }
+        }
+    }
+}
+
+SCENARIO("resume_retry() runs the revision loop and converges",
+         "[validation][gh30][v2.1.5]") {
+    GIVEN("paused validation with a compliant revision queued") {
+        MockValidationInference mock;
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION); // initial
+        mock.responses.push_back(COMPLIANT_JSON);             // post-revise
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 3;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+        validator.set_auto_retry(false);
+
+        auto first = validator.validate(
+            "Upload to cloud", "eng", nullptr);
+        REQUIRE(first.verdict
+                == ValidationVerdict::paused_pending_consumer);
+
+        WHEN("consumer calls resume_retry()") {
+            auto rc = validator.resume_retry();
+
+            THEN("revision pass runs and last_result is `revised`") {
+                REQUIRE(rc == ENTROPIC_OK);
+                auto last = validator.last_result();
+                CHECK(last.verdict == ValidationVerdict::revised);
+                CHECK(last.was_revised);
+                CHECK(last.revision_count == 1);
+                CHECK(last.attempt_n == 1);
+                CHECK(last.content == "Process locally");
+            }
+        }
+    }
+}
+
+SCENARIO("attempt_boundary_cb fires per revision",
+         "[validation][gh30][v2.1.5]") {
+    GIVEN("validator that revises twice before passing") {
+        MockValidationInference mock;
+        // First critique fails, revision exists; second critique fails again
+        // (max-revisions track); third critique passes.
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION);
+        mock.responses.push_back(NONCOMPLIANT_WITH_REVISION);
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        cfg.max_revisions = 3;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+
+        struct Counter { int calls = 0; int last_n = -1; } ctr;
+        validator.set_attempt_boundary_cb(
+            [](int n, void* ud) {
+                auto* c = static_cast<Counter*>(ud);
+                c->calls += 1;
+                c->last_n = n;
+            },
+            &ctr);
+
+        WHEN("validate runs with two revision passes") {
+            // Short original avoids the length safety valve when the
+            // mock revision ("Process locally", 15 chars) is >= half
+            // the original length.
+            auto result = validator.validate(
+                "Upload", "eng", nullptr);
+
+            THEN("callback fires before each revision attempt") {
+                CHECK(ctr.calls == 2);
+                CHECK(ctr.last_n == 2);
+                CHECK(result.verdict == ValidationVerdict::revised);
+            }
+        }
+    }
+}

@@ -64,6 +64,12 @@ _LAZY_EXPORTS = frozenset(
         "EntDelegationRequest",
         "EntDelegationResult",
         "entropic_set_delegation_callbacks",
+        # gh#30 (v2.1.5): validation retry controls.
+        "ATTEMPT_BOUNDARY_CB",
+        "entropic_set_attempt_boundary_cb",
+        "entropic_validation_accept_last",
+        "entropic_validation_resume_retry",
+        "entropic_validation_set_auto_retry",
         "entropic_alloc",
         "entropic_api_version",
         "entropic_configure_dir",

@@ -575,7 +575,7 @@ static void wire_tool_executor(entropic_handle_t h) {
  * @param ud entropic_engine handle.
  * @return JSON string or NULL if validator not configured.
  * @callback
- * @version 2.0.6-rc18
+ * @version 2.1.5
  */
 static char* sp_get_validation(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
@@ -594,14 +594,26 @@ static char* sp_get_validation(void* ud) {
         v["verdict"] = "rejected_max_revisions"; break;
     case entropic::ValidationVerdict::skipped:
         v["verdict"] = "skipped"; break;
+    case entropic::ValidationVerdict::paused_pending_consumer:
+        v["verdict"] = "paused_pending_consumer"; break;
+    case entropic::ValidationVerdict::passed_consumer_override:
+        v["verdict"] = "passed_consumer_override"; break;
     }
     v["revisions_applied"] = r.revision_count;
+    // gh#30 (v2.1.5): structured fields the consumer needs to render
+    // a "retry / override / re-prompt" UI without parsing free-form
+    // reason strings.
+    v["attempt_n"] = r.attempt_n;
     nlohmann::json violations = nlohmann::json::array();
     for (const auto& vi : r.final_critique.violations) {
         violations.push_back({
             {"rule", vi.rule},
+            {"rule_id", vi.rule},        // alias for gh#30 schema
+            {"rule_text", vi.rule},      // alias for gh#30 schema
             {"excerpt", vi.excerpt},
+            {"quote", vi.excerpt},       // alias matching gh#30 "evidence.quote"
             {"explanation", vi.explanation},
+            {"severity", "error"},       // gh#30: hard rejection only today
         });
     }
     v["violations"] = violations;
@@ -1329,6 +1341,87 @@ entropic_error_t entropic_set_stream_observer(
     // and child-loop delegations) reaches the observer. (P0-1, 2.0.6-rc16)
     if (handle->engine) {
         handle->engine->set_stream_observer(observer, user_data);
+    }
+    return ENTROPIC_OK;
+}
+
+// ── gh#30 (v2.1.5): validation retry controls ─────────────
+
+/**
+ * @brief Toggle automatic constitutional revision.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_validation_set_auto_retry(
+    entropic_handle_t handle, int enabled) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->validator) {
+        handle->validator->set_auto_retry(enabled != 0);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Resume a paused constitutional revision pass.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_validation_resume_retry(
+    entropic_handle_t handle) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!handle->validator) { return ENTROPIC_ERROR_INVALID_STATE; }
+    std::lock_guard lock(handle->api_mutex);
+    return handle->validator->resume_retry();
+}
+
+/**
+ * @brief Accept the last paused attempt as the final answer.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_validation_accept_last(
+    entropic_handle_t handle) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!handle->validator) { return ENTROPIC_ERROR_INVALID_STATE; }
+    std::lock_guard lock(handle->api_mutex);
+    return handle->validator->accept_last();
+}
+
+/**
+ * @brief Register attempt-boundary callback on the validator.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_set_attempt_boundary_cb(
+    entropic_handle_t handle,
+    ent_validation_attempt_boundary_cb cb,
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->validator) {
+        handle->validator->set_attempt_boundary_cb(cb, user_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+ * @param handle Engine handle.
+ * @param on_start Pre-delegation gate (nullable clears).
+ * @param on_complete Post-delegation result (nullable clears).
+ * @param user_data Forwarded to both callbacks.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.5
+ */
+entropic_error_t entropic_set_delegation_callbacks(
+    entropic_handle_t handle,
+    ent_delegation_start_cb on_start,
+    ent_delegation_complete_cb on_complete,
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->engine) {
+        handle->engine->set_delegation_callbacks(
+            on_start, on_complete, user_data);
     }
     return ENTROPIC_OK;
 }

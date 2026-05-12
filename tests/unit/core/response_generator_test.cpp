@@ -8,6 +8,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/core/response_generator.h>
 #include <entropic/core/engine_types.h>
+#include <entropic/types/error.h>  // ENTROPIC_ERROR_CANCELLED (gh#20)
 
 #include <atomic>
 #include <cstring>
@@ -785,6 +786,105 @@ SCENARIO("System message stays bit-stable across turns (prompt cache)",
                       != std::string::npos);
                 CHECK(g_captured_msgs.find("tool calls so far: 1")
                       != std::string::npos);
+            }
+        }
+    }
+}
+
+// ── gh#20 (v2.1.5): cancel-branch regression test ─────────
+
+namespace {
+
+/**
+ * @brief Mock streaming state for the cancel-branch scenario.
+ *
+ * The mock emits two tokens. The first token is plain content; the
+ * second is emitted only after `interrupt_flag->store(true)` runs,
+ * simulating an external Ctrl-C arriving between tokens. The mock
+ * captures whether the engine's token callback flipped `*cancel`
+ * to 1 (the gh#20 fix path) before the mock returned. If `*cancel`
+ * was raised, the mock returns ENTROPIC_ERROR_CANCELLED to mirror
+ * what llama_cpp_backend does when its cancel atomic fires.
+ *
+ * @internal
+ * @version 2.1.5
+ */
+struct CancelMockState {
+    std::atomic<bool>* interrupt_flag = nullptr;
+    bool cancel_observed = false;
+    int return_code = 0;
+};
+
+static int mock_cancel_branch_stream(
+    const char* /*msgs*/,
+    const char* /*params*/,
+    void (*on_token)(const char*, size_t, void*),
+    void* cb_data,
+    int* cancel,
+    void* user_data) {
+    auto* st = static_cast<CancelMockState*>(user_data);
+    if (on_token != nullptr) {
+        on_token("alpha ", 6, cb_data);
+        // Simulate an external interrupt arriving between tokens.
+        if (st->interrupt_flag != nullptr) {
+            st->interrupt_flag->store(true);
+        }
+        on_token("beta", 4, cb_data);
+    }
+    // After the second token, the engine's token callback should
+    // have raised the backend's cancel flag.
+    if (cancel != nullptr && *cancel != 0) {
+        st->cancel_observed = true;
+        st->return_code = ENTROPIC_ERROR_CANCELLED;
+    }
+    return st->return_code;
+}
+
+} // namespace
+
+SCENARIO("generate_streaming preserves content on backend-cancel "
+         "and reports finish_reason=interrupted",
+         "[core][response_generator][gh20][v2.1.5]") {
+    GIVEN("a streaming mock and an interrupt atomic wired through "
+          "GenerationEvents") {
+        std::atomic<bool> interrupt_flag{false};
+        CancelMockState state;
+        state.interrupt_flag = &interrupt_flag;
+
+        auto iface = make_mock_inference();
+        iface.generate_stream = mock_cancel_branch_stream;
+        iface.backend_data = &state;
+
+        auto loop_cfg = make_loop_config();
+        loop_cfg.stream_output = true;
+
+        EngineCallbacks callbacks{};
+        GenerationEvents events{};
+        events.interrupt = &interrupt_flag;
+
+        ResponseGenerator gen(iface, loop_cfg, callbacks, events);
+
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "default";
+        Message msg;
+        msg.role = "user";
+        msg.content = "test";
+        ctx.messages.push_back(std::move(msg));
+
+        WHEN("the interrupt fires between tokens") {
+            auto result = gen.generate_response(ctx);
+
+            THEN("the engine raised the backend's cancel flag") {
+                CHECK(state.cancel_observed);
+            }
+            THEN("finish_reason is 'interrupted'") {
+                CHECK(result.finish_reason == "interrupted");
+            }
+            THEN("accumulated content is preserved across the interrupt") {
+                // Both tokens must be present — the pre-2.1.5 bug
+                // dropped the post-interrupt token (gh#20 case B).
+                CHECK(result.content == "alpha beta");
             }
         }
     }

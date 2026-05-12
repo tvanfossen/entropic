@@ -9,7 +9,7 @@ target_sources(entropic-core PRIVATE
     context_manager.cpp
     response_generator.cpp
     engine.cpp
-    worktree.cpp
+    sandbox.cpp
     delegation.cpp
     hook_registry.cpp
     identity_manager.cpp

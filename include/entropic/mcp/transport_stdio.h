@@ -38,6 +38,7 @@ class StdioTransport : public Transport {
 public:
     /**
      * @brief Construct with command, arguments, and environment.
+     *
      * @param command Executable to spawn.
      * @param args Command-line arguments.
      * @param env Environment variable overrides (merged with parent).
@@ -49,6 +50,36 @@ public:
         std::vector<std::string> args,
         std::map<std::string, std::string> env = {},
         uint32_t default_timeout_ms = 30000);
+
+    /**
+     * @brief Construct with a display name for stderr labeling (gh#19).
+     *
+     * The display name is used as the bracketed label on every child
+     * stderr line, replacing the v2.1.4 behavior of using the resolved
+     * spawn command (`argv[0]`). When multiple servers spawn via the
+     * same entrypoint (e.g. `/usr/bin/env python`), the command-based
+     * label collides and consumers cannot tell servers apart. The
+     * display name (typically the registered server name) is unique
+     * per registration and free of leading slashes, which also avoids
+     * Rich BBCode parsing collisions on consumers that pipe stderr
+     * through `rich.console.print`.
+     *
+     * @param display_name Bracketed label used for stderr lines and
+     *                     lifecycle log messages. Should be the
+     *                     server name passed to
+     *                     `entropic_register_mcp_server`.
+     * @param command Executable to spawn.
+     * @param args Command-line arguments.
+     * @param env Environment variable overrides.
+     * @param default_timeout_ms Default timeout for send_request.
+     * @version 2.1.5
+     */
+    StdioTransport(
+        std::string display_name,
+        std::string command,
+        std::vector<std::string> args,
+        std::map<std::string, std::string> env,
+        uint32_t default_timeout_ms);
 
     ~StdioTransport() override;
 
@@ -94,9 +125,25 @@ public:
      */
     void interrupt() override;
 
+    /**
+     * @brief Get the sanitized display name used for stderr labeling.
+     *
+     * Exposed for unit tests (gh#19) and consumer diagnostics. The
+     * value is the bracketed label that appears in log lines from
+     * the stderr pump and lifecycle events. Sanitization (leading
+     * `/` stripped, bracket / control chars removed) is applied at
+     * construction.
+     *
+     * @return Reference to the sanitized display name.
+     * @utility
+     * @version 2.1.5
+     */
+    const std::string& display_name() const { return display_name_; }
+
 private:
     std::atomic<bool> cancel_flag_{false};        ///< Set by interrupt() (P1-10)
 
+    std::string display_name_;                   ///< Label for stderr/lifecycle logs (gh#19, v2.1.5)
     std::string command_;                        ///< Executable path
     std::vector<std::string> args_;              ///< Command-line arguments
     std::map<std::string, std::string> env_;     ///< Environment overrides

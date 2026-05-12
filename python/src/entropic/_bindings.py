@@ -186,6 +186,18 @@ result via ``*modified_json`` (allocate with malloc — engine free()s),
 and returns 0 for OK or non-zero to cancel/reject.
 """
 
+# gh#22 (v2.1.5): C-ABI-documentation-spelled aliases for the CFUNCTYPE
+# typedefs. The wrapper picked terse names internally (HOOK_CB, TOKEN_CB,
+# STREAM_OBSERVER_CB); the C header documents them as
+# entropic_hook_callback_t, entropic_token_callback_t, etc. Consumers
+# coming from the C ABI docs expect the spelled-out names. Keep both
+# spellings; old code continues to work.
+HOOK_CALLBACK_CB = HOOK_CB
+"""Alias for :data:`HOOK_CB` matching the C ABI docs (gh#22)."""
+
+TOKEN_STREAM_CB = TOKEN_CB
+"""Alias for :data:`TOKEN_CB` matching the C ABI docs (gh#22)."""
+
 
 ## @brief Pin restype/argtypes on a symbol from the loaded library.
 ## @utility
@@ -250,6 +262,22 @@ entropic_context_count = _bind(
     ctypes.POINTER(ctypes.c_size_t),
 )
 
+# gh#22 (v2.1.5): closes the gh#8 partial gap. The C ABI exposes
+# entropic_context_get(handle, char** out_messages_json) — the engine
+# allocates *out_messages_json via malloc and the caller must free it
+# via entropic_free.
+entropic_context_get = _bind(
+    "entropic_context_get",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.POINTER(ctypes.c_char_p),
+)
+"""(handle, out_messages_json) -> entropic_error_t.
+
+Returns the current conversation as a JSON array string in
+``*out_messages_json``. Caller frees with :data:`entropic_free`.
+"""
+
 # ── Observers ────────────────────────────────────────────────────────────
 entropic_set_state_observer = _bind(
     "entropic_set_state_observer",
@@ -267,6 +295,121 @@ entropic_set_stream_observer = _bind(
     ctypes.c_int,
     entropic_handle_t,
     STREAM_OBSERVER_CB,
+    ctypes.c_void_p,
+)
+
+
+# ── Delegation callbacks (v2.1.5, gh#29) ─────────────────────────────────
+# Replaces the silent auto-merge-to-develop behavior. Consumers register
+# on_start (pre-delegation gate) and on_complete (patch delivery). The
+# engine NEVER applies patches; the consumer does it with user consent
+# (see entropic.helpers.apply_patch). See include/entropic/entropic.h for
+# the C ABI documentation.
+
+
+class EntDecision(enum.IntEnum):
+    """Mirrors ``ent_decision_t`` from entropic.h (gh#29, v2.1.5)."""
+
+    ACCEPT = 0
+    REJECT = 1
+
+
+class EntDelegationRequest(ctypes.Structure):
+    """Mirrors ``ent_delegation_request_t`` from entropic.h.
+
+    All pointers are owned by the engine and valid only for the
+    callback's duration. Copy any string the Python side needs to retain.
+    """
+
+    _fields_ = [
+        ("delegation_id", ctypes.c_char_p),
+        ("target_tier", ctypes.c_char_p),
+        ("task", ctypes.c_char_p),
+        ("depth", ctypes.c_int),
+        ("is_pipeline", ctypes.c_int),
+    ]
+
+
+class EntDelegationResult(ctypes.Structure):
+    """Mirrors ``ent_delegation_result_t`` from entropic.h.
+
+    ``files_touched`` is a NULL-terminated array of relative path
+    strings; iterate by index up to ``files_touched_len``. The patch
+    buffer is a unified diff suitable for ``git apply``.
+    """
+
+    _fields_ = [
+        ("delegation_id", ctypes.c_char_p),
+        ("target_tier", ctypes.c_char_p),
+        ("success", ctypes.c_int),
+        ("summary", ctypes.c_char_p),
+        ("patch", ctypes.c_char_p),
+        ("patch_len", ctypes.c_size_t),
+        ("files_touched", ctypes.POINTER(ctypes.c_char_p)),
+        ("files_touched_len", ctypes.c_size_t),
+    ]
+
+
+DELEGATION_START_CB = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # ent_decision_t
+    ctypes.POINTER(EntDelegationRequest),
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_delegation_start_cb`` (gh#29, v2.1.5)."""
+
+DELEGATION_COMPLETE_CB = ctypes.CFUNCTYPE(
+    ctypes.c_int,  # ent_decision_t
+    ctypes.POINTER(EntDelegationResult),
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_delegation_complete_cb`` (gh#29, v2.1.5)."""
+
+entropic_set_delegation_callbacks = _bind(
+    "entropic_set_delegation_callbacks",
+    ctypes.c_int,
+    entropic_handle_t,
+    DELEGATION_START_CB,
+    DELEGATION_COMPLETE_CB,
+    ctypes.c_void_p,
+)
+
+
+# ── Validation retry controls (v2.1.5, gh#30) ────────────────────────────
+# Lets consumers gate the constitutional revision loop instead of having
+# the engine race them with auto-revision. See entropic.h for the full
+# behavior contract.
+
+ATTEMPT_BOUNDARY_CB = ctypes.CFUNCTYPE(
+    None,  # void
+    ctypes.c_int,  # attempt_n
+    ctypes.c_void_p,
+)
+"""CFUNCTYPE for ``ent_validation_attempt_boundary_cb`` (gh#30, v2.1.5)."""
+
+entropic_validation_set_auto_retry = _bind(
+    "entropic_validation_set_auto_retry",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_int,  # enabled
+)
+
+entropic_validation_resume_retry = _bind(
+    "entropic_validation_resume_retry",
+    ctypes.c_int,
+    entropic_handle_t,
+)
+
+entropic_validation_accept_last = _bind(
+    "entropic_validation_accept_last",
+    ctypes.c_int,
+    entropic_handle_t,
+)
+
+entropic_set_attempt_boundary_cb = _bind(
+    "entropic_set_attempt_boundary_cb",
+    ctypes.c_int,
+    entropic_handle_t,
+    ATTEMPT_BOUNDARY_CB,
     ctypes.c_void_p,
 )
 

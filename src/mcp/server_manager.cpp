@@ -568,7 +568,7 @@ void ServerManager::connect_and_register_external(
  * responsible for env blocklist enforcement before populating spec).
  *
  * @internal
- * @version 2.1.4
+ * @version 2.1.5
  */
 std::unique_ptr<Transport> ServerManager::make_transport(
     const ExternalServerConfig& spec) {
@@ -577,8 +577,13 @@ std::unique_ptr<Transport> ServerManager::make_transport(
     if (prefer_sse) {
         return std::make_unique<SSETransport>(spec.url);
     }
+    // gh#19 (v2.1.5): pass the registered server name as the display
+    // label so child stderr lines and lifecycle logs identify the
+    // server, not the resolved spawn command (which collides when
+    // multiple servers share an entrypoint like /usr/bin/env python).
     return std::make_unique<StdioTransport>(
-        spec.command, spec.args, spec.env);
+        spec.name, spec.command, spec.args, spec.env,
+        /*default_timeout_ms=*/30000U);
 }
 
 /**

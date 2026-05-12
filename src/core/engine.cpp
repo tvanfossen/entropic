@@ -7,7 +7,7 @@
 
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
-#include <entropic/core/worktree.h>
+#include <entropic/core/sandbox.h>
 #include <entropic/types/logging.h>
 #include <entropic/types/tool_result.h>
 
@@ -155,6 +155,36 @@ void AgentEngine::set_hooks(const HookInterface& hooks) {
 void AgentEngine::set_stream_observer(
     TokenCallback observer, void* user_data) {
     response_generator_.set_stream_observer(observer, user_data);
+}
+
+/**
+ * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+ * @param on_start Pre-delegation gate (nullable).
+ * @param on_complete Post-delegation result (nullable).
+ * @param user_data Forwarded to both callbacks.
+ * @internal
+ * @version 2.1.5-hard
+ */
+void AgentEngine::set_delegation_callbacks(
+    ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+    ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+    void* user_data) {
+    std::lock_guard<std::mutex> lock(delegation_cb_mutex_);
+    delegation_cb_.start = on_start;
+    delegation_cb_.complete = on_complete;
+    delegation_cb_.user_data = user_data;
+}
+
+/**
+ * @brief Atomically snapshot the registered delegation callbacks.
+ * @return Copy of the current callback triple.
+ * @internal
+ * @version 2.1.5
+ */
+AgentEngine::DelegationCallbacks
+AgentEngine::delegation_callbacks_snapshot() const {
+    std::lock_guard<std::mutex> lock(delegation_cb_mutex_);
+    return delegation_cb_;
 }
 
 /**
@@ -1649,7 +1679,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.1.4
+ * @version 2.1.5-hard
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1689,6 +1719,12 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
+    // gh#29 (v2.1.5): snapshot consumer-registered callbacks under
+    // the mutex once at delegation entry so a concurrent setter call
+    // cannot tear the {start, complete, user_data} triple mid-call.
+    auto cb_snap = delegation_callbacks_snapshot();
+    mgr.set_delegation_callbacks(
+        cb_snap.start, cb_snap.complete, cb_snap.user_data);
 
     auto result = mgr.execute_delegation(
         ctx, pending.target, pending.task, max_turns);
@@ -1860,7 +1896,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 1.8.8
+ * @version 2.1.5-hard
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -1885,6 +1921,12 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
+    // gh#29 (v2.1.5): snapshot under the mutex (see execute_pending_
+    // delegation comment); avoids a torn read against a concurrent
+    // set_delegation_callbacks call.
+    auto cb_snap = delegation_callbacks_snapshot();
+    mgr.set_delegation_callbacks(
+        cb_snap.start, cb_snap.complete, cb_snap.user_data);
     auto result = mgr.execute_pipeline(
         ctx, pending.stages, pending.task);
 
@@ -2004,53 +2046,29 @@ bool AgentEngine::try_auto_chain(
     return !target.empty();
 }
 
-// ── Repo init (v1.8.6) ──────────────────────────────────
+// ── Project dir (v2.1.5, gh#29) ─────────────────────────
 
 /**
- * @brief Get or discover the project git repository.
- * @return Repo directory, or empty if not found.
+ * @brief Get the project directory used as sandbox snapshot source.
+ *
+ * Caches `std::filesystem::current_path()` on first call. No git
+ * inspection, no repo initialization, no writes to the user's
+ * directory. `SandboxManager` handles both git and non-git projects
+ * — the engine is purely a reader of this path.
+ *
+ * @return Project directory path.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
     repo_dir_checked_ = true;
-
     auto cwd = std::filesystem::current_path();
-    bool found = std::filesystem::exists(cwd / ".git");
-    bool inited = !found && init_project_repo(cwd);
-
-    if (found || inited) {
-        cached_repo_dir_ = cwd;
-        logger->info("Git repo at: {}", cwd.string());
-    } else {
-        logger->warn("No git repo found or initialized");
-    }
-    return cached_repo_dir_.value_or(std::filesystem::path{});
-}
-
-/**
- * @brief Initialize a git repo if none exists.
- * @param project_dir Directory to init.
- * @return true if repo now exists.
- * @internal
- * @version 2.0.2
- */
-bool AgentEngine::init_project_repo(
-    const std::filesystem::path& project_dir) {
-    auto r1 = run_git(project_dir, "init");
-    if (!r1.success) {
-        return false;
-    }
-    auto r2 = run_git(project_dir, "add -A");
-    if (!r2.success) {
-        return false;
-    }
-    run_git(project_dir, "commit --allow-empty -m 'Initial commit'");
-    logger->info("Initialized git repo at: {}", project_dir.string());
-    return true;
+    cached_repo_dir_ = cwd;
+    logger->info("Project dir for sandbox snapshots: {}", cwd.string());
+    return cwd;
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────

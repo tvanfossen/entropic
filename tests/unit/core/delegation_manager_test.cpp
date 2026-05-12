@@ -469,3 +469,337 @@ TEST_CASE("coverage_gap absent → result fields stay default",
     CHECK(result.gap_description.empty());
     CHECK(result.suggested_files.empty());
 }
+
+// ── gh#29 (v2.1.5): delegation callback tests ────────────
+
+#include <entropic/core/sandbox.h>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+
+namespace gh29_cb_tests {
+namespace fs = std::filesystem;
+
+/**
+ * @brief Override $HOME so SandboxManager places sessions under a tmp dir.
+ * @internal
+ * @version 2.1.5
+ */
+struct ScopedHomeDeleg {
+    std::string original;
+    fs::path tmp_home;
+    ScopedHomeDeleg() {
+        const char* h = std::getenv("HOME");
+        original = h ? h : "";
+        tmp_home = fs::temp_directory_path() /
+                   ("entropic_dh_" + std::to_string(::getpid()) + "_" +
+                    std::to_string(std::rand()));
+        fs::create_directories(tmp_home);
+        ::setenv("HOME", tmp_home.string().c_str(), 1);
+    }
+    ~ScopedHomeDeleg() {
+        if (!original.empty()) { ::setenv("HOME", original.c_str(), 1); }
+        else { ::unsetenv("HOME"); }
+        std::error_code ec;
+        fs::remove_all(tmp_home, ec);
+    }
+};
+
+/**
+ * @brief Build a small temp project (non-git, no .gitignore overhead).
+ * @internal
+ * @version 2.1.5
+ */
+static fs::path make_project() {
+    auto p = fs::temp_directory_path() /
+             ("entropic_proj_" + std::to_string(::getpid()) + "_" +
+              std::to_string(std::rand()));
+    fs::create_directories(p);
+    std::ofstream(p / "a.txt") << "hello\n";
+    return p;
+}
+
+/**
+ * @brief Child loop that edits a sandbox file then completes.
+ * @internal
+ * @version 2.1.5
+ */
+static void edit_loop(LoopContext& ctx, void* /*ud*/) {
+    auto cwd = fs::current_path();
+    std::ofstream(cwd / "a.txt") << "world\n";
+    Message m;
+    m.role = "assistant";
+    m.content = "edited";
+    ctx.messages.push_back(std::move(m));
+    ctx.state = AgentState::COMPLETE;
+}
+
+} // namespace gh29_cb_tests
+
+TEST_CASE("start_cb ACCEPT lets delegation proceed",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockChildLoop loop_mock;
+
+    int fired = 0;
+    auto start = [](const ent_delegation_request_t* /*r*/, void* ud) {
+        *static_cast<int*>(ud) += 1;
+        return ENT_DECISION_ACCEPT;
+    };
+
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    mgr.set_delegation_callbacks(start, nullptr, &fired);
+
+    LoopContext parent;
+    auto result = mgr.execute_delegation(parent, "eng", "task");
+    CHECK(fired == 1);
+    CHECK(loop_mock.call_count == 1);
+    CHECK(result.success);
+}
+
+TEST_CASE("start_cb REJECT aborts delegation before child loop runs",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockChildLoop loop_mock;
+
+    auto start = [](const ent_delegation_request_t* /*r*/, void* /*ud*/) {
+        return ENT_DECISION_REJECT;
+    };
+
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    mgr.set_delegation_callbacks(start, nullptr, nullptr);
+
+    LoopContext parent;
+    auto result = mgr.execute_delegation(parent, "eng", "task");
+    CHECK_FALSE(result.success);
+    CHECK(loop_mock.call_count == 0);
+    CHECK(result.summary.find("rejected") != std::string::npos);
+}
+
+TEST_CASE("start_cb receives correct request fields",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockChildLoop loop_mock;
+
+    struct Captured {
+        std::string id, tier, task;
+        int depth = -1, is_pipeline = -1;
+    } cap;
+    auto start = [](const ent_delegation_request_t* r, void* ud) {
+        auto* c = static_cast<Captured*>(ud);
+        c->id = r->delegation_id;
+        c->tier = r->target_tier;
+        c->task = r->task;
+        c->depth = r->depth;
+        c->is_pipeline = r->is_pipeline;
+        return ENT_DECISION_ACCEPT;
+    };
+
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    mgr.set_delegation_callbacks(start, nullptr, &cap);
+
+    LoopContext parent;
+    parent.delegation_depth = 2;
+    mgr.execute_delegation(parent, "researcher", "investigate X");
+    CHECK(cap.id == "d3");
+    CHECK(cap.tier == "researcher");
+    CHECK(cap.task == "investigate X");
+    CHECK(cap.depth == 3);
+    CHECK(cap.is_pipeline == 0);
+}
+
+TEST_CASE("pipeline start_cb fires once with is_pipeline=1",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockChildLoop loop_mock;
+
+    struct State { int count = 0; int is_pipeline = 0; std::string id; } s;
+    auto start = [](const ent_delegation_request_t* r, void* ud) {
+        auto* st = static_cast<State*>(ud);
+        st->count += 1;
+        st->is_pipeline = r->is_pipeline;
+        st->id = r->delegation_id;
+        return ENT_DECISION_ACCEPT;
+    };
+
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    mgr.set_delegation_callbacks(start, nullptr, &s);
+
+    LoopContext parent;
+    std::vector<std::string> stages{"researcher", "reader"};
+    mgr.execute_pipeline(parent, stages, "investigate");
+    CHECK(s.count == 1);
+    CHECK(s.is_pipeline == 1);
+    CHECK(s.id == "pipeline");
+    // Both child stages ran
+    CHECK(loop_mock.call_count == 2);
+}
+
+TEST_CASE("pipeline start_cb REJECT skips all stages",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockChildLoop loop_mock;
+
+    auto start = [](const ent_delegation_request_t* /*r*/, void* /*ud*/) {
+        return ENT_DECISION_REJECT;
+    };
+
+    DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+    mgr.set_delegation_callbacks(start, nullptr, nullptr);
+
+    LoopContext parent;
+    std::vector<std::string> stages{"a", "b"};
+    auto result = mgr.execute_pipeline(parent, stages, "task");
+    CHECK_FALSE(result.success);
+    CHECK(loop_mock.call_count == 0);
+}
+
+TEST_CASE("complete_cb receives patch and files_touched",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    ScopedHomeDeleg home;
+    auto project = make_project();
+
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    struct Captured {
+        std::string id, tier, summary, patch;
+        int success = -1;
+        std::vector<std::string> files;
+    } cap;
+    auto complete = [](const ent_delegation_result_t* r, void* ud) {
+        auto* c = static_cast<Captured*>(ud);
+        c->id = r->delegation_id;
+        c->tier = r->target_tier;
+        c->summary = r->summary;
+        c->patch = std::string(r->patch, r->patch_len);
+        c->success = r->success;
+        for (size_t i = 0; i < r->files_touched_len; ++i) {
+            c->files.emplace_back(r->files_touched[i]);
+        }
+        return ENT_DECISION_ACCEPT;
+    };
+
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    // Need a dir-swap that actually chdirs (so edit_loop writes in
+    // the sandbox, not the project).
+    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+        std::error_code ec;
+        fs::current_path(p, ec);
+    };
+    mgr.set_dir_swap(chdir_fn, nullptr);
+    mgr.set_delegation_callbacks(nullptr, complete, &cap);
+
+    LoopContext parent;
+    auto saved_cwd = fs::current_path();
+    mgr.execute_delegation(parent, "eng", "edit a.txt");
+    fs::current_path(saved_cwd);  // restore before assertions
+
+    CHECK(cap.success == 1);
+    CHECK(cap.id == "d1");
+    CHECK(cap.tier == "eng");
+    CHECK(cap.files.size() == 1);
+    CHECK(cap.files[0] == "a.txt");
+    CHECK(cap.patch.find("hello") != std::string::npos);
+    CHECK(cap.patch.find("world") != std::string::npos);
+
+    // Project unchanged (the entire point of gh#29)
+    std::ifstream in(project / "a.txt");
+    std::string content((std::istreambuf_iterator<char>(in)),
+                        std::istreambuf_iterator<char>());
+    CHECK(content == "hello\n");
+    fs::remove_all(project);
+}
+
+TEST_CASE("null complete_cb writes patch to pending/<id>.patch",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    ScopedHomeDeleg home;
+    auto project = make_project();
+
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+        std::error_code ec;
+        fs::current_path(p, ec);
+    };
+    mgr.set_dir_swap(chdir_fn, nullptr);
+    // No callbacks registered — default-deny path.
+
+    LoopContext parent;
+    auto saved_cwd = fs::current_path();
+    mgr.execute_delegation(parent, "eng", "edit a.txt");
+    fs::current_path(saved_cwd);
+
+    // Find any pending patch under $HOME/.entropic/sandbox/*/pending/
+    bool found = false;
+    auto sb_root = home.tmp_home / ".entropic" / "sandbox";
+    if (fs::exists(sb_root)) {
+        for (auto& sess : fs::directory_iterator(sb_root)) {
+            auto pending = sess.path() / "pending";
+            if (fs::exists(pending / "d1.patch")) {
+                std::ifstream in(pending / "d1.patch");
+                std::string content((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+                if (content.find("hello") != std::string::npos &&
+                    content.find("world") != std::string::npos) {
+                    found = true;
+                }
+            }
+        }
+    }
+    CHECK(found);
+    fs::remove_all(project);
+}
+
+TEST_CASE("complete_cb REJECT writes patch to pending/<id>.patch",
+          "[delegation][gh29][v2.1.5]") {
+    using namespace gh29_cb_tests;
+    ScopedHomeDeleg home;
+    auto project = make_project();
+
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    auto complete = [](const ent_delegation_result_t* /*r*/, void* /*ud*/) {
+        return ENT_DECISION_REJECT;
+    };
+
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+        std::error_code ec;
+        fs::current_path(p, ec);
+    };
+    mgr.set_dir_swap(chdir_fn, nullptr);
+    mgr.set_delegation_callbacks(nullptr, complete, nullptr);
+
+    LoopContext parent;
+    auto saved_cwd = fs::current_path();
+    mgr.execute_delegation(parent, "eng", "edit a.txt");
+    fs::current_path(saved_cwd);
+
+    bool found = false;
+    auto sb_root = home.tmp_home / ".entropic" / "sandbox";
+    if (fs::exists(sb_root)) {
+        for (auto& sess : fs::directory_iterator(sb_root)) {
+            if (fs::exists(sess.path() / "pending" / "d1.patch")) {
+                found = true;
+            }
+        }
+    }
+    CHECK(found);
+    fs::remove_all(project);
+}

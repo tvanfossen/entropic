@@ -3,10 +3,14 @@
  * @file delegation.cpp
  * @brief DelegationManager implementation.
  *
- * Ports Python's DelegationManager. Child loop creation, worktree
+ * Ports Python's DelegationManager. Child loop creation, sandbox
  * lifecycle, pipeline execution, todo list save/restore.
  *
- * @version 1.8.6
+ * v2.1.5 (gh#29): sandbox replaces worktree. The engine no longer
+ * touches the user's git repo. Delegation output flows back via a
+ * unified-diff patch produced by SandboxManager::finalize_sandbox().
+ *
+ * @version 2.1.5
  */
 
 #include <entropic/core/delegation.h>
@@ -28,9 +32,9 @@ namespace entropic {
  * @param run_child Callback to run child engine loop.
  * @param run_child_data Opaque pointer for run_child.
  * @param tier_resolution Tier resolution interface.
- * @param repo_dir Optional repo root for worktree isolation.
+ * @param repo_dir Optional project root for sandbox isolation (gh#29).
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 DelegationManager::DelegationManager(
     RunChildLoopFn run_child,
@@ -42,7 +46,7 @@ DelegationManager::DelegationManager(
       tier_res_(tier_resolution),
       repo_dir_(repo_dir) {
     if (!repo_dir_.empty()) {
-        worktree_mgr_.emplace(repo_dir_);
+        sandbox_mgr_.emplace(repo_dir_);
     }
 }
 
@@ -57,14 +61,14 @@ void DelegationManager::set_todo_callbacks(const TodoCallbacks& callbacks) {
 }
 
 /**
- * @brief Set directory swap callback for ScopedWorktree.
+ * @brief Set directory swap callback for ScopedSandbox.
  * @param swap_fn Directory swap callback.
  * @param user_data Opaque pointer for swap_fn.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5
  */
 void DelegationManager::set_dir_swap(
-    ScopedWorktree::SwapDirFn swap_fn, void* user_data) {
+    ScopedSandbox::SwapDirFn swap_fn, void* user_data) {
     swap_dir_fn_ = swap_fn;
     swap_dir_data_ = user_data;
 }
@@ -79,6 +83,161 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
     storage_ = storage;
 }
 
+/**
+ * @brief Set delegation start/complete callbacks.
+ * @param on_start Pre-delegation gate (nullable).
+ * @param on_complete Post-delegation result (nullable).
+ * @param user_data Forwarded to both callbacks.
+ * @internal
+ * @version 2.1.5
+ */
+void DelegationManager::set_delegation_callbacks(
+    ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+    ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+    void* user_data) {
+    delegation_start_cb_ = on_start;
+    delegation_complete_cb_ = on_complete;
+    delegation_cb_data_ = user_data;
+}
+
+/**
+ * @brief Invoke `delegation_start_cb_` if registered.
+ *
+ * Builds the request descriptor and dispatches. Null callback defaults
+ * to ACCEPT — the engine never refuses delegations without explicit
+ * consumer opt-in.
+ *
+ * @param delegation_id Short id.
+ * @param target_tier   Tier name.
+ * @param task          Task description.
+ * @param depth         Delegation depth.
+ * @param is_pipeline   True for pipeline stages.
+ * @return Decision from callback (or ACCEPT if null).
+ * @internal
+ * @version 2.1.5-hard
+ */
+ent_decision_t DelegationManager::fire_start_cb(
+    const std::string& delegation_id,
+    const std::string& target_tier,
+    const std::string& task,
+    int depth,
+    bool is_pipeline) {
+    if (delegation_start_cb_ == nullptr) {
+        return ENT_DECISION_ACCEPT;
+    }
+    ent_delegation_request_t req{};
+    req.delegation_id = delegation_id.c_str();
+    req.target_tier  = target_tier.c_str();
+    req.task         = task.c_str();
+    req.depth        = depth;
+    req.is_pipeline  = is_pipeline ? 1 : 0;
+    // Exception shield: per docs/architecture-cpp.md design rule #6,
+    // exceptions do not cross .so boundaries. A buggy consumer
+    // throwing a C++ exception out of the callback would otherwise
+    // unwind through the engine's stack with undefined cleanup. Fail
+    // safe by treating a throw as REJECT (gh#29 hardening).
+    try {
+        return delegation_start_cb_(&req, delegation_cb_data_);
+    } catch (...) {
+        logger->warn("delegation_start_cb threw for {}; treating as "
+                     "REJECT (gh#29 exception shield)",
+                     delegation_id);
+        return ENT_DECISION_REJECT;
+    }
+}
+
+/**
+ * @brief Deliver a finalized patch to consumer or pending/.
+ *
+ * The complete callback is null-tolerant (default-deny → pending/).
+ * If the callback returns REJECT the patch is also persisted to
+ * pending/ for the consumer to recover later. The sandbox directory
+ * is removed by the caller (`finalize_sandbox_for`) after this call
+ * returns — independent of the consumer's decision (gh#29: engine
+ * never retains writable state).
+ *
+ * @param sb_info        Sandbox identity.
+ * @param sandbox_result Patch artifact.
+ * @param result         Original delegation result.
+ * @internal
+ * @version 2.1.5-hard
+ */
+void DelegationManager::deliver_sandbox_result(
+    const SandboxInfo& sb_info,
+    const SandboxResult& sandbox_result,
+    const DelegationResult& result) {
+
+    if (delegation_complete_cb_ == nullptr) {
+        persist_pending_patch(sb_info, sandbox_result,
+                              "no complete callback registered");
+        return;
+    }
+
+    std::vector<std::string> files_owned;
+    files_owned.reserve(sandbox_result.files_touched.size());
+    for (const auto& p : sandbox_result.files_touched) {
+        files_owned.push_back(p.string());
+    }
+    std::vector<const char*> files_c;
+    files_c.reserve(files_owned.size() + 1);
+    for (const auto& s : files_owned) { files_c.push_back(s.c_str()); }
+    files_c.push_back(nullptr);
+
+    ent_delegation_result_t res{};
+    res.delegation_id     = sb_info.delegation_id.c_str();
+    res.target_tier       = result.target_tier.c_str();
+    res.success           = result.success ? 1 : 0;
+    res.summary           = result.summary.c_str();
+    res.patch             = sandbox_result.patch.c_str();
+    res.patch_len         = sandbox_result.patch.size();
+    res.files_touched     = files_c.data();
+    res.files_touched_len = files_owned.size();
+
+    // Exception shield: a buggy consumer must never unwind through
+    // the engine. Treat throw as REJECT so the patch is preserved on
+    // disk for inspection (gh#29 hardening — same policy as
+    // fire_start_cb).
+    ent_decision_t decision;
+    try {
+        decision = delegation_complete_cb_(&res, delegation_cb_data_);
+    } catch (...) {
+        logger->warn("delegation_complete_cb threw for {}; treating as "
+                     "REJECT (patch preserved to pending/)",
+                     sb_info.delegation_id);
+        decision = ENT_DECISION_REJECT;
+    }
+    if (decision == ENT_DECISION_REJECT) {
+        persist_pending_patch(sb_info, sandbox_result,
+                              "consumer REJECTED");
+    } else {
+        logger->info("Delegation {}: consumer ACCEPTED ({} files, "
+                     "{} bytes)",
+                     sb_info.delegation_id,
+                     sandbox_result.files_touched.size(),
+                     sandbox_result.patch.size());
+    }
+}
+
+/**
+ * @brief Persist a patch to pending/ + log WARN.
+ * @internal
+ * @version 2.1.5
+ */
+void DelegationManager::persist_pending_patch(
+    const SandboxInfo& sb_info,
+    const SandboxResult& sandbox_result,
+    const char* reason) {
+    auto path = sandbox_mgr_->write_pending_patch(
+        sb_info.delegation_id, sandbox_result.patch);
+    if (path) {
+        logger->warn("Delegation {}: {}; patch saved to {} "
+                     "({} files, {} bytes)",
+                     sb_info.delegation_id, reason, path->string(),
+                     sandbox_result.files_touched.size(),
+                     sandbox_result.patch.size());
+    }
+}
+
 // ── Single delegation ────────────────────────────────────
 
 /**
@@ -89,7 +248,7 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @internal
- * @version 2.0.2
+ * @version 2.1.5-cb
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -112,27 +271,37 @@ DelegationResult DelegationManager::execute_delegation(
     auto child_ctx = build_child_context(parent_ctx, info, task);
     child_ctx.locked_tier = target_tier;
 
-    // Create per-delegation worktree
-    std::optional<WorktreeInfo> wt_info;
-    if (worktree_mgr_) {
-        worktree_mgr_->ensure_develop();
-        wt_info = worktree_mgr_->create_worktree(
-            "d" + std::to_string(parent_ctx.delegation_depth + 1),
-            target_tier);
+    // gh#29 (v2.1.5): consumer gate before any child loop runs. Engine
+    // never proceeds past a REJECT — even if no sandbox is configured.
+    std::string del_id =
+        "d" + std::to_string(parent_ctx.delegation_depth + 1);
+    if (fire_start_cb(del_id, target_tier, task,
+                      parent_ctx.delegation_depth + 1, false)
+        == ENT_DECISION_REJECT) {
+        logger->info("Delegation {} ({}) rejected by start callback",
+                     del_id, target_tier);
+        return {"Delegation rejected by consumer", false,
+                target_tier, task};
+    }
+
+    // Create per-delegation filesystem sandbox (gh#29: was a git
+    // worktree, now an isolated copy under ~/.entropic/sandbox/).
+    std::optional<SandboxInfo> sb_info;
+    if (sandbox_mgr_) {
+        sb_info = sandbox_mgr_->create_sandbox(del_id);
     }
 
     DelegationResult result;
 
-    // Scoped worktree swap (RAII restores on exit)
-    if (wt_info && swap_dir_fn_ != nullptr) {
-        ScopedWorktree scope(swap_dir_fn_, swap_dir_data_,
-                             wt_info->path, repo_dir_);
+    if (sb_info && swap_dir_fn_ != nullptr) {
+        ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                            sb_info->path, repo_dir_);
         result = run_child(child_ctx, target_tier, task, max_turns);
     } else {
         result = run_child(child_ctx, target_tier, task, max_turns);
     }
 
-    finalize_worktree(wt_info, result);
+    finalize_sandbox_for(sb_info, result);
     return result;
 }
 
@@ -191,7 +360,7 @@ static std::string pipeline_context(
  * @param task Task description.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 2.1.4
+ * @version 2.1.5-cb
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -200,63 +369,96 @@ DelegationResult DelegationManager::execute_pipeline(
 
     logger->info("Pipeline: {} stages, task='{}'", stages.size(), task);
 
-    // Create shared worktree for entire pipeline
-    std::optional<WorktreeInfo> shared_wt;
-    if (worktree_mgr_) {
-        worktree_mgr_->ensure_develop();
-        shared_wt = worktree_mgr_->create_worktree("pipeline", "shared");
+    // gh#29 (v2.1.5): single pre-flight gate for the whole pipeline.
+    auto first = stages.empty() ? std::string{} : stages.front();
+    if (fire_start_cb("pipeline", first, task,
+                      parent_ctx.delegation_depth + 1, true)
+        == ENT_DECISION_REJECT) {
+        logger->info("Pipeline rejected by start callback");
+        return {"Pipeline rejected by consumer", false, first, task};
+    }
+
+    // Shared sandbox for the entire pipeline (gh#29). Each stage runs
+    // inside the same directory so later stages observe earlier stages'
+    // file edits — preserving the v2.1.4 forward-carry behavior.
+    std::optional<SandboxInfo> shared_sb;
+    if (sandbox_mgr_) {
+        shared_sb = sandbox_mgr_->create_sandbox("pipeline");
     }
 
     DelegationResult last_result;
     last_result.task = task;
 
     for (size_t i = 0; i < stages.size(); ++i) {
-        // Issue #11 (v2.1.4): forward prior stage's output to the
-        // next stage's context. Stage 0 sees empty prior_output.
-        std::string prior = (i == 0) ? std::string{} : last_result.summary;
-        std::string stage_task =
-            pipeline_context(i, stages.size(), stages, prior) + task;
-
-        auto info = tier_res_.resolve_tier
-            ? tier_res_.resolve_tier(stages[i], tier_res_.user_data)
-            : ChildContextInfo{};
-
-        if (!info.valid) {
-            logger->error("Pipeline stage {}: tier '{}' not found",
-                          i, stages[i]);
-            last_result.success = false;
-            last_result.summary = "Unknown tier: " + stages[i];
-            break;
-        }
-
-        auto child_ctx = build_child_context(parent_ctx, info, stage_task);
-        child_ctx.locked_tier = stages[i];
-
-        if (shared_wt && swap_dir_fn_ != nullptr) {
-            ScopedWorktree scope(swap_dir_fn_, swap_dir_data_,
-                                 shared_wt->path, repo_dir_);
-            last_result = run_child(
-                child_ctx, stages[i], stage_task, std::nullopt);
-        } else {
-            last_result = run_child(
-                child_ctx, stages[i], stage_task, std::nullopt);
-        }
-
-        logger->info("Pipeline stage {} ({}): {}",
-                      i, stages[i],
-                      last_result.success ? "complete" : "failed");
-
-        if (!last_result.success) {
+        if (!run_pipeline_stage(parent_ctx, stages, i, task,
+                                shared_sb, last_result)) {
             break;
         }
     }
 
-    // Pipeline always merges (even on partial failure)
-    if (shared_wt && worktree_mgr_) {
-        worktree_mgr_->merge_worktree(*shared_wt);
-    }
-
+    finalize_sandbox_for(shared_sb, last_result);
     return last_result;
+}
+
+/**
+ * @brief Run one stage of an `execute_pipeline` loop.
+ *
+ * Extracted to keep `execute_pipeline` under the SLOC gate. Returns
+ * false on tier-not-found or stage failure so the caller can break
+ * the outer loop.
+ *
+ * @param parent_ctx  Parent loop context.
+ * @param stages      Full stage list.
+ * @param stage_idx   Index of the stage to run.
+ * @param task        Original task text.
+ * @param shared_sb   Shared pipeline sandbox (may be empty).
+ * @param last_result In/out: previous-stage result on entry,
+ *                    this stage's result on return.
+ * @return true to continue to the next stage, false to break.
+ * @internal
+ * @version 2.1.5
+ */
+bool DelegationManager::run_pipeline_stage(
+    LoopContext& parent_ctx,
+    const std::vector<std::string>& stages,
+    size_t stage_idx,
+    const std::string& task,
+    const std::optional<SandboxInfo>& shared_sb,
+    DelegationResult& last_result) {
+
+    const auto& tier_name = stages[stage_idx];
+    std::string prior = (stage_idx == 0) ? std::string{} : last_result.summary;
+    std::string stage_task =
+        pipeline_context(stage_idx, stages.size(), stages, prior) + task;
+
+    auto info = tier_res_.resolve_tier
+        ? tier_res_.resolve_tier(tier_name, tier_res_.user_data)
+        : ChildContextInfo{};
+
+    if (!info.valid) {
+        logger->error("Pipeline stage {}: tier '{}' not found",
+                      stage_idx, tier_name);
+        last_result.success = false;
+        last_result.summary = "Unknown tier: " + tier_name;
+        return false;
+    }
+
+    auto child_ctx = build_child_context(parent_ctx, info, stage_task);
+    child_ctx.locked_tier = tier_name;
+
+    if (shared_sb && swap_dir_fn_ != nullptr) {
+        ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                            shared_sb->path, repo_dir_);
+        last_result = run_child(child_ctx, tier_name, stage_task,
+                                std::nullopt);
+    } else {
+        last_result = run_child(child_ctx, tier_name, stage_task,
+                                std::nullopt);
+    }
+
+    logger->info("Pipeline stage {} ({}): {}", stage_idx, tier_name,
+                 last_result.success ? "complete" : "failed");
+    return last_result.success;
 }
 
 // ── Child context ────────────────────────────────────────
@@ -526,24 +728,40 @@ void DelegationManager::log_child_result(
 }
 
 /**
- * @brief Finalize worktree based on delegation result.
- * @param wt_info Worktree to finalize.
+ * @brief Finalize sandbox based on delegation result.
+ *
+ * On success, generates a unified-diff patch and routes it to the
+ * registered complete callback. ACCEPT means the consumer applied the
+ * patch (engine discards the sandbox); REJECT or null-callback means
+ * the engine persists the patch to `<session>/pending/<id>.patch` for
+ * later inspection. The sandbox directory is removed unconditionally
+ * — the engine never retains writable state (gh#29).
+ *
+ * @param sb_info Sandbox to finalize.
  * @param result Delegation result.
  * @internal
- * @version 1.8.6
+ * @version 2.1.5-cb
  */
-void DelegationManager::finalize_worktree(
-    const std::optional<WorktreeInfo>& wt_info,
+void DelegationManager::finalize_sandbox_for(
+    const std::optional<SandboxInfo>& sb_info,
     const DelegationResult& result) {
-    if (!wt_info || !worktree_mgr_) {
+    if (!sb_info || !sandbox_mgr_) {
         return;
     }
 
     if (result.success) {
-        worktree_mgr_->merge_worktree(*wt_info);
+        auto patch_result = sandbox_mgr_->finalize_sandbox(*sb_info);
+        if (patch_result) {
+            deliver_sandbox_result(*sb_info, *patch_result, result);
+        } else {
+            logger->error("Delegation {}: finalize_sandbox failed; "
+                          "no patch delivered", sb_info->delegation_id);
+        }
     } else {
-        worktree_mgr_->discard_worktree(*wt_info);
+        logger->info("Delegation {} failed: discarding sandbox without "
+                     "generating patch", sb_info->delegation_id);
     }
+    sandbox_mgr_->discard_sandbox(*sb_info);
 }
 
 } // namespace entropic

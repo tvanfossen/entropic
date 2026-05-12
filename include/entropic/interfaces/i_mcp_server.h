@@ -21,6 +21,16 @@
  *   extern "C" ENTROPIC_EXPORT entropic_mcp_server_t entropic_create_server();
  * @endcode
  *
+ * @par ABI lock
+ * Function signatures and the `entropic_mcp_server_t` opaque-handle
+ * type are LOCKED at API version 1. Any change to a function
+ * declaration, struct member layout, or the macro/typedef contracts in
+ * this header is a breaking change that requires bumping
+ * `entropic_plugin_api_version()`. Comment-only changes are safe.
+ * Cross-version compatibility test: a plugin built against 2.1.4
+ * headers MUST `dlopen` cleanly into a 2.1.5 engine (verified
+ * comment-only diff in `gh release v2.1.5` review).
+ *
  * @version 1.8.5
  */
 
@@ -90,8 +100,9 @@ entropic_error_t entropic_mcp_server_configure(
  * @version 1.8.5
  *
  * Base class default is no-op. Directory-aware servers (filesystem,
- * bash, git) implement this. Enables v1.8.6 ScopedWorktree to swap
- * directories across .so boundaries without breaking isolation.
+ * bash, git) implement this. Enables ScopedSandbox (v2.1.5; formerly
+ * ScopedWorktree) to swap directories across .so boundaries without
+ * breaking isolation.
  */
 entropic_error_t entropic_mcp_server_set_working_dir(
     entropic_mcp_server_t server,

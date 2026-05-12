@@ -40,6 +40,7 @@
 #include <entropic/types/hooks.h>
 #include <entropic/types/validation.h>
 
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -179,6 +180,69 @@ public:
      * @version 1.9.8
      */
     ValidationResult last_result() const;
+
+    // ── gh#30 (v2.1.5): consumer-driven retry controls ──────
+
+    /**
+     * @brief Enable or disable automatic revision after rejection.
+     *
+     * When disabled, `validate()` returns immediately on the first
+     * failing critique with verdict `paused_pending_consumer` and
+     * caches enough state for `resume_retry()` to continue the
+     * revision loop later. Default: true (preserves pre-2.1.5
+     * behavior).
+     *
+     * @param enabled Whether auto-revision is enabled.
+     * @version 2.1.5
+     */
+    void set_auto_retry(bool enabled);
+
+    /**
+     * @brief Whether auto-revision is currently enabled.
+     * @return true if enabled.
+     * @utility
+     * @version 2.1.5
+     */
+    bool auto_retry_enabled() const;
+
+    /**
+     * @brief Resume the revision pass after a paused validation.
+     *
+     * Re-enters `apply_revisions()` using the state cached by the most
+     * recent `validate()` call that paused on a critique failure. Runs
+     * synchronously and updates `last_result_`. Returns
+     * `ENTROPIC_ERROR_INVALID_STATE` if no validation is paused.
+     *
+     * @return ENTROPIC_OK on success.
+     * @version 2.1.5
+     */
+    entropic_error_t resume_retry();
+
+    /**
+     * @brief Finalize the cached attempt as the validation result.
+     *
+     * Used after `set_auto_retry(false)` paused validation: marks the
+     * paused attempt as the consumer-accepted answer (verdict becomes
+     * `passed_consumer_override`) and clears the cached pending state.
+     *
+     * @return ENTROPIC_OK on success.
+     *         ENTROPIC_ERROR_INVALID_STATE if no validation is paused.
+     * @version 2.1.5
+     */
+    entropic_error_t accept_last();
+
+    /**
+     * @brief Register the attempt-boundary callback.
+     *
+     * Fires immediately before each revision attempt starts. Used by
+     * consumers to split rendered output between attempts.
+     *
+     * @param cb Callback (nullable clears).
+     * @param user_data Forwarded to `cb`.
+     * @version 2.1.5
+     */
+    void set_attempt_boundary_cb(
+        void (*cb)(int attempt_n, void* user_data), void* user_data);
 
     /**
      * @brief Get the config (read-only after construction).
@@ -493,6 +557,45 @@ private:
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;
     mutable std::mutex result_mutex_;         ///< Guards last_result_
+
+    // ── gh#30 (v2.1.5): consumer-driven retry controls ─────
+    /// @brief When false, `validate()` stops after the first critique
+    /// failure instead of entering the revision loop. Default true to
+    /// preserve pre-2.1.5 behavior.
+    std::atomic<bool> auto_retry_enabled_{true};
+
+    /**
+     * @brief State captured when validation is paused on rejection.
+     * @internal
+     * @version 2.1.5
+     */
+    struct PendingValidationState {
+        ValidationResult result;       ///< Cached partial result
+        CritiqueResult critique;       ///< First failing critique
+        std::string messages_json;     ///< Conversation context to revise against
+        std::string tier;              ///< Originating tier (for log)
+    };
+    /// @brief Set when verdict=paused_pending_consumer; cleared on
+    /// resume_retry() or accept_last(). Guarded by `pending_mutex_`.
+    std::optional<PendingValidationState> pending_state_;
+    mutable std::mutex pending_mutex_;        ///< Guards pending_state_
+
+    /**
+     * @brief Attempt-boundary callback + user_data, guarded together.
+     *
+     * Held under `attempt_boundary_mutex_` so a consumer reassigning
+     * the callback mid-revision cannot race with the firing site in
+     * `apply_revisions()`. Snapshotted into a local before invocation
+     * to release the lock before calling consumer code.
+     *
+     * @version 2.1.5
+     */
+    struct AttemptBoundaryCb {
+        void (*cb)(int, void*) = nullptr;
+        void* user_data = nullptr;
+    };
+    AttemptBoundaryCb attempt_boundary_;
+    mutable std::mutex attempt_boundary_mutex_;
 };
 
 } // namespace entropic

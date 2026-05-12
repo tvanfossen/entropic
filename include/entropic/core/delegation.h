@@ -4,16 +4,17 @@
  * @brief DelegationManager — child loop creation and execution.
  *
  * Ports Python's DelegationManager. Orchestrates child inference loop
- * creation, worktree lifecycle, pipeline execution, and todo list
+ * creation, sandbox lifecycle, pipeline execution, and todo list
  * save/restore across delegation boundaries.
  *
- * @version 1.8.6
+ * @version 2.1.5
  */
 
 #pragma once
 
+#include <entropic/entropic.h>  // ent_decision_t + ent_delegation_* (gh#29, v2.1.5)
 #include <entropic/core/engine_types.h>
-#include <entropic/core/worktree.h>
+#include <entropic/core/sandbox.h>
 #include <entropic/types/message.h>
 
 #include <functional>
@@ -124,12 +125,12 @@ public:
     void set_todo_callbacks(const TodoCallbacks& callbacks);
 
     /**
-     * @brief Set directory swap callback for ScopedWorktree.
+     * @brief Set directory swap callback for ScopedSandbox.
      * @param swap_fn Directory swap callback.
      * @param user_data Opaque pointer for swap_fn.
-     * @version 1.8.6
+     * @version 2.1.5
      */
-    void set_dir_swap(ScopedWorktree::SwapDirFn swap_fn, void* user_data);
+    void set_dir_swap(ScopedSandbox::SwapDirFn swap_fn, void* user_data);
 
     /**
      * @brief Set storage interface for delegation record persistence.
@@ -137,6 +138,26 @@ public:
      * @version 1.8.8
      */
     void set_storage(const struct StorageInterface* storage);
+
+    /**
+     * @brief Set delegation start/complete callbacks (gh#29, v2.1.5).
+     *
+     * Forwarded by the engine from `entropic_set_delegation_callbacks`.
+     * `on_start` is invoked before each child loop runs and may veto
+     * the delegation (REJECT). `on_complete` receives the sandbox patch
+     * artifact; ACCEPT means the consumer applied it (sandbox is
+     * discarded), REJECT or NULL means the engine writes the patch to
+     * `<session>/pending/<id>.patch` as a default-deny fallback.
+     *
+     * @param on_start    Pre-delegation gate (nullable).
+     * @param on_complete Post-delegation result (nullable).
+     * @param user_data   Forwarded to both callbacks.
+     * @version 2.1.5
+     */
+    void set_delegation_callbacks(
+        ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+        ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+        void* user_data);
 
     /**
      * @brief Run a child inference loop for the target tier.
@@ -226,13 +247,20 @@ private:
     void log_child_result(const DelegationResult& result);
 
     /**
-     * @brief Finalize worktree based on delegation result.
-     * @param wt_info Worktree to finalize (nullopt if no worktree).
-     * @param result Delegation result determining merge/discard.
-     * @version 1.8.6
+     * @brief Finalize sandbox based on delegation result.
+     *
+     * On success, generates a unified-diff patch via the sandbox
+     * manager. The patch is currently discarded after logging — the
+     * 2.1.5 fix removes the previous auto-merge-to-parent behavior
+     * (gh#29). Consumer-facing delivery of the patch will land via
+     * the delegation-complete C ABI callback (also 2.1.5).
+     *
+     * @param sb_info Sandbox to finalize (nullopt if no sandbox).
+     * @param result Delegation result (success/failure governs cleanup).
+     * @version 2.1.5
      */
-    void finalize_worktree(
-        const std::optional<WorktreeInfo>& wt_info,
+    void finalize_sandbox_for(
+        const std::optional<SandboxInfo>& sb_info,
         const DelegationResult& result);
 
     /**
@@ -262,11 +290,106 @@ private:
     void* run_child_data_;                             ///< Engine instance
     TierResolutionInterface tier_res_;                 ///< Tier lookup callbacks
     TodoCallbacks todo_callbacks_;                     ///< Todo save/restore
-    ScopedWorktree::SwapDirFn swap_dir_fn_ = nullptr;  ///< Dir swap callback
+    ScopedSandbox::SwapDirFn swap_dir_fn_ = nullptr;   ///< Dir swap callback
     void* swap_dir_data_ = nullptr;                    ///< Dir swap user data
-    std::optional<WorktreeManager> worktree_mgr_;      ///< Git worktree manager
-    std::filesystem::path repo_dir_;                   ///< Repository root
+    std::optional<SandboxManager> sandbox_mgr_;        ///< Filesystem sandbox (2.1.5, gh#29)
+    std::filesystem::path repo_dir_;                   ///< Project root
     const struct StorageInterface* storage_ = nullptr; ///< Nullable storage (v1.8.8)
+
+    // ── Delegation callbacks (gh#29, v2.1.5) ───────────────
+    ent_decision_t (*delegation_start_cb_)(
+        const ent_delegation_request_t*, void*) = nullptr;     ///< Pre-delegation gate
+    ent_decision_t (*delegation_complete_cb_)(
+        const ent_delegation_result_t*, void*) = nullptr;      ///< Post-delegation result
+    void* delegation_cb_data_ = nullptr;                       ///< Forwarded to both
+
+    /**
+     * @brief Invoke `delegation_start_cb_` if set; return its decision.
+     *
+     * Builds an `ent_delegation_request_t` from the supplied parameters
+     * and dispatches to the registered start callback. Null callback
+     * defaults to `ENT_DECISION_ACCEPT`.
+     *
+     * @param delegation_id Short id (e.g. "d1", "pipeline").
+     * @param target_tier   Tier name.
+     * @param task          Task description.
+     * @param depth         Delegation depth.
+     * @param is_pipeline   True if this is a pipeline stage.
+     * @return Decision returned by the callback (or ACCEPT if null).
+     * @internal
+     * @version 2.1.5
+     */
+    ent_decision_t fire_start_cb(
+        const std::string& delegation_id,
+        const std::string& target_tier,
+        const std::string& task,
+        int depth,
+        bool is_pipeline);
+
+    /**
+     * @brief Dispatch a finalized sandbox result to consumer or pending.
+     *
+     * Materializes `ent_delegation_result_t` from `SandboxResult` and
+     * fires `delegation_complete_cb_`. On REJECT (or null callback)
+     * writes the patch to `<session>/pending/<id>.patch`. The sandbox
+     * directory is removed by the caller after this returns.
+     *
+     * @param sb_info        Sandbox identity (for delegation_id).
+     * @param sandbox_result Patch artifact from finalize_sandbox().
+     * @param result         Original DelegationResult (for success/summary).
+     * @internal
+     * @version 2.1.5
+     */
+    void deliver_sandbox_result(
+        const SandboxInfo& sb_info,
+        const SandboxResult& sandbox_result,
+        const DelegationResult& result);
+
+    /**
+     * @brief Persist a patch to pending/ + log a WARN message.
+     *
+     * Extracted from `deliver_sandbox_result` to keep that function
+     * under the SLOC complexity gate. Used in two cases: no complete
+     * callback registered, or callback returned REJECT.
+     *
+     * @param sb_info Sandbox identity (for delegation_id + log fmt).
+     * @param sandbox_result Patch artifact.
+     * @param reason Short reason string for the log line.
+     * @internal
+     * @version 2.1.5
+     */
+    void persist_pending_patch(
+        const SandboxInfo& sb_info,
+        const SandboxResult& sandbox_result,
+        const char* reason);
+
+    /**
+     * @brief Run one pipeline stage; returns false to stop pipeline.
+     *
+     * Extracted from `execute_pipeline` to keep that function under
+     * the SLOC complexity gate. Resolves the tier, builds the child
+     * context, runs the child (under the shared sandbox if available),
+     * updates `last_result`, and logs the stage outcome.
+     *
+     * @param parent_ctx Parent loop context.
+     * @param stages     Full stage list (for indexing/labeling).
+     * @param stage_idx  Index of the stage to execute.
+     * @param task       Original task text.
+     * @param shared_sb  Shared pipeline sandbox (optional).
+     * @param last_result In/out: prior-stage result on entry, this
+     *                    stage's result on return.
+     * @return false if the pipeline should stop (failure or unknown
+     *         tier); true to continue to the next stage.
+     * @internal
+     * @version 2.1.5
+     */
+    bool run_pipeline_stage(
+        LoopContext& parent_ctx,
+        const std::vector<std::string>& stages,
+        size_t stage_idx,
+        const std::string& task,
+        const std::optional<SandboxInfo>& shared_sb,
+        DelegationResult& last_result);
 };
 
 } // namespace entropic

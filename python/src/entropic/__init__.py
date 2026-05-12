@@ -51,14 +51,32 @@ _LAZY_EXPORTS = frozenset(
         # Issue #8 (v2.1.4): EntropicHookPoint enum + 4 new ABI symbols.
         "EntropicHookPoint",
         "HOOK_CB",
+        # gh#22 (v2.1.5): C-ABI-documentation-spelled CFUNCTYPE aliases.
+        "HOOK_CALLBACK_CB",
+        "TOKEN_STREAM_CB",
         "STATE_OBSERVER_CB",
         "STREAM_OBSERVER_CB",
         "TOKEN_CB",
+        # gh#29 (v2.1.5): delegation callbacks — replaces auto-merge.
+        "DELEGATION_START_CB",
+        "DELEGATION_COMPLETE_CB",
+        "EntDecision",
+        "EntDelegationRequest",
+        "EntDelegationResult",
+        "entropic_set_delegation_callbacks",
+        # gh#30 (v2.1.5): validation retry controls.
+        "ATTEMPT_BOUNDARY_CB",
+        "entropic_set_attempt_boundary_cb",
+        "entropic_validation_accept_last",
+        "entropic_validation_resume_retry",
+        "entropic_validation_set_auto_retry",
         "entropic_alloc",
         "entropic_api_version",
         "entropic_configure_dir",
         "entropic_context_clear",
         "entropic_context_count",
+        # gh#22 (v2.1.5): closes gh#8 partial gap.
+        "entropic_context_get",
         "entropic_create",
         "entropic_destroy",
         "entropic_free",

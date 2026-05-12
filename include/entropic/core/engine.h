@@ -23,6 +23,7 @@
 
 #pragma once
 
+#include <entropic/entropic.h>  // for ent_decision_t and ent_delegation_* (gh#29, v2.1.5)
 #include <entropic/core/compaction.h>
 #include <entropic/core/context_manager.h>
 #include <entropic/core/directives.h>
@@ -69,6 +70,24 @@ public:
     AgentEngine(const InferenceInterface& inference,
                 const LoopConfig& loop_config,
                 const CompactionConfig& compaction_config);
+
+    /**
+     * @brief Grouped consumer-registered delegation callbacks (gh#29).
+     *
+     * Public so `delegation_callbacks_snapshot()` can return it. The
+     * struct mirrors the C ABI surface: a start gate, a complete
+     * delivery, and a shared user_data pointer. Snapshotted under
+     * `delegation_cb_mutex_` to avoid torn reads.
+     *
+     * @version 2.1.5
+     */
+    struct DelegationCallbacks {
+        ent_decision_t (*start)(const ent_delegation_request_t*, void*)
+            = nullptr;
+        ent_decision_t (*complete)(const ent_delegation_result_t*, void*)
+            = nullptr;
+        void* user_data = nullptr;
+    };
 
     /**
      * @brief Run the engine on a set of messages.
@@ -144,6 +163,41 @@ public:
      */
     void set_validation_provider(char* (*provider)(void*),
                                  void* user_data);
+
+    /**
+     * @brief Register delegation start/complete callbacks (gh#29, v2.1.5).
+     *
+     * Replaces the pre-2.1.5 silent auto-merge-to-parent behavior. The
+     * engine stores these C-style function pointers and forwards them
+     * into every `DelegationManager` it constructs (one per pending
+     * delegation or pipeline). Null callbacks are honored: `on_start`
+     * null = always ACCEPT; `on_complete` null = default-deny (write
+     * patch to `~/.entropic/sandbox/<session>/pending/<id>.patch`).
+     *
+     * @param on_start    Pre-delegation gate (nullable clears).
+     * @param on_complete Post-delegation result (nullable clears).
+     * @param user_data   Forwarded to both callbacks.
+     * @version 2.1.5
+     */
+    void set_delegation_callbacks(
+        ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
+        ent_decision_t (*on_complete)(const ent_delegation_result_t*, void*),
+        void* user_data);
+
+    /**
+     * @brief Atomically snapshot the registered delegation callbacks.
+     *
+     * Hot path is `execute_pending_delegation` / `execute_pending_pipeline`:
+     * they grab the triple under the mutex once and pass it forward to
+     * the per-call DelegationManager. Prevents a torn read where the
+     * consumer reassigns the callbacks mid-delegation. (Hardening
+     * landed alongside the 2.1.5 verification pass.)
+     *
+     * @return Copy of the current callback struct.
+     * @utility
+     * @version 2.1.5
+     */
+    DelegationCallbacks delegation_callbacks_snapshot() const;
 
     /**
      * @brief Register a callback invoked alongside interrupt().
@@ -698,19 +752,18 @@ private:
                                      const std::string& summary = "");///< @internal
 
     /**
-     * @brief Get or discover the project git repository.
-     * @return Repo directory, or empty if not found.
-     * @version 1.8.6
+     * @brief Get the project root used as sandbox snapshot source.
+     *
+     * Returns the current working directory. Unlike the v1.8.6–v2.1.4
+     * implementation, this method does NOT initialize a git repo if
+     * none exists — `SandboxManager` handles non-git projects natively
+     * (gh#29, v2.1.5). The engine no longer mutates the user's
+     * project directory under any circumstance.
+     *
+     * @return Project directory path.
+     * @version 2.1.5
      */
     std::filesystem::path get_repo_dir();                       ///< @internal
-
-    /**
-     * @brief Initialize a git repo if none exists.
-     * @param project_dir Directory to init.
-     * @return true if repo now exists.
-     * @version 1.8.6
-     */
-    bool init_project_repo(const std::filesystem::path& project_dir); ///< @internal
 
     /**
      * @brief Fire on_delegation_start callback.
@@ -745,6 +798,13 @@ private:
     std::atomic<bool> pause_flag_{false};                 ///< Pause signal
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
+    // ── Delegation callbacks (gh#29, v2.1.5) ────────────────
+    /// @brief Held under `delegation_cb_mutex_` so set + snapshot
+    /// can atomically swap all three fields without tearing. Bundled
+    /// to prevent a race where a consumer reassigns callbacks while a
+    /// delegation is in flight.
+    DelegationCallbacks delegation_cb_;
+    mutable std::mutex delegation_cb_mutex_;
     char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
     void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors

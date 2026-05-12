@@ -7,6 +7,7 @@
 
 #include <entropic/core/response_generator.h>
 #include <entropic/mcp/utf8_sanitize.h>
+#include <entropic/types/error.h>
 #include <entropic/types/logging.h>
 
 #include <cstring>
@@ -166,6 +167,12 @@ struct StreamAccumulator {
     const HookInterface* hooks;       ///< Hook dispatch (v1.9.1)
     int token_index = 0;              ///< Token counter (v1.9.1)
     bool interrupted = false;         ///< Set when interrupt detected
+    /// @brief Pointer to the backend's cancel flag (gh#20, v2.1.5).
+    ///
+    /// When the interrupt event fires, the token callback writes 1
+    /// here so the next iteration of the backend's decode loop stops
+    /// within a single token instead of running to natural EOS.
+    int* cancel_flag = nullptr;
     /// @brief Global observer — fires on every token alongside
     ///        callbacks->on_stream_chunk. (2.0.6-rc16)
     void (*observer)(const char*, size_t, void*) = nullptr;
@@ -178,18 +185,43 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.5
  */
 static void stream_token_callback(
     const char* token,
     size_t len,
     void* user_data) {
     auto* acc = static_cast<StreamAccumulator*>(user_data);
-    if (acc->events->interrupt != nullptr
-        && acc->events->interrupt->load()) {
+
+    // gh#20 (v2.1.5): two coupled bugs lived here.
+    //
+    // (A) The previous implementation set `acc->interrupted = true`
+    //     and returned early WITHOUT propagating the interrupt to the
+    //     backend. The backend's cancel_flag stayed 0, so llama_cpp
+    //     ran to natural EOS — up to 60s of wasted decode after the
+    //     user pressed Ctrl-C.
+    //
+    // (B) The early return also dropped every post-interrupt token
+    //     from `acc->content`. When the backend finally finished
+    //     cleanly, the response_generator built the iter result from
+    //     this truncated buffer (e.g. 7 chars instead of the 107
+    //     decoded tokens forming a valid tool call), throwing away
+    //     fully-formed output.
+    //
+    // The fix raises the cancel flag for the backend AND keeps
+    // appending the token so the content buffer is complete up to
+    // the cancel point. The backend stops on its next loop iteration
+    // (<= 1 token wall-time); whatever made it through is preserved.
+    bool just_interrupted = acc->events->interrupt != nullptr
+        && acc->events->interrupt->load()
+        && !acc->interrupted;
+    if (just_interrupted) {
         acc->interrupted = true;
-        return;
+        if (acc->cancel_flag != nullptr) {
+            *acc->cancel_flag = 1;
+        }
     }
+
     acc->content.append(token, len);
     if (acc->callbacks->on_stream_chunk != nullptr) {
         acc->callbacks->on_stream_chunk(token, len,
@@ -216,7 +248,7 @@ static void stream_token_callback(
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.1
+ * @version 2.1.5
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -237,6 +269,11 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     acc.callbacks = &callbacks_;
     acc.events = &events_;
     acc.hooks = &hooks_;
+    // gh#20 (v2.1.5): give the token callback a path to raise the
+    // backend cancel flag when an interrupt is observed. Without
+    // this, the previous implementation would early-return out of
+    // the token callback without ever telling the backend to stop.
+    acc.cancel_flag = &cancel_flag;
     // Wire the persistent stream observer so every token — including
     // batch entropic_run and delegate child-loop generations — reaches
     // any registered observer. (P0-1, 2.0.6-rc16)
@@ -249,7 +286,24 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         &cancel_flag, inference_.backend_data);
 
     GenerateResult result;
-    if (rc != 0 && !acc.content.empty()) {
+    // gh#20 (v2.1.5): finish reason resolution order:
+    //   - rc == ENTROPIC_ERROR_CANCELLED: backend honored the cancel
+    //     flag — preserve accumulated content as the interrupted
+    //     turn's output instead of dropping it.
+    //   - rc != 0 and content non-empty: backend errored mid-stream
+    //     but the consumer saw some tokens — surface as "partial".
+    //   - rc != 0 and content empty: backend errored before any
+    //     tokens emitted — surface as "error".
+    //   - rc == 0 and consumer-side interrupt fired: the backend
+    //     finished naturally just after the interrupt landed; the
+    //     model's full output is the correct response. Marking
+    //     "interrupted" here would discard a complete tool call.
+    //   - rc == 0 otherwise: clean stop.
+    if (rc == ENTROPIC_ERROR_CANCELLED) {
+        logger->info("Stream cancelled by interrupt after {} chars",
+                     acc.content.size());
+        result.finish_reason = "interrupted";
+    } else if (rc != 0 && !acc.content.empty()) {
         logger->warn("Stream failed (rc={}) after {} chars — preserving partial",
                      rc, acc.content.size());
         result.finish_reason = "partial";
@@ -257,7 +311,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         logger->error("Stream failed (rc={}) with no partial content", rc);
         result.finish_reason = "error";
     } else {
-        result.finish_reason = acc.interrupted ? "interrupted" : "stop";
+        result.finish_reason = "stop";
     }
     // Issue #3 (v2.1.1): inbound boundary from llama_cpp. Models can emit
     // malformed UTF-8 mid-stream (partial multi-byte runs under XML-tool-call

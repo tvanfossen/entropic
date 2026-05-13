@@ -1101,6 +1101,169 @@ ServerResponse ContextInspectTool::execute(
     return {result, {}};
 }
 
+// ── FollowupTool (gh#32, v2.1.6) ────────────────────────────────
+
+/**
+ * @brief Recall prior delegation results via storage-backed search.
+ *
+ * Backs `entropic.followup`. Read-only; no directives. Uses the state
+ * provider's `search_delegations` callback to surface candidate
+ * matches and returns the JSON verbatim to the model.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+class FollowupTool : public ToolBase {
+public:
+    /**
+     * @brief Construct from loaded tool definition.
+     * @param def Tool definition (entropic/followup.json).
+     * @internal
+     * @version 2.1.6
+     */
+    explicit FollowupTool(ToolDefinition def)
+        : ToolBase(std::move(def)) {}
+
+    /**
+     * @brief Execute a followup query.
+     * @param args_json JSON with required "query" and optional "max_results".
+     * @return ServerResponse with results JSON; no directives.
+     * @internal
+     * @version 2.1.6
+     */
+    ServerResponse execute(const std::string& args_json) override;
+
+    /**
+     * @brief Read-only — requires only READ access.
+     * @return MCPAccessLevel::READ.
+     * @internal
+     * @version 2.1.6
+     */
+    MCPAccessLevel required_access_level() const override {
+        return MCPAccessLevel::READ;
+    }
+
+    /** @brief Store provider pointer (non-owning).
+     * @param p Provider pointer.
+     * @utility
+     * @version 2.1.6
+     */
+    void set_provider(const entropic_state_provider_t* p) {
+        provider_ = p;
+    }
+
+private:
+    const entropic_state_provider_t* provider_ = nullptr;
+};
+
+/**
+ * @brief Execute a followup query against prior delegations.
+ * @param args_json JSON with "query" and optional "max_results".
+ * @return ServerResponse with results or typed error; no directives.
+ * @internal
+ * @version 2.1.6
+ */
+ServerResponse FollowupTool::execute(const std::string& args_json) {
+    auto args = nlohmann::json::parse(args_json, nullptr, false);
+    std::string body;
+    if (args.is_discarded() || !args.is_object()) {
+        body = R"({"error":"invalid args: object with 'query' required"})";
+    } else {
+        std::string query = args.value("query", "");
+        int max_results = args.value("max_results", 3);
+        if (query.empty()) {
+            body = R"({"error":"'query' is required and must be non-empty"})";
+        } else if (provider_ == nullptr
+                   || provider_->search_delegations == nullptr) {
+            logger->warn("[followup] no search_delegations provider "
+                         "configured");
+            body = R"({"error":"delegation storage not available"})";
+        } else {
+            logger->info("[followup] query='{}' max_results={}",
+                         query, max_results);
+            char* raw = provider_->search_delegations(
+                query.c_str(), max_results, provider_->user_data);
+            if (raw == nullptr) {
+                body = R"({"results":[]})";
+            } else {
+                body = raw;
+                std::free(raw);
+            }
+        }
+    }
+    return {body, {}};
+}
+
+// ── ResumeDelegationTool (gh#32, v2.1.6) ────────────────────────
+
+/**
+ * @brief Resume a prior delegation with its conversation seeded.
+ *
+ * Backs `entropic.resume_delegation`. Emits a delegate directive
+ * with `resume_from_delegation_id` set; the engine's delegation
+ * handler loads the prior child conversation from storage and
+ * builds the child context with that history before running the
+ * new task.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+class ResumeDelegationTool : public ToolBase {
+public:
+    /**
+     * @brief Construct from loaded tool definition.
+     * @param def Tool definition (entropic/resume_delegation.json).
+     * @internal
+     * @version 2.1.6
+     */
+    explicit ResumeDelegationTool(ToolDefinition def)
+        : ToolBase(std::move(def)) {}
+
+    /**
+     * @brief Emit a resume-flavored delegate directive.
+     * @param args_json JSON {delegation_id, task, max_turns?}.
+     * @return ServerResponse with delegate + stop directives.
+     * @internal
+     * @version 2.1.6
+     */
+    ServerResponse execute(const std::string& args_json) override;
+};
+
+/**
+ * @brief Parse resume args and emit a resume-flavored DelegateDirective.
+ * @param args_json JSON {delegation_id, task, max_turns?}.
+ * @return ServerResponse with directives.
+ * @internal
+ * @version 2.1.6
+ */
+ServerResponse ResumeDelegationTool::execute(const std::string& args_json) {
+    auto args = nlohmann::json::parse(args_json, nullptr, false);
+    if (args.is_discarded() || !args.is_object()) {
+        return {R"({"error":"invalid args: object required"})", {}};
+    }
+    std::string delegation_id = args.value("delegation_id", "");
+    std::string task = args.value("task", "");
+    int max_turns = args.value("max_turns", -1);
+    if (delegation_id.empty() || task.empty()) {
+        return {R"({"error":"'delegation_id' and 'task' are required"})",
+                {}};
+    }
+    logger->info("[resume_delegation] id='{}' task='{}' max_turns={}",
+                 delegation_id, task, max_turns);
+
+    nlohmann::json result;
+    result["action"] = "resume_delegation";
+    result["delegation_id"] = delegation_id;
+    result["task"] = task;
+    result["max_turns"] = max_turns;
+
+    Directive delegate_d;
+    delegate_d.type = ENTROPIC_DIRECTIVE_DELEGATE;
+    Directive stop_d;
+    stop_d.type = ENTROPIC_DIRECTIVE_STOP_PROCESSING;
+    return {result.dump(), {delegate_d, stop_d}};
+}
+
 // ── EntropicServer ──────────────────────────────────────────────
 
 /**
@@ -1141,7 +1304,7 @@ int EntropicServer::register_core_tools(
  * @param tier_names Tier names for schema patching.
  * @return Number of tools registered.
  * @internal
- * @version 1.9.12
+ * @version 2.1.6
  */
 int EntropicServer::register_delegation_tools(
     const std::string& tools_dir,
@@ -1161,7 +1324,15 @@ int EntropicServer::register_delegation_tools(
         std::move(pipeline_def), tier_names);
     register_tool(pipeline_.get());
 
-    return 2;
+    // gh#32 (v2.1.6): resume_delegation lives alongside delegate
+    // because it produces the same directive kind (resume-flavored).
+    auto resume_def = load_tool_definition(
+        "resume_delegation", "entropic", tools_dir);
+    resume_delegation_ = std::make_unique<ResumeDelegationTool>(
+        std::move(resume_def));
+    register_tool(resume_delegation_.get());
+
+    return 3;
 }
 
 /**
@@ -1169,7 +1340,7 @@ int EntropicServer::register_delegation_tools(
  * @param tools_dir Path to tools directory.
  * @return Number of tools registered.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.6
  */
 int EntropicServer::register_introspection_tools(
     const std::string& tools_dir) {
@@ -1191,7 +1362,14 @@ int EntropicServer::register_introspection_tools(
         std::move(ctx_def));
     register_tool(context_inspect_.get());
 
-    return 3;
+    // gh#32 (v2.1.6): followup is read-only and consumes the same
+    // state_provider plumbing as diagnose/inspect.
+    auto followup_def = load_tool_definition(
+        "followup", "entropic", tools_dir);
+    followup_ = std::make_unique<FollowupTool>(std::move(followup_def));
+    register_tool(followup_.get());
+
+    return 4;
 }
 
 /**
@@ -1236,7 +1414,7 @@ bool EntropicServer::skip_duplicate_check(
  * @brief Set the engine state provider for introspection tools.
  * @param provider Callback struct with engine state accessors.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.6
  */
 void EntropicServer::set_state_provider(
     const entropic_state_provider_t& provider) {
@@ -1244,6 +1422,9 @@ void EntropicServer::set_state_provider(
     diagnose_->set_provider(&state_provider_);
     inspect_->set_provider(&state_provider_);
     context_inspect_->set_provider(&state_provider_);
+    if (followup_) {
+        followup_->set_provider(&state_provider_);
+    }
     logger->info("State provider set for introspection tools");
 }
 

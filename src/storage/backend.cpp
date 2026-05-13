@@ -500,6 +500,92 @@ bool SqliteStorageBackend::get_delegations(
     return true;
 }
 
+/**
+ * @brief Look up a single delegation record by id (gh#32, v2.1.6).
+ * @param delegation_id Delegation id.
+ * @param[out] result_json Object JSON of the delegation row.
+ * @return true if found and parsed.
+ * @internal
+ * @version 2.1.6
+ */
+bool SqliteStorageBackend::get_delegation_by_id(
+        const std::string& delegation_id,
+        std::string& result_json) {
+    bool found = false;
+    json entry;
+    db_.fetch_all(
+        "SELECT * FROM delegations WHERE id = ? LIMIT 1",
+        [&](sqlite3_stmt* s) {
+            sqlite3_bind_text(s, 1, delegation_id.c_str(), -1,
+                              SQLITE_TRANSIENT);
+        },
+        [&](sqlite3_stmt* s) {
+            found = true;
+            entry["id"] = col_text(s, 0);
+            entry["parent_conversation_id"] = col_text(s, 1);
+            entry["child_conversation_id"] = col_text(s, 2);
+            entry["delegating_tier"] = col_text(s, 3);
+            entry["target_tier"] = col_text(s, 4);
+            entry["task"] = col_text(s, 5);
+            auto mt = sqlite3_column_int(s, 6);
+            entry["max_turns"] = (sqlite3_column_type(s, 6) == SQLITE_NULL)
+                                     ? json(nullptr) : json(mt);
+            entry["status"] = col_text(s, 7);
+            entry["result_summary"] = col_opt_text(s, 8).value_or("");
+            entry["created_at"] = col_text(s, 9);
+            entry["completed_at"] = col_opt_text(s, 10).value_or("");
+        });
+    if (!found) {
+        return false;
+    }
+    result_json = entry.dump();
+    return true;
+}
+
+/**
+ * @brief Substring-match delegations across all conversations.
+ *
+ * Bound to top-N most recently completed records. Uses sqlite's
+ * `LIKE` for portability — FTS5 is wired for messages, not
+ * delegation summaries.
+ *
+ * @param query        Substring to match (LIKE %query%).
+ * @param max_results  Cap on returned rows.
+ * @param[out] result_json JSON array of delegation rows.
+ * @return true on success.
+ * @internal
+ * @version 2.1.6
+ */
+bool SqliteStorageBackend::search_delegations(
+        const std::string& query, int max_results,
+        std::string& result_json) {
+    json arr = json::array();
+    std::string like = "%" + query + "%";
+    db_.fetch_all(
+        "SELECT * FROM delegations "
+        "WHERE result_summary LIKE ? AND status = 'completed' "
+        "ORDER BY completed_at DESC LIMIT ?",
+        [&](sqlite3_stmt* s) {
+            sqlite3_bind_text(s, 1, like.c_str(), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_int(s, 2, max_results);
+        },
+        [&](sqlite3_stmt* s) {
+            json entry;
+            entry["id"] = col_text(s, 0);
+            entry["parent_conversation_id"] = col_text(s, 1);
+            entry["child_conversation_id"] = col_text(s, 2);
+            entry["delegating_tier"] = col_text(s, 3);
+            entry["target_tier"] = col_text(s, 4);
+            entry["task"] = col_text(s, 5);
+            entry["status"] = col_text(s, 7);
+            entry["result_summary"] = col_opt_text(s, 8).value_or("");
+            entry["completed_at"] = col_opt_text(s, 10).value_or("");
+            arr.push_back(std::move(entry));
+        });
+    result_json = arr.dump();
+    return true;
+}
+
 // ── Compaction snapshots ──────────────────────────────────
 
 /**

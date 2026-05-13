@@ -43,6 +43,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>  // gh#32 (v2.1.6) resume payload type
+
 namespace entropic {
 
 /**
@@ -813,6 +815,68 @@ private:
      * @version 2.1.6
      */
     SandboxManager* ensure_sandbox_manager();                   ///< @internal
+
+    /**
+     * @brief Resolve a resume_delegation pending request against storage.
+     *
+     * gh#32 (v2.1.6). Calls `storage_.load_delegation_with_messages`,
+     * parses the result, and populates `pending.target` (from the loaded
+     * `target_tier`) and `out_history` (from the loaded `messages`).
+     * On failure (no storage, unknown id, parse error) writes a typed
+     * `[DELEGATION FAILED: resume_delegation ...]` user message to the
+     * parent context and returns false; the caller bails out.
+     *
+     * @param ctx          Parent loop context (failure message lands here).
+     * @param pending      Pending delegation (target rewritten on success).
+     * @param out_history  Loaded conversation messages on success.
+     * @return true on success.
+     * @internal
+     * @version 2.1.6
+     */
+    bool resolve_resume_delegation(
+        LoopContext& ctx,
+        PendingDelegation& pending,
+        std::vector<Message>& out_history);
+
+    /**
+     * @brief Helper for `resolve_resume_delegation` (gh#32, v2.1.6).
+     *
+     * Calls the storage callback, parses the JSON payload, pushes a
+     * typed failure message to `ctx` on any error path. Extracted so
+     * the parent function stays under the knots returns/SLOC gates.
+     *
+     * @param ctx     Parent context (receives failure message on error).
+     * @param id      Delegation id.
+     * @param parsed  [out] Parsed JSON payload on success.
+     * @return true on success.
+     * @internal
+     * @version 2.1.6
+     */
+    bool fetch_resume_payload(
+        LoopContext& ctx,
+        const std::string& id,
+        nlohmann::json& parsed);
+
+    /**
+     * @brief Run a pending delegation (cold or resume).
+     *
+     * Extracted to keep `execute_pending_delegation` under the knots
+     * SLOC gate. Builds a per-delegation `DelegationManager` against
+     * the engine-scoped sandbox + storage interfaces and dispatches
+     * to either `execute_delegation` or `execute_resume_delegation`
+     * based on whether `resume_history` is empty.
+     *
+     * @param ctx Parent loop context (informational).
+     * @param pending Pending delegation request.
+     * @param resume_history Pre-loaded history (empty for cold delegations).
+     * @return DelegationResult from the child loop.
+     * @internal
+     * @version 2.1.6
+     */
+    DelegationResult run_pending_delegation(
+        LoopContext& ctx,
+        const PendingDelegation& pending,
+        std::vector<Message> resume_history);
 
     /**
      * @brief Fire on_delegation_start callback.

@@ -1,0 +1,24 @@
+{
+  "name": "resume_delegation",
+  "description": "Resume a prior delegation with its full conversation state loaded, then run a new sub-task on top of it.\n\nUse this when a follow-up question targets the same area as a prior delegation. The previous delegate already knows the relevant file:line context — resuming is structurally cheaper than a cold re-delegation because the child does not have to re-discover anything.\n\nSemantics:\n- Loads the original delegation's child conversation snapshot from engine storage.\n- Spawns a fresh child loop seeded with that conversation history plus your new `task` as the user message.\n- Runs to completion and returns a DelegationResult to the lead exactly like entropic.delegate.\n- Fails with a typed error if `delegation_id` does not exist in storage.\n\nUse entropic.followup FIRST to find candidate delegation_ids. Use entropic.delegate (not this tool) when there is no relevant prior delegation.\n\nIntroduced in v2.1.6 (gh#32).",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "delegation_id": {
+        "type": "string",
+        "description": "Storage delegation id returned by entropic.followup"
+      },
+      "task": {
+        "type": "string",
+        "description": "New sub-task to run on top of the loaded conversation"
+      },
+      "max_turns": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 30,
+        "description": "Maximum number of turns the resumed delegate can use (optional)"
+      }
+    },
+    "required": ["delegation_id", "task"]
+  }
+}

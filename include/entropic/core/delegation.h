@@ -185,6 +185,32 @@ public:
         std::optional<int> max_turns = std::nullopt);
 
     /**
+     * @brief Resume a prior delegation with pre-loaded conversation history.
+     *
+     * gh#32 (v2.1.6): Seeds the child context with `seed_history`
+     * (loaded from storage by the engine), then appends the supplied
+     * `task` as a fresh user message. Subsequent run_child semantics
+     * are identical to `execute_delegation`. The first system message
+     * from the loaded history is preserved; if absent, the tier's
+     * default system prompt is prepended so the child still has its
+     * identity context.
+     *
+     * @param parent_ctx    Parent loop context.
+     * @param target_tier   Tier resolved by the engine from storage.
+     * @param task          New sub-task to append to history.
+     * @param seed_history  Pre-loaded conversation messages.
+     * @param max_turns     Optional iteration limit.
+     * @return DelegationResult.
+     * @version 2.1.6
+     */
+    DelegationResult execute_resume_delegation(
+        LoopContext& parent_ctx,
+        const std::string& target_tier,
+        const std::string& task,
+        std::vector<Message> seed_history,
+        std::optional<int> max_turns = std::nullopt);
+
+    /**
      * @brief Run a multi-stage delegation pipeline sequentially.
      * @param parent_ctx Parent loop context.
      * @param stages Ordered list of tier names.
@@ -210,6 +236,28 @@ private:
         const LoopContext& parent_ctx,
         const ChildContextInfo& info,
         const std::string& task);
+
+    /**
+     * @brief Build a resumed child context (gh#32, v2.1.6).
+     *
+     * Seeds with prior conversation, appends the tier's identity if no
+     * system prompt exists, then appends the new task.
+     *
+     * @param parent_ctx     Parent loop context.
+     * @param info           Resolved tier info.
+     * @param target_tier    Tier name.
+     * @param task           New sub-task.
+     * @param seed_history   Loaded history (consumed).
+     * @return Resumed child context.
+     * @internal
+     * @version 2.1.6
+     */
+    LoopContext build_resumed_child_context(
+        const LoopContext& parent_ctx,
+        const ChildContextInfo& info,
+        const std::string& target_tier,
+        const std::string& task,
+        std::vector<Message> seed_history);
 
     /**
      * @brief Extract the delegation summary from child context.

@@ -128,12 +128,19 @@ struct LoopMetrics {
 
 /**
  * @brief Pending single delegation (stored by dir_delegate handler).
- * @version 1.8.6
+ *
+ * gh#32 (v2.1.6): `resume_from_delegation_id` opts into resume mode.
+ * When non-empty, the engine loads the prior delegation's child
+ * conversation from storage and seeds the new child_ctx with it
+ * before running the supplied task.
+ *
+ * @version 2.1.6
  */
 struct PendingDelegation {
-    std::string target;    ///< Target tier name
-    std::string task;      ///< Task description
-    int max_turns = -1;    ///< Max turns for child (-1 = default)
+    std::string target;                    ///< Target tier name
+    std::string task;                      ///< Task description
+    int max_turns = -1;                    ///< Max turns for child (-1 = default)
+    std::string resume_from_delegation_id; ///< gh#32 (v2.1.6): empty = cold start
 };
 
 /**
@@ -415,6 +422,23 @@ struct StorageInterface {
     bool (*save_conversation)(
         const char* conversation_id,
         const char* messages_json,
+        void* user_data) = nullptr;
+
+    /// @brief Load a delegation's full child conversation (gh#32, v2.1.6).
+    ///
+    /// Resolves the delegation by id, then loads the child conversation
+    /// it spawned. Returns a JSON object whose top-level fields include
+    /// `target_tier`, `messages` (array), and `delegation_id`. The
+    /// engine uses this on resume_delegation to seed a fresh child
+    /// context with the prior conversation history.
+    ///
+    /// @param delegation_id Delegation id (storage PK).
+    /// @param[out] result_json Conversation JSON (target_tier + messages).
+    /// @param user_data Opaque pointer (storage backend).
+    /// @return true on success and the delegation+conversation were found.
+    bool (*load_delegation_with_messages)(
+        const char* delegation_id,
+        std::string& result_json,
         void* user_data) = nullptr;
 
     void* user_data = nullptr; ///< Opaque pointer (storage backend)

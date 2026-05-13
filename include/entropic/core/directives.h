@@ -73,26 +73,36 @@ struct TierChangeDirective : Directive {
 
 /**
  * @brief Delegate a task to a child inference loop.
- * @version 1.8.4
+ *
+ * gh#32 (v2.1.6): `resume_from_delegation_id` opts into resume mode —
+ * the child context is seeded with the prior delegation's conversation
+ * history loaded from storage, then the new `task` is appended as a
+ * user message. Empty means a fresh cold start (the historical default).
+ *
+ * @version 2.1.6
  */
 struct DelegateDirective : Directive {
-    std::string target; ///< Target tier for delegation
-    std::string task;   ///< Task description
-    int max_turns = -1; ///< Max turns (-1 = default)
+    std::string target;                   ///< Target tier for delegation
+    std::string task;                     ///< Task description
+    int max_turns = -1;                   ///< Max turns (-1 = default)
+    std::string resume_from_delegation_id; ///< gh#32 (v2.1.6): empty = fresh delegate
 
     /**
      * @brief Construct a Delegate directive.
      * @param tgt Target tier.
      * @param tsk Task description.
      * @param mt Max turns.
-     * @version 1.8.4
+     * @param resume_id Optional delegation id to resume from (gh#32).
+     * @version 2.1.6
      */
     DelegateDirective(std::string tgt = "",
                       std::string tsk = "",
-                      int mt = -1)
+                      int mt = -1,
+                      std::string resume_id = "")
         : target(std::move(tgt)),
           task(std::move(tsk)),
-          max_turns(mt) {
+          max_turns(mt),
+          resume_from_delegation_id(std::move(resume_id)) {
         type = ENTROPIC_DIRECTIVE_DELEGATE;
     }
 };

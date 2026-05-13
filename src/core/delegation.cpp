@@ -350,6 +350,107 @@ DelegationResult DelegationManager::execute_delegation(
     return result;
 }
 
+/**
+ * @brief Resume a delegation with pre-loaded conversation history.
+ *
+ * gh#32 (v2.1.6). Skips the normal `build_child_context` that builds a
+ * fresh {system, user} pair from the tier's identity prompt: the seed
+ * history already encodes the prior delegation's full state. Appends
+ * the new task as a user message before running the child loop. Reuses
+ * the precondition checks (tier validity, consumer gate, sandbox) via
+ * `check_delegation_preconditions` so the resume path enforces the
+ * same gates as a cold delegate.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+/**
+ * @brief Build a resumed child context from seed history + new task.
+ *
+ * Extracted from `execute_resume_delegation` to keep that function
+ * under the knots SLOC gate.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+LoopContext DelegationManager::build_resumed_child_context(
+        const LoopContext& parent_ctx,
+        const ChildContextInfo& info,
+        const std::string& target_tier,
+        const std::string& task,
+        std::vector<Message> seed_history) {
+    LoopContext child_ctx;
+    child_ctx.delegation_depth = parent_ctx.delegation_depth + 1;
+    child_ctx.delegation_ancestor_tiers =
+        parent_ctx.delegation_ancestor_tiers;
+    child_ctx.delegation_ancestor_tiers.push_back(target_tier);
+    child_ctx.parent_conversation_id = parent_ctx.conversation_id;
+    child_ctx.all_tools = info.tools;
+    child_ctx.active_phase = "default";
+    child_ctx.locked_tier = target_tier;
+    child_ctx.messages = std::move(seed_history);
+    bool has_system = !child_ctx.messages.empty()
+                       && child_ctx.messages.front().role == "system";
+    if (!has_system && !info.system_prompt.empty()) {
+        Message sys;
+        sys.role = "system";
+        sys.content = info.system_prompt;
+        child_ctx.messages.insert(child_ctx.messages.begin(),
+                                  std::move(sys));
+    }
+    Message user;
+    user.role = "user";
+    user.content = task;
+    if (!info.completion_instructions.empty()) {
+        user.content += "\n\n" + info.completion_instructions;
+    }
+    child_ctx.messages.push_back(std::move(user));
+    return child_ctx;
+}
+
+/**
+ * @brief Run a resumed child delegation with seed history (gh#32, v2.1.6).
+ * @internal
+ * @version 2.1.6
+ */
+DelegationResult DelegationManager::execute_resume_delegation(
+    LoopContext& parent_ctx,
+    const std::string& target_tier,
+    const std::string& task,
+    std::vector<Message> seed_history,
+    std::optional<int> max_turns) {
+
+    logger->info("Resume delegation: target_tier='{}' task='{}' "
+                 "history_messages={}",
+                 target_tier, task, seed_history.size());
+    auto info = tier_res_.resolve_tier
+        ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
+        : ChildContextInfo{};
+
+    std::string del_id =
+        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r";
+    std::optional<SandboxInfo> sb_info;
+    if (auto early = check_delegation_preconditions(
+            info, target_tier, task, del_id,
+            parent_ctx.delegation_depth + 1, sb_info)) {
+        return *early;
+    }
+
+    auto child_ctx = build_resumed_child_context(
+        parent_ctx, info, target_tier, task, std::move(seed_history));
+
+    DelegationResult result;
+    if (sb_info && swap_dir_fn_ != nullptr) {
+        ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                            sb_info->path, repo_dir_);
+        result = run_child(child_ctx, target_tier, task, max_turns);
+    } else {
+        result = run_child(child_ctx, target_tier, task, max_turns);
+    }
+    finalize_sandbox_for(sb_info, result);
+    return result;
+}
+
 // ── Pipeline ─────────────────────────────────────────────
 
 /**

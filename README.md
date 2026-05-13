@@ -351,8 +351,7 @@ Hook semantics:
 
 ### External MCP Bridge
 
-- `entropic mcp-bridge` — runs the engine as a JSON-RPC MCP server over stdio, the primary integration point for Claude Code, VSCode, and other MCP-protocol clients — `src/cli/mcp_bridge.cpp`, `src/facade/external_bridge.cpp`
-- `entropic mcp-connect --socket PATH` — client-side companion that attaches to a running engine's bridge socket — `src/cli/mcp_connect.cpp`
+- `entropic mcp-bridge` — pure stdio↔unix-socket relay (v2.1.7+, gh#34): forwards JSON-RPC bytes between an MCP client (Claude Code, VSCode, etc.) and a running engine's external bridge socket. Owns no engine instance and loads no model; an engine host (TUI / consumer app / future headless server) must already be running for the same project directory. Fails fast with a diagnostic naming the canonical path + socket when no engine is reachable — `src/cli/mcp_bridge.cpp`, `src/facade/external_bridge.cpp`
 - Multi-client subscription: TUI + Claude Code can both receive `ask_complete` / progress events simultaneously — `src/facade/external_bridge.cpp::subscribe, broadcast_notification`
 - Async ask via push notification + `ask_status` polling for long-running tasks — `src/facade/external_bridge.cpp::run_async_ask, handle_ask_status`
 - Phase observer: VERIFYING → "validating" / "revising" sub-phases surfaced to bridge subscribers — `src/facade/external_bridge.cpp::attach_phase_observer, phase_observer_cb`
@@ -366,7 +365,7 @@ Hook semantics:
 - Tarball layout: `bin/`, `lib/`, `include/`, `share/` — standard Unix prefix — see `docs/releasing.md`
 - `pip install entropic-engine` — pure-Python ~50 KB ctypes wrapper + `entropic install-engine` subcommand that fetches the matching tarball from GitHub Releases (playwright pattern) — `python/src/entropic/`
 - `$ENTROPIC_LIB` / `$ENTROPIC_HOME` env vars for custom install resolution — `python/src/entropic/_loader.py`
-- `entropic` CLI subcommands: `mcp-bridge`, `mcp-connect`, `download`, `version`, plus wrapper-side `install-engine` — `src/cli/main.cpp`, `python/src/entropic/cli.py`
+- `entropic` CLI subcommands: `mcp-bridge`, `download`, `version`, plus wrapper-side `install-engine` — `src/cli/main.cpp`, `python/src/entropic/cli.py`
 - Reference examples: `headless` (C), `pychess` (C++ multi-tier showcase), `explorer` (interactive REPL), `openai-server` (OpenAI-compat HTTP front-end with chat/completions, completions, models, models/{name}, health, SSE streaming) — `examples/`
 
 ### Observability

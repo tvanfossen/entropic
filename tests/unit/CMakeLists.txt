@@ -251,6 +251,8 @@ add_executable(entropic-api-tests
     api/serialize_messages_utf8_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
+    # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
+    mcp/mcp_bridge_relay_test.cpp
 )
 
 # v2.1.1 (#3): serialize_messages_utf8_test.cpp #includes the private
@@ -265,7 +267,12 @@ target_include_directories(entropic-api-tests PRIVATE
 # stays portable across out-of-tree builds.
 target_compile_definitions(entropic-api-tests PRIVATE
     ENTROPIC_VERSION_FILE_PATH="${PROJECT_SOURCE_DIR}/VERSION"
+    # v2.1.7 (gh#34): mcp-bridge relay round-trip test forks the entropic
+    # binary and exchanges bytes through a fake unix-socket server. The
+    # binary lives next to the test in the build tree.
+    ENTROPIC_CLI_BIN_PATH="$<TARGET_FILE:entropic>"
 )
+add_dependencies(entropic-api-tests entropic)
 
 target_link_libraries(entropic-api-tests PRIVATE
     entropic-facade

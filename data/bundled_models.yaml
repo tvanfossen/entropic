@@ -9,6 +9,17 @@ primary:
   size_gb: 13.1
   adapter: qwen35
   description: Primary workhorse — all roles (single model architecture)
+  # gh#42 (v2.1.8): Qwen3.5-35B-A3B is tagged image-text-to-text upstream
+  # (vision encoder + paired mmproj). Bundling the F16 mmproj turns the
+  # primary tier into a VLM without a separate VL model bundle. Consumers
+  # that want text-only can override `mmproj: ""` in their tier config.
+  mmproj_key: primary_mmproj
+
+primary_mmproj:
+  name: mmproj-F16
+  url: https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision projector paired with primary (Qwen3.5-35B-A3B, F16)
 
 mid:
   name: Qwen3.5-9B-Q8_0

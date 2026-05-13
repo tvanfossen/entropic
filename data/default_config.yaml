@@ -9,6 +9,13 @@ models:
     adapter: qwen35
     context_length: 131072
     gpu_layers: 40
+    # gh#42 (v2.1.8): primary is multimodal — pair the bundled mmproj
+    # so the lead tier (which is also the default per `default: lead`)
+    # carries vision capability. Other tiers continue to share the same
+    # base model weights via the orchestrator's model pool — no extra
+    # VRAM cost beyond the single mmproj (~0.9 GB).
+    mmproj: primary_mmproj
+    capabilities: [text, vision]
 
   arch:
     path: primary

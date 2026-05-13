@@ -22,7 +22,7 @@ namespace entropic::config {
  * @param path Path to bundled_models.yaml.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 std::string BundledModels::load(const std::filesystem::path& path)
 {
@@ -55,6 +55,7 @@ std::string BundledModels::load(const std::filesystem::path& path)
             extract(child, "size_gb", entry.size_gb);
             extract(child, "adapter", entry.adapter);
             extract(child, "description", entry.description);
+            extract(child, "mmproj_key", entry.mmproj_key);
 
             if (entry.name.empty()) {
                 err = "bundled model '" + entry.key + "' missing 'name'";

@@ -215,6 +215,34 @@ int fetch_to(const entropic::config::BundledModelEntry& entry,
 }
 
 /**
+ * @brief Paired-mmproj follow-up fetch (gh#42, v2.1.8).
+ *
+ * If `entry.mmproj_key` names a registry entry, downloads it into
+ * the same `target_dir` as the base model. Best-effort: missing
+ * paired key returns 0 (text-only mode still works); a failed
+ * download propagates the curl exit code so the caller surfaces it.
+ *
+ * @param entry Already-downloaded base model entry.
+ * @param registry Bundled models registry.
+ * @param target_dir Directory the base GGUF landed in.
+ * @return 0 on success or no-pairing, non-zero on mmproj fetch error.
+ * @utility
+ * @version 2.1.8
+ */
+int fetch_mmproj_if_paired(
+    const entropic::config::BundledModelEntry& entry,
+    const entropic::config::BundledModels& registry,
+    const std::filesystem::path& target_dir)
+{
+    if (entry.mmproj_key.empty()) { return 0; }
+    const auto* mm = resolve_entry(registry, entry.mmproj_key);
+    if (mm == nullptr) { return 0; }
+    std::printf("Fetching paired mmproj '%s' for vision support\n",
+                entry.mmproj_key.c_str());
+    return fetch_to(*mm, target_dir, entry.mmproj_key);
+}
+
+/**
  * @brief Handle `entropic download` subcommand.
  *
  * @param argc argc-like count starting at subcommand name.
@@ -228,7 +256,7 @@ int fetch_to(const entropic::config::BundledModelEntry& entry,
  * @brief Dispatch after args parsed + registry loaded.
  * @utility
  * @return Subcommand exit code.
- * @version 1
+ * @version 2.1.8
  */
 int dispatch(const DownloadArgs& args,
              const entropic::config::BundledModels& registry)
@@ -248,6 +276,9 @@ int dispatch(const DownloadArgs& args,
         auto target_dir = args.override_dir.empty()
             ? default_model_dir() : args.override_dir;
         rc = fetch_to(*entry, target_dir, args.key);
+        if (rc == 0) {
+            rc = fetch_mmproj_if_paired(*entry, registry, target_dir);
+        }
     }
     return rc;
 }

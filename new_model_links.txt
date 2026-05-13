@@ -1,0 +1,16 @@
+https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/tree/main ----> IQ4, primary alternate (Validation opposition to primary model)
+https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF
+https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF
+
+https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/tree/main -> , new primary, latest qwen3.6 > qwen3.5
+
+https://huggingface.co/unsloth/Qwen3.5-0.8B
+https://huggingface.co/unsloth/Qwen3.5-2B
+https://huggingface.co/unsloth/Qwen3.5-9B
+https://huggingface.co/unsloth/Qwen3.5-4B-GGUF
+
+https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF/tree/main
+
+Vision mdoels from unsloth? Tentative
+https://huggingface.co/unsloth/Qwen-Image-Edit-2511-GGUF
+https://huggingface.co/unsloth/Qwen-Image-2512-GGUF

@@ -1,136 +1,95 @@
-# entropic v2.1.6
+# entropic v2.1.7
 
-Patch release resolving three consumer-reported issues from the v2.1.5
-verification pass. The headline item is **gh#33** — a session-killer
-bug cluster where one failed delegation poisoned the rest of the
-session and the recovery introspection tool crashed the engine. Also
-bundled: **gh#31** (configure_dir's project_dir was being silently
-ignored) and **gh#32** (two new builtin tools for delegation recall +
-resume).
+Patch release with one architectural fix: **gh#34** — `entropic
+mcp-bridge` is now a pure stdio↔unix-socket relay. Previously it
+spawned a full standalone engine on every external MCP connection,
+loading the model a second time into VRAM (~13–15 GB) even when a
+consumer already had an engine running for the same project. The
+name "bridge" implies a relay; the implementation was a hidden second
+server. v2.1.7 makes the bridge match its name.
 
 ## Highlights
 
-- **gh#33 (CRITICAL):** Three coupled bugs in the sandbox + delegation
-  + inspect path. Per-delegation `SandboxManager` lifecycle is fixed
-  (now engine-scoped); failed `create_sandbox` produces a typed
-  consumer-visible error instead of opaque "(No response from
-  delegate)"; `entropic.inspect` no longer crashes on empty/invalid
-  args.
-- **gh#31:** `AgentEngine::get_repo_dir` was caching CWD on first call
-  and silently dropping the `project_dir` passed to
-  `entropic_configure_dir`. Consumers whose launcher cwd differed from
-  the target repo (the common case for wrapper CLIs and IDE plugins)
-  snapshotted the wrong tree into the sandbox.
-- **gh#32:** New `entropic.followup` and `entropic.resume_delegation`
-  builtin tools give the lead structural recall + resume, instead of
-  relying on attention to buried earlier turns. Required closing a
-  pre-existing wiring gap: `StorageInterface` was declared on the
-  engine but never populated by the facade — `create_delegation` and
-  `save_conversation` were dead code throughout 2.1.x.
+- **gh#34 (HIGH):** `entropic mcp-bridge` no longer creates an engine
+  handle or loads a model. It is a thin byte-transparent relay
+  between stdio JSON-RPC (e.g. Claude Code, IDE plugins) and a
+  running engine's unix-socket bridge. If no engine is reachable for
+  the project_dir, the bridge exits 1 with a diagnostic naming the
+  requested path, canonical path, computed socket, and errno reason.
+- **`mcp-connect` removed:** the two CLI surfaces collapse into one.
+  `mcp-bridge` is the only relay subcommand. `--socket PATH` is
+  retained as an override for non-standard engine deployments and
+  for deterministic testing.
+- **Unix-socket hardening:** SO_PEERCRED uid check on accept,
+  `~/.entropic/socks/` explicit mode 0700, socket file mode 0600,
+  symlink-safe + non-socket-safe bind.
 
 ## Engine bug fixes
 
-- **gh#31** — `36dddd7`: `AgentEngine::set_project_dir` is now called
-  from `entropic_configure_dir`; `get_repo_dir` prefers the stored
-  value and falls back to CWD only when no `project_dir` was supplied.
-- **gh#33 bug 1** — `36dddd7`: `SandboxManager` lifted from
-  per-delegation stack-local in `DelegationManager` to a long-lived
-  engine member. `DelegationManager` takes a non-owning pointer.
-  Eliminates the misleading "Session sandbox cleanup" log that fired
-  after every delegation and the wasted re-snapshot of the entire
-  project tree on every call.
-- **gh#33 bug 2** — `36dddd7`: failed `create_sandbox` now returns
-  `(DELEGATION FAILED: session sandbox unavailable)` so consumers can
-  distinguish "could not spawn child" from "child ran but produced no
-  content". Precondition checks extracted into a helper to keep
-  `execute_delegation` under knots SLOC + return-count gates.
-- **gh#33 bug 3** — `36dddd7`: `InspectTool::execute` guards the
-  non-throwing JSON parse against `is_discarded()` / non-object args.
-  A no-arg `entropic.inspect()` falls through to the full-state dump
-  rather than throwing `nlohmann::json::type_error.306` and killing
-  the engine.
+- **gh#34 — `0163760`:** `src/cli/mcp_bridge.cpp` rewritten as a
+  pure relay; no `entropic_create`, no model load, no engine handle.
+  Discovery uses the same `compute_socket_path(canonical project_dir)`
+  hash the engine's `ExternalBridge` publishes to, so consumer
+  `.mcp.json` configs need no path tweaks. A bidirectional `poll(2)`
+  loop forwards bytes in both directions — server-initiated
+  `notifications/progress` and streaming responses pass through
+  unmodified, fixing a latent stall in the pre-2.1.7 `mcp-connect`
+  synchronous request→response loop.
+- **gh#34 — `0163760`:** `src/facade/external_bridge.cpp` hardened:
+  `SO_PEERCRED` uid mismatch closes the client fd before any serve
+  thread is spawned; symlink or pre-existing non-socket at the bind
+  path is refused with a clear log line; socket file and containing
+  directory get explicit `chmod` rather than relying on umask.
+- **gh#34 — `0163760`:** bind success now logs canonical project_dir
+  + socket so engine and bridge log lines are symmetric — the silent
+  misroute mode (consumer launches engine from a different
+  canonicalized cwd than the bridge sees) is diagnosable from either
+  end.
 
 ## New features
 
-### gh#32: entropic.followup + entropic.resume_delegation
-
-Two new builtin tools surface delegation history as structurally
-authoritative input to the lead, instead of relying on the model
-attending to buried earlier turns:
-
-```text
-entropic.followup(query, max_results=3)
-  → { results: [ { delegation_id, target_tier, summary,
-                   completed_at }, ... ] }
-
-entropic.resume_delegation(delegation_id, task, max_turns?)
-  → DelegationResult
-```
-
-`followup` is read-only — it substring-matches `query` against the
-stored delegation result summaries and returns the top-N most recently
-completed records. `resume_delegation` loads the prior child
-conversation snapshot from storage, seeds a fresh child loop with that
-history, and runs the new task on top. The engine resolves the
-original `target_tier` from storage so the lead doesn't have to.
-
-Lead identities can teach the model: "before delegating a follow-up,
-call `entropic.followup` with the user's question phrase. If a
-relevant prior result returns with a citable file:line, answer
-directly from it. If the answer is close but incomplete, call
-`entropic.resume_delegation` with that delegation_id instead of a cold
-re-delegation."
-
-This required closing a pre-existing wiring gap: `AgentEngine` had a
-`StorageInterface` member whose function pointers were never populated
-by the facade. `create_delegation` and `save_conversation` were dead
-code throughout 2.1.x — delegations weren't being persisted at all.
-v2.1.6 wires `SqliteStorageBackend` into the engine via a set of
-facade-side bridge trampolines so storage records actually accrue.
-
-#### New ABI surface
-
-```c
-/* entropic_state_provider_t */
-char* (*search_delegations)(const char* query, int max_results,
-                            void* user_data);
-char* (*load_delegation_conversation)(const char* delegation_id,
-                                      void* user_data);
-
-/* StorageInterface (engine-facing) */
-bool (*load_delegation_with_messages)(
-    const char* delegation_id,
-    std::string& result_json,
-    void* user_data);
-```
-
-`SqliteStorageBackend` gains `get_delegation_by_id` and
-`search_delegations` queries. These are additions only — existing
-storage callers are unaffected.
+None. v2.1.7 is a behavior-correction patch.
 
 ## Breaking changes
 
-None. All changes are additive at the ABI surface and the existing
-delegation contract is unchanged. Consumers that don't call
-`entropic.followup` / `entropic.resume_delegation` and don't depend on
-delegation storage records see no behavioral difference apart from the
-three bug fixes.
+- **`entropic mcp-bridge` semantics changed.** Pre-2.1.7 `.mcp.json`
+  configs that relied on the bridge starting its own engine will now
+  exit 1 with a "no running engine for `<project_dir>`" diagnostic.
+  Fix: start an engine host (TUI, consumer app, or invoke the engine
+  via the C/Python API) for the same `project_dir` before connecting
+  the MCP client. The bridge is an *optional service* on top of an
+  engine — never a substitute for one.
+- **`entropic mcp-connect` subcommand removed.** The functionality is
+  now the default `entropic mcp-bridge` behavior. Anywhere
+  `mcp-connect --socket PATH` was used, `mcp-bridge --socket PATH`
+  is the drop-in replacement.
 
 ## Distribution
 
-- **CPU tarball:** `entropic-2.1.6-linux-x86_64-cpu.tar.gz`
-  (sha256 in companion file)
-- **CUDA tarball:** `entropic-2.1.6-linux-x86_64-cuda.tar.gz`
-  (sha256 in companion file)
-- **Python wrapper:** `pip install entropic-engine==2.1.6` then
-  `entropic install-engine` to fetch the matching native engine.
+- Tarball: `entropic-2.1.7-linux-x86_64-{cpu,cuda}.tar.gz` with
+  matching `.sha256` files.
+- PyPI: `pip install entropic-engine==2.1.7` publishes from the
+  release-published trigger.
 
 ## Known limitations
 
-- `entropic.followup` v1 uses substring matching against stored
-  delegation summaries. Semantic recall (small embedding model over
-  summary text) is a follow-up — out of scope for 2.1.6.
-- Per-conversation scoping of `followup` results is engine-wide; the
-  parent-loop `conversation_id` plumbing remains absent in the run
-  path. Results may include matches from sibling sessions. A v2.2
-  pass will scope to the active conversation.
+- **Engine hosts (TUI, consumer apps) still have no idle-exit
+  policy.** The acute VRAM-orphan case from gh#34 is fixed because
+  the bridge no longer holds the model; the chronic case — a
+  long-running consumer engine sitting idle with the model resident
+  — remains. Tracked separately as **gh#35** (engine idle-exit
+  policy).
+- **Single-uid trust boundary.** The unix-socket transport is
+  authenticated only by file perms + SO_PEERCRED uid match. Same-uid
+  attackers with shell access can still reach the socket; this is
+  the same trust posture as embedding the engine in a consumer
+  process. TCP transport (if ever added) is the trigger for adding
+  proper token/OAuth auth — recorded in `architecture-cpp.md`
+  decision log entry #37.
+
+## Post-release
+
+- gh#34 closes automatically on this release (referenced in the
+  commit + merge messages).
+- gh#35 (engine idle-exit) and gh#36 (speculative decoding, CPU draft
+  → GPU verifier) tracked as separate, unscheduled work.

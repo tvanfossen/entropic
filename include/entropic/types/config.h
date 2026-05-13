@@ -299,6 +299,36 @@ struct TierConfig : ModelConfig {
     /// @version 1.9.2
     float adapter_scale = 1.0f;
 
+    /// @brief Declared tier capabilities (gh#41).
+    ///
+    /// Free-form lowercase strings — canonical values are "text" and
+    /// "vision". Missing / empty in YAML resolves to `{"text"}` at
+    /// config-load time so every pre-v2.1.8 tier config stays valid
+    /// without modification. The orchestrator inspects this set when
+    /// it sees a message with image content_parts; if no configured
+    /// tier carries `"vision"`, the run is rejected with
+    /// `ENTROPIC_ERROR_NO_VISION_TIER`.
+    ///
+    /// Order is not significant. Duplicates are tolerated but
+    /// idiomatic configs deduplicate.
+    ///
+    /// @version 2.1.8
+    std::vector<std::string> capabilities;
+
+    /**
+     * @brief Return true if this tier declares the named capability.
+     * @param name Lowercase capability name (e.g., "vision").
+     * @return true if the capabilities vector contains `name`.
+     * @utility
+     * @version 2.1.8
+     */
+    bool has_capability(const std::string& name) const {
+        for (const auto& c : capabilities) {
+            if (c == name) { return true; }
+        }
+        return false;
+    }
+
     /**
      * @brief Get a named parameter derived from tier config fields.
      *

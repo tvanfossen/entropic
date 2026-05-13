@@ -29,7 +29,6 @@
 namespace entropic::cli {
 
 int run_mcp_bridge(int argc, char* argv[]);
-int run_mcp_connect(int argc, char* argv[]);
 int run_version();
 int run_download(int argc, char* argv[]);
 
@@ -38,7 +37,7 @@ int run_download(int argc, char* argv[]);
 /**
  * @brief Print top-level usage to stderr.
  * @utility
- * @version 2.0.8
+ * @version 2.1.7
  */
 static void print_usage()
 {
@@ -46,26 +45,28 @@ static void print_usage()
         "Usage: entropic <subcommand> [options]\n"
         "\n"
         "Subcommands:\n"
-        "  mcp-bridge   Run as standalone MCP server over stdio\n"
-        "  mcp-connect  Connect to a running engine's MCP bridge socket\n"
+        "  mcp-bridge   Relay MCP/stdio to a running engine's unix socket\n"
         "  download     Fetch a bundled GGUF model\n"
         "  version      Print engine version\n"
         "\n"
         "Options for mcp-bridge:\n"
-        "  --project-dir DIR   Project config directory (default: cwd)\n"
-        "\n"
-        "Options for mcp-connect:\n"
-        "  --socket PATH       Unix socket of the running engine (required)\n"
+        "  --project-dir DIR   Project directory whose engine to bridge to\n"
+        "                      (default: cwd). The bridge does NOT start an\n"
+        "                      engine; one must already be running for the\n"
+        "                      same project directory.\n"
+        "  --socket PATH       Override socket discovery (bypasses the\n"
+        "                      project_dir hash). For non-standard engine\n"
+        "                      deployments and deterministic testing.\n"
         "\n"
         "Options for download:\n"
         "  --list              List available model keys\n"
         "  --dir DIR           Override target directory\n"
         "                      (default: $ENTROPIC_MODEL_DIR or ~/.entropic/models)\n"
         "\n"
-        "Example: connect Claude Code to a running entropic engine:\n"
-        "  {\"mcpServers\": {\"entropic-explorer\": {\n"
+        "Example .mcp.json — connect Claude Code to a running engine:\n"
+        "  {\"mcpServers\": {\"entropic\": {\n"
         "    \"type\": \"stdio\", \"command\": \"entropic\",\n"
-        "    \"args\": [\"mcp-connect\", \"--project-dir\", \"/path/to/.explorer\"]\n"
+        "    \"args\": [\"mcp-bridge\"]\n"
         "  }}}\n");
 }
 
@@ -91,7 +92,6 @@ int run_version_adapter(int, char*[])
 
 constexpr Subcommand kSubcommands[] = {
     {"mcp-bridge",  entropic::cli::run_mcp_bridge},
-    {"mcp-connect", entropic::cli::run_mcp_connect},
     {"version",     run_version_adapter},
     {"download",    entropic::cli::run_download},
 };

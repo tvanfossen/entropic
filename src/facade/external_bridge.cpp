@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <unistd.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <poll.h>
 
@@ -568,37 +569,137 @@ ExternalBridge::~ExternalBridge() {
 }
 
 /**
+ * @brief Prepare the socket containing directory with 0700 perms.
+ *
+ * Creates the parent directory if absent and ensures it is mode 0700
+ * so only the engine owner can enumerate sockets. v2.1.7 hardening
+ * (gh#34): explicit perms rather than relying on umask.
+ *
+ * @param parent Directory path.
+ * @utility
+ * @version 2.1.7
+ */
+static void prepare_socket_dir(const std::filesystem::path& parent) {
+    std::error_code ec;
+    std::filesystem::create_directories(parent, ec);
+    ::chmod(parent.c_str(), S_IRWXU);  // 0700
+}
+
+/**
+ * @brief Reject a pre-existing path that is a symlink or non-socket.
+ *
+ * Defends against swap-the-socket-file races where an attacker plants
+ * a symlink at the expected path before the engine starts. If the
+ * path exists and is anything other than a regular unix socket, the
+ * bind is refused. v2.1.7 hardening (gh#34).
+ *
+ * @param path Socket path.
+ * @return true if safe to bind (path absent or is a socket).
+ * @utility
+ * @version 2.1.7
+ */
+static bool socket_path_safe(const std::filesystem::path& path) {
+    struct stat st{};
+    if (::lstat(path.c_str(), &st) != 0) {
+        return errno == ENOENT;  // absent is fine
+    }
+    bool is_symlink = S_ISLNK(st.st_mode);
+    bool is_socket = S_ISSOCK(st.st_mode);
+    if (!is_socket || is_symlink) {
+        logger->error(
+            "Refusing to bind: {} is a {} (expected unix socket)",
+            path.string(),
+            is_symlink ? "symlink" : "non-socket file");
+    }
+    return is_socket && !is_symlink;
+}
+
+/**
+ * @brief Bind+listen on an AF_UNIX socket, applying 0600 perms.
+ * @param fd Pre-created socket fd.
+ * @param path Bind path (already validated by socket_path_safe).
+ * @return true on success.
+ * @utility
+ * @version 2.1.7
+ */
+static bool bind_and_listen(int fd, const std::filesystem::path& path) {
+    auto s = path.string();
+    if (s.size() >= sizeof(sockaddr_un::sun_path)) { return false; }
+    struct sockaddr_un addr{};
+    addr.sun_family = AF_UNIX;
+    std::strncpy(addr.sun_path, s.c_str(),
+                 sizeof(addr.sun_path) - 1);
+    if (bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        return false;
+    }
+    ::chmod(s.c_str(), S_IRUSR | S_IWUSR);  // 0600 — owner only
+    return listen(fd, 1) == 0;
+}
+
+/**
  * @brief Create, bind, and listen on a unix domain socket.
+ *
+ * v2.1.7 hardening (gh#34): containing dir 0700, socket file 0600,
+ * symlink-and-non-socket-safe bind. Path canonicalization + the hash
+ * naming scheme (see `compute_socket_path`) already provide a unique
+ * per-project path inside `~/.entropic/socks/`; these checks defend
+ * against the residual cases where the path is squatted or perms
+ * have been loosened.
+ *
  * @param path Socket filesystem path.
  * @return Listening fd, or -1 on failure.
  * @utility
- * @version 2.0.8
+ * @version 2.1.7
  */
 static int create_listen_socket(const std::filesystem::path& path) {
-    std::filesystem::create_directories(path.parent_path());
+    prepare_socket_dir(path.parent_path());
+    if (!socket_path_safe(path)) { return -1; }
     std::filesystem::remove(path);
 
-    auto s = path.string();
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    bool ok = (fd >= 0) && (s.size() < sizeof(sockaddr_un::sun_path));
-
-    if (ok) {
-        struct sockaddr_un addr{};
-        addr.sun_family = AF_UNIX;
-        std::strncpy(addr.sun_path, s.c_str(),
-                     sizeof(addr.sun_path) - 1);
-        ok = (bind(fd, reinterpret_cast<sockaddr*>(&addr),
-                   sizeof(addr)) == 0)
-          && (listen(fd, 1) == 0);
-    }
-
+    bool ok = (fd >= 0) && bind_and_listen(fd, path);
     if (!ok) {
         logger->error("Socket setup failed for {}: {}",
-                      s, std::strerror(errno));
+                      path.string(), std::strerror(errno));
         if (fd >= 0) { ::close(fd); }
         return -1;
     }
+    logger->info(
+        "External MCP bridge ready: project_dir(canonical)={} socket={}",
+        path.parent_path().parent_path().string(), path.string());
     return fd;
+}
+
+/**
+ * @brief Validate that the connecting peer shares the engine's UID.
+ *
+ * Defense-in-depth against same-machine cross-user attempts that
+ * somehow reach the socket. Even with 0700 containing dir + 0600
+ * socket, an SO_PEERCRED check is cheap and pins the trust boundary
+ * to "same uid only" explicitly rather than relying on file perms
+ * being correctly applied. v2.1.7 hardening (gh#34).
+ *
+ * @param client_fd Newly accepted client fd.
+ * @return true if peer uid matches our euid.
+ * @utility
+ * @version 2.1.7
+ */
+static bool peer_uid_matches(int client_fd) {
+    struct ucred cred{};
+    socklen_t len = sizeof(cred);
+    if (getsockopt(client_fd, SOL_SOCKET, SO_PEERCRED,
+                   &cred, &len) != 0) {
+        logger->warn("SO_PEERCRED failed on fd={}: {}",
+                     client_fd, std::strerror(errno));
+        return false;
+    }
+    if (cred.uid != ::geteuid()) {
+        logger->warn(
+            "Rejecting MCP client on fd={}: peer uid {} != engine uid {}",
+            client_fd, cred.uid, ::geteuid());
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -714,8 +815,11 @@ void ExternalBridge::reap_finished_clients_locked() {
  * mid-serve by ``shutdown(fd, SHUT_RDWR)`` to wake any blocking
  * read.
  *
+ * v2.1.7 (gh#34): every accepted fd is gated by SO_PEERCRED — non-
+ * matching uid is closed before a serve thread is spawned.
+ *
  * @internal
- * @version 2.1.2
+ * @version 2.1.7
  */
 void ExternalBridge::accept_loop() {
     while (running_.load()) {
@@ -728,6 +832,11 @@ void ExternalBridge::accept_loop() {
 
         int client_fd = accept(listen_fd_, nullptr, nullptr);
         if (client_fd < 0) { continue; }
+
+        if (!peer_uid_matches(client_fd)) {
+            ::close(client_fd);  // v2.1.7 (gh#34): cross-uid attempt
+            continue;
+        }
 
         logger->info("External MCP client connected (fd={})", client_fd);
 

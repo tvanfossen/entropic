@@ -144,9 +144,11 @@ arbitrary `librentropic.so` via `$ENTROPIC_LIB`.
 
 ```bash
 entropic version            # confirm install
-entropic mcp-bridge         # run as MCP server over stdio (Claude Code etc.)
 entropic download primary   # fetch the recommended GGUF model
-entropic mcp-connect --socket /tmp/entropic.sock   # connect to running engine
+entropic mcp-bridge         # relay stdio↔running engine's MCP socket
+                            # (requires an engine to already be running
+                            #  for this project — e.g. a TUI, consumer
+                            #  app, or future headless server)
 ```
 
 The wrapper handles `install-engine` in-process; every other

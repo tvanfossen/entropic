@@ -1,0 +1,20 @@
+{
+  "name": "followup",
+  "description": "Recall a prior delegation result whose answer covers the current question.\n\nUse this BEFORE delegating a follow-up when the user's current question is likely answered by a result you already received in this session. Calling this is structurally stronger than relying on attention to buried earlier turns: the matches return as a fresh tool-result message that the model treats as authoritative input.\n\nSemantics:\n- Substring-matches `query` against the stored delegation result summaries from the engine's session storage.\n- Returns up to `max_results` matches (default 3), each with `delegation_id`, `target_tier`, `summary`, and `completed_at`.\n- Returns an empty array `{\"results\": []}` when nothing matches.\n- If a match exists with a citable file:line that already answers the question, RELAY THAT ANSWER DIRECTLY. Do not re-delegate.\n- If a match exists but the question asks for something the prior summary doesn't cover, call entropic.resume_delegation with that delegation_id rather than starting a fresh delegate.\n\nThis tool was introduced in v2.1.6 (gh#32) to give the lead a structural recall mechanism that prompt instructions alone cannot reliably enforce on autoregressive models.",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Keyword or phrase to match against prior delegation summaries"
+      },
+      "max_results": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 10,
+        "description": "Maximum number of matches to return (default 3)"
+      }
+    },
+    "required": ["query"]
+  }
+}

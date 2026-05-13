@@ -221,3 +221,61 @@ SCENARIO("Delegate tool enum excludes source tiers",
         }
     }
 }
+
+// ── gh#32 (v2.1.6): followup + resume_delegation tools ──
+
+/**
+ * @brief resume_delegation emits a delegate directive carrying the
+ *        delegation_id so the engine can resolve target_tier from
+ *        storage on processing.
+ *
+ * @version 2.1.6
+ */
+TEST_CASE("resume_delegation emits delegate+stop directives",
+          "[entropic][gh32][v2.1.6]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    json args;
+    args["delegation_id"] = "d-abc-123";
+    args["task"] = "expand on QoS settings";
+
+    auto envelope = server.execute("resume_delegation", args.dump());
+    auto types = extract_directive_types(envelope);
+
+    REQUIRE(has_directive(types, "delegate"));
+    REQUIRE(has_directive(types, "stop_processing"));
+
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("d-abc-123") != std::string::npos);
+    REQUIRE(result.find("expand on QoS settings") != std::string::npos);
+}
+
+/**
+ * @brief resume_delegation returns a typed error when required args are
+ *        missing rather than crashing or emitting a bogus directive.
+ *
+ * @version 2.1.6
+ */
+TEST_CASE("resume_delegation rejects missing args",
+          "[entropic][gh32][v2.1.6]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    auto envelope = server.execute("resume_delegation", R"({})");
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("error") != std::string::npos);
+}
+
+/**
+ * @brief followup returns a typed error when no state provider has
+ *        been configured (storage unavailable).
+ *
+ * @version 2.1.6
+ */
+TEST_CASE("followup reports unavailable without provider",
+          "[entropic][gh32][v2.1.6]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    auto envelope = server.execute("followup",
+        R"({"query":"ping","max_results":3})");
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("storage") != std::string::npos);
+}

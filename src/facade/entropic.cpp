@@ -357,6 +357,154 @@ static void populate_tier_info(entropic_handle_t h,
  * @internal
  * @version 2.0.1
  */
+/**
+ * @brief StorageInterface bridge: create_delegation trampoline.
+ *
+ * Translates the engine's StorageInterface callback into a call against
+ * `SqliteStorageBackend::create_delegation`. gh#32 (v2.1.6) closes a
+ * pre-existing wiring gap: the engine declared the interface but the
+ * facade never populated it, so per-delegation storage records were
+ * silently dropped. This is the bridge that finally connects them.
+ *
+ * @callback
+ * @version 2.1.6
+ */
+static bool si_create_delegation(
+        const char* parent_id, const char* delegating_tier,
+        const char* target_tier, const char* task, int max_turns,
+        std::string& delegation_id, std::string& child_conversation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr) { return false; }
+    return sb->create_delegation(
+        parent_id ? parent_id : "",
+        delegating_tier ? delegating_tier : "",
+        target_tier ? target_tier : "",
+        task ? task : "",
+        max_turns, delegation_id, child_conversation_id);
+}
+
+/**
+ * @brief StorageInterface bridge: complete_delegation trampoline.
+ * @callback
+ * @version 2.1.6
+ */
+static bool si_complete_delegation(
+        const char* delegation_id, const char* status,
+        const char* summary, void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr || delegation_id == nullptr) { return false; }
+    std::optional<std::string> sum;
+    if (summary != nullptr) { sum = summary; }
+    return sb->complete_delegation(delegation_id,
+                                   status ? status : "completed", sum);
+}
+
+/**
+ * @brief StorageInterface bridge: save_conversation trampoline.
+ * @callback
+ * @version 2.1.6
+ */
+static bool si_save_conversation(
+        const char* conversation_id, const char* messages_json,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr || conversation_id == nullptr
+        || messages_json == nullptr) {
+        return false;
+    }
+    return sb->save_messages(conversation_id, messages_json);
+}
+
+/**
+ * @brief StorageInterface bridge: save_snapshot trampoline.
+ * @callback
+ * @version 2.1.6
+ */
+static bool si_save_snapshot(
+        const char* conversation_id, const char* messages_json,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr || conversation_id == nullptr
+        || messages_json == nullptr) {
+        return false;
+    }
+    return sb->save_snapshot(conversation_id, messages_json);
+}
+
+/**
+ * @brief StorageInterface bridge: load_delegation_with_messages.
+ *
+ * Resolves delegation id → child_conversation_id → conversation messages,
+ * then returns the composed JSON with `target_tier` and `messages` at
+ * the top level. Used by `entropic.resume_delegation` (gh#32, v2.1.6).
+ *
+ * @callback
+ * @version 2.1.6
+ */
+static bool si_load_delegation_with_messages(
+        const char* delegation_id, std::string& result_json,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    bool ok = sb != nullptr && delegation_id != nullptr;
+    std::string del_json;
+    nlohmann::json del, conv;
+    std::string child_id, target, conv_json;
+    if (ok) {
+        ok = sb->get_delegation_by_id(delegation_id, del_json);
+    }
+    if (ok) {
+        del = nlohmann::json::parse(del_json, nullptr, false);
+        ok = del.is_object();
+    }
+    if (ok) {
+        child_id = del.value("child_conversation_id", std::string{});
+        target = del.value("target_tier", std::string{});
+        ok = !child_id.empty() && !target.empty()
+             && sb->load_conversation(child_id, conv_json);
+    }
+    if (ok) {
+        conv = nlohmann::json::parse(conv_json, nullptr, false);
+        ok = conv.is_object();
+    }
+    if (ok) {
+        conv["target_tier"] = target;
+        conv["delegation_id"] = del.value("id", std::string{});
+        result_json = conv.dump();
+    }
+    return ok;
+}
+
+/**
+ * @brief Build a populated StorageInterface bound to `sb`.
+ *
+ * gh#32 (v2.1.6): pre-2.1.6 nothing called `AgentEngine::set_storage`
+ * so the engine's StorageInterface fields were all nullptr and the
+ * delegation/compaction storage paths were dead code. This builder
+ * closes that gap.
+ *
+ * @param sb Storage backend (non-owning).
+ * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
+ * @internal
+ * @version 2.1.6
+ */
+static entropic::StorageInterface build_storage_iface(
+        entropic::SqliteStorageBackend* sb) {
+    entropic::StorageInterface si{};
+    si.create_delegation = si_create_delegation;
+    si.complete_delegation = si_complete_delegation;
+    si.save_conversation = si_save_conversation;
+    si.save_snapshot = si_save_snapshot;
+    si.load_delegation_with_messages = si_load_delegation_with_messages;
+    si.user_data = sb;
+    return si;
+}
+
+/**
+ * @brief Initialize persistence: storage + session logger + StorageInterface.
+ * @internal
+ * @version 2.1.6
+ */
 static void init_persistence(entropic_handle_t h) {
     if (h->config.log_dir.empty()) { return; }
     auto db_path = h->config.log_dir / "entropic.db";
@@ -366,6 +514,12 @@ static void init_persistence(entropic_handle_t h) {
     } else {
         s_log->warn("storage init failed, continuing without persistence");
         h->storage.reset();
+    }
+    // gh#32 (v2.1.6): wire StorageInterface into the engine so the
+    // create_delegation/save_conversation paths actually persist (they
+    // were dead code pre-2.1.6 because nothing populated the iface).
+    if (h->storage && h->engine) {
+        h->engine->set_storage(build_storage_iface(h->storage.get()));
     }
     h->session_logger = std::make_unique<entropic::SessionLogger>(
         h->config.log_dir);
@@ -897,10 +1051,55 @@ static char* sp_get_docs(const char* section, void* ud) {
 }
 
 /**
+ * @brief State provider: search_delegations (gh#32, v2.1.6).
+ *
+ * Substring-search past delegation result summaries via the SQLite
+ * storage backend. Returns NULL if no storage is configured.
+ *
+ * @callback
+ * @version 2.1.6
+ */
+static char* sp_search_delegations(
+        const char* query, int max_results, void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (h == nullptr || !h->storage || query == nullptr) {
+        return nullptr;
+    }
+    std::string out;
+    if (!h->storage->search_delegations(query, max_results, out)) {
+        return nullptr;
+    }
+    return strdup(out.c_str());
+}
+
+/**
+ * @brief State provider: load_delegation_conversation (gh#32, v2.1.6).
+ *
+ * Delegates to the engine-facing StorageInterface bridge so both
+ * surfaces stay in lockstep.
+ *
+ * @callback
+ * @version 2.1.6
+ */
+static char* sp_load_delegation_conversation(
+        const char* delegation_id, void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (h == nullptr || !h->storage || delegation_id == nullptr) {
+        return nullptr;
+    }
+    std::string out;
+    if (!si_load_delegation_with_messages(
+            delegation_id, out, h->storage.get())) {
+        return nullptr;
+    }
+    return strdup(out.c_str());
+}
+
+/**
  * @brief Wire state provider to the EntropicServer.
  * @param h Engine handle with all subsystems constructed.
  * @internal
- * @version 2.0.6
+ * @version 2.1.6
  */
 static void wire_state_provider(entropic_handle_t h) {
     if (!h->server_manager) { return; }
@@ -916,6 +1115,9 @@ static void wire_state_provider(entropic_handle_t h) {
     sp.get_state = sp_get_state;
     sp.get_metrics = sp_get_metrics;
     sp.get_docs = sp_get_docs;
+    // gh#32 (v2.1.6): storage-backed delegation recall + resume.
+    sp.search_delegations = sp_search_delegations;
+    sp.load_delegation_conversation = sp_load_delegation_conversation;
     sp.user_data = h;
     es->set_state_provider(sp);
     s_log->info("State provider wired to entropic server");
@@ -1116,11 +1318,13 @@ entropic_error_t entropic_configure_from_file(
  * @brief Configure using layered resolution (project dir).
  *
  * Loads bundled default → global → project config.local.yaml → env.
- * Sets config.log_dir to project_dir if not already set.
+ * Sets config.log_dir to project_dir if not already set. gh#31
+ * (v2.1.6): propagates project_dir to AgentEngine::set_project_dir
+ * so sandbox snapshots use the configured tree rather than CWD.
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.1
+ * @version 2.1.6
  */
 entropic_error_t entropic_configure_dir(
     entropic_handle_t handle,
@@ -1149,7 +1353,18 @@ entropic_error_t entropic_configure_dir(
         return ENTROPIC_ERROR_INVALID_CONFIG;
     }
 
-    return configure_common(handle);
+    auto rc = configure_common(handle);
+
+    // gh#31 (v2.1.6): propagate the configured project_dir into the
+    // engine so `AgentEngine::get_repo_dir()` uses it as the sandbox
+    // snapshot source. Pre-2.1.6 this was silently dropped and the
+    // engine used CWD, snapshotting whatever directory the consumer
+    // launched from.
+    if (rc == ENTROPIC_OK && handle->engine && !proj_dir.empty()) {
+        handle->engine->set_project_dir(std::filesystem::absolute(proj_dir));
+    }
+
+    return rc;
 }
 
 /**

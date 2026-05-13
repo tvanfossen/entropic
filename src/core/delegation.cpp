@@ -32,22 +32,22 @@ namespace entropic {
  * @param run_child Callback to run child engine loop.
  * @param run_child_data Opaque pointer for run_child.
  * @param tier_resolution Tier resolution interface.
- * @param repo_dir Optional project root for sandbox isolation (gh#29).
+ * @param repo_dir Optional project root (informational metadata).
+ * @param sandbox_mgr Non-owning, engine-scoped sandbox manager.
  * @internal
- * @version 2.1.5
+ * @version 2.1.6
  */
 DelegationManager::DelegationManager(
     RunChildLoopFn run_child,
     void* run_child_data,
     const TierResolutionInterface& tier_resolution,
-    const std::filesystem::path& repo_dir)
+    const std::filesystem::path& repo_dir,
+    SandboxManager* sandbox_mgr)
     : run_child_fn_(run_child),
       run_child_data_(run_child_data),
       tier_res_(tier_resolution),
+      sandbox_mgr_(sandbox_mgr),
       repo_dir_(repo_dir) {
-    if (!repo_dir_.empty()) {
-        sandbox_mgr_.emplace(repo_dir_);
-    }
 }
 
 /**
@@ -114,7 +114,7 @@ void DelegationManager::set_delegation_callbacks(
  * @param is_pipeline   True for pipeline stages.
  * @return Decision from callback (or ACCEPT if null).
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 ent_decision_t DelegationManager::fire_start_cb(
     const std::string& delegation_id,
@@ -160,7 +160,7 @@ ent_decision_t DelegationManager::fire_start_cb(
  * @param sandbox_result Patch artifact.
  * @param result         Original delegation result.
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void DelegationManager::deliver_sandbox_result(
     const SandboxInfo& sb_info,
@@ -248,7 +248,68 @@ void DelegationManager::persist_pending_patch(
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @internal
- * @version 2.1.5-cb
+ * @version 2.1.6
+ */
+/**
+ * @brief Run the three pre-flight checks for a single delegation.
+ *
+ * Returns either a populated `DelegationResult` (caller should
+ * early-return) or `nullopt` (proceed with run_child). Extracted to
+ * keep `execute_delegation` under the knots SLOC + returns gate.
+ *
+ * Side effect: on success, populates `sb_info` with a freshly created
+ * sandbox when a sandbox manager is configured.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+std::optional<DelegationResult>
+DelegationManager::check_delegation_preconditions(
+    const ChildContextInfo& info,
+    const std::string& target_tier,
+    const std::string& task,
+    const std::string& del_id,
+    int depth,
+    std::optional<SandboxInfo>& sb_info) {
+    std::optional<DelegationResult> early;
+    if (!info.valid) {
+        logger->error("Tier '{}' not found", target_tier);
+        early = DelegationResult{
+            "Unknown tier: " + target_tier, false, target_tier, task};
+    } else if (fire_start_cb(del_id, target_tier, task, depth, false)
+               == ENT_DECISION_REJECT) {
+        logger->info("Delegation {} ({}) rejected by start callback",
+                     del_id, target_tier);
+        early = DelegationResult{
+            "Delegation rejected by consumer", false, target_tier, task};
+    } else if (sandbox_mgr_ != nullptr) {
+        sb_info = sandbox_mgr_->create_sandbox(del_id);
+        if (!sb_info.has_value()) {
+            // gh#33 bug 2 (v2.1.6): pre-2.1.6 a failed create_sandbox
+            // silently fell through to running the child against the
+            // parent's cwd and surfaced an opaque
+            // "(No response from delegate)" on later failure. The
+            // sandbox-unavailable mode is now consumer-visible.
+            logger->error(
+                "Delegation {} ({}): session sandbox unavailable",
+                del_id, target_tier);
+            early = DelegationResult{
+                "(DELEGATION FAILED: session sandbox unavailable)",
+                false, target_tier, task};
+        }
+    }
+    return early;
+}
+
+/**
+ * @brief Run a child inference loop for the target tier.
+ * @param parent_ctx Parent loop context.
+ * @param target_tier Tier name to delegate to.
+ * @param task Task description for the child.
+ * @param max_turns Optional iteration limit.
+ * @return DelegationResult.
+ * @internal
+ * @version 2.1.6
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -263,33 +324,17 @@ DelegationResult DelegationManager::execute_delegation(
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};
 
-    if (!info.valid) {
-        logger->error("Tier '{}' not found", target_tier);
-        return {"Unknown tier: " + target_tier, false, target_tier, task};
+    std::string del_id =
+        "d" + std::to_string(parent_ctx.delegation_depth + 1);
+    std::optional<SandboxInfo> sb_info;
+    if (auto early = check_delegation_preconditions(
+            info, target_tier, task, del_id,
+            parent_ctx.delegation_depth + 1, sb_info)) {
+        return *early;
     }
 
     auto child_ctx = build_child_context(parent_ctx, info, task);
     child_ctx.locked_tier = target_tier;
-
-    // gh#29 (v2.1.5): consumer gate before any child loop runs. Engine
-    // never proceeds past a REJECT — even if no sandbox is configured.
-    std::string del_id =
-        "d" + std::to_string(parent_ctx.delegation_depth + 1);
-    if (fire_start_cb(del_id, target_tier, task,
-                      parent_ctx.delegation_depth + 1, false)
-        == ENT_DECISION_REJECT) {
-        logger->info("Delegation {} ({}) rejected by start callback",
-                     del_id, target_tier);
-        return {"Delegation rejected by consumer", false,
-                target_tier, task};
-    }
-
-    // Create per-delegation filesystem sandbox (gh#29: was a git
-    // worktree, now an isolated copy under ~/.entropic/sandbox/).
-    std::optional<SandboxInfo> sb_info;
-    if (sandbox_mgr_) {
-        sb_info = sandbox_mgr_->create_sandbox(del_id);
-    }
 
     DelegationResult result;
 
@@ -301,6 +346,107 @@ DelegationResult DelegationManager::execute_delegation(
         result = run_child(child_ctx, target_tier, task, max_turns);
     }
 
+    finalize_sandbox_for(sb_info, result);
+    return result;
+}
+
+/**
+ * @brief Resume a delegation with pre-loaded conversation history.
+ *
+ * gh#32 (v2.1.6). Skips the normal `build_child_context` that builds a
+ * fresh {system, user} pair from the tier's identity prompt: the seed
+ * history already encodes the prior delegation's full state. Appends
+ * the new task as a user message before running the child loop. Reuses
+ * the precondition checks (tier validity, consumer gate, sandbox) via
+ * `check_delegation_preconditions` so the resume path enforces the
+ * same gates as a cold delegate.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+/**
+ * @brief Build a resumed child context from seed history + new task.
+ *
+ * Extracted from `execute_resume_delegation` to keep that function
+ * under the knots SLOC gate.
+ *
+ * @internal
+ * @version 2.1.6
+ */
+LoopContext DelegationManager::build_resumed_child_context(
+        const LoopContext& parent_ctx,
+        const ChildContextInfo& info,
+        const std::string& target_tier,
+        const std::string& task,
+        std::vector<Message> seed_history) {
+    LoopContext child_ctx;
+    child_ctx.delegation_depth = parent_ctx.delegation_depth + 1;
+    child_ctx.delegation_ancestor_tiers =
+        parent_ctx.delegation_ancestor_tiers;
+    child_ctx.delegation_ancestor_tiers.push_back(target_tier);
+    child_ctx.parent_conversation_id = parent_ctx.conversation_id;
+    child_ctx.all_tools = info.tools;
+    child_ctx.active_phase = "default";
+    child_ctx.locked_tier = target_tier;
+    child_ctx.messages = std::move(seed_history);
+    bool has_system = !child_ctx.messages.empty()
+                       && child_ctx.messages.front().role == "system";
+    if (!has_system && !info.system_prompt.empty()) {
+        Message sys;
+        sys.role = "system";
+        sys.content = info.system_prompt;
+        child_ctx.messages.insert(child_ctx.messages.begin(),
+                                  std::move(sys));
+    }
+    Message user;
+    user.role = "user";
+    user.content = task;
+    if (!info.completion_instructions.empty()) {
+        user.content += "\n\n" + info.completion_instructions;
+    }
+    child_ctx.messages.push_back(std::move(user));
+    return child_ctx;
+}
+
+/**
+ * @brief Run a resumed child delegation with seed history (gh#32, v2.1.6).
+ * @internal
+ * @version 2.1.6
+ */
+DelegationResult DelegationManager::execute_resume_delegation(
+    LoopContext& parent_ctx,
+    const std::string& target_tier,
+    const std::string& task,
+    std::vector<Message> seed_history,
+    std::optional<int> max_turns) {
+
+    logger->info("Resume delegation: target_tier='{}' task='{}' "
+                 "history_messages={}",
+                 target_tier, task, seed_history.size());
+    auto info = tier_res_.resolve_tier
+        ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
+        : ChildContextInfo{};
+
+    std::string del_id =
+        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r";
+    std::optional<SandboxInfo> sb_info;
+    if (auto early = check_delegation_preconditions(
+            info, target_tier, task, del_id,
+            parent_ctx.delegation_depth + 1, sb_info)) {
+        return *early;
+    }
+
+    auto child_ctx = build_resumed_child_context(
+        parent_ctx, info, target_tier, task, std::move(seed_history));
+
+    DelegationResult result;
+    if (sb_info && swap_dir_fn_ != nullptr) {
+        ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
+                            sb_info->path, repo_dir_);
+        result = run_child(child_ctx, target_tier, task, max_turns);
+    } else {
+        result = run_child(child_ctx, target_tier, task, max_turns);
+    }
     finalize_sandbox_for(sb_info, result);
     return result;
 }
@@ -360,7 +506,7 @@ static std::string pipeline_context(
  * @param task Task description.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 2.1.5-cb
+ * @version 2.1.6
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -382,8 +528,16 @@ DelegationResult DelegationManager::execute_pipeline(
     // inside the same directory so later stages observe earlier stages'
     // file edits — preserving the v2.1.4 forward-carry behavior.
     std::optional<SandboxInfo> shared_sb;
-    if (sandbox_mgr_) {
+    if (sandbox_mgr_ != nullptr) {
         shared_sb = sandbox_mgr_->create_sandbox("pipeline");
+        if (!shared_sb.has_value()) {
+            // gh#33 bug 2 (v2.1.6): see execute_delegation comment.
+            logger->error(
+                "Pipeline ({} stages): session sandbox unavailable",
+                stages.size());
+            return {"(DELEGATION FAILED: session sandbox unavailable)",
+                    false, first, task};
+        }
     }
 
     DelegationResult last_result;
@@ -740,7 +894,7 @@ void DelegationManager::log_child_result(
  * @param sb_info Sandbox to finalize.
  * @param result Delegation result.
  * @internal
- * @version 2.1.5-cb
+ * @version 2.1.6
  */
 void DelegationManager::finalize_sandbox_for(
     const std::optional<SandboxInfo>& sb_info,

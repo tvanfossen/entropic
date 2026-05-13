@@ -163,7 +163,7 @@ void AgentEngine::set_stream_observer(
  * @param on_complete Post-delegation result (nullable).
  * @param user_data Forwarded to both callbacks.
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void AgentEngine::set_delegation_callbacks(
     ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
@@ -805,16 +805,23 @@ void AgentEngine::dir_tier_change(
 /**
  * @brief Handle delegate directive (store pending).
  * @internal
- * @version 1.8.6
+ * @version 2.1.6
  */
 void AgentEngine::dir_delegate(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& dl = static_cast<const DelegateDirective&>(d);
     ctx.pending_delegation = PendingDelegation{
-        dl.target, dl.task, dl.max_turns};
+        dl.target, dl.task, dl.max_turns,
+        dl.resume_from_delegation_id};
     r.stop_processing = true;
-    logger->info("[DIRECTIVE] delegate: target={} task='{}'",
-                 dl.target, dl.task);
+    if (dl.resume_from_delegation_id.empty()) {
+        logger->info("[DIRECTIVE] delegate: target={} task='{}'",
+                     dl.target, dl.task);
+    } else {
+        // gh#32 (v2.1.6): target will be resolved from storage later.
+        logger->info("[DIRECTIVE] resume_delegation: id={} task='{}'",
+                     dl.resume_from_delegation_id, dl.task);
+    }
 }
 
 /**
@@ -1679,7 +1686,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.1.5-hard
+ * @version 2.1.6-gh32
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1702,32 +1709,30 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
 
     set_state(ctx, AgentState::DELEGATING);
 
-    // Hook: ON_DELEGATE pre-hook — can cancel (v1.9.1)
-    if (fire_delegate_pre_hook(pending, ctx.delegation_depth)) {
+    // gh#32 (v2.1.6): resume_delegation tool emits a directive with
+    // resume_from_delegation_id set; the target tier is unknown to the
+    // tool and must be resolved from storage. Failure to load (unknown
+    // id, no storage) surfaces a typed error to the lead.
+    //
+    // The pre-hook gate is interleaved with resume so both share a
+    // single early-exit (knots returns gate).
+    std::vector<Message> resume_history;
+    bool blocked = false;
+    if (!pending.resume_from_delegation_id.empty()
+        && !resolve_resume_delegation(ctx, pending, resume_history)) {
+        blocked = true;
+    } else if (fire_delegate_pre_hook(pending, ctx.delegation_depth)) {
         logger->info("ON_DELEGATE hook cancelled delegation");
+        blocked = true;
+    }
+    if (blocked) {
         set_state(ctx, AgentState::EXECUTING);
         return;
     }
 
     fire_delegation_start(ctx, pending.target, pending.task);
-
-    std::optional<int> max_turns;
-    if (pending.max_turns > 0) { max_turns = pending.max_turns; }
-
-    DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, get_repo_dir());
-    if (storage_.create_delegation != nullptr) {
-        mgr.set_storage(&storage_);
-    }
-    // gh#29 (v2.1.5): snapshot consumer-registered callbacks under
-    // the mutex once at delegation entry so a concurrent setter call
-    // cannot tear the {start, complete, user_data} triple mid-call.
-    auto cb_snap = delegation_callbacks_snapshot();
-    mgr.set_delegation_callbacks(
-        cb_snap.start, cb_snap.complete, cb_snap.user_data);
-
-    auto result = mgr.execute_delegation(
-        ctx, pending.target, pending.task, max_turns);
+    auto result = run_pending_delegation(
+        ctx, pending, std::move(resume_history));
     push_delegation_result(ctx, pending.target, result);
 
     fire_delegation_complete(ctx, pending.target, result);
@@ -1896,7 +1901,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -1915,9 +1920,11 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
 
     set_state(ctx, AgentState::DELEGATING);
 
+    // gh#33 (v2.1.6): engine-scoped sandbox; non-owning pointer.
     auto repo_dir = get_repo_dir();
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, repo_dir);
+                          tier_res_, repo_dir,
+                          ensure_sandbox_manager());
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -2051,24 +2058,211 @@ bool AgentEngine::try_auto_chain(
 /**
  * @brief Get the project directory used as sandbox snapshot source.
  *
- * Caches `std::filesystem::current_path()` on first call. No git
- * inspection, no repo initialization, no writes to the user's
- * directory. `SandboxManager` handles both git and non-git projects
- * — the engine is purely a reader of this path.
+ * gh#31 (v2.1.6): pre-2.1.6 this method unconditionally cached
+ * `std::filesystem::current_path()` on first call and silently
+ * ignored the `project_dir` passed to `entropic_configure_dir`.
+ * Consumers whose launcher cwd differed from the target repo (the
+ * common case for wrapper CLIs and IDE plugins) ended up snapshotting
+ * the wrong tree into the sandbox; researcher tiers would then read
+ * unrelated source and produce garbage. The configured value now
+ * wins; CWD remains the fallback when no override is set so callers
+ * that don't use `configure_dir` are unaffected.
+ *
+ * Cached on first call. No git inspection, no repo initialization,
+ * no writes to the user's directory.
  *
  * @return Project directory path.
  * @internal
- * @version 2.1.5
+ * @version 2.1.6
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
     repo_dir_checked_ = true;
-    auto cwd = std::filesystem::current_path();
-    cached_repo_dir_ = cwd;
-    logger->info("Project dir for sandbox snapshots: {}", cwd.string());
-    return cwd;
+    std::filesystem::path resolved;
+    if (!project_dir_override_.empty()) {
+        resolved = project_dir_override_;
+        logger->info("Project dir for sandbox snapshots: {} (configured)",
+                     resolved.string());
+    } else {
+        resolved = std::filesystem::current_path();
+        logger->info("Project dir for sandbox snapshots: {} (cwd fallback)",
+                     resolved.string());
+    }
+    cached_repo_dir_ = resolved;
+    return resolved;
+}
+
+/**
+ * @brief Store the project_dir resolved by `entropic_configure_dir`.
+ *
+ * gh#31 (v2.1.6). See engine.h for rationale. Resets the cache so a
+ * subsequent `get_repo_dir()` call picks up the new value even if a
+ * previous lookup already settled on the CWD fallback.
+ *
+ * @param project_dir Project root (empty resets to CWD fallback).
+ * @internal
+ * @version 2.1.6
+ */
+void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
+    project_dir_override_ = project_dir;
+    cached_repo_dir_.reset();
+    repo_dir_checked_ = false;
+}
+
+/**
+ * @brief Lazy session-scoped SandboxManager accessor (gh#33, v2.1.6).
+ *
+ * See engine.h for rationale on why this is engine-scoped rather
+ * than per-delegation.
+ *
+ * @return Pointer to engine-owned manager, or nullptr if no repo_dir.
+ * @internal
+ * @version 2.1.6
+ */
+/**
+ * @brief Build a typed failure message for resume_delegation errors.
+ * @internal
+ * @version 2.1.6
+ */
+static void push_resume_failure(
+        LoopContext& ctx,
+        const std::string& reason,
+        const std::string& delegation_id) {
+    Message m;
+    m.role = "user";
+    m.content = "[DELEGATION FAILED: resume_delegation] "
+                + reason + " (delegation_id=" + delegation_id + ")";
+    ctx.messages.push_back(std::move(m));
+}
+
+/**
+ * @brief Load + parse the resume payload from storage.
+ *
+ * Extracted to keep `resolve_resume_delegation` under knots SLOC and
+ * returns gates.
+ *
+ * @param ctx          Parent context (failure messages land here).
+ * @param id           Delegation id.
+ * @param[out] parsed  JSON payload on success.
+ * @return true on success, false (and pushes failure to ctx) otherwise.
+ * @internal
+ * @version 2.1.6
+ */
+bool AgentEngine::fetch_resume_payload(
+        LoopContext& ctx,
+        const std::string& id,
+        nlohmann::json& parsed) {
+    std::optional<std::string> error;
+    std::string raw;
+    if (storage_.load_delegation_with_messages == nullptr) {
+        error = "storage unavailable";
+    } else if (!storage_.load_delegation_with_messages(
+                   id.c_str(), raw, storage_.user_data)) {
+        error = "unknown delegation_id";
+    } else {
+        parsed = nlohmann::json::parse(raw, nullptr, false);
+        if (parsed.is_discarded() || !parsed.is_object()) {
+            error = "malformed storage payload";
+        }
+    }
+    if (error.has_value()) {
+        logger->error("resume_delegation '{}': {}", id, *error);
+        push_resume_failure(ctx, *error, id);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Resolve a resume_delegation request via storage (gh#32, v2.1.6).
+ * @internal
+ * @version 2.1.6
+ */
+bool AgentEngine::resolve_resume_delegation(
+        LoopContext& ctx,
+        PendingDelegation& pending,
+        std::vector<Message>& out_history) {
+    const auto& id = pending.resume_from_delegation_id;
+    nlohmann::json j;
+    if (!fetch_resume_payload(ctx, id, j)) {
+        return false;
+    }
+    auto target = j.value("target_tier", std::string{});
+    if (target.empty()) {
+        push_resume_failure(ctx, "target_tier missing in storage", id);
+        return false;
+    }
+    pending.target = target;
+    if (j.contains("messages") && j["messages"].is_array()) {
+        for (const auto& mj : j["messages"]) {
+            Message m;
+            m.role = mj.value("role", "");
+            m.content = mj.value("content", "");
+            if (!m.role.empty()) {
+                out_history.push_back(std::move(m));
+            }
+        }
+    }
+    logger->info("resume_delegation '{}': loaded {} messages, target='{}'",
+                 id, out_history.size(), target);
+    return true;
+}
+
+/**
+ * @brief Build a DelegationManager and run the pending delegation.
+ *
+ * Extracted from `execute_pending_delegation` to keep that function
+ * under the knots SLOC + return-count gates. Routes through
+ * `execute_resume_delegation` when `resume_history` is non-empty.
+ *
+ * @param ctx             Parent context (informational).
+ * @param pending         Pending delegation request.
+ * @param resume_history  Pre-loaded history (empty for cold delegations).
+ * @return DelegationResult from the child loop.
+ * @internal
+ * @version 2.1.6
+ */
+DelegationResult AgentEngine::run_pending_delegation(
+        LoopContext& ctx,
+        const PendingDelegation& pending,
+        std::vector<Message> resume_history) {
+    std::optional<int> max_turns;
+    if (pending.max_turns > 0) { max_turns = pending.max_turns; }
+    DelegationManager mgr(run_child_loop_trampoline, this,
+                          tier_res_, get_repo_dir(),
+                          ensure_sandbox_manager());
+    if (storage_.create_delegation != nullptr) {
+        mgr.set_storage(&storage_);
+    }
+    auto cb_snap = delegation_callbacks_snapshot();
+    mgr.set_delegation_callbacks(
+        cb_snap.start, cb_snap.complete, cb_snap.user_data);
+    if (resume_history.empty()) {
+        return mgr.execute_delegation(
+            ctx, pending.target, pending.task, max_turns);
+    }
+    return mgr.execute_resume_delegation(
+        ctx, pending.target, pending.task,
+        std::move(resume_history), max_turns);
+}
+
+/**
+ * @brief Lazy accessor for the engine-scoped SandboxManager (gh#33, v2.1.6).
+ * @internal
+ * @version 2.1.6
+ */
+SandboxManager* AgentEngine::ensure_sandbox_manager() {
+    if (sandbox_mgr_) {
+        return &*sandbox_mgr_;
+    }
+    auto repo_dir = get_repo_dir();
+    if (repo_dir.empty()) {
+        return nullptr;
+    }
+    sandbox_mgr_.emplace(repo_dir);
+    return &*sandbox_mgr_;
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────

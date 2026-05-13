@@ -29,6 +29,7 @@
 #include <entropic/core/directives.h>
 #include <entropic/core/engine_types.h>
 #include <entropic/core/response_generator.h>
+#include <entropic/core/sandbox.h>  // gh#33 (v2.1.6): engine-owned session sandbox
 #include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/core/stream_think_filter.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
@@ -41,6 +42,8 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+#include <nlohmann/json_fwd.hpp>  // gh#32 (v2.1.6) resume payload type
 
 namespace entropic {
 
@@ -132,6 +135,27 @@ public:
      * @version 1.9.1
      */
     void set_hooks(const HookInterface& hooks);
+
+    /**
+     * @brief Set the configured project directory (gh#31, v2.1.6).
+     *
+     * The facade calls this from `entropic_configure_dir` after the
+     * layered config loader has resolved the project root. `get_repo_dir()`
+     * uses this value in preference to `std::filesystem::current_path()`,
+     * so consumers whose launcher cwd differs from the target project
+     * (the common case for wrapper CLIs and IDE plugins) still snapshot
+     * the right tree into the sandbox.
+     *
+     * Pre-2.1.6 the engine used CWD unconditionally, silently ignoring
+     * the `project_dir` argument to `entropic_configure_dir`. Setting
+     * an empty path resets the override so `get_repo_dir()` falls back
+     * to CWD (preserves the no-configure-dir caller's behavior).
+     *
+     * @param project_dir Project root (empty resets to CWD fallback).
+     * @threadsafety Serialized per-handle via the facade's api_mutex.
+     * @version 2.1.6
+     */
+    void set_project_dir(const std::filesystem::path& project_dir);
 
     /**
      * @brief Set the global stream observer.
@@ -754,16 +778,105 @@ private:
     /**
      * @brief Get the project root used as sandbox snapshot source.
      *
-     * Returns the current working directory. Unlike the v1.8.6–v2.1.4
-     * implementation, this method does NOT initialize a git repo if
-     * none exists — `SandboxManager` handles non-git projects natively
-     * (gh#29, v2.1.5). The engine no longer mutates the user's
-     * project directory under any circumstance.
+     * Preference order (gh#31, v2.1.6):
+     *   1. The path stored via `set_project_dir()` (populated by
+     *      `entropic_configure_dir`).
+     *   2. `std::filesystem::current_path()` as a fallback when no
+     *      project_dir was configured (preserves legacy facade callers).
+     *
+     * Cached on first call. Unlike the v1.8.6–v2.1.4 implementation, this
+     * method does NOT initialize a git repo if none exists — `SandboxManager`
+     * handles non-git projects natively (gh#29, v2.1.5). The engine never
+     * mutates the user's project directory.
      *
      * @return Project directory path.
-     * @version 2.1.5
+     * @version 2.1.6
      */
     std::filesystem::path get_repo_dir();                       ///< @internal
+
+    /**
+     * @brief Lazily construct (or return) the session-scoped SandboxManager.
+     *
+     * gh#33 (v2.1.6): pre-2.1.6 each delegation built a fresh
+     * `DelegationManager` as a stack local, which owned a fresh
+     * `SandboxManager` and dropped it on return — re-snapshotting the
+     * entire project on every delegation and emitting a misleading
+     * "Session sandbox cleanup" log after every call. The manager is
+     * now engine-scoped: created once on first delegation, destroyed
+     * when the engine is destroyed.
+     *
+     * Returns nullptr when `get_repo_dir()` resolves to an empty path
+     * (no project configured) — callers fall back to the no-sandbox
+     * child-loop path, matching pre-2.1.6 behavior for that case.
+     *
+     * @return Pointer to the engine-scoped sandbox manager, or nullptr
+     *         when no project_dir is available.
+     * @threadsafety Construction is serialized by the facade's api_mutex.
+     * @version 2.1.6
+     */
+    SandboxManager* ensure_sandbox_manager();                   ///< @internal
+
+    /**
+     * @brief Resolve a resume_delegation pending request against storage.
+     *
+     * gh#32 (v2.1.6). Calls `storage_.load_delegation_with_messages`,
+     * parses the result, and populates `pending.target` (from the loaded
+     * `target_tier`) and `out_history` (from the loaded `messages`).
+     * On failure (no storage, unknown id, parse error) writes a typed
+     * `[DELEGATION FAILED: resume_delegation ...]` user message to the
+     * parent context and returns false; the caller bails out.
+     *
+     * @param ctx          Parent loop context (failure message lands here).
+     * @param pending      Pending delegation (target rewritten on success).
+     * @param out_history  Loaded conversation messages on success.
+     * @return true on success.
+     * @internal
+     * @version 2.1.6
+     */
+    bool resolve_resume_delegation(
+        LoopContext& ctx,
+        PendingDelegation& pending,
+        std::vector<Message>& out_history);
+
+    /**
+     * @brief Helper for `resolve_resume_delegation` (gh#32, v2.1.6).
+     *
+     * Calls the storage callback, parses the JSON payload, pushes a
+     * typed failure message to `ctx` on any error path. Extracted so
+     * the parent function stays under the knots returns/SLOC gates.
+     *
+     * @param ctx     Parent context (receives failure message on error).
+     * @param id      Delegation id.
+     * @param parsed  [out] Parsed JSON payload on success.
+     * @return true on success.
+     * @internal
+     * @version 2.1.6
+     */
+    bool fetch_resume_payload(
+        LoopContext& ctx,
+        const std::string& id,
+        nlohmann::json& parsed);
+
+    /**
+     * @brief Run a pending delegation (cold or resume).
+     *
+     * Extracted to keep `execute_pending_delegation` under the knots
+     * SLOC gate. Builds a per-delegation `DelegationManager` against
+     * the engine-scoped sandbox + storage interfaces and dispatches
+     * to either `execute_delegation` or `execute_resume_delegation`
+     * based on whether `resume_history` is empty.
+     *
+     * @param ctx Parent loop context (informational).
+     * @param pending Pending delegation request.
+     * @param resume_history Pre-loaded history (empty for cold delegations).
+     * @return DelegationResult from the child loop.
+     * @internal
+     * @version 2.1.6
+     */
+    DelegationResult run_pending_delegation(
+        LoopContext& ctx,
+        const PendingDelegation& pending,
+        std::vector<Message> resume_history);
 
     /**
      * @brief Fire on_delegation_start callback.
@@ -819,6 +932,8 @@ private:
     HookInterface hooks_;                                    ///< Hook dispatch (v1.9.1)
     std::optional<std::filesystem::path> cached_repo_dir_; ///< Cached repo path (v1.8.6)
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
+    std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
+    std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
 
     // ── Conversation state (v2.0.2) ─────────────────────────
     std::vector<Message> conversation_;                    ///< Persistent conversation

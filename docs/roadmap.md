@@ -459,6 +459,82 @@ moves to v2.2 candidate (below).
 
 ---
 
+## v2.1.6 — Configure-dir + sandbox lifecycle fixes + delegation recall
+
+Three consumer-reported issues addressed in one patch release.
+
+### gh#31: configure_dir's project_dir was silently dropped
+
+`AgentEngine::get_repo_dir` unconditionally cached
+`std::filesystem::current_path()` on first call, ignoring the
+`project_dir` argument passed to `entropic_configure_dir`. Consumers
+whose launcher cwd differed from the target repo (the common case for
+wrapper CLIs and IDE plugins — bissell-llm-studio invoking the engine
+from its own source tree against a separate target repo) snapshotted
+the wrong tree into the sandbox; researcher tiers then read unrelated
+source. The facade now calls `AgentEngine::set_project_dir` after
+configure; `get_repo_dir` prefers the stored value and falls back to
+CWD only when no project_dir was supplied.
+
+### gh#33: session-killer sandbox + delegation + inspect bug cluster
+
+A single failed delegation poisoned the entire session.
+
+**Bug 1 — SandboxManager lifecycle:** `DelegationManager` was
+constructed as a stack-local inside `handle_delegation`, owning a
+fresh `SandboxManager` it dropped on return — re-snapshotting the
+whole project on every delegation and emitting a misleading "Session
+sandbox cleanup" log after every call. `SandboxManager` is now
+engine-scoped: `AgentEngine` owns one, lazily constructed on first
+delegation; `DelegationManager` takes a non-owning pointer.
+
+**Bug 2 — opaque "(No response from delegate)":** a failed
+`create_sandbox` fell through to running the child against the
+parent's cwd, then surfaced a generic "no response" error if the
+child later faulted. The sandbox-unavailable mode is now reported as
+`(DELEGATION FAILED: session sandbox unavailable)`. Precondition
+checks are extracted into a helper that keeps `execute_delegation`
+under the knots SLOC + returns gates.
+
+**Bug 3 — entropic.inspect null-deref:** the non-throwing JSON parse
+returned a discarded value on invalid/empty/null args; the subsequent
+`.value("target", "")` threw `nlohmann::json::type_error.306` and
+killed the engine — the recovery tool the lead was prompted to use
+for diagnosis crashed the engine instead. Discarded / non-object args
+are now coerced to an empty object so a no-arg `entropic.inspect()`
+falls through to the full-state dump.
+
+### gh#32: entropic.followup + entropic.resume_delegation
+
+Two new builtin tools give the lead structural recall and resume,
+instead of relying on attention to buried earlier turns. Prompt
+instructions ("recall from history when an answer is already there")
+weren't reliable on Qwen-class autoregressive models — a tool call
+lands as a fresh user-role message the model treats as authoritative.
+
+- `entropic.followup(query, max_results=3)` — substring-search past
+  delegation summaries in storage. Returns matching `{delegation_id,
+  target_tier, summary, completed_at}` records.
+- `entropic.resume_delegation(delegation_id, task, max_turns?)` —
+  loads the prior child conversation from storage, seeds a fresh
+  child context with it, then runs the new task. The engine resolves
+  the original target tier from storage so the lead doesn't have to.
+
+These required closing a pre-existing wiring gap: `AgentEngine` had a
+`StorageInterface` member whose function pointers were never
+populated by the facade — `create_delegation` and `save_conversation`
+were dead code. v2.1.6 wires the interface from `SqliteStorageBackend`
+through a set of facade-side bridge trampolines so delegations now
+actually persist and can be resumed.
+
+Storage backend gains `get_delegation_by_id` and `search_delegations`
+queries; `entropic_state_provider_t` gains `search_delegations` and
+`load_delegation_conversation` callbacks; `StorageInterface` gains a
+`load_delegation_with_messages` callback for the engine-side resume
+path.
+
+---
+
 ## v2.1.3 — Context pruning + validator evidence + release tooling (SHIPPED)
 
 Two consumer-reported bugs in the context-management path, plus a

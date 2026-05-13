@@ -185,6 +185,37 @@ public:
     bool get_delegations(const std::string& conversation_id,
                          std::string& result_json);
 
+    /**
+     * @brief Look up a single delegation record by id (gh#32, v2.1.6).
+     *
+     * Used by `entropic.followup` and `entropic.resume_delegation` to
+     * resolve a delegation's `target_tier` and `child_conversation_id`
+     * without scanning all parents.
+     *
+     * @param delegation_id Delegation id.
+     * @param[out] result_json Single-object JSON with the delegation row.
+     * @return true on success and a row was found; false on absence/error.
+     * @version 2.1.6
+     */
+    bool get_delegation_by_id(const std::string& delegation_id,
+                              std::string& result_json);
+
+    /**
+     * @brief Search delegations across all conversations (gh#32, v2.1.6).
+     *
+     * Substring match against `result_summary` (case-insensitive).
+     * Returns the top-N most recently completed delegations whose
+     * summary contains `query`.
+     *
+     * @param query        Keyword/phrase to match.
+     * @param max_results  Maximum records to return.
+     * @param[out] result_json JSON array of matching delegation rows.
+     * @return true on success.
+     * @version 2.1.6
+     */
+    bool search_delegations(const std::string& query, int max_results,
+                            std::string& result_json);
+
     // ── Compaction snapshots ──────────────────────────────
 
     /**

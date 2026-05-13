@@ -1141,7 +1141,7 @@ static std::vector<std::string> extract_pipeline_stages(
  * @param result_json Parsed result JSON for parameter lookup.
  * @return Owned Directive (nullptr if type is unrecognized).
  * @internal
- * @version 2.1.4
+ * @version 2.1.6
  */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
@@ -1150,10 +1150,15 @@ static std::unique_ptr<Directive> build_directive(
     if (type_str == "stop_processing") {
         result = std::make_unique<StopProcessingDirective>();
     } else if (type_str == "delegate") {
+        // gh#32 (v2.1.6): resume_delegation emits action=resume_delegation
+        // with delegation_id but no target. The directive's target is
+        // resolved later by the engine after loading the original
+        // delegation's tier from storage.
         result = std::make_unique<DelegateDirective>(
             result_json.value("target", ""),
             result_json.value("task", ""),
-            result_json.value("max_turns", -1));
+            result_json.value("max_turns", -1),
+            result_json.value("delegation_id", ""));
     } else if (type_str == "complete") {
         // Issue #10 (v2.1.4): coverage_gap + gap_description +
         // suggested_files extend CompleteDirective so consumers can

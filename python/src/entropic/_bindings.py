@@ -96,6 +96,7 @@ class EntropicError(enum.IntEnum):
     UNSUPPORTED_URL = 47
     NOT_SUPPORTED = 48
     STATE_INCOMPATIBLE = 49
+    NO_VISION_TIER = 50  # gh#41 (v2.1.8)
 
 
 class AgentState(enum.IntEnum):
@@ -241,6 +242,32 @@ free it via :data:`entropic_free`.
 
 entropic_run_streaming = _bind(
     "entropic_run_streaming",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_char_p,
+    TOKEN_CB,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_int),
+)
+
+# gh#37 (v2.1.8): multimodal messages entry points. messages_json is a
+# JSON array (OpenAI-compatible content arrays); content_parts survive
+# end-to-end. See entropic_run() for the back-compat text-only path.
+entropic_run_messages = _bind(
+    "entropic_run_messages",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_char_p,
+    ctypes.POINTER(ctypes.c_char_p),
+)
+"""(handle, messages_json, out_result_json) → entropic_error_t.
+
+The C function allocates ``*out_result_json`` via malloc; callers must
+free it via :data:`entropic_free`.
+"""
+
+entropic_run_messages_streaming = _bind(
+    "entropic_run_messages_streaming",
     ctypes.c_int,
     entropic_handle_t,
     ctypes.c_char_p,

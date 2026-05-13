@@ -2315,6 +2315,46 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
 }
 
 /**
+ * @brief Multimodal-aware run_turn overload (gh#37, v2.1.8).
+ *
+ * Takes a pre-built list of messages and preserves their
+ * `content_parts` end-to-end (no string flattening). Each input
+ * message is appended verbatim to the engine's conversation history
+ * before the agent loop runs. If the conversation is empty and the
+ * caller did not supply a system message, the engine's configured
+ * `system_prompt_` is prepended first — matching the single-string
+ * overload's first-turn behavior.
+ *
+ * @param new_messages Messages to add this turn.
+ * @return Result messages from the loop.
+ * @internal
+ * @version 2.1.8
+ */
+std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
+    bool caller_has_system = false;
+    for (const auto& m : new_messages) {
+        if (m.role == "system") { caller_has_system = true; break; }
+    }
+    if (conversation_.empty() && !system_prompt_.empty()
+            && !caller_has_system) {
+        Message sys;
+        sys.role = "system";
+        sys.content = system_prompt_;
+        conversation_.push_back(std::move(sys));
+    }
+    for (auto& m : new_messages) {
+        conversation_.push_back(std::move(m));
+    }
+
+    size_t sent_len = conversation_.size();
+    auto result = run(conversation_);
+    for (size_t i = sent_len; i < result.size(); ++i) {
+        conversation_.push_back(result[i]);
+    }
+    return result;
+}
+
+/**
  * @brief Run a streaming conversation turn (stateful).
  * @param input User input.
  * @param on_token Consumer callback (filtered, UTF-8 aligned).
@@ -2361,6 +2401,85 @@ int AgentEngine::run_streaming(
     set_callbacks(cbs);
 
     auto result = run_turn(input);
+    filter.flush();
+
+    if (session_logger_) {
+        session_logger_->end_turn();
+    }
+    if (cancel_flag && *cancel_flag) { return 1; }
+    return 0;
+}
+
+/**
+ * @brief Concatenate user-role message text for session-log echo.
+ * @param messages Incoming messages for the streaming turn.
+ * @return Newline-joined user text (skips system/assistant turns).
+ * @internal
+ * @version 2.1.8
+ */
+static std::string concat_user_echo(
+    const std::vector<Message>& messages) {
+    std::string echo;
+    for (const auto& m : messages) {
+        if (m.role != "user" || m.content.empty()) { continue; }
+        if (!echo.empty()) { echo += '\n'; }
+        echo += m.content;
+    }
+    return echo;
+}
+
+/**
+ * @brief Multimodal-aware streaming run_turn overload (gh#37, v2.1.8).
+ *
+ * Mirrors the single-string streaming variant — same stream filter,
+ * cancel polling, session logger wiring — but consumes a pre-built
+ * message list with `content_parts` preserved.
+ *
+ * @param new_messages Messages to add this turn.
+ * @param on_token Filtered token callback.
+ * @param user_data Consumer context.
+ * @param cancel_flag Per-token cancel poll, nullable.
+ * @return 0=OK, 1=cancelled, 2=error.
+ * @internal
+ * @version 2.1.8
+ */
+int AgentEngine::run_streaming(
+    std::vector<Message> new_messages,
+    TokenCallback on_token,
+    void* user_data,
+    int* cancel_flag)
+{
+    if (session_logger_) {
+        session_logger_->log_user_input(concat_user_echo(new_messages));
+    }
+
+    StreamThinkFilter filter(on_token, user_data);
+    if (session_logger_ && session_logger_->is_open()) {
+        filter.set_raw_callback(
+            SessionLogger::raw_token_callback,
+            session_logger_);
+    }
+
+    struct Ctx {
+        StreamThinkFilter* filter;
+        int* cancel;
+        AgentEngine* engine;
+    };
+    Ctx sctx{&filter, cancel_flag, this};
+
+    EngineCallbacks cbs{};
+    cbs.on_stream_chunk = [](const char* t, size_t l, void* ud) {
+        auto* c = static_cast<Ctx*>(ud);
+        if (c->cancel && *c->cancel) {
+            c->engine->interrupt();
+            return;
+        }
+        c->filter->on_token(t, l);
+    };
+    cbs.user_data = &sctx;
+    set_callbacks(cbs);
+
+    auto result = run_turn(std::move(new_messages));
     filter.flush();
 
     if (session_logger_) {

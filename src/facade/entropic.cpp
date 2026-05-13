@@ -19,7 +19,9 @@
 #include <entropic/types/logging.h>
 #include "llama_cpp_backend.h"
 #include <entropic/inference/interface_factory.h>
+#include <entropic/inference/orchestrator.h>
 #include <entropic/interfaces/i_inference_backend.h>
+#include <entropic/types/messages_json.h>
 #include "json_serializers.h"
 #include <cstdlib>
 #include <cstring>
@@ -1506,7 +1508,7 @@ entropic_error_t entropic_run(
  * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.8
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -1532,6 +1534,173 @@ entropic_error_t entropic_run_streaming(
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_streaming: {}", handle->last_error);
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+// ── gh#37 (v2.1.8): multimodal messages entry points ──────────
+
+/**
+ * @brief Parse messages_json and check vision-tier availability (gh#37/gh#41).
+ *
+ * Parses the wire-format messages array via the shared utility and,
+ * if any message carries image content_parts, verifies that the
+ * orchestrator has at least one tier whose `capabilities` includes
+ * `"vision"`. Returns the parsed vector on success; throws on
+ * parse failure (caller catches and maps to ENTROPIC_ERROR_*).
+ *
+ * @param handle Engine handle (already validated by caller).
+ * @param messages_json Caller-provided JSON array string.
+ * @param[out] out_rc Set to ENTROPIC_OK on success, or to a specific
+ *        error code (NO_VISION_TIER) when validation fails.
+ * @return Parsed messages on success, empty vector on failure.
+ * @internal
+ * @version 2.1.8
+ */
+static std::vector<entropic::Message> parse_and_check_vision(
+    entropic_handle_t handle,
+    const char* messages_json,
+    entropic_error_t& out_rc) {
+    auto msgs = entropic::parse_messages_json(messages_json);
+    if (entropic::any_message_has_images(msgs)
+            && handle->orchestrator
+            && !handle->orchestrator->has_vision_capable_tier()) {
+        out_rc = ENTROPIC_ERROR_NO_VISION_TIER;
+        return {};
+    }
+    out_rc = ENTROPIC_OK;
+    return msgs;
+}
+
+/**
+ * @brief Blocking multimodal run (gh#37, v2.1.8).
+ * @internal
+ * @version 2.1.8
+ */
+/**
+ * @brief Inner blocking-run dispatch — no front validation (gh#37).
+ *
+ * Caller has already verified handle, args, and engine pointer.
+ * Parses messages, runs the multimodal vision check, dispatches
+ * the turn, serializes the result, and fires the synthetic
+ * stream-observer completion sentinel. Returns the canonical
+ * entropic_error_t status — single exit.
+ *
+ * @internal
+ * @version 2.1.8
+ */
+static entropic_error_t run_messages_inner(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json) {
+    entropic_error_t vrc = ENTROPIC_OK;
+    auto msgs = parse_and_check_vision(handle, messages_json, vrc);
+    if (vrc != ENTROPIC_OK) { return vrc; }
+    auto result = handle->engine->run_turn(std::move(msgs));
+    *result_json = alloc_cstr(
+        facade_json::serialize_messages(result));
+    if (handle->stream_observer != nullptr) {
+        handle->stream_observer(
+            "", 0, handle->stream_observer_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Blocking multimodal agentic run (gh#37, v2.1.8).
+ *
+ * Front-line argument validation, then dispatches to
+ * run_messages_inner() under a try/catch that maps unexpected
+ * exceptions to ENTROPIC_ERROR_GENERATE_FAILED. See the public
+ * declaration in entropic.h for the full error matrix.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param result_json Out-param: malloc'd JSON result. Caller frees.
+ * @return ENTROPIC_OK or one of the documented error codes.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_run_messages(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK
+            || !messages_json || !result_json || !handle->engine) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return run_messages_inner(handle, messages_json, result_json);
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_messages: {}", handle->last_error);
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+/**
+ * @brief Streaming multimodal run (gh#37, v2.1.8).
+ * @internal
+ * @version 2.1.8
+ */
+/**
+ * @brief Inner streaming dispatch — no front validation (gh#37).
+ * @internal
+ * @version 2.1.8
+ */
+static entropic_error_t run_messages_stream_inner(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    entropic_error_t vrc = ENTROPIC_OK;
+    auto msgs = parse_and_check_vision(handle, messages_json, vrc);
+    if (vrc != ENTROPIC_OK) { return vrc; }
+    int code = handle->engine->run_streaming(
+        std::move(msgs), on_token, user_data, cancel_flag);
+    if (handle->stream_observer != nullptr) {
+        handle->stream_observer(
+            "", 0, handle->stream_observer_data);
+    }
+    return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
+}
+
+/**
+ * @brief Streaming multimodal agentic run (gh#37, v2.1.8).
+ *
+ * Streaming sibling of entropic_run_messages. Same validation
+ * + try/catch shape; dispatches to run_messages_stream_inner()
+ * under a try/catch. The first token may be delayed by
+ * vision-encoder latency when image content is present.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param on_token Per-token callback (UTF-8 filtered).
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional int*; non-zero cancels.
+ * @return ENTROPIC_OK or one of the documented error codes.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_run_messages_streaming(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK
+            || !messages_json || !on_token || !handle->engine) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return run_messages_stream_inner(
+            handle, messages_json, on_token, user_data, cancel_flag);
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_messages_streaming: {}", handle->last_error);
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
 }

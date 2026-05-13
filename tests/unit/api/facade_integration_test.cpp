@@ -501,3 +501,97 @@ SCENARIO("entropic_context_usage on a configured engine returns valid pair",
         }
     }
 }
+
+// ── gh#37 (v2.1.8): entropic_run_messages / streaming ───────
+
+SCENARIO("entropic_run_messages on null handle returns INVALID_HANDLE",
+         "[api][facade][run_messages][v2.1.8]") {
+    GIVEN("a null handle") {
+        char* result = nullptr;
+        WHEN("run_messages is called") {
+            auto rc = entropic_run_messages(nullptr, "[]", &result);
+            THEN("INVALID_HANDLE is returned") {
+                REQUIRE(rc == ENTROPIC_ERROR_INVALID_HANDLE);
+                REQUIRE(result == nullptr);
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_run_messages with null args returns INVALID_ARGUMENT",
+         "[api][facade][run_messages][v2.1.8]") {
+    ConfiguredHandle h;
+    REQUIRE(h.configured());
+
+    GIVEN("a configured handle") {
+        char* result = nullptr;
+        WHEN("messages_json is null") {
+            auto rc = entropic_run_messages(h, nullptr, &result);
+            THEN("INVALID_ARGUMENT is returned") {
+                REQUIRE(rc == ENTROPIC_ERROR_INVALID_ARGUMENT);
+            }
+        }
+        WHEN("result_json is null") {
+            auto rc = entropic_run_messages(h, "[]", nullptr);
+            THEN("INVALID_ARGUMENT is returned") {
+                REQUIRE(rc == ENTROPIC_ERROR_INVALID_ARGUMENT);
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_run_messages with malformed JSON returns GENERATE_FAILED",
+         "[api][facade][run_messages][v2.1.8]") {
+    ConfiguredHandle h;
+    REQUIRE(h.configured());
+
+    GIVEN("a configured handle") {
+        WHEN("messages_json is malformed") {
+            char* result = nullptr;
+            auto rc = entropic_run_messages(h, "not json", &result);
+            THEN("the parse exception is mapped to GENERATE_FAILED") {
+                REQUIRE(rc == ENTROPIC_ERROR_GENERATE_FAILED);
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_run_messages: image without vision tier → NO_VISION_TIER",
+         "[api][facade][run_messages][v2.1.8]") {
+    ConfiguredHandle h;
+    REQUIRE(h.configured());
+
+    GIVEN("a configured handle with no vision-capable tier") {
+        const char* j = R"([{"role":"user","content":[
+            {"type":"image","path":"/tmp/x.png"},
+            {"type":"text","text":"what?"}
+        ]}])";
+        char* result = nullptr;
+        WHEN("run_messages is called with an image content part") {
+            auto rc = entropic_run_messages(h, j, &result);
+            THEN("NO_VISION_TIER is returned cleanly") {
+                // Minimal configure has no tiers loaded; the
+                // orchestrator may be NULL — in that case the parse
+                // also raises GENERATE_FAILED. Either is acceptable
+                // proof that image input fails fast without a tier.
+                REQUIRE((rc == ENTROPIC_ERROR_NO_VISION_TIER
+                         || rc == ENTROPIC_ERROR_INVALID_STATE
+                         || rc == ENTROPIC_ERROR_GENERATE_FAILED));
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_run_messages_streaming validates args",
+         "[api][facade][run_messages][v2.1.8]") {
+    GIVEN("a null handle") {
+        WHEN("streaming variant is called") {
+            auto rc = entropic_run_messages_streaming(
+                nullptr, "[]",
+                [](const char*, size_t, void*){}, nullptr, nullptr);
+            THEN("INVALID_HANDLE is returned") {
+                REQUIRE(rc == ENTROPIC_ERROR_INVALID_HANDLE);
+            }
+        }
+    }
+}

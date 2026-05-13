@@ -1,1 +1,18 @@
-[]
+[
+  {
+    "req_id": "REQ-INFER-003",
+    "req_name": null,
+    "functions": [
+      {
+        "name": "entropic_inference_generate",
+        "file": "src/inference/inference_c_api.cpp",
+        "version": "2.1.8"
+      },
+      {
+        "name": "entropic_inference_generate_streaming",
+        "file": "src/inference/inference_c_api.cpp",
+        "version": "2.1.8"
+      }
+    ]
+  }
+]

@@ -732,6 +732,32 @@ void ModelOrchestrator::clear_all_prompt_caches() {
 }
 
 /**
+ * @brief Vision-capability lookup (gh#41, v2.1.8).
+ * @return true if any configured tier declares "vision".
+ * @internal
+ * @version 2.1.8
+ */
+bool ModelOrchestrator::has_vision_capable_tier() const {
+    for (const auto& [_, tier] : config_.models.tiers) {
+        if (tier.has_capability("vision")) { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief First vision-capable tier name (gh#41, v2.1.8).
+ * @return Tier name, or "" if none configured.
+ * @internal
+ * @version 2.1.8
+ */
+std::string ModelOrchestrator::select_vision_tier() const {
+    for (const auto& [name, tier] : config_.models.tiers) {
+        if (tier.has_capability("vision")) { return name; }
+    }
+    return "";
+}
+
+/**
  * @brief Normalize a frontmatter grammar value to a registry key.
  *
  * Strips .gbnf extension if present: "compactor.gbnf" → "compactor".

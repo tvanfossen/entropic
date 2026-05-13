@@ -88,6 +88,9 @@ _LAZY_EXPORTS = frozenset(
         "entropic_register_mcp_server",
         "entropic_run",
         "entropic_run_streaming",
+        # gh#37 (v2.1.8): multimodal messages entry points.
+        "entropic_run_messages",
+        "entropic_run_messages_streaming",
         "entropic_set_state_observer",
         "entropic_set_stream_observer",
         "entropic_version",

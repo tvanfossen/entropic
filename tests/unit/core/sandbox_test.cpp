@@ -320,3 +320,42 @@ TEST_CASE("ScopedSandbox no-op when swap_fn is null", "[sandbox][scoped]") {
     ScopedSandbox s(nullptr, nullptr, p, p);
     SUCCEED();
 }
+
+// ── gh#33 (v2.1.6): session-scoped lifecycle ─────────────
+
+/**
+ * @brief A session-scoped SandboxManager preserves session_base_ across
+ *        multiple create_sandbox / discard cycles.
+ *
+ * Regression for gh#33: pre-2.1.6 each delegation rebuilt the manager,
+ * which destroyed and recreated `session_base_` on every call. With the
+ * v2.1.6 lifecycle a single manager handles many delegations; this test
+ * asserts that the session directory survives a discard+create round-trip.
+ *
+ * @version 2.1.6
+ */
+TEST_CASE("SandboxManager survives discard+create cycle", "[sandbox][gh33][v2.1.6]") {
+    ScopedHome home;
+    auto project = home.tmp_home / "proj";
+    fs::create_directories(project);
+    std::ofstream(project / "a.txt") << "hello\n";
+
+    SandboxManager mgr(project);
+    auto session_root = mgr.session_base();
+
+    auto s1 = mgr.create_sandbox("d1");
+    REQUIRE(s1.has_value());
+    REQUIRE(fs::exists(s1->path));
+    mgr.discard_sandbox(*s1);
+    REQUIRE_FALSE(fs::exists(s1->path));
+    // Critical: session_base_ must still exist (the manager is alive).
+    REQUIRE(fs::exists(session_root));
+
+    auto s2 = mgr.create_sandbox("d2");
+    REQUIRE(s2.has_value());
+    REQUIRE(fs::exists(s2->path));
+    // Same session, different delegation dir.
+    REQUIRE(s2->path.parent_path() == session_root);
+    REQUIRE(s1->path != s2->path);
+    mgr.discard_sandbox(*s2);
+}

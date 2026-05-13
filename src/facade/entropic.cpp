@@ -1116,11 +1116,13 @@ entropic_error_t entropic_configure_from_file(
  * @brief Configure using layered resolution (project dir).
  *
  * Loads bundled default → global → project config.local.yaml → env.
- * Sets config.log_dir to project_dir if not already set.
+ * Sets config.log_dir to project_dir if not already set. gh#31
+ * (v2.1.6): propagates project_dir to AgentEngine::set_project_dir
+ * so sandbox snapshots use the configured tree rather than CWD.
  *
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.1
+ * @version 2.1.6
  */
 entropic_error_t entropic_configure_dir(
     entropic_handle_t handle,
@@ -1149,7 +1151,18 @@ entropic_error_t entropic_configure_dir(
         return ENTROPIC_ERROR_INVALID_CONFIG;
     }
 
-    return configure_common(handle);
+    auto rc = configure_common(handle);
+
+    // gh#31 (v2.1.6): propagate the configured project_dir into the
+    // engine so `AgentEngine::get_repo_dir()` uses it as the sandbox
+    // snapshot source. Pre-2.1.6 this was silently dropped and the
+    // engine used CWD, snapshotting whatever directory the consumer
+    // launched from.
+    if (rc == ENTROPIC_OK && handle->engine && !proj_dir.empty()) {
+        handle->engine->set_project_dir(std::filesystem::absolute(proj_dir));
+    }
+
+    return rc;
 }
 
 /**

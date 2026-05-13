@@ -106,16 +106,26 @@ class DelegationManager {
 public:
     /**
      * @brief Construct with engine loop callback and tier resolution.
+     *
+     * gh#33 (v2.1.6): pre-2.1.6 this constructor owned a fresh
+     * `SandboxManager` per delegation. The manager is now engine-scoped
+     * and supplied as a non-owning pointer by the caller (AgentEngine);
+     * passing nullptr disables sandboxing for the delegation.
+     *
      * @param run_child Callback to run child engine loop.
      * @param run_child_data Opaque pointer for run_child.
      * @param tier_resolution Tier resolution interface.
-     * @param repo_dir Optional repo root for worktree isolation.
-     * @version 1.8.6
+     * @param repo_dir Optional repo root (informational; used for
+     *        ScopedSandbox dir-swap and storage record metadata).
+     * @param sandbox_mgr Non-owning, engine-scoped sandbox manager. May
+     *        be nullptr (delegation runs without an isolated sandbox).
+     * @version 2.1.6
      */
     DelegationManager(RunChildLoopFn run_child,
                       void* run_child_data,
                       const TierResolutionInterface& tier_resolution,
-                      const std::filesystem::path& repo_dir = {});
+                      const std::filesystem::path& repo_dir = {},
+                      SandboxManager* sandbox_mgr = nullptr);
 
     /**
      * @brief Set todo list save/restore callbacks.
@@ -210,6 +220,32 @@ private:
     std::string extract_summary(const LoopContext& child_ctx) const;
 
     /**
+     * @brief Run the three pre-flight checks for a single delegation.
+     *
+     * Returns a populated `DelegationResult` (caller should early-exit)
+     * or `nullopt` (proceed). On success with a configured sandbox,
+     * `sb_info_out` is populated with the freshly created sandbox info.
+     * Extracted to keep `execute_delegation` under knots SLOC/return
+     * limits (gh#33, v2.1.6).
+     *
+     * @param info          Resolved tier info.
+     * @param target_tier   Tier name.
+     * @param task          Task description.
+     * @param del_id        Delegation id (e.g. "d1").
+     * @param depth         Parent depth + 1.
+     * @param sb_info_out   [out] Sandbox info populated on success.
+     * @return DelegationResult to early-return, or nullopt to proceed.
+     * @version 2.1.6
+     */
+    std::optional<DelegationResult> check_delegation_preconditions(
+        const ChildContextInfo& info,
+        const std::string& target_tier,
+        const std::string& task,
+        const std::string& del_id,
+        int depth,
+        std::optional<SandboxInfo>& sb_info_out);
+
+    /**
      * @brief Run child loop with todo save/restore.
      * @param child_ctx Child context to execute.
      * @param target_tier Tier name.
@@ -292,7 +328,7 @@ private:
     TodoCallbacks todo_callbacks_;                     ///< Todo save/restore
     ScopedSandbox::SwapDirFn swap_dir_fn_ = nullptr;   ///< Dir swap callback
     void* swap_dir_data_ = nullptr;                    ///< Dir swap user data
-    std::optional<SandboxManager> sandbox_mgr_;        ///< Filesystem sandbox (2.1.5, gh#29)
+    SandboxManager* sandbox_mgr_ = nullptr;            ///< gh#33 (v2.1.6): non-owning, engine-scoped
     std::filesystem::path repo_dir_;                   ///< Project root
     const struct StorageInterface* storage_ = nullptr; ///< Nullable storage (v1.8.8)
 

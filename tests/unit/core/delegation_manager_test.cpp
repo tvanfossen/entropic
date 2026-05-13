@@ -691,7 +691,10 @@ TEST_CASE("complete_cb receives patch and files_touched",
         return ENT_DECISION_ACCEPT;
     };
 
-    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    // gh#33 (v2.1.6): SandboxManager is engine-scoped; tests now build
+    // their own and pass a non-owning pointer.
+    SandboxManager sandbox(project);
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
     // Need a dir-swap that actually chdirs (so edit_loop writes in
     // the sandbox, not the project).
     auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
@@ -731,7 +734,8 @@ TEST_CASE("null complete_cb writes patch to pending/<id>.patch",
     MockTierResolution tier_mock;
     auto tier_res = make_mock_tier_res(tier_mock);
 
-    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    SandboxManager sandbox(project);  // gh#33 (v2.1.6)
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
     auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
         std::error_code ec;
         fs::current_path(p, ec);
@@ -778,7 +782,8 @@ TEST_CASE("complete_cb REJECT writes patch to pending/<id>.patch",
         return ENT_DECISION_REJECT;
     };
 
-    DelegationManager mgr(edit_loop, nullptr, tier_res, project);
+    SandboxManager sandbox(project);  // gh#33 (v2.1.6)
+    DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
     auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
         std::error_code ec;
         fs::current_path(p, ec);

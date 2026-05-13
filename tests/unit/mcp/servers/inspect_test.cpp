@@ -363,3 +363,32 @@ TEST_CASE("test_inspect_no_provider_error", "[inspect]") {
         server.execute("inspect", R"({"target":"state"})"));
     REQUIRE(r.find("Error") != std::string::npos);
 }
+
+// ── gh#33 bug 3 (v2.1.6): null-deref crash on empty/invalid args ──
+
+/**
+ * @brief Pre-2.1.6 crash regression: invalid-JSON args must not throw.
+ *
+ * The non-throwing JSON parse returns a discarded value; pre-2.1.6 the
+ * subsequent `.value("target", "")` call threw `type_error.306` and
+ * killed the engine. Coercing to an empty object treats no-arg as a
+ * full-state dump, matching the documented behavior.
+ *
+ * @version 2.1.6
+ */
+TEST_CASE("inspect handles empty/invalid args without crashing",
+          "[inspect][gh33][v2.1.6]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto prov = make_provider();
+    server.set_state_provider(prov);
+
+    // Empty string — discarded after non-throwing parse.
+    REQUIRE_NOTHROW(server.execute("inspect", ""));
+    // Literal null — parses, but isn't an object.
+    REQUIRE_NOTHROW(server.execute("inspect", "null"));
+    // Malformed.
+    REQUIRE_NOTHROW(server.execute("inspect", "not-json"));
+    // Empty object — no target → full state dump path.
+    auto r = get_result(server.execute("inspect", "{}"));
+    REQUIRE_FALSE(r.empty());
+}

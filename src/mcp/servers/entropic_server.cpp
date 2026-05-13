@@ -1034,10 +1034,15 @@ static std::string dispatch_inspect(
  * runtime state dump so the model can self-orient without knowing
  * which specific target to query.
  *
+ * gh#33 bug 3 (v2.1.6): guard non-throwing parse against discarded /
+ * non-object results so a malformed or no-arg call falls through to
+ * the full-state dump rather than crashing the engine with
+ * `nlohmann::json::type_error.306`.
+ *
  * @param args_json JSON with optional "target" and "key".
  * @return ServerResponse with query result.
  * @internal
- * @version 2.0.6
+ * @version 2.1.6
  */
 ServerResponse InspectTool::execute(const std::string& args_json) {
     if (provider_ == nullptr) {
@@ -1046,6 +1051,14 @@ ServerResponse InspectTool::execute(const std::string& args_json) {
     }
 
     auto args = nlohmann::json::parse(args_json, nullptr, false);
+    // gh#33 (v2.1.6): non-throwing parse returns a discarded value on
+    // invalid/empty/null input; calling .value() on it throws
+    // type_error.306 and crashes the engine. Coerce to an empty object
+    // so a no-arg `entropic.inspect()` call falls through to the
+    // full-state dump path.
+    if (args.is_discarded() || !args.is_object()) {
+        args = nlohmann::json::object();
+    }
     std::string target = args.value("target", "");
     std::string key = args.value("key", "");
 

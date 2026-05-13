@@ -163,7 +163,7 @@ void AgentEngine::set_stream_observer(
  * @param on_complete Post-delegation result (nullable).
  * @param user_data Forwarded to both callbacks.
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void AgentEngine::set_delegation_callbacks(
     ent_decision_t (*on_start)(const ent_delegation_request_t*, void*),
@@ -1679,7 +1679,7 @@ static void push_delegation_result(LoopContext& ctx,
  *
  * @param ctx Loop context with pending delegation.
  * @utility
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -1714,8 +1714,11 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     std::optional<int> max_turns;
     if (pending.max_turns > 0) { max_turns = pending.max_turns; }
 
+    // gh#33 (v2.1.6): SandboxManager is engine-scoped; DelegationManager
+    // takes a non-owning pointer instead of building its own per-call.
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, get_repo_dir());
+                          tier_res_, get_repo_dir(),
+                          ensure_sandbox_manager());
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -1896,7 +1899,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 2.1.5-hard
+ * @version 2.1.6
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -1915,9 +1918,11 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
 
     set_state(ctx, AgentState::DELEGATING);
 
+    // gh#33 (v2.1.6): engine-scoped sandbox; non-owning pointer.
     auto repo_dir = get_repo_dir();
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, repo_dir);
+                          tier_res_, repo_dir,
+                          ensure_sandbox_manager());
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -2051,24 +2056,79 @@ bool AgentEngine::try_auto_chain(
 /**
  * @brief Get the project directory used as sandbox snapshot source.
  *
- * Caches `std::filesystem::current_path()` on first call. No git
- * inspection, no repo initialization, no writes to the user's
- * directory. `SandboxManager` handles both git and non-git projects
- * — the engine is purely a reader of this path.
+ * gh#31 (v2.1.6): pre-2.1.6 this method unconditionally cached
+ * `std::filesystem::current_path()` on first call and silently
+ * ignored the `project_dir` passed to `entropic_configure_dir`.
+ * Consumers whose launcher cwd differed from the target repo (the
+ * common case for wrapper CLIs and IDE plugins) ended up snapshotting
+ * the wrong tree into the sandbox; researcher tiers would then read
+ * unrelated source and produce garbage. The configured value now
+ * wins; CWD remains the fallback when no override is set so callers
+ * that don't use `configure_dir` are unaffected.
+ *
+ * Cached on first call. No git inspection, no repo initialization,
+ * no writes to the user's directory.
  *
  * @return Project directory path.
  * @internal
- * @version 2.1.5
+ * @version 2.1.6
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
     repo_dir_checked_ = true;
-    auto cwd = std::filesystem::current_path();
-    cached_repo_dir_ = cwd;
-    logger->info("Project dir for sandbox snapshots: {}", cwd.string());
-    return cwd;
+    std::filesystem::path resolved;
+    if (!project_dir_override_.empty()) {
+        resolved = project_dir_override_;
+        logger->info("Project dir for sandbox snapshots: {} (configured)",
+                     resolved.string());
+    } else {
+        resolved = std::filesystem::current_path();
+        logger->info("Project dir for sandbox snapshots: {} (cwd fallback)",
+                     resolved.string());
+    }
+    cached_repo_dir_ = resolved;
+    return resolved;
+}
+
+/**
+ * @brief Store the project_dir resolved by `entropic_configure_dir`.
+ *
+ * gh#31 (v2.1.6). See engine.h for rationale. Resets the cache so a
+ * subsequent `get_repo_dir()` call picks up the new value even if a
+ * previous lookup already settled on the CWD fallback.
+ *
+ * @param project_dir Project root (empty resets to CWD fallback).
+ * @internal
+ * @version 2.1.6
+ */
+void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
+    project_dir_override_ = project_dir;
+    cached_repo_dir_.reset();
+    repo_dir_checked_ = false;
+}
+
+/**
+ * @brief Lazy session-scoped SandboxManager accessor (gh#33, v2.1.6).
+ *
+ * See engine.h for rationale on why this is engine-scoped rather
+ * than per-delegation.
+ *
+ * @return Pointer to engine-owned manager, or nullptr if no repo_dir.
+ * @internal
+ * @version 2.1.6
+ */
+SandboxManager* AgentEngine::ensure_sandbox_manager() {
+    if (sandbox_mgr_) {
+        return &*sandbox_mgr_;
+    }
+    auto repo_dir = get_repo_dir();
+    if (repo_dir.empty()) {
+        return nullptr;
+    }
+    sandbox_mgr_.emplace(repo_dir);
+    return &*sandbox_mgr_;
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────

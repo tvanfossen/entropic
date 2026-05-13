@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.1.3)
+## Current State (v2.1.7)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -455,7 +455,140 @@ Bundles four streams of work into the first formally-tagged minor:
 
 The original "Fine-Tuning Pipeline" plan that previously occupied
 this slot was de-prioritised in favour of release-readiness work and
-moves to v2.2 candidate (below).
+moves to v2.3 candidate (below).
+
+---
+
+## v2.2.0 — Multimodal Foundation + Adapter & Model Expansion (in progress)
+
+The next minor — committed scope, planned as four patch releases that
+bundle together at the milestone tag. Each patch is internally coherent
+and ships independently; the 2.2.0 tag marks bundle completion.
+
+Strictly additive at the C ABI: new symbols, new config keys, new
+bundled-model entries. No removals, no behavioural changes to existing
+2.1.x consumers. Patch sequence preserves backwards compatibility at
+every step.
+
+### v2.1.8 — Multimodal foundation
+
+Close the facade-layer gap that drops `content_parts` before the
+backend sees them (v1.9.11 shipped vision at the inference layer, but
+`entropic_run` accepts only a flat string).
+
+- New facade ABI: `entropic_run_messages` / `_run_messages_streaming`
+  (two parallel paths — `entropic_run` preserved unchanged).
+- mmproj per-tier routing — orchestrator picks a vision-capable tier
+  when image parts arrive; tier `capabilities` config field added.
+- Bundled VLM tier — Qwen2.5-VL-7B-Instruct (or Qwen3.x-VL successor
+  if released by implementation time).
+- OpenAI server example accepts `data:` URL / `file://` / absolute
+  paths; `http(s)://` returns 400 (SSRF surface).
+- Ride-along: `entropic_context_usage(handle, *used, *capacity)` —
+  two-scalar getter for the gauge consumers want.
+
+Issues: [gh#37](https://github.com/tvanfossen/entropic/issues/37),
+[gh#38](https://github.com/tvanfossen/entropic/issues/38),
+[gh#39](https://github.com/tvanfossen/entropic/issues/39),
+[gh#41](https://github.com/tvanfossen/entropic/issues/41),
+[gh#42](https://github.com/tvanfossen/entropic/issues/42).
+
+Proposal pointer: `.claude/proposals/BACKLOG/v2.1.8-multimodal-foundation.md`.
+
+### v2.1.9 — Model registry expansion + 3 new adapter classes
+
+Broaden the bundled-model registry from 2 entries to 11. Each
+generation gets its own adapter class — no version lumping.
+
+- Naming convention `<family>_<size_or_variant>` documented in
+  `data/bundled_models.yaml`.
+- 9 new registry entries: Qwen3.5 siblings (0.8B / 2B / 4B / 9B),
+  Qwen3.6-A3B, Gemma 4 (26B-A4B / E4B / E2B), Nemotron-3-Nano-4B.
+- `Qwen36Adapter`, `Gemma4Adapter`, `Nemotron3Adapter` — distinct
+  classes, registered under keys `qwen36` / `gemma4` / `nemotron3`.
+- Nemotron adapter gated on architecture verification (hybrid-Mamba
+  vs. pure Transformer; chat template; tool-call format; reasoning
+  trace handling).
+- Unit tests per adapter (render + tool-call parse + multi-turn) and
+  model tests per bundled GGUF (load + first-token smoke + tool-call
+  fixture).
+
+Issues: [gh#44](https://github.com/tvanfossen/entropic/issues/44),
+[gh#45](https://github.com/tvanfossen/entropic/issues/45),
+[gh#46](https://github.com/tvanfossen/entropic/issues/46),
+[gh#47](https://github.com/tvanfossen/entropic/issues/47);
+ratchets [gh#17](https://github.com/tvanfossen/entropic/issues/17).
+
+Proposal pointer: `.claude/proposals/BACKLOG/v2.1.9-model-registry-and-adapters.md`.
+
+### v2.1.10 — Mid-generation user message queue
+
+UX feature for long-thinking interactive sessions. Today consumers
+must either interrupt (destroys in-flight investigation) or wait
+(kills momentum). This patch adds a third path: enqueue follow-up
+messages that the engine consumes at the next clean turn boundary.
+
+- New ABI: `entropic_queue_user_message`,
+  `entropic_user_message_queue_depth`,
+  `entropic_clear_user_message_queue`.
+- Injection boundary: **top-level `AgentState::COMPLETE` only** — not
+  parent-resume-after-child (avoids parent-context corruption).
+- Queue bounded (default cap 8); streaming protocol unchanged
+  (callbacks fire only for the active turn).
+
+Issue: [gh#40](https://github.com/tvanfossen/entropic/issues/40).
+
+Proposal pointer: `.claude/proposals/BACKLOG/v2.1.10-mid-gen-message-queue.md`.
+
+### v2.1.11 — Speculative decoding + SecondaryModelLoader
+
+Speculative decoding was previously listed under "Deferred to 3.0.0"
+with the rationale "blocked by single-GPU VRAM constraint." That
+rationale is invalidated by CPU-led-draft as the default placement —
+the GPU stays saturated verifying, CPU headroom does the drafting,
+no VRAM competition with the primary.
+
+- `SecondaryModelLoader` (gh#27) — unified lifecycle for router /
+  draft / future thinking-model slots.
+- Speculative decoding (gh#36) decoupled from the router model —
+  `routing.model` and `inference.speculative.draft_model` are
+  independent config keys.
+- Draft placement is a config axis (`draft_n_gpu_layers`): CPU
+  default, GPU optional when VRAM allows, hybrid offload supported.
+- Draft pairing is tokenizer compatibility (checked via
+  `common_speculative_is_compat`), not same-family.
+- Draft model: Qwen3.5 small variant (NOT Qwen3-0.6B — different
+  generation, tokenizer mismatch likely); specific size picked from
+  the v2.1.9 registry.
+- No llama.cpp pin bump required — current pin already exposes
+  `common_speculative_*` surface.
+- Token-stream protocol unchanged (callbacks fire once per *accepted*
+  token, not per *proposed*).
+- Off by default; opt-in via config.
+
+Issues: [gh#27](https://github.com/tvanfossen/entropic/issues/27),
+[gh#36](https://github.com/tvanfossen/entropic/issues/36).
+
+Proposal pointer: `.claude/proposals/BACKLOG/v2.1.11-speculative-decoding.md`.
+
+### v2.2.0 — milestone tag
+
+Cut after v2.1.11 lands. No new code; release notes consolidation and
+the model-test results JSON attached as a Release artifact per the
+project's release process.
+
+### Tracked but not in v2.2.0
+
+- [gh#35](https://github.com/tvanfossen/entropic/issues/35) — engine
+  idle-exit policy. Deferred until a headless `entropic serve` host
+  is on the roadmap; the bridge fix in v2.1.7 removed the acute
+  orphan-VRAM source.
+- [gh#43](https://github.com/tvanfossen/entropic/issues/43) —
+  image-generation / image-edit models (Qwen-Image, Qwen-Image-Edit).
+  Future feature with a distinct ABI; not a vision-language model.
+- [gh#17](https://github.com/tvanfossen/entropic/issues/17) remaining
+  adapter families — Llama 3.x, Gemma 2/3, Mistral / Mixtral, Phi-3
+  / Phi-4, DeepSeek, Granite, Command-R. Ratchets through 2.3.x.
 
 ---
 
@@ -755,9 +888,11 @@ namespace are unchanged for ABI compatibility.
 
 ---
 
-## v2.2 candidates (not committed)
+## v2.3 candidates (not committed)
 
-Candidate scope for the next minor, awaiting prioritisation:
+Items previously listed as v2.2 candidates that did not make the
+committed v2.2.0 composition (see the v2.2.0 section above). They
+remain candidates for v2.3.x or later, awaiting prioritisation:
 
 - **Fine-tuning pipeline**: bundled `entropic train` CLI, QLoRA + DPO
   from session logs, synthetic data generation with grammar
@@ -849,10 +984,24 @@ Subclass of `InferenceBackend` interface designed in 1.9.13.
 
 - Context: `.claude/proposals/ideas/entropic-3.0-robotics-roadmap-asks.md`
 
-### Speculative Decoding
+### Speculative Decoding — moved to v2.1.11
 
-Draft model proposes tokens, large model validates. Can double throughput.
-Blocked by single-GPU VRAM constraint — needs multi-GPU or smaller primary model.
+Previously deferred here under the rationale "blocked by single-GPU
+VRAM constraint — needs multi-GPU or smaller primary model." That
+rationale assumed a GPU-resident draft competing with the primary.
+**CPU-led draft as the default placement invalidates the blocker** —
+the GPU stays saturated verifying while CPU headroom handles the
+drafting, no VRAM competition.
+
+Now scoped under v2.2.0 release plan (v2.1.11 patch) — see issues
+[gh#27](https://github.com/tvanfossen/entropic/issues/27) and
+[gh#36](https://github.com/tvanfossen/entropic/issues/36) and the
+proposal at
+`.claude/proposals/BACKLOG/v2.1.11-speculative-decoding.md`.
+
+Still out of scope for 2.x: tree-based speculation / multi-branch
+drafts, self-speculation / Medusa heads. Both are follow-ups if
+specific consumer demand emerges.
 
 - llama.cpp supports it, auto-disables for recurrent models
 - https://github.com/ggml-org/llama.cpp/pull/19270

@@ -459,6 +459,44 @@ moves to v2.2 candidate (below).
 
 ---
 
+## v2.1.7 — `mcp-bridge` becomes a pure relay
+
+Architecture fix for [gh#34](https://github.com/tvanfossen/entropic/issues/34).
+
+`entropic mcp-bridge` historically spawned a full standalone engine
+(model load, ~13–15 GB VRAM) every time an external MCP client (Claude
+Code, IDE plugins) connected, even when a consumer engine was already
+running for the same project. The name "bridge" implies a thin relay;
+the implementation was a hidden second server. Consumers OOM'd their
+GPUs on what looked like a no-op connection.
+
+v2.1.7 makes the bridge match its name:
+
+- `mcp-bridge` is a pure stdio↔unix-socket relay. It never calls
+  `entropic_create`, owns no model, and exits fast when no engine is
+  reachable. `mcp-connect` is absorbed and removed.
+- Engine hosts (TUI, consumer apps, future headless server) remain
+  the sole owners of the model and the unix socket. The bridge sits
+  in front of them identically.
+- Unix-socket hardening: SO_PEERCRED UID check on accept, `socks/`
+  dir mode 0700, socket mode 0600, symlink-safe bind. Session token
+  was considered and dropped — same-uid attackers can read it,
+  cross-uid attackers can't reach the socket; no security delta.
+- Loud diagnostic logging on both sides naming canonical project_dir,
+  hash, and computed socket path, so the silent-misroute failure
+  mode is diagnosable from either end.
+
+Idle-exit policy for engine hosts (the chronic version of the orphan-
+VRAM bug) is split to [gh#35](https://github.com/tvanfossen/entropic/issues/35)
+and targets a later release.
+
+TCP transport is out of scope. When/if it ships, that is the trigger
+for proper token/OAuth auth — recorded in `architecture-cpp.md`.
+
+Proposal pointer: `.claude/proposals/ACTIVE/v2.1.7-mcp-bridge-relay.md`.
+
+---
+
 ## v2.1.6 — Configure-dir + sandbox lifecycle fixes + delegation recall
 
 Three consumer-reported issues addressed in one patch release.

@@ -1,368 +1,308 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 /**
  * @file mcp_bridge.cpp
- * @brief `entropic mcp-bridge` subcommand — exposes engine via MCP/stdio.
+ * @brief `entropic mcp-bridge` — stdio↔unix-socket relay for MCP.
  *
- * Speaks JSON-RPC 2.0 over stdin/stdout following the Model Context
- * Protocol (MCP) so that external clients (Claude Code, VSCode, etc.)
- * can use the entropic engine as a tool provider with zero consumer
- * code. The user adds entropic to their .mcp.json with command
- * "entropic" and args ["mcp-bridge"]; the engine then appears as MCP
- * tools.
+ * Pure protocol adapter. Connects to a running engine's external MCP
+ * unix socket and shuttles JSON-RPC 2.0 bytes between the local stdio
+ * pair (read from an MCP client like Claude Code) and the socket pair
+ * (read by the engine's ExternalBridge). The bridge:
  *
- * Lifecycle:
- *   1. Parse --project-dir flag (default: cwd)
- *   2. Create EntropicEngine handle
- *   3. configure_dir(project_dir) — applies layered config and discovers .mcp.json
- *   4. Read JSON-RPC requests from stdin; dispatch to handlers
- *   5. On EOF or "shutdown" method, destroy engine and exit
+ *   - Never creates an engine handle. Never loads a model. Owns no
+ *     state beyond two file descriptors.
+ *   - Discovers the socket path by hashing the canonicalized project
+ *     directory (same `compute_socket_path` used by the engine), so
+ *     `.mcp.json` consumers do not have to know the path.
+ *   - Fails fast with a diagnostic naming cwd, canonical path, hash,
+ *     and computed socket path when no socket exists.
  *
- * Exposed tools:
- *   entropic.ask              Single-turn run, returns full text
- *   entropic.status           Engine version + message count
- *   entropic.context_clear    Reset conversation
- *   entropic.context_get      Return conversation as JSON
- *   entropic.context_count    Return message count
+ * The relay is byte-transparent: it does not parse JSON-RPC at all,
+ * so server-initiated progress notifications, streaming, and
+ * out-of-order responses all pass through unmodified. Both sides use
+ * newline-framed messages (the wire convention established by the
+ * engine's ExternalBridge).
  *
- * The engine is created once at startup and persisted across requests
- * within a bridge session, so multi-turn conversations work naturally.
+ * Usage in .mcp.json:
+ * @code
+ *   {"mcpServers": {"entropic": {
+ *     "type": "stdio",
+ *     "command": "entropic",
+ *     "args": ["mcp-bridge"]
+ *   }}}
+ * @endcode
  *
- * @version 2.0.3
+ * An engine must already be running for the same project directory
+ * (TUI, consumer app, or a future headless server). The bridge is an
+ * *optional service* on top of that engine — never a substitute for
+ * it.
+ *
+ * @par MCP transport compliance
+ * - **Stdio framing**: MCP stdio transport is newline-delimited
+ *   JSON-RPC 2.0 (one message per line, UTF-8, no embedded newlines).
+ *   The relay is byte-transparent and preserves framing because both
+ *   the client (e.g. Claude Code) and the engine's ExternalBridge
+ *   emit complete `\n`-terminated frames; the relay merely shuttles
+ *   bytes in order.
+ * - **Stdout discipline**: stdout is reserved for relayed JSON-RPC
+ *   bytes only. All diagnostics go to stderr (per the MCP spec's
+ *   stdio transport contract). The bridge writes nothing to stdout
+ *   itself — no banners, no log lines, no flush noise.
+ * - **Bidirectional traffic**: a `poll(2)` loop handles both
+ *   directions independently, so server-initiated frames
+ *   (`notifications/progress`, streaming partial results, etc.) reach
+ *   the client even when no request is in flight. The pre-2.1.7
+ *   `mcp-connect` did synchronous request→response and would have
+ *   stalled server-pushed frames.
+ * - **`initialize` / `notifications/initialized` handshake**: the
+ *   bridge is transparent — the handshake occurs end-to-end between
+ *   the MCP client and the engine, exactly as the spec describes.
+ * - **`shutdown` / `exit`**: handled by the engine's dispatch. On
+ *   stdin EOF (client went away) the bridge half-closes the socket
+ *   write side via `shutdown(SHUT_WR)`, which the engine's
+ *   `serve_client` observes as an empty read and uses to tear down
+ *   the per-client thread cleanly.
+ * - **No protocol coupling**: the bridge does not parse JSON-RPC at
+ *   all, so future MCP protocol revisions ride through without
+ *   needing changes here. The contract sits with the engine's
+ *   `ExternalBridge::dispatch`.
+ *
+ * @version 2.1.7
  */
 
-#include <entropic/entropic.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
-#include <nlohmann/json.hpp>
-#include <spdlog/spdlog.h>
-
+#include <cerrno>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
-#include <iostream>
-#include <sstream>
+#include <filesystem>
 #include <string>
 
-using json = nlohmann::json;
+namespace entropic {
+// Forward-declared from include/entropic/mcp/mcp_json_discovery.h; pulled in
+// via libentropic-mcp at link time so the CLI does not have to include the
+// mcp internal header (which transitively pulls nlohmann/json_fwd).
+std::filesystem::path compute_socket_path(
+    const std::filesystem::path& project_dir);
+}  // namespace entropic
 
 namespace entropic::cli {
 
 namespace {
 
-/**
- * @brief Bridge state — engine handle + accumulator for streamed output.
- * @internal
- * @version 2.0.3
- */
-struct BridgeState {
-    entropic_handle_t handle = nullptr; ///< Engine handle
-    std::string accumulator;            ///< Streaming token buffer
-};
+constexpr size_t kRelayBufSize = 8192;
 
 /**
- * @brief Streaming token callback — accumulates into the bridge state.
- * @callback
- * @version 2.0.3
- */
-void on_token(const char* token, size_t len, void* user_data)
-{
-    auto* state = static_cast<BridgeState*>(user_data);
-    state->accumulator.append(token, len);
-}
-
-/**
- * @brief Tool definitions exposed by the bridge.
+ * @brief Parse a --flag VALUE pair from argv.
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @param flag Flag name (e.g. "--project-dir").
+ * @return Provided value or empty if absent.
  * @utility
- * @version 2.0.3
+ * @version 2.1.7
  */
-json tool_definitions()
-{
-    return json::array({
-        {{"name", "entropic.ask"},
-         {"description",
-          "Run a single agentic turn against the entropic engine. "
-          "Returns the assistant's complete response. Conversation "
-          "context is retained across calls within this bridge session."},
-         {"inputSchema", {
-            {"type", "object"},
-            {"properties", {{"prompt", {
-                {"type", "string"},
-                {"description", "User message"}
-            }}}},
-            {"required", json::array({"prompt"})}
-         }}},
-        {{"name", "entropic.status"},
-         {"description", "Get engine status: version and message count."},
-         {"inputSchema", {{"type", "object"}, {"properties", json::object()}}}},
-        {{"name", "entropic.context_clear"},
-         {"description", "Clear conversation history (start a new session)."},
-         {"inputSchema", {{"type", "object"}, {"properties", json::object()}}}},
-        {{"name", "entropic.context_get"},
-         {"description", "Return the current conversation as a JSON message array."},
-         {"inputSchema", {{"type", "object"}, {"properties", json::object()}}}},
-        {{"name", "entropic.context_count"},
-         {"description", "Return the number of messages in the conversation."},
-         {"inputSchema", {{"type", "object"}, {"properties", json::object()}}}},
-    });
-}
-
-/**
- * @brief Build a JSON-RPC success response.
- * @utility
- * @version 2.0.3
- */
-json rpc_ok(const json& id, const json& result)
-{
-    return {{"jsonrpc", "2.0"}, {"id", id}, {"result", result}};
-}
-
-/**
- * @brief Build a JSON-RPC error response.
- * @utility
- * @version 2.0.3
- */
-json rpc_err(const json& id, int code, const std::string& msg)
-{
-    return {{"jsonrpc", "2.0"}, {"id", id},
-            {"error", {{"code", code}, {"message", msg}}}};
-}
-
-/**
- * @brief Wrap a text result in MCP tools/call response shape.
- * @utility
- * @version 2.0.3
- */
-json tool_text_result(const std::string& text)
-{
-    return {{"content", json::array({
-        {{"type", "text"}, {"text", text}}
-    })}};
-}
-
-/**
- * @brief Handle the `entropic.ask` tool.
- *
- * Runs entropic_run_streaming, accumulates tokens into the bridge
- * state's buffer, then returns the accumulated text.
- *
- * @param state Bridge state (handle + accumulator).
- * @param args Tool arguments (must contain "prompt").
- * @return MCP tool result JSON.
- * @internal
- * @version 2.0.3
- */
-json handle_ask(BridgeState& state, const json& args)
-{
-    auto prompt_it = args.find("prompt");
-    if (prompt_it == args.end() || !prompt_it->is_string()) {
-        return tool_text_result("error: missing 'prompt' argument");
-    }
-    std::string prompt = prompt_it->get<std::string>();
-    state.accumulator.clear();
-    auto err = entropic_run_streaming(
-        state.handle, prompt.c_str(), on_token, &state, nullptr);
-    if (err != ENTROPIC_OK) {
-        const char* msg = entropic_last_error(state.handle);
-        return tool_text_result(
-            std::string("error: ") + (msg ? msg : "unknown"));
-    }
-    return tool_text_result(state.accumulator);
-}
-
-/**
- * @brief Handle the `entropic.status` tool.
- * @internal
- * @version 2.0.3
- */
-json handle_status(BridgeState& state)
-{
-    size_t count = 0;
-    entropic_context_count(state.handle, &count);
-    std::ostringstream os;
-    os << "entropic engine ready\n"
-       << "messages in conversation: " << count;
-    return tool_text_result(os.str());
-}
-
-/**
- * @brief Handle the `entropic.context_clear` tool.
- * @internal
- * @version 2.0.3
- */
-json handle_clear(BridgeState& state)
-{
-    auto err = entropic_context_clear(state.handle);
-    if (err != ENTROPIC_OK) {
-        return tool_text_result("error: clear failed");
-    }
-    return tool_text_result("conversation cleared");
-}
-
-/**
- * @brief Handle the `entropic.context_get` tool.
- * @internal
- * @version 2.0.3
- */
-json handle_context_get(BridgeState& state)
-{
-    char* messages = nullptr;
-    auto err = entropic_context_get(state.handle, &messages);
-    if (err != ENTROPIC_OK || !messages) {
-        return tool_text_result("error: context_get failed");
-    }
-    std::string result(messages);
-    entropic_free(messages);
-    return tool_text_result(result);
-}
-
-/**
- * @brief Handle the `entropic.context_count` tool.
- * @internal
- * @version 2.0.3
- */
-json handle_context_count(BridgeState& state)
-{
-    size_t count = 0;
-    entropic_context_count(state.handle, &count);
-    return tool_text_result(std::to_string(count));
-}
-
-/**
- * @brief Dispatch a tools/call request to the appropriate handler.
- * @internal
- * @version 2.0.3
- */
-/**
- * @brief Dispatch a tools/call to a no-argument handler.
- * @internal
- * @version 2.0.3
- */
-json dispatch_no_args(BridgeState& state, const std::string& name)
-{
-    json result = tool_text_result("error: unknown tool '" + name + "'");
-    if (name == "entropic.status") { result = handle_status(state); }
-    if (name == "entropic.context_clear") { result = handle_clear(state); }
-    if (name == "entropic.context_get") { result = handle_context_get(state); }
-    if (name == "entropic.context_count") { result = handle_context_count(state); }
-    return result;
-}
-
-/**
- * @brief Dispatch a tools/call request to the appropriate handler.
- * @internal
- * @version 2.0.3
- */
-json dispatch_tool(BridgeState& state, const json& params)
-{
-    std::string name = params.value("name", std::string{});
-    json args = params.value("arguments", json::object());
-    json result = (name == "entropic.ask")
-        ? handle_ask(state, args)
-        : dispatch_no_args(state, name);
-    return result;
-}
-
-/**
- * @brief Dispatch a single JSON-RPC request and write the response.
- *
- * Notifications (no id field) are silently ignored per JSON-RPC 2.0.
- *
- * @internal
- * @version 2.0.9
- */
-void handle_request(BridgeState& state, const json& req)
-{
-    // JSON-RPC 2.0: no "id" field = notification → no response
-    if (!req.contains("id")) { return; }
-
-    json id = req["id"];
-    std::string method = req.value("method", std::string{});
-    json params = req.value("params", json::object());
-    json response;
-
-    if (method == "initialize") {
-        response = rpc_ok(id, {
-            {"protocolVersion", "2025-06-18"},
-            {"serverInfo", {{"name", "entropic"}, {"version", entropic_version()}}},
-            {"capabilities", {{"tools", json::object()}}}
-        });
-    } else if (method == "tools/list") {
-        response = rpc_ok(id, {{"tools", tool_definitions()}});
-    } else if (method == "tools/call") {
-        response = rpc_ok(id, dispatch_tool(state, params));
-    } else if (method == "shutdown" || method == "exit") {
-        response = rpc_ok(id, json::object());
-    } else {
-        response = rpc_err(id, -32601, "Unknown method: " + method);
-    }
-
-    std::cout << response.dump() << '\n';
-    std::cout.flush();
-}
-
-/**
- * @brief Parse --project-dir from argv.
- * @utility
- * @version 2.0.3
- */
-std::string parse_project_dir(int argc, char* argv[])
+std::string parse_flag(int argc, char* argv[], const char* flag)
 {
     for (int i = 1; i < argc - 1; ++i) {
-        if (std::strcmp(argv[i], "--project-dir") == 0) {
+        if (std::strcmp(argv[i], flag) == 0) {
             return argv[i + 1];
         }
     }
     return {};
 }
 
-} // anonymous namespace
+/**
+ * @brief Connect to a unix domain socket.
+ * @param path Socket path.
+ * @return Connected fd, or -1 on failure (errno set).
+ * @utility
+ * @version 2.1.7
+ */
+int connect_unix_socket(const std::string& path)
+{
+    int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+    bool ok = fd >= 0 && path.size() < sizeof(sockaddr_un::sun_path);
+    int saved = ok ? 0 : (fd < 0 ? errno : ENAMETOOLONG);
+    if (ok) {
+        struct sockaddr_un addr {};
+        addr.sun_family = AF_UNIX;
+        std::strncpy(addr.sun_path, path.c_str(),
+                     sizeof(addr.sun_path) - 1);
+        ok = ::connect(fd, reinterpret_cast<sockaddr*>(&addr),
+                       sizeof(addr)) == 0;
+        if (!ok) { saved = errno; }
+    }
+    if (!ok) {
+        if (fd >= 0) { ::close(fd); }
+        errno = saved;
+        fd = -1;
+    }
+    return fd;
+}
 
 /**
- * @brief Run the MCP bridge — main stdio loop.
+ * @brief Emit the no-engine diagnostic and return exit code 1.
  *
- * Creates an engine, configures it from the project directory (which
- * triggers .mcp.json discovery for any external servers), then reads
- * JSON-RPC requests one per line until EOF.
+ * Names every component that contributes to socket discovery so a user
+ * can pinpoint where the bridge and engine disagree. This is the
+ * primary user-facing failure mode and must be diagnosable without
+ * running strace.
  *
- * @param argc Argument count (after the "mcp-bridge" subcommand name).
- * @param argv Argument vector. argv[0] is "mcp-bridge".
- * @return 0 on clean exit, 1 on initialization failure.
+ * @param requested  Project dir as provided (cwd if --project-dir omitted).
+ * @param canonical  weakly_canonical(requested).
+ * @param socket     Computed socket path.
+ * @param why        errno-derived reason text.
+ * @return 1 (process exit code).
+ * @utility
+ * @version 2.1.7
+ */
+int emit_no_engine_error(
+    const std::filesystem::path& requested,
+    const std::filesystem::path& canonical,
+    const std::filesystem::path& socket,
+    const char* why)
+{
+    std::fprintf(stderr,
+        "entropic mcp-bridge: no running engine.\n"
+        "  project_dir (requested):  %s\n"
+        "  project_dir (canonical):  %s\n"
+        "  expected socket:          %s\n"
+        "  connect failed:           %s\n"
+        "\n"
+        "An engine must be running for this project. Start one via the\n"
+        "engine host that owns the model (TUI, consumer app, or headless\n"
+        "server). mcp-bridge is a relay only — it does not load the\n"
+        "model itself.\n",
+        requested.c_str(), canonical.c_str(),
+        socket.c_str(), why ? why : "unknown");
+    return 1;
+}
+
+/**
+ * @brief Forward bytes from src_fd to dst_fd.
+ * @param src_fd Read source.
+ * @param dst_fd Write destination.
+ * @return true if data forwarded, false on EOF/error.
+ * @utility
+ * @version 2.1.7
+ */
+bool pump_once(int src_fd, int dst_fd)
+{
+    char buf[kRelayBufSize];
+    ssize_t n = ::read(src_fd, buf, sizeof(buf));
+    if (n <= 0) { return false; }
+    ssize_t off = 0;
+    while (off < n) {
+        ssize_t w = ::write(dst_fd, buf + off, n - off);
+        if (w <= 0) { return false; }
+        off += w;
+    }
+    return true;
+}
+
+/**
+ * @brief Service a single ready pollfd revent set.
+ * @utility
+ * @version 2.1.7
+ */
+void service_revents(struct pollfd* fds, int sock_fd,
+                     bool& stdin_open, bool& sock_open)
+{
+    if (stdin_open && (fds[0].revents & (POLLIN | POLLHUP))) {
+        if (!pump_once(STDIN_FILENO, sock_fd)) {
+            stdin_open = false;
+            ::shutdown(sock_fd, SHUT_WR);
+        }
+    }
+    if (sock_open && (fds[1].revents & (POLLIN | POLLHUP))) {
+        if (!pump_once(sock_fd, STDOUT_FILENO)) {
+            sock_open = false;
+        }
+    }
+}
+
+/**
+ * @brief Bidirectional byte relay between stdio and a connected socket.
  *
+ * Pure poll loop. No JSON parsing, no framing knowledge. Either side
+ * may send data at any time; server-initiated progress notifications
+ * and streaming responses pass through unmodified.
+ *
+ * Exits cleanly on EOF from either side. Half-close on stdin (client
+ * went away) propagates by closing the socket write side; the engine's
+ * ExternalBridge observes that and tears down its per-client thread.
+ *
+ * @param sock_fd Connected unix socket fd.
  * @internal
- * @version 2.0.3
+ * @version 2.1.7
+ */
+void relay_loop(int sock_fd)
+{
+    struct pollfd fds[2] = {};
+    fds[0].fd = STDIN_FILENO;
+    fds[1].fd = sock_fd;
+
+    bool stdin_open = true;
+    bool sock_open = true;
+    while (stdin_open || sock_open) {
+        fds[0].events = stdin_open ? POLLIN : 0;
+        fds[1].events = sock_open ? POLLIN : 0;
+        int rc = ::poll(fds, 2, -1);
+        if (rc < 0 && errno != EINTR) { break; }
+        if (rc > 0) {
+            service_revents(fds, sock_fd, stdin_open, sock_open);
+        }
+    }
+}
+
+}  // namespace
+
+/**
+ * @brief Entry point for the `mcp-bridge` subcommand.
+ *
+ * Resolves the project dir, computes the engine's unix socket path
+ * via the same deterministic hash the engine uses, connects, then
+ * relays bytes between stdio and the socket until either side closes.
+ *
+ * @param argc Argument count (after the "mcp-bridge" subcommand).
+ * @param argv Argument vector. argv[0] is "mcp-bridge".
+ * @return 0 on clean exit, 1 if no engine is reachable.
+ * @internal
+ * @version 2.1.7
  */
 int run_mcp_bridge(int argc, char* argv[])
 {
-    // CRITICAL: stdout is reserved for JSON-RPC. Silence spdlog's default
-    // stdout sink before any engine call (logs still flow to session log
-    // file when project_dir is set).
-    spdlog::set_level(spdlog::level::off);
+    // --socket PATH overrides discovery. Primary uses: deterministic
+    // tests, and users whose engine is configured with a non-default
+    // socket path. Absent the override, the bridge derives the path
+    // from the canonicalized project_dir hash — same scheme as the
+    // engine's ExternalBridge.
+    std::string explicit_socket = parse_flag(argc, argv, "--socket");
+    std::string requested = parse_flag(argc, argv, "--project-dir");
+    std::filesystem::path requested_path = requested.empty()
+        ? std::filesystem::current_path()
+        : std::filesystem::path(requested);
 
-    BridgeState state;
-    if (entropic_create(&state.handle) != ENTROPIC_OK) {
-        std::fprintf(stderr, "entropic mcp-bridge: create failed\n");
-        return 1;
-    }
-    std::string project_dir = parse_project_dir(argc, argv);
-    auto err = entropic_configure_dir(
-        state.handle,
-        project_dir.empty() ? nullptr : project_dir.c_str());
-    if (err != ENTROPIC_OK) {
-        std::fprintf(stderr, "entropic mcp-bridge: configure failed: %s\n",
-                     entropic_last_error(state.handle));
-        entropic_destroy(state.handle);
-        return 1;
-    }
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(requested_path, ec);
+    if (ec) { canonical = requested_path; }
 
-    std::string line;
-    while (std::getline(std::cin, line)) {
-        if (line.empty()) { continue; }
-        auto req = json::parse(line, nullptr, false);
-        if (req.is_discarded()) { continue; }
-        handle_request(state, req);
+    std::filesystem::path socket_path = explicit_socket.empty()
+        ? entropic::compute_socket_path(canonical)
+        : std::filesystem::path(explicit_socket);
+
+    int fd = connect_unix_socket(socket_path.string());
+    if (fd < 0) {
+        return emit_no_engine_error(
+            requested_path, canonical, socket_path,
+            std::strerror(errno));
     }
 
-    entropic_destroy(state.handle);
+    relay_loop(fd);
+    ::close(fd);
     return 0;
 }
 
-} // namespace entropic::cli
+}  // namespace entropic::cli

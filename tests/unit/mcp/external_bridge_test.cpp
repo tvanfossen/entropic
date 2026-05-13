@@ -9,7 +9,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -823,6 +825,169 @@ SCENARIO("Bridge stop() cleanly joins per-client threads",
         }
 
         ::close(fd);
+        ::unlink(sock_path.c_str());
+    }
+}
+
+// ── v2.1.7 unix-socket hardening (gh#34) ─────────────────
+
+SCENARIO("Bridge refuses to bind when socket path is a symlink",
+         "[external_bridge][hardening][2.1.7][gh34]")
+{
+    GIVEN("a symlink squatting at the expected socket path") {
+        std::string sock_path = "/tmp/test-gh34-symlink-" +
+            std::to_string(::getpid()) + ".sock";
+        std::string target = "/tmp/test-gh34-symlink-target-" +
+            std::to_string(::getpid());
+        ::unlink(sock_path.c_str());
+        ::unlink(target.c_str());
+        REQUIRE(::symlink(target.c_str(), sock_path.c_str()) == 0);
+
+        ExternalMCPConfig cfg;
+        cfg.socket_path = sock_path;
+        ExternalBridge bridge(nullptr, cfg, "/tmp");
+
+        WHEN("start() is called") {
+            bool ok = bridge.start();
+            THEN("bind is refused and the symlink is untouched") {
+                CHECK_FALSE(ok);
+                struct stat st{};
+                CHECK(::lstat(sock_path.c_str(), &st) == 0);
+                CHECK(S_ISLNK(st.st_mode));
+            }
+        }
+        ::unlink(sock_path.c_str());
+    }
+}
+
+SCENARIO("Bridge refuses to bind when socket path is a regular file",
+         "[external_bridge][hardening][2.1.7][gh34]")
+{
+    GIVEN("a regular file squatting at the expected socket path") {
+        std::string sock_path = "/tmp/test-gh34-regfile-" +
+            std::to_string(::getpid()) + ".sock";
+        ::unlink(sock_path.c_str());
+        int fd = ::open(sock_path.c_str(), O_CREAT | O_RDWR, 0600);
+        REQUIRE(fd >= 0);
+        ::close(fd);
+
+        ExternalMCPConfig cfg;
+        cfg.socket_path = sock_path;
+        ExternalBridge bridge(nullptr, cfg, "/tmp");
+
+        WHEN("start() is called") {
+            bool ok = bridge.start();
+            THEN("bind is refused and the file is left in place") {
+                CHECK_FALSE(ok);
+                struct stat st{};
+                CHECK(::stat(sock_path.c_str(), &st) == 0);
+                CHECK(S_ISREG(st.st_mode));
+            }
+        }
+        ::unlink(sock_path.c_str());
+    }
+}
+
+SCENARIO("Bridge sets socket file mode to 0600",
+         "[external_bridge][hardening][2.1.7][gh34]")
+{
+    GIVEN("a bridge bound to a private socket path") {
+        std::string sock_path = "/tmp/test-gh34-perms-" +
+            std::to_string(::getpid()) + ".sock";
+        ::unlink(sock_path.c_str());
+
+        ExternalMCPConfig cfg;
+        cfg.socket_path = sock_path;
+        ExternalBridge bridge(nullptr, cfg, "/tmp");
+        REQUIRE(bridge.start());
+
+        WHEN("the socket file is stat'd") {
+            struct stat st{};
+            REQUIRE(::stat(sock_path.c_str(), &st) == 0);
+            THEN("permission bits are owner read+write only") {
+                auto perms = st.st_mode & 0777;
+                CHECK(perms == 0600);
+            }
+        }
+
+        bridge.stop();
+        ::unlink(sock_path.c_str());
+    }
+}
+
+SCENARIO("Bridge sets ~/.entropic/socks/ directory mode to 0700",
+         "[external_bridge][hardening][2.1.7][gh34]")
+{
+    // Derived (not explicit) socket path so the bridge exercises the
+    // prepare_socket_dir() path that owns the chmod.
+    GIVEN("a bridge using the default ~/.entropic/socks/ derivation") {
+        ExternalMCPConfig cfg;
+        // No socket_path override -> bridge derives from project_dir.
+        std::string project = "/tmp/test-gh34-dirperms-" +
+            std::to_string(::getpid());
+        ExternalBridge bridge(nullptr, cfg, project);
+        REQUIRE(bridge.start());
+
+        WHEN("the containing directory is stat'd") {
+            auto parent = bridge.socket_path().parent_path();
+            struct stat st{};
+            REQUIRE(::stat(parent.c_str(), &st) == 0);
+            THEN("permission bits are owner-only (0700)") {
+                auto perms = st.st_mode & 0777;
+                CHECK(perms == 0700);
+            }
+        }
+
+        bridge.stop();
+    }
+}
+
+SCENARIO("Bridge accepts same-uid client (SO_PEERCRED baseline)",
+         "[external_bridge][hardening][2.1.7][gh34]")
+{
+    // Cross-uid rejection cannot be exercised from a single-uid unit
+    // test runner. This scenario pins the baseline: a connection from
+    // the same uid passes the SO_PEERCRED check and the per-client
+    // thread spawns normally. The reject-on-mismatch path is covered
+    // by the peer_uid_matches() implementation (logs + close) — the
+    // logical complement of this test.
+    GIVEN("a bridge bound to a private socket") {
+        std::string sock_path = "/tmp/test-gh34-peercred-" +
+            std::to_string(::getpid()) + ".sock";
+        ::unlink(sock_path.c_str());
+        ExternalMCPConfig cfg;
+        cfg.socket_path = sock_path;
+        ExternalBridge bridge(nullptr, cfg, "/tmp");
+        REQUIRE(bridge.start());
+
+        WHEN("a same-uid client connects") {
+            int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+            REQUIRE(fd >= 0);
+            sockaddr_un addr{};
+            addr.sun_family = AF_UNIX;
+            std::strncpy(addr.sun_path, sock_path.c_str(),
+                         sizeof(addr.sun_path) - 1);
+            int rc = -1;
+            for (int i = 0; i < 50 && rc != 0; ++i) {
+                rc = ::connect(fd, reinterpret_cast<sockaddr*>(&addr),
+                               sizeof(addr));
+                if (rc != 0) {
+                    std::this_thread::sleep_for(
+                        std::chrono::milliseconds(10));
+                }
+            }
+            THEN("connect succeeds and the bridge accepts it") {
+                CHECK(rc == 0);
+                std::string ping =
+                    R"({"jsonrpc":"2.0","method":"ping"})" "\n";
+                ssize_t n = ::send(fd, ping.c_str(), ping.size(),
+                                   MSG_NOSIGNAL);
+                CHECK(n == static_cast<ssize_t>(ping.size()));
+            }
+            if (fd >= 0) { ::close(fd); }
+        }
+
+        bridge.stop();
         ::unlink(sock_path.c_str());
     }
 }

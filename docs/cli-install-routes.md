@@ -8,14 +8,18 @@
 ## Native binary subcommand surface
 
 The native `entropic` C++ binary (built from `src/cli/`) exposes
-exactly four subcommands:
+exactly three subcommands:
 
 | Subcommand    | Purpose |
 |---|---|
-| `mcp-bridge`  | Run the engine as a JSON-RPC MCP server over stdio (primary integration for Claude Code, VSCode, etc.) |
-| `mcp-connect` | Client side: connect to a running engine's MCP bridge socket |
+| `mcp-bridge`  | Pure stdio↔unix-socket relay (v2.1.7+, gh#34). Forwards JSON-RPC bytes between an MCP client (Claude Code, VSCode, etc.) and a running engine's external bridge socket. **Does not start an engine** — one must already be running for the same project directory. |
 | `download`    | Fetch a bundled GGUF model from the registry into `~/.entropic/models/` |
 | `version`     | Print engine version |
+
+> Pre-v2.1.7 also shipped `mcp-connect` (explicit `--socket PATH`
+> relay) and a standalone-server flavor of `mcp-bridge` that loaded
+> the model itself. Both are gone — relay is the only role, and the
+> socket is discovered from the project_dir hash.
 
 Anything else (e.g. `entropic ask "…"`) returns
 `entropic: unknown subcommand 'X'` and a usage banner.
@@ -35,8 +39,8 @@ Anything else (e.g. `entropic ask "…"`) returns
 └─────────────────────────────┴───────────────────────────────────────┘
 ```
 
-The same binary ships across all four — `mcp-bridge` / `mcp-connect`
-/ `download` / `version` work identically regardless of how the user
+The same binary ships across all four routes — `mcp-bridge` /
+`download` / `version` work identically regardless of how the user
 got it.
 
 ## Python wrapper console script

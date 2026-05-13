@@ -30,6 +30,8 @@ class PruneContextTool;
 class DiagnoseTool;
 class InspectTool;
 class ContextInspectTool;
+class FollowupTool;          ///< gh#32 (v2.1.6) recall
+class ResumeDelegationTool;  ///< gh#32 (v2.1.6) resume
 
 /**
  * @brief Entropic MCP server for engine-level tools.
@@ -79,6 +81,8 @@ private:
     std::unique_ptr<DiagnoseTool> diagnose_;          ///< v1.9.12 introspection
     std::unique_ptr<InspectTool> inspect_;             ///< v1.9.12 introspection
     std::unique_ptr<ContextInspectTool> context_inspect_; ///< v2.0.6 context window
+    std::unique_ptr<FollowupTool> followup_;              ///< gh#32 (v2.1.6) recall
+    std::unique_ptr<ResumeDelegationTool> resume_delegation_; ///< gh#32 (v2.1.6) resume
     entropic_state_provider_t state_provider_{};  ///< Stored copy for lifetime
 
     /** @brief Register core tools (todo, complete, phase_change, prune).

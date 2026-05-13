@@ -162,6 +162,44 @@ typedef struct {
      */
     char* (*get_docs)(const char* section, void* user_data);
 
+    /**
+     * @brief Search prior delegation summaries (gh#32, v2.1.6).
+     *
+     * Backs `entropic.followup`. Returns a JSON array of objects with
+     * fields {delegation_id, target_tier, summary, completed_at},
+     * containing up to `max_results` records whose summary
+     * substring-matches `query`. May be NULL on engines built without
+     * a storage backend; the tool surfaces a typed error in that case.
+     *
+     * Caller must free the returned string with entropic_free().
+     *
+     * @param query        Keyword/phrase to match (NULL-safe).
+     * @param max_results  Maximum records to return (>=1).
+     * @param user_data    Opaque provider state.
+     * @return JSON string (caller frees), or NULL on error.
+     * @version 2.1.6
+     */
+    char* (*search_delegations)(const char* query, int max_results,
+                                void* user_data);
+
+    /**
+     * @brief Load a delegation's full child conversation (gh#32, v2.1.6).
+     *
+     * Backs `entropic.resume_delegation`. Returns the conversation JSON
+     * previously persisted via storage_save_conversation, scoped to the
+     * delegation's child_conversation_id. May be NULL when storage is
+     * unavailable or the id is unknown — the tool surfaces a typed error.
+     *
+     * Caller must free with entropic_free().
+     *
+     * @param delegation_id Storage delegation id.
+     * @param user_data     Opaque provider state.
+     * @return JSON string (caller frees), or NULL on error.
+     * @version 2.1.6
+     */
+    char* (*load_delegation_conversation)(const char* delegation_id,
+                                          void* user_data);
+
     /** @brief Opaque user data passed to all callbacks. */
     void* user_data;
 } entropic_state_provider_t;

@@ -6,11 +6,16 @@ custom code with the `openai` SDK, etc.). Demonstrates that the
 entropic C ABI is sufficient to build a full HTTP bridge — no C++
 internal headers required, no C++ ABI crossing.
 
-> **Status:** v2.1.0 example pinned to OpenAI API 2024-06-01.
+> **Status:** v2.1.8 example pinned to OpenAI API 2024-06-01.
 > Endpoints implemented: `/v1/chat/completions` (streaming +
 > non-streaming), `/v1/completions` (legacy single-turn), `/v1/models`,
-> `/v1/models/{model}`, `/health`. Embeddings, fine-tuning, files,
-> images, audio, and assistants are out of scope.
+> `/v1/models/{model}`, `/health`. Image content is **accepted** on
+> `/v1/chat/completions` (`type: image_url` with `data:` URIs,
+> `file://` paths, or absolute paths — see [Multimodal](#multimodal)).
+> Embeddings, fine-tuning, files, audio, assistants, and remote
+> (`http(s)://`) image URLs remain out of scope. Vision requires a
+> tier configured with `capabilities: [text, vision]` and a paired
+> mmproj — bundled `primary_mmproj` covers the default case (gh#42).
 
 ## Build
 
@@ -58,6 +63,42 @@ curl -N http://localhost:8080/v1/chat/completions \
       "stream": true,
       "messages": [{"role": "user", "content": "Count to ten."}]
     }'
+```
+
+## Multimodal
+
+`/v1/chat/completions` accepts OpenAI-style `image_url` content parts.
+Three input shapes are supported (gh#38):
+
+| URL form | Behavior |
+|---|---|
+| `data:image/<mime>;base64,<payload>` | Base64-decoded into a per-request tempfile, deleted on response (success or error). |
+| `file:///abs/path/image.png`         | Scheme stripped, path passed to the engine. |
+| `/abs/path/image.png`                | Treated as an absolute path. |
+| `http(s)://...`                      | **Rejected with HTTP 400** (SSRF surface — fetch yourself and resend as `data:`). |
+
+The active engine config must declare a tier with
+`capabilities: [text, vision]` and a paired `mmproj` (the bundled
+`primary_mmproj` ships F16). If image content arrives at a server
+whose engine has no vision-capable tier, the response is HTTP 400
+with an actionable diagnostic.
+
+Example:
+
+```bash
+curl -s http://localhost:8080/v1/chat/completions \
+    -H 'Content-Type: application/json' \
+    -d '{
+      "model": "primary",
+      "messages": [{
+        "role": "user",
+        "content": [
+          {"type": "text", "text": "Describe this image."},
+          {"type": "image_url",
+           "image_url": {"url": "data:image/png;base64,iVBORw0KGgo..."}}
+        ]
+      }]
+    }' | jq .
 ```
 
 List models:

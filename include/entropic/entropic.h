@@ -423,6 +423,33 @@ ENTROPIC_EXPORT entropic_error_t entropic_context_count(
     size_t* count);
 
 /**
+ * @brief Read current context-window pressure for the active tier.
+ *
+ * Returns the same (used, capacity) pair the engine's
+ * core.context_manager logs at info level. Cheap — counts tokens
+ * across the current conversation against the active tier's
+ * `context_length`. Suitable for ~1 Hz consumer polling (e.g. a
+ * "6727/32768 tokens (20%)" UI gauge).
+ *
+ * @param handle Engine handle.
+ * @param[out] tokens_used Output: tokens currently in the conversation.
+ * @param[out] capacity Output: configured context_length for the
+ *             active tier.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — either out pointer is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine has no active tier
+ *           (rare; before first tier_lock / configure).
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_usage(
+    entropic_handle_t handle,
+    size_t* tokens_used,
+    size_t* capacity);
+
+/**
  * @brief Get loop metrics from the most recent run as JSON.
  *
  * Populates *out with a malloc'd JSON string containing flat fields

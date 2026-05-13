@@ -262,6 +262,23 @@ entropic_context_count = _bind(
     ctypes.POINTER(ctypes.c_size_t),
 )
 
+# gh#39 (v2.1.8): token-level context pressure for consumer UIs
+# (e.g. "6727/32768 tokens (20%)" gauges). Mirrors the
+# `Context: N/M tokens` line emitted by core.context_manager.
+entropic_context_usage = _bind(
+    "entropic_context_usage",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.POINTER(ctypes.c_size_t),
+)
+"""(handle, out_tokens_used, out_capacity) -> entropic_error_t.
+
+Reads the active tier's current context pressure. Both outputs are
+``size_t``. Returns ``ENTROPIC_ERROR_INVALID_STATE`` before any tier
+is locked.
+"""
+
 # gh#22 (v2.1.5): closes the gh#8 partial gap. The C ABI exposes
 # entropic_context_get(handle, char** out_messages_json) — the engine
 # allocates *out_messages_json via malloc and the caller must free it

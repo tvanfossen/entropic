@@ -1742,6 +1742,34 @@ entropic_error_t entropic_context_count(
 }
 
 /**
+ * @brief Read current context-window pressure (gh#39, v2.1.8).
+ *
+ * Mirrors the `Context: N/M tokens (P%)` line emitted by
+ * core.context_manager. Reads from the engine's existing
+ * `context_usage(messages)` helper against the current conversation.
+ *
+ * @param handle Engine handle.
+ * @param tokens_used Out-param: tokens in the current conversation.
+ * @param capacity Out-param: active tier's configured context_length.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_context_usage(
+    entropic_handle_t handle,
+    size_t* tokens_used,
+    size_t* capacity) {
+    if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!tokens_used || !capacity) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    std::lock_guard lock(handle->api_mutex);
+    auto [used, max] = handle->engine->context_usage(
+        handle->engine->get_messages());
+    *tokens_used = static_cast<size_t>(used);
+    *capacity = static_cast<size_t>(max);
+    return max > 0 ? ENTROPIC_OK : ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
  * @brief Get loop metrics as JSON (flat + per_tier).
  *
  * Reuses the state-provider sp_get_metrics builder so handle_status

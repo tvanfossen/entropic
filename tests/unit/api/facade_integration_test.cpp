@@ -446,3 +446,58 @@ SCENARIO("MCP server list on fresh engine", "[api][facade][mcp]") {
         }
     }
 }
+
+// ── gh#39 (v2.1.8): entropic_context_usage ──────────────────
+
+SCENARIO("entropic_context_usage on null handle returns INVALID_HANDLE",
+         "[api][facade][context][v2.1.8]") {
+    GIVEN("a null handle") {
+        size_t used = 0, cap = 0;
+        WHEN("context_usage is called") {
+            auto rc = entropic_context_usage(nullptr, &used, &cap);
+            THEN("it returns ENTROPIC_ERROR_INVALID_HANDLE") {
+                REQUIRE(rc == ENTROPIC_ERROR_INVALID_HANDLE);
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_context_usage with null out params returns INVALID_ARGUMENT",
+         "[api][facade][context][v2.1.8]") {
+    ConfiguredHandle h;
+    REQUIRE(h.configured());
+
+    GIVEN("a configured handle") {
+        WHEN("either out pointer is null") {
+            size_t v = 0;
+            THEN("INVALID_ARGUMENT is returned") {
+                REQUIRE(entropic_context_usage(h, nullptr, &v)
+                        == ENTROPIC_ERROR_INVALID_ARGUMENT);
+                REQUIRE(entropic_context_usage(h, &v, nullptr)
+                        == ENTROPIC_ERROR_INVALID_ARGUMENT);
+            }
+        }
+    }
+}
+
+SCENARIO("entropic_context_usage on a configured engine returns valid pair",
+         "[api][facade][context][v2.1.8]") {
+    ConfiguredHandle h;
+    REQUIRE(h.configured());
+
+    GIVEN("a configured engine") {
+        size_t used = 999, cap = 999;
+        WHEN("context_usage is called") {
+            auto rc = entropic_context_usage(h, &used, &cap);
+            THEN("either OK with capacity > 0, or INVALID_STATE (no tier)") {
+                // Minimal configure may not lock a tier — either outcome OK.
+                REQUIRE((rc == ENTROPIC_OK
+                         || rc == ENTROPIC_ERROR_INVALID_STATE));
+                if (rc == ENTROPIC_OK) {
+                    REQUIRE(cap > 0);
+                    REQUIRE(used <= cap);
+                }
+            }
+        }
+    }
+}

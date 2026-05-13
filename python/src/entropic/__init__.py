@@ -77,6 +77,8 @@ _LAZY_EXPORTS = frozenset(
         "entropic_context_count",
         # gh#22 (v2.1.5): closes gh#8 partial gap.
         "entropic_context_get",
+        # gh#39 (v2.1.8): token-level context pressure.
+        "entropic_context_usage",
         "entropic_create",
         "entropic_destroy",
         "entropic_free",

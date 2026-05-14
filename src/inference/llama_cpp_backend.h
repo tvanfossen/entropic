@@ -138,26 +138,16 @@ protected:
         std::atomic<bool>& cancel) override;
 
     /**
-     * @brief Speculative streaming generation (v2.1.11, gh#36).
+     * @brief Speculative streaming via the abstract InferenceBackend
+     *        interface (kept as NOT_SUPPORTED — see kernel entry below).
      *
-     * Kernel scaffolding is in place — at present this returns
-     * `ENTROPIC_ERROR_NOT_SUPPORTED` and the orchestrator falls back
-     * to `do_generate_streaming` (plain decode). The actual
-     * common_speculative_*-driven kernel against pin 253ba110b is
-     * staged for a developer-driven session because the
-     * speculative-decoding correctness contract ("output distribution
-     * bit-identical to plain decode on rejection cases") is
-     * load-bearing per the v2.1.11 proposal and requires hands-on
-     * GPU validation (model-test gate, ≥1.8× speedup on long
-     * generations). Until that lands, infrastructure consumers
-     * (compat check, draft slot, config schema, C ABI) are reachable
-     * and useful in their own right.
+     * The actual draft-pair-aware kernel lives in
+     * `generate_speculative_with_draft` and is called by the
+     * orchestrator after it has resolved the draft backend. This
+     * abstract override exists for backends with implicit draft
+     * resolution; LlamaCppBackend requires an explicit draft handle.
      *
-     * @param messages Conversation history.
-     * @param params Generation parameters.
-     * @param on_token Per-accepted-token callback.
-     * @param cancel Cancellation flag.
-     * @return Generation result; currently NOT_SUPPORTED.
+     * @return GenerationResult with NOT_SUPPORTED.
      * @version 2.1.11
      */
     GenerationResult do_generate_speculative(
@@ -166,6 +156,50 @@ protected:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel) override;
 
+public:
+    /**
+     * @brief Speculative-decoding kernel with explicit draft backend.
+     *
+     * Adapts the upstream `speculative-simple` reference loop at pin
+     * `253ba110b` to entropic's idioms: drives a draft LlamaCppBackend
+     * through `common_speculative_*`, verifies in batch on the target,
+     * and emits one `on_token` callback per accepted token (not per
+     * proposed) — preserving the standard streaming contract. Honors
+     * `cancel` between accept rounds; latency is one accept round
+     * (typically 1–8 tokens).
+     *
+     * Correctness contract: output distribution bit-identical to plain
+     * decode on rejection cases. Verified by
+     * `test_speculative_correctness.cpp` against Qwen3.6-A3B target
+     * + Qwen3.5-0.8B draft.
+     *
+     * Constraints (v2.1.11):
+     *   - Both target and draft must report
+     *     `common_context_can_seq_rm == COMMON_CONTEXT_SEQ_RM_TYPE_FULL`.
+     *     Falls back to NOT_SUPPORTED otherwise (partial-acceptance
+     *     checkpoint restore is deferred — see decision log #41).
+     *   - Both backends must be ACTIVE.
+     *   - Caller (orchestrator) is responsible for compat verification
+     *     before calling — this entry trusts the pair.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters (samplers + max_tokens + seed).
+     * @param on_token Callback fired once per accepted token.
+     * @param cancel Cancellation flag (polled between accept rounds).
+     * @param draft Draft backend (must be ACTIVE).
+     * @return GenerationResult with content, token_count, finish_reason.
+     * @version 2.1.11
+     */
+    GenerationResult generate_speculative_with_draft(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel,
+        LlamaCppBackend& draft,
+        int n_draft_max,
+        const std::string& draft_path);
+
+protected:
     GenerationResult do_complete(
         const std::string& prompt,
         const GenerationParams& params) override;

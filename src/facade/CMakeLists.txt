@@ -42,6 +42,10 @@ target_link_libraries(entropic-facade PRIVATE
     # llama. inference's LlamaCppBackend.o has unresolved mtmd_*
     # references that must resolve at the shared-library link step.
     $<LINK_ONLY:mtmd>
+    # v2.1.11 (gh#36): common is absorbed for common_speculative_*,
+    # common_sampler_*, common_batch_*, common_token_to_piece used
+    # by the speculative-decoding kernel in LlamaCppBackend.
+    $<LINK_ONLY:llama-common>
     # libdl for dladdr() — used by config/data_dir.cpp to derive
     # <prefix>/share/entropic relative to librentropic.so at runtime.
     # On glibc 2.34+ dlfcn is merged into libc; CMAKE_DL_LIBS keeps

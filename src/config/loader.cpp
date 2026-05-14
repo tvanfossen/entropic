@@ -395,15 +395,18 @@ static void parse_constitutional_validation_config(
  * @brief Parse `inference.speculative` YAML node into SpeculativeConfig.
  *
  * Off-by-default semantics: missing keys leave the struct defaults
- * intact (`enabled=false`, `n_draft=16`, `draft_n_gpu_layers=0`,
- * `draft_cpu_threads=4`). `draft_model` is taken verbatim — bundled-
- * key vs. path resolution happens at engine init time, mirroring the
- * existing tier model resolution path.
+ * intact (`enabled=false`, `n_draft=16`). The draft model is
+ * configured via a nested `draft:` block that accepts every
+ * ModelConfig field (path, gpu_layers, n_threads, flash_attn,
+ * context_length, use_mlock, etc.); defaults for the kernel come
+ * from `make_default_draft_model_config()`. (v2.1.11 refactor —
+ * earlier flat `draft_model`/`draft_n_gpu_layers`/`draft_cpu_threads`
+ * keys are absorbed into the nested block.)
  *
  * @param node YAML node for `inference.speculative`.
  * @param[out] config Output speculative config.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static void parse_speculative_config(
     ryml::ConstNodeRef node,
@@ -411,13 +414,18 @@ static void parse_speculative_config(
     SpeculativeConfig& config)
 {
     extract(node, "enabled", config.enabled);
-    std::string draft_str;
-    if (extract(node, "draft_model", draft_str)) {
-        config.draft_path = registry.resolve(draft_str);
-    }
     extract(node, "n_draft", config.n_draft);
-    extract(node, "draft_n_gpu_layers", config.draft_n_gpu_layers);
-    extract(node, "draft_cpu_threads", config.draft_cpu_threads);
+    // Nested ModelConfig — every llama.cpp knob is consumer-tunable
+    // via `inference.speculative.draft.<field>`. Defaults come from
+    // `make_default_draft_model_config()` (gpu_layers=0, flash_attn=
+    // false, context_length=8192, n_threads=4). (v2.1.11)
+    if (node.has_child("draft")) {
+        auto err = parse_model_config(
+            node["draft"], registry, config.draft);
+        if (!err.empty()) {
+            s_log->warn("inference.speculative.draft parse: {}", err);
+        }
+    }
 }
 
 /**

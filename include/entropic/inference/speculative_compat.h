@@ -22,10 +22,20 @@
  *   - Unit-testability against mock vocabs on CPU pre-commit.
  *
  * In addition to the vocab-level checks llama.cpp's static helper
- * performs, entropic adds an explicit recurrent/hybrid-Mamba gate.
- * Upstream's speculative layer does NOT self-disable for recurrent
- * targets at this pin, but the speculative-decoding math assumes a
- * non-recurrent verifier — so we refuse the pairing up front.
+ * performs, entropic adds an explicit architecture gate that refuses
+ * speculative pairing for both recurrent (Mamba/RWKV) AND hybrid
+ * (Jamba/Granite/Nemotron-H/QWEN35/QWEN35MOE/QWEN3NEXT/KIMI_LINEAR/
+ * FALCON_H1/PLAMO2/LFM2/LFM2MOE) target architectures.
+ *
+ * Upstream's speculative layer does NOT self-disable for either
+ * recurrent or hybrid targets at this pin. The speculative-decoding
+ * math assumes a non-recurrent verifier; Gate-A diagnostics in
+ * Session 5 (proposal Implementation Log) showed empirically that
+ * hybrid-SSM targets produce totally divergent logits at the first
+ * speculative-batch boundary because the chunked SSM scan does not
+ * carry the recurrent state across ubatch boundaries. The guard
+ * refuses both categories so consumers fall back to plain decode
+ * cleanly instead of generating garbage.
  *
  * @version 2.1.11
  */
@@ -55,12 +65,15 @@ struct CompatResult {
  *
  * Mirrors the logic of llama.cpp's file-private
  * `common_speculative_are_compatible` (in `common/speculative.cpp`)
- * and additionally enforces entropic's recurrent-architecture gate:
+ * and additionally enforces entropic's architecture gate:
  *
- *   1. Target model must NOT be recurrent (Mamba/RWKV/hybrid).
- *      Speculative-decoding math assumes a non-recurrent verifier;
+ *   1. Target model must NOT be recurrent (Mamba/RWKV) AND must NOT
+ *      be hybrid (Jamba, Granite-Hybrid, Nemotron-H, QWEN35/QWEN35MOE,
+ *      QWEN3NEXT, KIMI_LINEAR, FALCON_H1, PLAMO2, LFM2/LFM2MOE).
+ *      Speculative-decoding math assumes a pure-transformer verifier;
  *      upstream does not self-disable for these architectures at the
- *      v2.1.11 pin.
+ *      v2.1.11 pin, and hybrid SSM targets produce divergent logits
+ *      across split-prefill boundaries (Gate A, Session 5).
  *   2. Vocab type must match between target and draft.
  *   3. BOS-add behavior and BOS token id must match.
  *   4. EOS-add behavior and EOS token id must match.

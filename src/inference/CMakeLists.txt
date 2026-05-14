@@ -50,11 +50,13 @@ target_include_directories(${INFERENCE_LIB_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/extern/llama.cpp/vendor  # stb_image.h for image preprocessing
+        ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common  # common.h/sampling.h/speculative.h (v2.1.11)
 )
 
 target_link_libraries(${INFERENCE_LIB_NAME}
     PUBLIC
         entropic-types
+        llama-common
     PRIVATE
         llama
         mtmd

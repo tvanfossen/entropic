@@ -30,21 +30,44 @@ constexpr int kSpecVocabMaxSizeDifference = 128;
 constexpr int kSpecVocabCheckStartTokenId = 5;
 
 /**
- * @brief Refuse speculative pairing for recurrent / hybrid-Mamba
- *        target architectures.
+ * @brief Refuse speculative pairing for recurrent OR hybrid target
+ *        architectures.
+ *
+ * Recurrent-only check returned FALSE for QWEN35/QWEN35MOE/QWEN3NEXT/
+ * KIMI_LINEAR at the v2.1.11 pin — those are classified as
+ * `llm_arch_is_hybrid` (not recurrent), and the existing recurrent
+ * gate let them through. Session-5 diagnostics (Implementation Log,
+ * Gate A) confirmed empirically that hybrid SSM state evolution is
+ * not preserved across upstream's split-prefill scheme: prefilling
+ * N-1 tokens then batch-decoding `[id_last + drafts]` produces
+ * near-zero recurrent state at the boundary position, yielding
+ * totally divergent logits from a single-pass prefill of N tokens.
+ *
+ * Bit-identical correctness is therefore unreachable on any hybrid
+ * primary at this pin. This guard refuses speculative for both
+ * recurrent AND hybrid targets, falling back to plain decode with
+ * a diagnostic naming the offending classification.
  *
  * @param target Target llama_model.
  * @return Diagnostic string if rejected, empty optional otherwise.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
-std::optional<std::string> check_recurrent_gate(
+std::optional<std::string> check_arch_gate(
     const llama_model* target) {
     if (llama_model_is_recurrent(target)) {
         return std::string{
-            "target model is recurrent (Mamba/RWKV/hybrid) — "
-            "speculative decoding is incompatible with recurrent "
-            "architectures at the v2.1.11 llama.cpp pin"};
+            "target model is recurrent (Mamba/RWKV) — speculative "
+            "decoding is incompatible with recurrent architectures "
+            "at the v2.1.11 llama.cpp pin"};
+    }
+    if (llama_model_is_hybrid(target)) {
+        return std::string{
+            "target model is hybrid (e.g., QWEN35/QWEN35MOE, "
+            "NEMOTRON_H, JAMBA, GRANITE_HYBRID) — speculative "
+            "decoding produces divergent state at split-prefill "
+            "boundaries on hybrid SSM architectures at the v2.1.11 "
+            "llama.cpp pin (see proposal Implementation Log, Gate A)"};
     }
     return std::nullopt;
 }
@@ -215,14 +238,14 @@ std::string run_vocab_checks(
  * @param draft  Draft model.
  * @return Diagnostic string ("" = compatible).
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 std::string build_compat_diagnostic(
     const llama_model* target, const llama_model* draft) {
     std::string err;
     if (target == nullptr || draft == nullptr) {
         err = "null model handle (target or draft)";
-    } else if (auto d = check_recurrent_gate(target); d.has_value()) {
+    } else if (auto d = check_arch_gate(target); d.has_value()) {
         err = std::move(*d);
     } else {
         const llama_vocab* vt = llama_model_get_vocab(target);

@@ -148,6 +148,14 @@ qwen3_6_a3b_mmproj:
 #   - E2B (2B dense) — edge / router class
 # Tool-call format uses Gemma's channel-based template; see
 # Gemma4Adapter for the parsing strategy decided at implementation time.
+#
+# Multimodal coverage gap (v2.1.11): Gemma 4 is image-text-to-text
+# upstream, but no `mmproj_key` is configured on any of the three
+# variants below. Image inputs routed to a Gemma 4 tier fall through
+# to text-only via `do_generate`'s image-strip path. Adding the
+# matching `mmproj-F16.gguf` files to the registry is tracked
+# separately — only Qwen3.5 / Qwen3.6 ship with mmproj bundled at
+# this version. Same applies to `nemotron3_nano_4b` below.
 
 gemma4_a4b:
   name: gemma-4-26B-A4B-it-UD-IQ4_XS

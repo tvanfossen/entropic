@@ -86,6 +86,15 @@ add_model_test(test-v219-gemma4-e4b   test_v219_gemma4_e4b_family.cpp)
 add_model_test(test-v219-gemma4-a4b   test_v219_gemma4_a4b_family.cpp)
 add_model_test(test-v219-nemotron3    test_v219_nemotron3_family.cpp)
 
+# ── v2.1.11 speculative-decoding tests (gh#36) ───────────────
+# Both load Qwen3.6-A3B (target, GPU) + Qwen3.5-0.8B (draft, CPU).
+# Correctness asserts bit-identical output vs plain decode; speedup
+# asserts ≥1.8× tokens/sec gain on a >500-token generation. SKIP
+# cleanly if the draft GGUF is missing.
+add_model_test(test-speculative-correctness  test_speculative_correctness.cpp)
+add_model_test(test-speculative-speedup      test_speculative_speedup.cpp)
+set_tests_properties(model/test-speculative-speedup PROPERTIES TIMEOUT 360)
+
 # Pass mock server binary path for external MCP test
 if(TARGET mock-mcp-server)
     target_compile_definitions(test-external-mcp PRIVATE

@@ -30,11 +30,24 @@
 
 #include <llama.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
+
+// Forward-declare libmtmd's opaque types at file scope so they
+// resolve to ::mtmd_context / ::mtmd_bitmap (not entropic::mtmd_*)
+// when referenced inside the class body. Full types live in
+// extern/llama.cpp/tools/mtmd/mtmd.h and are only included from
+// the implementation file. (v2.1.8, gh#37/v1.9.11 Phase 5)
+extern "C" {
+struct mtmd_context;
+struct mtmd_bitmap;
+}
 
 namespace entropic {
 
@@ -359,6 +372,107 @@ protected:
      * @version 1.9.13
      */
     bool is_recurrent() const;
+
+    /* ── Vision / multimodal (v1.9.11 Phases 5–7 + v2.1.8) ── */
+
+    /// @brief libmtmd context, or nullptr if no mmproj loaded.
+    /// Allocated in do_activate() when ModelConfig::mmproj_path is
+    /// set; freed in do_deactivate()/do_unload(). The leading `::`
+    /// is required — without it `mtmd_context` resolves into the
+    /// `entropic::` namespace and the forward declaration becomes
+    /// an incompatible incomplete type at the call sites.
+    /// @version 2.1.8
+    ::mtmd_context* mtmd_ctx_ = nullptr;
+
+    /// @brief Cached `mtmd_support_vision(mtmd_ctx_)` result.
+    /// @version 2.1.8
+    bool has_vision_ = false;
+
+    /**
+     * @brief Multimodal generation core (v1.9.11 Phases 5–7).
+     *
+     * Runs the libmtmd-backed prefill + decode for messages whose
+     * `content_parts` contain image entries. Builds an mtmd_bitmap
+     * list from ContentPart paths, inserts media markers in the
+     * chat-formatted prompt, then calls mtmd_helper_eval_chunks to
+     * encode images and decode all chunks in order.
+     *
+     * After eval, sampling proceeds via the normal step_token loop
+     * — the cache state is positioned past the multimodal prefill.
+     *
+     * @param messages Conversation history (must contain images).
+     * @param params Generation parameters.
+     * @param on_token Per-token callback (nullptr for batch mode).
+     * @param cancel Cancel atomic (nullptr for batch mode).
+     * @return GenerationResult.
+     * @version 2.1.8
+     */
+    GenerationResult generate_multimodal(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>* cancel);
+
+    /**
+     * @brief Initialize the libmtmd context if mmproj is configured.
+     * @utility
+     * @version 2.1.8
+     */
+    void init_mmproj_if_configured();
+
+    /**
+     * @brief Run mtmd_tokenize + mtmd_helper_eval_chunks on a prompt.
+     * @param prompt Marker-substituted chat-formatted prompt.
+     * @param bitmaps Loaded image bitmaps in marker order (borrowed).
+     * @param[out] err_msg Filled on failure.
+     * @return ENTROPIC_OK on success, error code on failure.
+     * @utility
+     * @version 2.1.8
+     */
+    entropic_error_t mtmd_prefill(
+        const std::string& prompt,
+        const std::vector<::mtmd_bitmap*>& bitmaps,
+        std::string& err_msg);
+
+    /**
+     * @brief Sample tokens until stop / max_tokens / cancel.
+     *
+     * Shared by generate_multimodal and the text-only paths after
+     * prefill. Operates on the already-positioned `ctx_` KV cache.
+     *
+     * @param params Generation parameters.
+     * @param on_token Per-token callback (nullable).
+     * @param cancel Atomic cancel flag (nullable).
+     * @param t0 Generation start time for finalize_result.
+     * @return GenerationResult.
+     * @utility
+     * @version 2.1.8
+     */
+    GenerationResult run_sampling_loop(
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>* cancel,
+        const std::chrono::steady_clock::time_point& t0);
+
+    /**
+     * @brief Text-only batch generation (extracted from do_generate).
+     * @utility
+     * @version 2.1.8
+     */
+    GenerationResult do_generate_text_only(
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Text-only streaming generation (extracted from streaming).
+     * @utility
+     * @version 2.1.8
+     */
+    GenerationResult do_generate_streaming_text_only(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel);
 };
 
 } // namespace entropic

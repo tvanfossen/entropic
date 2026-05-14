@@ -52,6 +52,7 @@ target_link_libraries(${INFERENCE_LIB_NAME}
         entropic-types
     PRIVATE
         llama
+        mtmd
         nlohmann_json::nlohmann_json
         spdlog::spdlog
 )

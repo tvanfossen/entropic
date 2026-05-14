@@ -58,6 +58,13 @@ set_target_properties(c4core PROPERTIES CXX_VISIBILITY_PRESET default)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+# v2.1.8 (gh#37/v1.9.11 Phase 5): enable LLAMA_BUILD_COMMON so the
+# libmtmd subdirectory (added explicitly below) can reference the
+# `common` target on its CLI executables (which we never build).
+# LLAMA_BUILD_TOOLS stays OFF — we add only the mtmd subdirectory,
+# not the whole tools/ tree.
+set(LLAMA_BUILD_COMMON ON CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 # Bridge ENTROPIC_HAS_CUDA → GGML_CUDA so llama.cpp builds with GPU support
 if(ENTROPIC_HAS_CUDA)
     set(GGML_CUDA ON CACHE BOOL "" FORCE)
@@ -77,6 +84,23 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 # Our facade absorbs libllama.a as a static dependency; consumers never
 # link to llama directly.
 add_subdirectory(llama.cpp EXCLUDE_FROM_ALL)
+# v2.1.8: pull in libmtmd from the same submodule for multimodal
+# inference. The mtmd library lives under llama.cpp/tools/mtmd and
+# only links ggml+llama (its sibling CLI executables link `common`
+# but are never built thanks to EXCLUDE_FROM_ALL).
+#
+# LLAMA_INSTALL_VERSION is set in llama.cpp/CMakeLists.txt but does
+# not propagate up out of that subdirectory scope. mtmd's CMakeLists
+# uses it for set_target_properties(VERSION ...), so we mirror the
+# upstream construction here.
+if (NOT DEFINED LLAMA_BUILD_NUMBER)
+    set(LLAMA_BUILD_NUMBER 0)
+endif()
+set(LLAMA_INSTALL_VERSION 0.0.${LLAMA_BUILD_NUMBER})
+add_subdirectory(
+    llama.cpp/tools/mtmd
+    ${CMAKE_BINARY_DIR}/extern/llama-mtmd-build
+    EXCLUDE_FROM_ALL)
 set(BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS_SAVED})
 set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_SAVED})
 

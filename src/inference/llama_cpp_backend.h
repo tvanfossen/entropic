@@ -137,6 +137,35 @@ protected:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel) override;
 
+    /**
+     * @brief Speculative streaming generation (v2.1.11, gh#36).
+     *
+     * Kernel scaffolding is in place — at present this returns
+     * `ENTROPIC_ERROR_NOT_SUPPORTED` and the orchestrator falls back
+     * to `do_generate_streaming` (plain decode). The actual
+     * common_speculative_*-driven kernel against pin 253ba110b is
+     * staged for a developer-driven session because the
+     * speculative-decoding correctness contract ("output distribution
+     * bit-identical to plain decode on rejection cases") is
+     * load-bearing per the v2.1.11 proposal and requires hands-on
+     * GPU validation (model-test gate, ≥1.8× speedup on long
+     * generations). Until that lands, infrastructure consumers
+     * (compat check, draft slot, config schema, C ABI) are reachable
+     * and useful in their own right.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Per-accepted-token callback.
+     * @param cancel Cancellation flag.
+     * @return Generation result; currently NOT_SUPPORTED.
+     * @version 2.1.11
+     */
+    GenerationResult do_generate_speculative(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel) override;
+
     GenerationResult do_complete(
         const std::string& prompt,
         const GenerationParams& params) override;

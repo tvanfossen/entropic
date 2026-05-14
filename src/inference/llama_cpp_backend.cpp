@@ -1391,6 +1391,61 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
 }
 
 /**
+ * @brief Speculative streaming generation — kernel staged.
+ *
+ * See header for the full deferral rationale: the kernel against the
+ * v2.1.11-pinned `common_speculative_*` API requires GPU validation
+ * for its bit-identical correctness contract; until that lands, this
+ * override returns NOT_SUPPORTED and the orchestrator falls through
+ * to `do_generate_streaming`. The surrounding infrastructure
+ * (compat check, draft slot, config schema, C ABI) is functional and
+ * verifiable on CPU.
+ *
+ * Scope reminder for the kernel session:
+ *   - `common_speculative_init(params.speculative, 1)` with target
+ *     ctx + draft ctx populated in `params.speculative.draft`.
+ *   - `common_speculative_begin(spec, seq_id, prompt_tgt)` once.
+ *   - Loop: get_draft_params → draft() → decode tgt + dft on the
+ *     speculative batch → `common_sampler_sample_and_accept_n` to
+ *     determine accepted prefix → `common_speculative_accept`
+ *     accumulating accepted count → fire on_token() per accepted
+ *     token (one callback per accepted, not per proposed) → honor
+ *     cancel between accept rounds.
+ *   - Entropic currently uses `llama_sampler*` (not `common_sampler*`).
+ *     Bridging requires either (a) using `common_sampler_*` for
+ *     speculative only, with translation between the two sampler
+ *     types, or (b) reimplementing sample_and_accept_n logic
+ *     against llama_sampler primitives.
+ *   - Partial-acceptance / checkpoint restoration may be skipped
+ *     for the initial implementation if the target context reports
+ *     `COMMON_CONTEXT_SEQ_RM_TYPE_FULL` and full-acceptance is the
+ *     common case for the bundled draft pair.
+ *
+ * @param messages Conversation history (unused in stub).
+ * @param params Generation parameters (unused in stub).
+ * @param on_token Per-accepted-token callback (unused in stub).
+ * @param cancel Cancellation flag (unused in stub).
+ * @return GenerationResult with NOT_SUPPORTED + diagnostic.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult LlamaCppBackend::do_generate_speculative(
+    const std::vector<Message>& /*messages*/,
+    const GenerationParams& /*params*/,
+    std::function<void(std::string_view)> /*on_token*/,
+    std::atomic<bool>& /*cancel*/)
+{
+    GenerationResult result;
+    result.error_code = ENTROPIC_ERROR_NOT_SUPPORTED;
+    result.error_message =
+        "speculative-decoding kernel staged for developer-GPU "
+        "implementation session (v2.1.11 infrastructure ready: "
+        "compat check, draft slot, config schema, C ABI all wired)";
+    result.finish_reason = "error";
+    return result;
+}
+
+/**
  * @brief Raw text completion without chat template.
  * @param prompt Raw prompt string.
  * @param params Generation parameters.

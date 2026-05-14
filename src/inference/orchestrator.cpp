@@ -300,8 +300,15 @@ GenerationResult ModelOrchestrator::generate(
 
 /**
  * @brief Streaming generation.
+ *
+ * Speculative routing added in v2.1.11 (gh#36): when
+ * `inference.speculative.enabled` is true AND the target/draft pair
+ * is compatible, attempts the speculative kernel via
+ * `generate_speculative`. Falls back to plain streaming on
+ * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
+ *
  * @internal
- * @version 1.9.3
+ * @version 2.1.11
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -324,6 +331,30 @@ GenerationResult ModelOrchestrator::generate_streaming(
     // Resolve grammar_key → grammar content (v1.9.3)
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
+
+    // Speculative routing (v2.1.11, gh#36): when speculative is
+    // enabled in config AND target/draft pair is compatible, attempt
+    // the speculative kernel. On NOT_SUPPORTED (kernel staged), fall
+    // back to plain streaming. This keeps the v2.1.11 ship-without-
+    // kernel state observable as "plain decode, speculative
+    // requested but deferred."
+    if (config_.inference.speculative.enabled) {
+        auto compat = check_speculative_compat();
+        if (compat.compatible) {
+            auto spec_result = model->generate_speculative(
+                messages, resolved_params, on_token, cancel);
+            if (spec_result.error_code != ENTROPIC_ERROR_NOT_SUPPORTED) {
+                return spec_result;
+            }
+            logger->info("Speculative kernel returned NOT_SUPPORTED — "
+                         "falling back to plain streaming "
+                         "(kernel staged for v2.1.11)");
+        } else {
+            logger->info("Speculative requested but pair incompatible "
+                         "({}); using plain streaming",
+                         compat.diagnostic);
+        }
+    }
 
     return model->generate_streaming(messages, resolved_params, on_token, cancel);
 }

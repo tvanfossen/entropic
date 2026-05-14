@@ -1,13 +1,1 @@
-[
-  {
-    "req_id": "REQ-CFG-001",
-    "req_name": null,
-    "functions": [
-      {
-        "name": "parse_config_file",
-        "file": "src/config/loader.cpp",
-        "version": "2.1.11"
-      }
-    ]
-  }
-]
+[]

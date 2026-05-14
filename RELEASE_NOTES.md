@@ -1,3 +1,90 @@
+# entropic v2.1.10
+
+Patch release adding a mid-generation user-message queue — a UX
+primitive for long-thinking interactive sessions where a turn can
+expand into 30+ tool calls running for minutes. Lands a single issue
+(**gh#40**) as the third of four patches bundling to the v2.2.0
+milestone. No inference-path, adapter, or vision changes.
+
+## Highlights
+
+- **gh#40 (MEDIUM):** mid-generation user-message queue.
+  - New C ABI: `entropic_queue_user_message`,
+    `entropic_user_message_queue_depth`,
+    `entropic_clear_user_message_queue`, and
+    `entropic_set_queue_observer`. New error code
+    `ENTROPIC_ERROR_QUEUE_FULL`. All additions are strictly
+    additive — no existing symbol changes signature or semantics.
+  - Consumers can call `entropic_queue_user_message(handle, text)`
+    from any thread while a run is in flight. The queued message
+    becomes a fresh next turn the moment the current top-level turn
+    reaches `AgentState::COMPLETE`, under the same per-call
+    `on_token` callback. Streaming protocol is unchanged — tokens
+    fire for the active turn, then for the queued turn, with no
+    multiplexing.
+  - Bounded FIFO (default cap 8, runtime-configurable via
+    `AgentEngine::set_message_queue_capacity`). Past capacity,
+    enqueue returns `ENTROPIC_ERROR_QUEUE_FULL`. Calling
+    `entropic_queue_user_message` when no run is in flight returns
+    `ENTROPIC_ERROR_INVALID_STATE` — the consumer should just call
+    `entropic_run_streaming` directly in that case.
+
+## Design decisions (locked at proposal time)
+
+- **Boundary = top-level COMPLETE only.** Queued messages do NOT
+  inject at parent-resume-after-child-delegation boundaries. The
+  drain hook lives in `AgentEngine::run_turn` after `run()` returns,
+  not in the state observer — this structurally guarantees the
+  property (child loops invoked through `run_loop` cannot reach the
+  drain).
+- **No interruption.** The queue does NOT cancel the current turn.
+  Consumers wanting that already have `entropic_interrupt`.
+- **FIFO append.** Oldest queued message becomes next turn.
+  Prioritization, newest-wins, coalescing, and dedup are deferred —
+  no v1 consumer demand.
+- **Thread-safe via a dedicated queue mutex** that is disjoint from
+  the facade's per-handle `api_mutex`. The facade thunks for the
+  three new ABI calls do not take `api_mutex`, so consumer threads
+  can enqueue while another thread is inside `entropic_run_streaming`.
+
+## Engineering changes
+
+- `LoopConfig` gains `message_queue_capacity` (default 8).
+- `AgentEngine` gains a dedicated queue observer slot (persistent
+  across `set_callbacks()` reassignments) — modeled on the existing
+  `set_stream_observer` pattern so the streaming entry points'
+  per-call EngineCallbacks installation does not lose the
+  registration.
+- Facade adds a `rewire_queue_observer` companion to
+  `rewire_stream_observer`, called from `configure_common` so
+  pre-configure registrations survive engine construction.
+
+## Out of scope (deferred)
+
+- Boundary policies beyond top-level COMPLETE (parent-resume-
+  after-child, per-call boundary policy).
+- Queue prioritization / coalescing / dedup.
+- Cross-turn message editing or per-message dequeue by id.
+- Queue persistence across engine restarts.
+
+## Tests
+
+- `tests/unit/core/message_queue_test.cpp` — queue semantics
+  (enqueue / depth / clear / cap), top-level COMPLETE boundary
+  property, FIFO drain order, and a thread-safety stress test
+  (concurrent enqueues + depth queries).
+- `tests/unit/api/message_queue_abi_test.cpp` — C ABI surface
+  validation (NULL handle / arg, INVALID_STATE when idle, depth
+  no-op on unconfigured handle, pre-configure observer registration,
+  `ENTROPIC_ERROR_QUEUE_FULL` name lookup).
+
+## Compatibility
+
+Strictly additive. No ABI break. Existing consumers compile and
+run unchanged.
+
+---
+
 # entropic v2.1.9
 
 Patch release expanding the bundled model registry and adding three

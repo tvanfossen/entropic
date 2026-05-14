@@ -120,4 +120,11 @@ struct entropic_engine {
     /// VERIFYING → "validating"/"revising" phases.
     void (*state_observer)(int, void*) = nullptr;
     void* state_observer_data = nullptr;
+
+    // ── Mid-gen queue observer (gh#40, v2.1.10) ───────────────
+    /// @brief Observer fired when a queued mid-gen user message is
+    /// consumed and seeded as the next turn. Stored on the handle
+    /// so pre-configure registration survives engine construction.
+    void (*queue_observer)(const char*, size_t, void*) = nullptr;
+    void* queue_observer_data = nullptr;
 };

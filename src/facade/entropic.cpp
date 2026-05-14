@@ -318,6 +318,25 @@ static void rewire_stream_observer(entropic_handle_t h) {
 }
 
 /**
+ * @brief Propagate any pre-configure queue observer to the new engine.
+ *
+ * Sibling of rewire_stream_observer for the mid-gen queue
+ * consumption callback (gh#40, v2.1.10). Re-binds the handle-stored
+ * observer when the AgentEngine is constructed so observers never
+ * miss queue-consumption events on a late-bound engine.
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.10
+ */
+static void rewire_queue_observer(entropic_handle_t h) {
+    if (h->queue_observer != nullptr && h->engine) {
+        h->engine->set_queue_observer(
+            h->queue_observer, h->queue_observer_data);
+    }
+}
+
+/**
  * @brief Register per-tier ChildContextInfo with the engine.
  *
  * Extracted from configure_common to keep that function under the
@@ -1182,10 +1201,15 @@ static void start_external_bridge(entropic_handle_t h) {
 
 /**
  * @brief Post-parse config setup: subsystem construction + wiring.
+ *
+ * v2.1.10 (gh#40): added rewire_queue_observer alongside the existing
+ * rewire_stream_observer so pre-configure queue-observer registrations
+ * survive engine construction.
+ *
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.10
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -1222,6 +1246,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
     rewire_stream_observer(h);
+    rewire_queue_observer(h);  // gh#40 (v2.1.10)
     wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);
 
@@ -1857,6 +1882,87 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->engine) { return ENTROPIC_ERROR_INVALID_STATE; }
     handle->engine->interrupt();
+    return ENTROPIC_OK;
+}
+
+// ── Mid-generation user-message queue (gh#40, v2.1.10) ────────
+
+/**
+ * @brief Enqueue a follow-up user message while a run is in flight.
+ *
+ * Pure passthrough to the engine's thread-safe queue primitive. Does
+ * NOT take api_mutex — `entropic_run_streaming` holds nothing while
+ * the agent loop is running, so this call must be lock-disjoint from
+ * the run path to avoid deadlock. The engine's per-queue mutex
+ * guarantees thread safety on the queue itself.
+ *
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_queue_user_message(
+    entropic_handle_t handle, const char* message) {
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!handle) {
+        rc = ENTROPIC_ERROR_INVALID_HANDLE;
+    } else if (!message) {
+        rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+    } else if (!handle->engine || !handle->engine->is_running()) {
+        rc = ENTROPIC_ERROR_INVALID_STATE;
+    } else if (!handle->engine->queue_user_message(message)) {
+        rc = ENTROPIC_ERROR_QUEUE_FULL;
+    }
+    return rc;
+}
+
+/**
+ * @brief Snapshot the mid-gen queue depth.
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_user_message_queue_depth(
+    entropic_handle_t handle, size_t* count) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!count) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    *count = handle->engine
+        ? handle->engine->user_message_queue_depth() : 0;
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Drop all queued mid-gen user messages.
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_clear_user_message_queue(
+    entropic_handle_t handle) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->engine) {
+        handle->engine->clear_user_message_queue();
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register the queue-consumption observer.
+ *
+ * Stores on the handle so pre-configure registration is preserved,
+ * then forwards to the engine if it exists. The engine member is the
+ * source of truth at fire time — set_callbacks() shuffles in the
+ * streaming path do not touch this slot.
+ *
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_set_queue_observer(
+    entropic_handle_t handle,
+    void (*observer)(const char*, size_t, void*),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->queue_observer = observer;
+    handle->queue_observer_data = user_data;
+    if (handle->engine) {
+        handle->engine->set_queue_observer(observer, user_data);
+    }
     return ENTROPIC_OK;
 }
 

@@ -97,18 +97,57 @@ Phi-3/4, DeepSeek, Granite, Command-R) deferred to 2.3.x.
 - Python wrapper: `pip install entropic-engine==2.1.9` then
   `entropic install-engine`
 
+## Empirical validation (v2.1.9 model-test closure)
+
+All 35 model tests pass (30 pre-existing + 5 new v2.1.9 family
+tests), validated end-to-end against actual GGUFs on GPU:
+
+- `qwen3_6_a3b` loaded; **Qwen 3.6 emits qwen3_coder XML** —
+  `<tool_call><function=fs.read><parameter=path>...</parameter>
+  </function></tool_call>`. `Qwen36Adapter` parsed it cleanly.
+- `gemma4_e2b`, `gemma4_e4b`, `gemma4_a4b` all loaded; **Gemma 4
+  emits tagged JSON tool calls** —
+  `<tool_call>{"name":"fs.read","arguments":{...}}</tool_call>`.
+  The permissive `Gemma4Adapter::parse_tool_calls` handles it via
+  base-class `parse_tagged_tool_calls`. The "open question" flagged
+  in `gemma4_adapter.h` is resolved: tagged JSON.
+- `nemotron3_nano_4b` loaded (hybrid Mamba via `nemotron_h` arch);
+  emits `<think>...</think>` reasoning then a qwen3_coder XML call.
+  `Nemotron3Adapter` + base-class think-block stripping work as
+  designed.
+
+## Build / infrastructure changes bundled with v2.1.9
+
+- **`extern/llama.cpp` bumped** from `7f2cbd9a4` (Mar 19) to
+  `253ba110b` (May 14, 732 commits) — adds `LLM_ARCH_GEMMA4` which
+  was required to load Gemma 4 GGUFs (arch tag `'gemma4'`). All 30
+  pre-existing model tests still pass against the new pin.
+- **Root `CMakeLists.txt`** now pre-defaults `CMAKE_CUDA_ARCHITECTURES`
+  to `native` before `enable_language(CUDA)`. Previously CMake's
+  CUDA module assigned `sm_52` (lowest supported for CUDA 12) when
+  the variable wasn't set, and llama.cpp's own native-detection
+  skipped its path because the value was already defined. After the
+  llama.cpp bump, the new MoE-GEMV kernel could not execute on
+  `sm_52` binary against `sm_120` (Blackwell) hardware. Release
+  builds (`tasks.py::_build_and_stage`) still override with the
+  comprehensive multi-arch list — only the dev/full preset path
+  inherits the new `native` default.
+- **`inv test --cpu` hardening** — the cpu-only ctest lane now
+  passes `-LE model` so a stale model-test registration in
+  `build/dev` (e.g., left over from a `--debug` cmake reconfigure)
+  can't cause pre-commit to load a real GGUF on the CPU lane and
+  hang.
+
 ## Known limitations
-- **Gemma 4 native tool-call format is not authoritatively
-  documented yet.** `Gemma4Adapter` ships with a permissive
-  multi-format parser (tagged JSON, bare JSON) pending empirical
-  refinement at the v2.1.9 model-test phase. When the actual
-  format is observed, a follow-up patch will tighten the parser
-  and bump `Gemma4Adapter::parse_tool_calls` from @version 2.1.9.
+
 - **Adapter coverage** for the remaining gh#17 families (Llama 3.x,
   Gemma 2 / 3, Mistral / Mixtral, Phi-3 / Phi-4, DeepSeek,
   Granite, Command-R) is deferred to 2.3.x per the gh#17 triage —
   v2.1.9 is the first ratchet, not the close-out.
-- **Validation criteria #3 and #6** (fetch-resolution + model
-  tests run cleanly) are developer-run and will be validated by
-  the user with actual `entropic download <key>` followed by
-  `ctest -L model -R v219`.
+- **Gemma 4 A4B requires 24+ GB VRAM for full-context inference.**
+  Its KV cache is fundamentally larger per token than Qwen 3.6 A3B
+  (8 KV heads × 512 head_dim vs 2 × 256), so the same nominal MoE
+  GGUF size hides a ~3× memory profile difference. The v2.1.9
+  model-test harness overrides `tier.context_length = 4096` so the
+  smoke + tool-call fixtures fit on a 16 GB dev GPU; production
+  deployments load the full context via config.

@@ -356,6 +356,29 @@ static void rewire_state_observer(entropic_handle_t h) {
 }
 
 /**
+ * @brief Propagate pre-configure critique callbacks to a newly-
+ *        constructed ConstitutionalValidator (gh#50, v2.1.12).
+ *
+ * Same pattern as rewire_state_observer: the handle owns the
+ * authoritative slot; configure_common reconstructs the validator
+ * each call, so the rewire helper re-applies the consumer's
+ * registered callbacks after every (re)construction.
+ *
+ * @param h Engine handle with validator just constructed (or NULL).
+ * @utility
+ * @version 2.1.12
+ */
+static void rewire_critique_callbacks(entropic_handle_t h) {
+    if ((h->critique_start_cb != nullptr || h->critique_end_cb != nullptr)
+            && h->validator) {
+        h->validator->set_critique_callbacks(
+            h->critique_start_cb,
+            h->critique_end_cb,
+            h->critique_cb_data);
+    }
+}
+
+/**
  * @brief Re-bind every pre-configure observer to the new engine.
  *
  * Aggregates the three rewire helpers so configure_common stays
@@ -363,11 +386,12 @@ static void rewire_state_observer(entropic_handle_t h) {
  *
  * @param h Engine handle with engine just constructed.
  * @utility
- * @version 2.1.10
+ * @version 2.1.12
  */
 static void rewire_observers(entropic_handle_t h) {
     rewire_stream_observer(h);
     rewire_queue_observer(h);
+    rewire_critique_callbacks(h);
     rewire_state_observer(h);
 }
 
@@ -438,6 +462,28 @@ static bool si_create_delegation(
         target_tier ? target_tier : "",
         task ? task : "",
         max_turns, delegation_id, child_conversation_id);
+}
+
+/**
+ * @brief StorageInterface bridge: create_conversation trampoline.
+ *
+ * Forwards `AgentEngine::run`'s root-conversation creation to the
+ * `SqliteStorageBackend`. Pre-v2.1.12 (gh#48) the interface had no
+ * `create_conversation` callback, so the root conversation row was
+ * never inserted and every subsequent delegation's FK to
+ * `conversations(id)` failed silently against the empty parent id.
+ *
+ * @callback
+ * @version 2.1.12
+ */
+static bool si_create_conversation(
+        const char* title, std::string& conversation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr) { return false; }
+    conversation_id = sb->create_conversation(
+        title ? title : "session", std::nullopt, std::nullopt);
+    return !conversation_id.empty();
 }
 
 /**
@@ -542,11 +588,12 @@ static bool si_load_delegation_with_messages(
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
  * @internal
- * @version 2.1.6
+ * @version 2.1.12
  */
 static entropic::StorageInterface build_storage_iface(
         entropic::SqliteStorageBackend* sb) {
     entropic::StorageInterface si{};
+    si.create_conversation = si_create_conversation;
     si.create_delegation = si_create_delegation;
     si.complete_delegation = si_complete_delegation;
     si.save_conversation = si_save_conversation;
@@ -1901,6 +1948,40 @@ entropic_error_t entropic_set_state_observer(
         // wiring there silently failed for streaming runs (the
         // exact bridge use case this API was designed for).
         handle->engine->set_state_observer(observer, user_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register critique start/end callbacks on the handle
+ *        (gh#50, v2.1.12).
+ *
+ * Saves the callback pair on the handle (the authoritative slot)
+ * and re-applies to the current ConstitutionalValidator if one is
+ * already constructed. Subsequent `entropic_configure*` calls
+ * rebuild the validator; the `rewire_critique_callbacks` helper
+ * re-applies this slot from the handle automatically.
+ *
+ * @param handle Engine handle.
+ * @param start_cb Pre-critique callback (NULL to disable).
+ * @param end_cb Post-critique callback (NULL to disable).
+ * @param user_data Forwarded to both callbacks.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.12
+ */
+entropic_error_t entropic_set_critique_callbacks(
+    entropic_handle_t handle,
+    void (*start_cb)(void* user_data),
+    void (*end_cb)(void* user_data),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->critique_start_cb = start_cb;
+    handle->critique_end_cb = end_cb;
+    handle->critique_cb_data = user_data;
+    if (handle->validator) {
+        handle->validator->set_critique_callbacks(
+            start_cb, end_cb, user_data);
     }
     return ENTROPIC_OK;
 }

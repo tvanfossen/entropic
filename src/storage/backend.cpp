@@ -371,6 +371,79 @@ bool SqliteStorageBackend::search_conversations(
 // ── Delegation storage ────────────────────────────────────
 
 /**
+ * @brief Bind a Delegation record onto the delegations-INSERT
+ *        statement's 11 placeholders.
+ *
+ * Extracted from `create_delegation` (v2.1.12, gh#48) so the public
+ * function fits the knots SLOC ≤ 50 threshold after the defense-in-
+ * depth additions. Bind order matches the INSERT column order.
+ *
+ * @param s Prepared statement.
+ * @param rec Delegation record (read-only).
+ * @internal
+ * @version 2.1.12
+ */
+static void bind_delegation_insert(sqlite3_stmt* s,
+                                   const DelegationRecord& rec) {
+    sqlite3_bind_text(s, 1, rec.id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, rec.parent_conversation_id.c_str(),
+                      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 3, rec.child_conversation_id.c_str(),
+                      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 4, rec.delegating_tier.c_str(),
+                      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 5, rec.target_tier.c_str(),
+                      -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 6, rec.task.c_str(), -1, SQLITE_TRANSIENT);
+    if (rec.max_turns) {
+        sqlite3_bind_int(s, 7, *rec.max_turns);
+    } else {
+        sqlite3_bind_null(s, 7);
+    }
+    sqlite3_bind_text(s, 8, rec.status.c_str(), -1, SQLITE_TRANSIENT);
+    bind_opt_text(s, 9, rec.result_summary);
+    sqlite3_bind_text(s, 10, rec.created_at.c_str(),
+                      -1, SQLITE_TRANSIENT);
+    bind_opt_text(s, 11, rec.completed_at);
+}
+
+/**
+ * @brief Reject an empty parent_conversation_id with a clear error
+ *        and reset the out params (gh#48 defense-in-depth).
+ *
+ * Pre-v2.1.12 an empty parent slipped through to the FK-bound INSERT
+ * and failed silently against `conversations(id)`. The engine
+ * populates the root conversation at run() init; this guards
+ * against any caller bypassing that path.
+ *
+ * @param parent_conversation_id Parent ID (must be non-empty).
+ * @param delegating_tier Diagnostic context.
+ * @param target_tier Diagnostic context.
+ * @param[out] delegation_id Cleared on rejection.
+ * @param[out] child_conversation_id Cleared on rejection.
+ * @return true if the parent is valid; false (and out params cleared)
+ *         if empty.
+ * @internal
+ * @version 2.1.12
+ */
+static bool guard_parent_conversation(
+    const std::string& parent_conversation_id,
+    const std::string& delegating_tier,
+    const std::string& target_tier,
+    std::string& delegation_id,
+    std::string& child_conversation_id) {
+    if (!parent_conversation_id.empty()) { return true; }
+    logger->error("create_delegation refused: parent_conversation_id "
+                  "is empty (delegating_tier={}, target_tier={}). "
+                  "Root conversation must be created before "
+                  "delegating (gh#48).",
+                  delegating_tier, target_tier);
+    delegation_id.clear();
+    child_conversation_id.clear();
+    return false;
+}
+
+/**
  * @brief Create a delegation with a child conversation.
  * @param parent_conversation_id Parent conversation.
  * @param delegating_tier Source tier.
@@ -381,7 +454,7 @@ bool SqliteStorageBackend::search_conversations(
  * @param[out] child_conversation_id Created child conversation ID.
  * @return true on success.
  * @internal
- * @version 2.0.0
+ * @version 2.1.12
  */
 bool SqliteStorageBackend::create_delegation(
         const std::string& parent_conversation_id,
@@ -391,7 +464,13 @@ bool SqliteStorageBackend::create_delegation(
         int max_turns,
         std::string& delegation_id,
         std::string& child_conversation_id) {
-    // Create child conversation
+    if (!guard_parent_conversation(parent_conversation_id,
+                                   delegating_tier, target_tier,
+                                   delegation_id,
+                                   child_conversation_id)) {
+        return false;
+    }
+
     auto child_title = "Delegation: " + target_tier + " — " +
                        task.substr(0, 60);
     child_conversation_id = create_conversation(
@@ -409,27 +488,24 @@ bool SqliteStorageBackend::create_delegation(
         "delegating_tier, target_tier, task, max_turns, "
         "status, result_summary, created_at, completed_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [&](sqlite3_stmt* s) {
-            sqlite3_bind_text(s, 1, rec.id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 2, rec.parent_conversation_id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 3, rec.child_conversation_id.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 4, rec.delegating_tier.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 5, rec.target_tier.c_str(), -1, SQLITE_TRANSIENT);
-            sqlite3_bind_text(s, 6, rec.task.c_str(), -1, SQLITE_TRANSIENT);
-            if (rec.max_turns) {
-                sqlite3_bind_int(s, 7, *rec.max_turns);
-            } else {
-                sqlite3_bind_null(s, 7);
-            }
-            sqlite3_bind_text(s, 8, rec.status.c_str(), -1, SQLITE_TRANSIENT);
-            bind_opt_text(s, 9, rec.result_summary);
-            sqlite3_bind_text(s, 10, rec.created_at.c_str(), -1, SQLITE_TRANSIENT);
-            bind_opt_text(s, 11, rec.completed_at);
-        });
+        [&](sqlite3_stmt* s) { bind_delegation_insert(s, rec); });
 
     delegation_id = rec.id;
-    logger->info("Created delegation {}: {} -> {}",
-                 rec.id, delegating_tier, target_tier);
+    // gh#48 defense-in-depth (v2.1.12): log success only when the
+    // INSERT actually succeeded. Pre-v2.1.12 this fired
+    // unconditionally and masked the FK failure logged one line up
+    // by `database.cpp`'s `execute()` from anyone scanning for
+    // "Created delegation" in the session log.
+    if (ok) {
+        logger->info("Created delegation {}: {} -> {}",
+                     rec.id, delegating_tier, target_tier);
+    } else {
+        logger->error("Failed to insert delegation {} ({} -> {}): "
+                      "parent_conversation_id='{}' — check the SQL "
+                      "execute error logged immediately above",
+                      rec.id, delegating_tier, target_tier,
+                      parent_conversation_id);
+    }
     return ok;
 }
 

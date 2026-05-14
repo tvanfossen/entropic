@@ -108,3 +108,4 @@ api/
 
 # Release tarballs
 dist/
+.claude/scheduled_tasks.lock

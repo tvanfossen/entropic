@@ -217,6 +217,30 @@ void ConstitutionalValidator::set_attempt_boundary_cb(
 }
 
 /**
+ * @brief Register critique start/end callbacks (gh#50, v2.1.12).
+ *
+ * Stored under critique_cbs_mutex_ so a consumer reassigning the
+ * slot cannot race with the firing site in run_critique(). Either
+ * callback pointer may be nullptr independently — only the non-null
+ * ones fire.
+ *
+ * @param start_cb Pre-generate hook.
+ * @param end_cb Post-generate hook.
+ * @param user_data Forwarded to both.
+ * @internal
+ * @version 2.1.12
+ */
+void ConstitutionalValidator::set_critique_callbacks(
+    void (*start_cb)(void*),
+    void (*end_cb)(void*),
+    void* user_data) {
+    std::lock_guard<std::mutex> lock(critique_cbs_mutex_);
+    critique_cbs_.start_cb = start_cb;
+    critique_cbs_.end_cb = end_cb;
+    critique_cbs_.user_data = user_data;
+}
+
+/**
  * @brief Set per-identity validation override.
  * @param identity_name Identity name.
  * @param enabled Whether validation is enabled.
@@ -634,7 +658,7 @@ std::string ConstitutionalValidator::attempt_revision(
  * @param content Text to critique.
  * @return Parsed CritiqueResult.
  * @internal
- * @version 2.0.0
+ * @version 2.1.12
  */
 CritiqueResult ConstitutionalValidator::run_critique(
     const std::string& content) {
@@ -648,9 +672,23 @@ CritiqueResult ConstitutionalValidator::run_critique(
     auto params = build_critique_params();
     char* result_json = nullptr;
 
+    // gh#50 (v2.1.12): snapshot the callback pair under the mutex
+    // so a consumer reassigning the slot mid-critique cannot tear
+    // {start_cb, end_cb, user_data}. Invoke OUTSIDE the lock so a
+    // pathological consumer-side handler that re-enters
+    // set_critique_callbacks doesn't self-deadlock.
+    CritiqueCallbacks cbs;
+    {
+        std::lock_guard<std::mutex> lock(critique_cbs_mutex_);
+        cbs = critique_cbs_;
+    }
+    if (cbs.start_cb != nullptr) { cbs.start_cb(cbs.user_data); }
+
     int rc = inference_->generate(
         messages.c_str(), params.c_str(),
         &result_json, inference_->backend_data);
+
+    if (cbs.end_cb != nullptr) { cbs.end_cb(cbs.user_data); }
 
     if (rc != 0 || result_json == nullptr) {
         logger->warn("Constitutional validation: critique generation "

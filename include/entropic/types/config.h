@@ -580,6 +580,52 @@ struct ConstitutionalValidationConfig {
 };
 
 /**
+ * @brief Speculative decoding configuration (v2.1.11, gh#36).
+ *
+ * Off by default. When `enabled` is true and a `draft_model` is set,
+ * the engine loads the draft into the SecondaryModelLoader's `"draft"`
+ * slot at init and routes main-tier generation through
+ * `LlamaCppBackend::do_generate_speculative`.
+ *
+ * Placement axis: `draft_n_gpu_layers` selects CPU (`0`), full GPU
+ * (`-1`), or hybrid partial offload (`>0` and `< model_layers`). The
+ * default of `0` puts the draft on CPU so the GPU stays saturated on
+ * the verifier — minimal VRAM cost.
+ *
+ * @version 2.1.11
+ */
+struct SpeculativeConfig {
+    bool enabled = false;                  ///< Master switch (off by default)
+    /**
+     * @brief Resolved draft-model path (empty when no draft is set).
+     *
+     * Populated at config-parse time by the loader: the YAML key is
+     * `inference.speculative.draft_model` and accepts either a
+     * bundled-model registry key (e.g. `qwen3_5_0_8b`) or a literal
+     * filesystem path. The loader resolves both shapes through
+     * `BundledModels::resolve()` — by the time orchestrator init runs,
+     * this field holds the final on-disk path.
+     */
+    std::filesystem::path draft_path;
+    int n_draft = 16;                      ///< Window size (proposed tokens)
+    int draft_n_gpu_layers = 0;            ///< 0 = CPU, -1 = full GPU
+    int draft_cpu_threads = 4;             ///< CPU threads for draft decode
+};
+
+/**
+ * @brief Inference-side configuration knobs (v2.1.11).
+ *
+ * Sub-tree mirroring the proposal's `inference.*` YAML namespace.
+ * Currently holds speculative decoding only; future inference-level
+ * settings land here rather than spreading across ParsedConfig.
+ *
+ * @version 2.1.11
+ */
+struct InferenceConfig {
+    SpeculativeConfig speculative;         ///< Speculative decoding (gh#36)
+};
+
+/**
  * @brief Full parsed configuration.
  *
  * Aggregates all config sections. C++ equivalent of Python's
@@ -623,6 +669,10 @@ struct ParsedConfig {
 
     /// Constitutional validation pipeline settings.
     ConstitutionalValidationConfig constitutional_validation;
+
+    /// Inference-side knobs (currently speculative decoding only).
+    /// @version 2.1.11
+    InferenceConfig inference;
 };
 
 /**

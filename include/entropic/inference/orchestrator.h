@@ -26,6 +26,7 @@
 #include <entropic/inference/adapter_manager.h>
 #include <entropic/inference/grammar_registry.h>
 #include <entropic/inference/profile_registry.h>
+#include <entropic/inference/secondary_model_loader.h>
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
@@ -38,6 +39,7 @@
 #include <vector>
 
 struct llama_context;  // Forward declaration for adapter management
+struct llama_model;    // Forward declaration for speculative compat (v2.1.11)
 
 namespace entropic {
 
@@ -229,6 +231,34 @@ public:
     bool has_vision_capable_tier() const;
 
     /**
+     * @brief Result of a speculative-decoding compatibility check.
+     *
+     * @version 2.1.11
+     */
+    struct SpeculativeCompatInfo {
+        bool compatible = false;     ///< true when speculative may proceed
+        std::string diagnostic;      ///< Reason on failure (empty on ok)
+    };
+
+    /**
+     * @brief Check whether the currently-configured target/draft pair
+     *        is compatible for speculative decoding.
+     *
+     * Reads the active main tier as the target (verifier) and the
+     * `"draft"` role on the `SecondaryModelLoader` as the proposer.
+     * Returns `compatible=false` with a specific diagnostic when:
+     *   - No main tier is loaded (target unavailable).
+     *   - No draft role is loaded (no proposer configured).
+     *   - `entropic::speculative::check_compat` rejects the pairing
+     *     (recurrent target, tokenizer mismatch, etc.).
+     *
+     * @return SpeculativeCompatInfo.
+     * @utility
+     * @version 2.1.11
+     */
+    SpeculativeCompatInfo check_speculative_compat() const;
+
+    /**
      * @brief Pick the canonical vision-capable tier name (gh#41).
      *
      * Returns the first tier (iteration order of the parsed
@@ -255,8 +285,18 @@ private:
     /* ── Per-tier adapters (one-to-one, identity-specific) ── */
     std::unordered_map<std::string, std::unique_ptr<ChatAdapter>> adapters_;
 
-    /* ── Router (separate small model, always ACTIVE) ────── */
-    std::shared_ptr<InferenceBackend> router_;
+    /* ── Secondary models (router, draft, future thinking) ── */
+    /**
+     * @brief Role-keyed lifecycle for non-primary models.
+     *
+     * Absorbed the legacy `router_` field in v2.1.11 (gh#27). Router
+     * remains accessible via `secondary_loader_.get("router")`; the
+     * speculative draft slot lands alongside it under the `"draft"`
+     * key (v2.1.11, gh#36).
+     *
+     * @version 2.1.11
+     */
+    SecondaryModelLoader secondary_loader_;
 
     /* ── Routing state ───────────────────────────────────── */
     std::unordered_map<std::string, std::string> tier_map_;  ///< digit → tier name
@@ -366,6 +406,23 @@ private:
     void activate_router(const ParsedConfig& config);
 
     /**
+     * @brief Activate the speculative-draft model if configured.
+     *
+     * Loads the draft GGUF (resolved via the bundled-models registry
+     * or as a literal path) into the secondary loader's `"draft"`
+     * role when `config.inference.speculative.enabled` is true and a
+     * `draft_model` value is set. Logs but does NOT fail engine init
+     * if the draft cannot be loaded — speculative is opt-in, so a
+     * misconfigured draft degrades to plain decode rather than
+     * blocking startup.
+     *
+     * @param config Full engine config.
+     * @internal
+     * @version 2.1.11
+     */
+    void activate_draft(const ParsedConfig& config);
+
+    /**
      * @brief Load bundled grammars from data directory at startup.
      * @version 1.9.3
      */
@@ -379,6 +436,19 @@ private:
      */
     void resolve_grammar_key(GenerationParams& params,
                              const std::string& tier_name);
+
+    /**
+     * @brief Resolve speculative target/draft llama_model pointers
+     *        from current orchestrator state.
+     *
+     * @param[out] target_out Active main-tier llama_model, or nullptr.
+     * @param[out] draft_out  Configured draft llama_model, or nullptr.
+     * @return Empty string on success; diagnostic on missing side.
+     * @internal
+     * @version 2.1.11
+     */
+    std::string resolve_speculative_pair(
+        llama_model*& target_out, llama_model*& draft_out) const;
 };
 
 } // namespace entropic

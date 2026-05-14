@@ -1,3 +1,139 @@
+# entropic v2.1.11
+
+Patch release introducing **SecondaryModelLoader (gh#27)** and the
+**speculative-decoding infrastructure (gh#36)**. Closes out the four-
+patch sequence (v2.1.8 multimodal → v2.1.9 registry → v2.1.10 mid-gen
+queue → v2.1.11 speculative) bundled to the v2.2.0 milestone tag.
+
+The speculative-decoding *kernel itself* is staged for a follow-up
+developer session with GPU validation — see "Speculative kernel
+deferral" below. All v2.1.11-listed infrastructure (compat check,
+draft slot, config schema, C ABI, recurrent gate, orchestrator
+routing) is in place and consumer-reachable.
+
+## Highlights
+
+- **gh#27 (MEDIUM):** SecondaryModelLoader — unified role-keyed
+  lifecycle for non-primary inference backends.
+  - Replaces the per-role `router_` shared_ptr on `ModelOrchestrator`
+    with composition over a slot map keyed by role name. Today's
+    roles: `"router"` (digit classifier) and `"draft"` (speculative
+    proposer); thinking-model (gh#25) lands the same way.
+  - API: `ensure_loaded(role, ModelConfig)`, `get(role)`,
+    `get_shared(role)`, `release_role(role)`, `is_loaded(role)`,
+    `loaded_roles()`, `clear_all_prompt_caches()`, `shutdown()`.
+  - No observable change for router consumers — existing classify
+    path, diagnostics, and cache management behave identically.
+  - Single-class internal helper (no interface layer), following the
+    AdapterManager (#29) and GrammarRegistry (#31) precedent.
+
+- **gh#36 (LARGE — infrastructure landed, kernel staged):**
+  Speculative decoding scaffolding.
+  - New config schema (off by default, additive):
+    ```yaml
+    inference:
+      speculative:
+        enabled: false
+        draft_model: <bundled key or path>
+        n_draft: 16
+        draft_n_gpu_layers: 0
+        draft_cpu_threads: 4
+    ```
+    `draft_model` accepts a bundled-registry key (e.g.
+    `qwen3_5_0_8b`) or a literal path; resolution happens at
+    config-parse time via `BundledModels::resolve()`.
+  - New helper `entropic::speculative::check_compat(target, draft)`
+    mirrors the file-private `common_speculative_are_compatible`
+    rules from `extern/llama.cpp/common/speculative.cpp` plus an
+    explicit recurrent-architecture gate (target must NOT be
+    Mamba/RWKV/hybrid — upstream's speculative layer does not
+    self-disable at pin `253ba110b`).
+  - New C ABI: `entropic_speculative_compat(handle, *compatible,
+    **diagnostic)` — metadata-only query, no model state allocation.
+    Returns a heap-allocated diagnostic on rejection (caller frees
+    with `entropic_free_string`).
+  - New `BackendCapability::SPECULATIVE_DECODING` reporting
+    (existing enum value, wired with a dynamic check).
+  - New backend virtual `do_generate_speculative` + public
+    `generate_speculative` wrapper. Default impl returns
+    `ENTROPIC_ERROR_NOT_SUPPORTED`.
+  - Orchestrator routing: when `inference.speculative.enabled` is
+    true AND the configured pair is compatible, attempts
+    `generate_speculative`; on `NOT_SUPPORTED`, logs and falls back
+    to plain streaming.
+
+## Speculative kernel deferral (load-bearing context)
+
+The v2.1.11 proposal calls out "output distribution bit-identical to
+plain decode on rejection cases" as the speculative correctness
+contract. Validating that contract requires GPU runs against real
+model pairs (the proposal's model-test gate at ≥1.8× speedup on >500
+token generations).
+
+Two additional implementation challenges surfaced during the v2.1.11
+verification gates that the proposal had not anticipated:
+
+1. **API shift at the v2.1.11 llama.cpp pin.** When v2.1.9 bumped
+   the submodule from `7f2cbd9a4` → `253ba110b`,
+   `common_speculative_is_compat` moved from a public symbol to a
+   file-private `static common_speculative_are_compatible` inside
+   `common/speculative.cpp` — the new shape *throws* from the
+   draft-simple ctor on incompatible vocabs rather than returning a
+   boolean. The proposal's pseudocode against the older surface no
+   longer compiles. **Action:** mirrored the upstream rules inside
+   entropic (`speculative_compat.cpp`) — metadata-only, unit-
+   testable, plus an entropic-side recurrent-target gate that
+   upstream does not provide.
+2. **Sampler-type bridge.** The new
+   `common_sampler_sample_and_accept_n` operates on
+   `common_sampler*`; entropic's existing decode path uses
+   `llama_sampler*` (lower-level). The kernel needs either a sampler
+   bridge or a reimplementation of accept-N against
+   `llama_sampler_*` primitives.
+
+The infrastructure landed here is independently useful even before
+the kernel:
+
+- **`entropic_speculative_compat`** is callable today — consumers
+  validate a planned pair (Qwen3.5-Small + Qwen3.6-A3B, etc.)
+  without booting the kernel.
+- **SecondaryModelLoader** is consumer-reachable for the router slot
+  and ready to absorb the thinking-model slot (gh#25).
+- **Off-by-default** means existing deployments see zero behavior
+  change.
+
+The next session takes the kernel from `NOT_SUPPORTED` stub to
+working `common_speculative_*`-driven generation against the actual
+v2.1.11 pin, with the model-test gate as the binding correctness
+check.
+
+## C ABI additions (strictly additive)
+
+- `entropic_speculative_compat(handle, int* compatible, char** diagnostic)`
+
+## Internal API additions
+
+- `entropic::SecondaryModelLoader`
+- `entropic::speculative::check_compat(...)` + `CompatResult`
+- `entropic::InferenceBackend::do_generate_speculative(...)`
+- `entropic::InferenceBackend::generate_speculative(...)` (public wrapper)
+- `entropic::ModelOrchestrator::check_speculative_compat()`
+- `entropic::ModelOrchestrator::activate_draft(...)`
+
+## New tests
+
+- `entropic-speculative-compat-tests` (11 cases, 23 assertions) —
+  mock-vocab coverage of every compat rule.
+- `entropic-secondary-loader-tests` (6 cases, 14 assertions) —
+  loader bookkeeping invariants.
+
+## Documentation updates
+
+- `docs/architecture-cpp.md` decision log entries #38 (speculative
+  decoupled from router), #39 (entropic-side recurrent gate vs
+  upstream non-self-disable), #40 (compat check is metadata-only +
+  mirrors upstream `static common_speculative_are_compatible`).
+
 # entropic v2.1.10
 
 Patch release adding a mid-generation user-message queue — a UX

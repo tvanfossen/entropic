@@ -392,14 +392,45 @@ static void parse_constitutional_validation_config(
 }
 
 /**
+ * @brief Parse `inference.speculative` YAML node into SpeculativeConfig.
+ *
+ * Off-by-default semantics: missing keys leave the struct defaults
+ * intact (`enabled=false`, `n_draft=16`, `draft_n_gpu_layers=0`,
+ * `draft_cpu_threads=4`). `draft_model` is taken verbatim — bundled-
+ * key vs. path resolution happens at engine init time, mirroring the
+ * existing tier model resolution path.
+ *
+ * @param node YAML node for `inference.speculative`.
+ * @param[out] config Output speculative config.
+ * @internal
+ * @version 2.1.11
+ */
+static void parse_speculative_config(
+    ryml::ConstNodeRef node,
+    const BundledModels& registry,
+    SpeculativeConfig& config)
+{
+    extract(node, "enabled", config.enabled);
+    std::string draft_str;
+    if (extract(node, "draft_model", draft_str)) {
+        config.draft_path = registry.resolve(draft_str);
+    }
+    extract(node, "n_draft", config.n_draft);
+    extract(node, "draft_n_gpu_layers", config.draft_n_gpu_layers);
+    extract(node, "draft_cpu_threads", config.draft_cpu_threads);
+}
+
+/**
  * @brief Parse optional config sections that don't return errors.
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 2.0.6
+ * @version 2.1.11
  */
 static void parse_optional_sections(
-    ryml::ConstNodeRef root, ParsedConfig& config)
+    ryml::ConstNodeRef root,
+    const BundledModels& registry,
+    ParsedConfig& config)
 {
     if (root.has_child("generation"))
         parse_generation_config(root["generation"], config.generation);
@@ -414,6 +445,10 @@ static void parse_optional_sections(
     if (root.has_child("inference") && root["inference"].has_child("prompt_cache"))
         parse_prompt_cache_config(root["inference"]["prompt_cache"],
                                   config.prompt_cache);
+    if (root.has_child("inference") && root["inference"].has_child("speculative"))
+        parse_speculative_config(root["inference"]["speculative"],
+                                 registry,
+                                 config.inference.speculative);
     if (root.has_child("constitutional_validation"))
         parse_constitutional_validation_config(
             root["constitutional_validation"],
@@ -434,12 +469,17 @@ static void parse_optional_sections(
 
 /**
  * @brief Parse a config YAML file and overlay onto existing config.
+ *
+ * Passes the bundled-models registry through to optional-section
+ * parsers so `inference.speculative.draft_model` can be resolved
+ * (bundled key or path) at parse time. (v2.1.11)
+ *
  * @param path Path to YAML file.
  * @param registry Bundled models for path resolution.
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::string parse_config_file(
     const std::filesystem::path& path,
@@ -472,7 +512,7 @@ std::string parse_config_file(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, config);
+        parse_optional_sections(root, registry, config);
     }
 
     return err;
@@ -927,12 +967,16 @@ std::string load_layered(
 
 /**
  * @brief Parse a config string (YAML or JSON) and overlay onto config.
+ *
+ * Threads the bundled-models registry through to the optional-section
+ * parser for speculative draft_model resolution (v2.1.11).
+ *
  * @param content Raw config string.
  * @param registry Bundled models for path resolution.
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 static std::string parse_config_string(
     const std::string& content,
@@ -959,7 +1003,7 @@ static std::string parse_config_string(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, config);
+        parse_optional_sections(root, registry, config);
     }
     return err;
 }

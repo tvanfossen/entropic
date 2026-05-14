@@ -137,6 +137,28 @@ public:
         std::atomic<bool>& cancel);
 
     /**
+     * @brief Generate via the speculative-decoding kernel (v2.1.11).
+     *
+     * Public wrapper around `do_generate_speculative`. Validates
+     * ACTIVE state, then delegates to the subclass override. Backends
+     * that do not implement the kernel return
+     * `ENTROPIC_ERROR_NOT_SUPPORTED` — the orchestrator falls back to
+     * `generate_streaming` in that case.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Per-accepted-token callback.
+     * @param cancel Cancellation flag.
+     * @return GenerationResult.
+     * @version 2.1.11
+     */
+    GenerationResult generate_speculative(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel);
+
+    /**
      * @brief Raw text completion without chat template.
      * @param prompt Raw prompt string (no chat formatting).
      * @param params Generation parameters.
@@ -421,6 +443,35 @@ protected:
         const GenerationParams& params,
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel) = 0;
+
+    /**
+     * @brief Subclass speculative-decoding streaming generation.
+     *
+     * Same contract as `do_generate_streaming` (callback fires once
+     * per *accepted* token, cancel flag honored between accept rounds)
+     * but the backend is expected to drive a draft model through
+     * `common_speculative_*` (or equivalent) to propose tokens, then
+     * verify them in batch against the target. Output distribution
+     * MUST be bit-identical to plain decode on rejection cases
+     * (correctness contract from the v2.1.11 proposal).
+     *
+     * Default returns a result with `ENTROPIC_ERROR_NOT_SUPPORTED` —
+     * backends that don't implement speculative fall through to the
+     * standard streaming path via the orchestrator.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param on_token Callback for each accepted token.
+     * @param cancel Atomic cancel flag.
+     * @return Generation result. On NOT_SUPPORTED, caller should fall
+     *         back to do_generate_streaming.
+     * @version 2.1.11
+     */
+    virtual GenerationResult do_generate_speculative(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel);
 
     /**
      * @brief Subclass raw completion. Called only when ACTIVE.

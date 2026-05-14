@@ -230,6 +230,74 @@ GenerationResult InferenceBackend::generate_streaming(
 }
 
 /**
+ * @brief Public entry point for speculative-decoding streaming.
+ *
+ * Mirrors generate_streaming: validates ACTIVE state then delegates
+ * to the subclass override. Stamps generation_time_ms. Returns the
+ * subclass's NOT_SUPPORTED on stub backends — caller falls back to
+ * generate_streaming.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @param on_token Per-accepted-token callback.
+ * @param cancel Cancellation flag.
+ * @return GenerationResult.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult InferenceBackend::generate_speculative(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>& cancel)
+{
+    if (!is_active()) {
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_INVALID_STATE;
+        err.error_message =
+            "generate_speculative() requires ACTIVE state";
+        err.finish_reason = "error";
+        logger->error("{}", err.error_message);
+        return err;
+    }
+    auto start = entropic::log::now();
+    auto result = do_generate_speculative(
+        messages, params, std::move(on_token), cancel);
+    result.generation_time_ms =
+        entropic::log::elapsed_ms(start, entropic::log::now());
+    return result;
+}
+
+/**
+ * @brief Default implementation of speculative streaming generation.
+ *
+ * Returns ENTROPIC_ERROR_NOT_SUPPORTED so the orchestrator falls back
+ * to plain `do_generate_streaming`. Backends that implement the
+ * speculative kernel override this method. (v2.1.11, gh#36)
+ *
+ * @param messages Unused in default impl.
+ * @param params Unused in default impl.
+ * @param on_token Unused in default impl.
+ * @param cancel Unused in default impl.
+ * @return GenerationResult with NOT_SUPPORTED error code.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult InferenceBackend::do_generate_speculative(
+    const std::vector<Message>& /*messages*/,
+    const GenerationParams& /*params*/,
+    std::function<void(std::string_view)> /*on_token*/,
+    std::atomic<bool>& /*cancel*/)
+{
+    GenerationResult result;
+    result.error_code = ENTROPIC_ERROR_NOT_SUPPORTED;
+    result.error_message =
+        "speculative decoding not implemented for this backend";
+    result.finish_reason = "error";
+    return result;
+}
+
+/**
  * @brief Raw text completion. Requires ACTIVE state.
  * @param prompt Raw prompt string.
  * @param params Generation parameters.

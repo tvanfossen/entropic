@@ -28,7 +28,7 @@ qwen3_6_a3b:
   mmproj_key: qwen3_6_a3b_mmproj
 
 qwen3_6_a3b_mmproj:
-  name: mmproj-F16
+  name: Qwen3.6-35B-A3B-mmproj-F16
   url: https://example.com/qwen3_6_a3b_mmproj.gguf
   size_gb: 0.9
   description: Vision projector fixture for qwen3_6_a3b

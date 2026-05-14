@@ -131,10 +131,15 @@ qwen3_6_a3b:
   mmproj_key: qwen3_6_a3b_mmproj
 
 qwen3_6_a3b_mmproj:
-  name: mmproj-F16
+  name: Qwen3.6-35B-A3B-mmproj-F16
   url: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
   size_gb: 0.9
   description: Vision projector paired with qwen3_6_a3b (F16)
+  # Unique `name` avoids the v2.1.8 `primary_mmproj` filename collision —
+  # mmproj weights are model-specific, so two mmprojs must resolve to
+  # distinct files on disk. The URL still points at the upstream
+  # `mmproj-F16.gguf` filename inside the Qwen3.6 repo; only the local
+  # filename is namespaced.
 
 # ── Gemma 4 (Gemma Terms of Use — review before redistributing) ─
 # Three variants:
@@ -145,15 +150,20 @@ qwen3_6_a3b_mmproj:
 # Gemma4Adapter for the parsing strategy decided at implementation time.
 
 gemma4_a4b:
-  name: gemma-4-26B-A4B-it-Q4_K_M
-  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-Q4_K_M.gguf
-  size_gb: 16.2
+  name: gemma-4-26B-A4B-it-UD-IQ4_XS
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf
+  size_gb: 13.6
   adapter: gemma4
-  description: Gemma 4 26B-A4B instruct — primary-class alternative
+  description: Gemma 4 26B-A4B instruct — primary-class alternative (validation opposition to Qwen primary)
   # License: Gemma Terms of Use (https://ai.google.dev/gemma/terms).
   # Restrictive vs Apache-2.0; redistributors should review.
-  # Quant rationale: Q4_K_M — 26B dense at Q8 (~28 GB) does not fit
-  # on a single 24 GB GPU; Q4_K_M is the standard quality/size pick.
+  # Quant rationale: UD-IQ4_XS (Unsloth Dynamic, ~13.6 GB) — the
+  # primary-alternate role exists for validation contrast against
+  # the Qwen primary (different family, different post-training).
+  # IQ4_XS gives the best quality-per-byte at the A4B size while
+  # leaving VRAM headroom matching the Qwen primary's ~13 GB
+  # footprint, so swapping the alternate in/out via tier config
+  # is a like-for-like comparison.
 
 gemma4_e4b:
   name: gemma-4-E4B-it-Q8_0
@@ -180,11 +190,17 @@ gemma4_e2b:
 # handled by ChatAdapter::strip_think_blocks.
 
 nemotron3_nano_4b:
-  name: NVIDIA-Nemotron-3-Nano-4B-Q8_0
-  url: https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF/resolve/main/NVIDIA-Nemotron-3-Nano-4B-Q8_0.gguf
-  size_gb: 4.5
+  name: NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF/resolve/main/NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf
+  size_gb: 3.1
   adapter: nemotron3
   description: Nemotron 3 Nano 4B — hybrid Mamba, reasoning-capable, edge class
   # License: NVIDIA Open Model License
   # (https://developer.download.nvidia.com/licenses/nvidia-open-model-license-agreement-june-2024.pdf).
-  # Review before redistribution. Quant: Q8_0 — 4B fits comfortably.
+  # Review before redistribution.
+  # Quant rationale: UD-Q4_K_XL (Unsloth Dynamic, 3.13 GB) — better
+  # quality-per-byte than bare Q4_K_M on reasoning-heavy small
+  # models, with VRAM headroom for the hybrid-Mamba state cache.
+  # NVFP4 / TurboQuant are not in this GGUF repo and would require
+  # a separate (TensorRT-LLM-class) backend; the GGML path here
+  # uses standard llama.cpp K/UD quants only.

@@ -80,9 +80,11 @@ add_model_test(test-context-bleed         test_delegation_context_bleed.cpp)
 # (Qwen 3.6, Gemma 4, Nemotron 3) and validates the corresponding
 # adapter end-to-end. SKIP cleanly if the GGUF isn't present;
 # developer runs `entropic download <key>` first.
-add_model_test(test-v219-qwen36    test_v219_qwen36_family.cpp)
-add_model_test(test-v219-gemma4    test_v219_gemma4_family.cpp)
-add_model_test(test-v219-nemotron3 test_v219_nemotron3_family.cpp)
+add_model_test(test-v219-qwen36       test_v219_qwen36_family.cpp)
+add_model_test(test-v219-gemma4-e2b   test_v219_gemma4_family.cpp)
+add_model_test(test-v219-gemma4-e4b   test_v219_gemma4_e4b_family.cpp)
+add_model_test(test-v219-gemma4-a4b   test_v219_gemma4_a4b_family.cpp)
+add_model_test(test-v219-nemotron3    test_v219_nemotron3_family.cpp)
 
 # Pass mock server binary path for external MCP test
 if(TARGET mock-mcp-server)

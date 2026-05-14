@@ -439,28 +439,83 @@ std::string ResponseGenerator::handle_pause(
  * @internal
  * @version 1.8.4
  */
+/**
+ * @brief JSON-escape one string into a growing buffer.
+ * @internal
+ * @version 2.1.8
+ */
+static void json_escape_into(const std::string& s, std::string& out) {
+    for (char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:   out += c;      break;
+        }
+    }
+}
+
+/**
+ * @brief Serialize a single multimodal content_parts array (gh#37, v2.1.8).
+ *
+ * Emits `[{"type":"text","text":"..."}, {"type":"image","path":"..."}]`
+ * directly — keeps core free of nlohmann/json (design rule #21).
+ *
+ * @internal
+ * @version 2.1.8
+ */
+static void serialize_content_parts(
+    const std::vector<ContentPart>& parts, std::string& out) {
+    out += '[';
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) { out += ','; }
+        if (parts[i].type == ContentPartType::IMAGE) {
+            out += R"({"type":"image","path":")";
+            json_escape_into(parts[i].image_path, out);
+            out += R"(","url":")";
+            json_escape_into(parts[i].image_url, out);
+            out += R"("})";
+        } else {
+            out += R"({"type":"text","text":")";
+            json_escape_into(parts[i].text, out);
+            out += R"("})";
+        }
+    }
+    out += ']';
+}
+
+/**
+ * @brief Serialize a message list to the engine-canonical JSON wire shape.
+ *
+ * Hand-rolled — core has no nlohmann/json dependency (design rule
+ * #21). For messages with non-empty `content_parts`, emits an
+ * OpenAI-style content array so image parts survive the
+ * engine→backend hop (gh#37, v2.1.8). Otherwise emits a plain
+ * `"content":"..."` string.
+ *
+ * @param messages Message vector to serialize.
+ * @return JSON array string ready for entropic_inference_generate.
+ * @internal
+ * @version 2.1.8
+ */
 std::string ResponseGenerator::serialize_messages(
     const std::vector<Message>& messages) {
-    // Minimal JSON serialization — no nlohmann/json dependency.
     std::string json = "[";
     for (size_t i = 0; i < messages.size(); ++i) {
-        if (i > 0) { json += ","; }
-        json += "{\"role\":\"" + messages[i].role
-              + "\",\"content\":\"";
-        // Escape content for JSON
-        for (char c : messages[i].content) {
-            switch (c) {
-            case '"':  json += "\\\""; break;
-            case '\\': json += "\\\\"; break;
-            case '\n': json += "\\n";  break;
-            case '\r': json += "\\r";  break;
-            case '\t': json += "\\t";  break;
-            default:   json += c;      break;
-            }
+        if (i > 0) { json += ','; }
+        json += "{\"role\":\"" + messages[i].role + "\",\"content\":";
+        if (messages[i].content_parts.empty()) {
+            json += '"';
+            json_escape_into(messages[i].content, json);
+            json += '"';
+        } else {
+            serialize_content_parts(messages[i].content_parts, json);
         }
-        json += "\"}";
+        json += '}';
     }
-    json += "]";
+    json += ']';
     return json;
 }
 

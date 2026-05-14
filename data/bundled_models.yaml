@@ -149,13 +149,17 @@ qwen3_6_a3b_mmproj:
 # Tool-call format uses Gemma's channel-based template; see
 # Gemma4Adapter for the parsing strategy decided at implementation time.
 #
-# Multimodal coverage gap (v2.1.11): Gemma 4 is image-text-to-text
-# upstream, but no `mmproj_key` is configured on any of the three
-# variants below. Image inputs routed to a Gemma 4 tier fall through
-# to text-only via `do_generate`'s image-strip path. Adding the
-# matching `mmproj-F16.gguf` files to the registry is tracked
-# separately — only Qwen3.5 / Qwen3.6 ship with mmproj bundled at
-# this version. Same applies to `nemotron3_nano_4b` below.
+# Multimodal coverage (v2.1.12, gh#51): each variant ships its matching
+# `mmproj-F16.gguf` bundled here. llama.cpp at the current pin
+# (`253ba110b`) has full Gemma 4 projector support:
+#   - `PROJECTOR_TYPE_GEMMA4V` (vision) — clip_graph_gemma4v
+#   - `PROJECTOR_TYPE_GEMMA4A` (audio) — clip_graph_gemma4a +
+#     mtmd_audio_preprocessor_gemma4a
+# Vision flows through the orchestrator's mmproj routing path (v2.1.8
+# gh#41) automatically. Audio inference end-to-end is not wired in
+# entropic at this version — tier `capabilities:` does not yet have an
+# `audio` value (gh#41 only defines `text` / `vision`); follow-up to
+# expose audio as a first-class capability.
 
 gemma4_a4b:
   name: gemma-4-26B-A4B-it-UD-IQ4_XS
@@ -172,6 +176,17 @@ gemma4_a4b:
   # leaving VRAM headroom matching the Qwen primary's ~13 GB
   # footprint, so swapping the alternate in/out via tier config
   # is a like-for-like comparison.
+  # Vision: paired mmproj — see gemma4_a4b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_a4b_mmproj
+
+gemma4_a4b_mmproj:
+  name: gemma-4-26B-A4B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_a4b (F16)
+  # License: Gemma Terms of Use. Unique `name` avoids the
+  # `mmproj-F16.gguf` filename collision pattern documented on
+  # qwen3_6_a3b_mmproj. (v2.1.12, gh#51)
 
 gemma4_e4b:
   name: gemma-4-E4B-it-Q8_0
@@ -180,6 +195,15 @@ gemma4_e4b:
   adapter: gemma4
   description: Gemma 4 E4B instruct — mid-class alternative
   # License: Gemma Terms of Use. Quant: Q8_0.
+  # Vision: paired mmproj — see gemma4_e4b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_e4b_mmproj
+
+gemma4_e4b_mmproj:
+  name: gemma-4-E4B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_e4b (F16)
+  # License: Gemma Terms of Use. (v2.1.12, gh#51)
 
 gemma4_e2b:
   name: gemma-4-E2B-it-Q8_0
@@ -188,6 +212,15 @@ gemma4_e2b:
   adapter: gemma4
   description: Gemma 4 E2B instruct — edge / router class
   # License: Gemma Terms of Use. Quant: Q8_0.
+  # Vision: paired mmproj — see gemma4_e2b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_e2b_mmproj
+
+gemma4_e2b_mmproj:
+  name: gemma-4-E2B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_e2b (F16)
+  # License: Gemma Terms of Use. (v2.1.12, gh#51)
 
 # ── Nemotron 3 (NVIDIA Open Model License — review) ───────────
 # Hybrid Mamba-Transformer (nemotron_h GGUF arch). llama.cpp support
@@ -196,6 +229,12 @@ gemma4_e2b:
 # Tool-call format: qwen3_coder XML (same as Qwen3.5/3.6).
 # Reasoning: emits <think>/</think> as separate special tokens —
 # handled by ChatAdapter::strip_think_blocks.
+#
+# Multimodal status at the current pin (v2.1.12, gh#51): TEXT-ONLY.
+# llama.cpp has `PROJECTOR_TYPE_NEMOTRON_V2_VL` (for v2-family vision)
+# but no `PROJECTOR_TYPE_NEMOTRON_V3_*` exists at pin `253ba110b` —
+# Nemotron-3-Nano-4B has no companion mmproj to bundle. Closing the
+# multimodal coverage gap here would require an upstream change first.
 
 nemotron3_nano_4b:
   name: NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL

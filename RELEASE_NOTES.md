@@ -1,3 +1,104 @@
+# entropic v2.1.12
+
+Patch release closing the gap between v2.1.11 and the v2.2.0 milestone
+tag. Four consumer-feedback-and-registry items land together as one
+patch (gh#48, gh#49, gh#50, gh#51). gh#48 / gh#49 / gh#50 were
+reported by bissell-llm-studio in a single 2026-05-13 session.
+
+After this patch the v2.1.x bundle is complete; v2.2.0 is a
+planner-driven milestone tag (release-notes consolidation +
+model-results JSON, no new code).
+
+## Highlights
+
+- **gh#48 (BUG — silent storage data loss):** Root `LoopContext`
+  now creates a conversation row at `AgentEngine::run` init when
+  storage is wired. Pre-v2.1.12 the root context defaulted to an
+  empty `conversation_id`; every delegation copied that empty string
+  into `parent_conversation_id` and the resulting INSERT FK-failed
+  silently against `conversations(id)`. The unconditional "Created
+  delegation" info log masked the failure, and `entropic.followup`
+  returned the 31-char "no matches" sentinel for every session
+  regardless of how many delegations had run. Primary fix at the
+  engine init point; defense-in-depth on the storage backend
+  (empty-parent guard + log-only-on-ok + paired error log on FK
+  failure).
+- **gh#49 (BUG — streaming interrupt regression):** The
+  `entropic_interrupt()` -> per-token cancel-flag chain on develop
+  is correctly wired (verified by an end-to-end regression test
+  added in this patch). A diagnostic log line now fires the first
+  time the per-token poll observes the engine flag ("Stream
+  interrupt observed at token N; raising backend cancel_flag"), so
+  any future "interrupt didn't propagate" report has a consumer-
+  side confirmation channel. The v2.1.7 repro that motivated the
+  issue did not reproduce on current develop directly — most
+  likely incidentally fixed by the v2.1.10 EngineCallbacks-shuffle
+  fix (gh#40 fallout); the diagnostic + regression test ensure any
+  future regression is observable and caught.
+- **gh#50 (FEATURE — critique visibility):** New
+  `entropic_set_critique_callbacks(handle, start_cb, end_cb, ud)`
+  C ABI surfaces the 20-30s constitutional-critique generation
+  window to consumer UIs. Each callback takes only `void* user_data`
+  — consumers correlate timing themselves to drive a "validating
+  response (Ns)…" indicator. Persistent-slot pattern matches the
+  v2.1.10 state observer precedent (slot lives on the handle and
+  on `ConstitutionalValidator`, survives every `set_callbacks()`
+  shuffle and configure-reconstruction).
+- **gh#51 (REGISTRY — Gemma 4 mmproj closure):** All three Gemma 4
+  variants (E2B / E4B / 26B-A4B) now ship their matching
+  `mmproj-F16.gguf` entries plus `mmproj_key:` populated on each
+  base. llama.cpp at the current pin has full Gemma 4 projector
+  support (`PROJECTOR_TYPE_GEMMA4V` for vision,
+  `PROJECTOR_TYPE_GEMMA4A` for audio); vision is wired through the
+  orchestrator's mmproj routing path (v2.1.8 gh#41) automatically.
+  Audio capability surfacing in tier `capabilities:` is flagged as
+  a follow-up. Nemotron-3 is now documented explicitly as
+  text-only-at-this-pin — no `PROJECTOR_TYPE_NEMOTRON_V3_*` exists
+  upstream.
+
+## C ABI additions (strictly additive)
+
+- `entropic_set_critique_callbacks(handle, start_cb, end_cb, user_data)`
+
+## Internal API additions
+
+- `StorageInterface::create_conversation` (engine_types.h) — required
+  for gh#48; orchestrator-side trampoline `si_create_conversation`
+  in the facade.
+- `ConstitutionalValidator::set_critique_callbacks(start, end, ud)`
+  + `CritiqueCallbacks` struct + `critique_cbs_mutex_`.
+
+## New tests
+
+- `engine_test.cpp`: "Root conversation created at run() init when
+  storage wired (gh#48)" + "Streaming interrupt propagates to backend
+  cancel chain (gh#49)".
+- `storage/backend_test.cpp`: "create_delegation refuses empty
+  parent (gh#48)".
+- `constitutional_validator_test.cpp`: "Critique start/end callbacks
+  fire around the generate call (gh#50)".
+
+All tests run under pre-commit (CPU lane). No new model tests.
+
+## Compatibility
+
+- Strictly additive C ABI: existing consumers see no behavior change.
+- `entropic_set_critique_callbacks` is OFF by default (slot is null
+  until the consumer registers callbacks).
+- gh#48 fix changes only the silent-storage-failure path; consumers
+  that pre-created conversations manually were never affected.
+- Registry additions in #51 only fetch when a Gemma 4 tier is
+  configured with `mmproj_key:` resolved (existing fetch tooling
+  picks them up automatically).
+
+## Documentation updates
+
+- `.claude/proposals/STAGED/v2.1.12-consumer-fixes-and-mmproj.md`
+  — implementation log per-issue.
+- `data/bundled_models.yaml`: Gemma 4 multimodal-coverage-gap
+  comment replaced with the closure note; Nemotron-3 text-only-at-
+  this-pin note expanded.
+
 # entropic v2.1.11
 
 Patch release introducing **SecondaryModelLoader (gh#27)** and the

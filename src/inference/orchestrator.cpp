@@ -50,12 +50,14 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @brief Initialize orchestrator from parsed config.
  *
  * Creates ONE backend per unique model path. Multiple tiers sharing
- * the same .gguf share a single backend instance.
+ * the same .gguf share a single backend instance. Router instantiation
+ * moved to SecondaryModelLoader in v2.1.11 (gh#27) — this function no
+ * longer touches the router slot directly.
  *
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 2.0.5
+ * @version 2.1.11
  */
 bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
     for (const auto& [name, tier_config] : config.models.tiers) {
@@ -77,9 +79,9 @@ bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
         adapters_[name] = create_adapter(
             tier_config.adapter, name, "" /* prompt resolved later */);
     }
-    if (config.models.router) {
-        router_ = std::make_shared<LlamaCppBackend>();
-    }
+    // Router backend instantiation moved to SecondaryModelLoader
+    // (gh#27, v2.1.11). The loader allocates the role slot lazily on
+    // first ensure_loaded() call from activate_router().
     logger->info("Created {} unique backend(s) for {} tier(s)",
                  model_pool_.size(), tiers_.size());
     return true;
@@ -122,18 +124,21 @@ bool ModelOrchestrator::activate_default_tier(const ParsedConfig& config) {
 }
 
 /**
- * @brief Load and activate the router model if configured.
+ * @brief Load and activate the router model via SecondaryModelLoader.
+ *
+ * Delegates the load/unload lifecycle to `secondary_loader_` under the
+ * `"router"` role (gh#27, v2.1.11). Preserves observable behavior:
+ * router still loads at init when `models.router` is configured.
+ *
  * @param config Parsed engine config.
  * @utility
- * @version 2.0.2
+ * @version 2.1.11
  */
 void ModelOrchestrator::activate_router(const ParsedConfig& config) {
-    if (!router_ || !config.models.router) { return; }
-    if (!router_->load_and_activate(*config.models.router)) {
-        logger->error("Failed to activate router model");
-    } else {
-        logger->info("Activated router model");
-    }
+    if (!config.models.router) { return; }
+    // Lifecycle now lives on SecondaryModelLoader (gh#27, v2.1.11).
+    // Diagnostic-level logging is emitted by the loader itself.
+    secondary_loader_.ensure_loaded("router", *config.models.router);
 }
 
 /**
@@ -168,8 +173,12 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
 
 /**
  * @brief Shutdown — unload all models.
+ *
+ * Main-tier pool is unloaded directly; secondary roles (router, draft,
+ * etc.) are released through `secondary_loader_.shutdown()` (v2.1.11).
+ *
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 void ModelOrchestrator::shutdown() {
     logger->info("Shutting down model orchestrator");
@@ -180,9 +189,7 @@ void ModelOrchestrator::shutdown() {
         }
     }
 
-    if (router_ && router_->is_loaded()) {
-        router_->unload();
-    }
+    secondary_loader_.shutdown();
 }
 
 // ── Generation ─────────────────────────────────────────────
@@ -289,13 +296,19 @@ GenerationResult ModelOrchestrator::generate_streaming(
 
 /**
  * @brief Route to appropriate tier using router model.
+ *
+ * Guard updated in v2.1.11: routing requires `models.router` to be
+ * configured (was: `router_` non-null). The slot is owned by
+ * `secondary_loader_` since gh#27.
+ *
  * @param messages Current conversation.
  * @return Selected tier name.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
-    if (!config_.routing.enabled || !router_) {
+    if (!config_.routing.enabled
+        || !config_.models.router.has_value()) {
         logger->info("Route: routing disabled, using default '{}'",
                      default_tier_);
         last_routing_result_ = {default_tier_, "", "", "none", 0.0};
@@ -317,10 +330,16 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
 
 /**
  * @brief Classify task using router model (raw completion).
+ *
+ * Fetches the router backend from `secondary_loader_.get("router")`
+ * (v2.1.11). Returns an empty pair if the router slot has not been
+ * loaded — the caller treats that as a routing miss and falls back to
+ * the default tier.
+ *
  * @param messages Conversation history.
- * @return Pair of (tier_name, raw_digit).
+ * @return Pair of (tier_name, raw_digit), or ("","") on miss.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -331,7 +350,13 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     router_params.max_tokens = 1;
     router_params.temperature = 0.0f;
 
-    auto result = router_->complete(user_msg + " ->", router_params);
+    auto* router_backend = secondary_loader_.get("router");
+    if (router_backend == nullptr) {
+        logger->warn("classify_task: router not loaded; returning empty");
+        return {"", ""};
+    }
+    auto result = router_backend->complete(
+        user_msg + " ->", router_params);
     std::string raw = result.content;
 
     // Trim whitespace
@@ -474,8 +499,12 @@ std::string ModelOrchestrator::last_used_tier() const {
 
 /**
  * @brief Currently loaded model tier names.
+ *
+ * Includes `"router"` when the secondary loader reports the role as
+ * loaded (v2.1.11, gh#27 — previously checked the raw `router_` field).
+ *
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::vector<std::string> ModelOrchestrator::loaded_models() const {
     std::vector<std::string> result;
@@ -484,7 +513,7 @@ std::vector<std::string> ModelOrchestrator::loaded_models() const {
             result.push_back(name);
         }
     }
-    if (router_ && router_->is_loaded()) {
+    if (secondary_loader_.is_loaded("router")) {
         result.push_back("router");
     }
     return result;
@@ -493,14 +522,14 @@ std::vector<std::string> ModelOrchestrator::loaded_models() const {
 /**
  * @brief All configured tier names.
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::vector<std::string> ModelOrchestrator::available_models() const {
     std::vector<std::string> result;
     for (const auto& [name, _] : tiers_) {
         result.push_back(name);
     }
-    if (router_) {
+    if (config_.models.router.has_value()) {
         result.push_back("router");
     }
     return result;
@@ -717,16 +746,17 @@ size_t ModelOrchestrator::load_grammars_from(
  * @brief Invalidate prompt caches across every pooled backend.
  *
  * Called on identity content changes so no cached prefix is served
- * against the new system prompt. (P1-7, 2.0.6-rc16)
+ * against the new system prompt. (P1-7, 2.0.6-rc16). Fans out to
+ * secondary roles (router, draft) via SecondaryModelLoader (v2.1.11).
  *
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.1.11
  */
 void ModelOrchestrator::clear_all_prompt_caches() {
     for (auto& [_, backend] : model_pool_) {
         if (backend) { backend->clear_prompt_cache(); }
     }
-    if (router_) { router_->clear_prompt_cache(); }
+    secondary_loader_.clear_all_prompt_caches();
     logger->info("Prompt caches invalidated across all backends "
                  "(identity change)");
 }

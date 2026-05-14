@@ -10,6 +10,7 @@ set(INFERENCE_SOURCES
     llama_cpp_backend.cpp
     prompt_cache.cpp
     orchestrator.cpp
+    secondary_model_loader.cpp
     adapter_manager.cpp
     grammar_registry.cpp
     profile_registry.cpp

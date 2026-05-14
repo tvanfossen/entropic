@@ -26,6 +26,7 @@
 #include <entropic/inference/adapter_manager.h>
 #include <entropic/inference/grammar_registry.h>
 #include <entropic/inference/profile_registry.h>
+#include <entropic/inference/secondary_model_loader.h>
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
@@ -255,8 +256,18 @@ private:
     /* ── Per-tier adapters (one-to-one, identity-specific) ── */
     std::unordered_map<std::string, std::unique_ptr<ChatAdapter>> adapters_;
 
-    /* ── Router (separate small model, always ACTIVE) ────── */
-    std::shared_ptr<InferenceBackend> router_;
+    /* ── Secondary models (router, draft, future thinking) ── */
+    /**
+     * @brief Role-keyed lifecycle for non-primary models.
+     *
+     * Absorbed the legacy `router_` field in v2.1.11 (gh#27). Router
+     * remains accessible via `secondary_loader_.get("router")`; the
+     * speculative draft slot lands alongside it under the `"draft"`
+     * key (v2.1.11, gh#36).
+     *
+     * @version 2.1.11
+     */
+    SecondaryModelLoader secondary_loader_;
 
     /* ── Routing state ───────────────────────────────────── */
     std::unordered_map<std::string, std::string> tier_map_;  ///< digit → tier name

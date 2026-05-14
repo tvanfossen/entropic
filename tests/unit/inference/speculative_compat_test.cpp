@@ -51,6 +51,7 @@ struct VocabAttrs {
 };
 
 static std::unordered_map<const llama_model*, bool> recurrent_map;
+static std::unordered_map<const llama_model*, bool> hybrid_map;
 static std::unordered_map<
     const llama_model*, const llama_vocab*> vocab_map;
 static std::unordered_map<const llama_vocab*, VocabAttrs> attrs_map;
@@ -62,6 +63,7 @@ static std::unordered_map<const llama_vocab*, VocabAttrs> attrs_map;
  */
 void reset() {
     recurrent_map.clear();
+    hybrid_map.clear();
     vocab_map.clear();
     attrs_map.clear();
 }
@@ -72,6 +74,8 @@ void reset() {
  * @param vocab Sentinel vocab pointer.
  * @param attrs Vocab attributes.
  * @param recurrent Mark the model as recurrent (default false).
+ * @param hybrid Mark the model as hybrid (default false). v2.1.11
+ *        adds this to cover the QWEN35/Nemotron-H class refusal.
  * @utility
  * @version 2.1.11
  */
@@ -79,8 +83,10 @@ void register_model(
     const llama_model* model,
     const llama_vocab* vocab,
     VocabAttrs attrs,
-    bool recurrent = false) {
+    bool recurrent = false,
+    bool hybrid = false) {
     recurrent_map[model] = recurrent;
+    hybrid_map[model] = hybrid;
     vocab_map[model] = vocab;
     attrs_map[vocab] = std::move(attrs);
 }
@@ -92,6 +98,11 @@ extern "C" {
 bool llama_model_is_recurrent(const struct llama_model* model) {
     auto it = mock_llama::recurrent_map.find(model);
     return it != mock_llama::recurrent_map.end() && it->second;
+}
+
+bool llama_model_is_hybrid(const struct llama_model* model) {
+    auto it = mock_llama::hybrid_map.find(model);
+    return it != mock_llama::hybrid_map.end() && it->second;
 }
 
 const struct llama_vocab* llama_model_get_vocab(
@@ -206,6 +217,26 @@ TEST_CASE("speculative compat: recurrent target is rejected",
     auto r = entropic::speculative::check_compat(TARGET, DRAFT);
     REQUIRE_FALSE(r.compatible);
     REQUIRE(r.diagnostic.find("recurrent") != std::string::npos);
+}
+
+TEST_CASE("speculative compat: hybrid target is rejected "
+          "(QWEN35 / Nemotron-H class)",
+          "[speculative][compat][hybrid]") {
+    // v2.1.11 Session 5: QWEN35, QWEN35MOE, NEMOTRON_H, JAMBA, etc.
+    // are `llm_arch_is_hybrid==true` at the pinned llama.cpp commit.
+    // Gate A confirmed empirically that hybrid SSM state diverges
+    // across speculative-simple's split-prefill scheme, so the
+    // compat helper refuses these targets to fall back to plain
+    // decode rather than emit garbage. This case mirrors the
+    // recurrent-refusal coverage above for the hybrid branch.
+    mock_llama::reset();
+    mock_llama::register_model(
+        TARGET, VT, default_attrs(),
+        /*recurrent=*/false, /*hybrid=*/true);
+    mock_llama::register_model(DRAFT, VD, default_attrs());
+    auto r = entropic::speculative::check_compat(TARGET, DRAFT);
+    REQUIRE_FALSE(r.compatible);
+    REQUIRE(r.diagnostic.find("hybrid") != std::string::npos);
 }
 
 TEST_CASE("speculative compat: vocab type mismatch rejected",

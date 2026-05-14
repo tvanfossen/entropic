@@ -1763,18 +1763,34 @@ static void spec_rollback_partial(
 }
 
 /**
- * @brief After full acceptance, clean any KV positions beyond
- *        n_past on both contexts. PART contexts honour this
- *        directly; FULL contexts no-op silently (their KV state
- *        is already correct via the checkpoint dance).
+ * @brief Clear any stale KV positions left by rejected draft tokens.
+ *
+ * After `spec_decode_both` populates positions `[n_past_old,
+ * n_past_old + K]` (one for id_last + K draft slots), the sampler
+ * accepts a prefix of length `1 + n_accepted` ≤ `1 + K`. n_past is
+ * then advanced to the next-write slot = old + 1 + n_accepted.
+ * Everything at or beyond `state.n_past` belongs to rejected drafts
+ * and must be removed before the next iteration's decode hits the
+ * same slots.
+ *
+ * Matches upstream `speculative-simple.cpp:323`:
+ *   `llama_memory_seq_rm(get_memory(ctx), seq_id, n_past, -1)`.
+ * The previous `n_past + 1` boundary was off-by-one and left the
+ * first rejected-draft slot polluted, causing rc=-1 on PART seq_rm
+ * contexts (Gemma 4) on the second iteration (Session 5).
+ *
+ * PART contexts honour the seq_rm directly; FULL contexts effectively
+ * no-op (their KV is restored via the checkpoint dance in
+ * `spec_rollback_partial` instead).
+ *
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
-static void spec_trim_full_accept(SpeculativeRunState& state) {
+static void spec_trim_rejected_drafts(SpeculativeRunState& state) {
     llama_memory_seq_rm(llama_get_memory(state.ctx_tgt),
-                        state.seq_id, state.n_past + 1, -1);
+                        state.seq_id, state.n_past, -1);
     llama_memory_seq_rm(llama_get_memory(state.ctx_dft),
-                        state.seq_id, state.n_past + 1, -1);
+                        state.seq_id, state.n_past, -1);
 }
 
 /**
@@ -1804,7 +1820,7 @@ static bool spec_commit_accepted(
  *        (or roll back via checkpoint on partial acceptance).
  *        Returns true to continue the outer loop.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static bool spec_accept_round(
     SpeculativeRunState& state,
@@ -1859,7 +1875,7 @@ static bool spec_accept_round(
     bool stop = spec_commit_accepted(
         state, ids, vocab, max_tokens, on_token, cancel);
     state.draft.clear();
-    spec_trim_full_accept(state);
+    spec_trim_rejected_drafts(state);
     return !stop;
 }
 
@@ -1873,27 +1889,37 @@ static bool spec_accept_round(
  *
  * @return Empty string on success, diagnostic on failure.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static std::string spec_check_preconditions(
     bool target_active, bool draft_active,
     llama_context* ctx_tgt, llama_context* ctx_dft) {
-    if (!target_active || !draft_active) {
-        return "speculative requires ACTIVE target + draft";
-    }
+    // Defense-in-depth arch gate — orchestrator's
+    // check_speculative_compat is the primary gate; a direct caller
+    // into the kernel must also be refused on recurrent / hybrid
+    // targets (Session 5 Gate A: hybrid SSM state diverges across
+    // split-prefill boundaries; bit-identical unreachable at this pin).
+    std::string err;
+    const llama_model* model_tgt = llama_get_model(ctx_tgt);
     int cap_tgt = common_context_can_seq_rm(ctx_tgt);
     int cap_dft = common_context_can_seq_rm(ctx_dft);
     logger->info("Speculative seq_rm capability: target={}, draft={} "
                  "(0=NO, 1=PART, 2=FULL)", cap_tgt, cap_dft);
-    // NO is the only unsupported case — the kernel has both a
-    // partial-seq_rm fast path (PART) AND a checkpoint-based path
-    // (FULL) that mirrors speculative-simple's use_ckpt branches.
-    if (cap_tgt == COMMON_CONTEXT_SEQ_RM_TYPE_NO
-        || cap_dft == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
-        return "speculative kernel requires at least FULL seq_rm "
-               "(target/draft reported NO seq_rm at all)";
+    if (!target_active || !draft_active) {
+        err = "speculative requires ACTIVE target + draft";
+    } else if (llama_model_is_recurrent(model_tgt)
+               || llama_model_is_hybrid(model_tgt)) {
+        err = "speculative refused: architecture (target is "
+              "recurrent or hybrid; see proposal Implementation "
+              "Log Gate A)";
+    } else if (cap_tgt == COMMON_CONTEXT_SEQ_RM_TYPE_NO
+               || cap_dft == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
+        // NO is the only unsupported seq_rm case — the kernel has
+        // both PART fast-path and FULL checkpoint paths.
+        err = "speculative kernel requires at least FULL seq_rm "
+              "(target/draft reported NO seq_rm at all)";
     }
-    return std::string{};
+    return err;
 }
 
 /**

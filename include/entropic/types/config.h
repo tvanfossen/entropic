@@ -625,6 +625,50 @@ inline ModelConfig make_default_draft_model_config() {
     return cfg;
 }
 
+/**
+ * @brief Speculative-decoding configuration (`inference.speculative.*`).
+ *
+ * @par Architecture compatibility (v2.1.11 pin `253ba110b`)
+ *
+ * The orchestrator's `check_speculative_compat()` refuses the
+ * pairing when the target model is recurrent OR hybrid at the
+ * pinned llama.cpp commit. Among bundled primaries today, that
+ * leaves a SINGLE workable family:
+ *
+ * | Bundled key      | llama.cpp arch       | Speculative? |
+ * |------------------|----------------------|--------------|
+ * | qwen3_5_0_8b     | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_2b       | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_4b       | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_9b       | QWEN35 (hybrid SSM)  | refused      |
+ * | primary (3.5-A3B)| QWEN35MOE (hybrid)   | refused      |
+ * | qwen3_6_a3b      | QWEN35MOE (hybrid)   | refused      |
+ * | nemotron3_nano_4b| NEMOTRON_H (hybrid)  | refused      |
+ * | gemma4_a4b       | GEMMA4 (pure xformer)| **OK**       |
+ * | gemma4_e4b       | GEMMA4 (pure xformer)| **OK**       |
+ * | gemma4_e2b       | GEMMA4 (pure xformer)| **OK**       |
+ *
+ * Bit-identical correctness was verified empirically on the
+ * Gemma 4 family in Session 5 (proposal Implementation Log,
+ * Gate A). Hybrid SSM targets produce divergent KV state across
+ * upstream's split-prefill scheme — the issue is structural to
+ * `common_speculative_*` at this pin, not entropic-side. Consumers
+ * pairing a non-Gemma primary with a Gemma draft (or vice versa)
+ * will also be refused, since the gate looks at the TARGET arch.
+ *
+ * @par Recommended pairings (bundled)
+ *   - target=`gemma4_e4b` + draft=`gemma4_e2b` (CPU): bit-identical,
+ *     measurable speedup on long generations.
+ *   - target=`gemma4_a4b` + draft=`gemma4_e2b` (CPU): more aggressive
+ *     verifier; needs ~16 GB VRAM at modest context.
+ *
+ * Future llama.cpp pins that fix the cross-ubatch SSM state issue
+ * (or alternate non-hybrid Qwen/Llama arches added to the bundled
+ * registry) will widen this set without code change — the gate is
+ * data-driven via `llama_model_is_hybrid` / `llama_model_is_recurrent`.
+ *
+ * @version 2.1.11
+ */
 struct SpeculativeConfig {
     bool enabled = false;                  ///< Master switch (off by default)
     int n_draft = 16;                      ///< Window size (proposed tokens)

@@ -16,14 +16,15 @@ parts (**gh#38**), and a small ride-along token-pressure getter
 > into a VLM without a parallel model load (~6 GB VRAM saved) and
 > preserves family alignment.
 
-> **Deferred to a follow-up patch.** The runtime mmproj load +
-> mtmd image-encoding path in `LlamaCppBackend` is part of v1.9.11
-> Phases 5–7 (deferred there; not addressed here). v2.1.8 ships
-> the full facade + config + routing slice; end-to-end vision
-> generation lands when the inference-layer work follows. The
-> facade fails fast with `ENTROPIC_ERROR_NO_VISION_TIER` for image
-> content arriving at a non-vision-capable tier, so consumers get
-> a clear signal rather than silent image-part drops.
+> **Inference-layer mtmd integration completes v1.9.11 Phases 5–7.**
+> v1.9.11 shipped the multimodal types, parser, image preprocessor,
+> and adapter scaffolding but deferred the actual
+> `LlamaCppBackend::do_generate` libmtmd wiring. v2.1.8 closes that
+> gap: `mtmd_init_from_file` runs in `do_activate` when an mmproj
+> is configured; `generate_multimodal` drives `mtmd_tokenize` +
+> `mtmd_helper_eval_chunks` + the standard sampler. A clean
+> text-only fallback strips image parts (with a warning) when no
+> mmproj is loaded.
 
 ## Highlights
 
@@ -81,14 +82,20 @@ None. All ABI additions; existing entry points unchanged.
 
 ## Known limitations
 
-- **End-to-end vision generation is gated on the inference-layer
-  follow-up.** v1.9.11 Phases 5–7 (`LlamaCppBackend::do_load`
-  mmproj init, `do_generate` multimodal path via libmtmd,
-  text-only fallback) remain deferred. v2.1.8 wires every
-  facade-side surface so the inference-layer patch is a drop-in.
 - **No HTTP fetch for remote images in the OpenAI server.**
   `http(s)://` returns 400; consumers download themselves and
-  resend as `data:`.
+  resend as `data:`. Adding HTTP fetch would expose SSRF surface
+  and is tracked as a separate hardening item.
+- **Model-quality validation of the bundled vision tier is a
+  developer-run model test, not a pre-commit gate.** Per the
+  test-gating policy (`.claude/CLAUDE.md`), patch releases run
+  unit tests only; the full model/benchmark suite (caption
+  fidelity, vision-tier first-token timing) runs at minor-version
+  bumps and against the live mmproj.
+- **mmproj is one-shot per tier.** Per-request mmproj swap is
+  deliberately out of scope (would reload the backend per
+  request — too heavy). Multi-tier configs with mixed text/vision
+  tiers must declare the vision tier upfront.
 
 ---
 

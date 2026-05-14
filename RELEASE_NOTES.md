@@ -1,196 +1,153 @@
-# entropic v2.1.8
+# entropic v2.1.9
 
-Patch release laying the multimodal foundation for v2.2.0. Five
-issues bundle as a coherent slice: facade ABI for multimodal
-messages (**gh#37**), tier-routing on `content_parts` with a new
-`ENTROPIC_ERROR_NO_VISION_TIER` (**gh#41**), bundled mmproj paired
-to the existing Qwen3.5-35B-A3B primary (**gh#42**), OpenAI server
-example accepts `data:` / `file://` / absolute-path image content
-parts (**gh#38**), and a small ride-along token-pressure getter
-(**gh#39**).
+Patch release expanding the bundled model registry and adding three
+new chat-adapter classes — strictly additive, no facade ABI changes.
+Bundles four issues as one cohesive registry-and-adapters slice
+toward the v2.2.0 milestone: registry expansion (**gh#44**), new
+adapter classes for Qwen 3.6 (**gh#45**), Gemma 4 (**gh#46**), and
+Nemotron 3 (**gh#47**); partial ratchet of the gh#17 umbrella with
+the remaining families (Llama 3.x, Gemma 2/3, Mistral / Mixtral,
+Phi-3/4, DeepSeek, Granite, Command-R) deferred to 2.3.x.
 
-> **Scope note (gh#42).** Initial design called for a separate
-> Qwen2.5-VL bundle. Upstream `unsloth/Qwen3.5-35B-A3B-GGUF` is
-> already tagged `image-text-to-text` and ships paired mmproj
-> GGUFs. Pairing the F16 mmproj turns the existing primary tier
-> into a VLM without a parallel model load (~6 GB VRAM saved) and
-> preserves family alignment.
-
-> **Inference-layer mtmd integration completes v1.9.11 Phases 5–7.**
-> v1.9.11 shipped the multimodal types, parser, image preprocessor,
-> and adapter scaffolding but deferred the actual
-> `LlamaCppBackend::do_generate` libmtmd wiring. v2.1.8 closes that
-> gap: `mtmd_init_from_file` runs in `do_activate` when an mmproj
-> is configured; `generate_multimodal` drives `mtmd_tokenize` +
-> `mtmd_helper_eval_chunks` + the standard sampler. A clean
-> text-only fallback strips image parts (with a warning) when no
-> mmproj is loaded.
+> **Nemotron architecture-verification gate (gh#47): PASSES.** The
+> Nemotron-3-Nano-4B model is a hybrid Mamba-Transformer with GGUF
+> arch tag `nemotron_h`. llama.cpp ships full integration via
+> `llm_build_nemotron_h : public llm_build_mamba_base`, so state
+> handling is on the stable Mamba path rather than experimental.
+> Adapter proceeds; gate documentation lives in
+> `nemotron3_adapter.h`.
 
 ## Highlights
 
-- **gh#37 (MEDIUM):** Two new C ABI entry points —
-  `entropic_run_messages` and `entropic_run_messages_streaming`.
-  Accept OpenAI-style messages with mixed `text` and `image`
-  content parts. `entropic_run` continues to work unchanged —
-  strictly additive ABI, no JSON ser/parse on the text-only fast
-  path.
-- **gh#41 (MEDIUM):** Tier configs gain a `capabilities` field
-  (default `[text]`). Facade preflight-checks every multimodal
-  turn against `ModelOrchestrator::has_vision_capable_tier()` and
-  returns `ENTROPIC_ERROR_NO_VISION_TIER` (50) when no tier
-  qualifies. Tier-lock semantics preserved — consumers that lock
-  to a text-only tier and then send an image get the error rather
-  than a silent auto-switch.
-- **gh#42 (MEDIUM):** `data/bundled_models.yaml` adds
-  `primary_mmproj` (F16, ~899 MB). `BundledModelEntry` gets a
-  `mmproj_key` field so `entropic download primary` fetches the
-  paired mmproj automatically. `data/default_config.yaml`'s `lead`
-  tier declares `capabilities: [text, vision]` and references the
-  mmproj.
-- **gh#38 (MEDIUM):** `examples/openai-server` accepts `image_url`
-  content parts. `data:image/<mime>;base64,...` URLs decode into
-  per-request tempfiles (RAII-cleaned on every exit path including
-  streaming completion). `file://` and absolute paths pass
-  through. `http(s)://` returns HTTP 400 with a SSRF-aware
-  diagnostic.
-- **gh#39 (LOW):** `entropic_context_usage(handle, *used, *cap)`
-  exposes the token-pressure pair the engine already logs every
-  iteration — direct replacement for the
-  re-tokenize-`entropic_context_get` workaround consumers were
-  using.
+- **gh#44 (MEDIUM):** `data/bundled_models.yaml` adds 9 model-keyed
+  entries using a `<family>_<size_or_variant>` naming convention:
+  `qwen3_5_{0_8b,2b,4b,9b}`, `qwen3_6_a3b` (+ paired
+  `qwen3_6_a3b_mmproj` for vision), `gemma4_{a4b,e4b,e2b}`,
+  `nemotron3_nano_4b`. Tier-role keys (`primary`, `mid`,
+  `lightweight`) are preserved for backward compatibility; new
+  configs should reference the model-keyed entries directly. Each
+  entry carries per-entry comments documenting license footprint
+  (Apache-2.0 / Gemma Terms of Use / NVIDIA Open Model License) and
+  the quant choice rationale.
+- **gh#45 (MEDIUM):** `Qwen36Adapter` (registry key `qwen36`) —
+  distinct adapter class for the Qwen 3.6 generation. Implements
+  the qwen3_coder XML tool-call format (`<tool_call><function=name>
+  <parameter=key>value</parameter></function></tool_call>`),
+  `<tool_response>` result wrapping, OpenAI-native content-array for
+  multimodal inputs, vision-aware system prompt extension. Kept
+  structurally distinct from `Qwen35Adapter` per the "no version
+  lumping" rule so future template divergence across the Qwen 3.x
+  line lands without churning Qwen 3.5 callers.
+- **gh#46 (MEDIUM):** `Gemma4Adapter` (registry key `gemma4`) —
+  single adapter covers Gemma 4 26B-A4B, E4B, and E2B variants.
+  Uses the GGUF-embedded chat template (`chat_format=""`) and a
+  permissive parser: tagged JSON primary, bare-JSON fallback. The
+  exact native tool-call syntax is to be refined empirically via
+  the new model tests — the adapter header documents the open
+  question and the decision criteria.
+- **gh#47 (MEDIUM):** `Nemotron3Adapter` (registry key `nemotron3`)
+  — first-class support for the Nemotron 3 family. Adapter header
+  records the arch-verification outcome (hybrid Mamba-Transformer,
+  `nemotron_h` GGUF arch, qwen3_coder XML tool-call format,
+  `<think>` reasoning trace via separate special tokens). Tool
+  parsing mirrors qwen3_coder; reasoning-trace stripping reuses the
+  base-class primitives so no Nemotron-specific override is needed.
 
-## Engine fix surfaced by the audit
+## Engineering changes
 
-- **Core serializer (gh#37 audit):** `ResponseGenerator::serialize_messages`
-  was the structural bottleneck that would have broken multimodal
-  end-to-end even after every other piece landed. It hand-rolled
-  JSON emitting only `role` + `content` (string) — `content_parts`
-  vanished at the engine→backend hop. Extended to emit OpenAI-style
-  content arrays when `content_parts` is non-empty. Still hand-rolled
-  to honor core's no-nlohmann-json rule (design decision #21).
-
-## Breaking changes
-
-None. All ABI additions; existing entry points unchanged.
-
-## Distribution
-
-- Tarball: `entropic-2.1.8-linux-x86_64-{cpu,cuda}.tar.gz` with
-  matching `.sha256` files.
-- PyPI: `pip install entropic-engine==2.1.8` publishes from the
-  release-published trigger.
-
-## Known limitations
-
-- **No HTTP fetch for remote images in the OpenAI server.**
-  `http(s)://` returns 400; consumers download themselves and
-  resend as `data:`. Adding HTTP fetch would expose SSRF surface
-  and is tracked as a separate hardening item.
-- **Model-quality validation of the bundled vision tier is a
-  developer-run model test, not a pre-commit gate.** Per the
-  test-gating policy (`.claude/CLAUDE.md`), patch releases run
-  unit tests only; the full model/benchmark suite (caption
-  fidelity, vision-tier first-token timing) runs at minor-version
-  bumps and against the live mmproj.
-- **mmproj is one-shot per tier.** Per-request mmproj swap is
-  deliberately out of scope (would reload the backend per
-  request — too heavy). Multi-tier configs with mixed text/vision
-  tiers must declare the vision tier upfront.
-
----
-
-# entropic v2.1.7
-
-Patch release with one architectural fix: **gh#34** — `entropic
-mcp-bridge` is now a pure stdio↔unix-socket relay. Previously it
-spawned a full standalone engine on every external MCP connection,
-loading the model a second time into VRAM (~13–15 GB) even when a
-consumer already had an engine running for the same project. The
-name "bridge" implies a relay; the implementation was a hidden second
-server. v2.1.7 makes the bridge match its name.
-
-## Highlights
-
-- **gh#34 (HIGH):** `entropic mcp-bridge` no longer creates an engine
-  handle or loads a model. It is a thin byte-transparent relay
-  between stdio JSON-RPC (e.g. Claude Code, IDE plugins) and a
-  running engine's unix-socket bridge. If no engine is reachable for
-  the project_dir, the bridge exits 1 with a diagnostic naming the
-  requested path, canonical path, computed socket, and errno reason.
-- **`mcp-connect` removed:** the two CLI surfaces collapse into one.
-  `mcp-bridge` is the only relay subcommand. `--socket PATH` is
-  retained as an override for non-standard engine deployments and
-  for deterministic testing.
-- **Unix-socket hardening:** SO_PEERCRED uid check on accept,
-  `~/.entropic/socks/` explicit mode 0700, socket file mode 0600,
-  symlink-safe + non-socket-safe bind.
-
-## Engine bug fixes
-
-- **gh#34 — `0163760`:** `src/cli/mcp_bridge.cpp` rewritten as a
-  pure relay; no `entropic_create`, no model load, no engine handle.
-  Discovery uses the same `compute_socket_path(canonical project_dir)`
-  hash the engine's `ExternalBridge` publishes to, so consumer
-  `.mcp.json` configs need no path tweaks. A bidirectional `poll(2)`
-  loop forwards bytes in both directions — server-initiated
-  `notifications/progress` and streaming responses pass through
-  unmodified, fixing a latent stall in the pre-2.1.7 `mcp-connect`
-  synchronous request→response loop.
-- **gh#34 — `0163760`:** `src/facade/external_bridge.cpp` hardened:
-  `SO_PEERCRED` uid mismatch closes the client fd before any serve
-  thread is spawned; symlink or pre-existing non-socket at the bind
-  path is refused with a clear log line; socket file and containing
-  directory get explicit `chmod` rather than relying on umask.
-- **gh#34 — `0163760`:** bind success now logs canonical project_dir
-  + socket so engine and bridge log lines are symmetric — the silent
-  misroute mode (consumer launches engine from a different
-  canonicalized cwd than the bridge sees) is diagnosable from either
-  end.
+- **Adapter registry refactored to a dispatch table.** Going from
+  two to five registered adapter families pushed
+  `create_adapter()` past the knots 3-return ceiling. Lookup is
+  now a `static const std::array<AdapterEntry, 4>` of
+  `{key, factory}` pairs; the function stays at three returns and
+  adding a sixth family is a one-row edit.
+- **Tests:** 24+ new unit-test scenarios across
+  `qwen36_adapter_test.cpp`, `gemma4_adapter_test.cpp`,
+  `nemotron3_adapter_test.cpp` — render round-trip, well-formed +
+  malformed tool-call parse, multi-turn with think+tool
+  interleaving, reasoning-trace stripping, fallback ordering,
+  vision content-parts (Qwen 3.6), vision system-prompt extension,
+  and the `chat_format` / `format_tool_result` contracts. Full
+  suite stays at 874 passing scenarios.
+- **Developer-run model tests:** new
+  `test_v219_{qwen36,gemma4,nemotron3}_family.cpp` exercise each
+  bundled GGUF end-to-end (smoke generation + tool-call fixture)
+  and SKIP cleanly when the model isn't on disk. Shared
+  infrastructure in `tests/model/v219_family_test_helpers.h`
+  lets a v2.1.9 family test override the default tier to load a
+  specific bundled key. Run via `entropic download <key>` then
+  `ctest -L model -R v219`.
 
 ## New features
-
-None. v2.1.7 is a behavior-correction patch.
+- 9 new bundled model registry entries (gh#44)
+- `Qwen36Adapter` (gh#45)
+- `Gemma4Adapter` (gh#46)
+- `Nemotron3Adapter` (gh#47)
 
 ## Breaking changes
-
-- **`entropic mcp-bridge` semantics changed.** Pre-2.1.7 `.mcp.json`
-  configs that relied on the bridge starting its own engine will now
-  exit 1 with a "no running engine for `<project_dir>`" diagnostic.
-  Fix: start an engine host (TUI, consumer app, or invoke the engine
-  via the C/Python API) for the same `project_dir` before connecting
-  the MCP client. The bridge is an *optional service* on top of an
-  engine — never a substitute for one.
-- **`entropic mcp-connect` subcommand removed.** The functionality is
-  now the default `entropic mcp-bridge` behavior. Anywhere
-  `mcp-connect --socket PATH` was used, `mcp-bridge --socket PATH`
-  is the drop-in replacement.
+- None. Registry additions only; adapter keys are new; existing
+  tier-role keys (`primary`, `mid`, `lightweight`) and the
+  `qwen35` / `generic` adapter keys all behave as before.
 
 ## Distribution
+- CPU tarball: `entropic-2.1.9-linux-x86_64-cpu.tar.gz` (sha256 in
+  companion file)
+- CUDA tarball: `entropic-2.1.9-linux-x86_64-cuda.tar.gz` (sha256
+  in companion file)
+- Python wrapper: `pip install entropic-engine==2.1.9` then
+  `entropic install-engine`
 
-- Tarball: `entropic-2.1.7-linux-x86_64-{cpu,cuda}.tar.gz` with
-  matching `.sha256` files.
-- PyPI: `pip install entropic-engine==2.1.7` publishes from the
-  release-published trigger.
+## Empirical validation (v2.1.9 model-test closure)
+
+All 35 model tests pass (30 pre-existing + 5 new v2.1.9 family
+tests), validated end-to-end against actual GGUFs on GPU:
+
+- `qwen3_6_a3b` loaded; **Qwen 3.6 emits qwen3_coder XML** —
+  `<tool_call><function=fs.read><parameter=path>...</parameter>
+  </function></tool_call>`. `Qwen36Adapter` parsed it cleanly.
+- `gemma4_e2b`, `gemma4_e4b`, `gemma4_a4b` all loaded; **Gemma 4
+  emits tagged JSON tool calls** —
+  `<tool_call>{"name":"fs.read","arguments":{...}}</tool_call>`.
+  The permissive `Gemma4Adapter::parse_tool_calls` handles it via
+  base-class `parse_tagged_tool_calls`. The "open question" flagged
+  in `gemma4_adapter.h` is resolved: tagged JSON.
+- `nemotron3_nano_4b` loaded (hybrid Mamba via `nemotron_h` arch);
+  emits `<think>...</think>` reasoning then a qwen3_coder XML call.
+  `Nemotron3Adapter` + base-class think-block stripping work as
+  designed.
+
+## Build / infrastructure changes bundled with v2.1.9
+
+- **`extern/llama.cpp` bumped** from `7f2cbd9a4` (Mar 19) to
+  `253ba110b` (May 14, 732 commits) — adds `LLM_ARCH_GEMMA4` which
+  was required to load Gemma 4 GGUFs (arch tag `'gemma4'`). All 30
+  pre-existing model tests still pass against the new pin.
+- **Root `CMakeLists.txt`** now pre-defaults `CMAKE_CUDA_ARCHITECTURES`
+  to `native` before `enable_language(CUDA)`. Previously CMake's
+  CUDA module assigned `sm_52` (lowest supported for CUDA 12) when
+  the variable wasn't set, and llama.cpp's own native-detection
+  skipped its path because the value was already defined. After the
+  llama.cpp bump, the new MoE-GEMV kernel could not execute on
+  `sm_52` binary against `sm_120` (Blackwell) hardware. Release
+  builds (`tasks.py::_build_and_stage`) still override with the
+  comprehensive multi-arch list — only the dev/full preset path
+  inherits the new `native` default.
+- **`inv test --cpu` hardening** — the cpu-only ctest lane now
+  passes `-LE model` so a stale model-test registration in
+  `build/dev` (e.g., left over from a `--debug` cmake reconfigure)
+  can't cause pre-commit to load a real GGUF on the CPU lane and
+  hang.
 
 ## Known limitations
 
-- **Engine hosts (TUI, consumer apps) still have no idle-exit
-  policy.** The acute VRAM-orphan case from gh#34 is fixed because
-  the bridge no longer holds the model; the chronic case — a
-  long-running consumer engine sitting idle with the model resident
-  — remains. Tracked separately as **gh#35** (engine idle-exit
-  policy).
-- **Single-uid trust boundary.** The unix-socket transport is
-  authenticated only by file perms + SO_PEERCRED uid match. Same-uid
-  attackers with shell access can still reach the socket; this is
-  the same trust posture as embedding the engine in a consumer
-  process. TCP transport (if ever added) is the trigger for adding
-  proper token/OAuth auth — recorded in `architecture-cpp.md`
-  decision log entry #37.
-
-## Post-release
-
-- gh#34 closes automatically on this release (referenced in the
-  commit + merge messages).
-- gh#35 (engine idle-exit) and gh#36 (speculative decoding, CPU draft
-  → GPU verifier) tracked as separate, unscheduled work.
+- **Adapter coverage** for the remaining gh#17 families (Llama 3.x,
+  Gemma 2 / 3, Mistral / Mixtral, Phi-3 / Phi-4, DeepSeek,
+  Granite, Command-R) is deferred to 2.3.x per the gh#17 triage —
+  v2.1.9 is the first ratchet, not the close-out.
+- **Gemma 4 A4B requires 24+ GB VRAM for full-context inference.**
+  Its KV cache is fundamentally larger per token than Qwen 3.6 A3B
+  (8 KV heads × 512 head_dim vs 2 × 256), so the same nominal MoE
+  GGUF size hides a ~3× memory profile difference. The v2.1.9
+  model-test harness overrides `tier.context_length = 4096` so the
+  smoke + tool-call fixtures fit on a 16 GB dev GPU; production
+  deployments load the full context via config.

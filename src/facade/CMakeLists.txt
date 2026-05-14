@@ -38,6 +38,10 @@ target_link_libraries(entropic-facade PRIVATE
     $<LINK_ONLY:nlohmann_json::nlohmann_json>
     $<LINK_ONLY:httplib::httplib>
     $<LINK_ONLY:llama>
+    # v2.1.8: libmtmd is absorbed into the facade .so alongside
+    # llama. inference's LlamaCppBackend.o has unresolved mtmd_*
+    # references that must resolve at the shared-library link step.
+    $<LINK_ONLY:mtmd>
     # libdl for dladdr() — used by config/data_dir.cpp to derive
     # <prefix>/share/entropic relative to librentropic.so at runtime.
     # On glibc 2.34+ dlfcn is merged into libc; CMAKE_DL_LIBS keeps

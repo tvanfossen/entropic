@@ -17,6 +17,9 @@
 
 #include <entropic/types/logging.h>
 
+#include <mtmd.h>
+#include <mtmd-helper.h>
+
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
@@ -154,7 +157,7 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
  *
  * @return true on success.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 bool LlamaCppBackend::do_activate() {
     // Reload model with GPU layers
@@ -210,15 +213,60 @@ bool LlamaCppBackend::do_activate() {
                      prompt_cache_config_.max_bytes);
     }
 
+    init_mmproj_if_configured();
     return true;
+}
+
+/**
+ * @brief Initialize libmtmd context if mmproj is configured (v2.1.8).
+ *
+ * Extracted from do_activate to keep that function under the knots
+ * SLOC threshold. mtmd holds a reference to the live `model_`, so
+ * init runs after the GPU reload and before any generation. Failure
+ * is non-fatal — the engine falls back to text-only with a logged
+ * diagnostic.
+ *
+ * @internal
+ * @version 2.1.8
+ */
+void LlamaCppBackend::init_mmproj_if_configured() {
+    if (config().mmproj_path.empty()) {
+        has_vision_ = false;
+        return;
+    }
+    auto ctx_params = mtmd_context_params_default();
+    ctx_params.use_gpu = (config().gpu_layers != 0);
+    ctx_params.flash_attn_type = config().flash_attn
+        ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+        : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    ctx_params.print_timings = false;
+    mtmd_ctx_ = mtmd_init_from_file(
+        config().mmproj_path.c_str(), model_, ctx_params);
+    if (mtmd_ctx_ == nullptr) {
+        logger->error("mtmd_init_from_file failed for {} — "
+                      "continuing in text-only mode",
+                      config().mmproj_path.string());
+        has_vision_ = false;
+        return;
+    }
+    has_vision_ = mtmd_support_vision(mtmd_ctx_);
+    logger->info("mmproj loaded from {} — vision={}",
+                 config().mmproj_path.string(), has_vision_);
 }
 
 /**
  * @brief Deactivate: free context, reload model CPU-only.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 void LlamaCppBackend::do_deactivate() {
+    // v2.1.8: mtmd holds a reference to the live llama_model — free
+    // it before the GPU model is unloaded below.
+    if (mtmd_ctx_ != nullptr) {
+        mtmd_free(mtmd_ctx_);
+        mtmd_ctx_ = nullptr;
+        has_vision_ = false;
+    }
     if (ctx_) {
         llama_free(ctx_);
         ctx_ = nullptr;
@@ -244,11 +292,17 @@ void LlamaCppBackend::do_deactivate() {
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 1.8.3
+ * @version 2.1.8
  */
 void LlamaCppBackend::do_unload() {
     if (prompt_cache_) {
         prompt_cache_->clear();
+    }
+    // v2.1.8: mtmd must be freed before the underlying llama_model.
+    if (mtmd_ctx_ != nullptr) {
+        mtmd_free(mtmd_ctx_);
+        mtmd_ctx_ = nullptr;
+        has_vision_ = false;
     }
     if (ctx_) {
         llama_free(ctx_);
@@ -941,17 +995,266 @@ bool LlamaCppBackend::run_prefill_cached(
     return prefill_and_cache_prefix(tokens, prefix_tokens, key);
 }
 
+// ── Multimodal generation (v1.9.11 Phases 5–7 + v2.1.8) ────
+
+namespace {
+
+/**
+ * @brief True when any message carries an IMAGE content part.
+ * @internal
+ * @version 2.1.8
+ */
+bool any_image_in(const std::vector<Message>& messages) {
+    for (const auto& m : messages) {
+        if (has_images(m.content_parts)) { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief Strip image content_parts down to text-only (fallback path).
+ *
+ * Used when a non-vision model receives image content. Each message's
+ * `content_parts` is replaced with `extract_text(parts)` so the
+ * model sees the surrounding prose but no image references.
+ *
+ * @param messages Original messages.
+ * @return New message vector with image parts removed.
+ * @internal
+ * @version 2.1.8
+ */
+std::vector<Message> strip_image_parts(
+    const std::vector<Message>& messages) {
+    std::vector<Message> out = messages;
+    for (auto& m : out) {
+        if (m.content_parts.empty()) { continue; }
+        m.content = extract_text(m.content_parts);
+        m.content_parts.clear();
+    }
+    return out;
+}
+
+/**
+ * @brief Substitute IMAGE parts with the mtmd media marker.
+ *
+ * The marker (typically `<__media__>`) tells mtmd_tokenize where
+ * to splice in the encoded image embeddings. Image bitmaps are
+ * loaded via mtmd_helper_bitmap_init_from_file and accumulated into
+ * `bitmaps_out` in part order.
+ *
+ * @param messages Original messages (with content_parts).
+ * @param ctx Active mtmd context (used to load bitmaps).
+ * @param bitmaps_out Accumulator for loaded bitmap pointers (caller
+ *        owns; must mtmd_bitmap_free each on exit).
+ * @return Messages with content flattened to marker-substituted text,
+ *         or empty vector if any image fails to load.
+ * @internal
+ * @version 2.1.8
+ */
+std::vector<Message> substitute_image_markers(
+    const std::vector<Message>& messages,
+    ::mtmd_context* ctx,
+    std::vector<::mtmd_bitmap*>& bitmaps_out) {
+    std::vector<Message> out;
+    out.reserve(messages.size());
+    const std::string marker = mtmd_default_marker();
+    for (const auto& m : messages) {
+        Message copy;
+        copy.role = m.role;
+        if (m.content_parts.empty()) {
+            copy.content = m.content;
+            out.push_back(std::move(copy));
+            continue;
+        }
+        std::string built;
+        for (const auto& p : m.content_parts) {
+            if (p.type != ContentPartType::IMAGE) {
+                built += p.text;
+                continue;
+            }
+            ::mtmd_bitmap* bm = nullptr;
+            if (!p.image_path.empty()) {
+                bm = mtmd_helper_bitmap_init_from_file(
+                    ctx, p.image_path.c_str());
+            }
+            if (bm == nullptr) { return {}; }
+            bitmaps_out.push_back(bm);
+            built += marker;
+        }
+        copy.content = std::move(built);
+        out.push_back(std::move(copy));
+    }
+    return out;
+}
+
+} // anonymous namespace
+
+/**
+ * @brief mtmd prefill helper (v2.1.8) — tokenize + eval chunks.
+ *
+ * Wraps mtmd_tokenize + mtmd_helper_eval_chunks. KV cache is cleared
+ * first so prefill always starts at seq position 0. Bitmap ownership
+ * stays with the caller (mtmd_tokenize borrows for the call).
+ *
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t LlamaCppBackend::mtmd_prefill(
+    const std::string& prompt,
+    const std::vector<::mtmd_bitmap*>& bitmaps,
+    std::string& err_msg)
+{
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    ::mtmd_input_text mt{prompt.c_str(), true, true};
+    auto* chunks = mtmd_input_chunks_init();
+    std::vector<const ::mtmd_bitmap*> bm_cptrs(
+        bitmaps.begin(), bitmaps.end());
+    int32_t tok_rc = mtmd_tokenize(
+        mtmd_ctx_, chunks, &mt, bm_cptrs.data(), bm_cptrs.size());
+    if (tok_rc != 0) {
+        mtmd_input_chunks_free(chunks);
+        err_msg = "mtmd_tokenize failed (rc="
+            + std::to_string(tok_rc) + ")";
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+    llama_pos new_n_past = 0;
+    int32_t eval_rc = mtmd_helper_eval_chunks(
+        mtmd_ctx_, ctx_, chunks, 0, 0,
+        static_cast<int32_t>(config().n_batch),
+        true, &new_n_past);
+    mtmd_input_chunks_free(chunks);
+    if (eval_rc != 0) {
+        err_msg = "mtmd_helper_eval_chunks failed (rc="
+            + std::to_string(eval_rc) + ")";
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+    logger->info("Multimodal prefill complete: n_past={}", new_n_past);
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Shared sampling loop (v2.1.8).
+ *
+ * Operates on the already-positioned `ctx_` KV cache. Mirrors the
+ * body of both text-only generation variants but factored out so
+ * generate_multimodal can reuse it after mtmd_prefill.
+ *
+ * @internal
+ * @version 2.1.8
+ */
+GenerationResult LlamaCppBackend::run_sampling_loop(
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>* cancel,
+    const std::chrono::steady_clock::time_point& t0)
+{
+    GenerationResult result;
+    auto* sampler = create_sampler(params);
+    std::string generated;
+    int n_generated = 0;
+    while (n_generated < params.max_tokens) {
+        if (cancel != nullptr
+                && cancel->load(std::memory_order_acquire)) {
+            result.finish_reason = "cancelled";
+            result.error_code = ENTROPIC_ERROR_CANCELLED;
+            break;
+        }
+        auto status = step_token(
+            sampler, generated, on_token, params.stop);
+        if (status == "continue") { ++n_generated; continue; }
+        result.finish_reason = (status == "error") ? "error" : "stop";
+        if (status == "error") {
+            result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        }
+        break;
+    }
+    if (n_generated >= params.max_tokens
+            && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+    llama_sampler_free(sampler);
+    result.content = generated;
+    result.token_count = n_generated;
+    finalize_result(result, t0);
+    return result;
+}
+
+/**
+ * @brief Multimodal generation core (v2.1.8, gh#37 / v1.9.11 Phase 6).
+ * @internal
+ * @version 2.1.8
+ */
+GenerationResult LlamaCppBackend::generate_multimodal(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>* cancel)
+{
+    auto t0 = entropic::log::now();
+    std::vector<::mtmd_bitmap*> bitmaps;
+    auto marked = substitute_image_markers(
+        messages, mtmd_ctx_, bitmaps);
+    if (marked.empty()) {
+        for (auto* b : bitmaps) { mtmd_bitmap_free(b); }
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_IMAGE_LOAD_FAILED;
+        err.error_message =
+            "mtmd_helper_bitmap_init_from_file failed";
+        return err;
+    }
+    auto prompt = apply_chat_template(marked, params);
+    logger->info("Multimodal generate: {} images, prompt={} chars, max_tokens={}",
+                 bitmaps.size(), prompt.size(), params.max_tokens);
+    std::string prefill_err;
+    auto rc = mtmd_prefill(prompt, bitmaps, prefill_err);
+    for (auto* b : bitmaps) { mtmd_bitmap_free(b); }
+    if (rc != ENTROPIC_OK) {
+        GenerationResult err;
+        err.error_code = rc;
+        err.error_message = std::move(prefill_err);
+        return err;
+    }
+    return run_sampling_loop(params, on_token, cancel, t0);
+}
+
 // ── Generation entry points ────────────────────────────────
 
 /**
  * @brief Generate a complete response using chat template.
+ *
+ * v2.1.8 (gh#37 / v1.9.11 Phases 5–7): dispatches to
+ * generate_multimodal() when any message carries IMAGE
+ * content_parts AND the backend has vision (mmproj loaded). When
+ * images arrive but vision is not available, image parts are
+ * stripped with a warning and generation proceeds text-only.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @return GenerationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.1.8
  */
 GenerationResult LlamaCppBackend::do_generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    if (!any_image_in(messages)) {
+        return do_generate_text_only(messages, params);
+    }
+    if (has_vision_ && mtmd_ctx_ != nullptr) {
+        return generate_multimodal(messages, params, nullptr, nullptr);
+    }
+    logger->warn("Image content present but model has no vision "
+                 "capability — stripping image parts");
+    return do_generate_text_only(strip_image_parts(messages), params);
+}
+
+/**
+ * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
+ * @internal
+ * @version 2.1.8
+ */
+GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
     const GenerationParams& params)
 {
@@ -1010,9 +1313,33 @@ GenerationResult LlamaCppBackend::do_generate(
  * @param cancel Atomic cancel flag.
  * @return GenerationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.1.8
  */
 GenerationResult LlamaCppBackend::do_generate_streaming(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view token)> on_token,
+    std::atomic<bool>& cancel)
+{
+    if (!any_image_in(messages)) {
+        return do_generate_streaming_text_only(
+            messages, params, on_token, cancel);
+    }
+    if (has_vision_ && mtmd_ctx_ != nullptr) {
+        return generate_multimodal(messages, params, on_token, &cancel);
+    }
+    logger->warn("Image content present but model has no vision "
+                 "capability — stripping image parts");
+    return do_generate_streaming_text_only(
+        strip_image_parts(messages), params, on_token, cancel);
+}
+
+/**
+ * @brief Text-only streaming body (v2.1.8, extracted for knots SLOC).
+ * @internal
+ * @version 2.1.8
+ */
+GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     const std::vector<Message>& messages,
     const GenerationParams& params,
     std::function<void(std::string_view token)> on_token,

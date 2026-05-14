@@ -185,7 +185,7 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @internal
- * @version 2.1.5
+ * @version 2.1.12
  */
 static void stream_token_callback(
     const char* token,
@@ -217,6 +217,15 @@ static void stream_token_callback(
         && !acc->interrupted;
     if (just_interrupted) {
         acc->interrupted = true;
+        // gh#49 (v2.1.12): log the cancel-flag raise so a session
+        // log can confirm the per-token interrupt poll observed the
+        // engine-level flag. Pre-v2.1.12 the bissell-llm-studio
+        // repro saw the "Engine interrupted" line on 0->1 transition
+        // but no evidence the per-token poll ever fired — this log
+        // is the first observable receipt of the propagation.
+        logger->info("Stream interrupt observed at token {}; "
+                     "raising backend cancel_flag",
+                     acc->token_index);
         if (acc->cancel_flag != nullptr) {
             *acc->cancel_flag = 1;
         }

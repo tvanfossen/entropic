@@ -185,6 +185,63 @@ TEST_CASE("last_loop_metrics populated after run", "[engine][P2-15]") {
     REQUIRE(m.duration_ms() >= 0);
 }
 
+TEST_CASE("Streaming interrupt propagates to backend cancel chain "
+          "(gh#49)", "[engine][gh49][streaming]") {
+    // Regression for v2.1.7 streaming interrupt break: thread B calls
+    // engine.interrupt() while thread A is mid-stream; the per-token
+    // cancel-flag chain must propagate to the mock backend's cancel
+    // poll so the stream terminates within ~1 more token instead of
+    // running to the response's natural end.
+    //
+    // We can't trivially launch a real second thread from a Catch2
+    // case, so we mimic the cross-thread race deterministically:
+    // an on_stream_chunk callback installed via set_callbacks fires
+    // engine.interrupt() after the 2nd character. The next iteration
+    // of stream_token_callback observes events_->interrupt and raises
+    // the cancel flag the mock polls — the mock then exits before
+    // emitting the rest.
+    MockInference mock;
+    mock.response = "0123456789ABCDEFGHIJ";   // 20 chars
+    mock.stream_token_by_token = true;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    struct State {
+        AgentEngine* engine = nullptr;
+        int chars_seen = 0;
+    };
+    State state;
+    state.engine = &engine;
+    EngineCallbacks cb;
+    cb.on_stream_chunk = [](const char* /*t*/, size_t /*l*/, void* ud) {
+        auto* s = static_cast<State*>(ud);
+        s->chars_seen++;
+        if (s->chars_seen == 2) {
+            s->engine->interrupt();
+        }
+    };
+    cb.user_data = &state;
+    engine.set_callbacks(cb);
+
+    engine.run(make_messages());
+
+    // Expected cadence:
+    //   token 1 emitted -> on_stream_chunk fires (chars_seen=1)
+    //   token 2 emitted -> on_stream_chunk fires, interrupt() called
+    //                       (chars_seen=2; interrupt_flag_ now true)
+    //   token 3 emitted -> stream_token_callback observes the
+    //                       interrupt BEFORE on_stream_chunk runs,
+    //                       raises *cancel_flag=1, calls on_stream_chunk
+    //                       (chars_seen=3)
+    //   mock's next loop iter polls cancel != 0 and returns 0
+    // So we should see <= 3 chars total even though the response
+    // had 20 chars to stream.
+    REQUIRE(state.chars_seen >= 2);
+    REQUIRE(state.chars_seen <= 3);
+}
+
 TEST_CASE("Finish reason length continues loop", "[engine]") {
     MockInference mock;
     mock.is_complete = false;

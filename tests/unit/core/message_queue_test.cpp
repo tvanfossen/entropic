@@ -17,6 +17,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <string>
@@ -162,6 +163,43 @@ TEST_CASE("multiple queued messages drain in FIFO order",
     REQUIRE(cap.consumed[0] == "one");
     REQUIRE(cap.consumed[1] == "two");
     REQUIRE(cap.consumed[2] == "three");
+}
+
+// ── Persistent state observer survives set_callbacks shuffle ──
+
+TEST_CASE("set_state_observer fires after set_callbacks shuffle",
+          "[engine][state_observer]") {
+    // Regression for the gh#40 fallout: run_streaming installs a
+    // fresh EngineCallbacks via set_callbacks() that wipes
+    // on_state_change. The persistent state_observer_ slot must
+    // survive that shuffle, otherwise the documented external-MCP
+    // bridge use case is silently broken.
+    MockInference mock;
+    auto engine = make_engine(mock);
+
+    struct Capture { std::vector<int> states; } cap;
+    engine.set_state_observer(
+        [](int s, void* ud) {
+            static_cast<Capture*>(ud)->states.push_back(s);
+        }, &cap);
+
+    // Simulate run_streaming's wiring: install a fresh callbacks
+    // struct that ONLY sets on_stream_chunk + user_data, dropping
+    // any state callback (matches engine.cpp run_streaming code).
+    EngineCallbacks shuffled{};
+    shuffled.on_stream_chunk =
+        [](const char*, size_t, void*) {};
+    shuffled.user_data = nullptr;
+    engine.set_callbacks(shuffled);
+
+    engine.run_turn("hi");
+
+    // Without the persistent slot fix, this vector would be empty.
+    REQUIRE_FALSE(cap.states.empty());
+    // Must include the terminal COMPLETE transition.
+    REQUIRE(std::find(cap.states.begin(), cap.states.end(),
+                      static_cast<int>(AgentState::COMPLETE))
+            != cap.states.end());
 }
 
 // ── Thread safety ──────────────────────────────────────────────

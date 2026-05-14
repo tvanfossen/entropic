@@ -174,6 +174,13 @@ private:
     TokenCallback stream_observer_ = nullptr;
     void* stream_observer_data_ = nullptr;
 
+    /// @brief Persistent state-transition observer, parallel to
+    /// stream_observer_. Survives the EngineCallbacks reassignment
+    /// done by run_streaming so the PAUSED transition emitted from
+    /// handle_pause still reaches the consumer. (gh#40 fallout, v2.1.10)
+    void (*state_observer_)(int, void*) = nullptr;
+    void* state_observer_data_ = nullptr;
+
 public:
     /**
      * @brief Set the hook dispatch interface.
@@ -208,6 +215,24 @@ public:
      * @version 2.0.6-rc16
      */
     TokenCallback stream_observer() const { return stream_observer_; }
+
+    /**
+     * @brief Set the persistent state-transition observer.
+     *
+     * Mirrors set_stream_observer's persistent-slot pattern so the
+     * PAUSED transition emitted from handle_pause reaches the
+     * consumer even after run_streaming overwrites EngineCallbacks.
+     *
+     * @param observer State callback (nullable).
+     * @param user_data Forwarded to observer.
+     * @utility
+     * @version 2.1.10
+     */
+    void set_state_observer(
+        void (*observer)(int, void*), void* user_data) {
+        state_observer_ = observer;
+        state_observer_data_ = user_data;
+    }
 
     /**
      * @brief Get the observer's user_data pointer.

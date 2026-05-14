@@ -619,7 +619,7 @@ bool AgentEngine::should_stop(const LoopContext& ctx) const {
  * @param ctx Loop context.
  * @param state New state.
  * @internal
- * @version 1.9.1
+ * @version 2.1.10
  */
 void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
     auto prev = ctx.state;
@@ -628,6 +628,13 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
     if (callbacks_.on_state_change != nullptr) {
         callbacks_.on_state_change(
             static_cast<int>(state), callbacks_.user_data);
+    }
+    // Persistent slot (gh#40 fallout, v2.1.10): the streaming entry
+    // points overwrite callbacks_ via set_callbacks(), so the legacy
+    // on_state_change is silent for streaming runs. The persistent
+    // slot is unaffected by that shuffle.
+    if (state_observer_ != nullptr) {
+        state_observer_(static_cast<int>(state), state_observer_data_);
     }
 
     // Hook: ON_STATE_CHANGE (v1.9.1)
@@ -2651,6 +2658,25 @@ void AgentEngine::set_queue_observer(
     void* user_data) {
     queue_observer_ = observer;
     queue_observer_data_ = user_data;
+}
+
+/**
+ * @brief Wire the persistent state-observer slot.
+ *
+ * Forwarded to ResponseGenerator so the PAUSED transition that
+ * ResponseGenerator emits during handle_pause also reaches the
+ * persistent slot. The legacy `EngineCallbacks::on_state_change`
+ * remains supported in parallel for in-tree callers (tests etc.).
+ *
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_state_observer(
+    void (*observer)(int, void*),
+    void* user_data) {
+    state_observer_ = observer;
+    state_observer_data_ = user_data;
+    response_generator_.set_state_observer(observer, user_data);
 }
 
 // ── Directive hooks (v2.0.2) ────────────────────────────────

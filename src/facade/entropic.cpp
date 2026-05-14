@@ -337,6 +337,41 @@ static void rewire_queue_observer(entropic_handle_t h) {
 }
 
 /**
+ * @brief Propagate any pre-configure state observer to the new engine.
+ *
+ * gh#40 fallout (v2.1.10): pre-existing behavior wired the observer
+ * via `engine->set_callbacks()`, which is wiped by run_streaming.
+ * Re-bind through the persistent slot so pre-configure registrations
+ * survive engine construction AND streaming runs.
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.10
+ */
+static void rewire_state_observer(entropic_handle_t h) {
+    if (h->state_observer != nullptr && h->engine) {
+        h->engine->set_state_observer(
+            h->state_observer, h->state_observer_data);
+    }
+}
+
+/**
+ * @brief Re-bind every pre-configure observer to the new engine.
+ *
+ * Aggregates the three rewire helpers so configure_common stays
+ * under the SLOC ceiling. (gh#40 fallout, v2.1.10)
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.10
+ */
+static void rewire_observers(entropic_handle_t h) {
+    rewire_stream_observer(h);
+    rewire_queue_observer(h);
+    rewire_state_observer(h);
+}
+
+/**
  * @brief Register per-tier ChildContextInfo with the engine.
  *
  * Extracted from configure_common to keep that function under the
@@ -1202,14 +1237,15 @@ static void start_external_bridge(entropic_handle_t h) {
 /**
  * @brief Post-parse config setup: subsystem construction + wiring.
  *
- * v2.1.10 (gh#40): added rewire_queue_observer alongside the existing
- * rewire_stream_observer so pre-configure queue-observer registrations
- * survive engine construction.
+ * v2.1.10 (gh#40 + fallout): observer rewiring at engine construction
+ * is bundled into `rewire_observers` so pre-configure stream, queue,
+ * and state observers all survive engine construction AND the
+ * EngineCallbacks shuffle that run_streaming performs.
  *
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.1.10
+ * @version 2.1.10.1
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -1245,8 +1281,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
-    rewire_stream_observer(h);
-    rewire_queue_observer(h);  // gh#40 (v2.1.10)
+    rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);
 
@@ -1838,16 +1873,18 @@ entropic_error_t entropic_set_delegation_callbacks(
 /**
  * @brief Register a state-change observer on the handle.
  *
- * Updates the engine's EngineCallbacks.on_state_change to forward
- * transitions to the registered C observer. (P1-5 follow-up,
- * 2.0.6-rc16.2)
+ * v2.1.10 (gh#40 fallout): routes through the engine's persistent
+ * state_observer slot rather than the legacy
+ * EngineCallbacks.on_state_change. The legacy path is wiped by
+ * run_streaming's set_callbacks() shuffle, which silently broke the
+ * documented external-MCP-bridge use case for streaming runs.
  *
  * @param handle Engine handle.
  * @param observer State observer (NULL to clear).
  * @param user_data Forwarded to observer.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.10
  */
 entropic_error_t entropic_set_state_observer(
     entropic_handle_t handle,
@@ -1857,15 +1894,13 @@ entropic_error_t entropic_set_state_observer(
     handle->state_observer = observer;
     handle->state_observer_data = user_data;
     if (handle->engine) {
-        entropic::EngineCallbacks cb{};
-        cb.on_state_change = [](int state, void* ud) {
-            auto* h = static_cast<entropic_engine*>(ud);
-            if (h->state_observer) {
-                h->state_observer(state, h->state_observer_data);
-            }
-        };
-        cb.user_data = handle;
-        handle->engine->set_callbacks(cb);
+        // gh#40 fallout (v2.1.10): route through the engine's
+        // persistent state-observer slot rather than the legacy
+        // EngineCallbacks::on_state_change. The legacy path is
+        // wiped by run_streaming's set_callbacks() shuffle, so
+        // wiring there silently failed for streaming runs (the
+        // exact bridge use case this API was designed for).
+        handle->engine->set_state_observer(observer, user_data);
     }
     return ENTROPIC_OK;
 }

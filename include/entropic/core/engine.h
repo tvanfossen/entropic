@@ -531,6 +531,29 @@ public:
         void (*observer)(const char*, size_t, void*),
         void* user_data);
 
+    /**
+     * @brief Register a persistent state-transition observer.
+     *
+     * The legacy path (`EngineCallbacks::on_state_change`) is wiped
+     * for the duration of `run_streaming` because that method
+     * replaces the full callback struct to install its token
+     * sink. This persistent slot survives every `set_callbacks()`
+     * shuffle so consumers (notably the external MCP bridge that
+     * the entropic_set_state_observer docstring names) actually see
+     * transitions during streaming runs.
+     *
+     * Fires alongside the legacy `on_state_change` slot — neither
+     * supersedes the other. Pass `nullptr` to clear.
+     *
+     * @param observer State-change callback.
+     * @param user_data Forwarded to observer.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_state_observer(
+        void (*observer)(int state, void* user_data),
+        void* user_data);
+
     // ── Directive hooks (v2.0.2) ────────────────────────────
 
     /**
@@ -1061,6 +1084,10 @@ private:
     std::atomic<bool> running_flag_{false};   ///< Top-level run_turn in progress
     void (*queue_observer_)(const char*, size_t, void*) = nullptr; ///< gh#40 callback
     void* queue_observer_data_ = nullptr;     ///< Forwarded to queue_observer_
+    /// @brief Persistent state-transition observer slot. Survives
+    /// EngineCallbacks shuffles done by run_streaming. (gh#40 fallout)
+    void (*state_observer_)(int, void*) = nullptr;
+    void* state_observer_data_ = nullptr;     ///< Forwarded to state_observer_
     /**
      * @brief Pop one queued message if present.
      *

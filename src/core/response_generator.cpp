@@ -380,11 +380,17 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
 
 /**
  * @brief Handle pause during streaming generation.
+ *
+ * v2.1.10 (gh#40 fallout): fire the persistent state_observer_ slot
+ * in addition to the legacy callbacks_.on_state_change, so consumers
+ * see PAUSED during streaming runs where the legacy callbacks have
+ * been overwritten by run_streaming's set_callbacks() shuffle.
+ *
  * @param ctx Loop context.
  * @param partial Content generated so far.
  * @return Updated content.
  * @internal
- * @version 1.8.4
+ * @version 2.1.10
  */
 std::string ResponseGenerator::handle_pause(
     LoopContext& ctx,
@@ -394,6 +400,14 @@ std::string ResponseGenerator::handle_pause(
         callbacks_.on_state_change(
             static_cast<int>(AgentState::PAUSED),
             callbacks_.user_data);
+    }
+    // gh#40 fallout (v2.1.10): persistent slot fires alongside the
+    // legacy on_state_change so consumers see PAUSED during
+    // streaming runs where the legacy callbacks_ struct has been
+    // overwritten by run_streaming's set_callbacks() shuffle.
+    if (state_observer_ != nullptr) {
+        state_observer_(static_cast<int>(AgentState::PAUSED),
+                        state_observer_data_);
     }
 
     char* injection = nullptr;

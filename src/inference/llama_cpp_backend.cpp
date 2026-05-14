@@ -1433,7 +1433,7 @@ namespace {
  * @param params Entropic generation params.
  * @return Populated common_params_sampling.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 common_params_sampling to_common_sampling(
     const GenerationParams& params) {
@@ -1446,6 +1446,24 @@ common_params_sampling to_common_sampling(
         cps.seed = static_cast<uint32_t>(params.seed);
     }
     cps.no_perf = true;
+    // Mirror entropic's standard sampler chain ordering so the
+    // speculative path produces output bit-identical to plain decode
+    // (the v2.1.11 correctness contract). Entropic's `create_sampler`
+    // builds: penalties → top_k → top_p → temperature → dist, AND
+    // SKIPS the temperature sampler when temp == 0 (greedy mode).
+    // common_sampler appends an extended-temperature sampler that
+    // differs subtly from "no temp at all" — we omit it for temp=0
+    // to match entropic exactly. Also strip the additional filters
+    // (min_p, top_n_sigma, dry, xtc, typical_p) in the default chain.
+    cps.samplers = {COMMON_SAMPLER_TYPE_PENALTIES,
+                    COMMON_SAMPLER_TYPE_TOP_K,
+                    COMMON_SAMPLER_TYPE_TOP_P};
+    if (params.temperature > 0.0f) {
+        cps.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
+    }
+    cps.min_p = 0.0f;
+    cps.dry_multiplier = 0.0f;
+    cps.top_n_sigma = -1.0f;
     return cps;
 }
 
@@ -1521,6 +1539,17 @@ struct SpeculativeRunState {
     std::string finish_reason;
     entropic_error_t error_code = ENTROPIC_OK;
     std::string error_message;
+
+    // ── Checkpoint state (v2.1.11) ──────────────────────────
+    // Activated when either context reports FULL-only seq_rm
+    // (no partial removal). The kernel saves+restores draft/target
+    // state across each speculative round so the underlying
+    // memory module never sees an attempted partial removal.
+    // Mirrors the use_ckpt_tgt / use_ckpt_dft flow in upstream's
+    // speculative-simple example.
+    bool use_ckpt_tgt = false;
+    bool use_ckpt_dft = false;
+    common_prompt_checkpoint ckpt;
 };
 
 /**
@@ -1656,6 +1685,127 @@ static std::string spec_emit_token(
  * @internal
  * @version 2.1.11 [reviewed]
  */
+/**
+ * @brief Snapshot draft state before drafting (when use_ckpt_dft).
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_ckpt_save_dft(SpeculativeRunState& state) {
+    state.ckpt.update_pos(
+        static_cast<int64_t>(state.prompt_tgt.size()),
+        llama_memory_seq_pos_min(
+            llama_get_memory(state.ctx_tgt), state.seq_id),
+        llama_memory_seq_pos_max(
+            llama_get_memory(state.ctx_tgt), state.seq_id));
+    if (state.use_ckpt_dft) {
+        state.ckpt.update_dft(state.ctx_dft, state.seq_id,
+            LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY
+                | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
+    }
+}
+
+/**
+ * @brief Snapshot target state right before the target decode of
+ *        the speculative batch (when use_ckpt_tgt + non-empty draft).
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_ckpt_save_tgt(SpeculativeRunState& state) {
+    if (state.use_ckpt_tgt && !state.draft.empty()) {
+        state.ckpt.update_tgt(state.ctx_tgt, state.seq_id,
+            LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY
+                | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
+    }
+}
+
+/**
+ * @brief Restore the draft's pre-draft state so the upcoming
+ *        target-batch decode on the draft re-fills cleanly.
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_ckpt_restore_dft(SpeculativeRunState& state) {
+    constexpr auto flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY
+                         | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE;
+    if (state.use_ckpt_dft) {
+        state.ckpt.load_dft(state.ctx_dft, state.seq_id, flags);
+    }
+    llama_memory_seq_rm(llama_get_memory(state.ctx_dft),
+                        state.seq_id, state.ckpt.pos_max + 1, -1);
+}
+
+/**
+ * @brief Partial-acceptance rollback: restore both contexts and
+ *        the sampler to their pre-draft state, then arrange for the
+ *        outer loop to re-decode with the partial accept as the new
+ *        draft. Matches speculative-simple's partial-acceptance
+ *        path lines 258-281.
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_rollback_partial(
+    SpeculativeRunState& state, common_sampler* smpl_save,
+    std::vector<llama_token>& ids) {
+    constexpr auto flags = LLAMA_STATE_SEQ_FLAGS_PARTIAL_ONLY
+                         | LLAMA_STATE_SEQ_FLAGS_ON_DEVICE;
+    state.draft = std::move(ids);
+    state.ckpt.load_tgt(state.ctx_tgt, state.seq_id, flags);
+    llama_memory_seq_rm(llama_get_memory(state.ctx_tgt),
+                        state.seq_id, state.ckpt.pos_max + 1, -1);
+    state.ckpt.load_dft(state.ctx_dft, state.seq_id, flags);
+    llama_memory_seq_rm(llama_get_memory(state.ctx_dft),
+                        state.seq_id, state.ckpt.pos_max + 1, -1);
+    state.prompt_tgt.resize(static_cast<size_t>(state.ckpt.n_tokens));
+    state.n_past = static_cast<int>(state.prompt_tgt.size());
+    // Sampler clone is non-null only when use_ckpt_tgt is set
+    common_sampler_free(state.smpl);
+    state.smpl = smpl_save;
+}
+
+/**
+ * @brief After full acceptance, clean any KV positions beyond
+ *        n_past on both contexts. PART contexts honour this
+ *        directly; FULL contexts no-op silently (their KV state
+ *        is already correct via the checkpoint dance).
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_trim_full_accept(SpeculativeRunState& state) {
+    llama_memory_seq_rm(llama_get_memory(state.ctx_tgt),
+                        state.seq_id, state.n_past + 1, -1);
+    llama_memory_seq_rm(llama_get_memory(state.ctx_dft),
+                        state.seq_id, state.n_past + 1, -1);
+}
+
+/**
+ * @brief Walk accepted ids, emit tokens via callback, update state.
+ *        Returns true if the outer loop should stop.
+ * @internal
+ * @version 2.1.11
+ */
+static bool spec_commit_accepted(
+    SpeculativeRunState& state,
+    const std::vector<llama_token>& ids,
+    const llama_vocab* vocab, int max_tokens,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel) {
+    bool stop = false;
+    for (auto id : ids) {
+        auto signal = spec_emit_token(
+            state, id, vocab, max_tokens, on_token, cancel);
+        if (!signal.empty()) { stop = true; break; }
+    }
+    return stop;
+}
+
+/**
+ * @brief Drive one accept round: optional draft generation,
+ *        decode on both contexts, sample-and-accept, emit tokens
+ *        (or roll back via checkpoint on partial acceptance).
+ *        Returns true to continue the outer loop.
+ * @internal
+ * @version 2.1.11
+ */
 static bool spec_accept_round(
     SpeculativeRunState& state,
     const llama_vocab* vocab,
@@ -1663,47 +1813,67 @@ static bool spec_accept_round(
     std::function<void(std::string_view)>& on_token,
     std::atomic<bool>& cancel)
 {
-    int draft_size_before = spec_run_draft(state);
-    // common_speculative_draft advances the draft's KV cache as it
-    // proposes tokens. Truncate back to the pre-draft boundary so
-    // the upcoming "same batch on draft" decode re-fills positions
-    // [n_past, n_past + draft.size()] cleanly — matches the upstream
-    // speculative-simple checkpoint-restore pattern.
-    llama_memory_seq_rm(
-        llama_get_memory(state.ctx_dft), state.seq_id,
-        state.n_past, -1);
+    // Skip drafting if the previous round restored a partial accept
+    // into state.draft (carry-over from rollback).
+    int draft_size_before = 0;
+    if (state.draft.empty()) {
+        spec_ckpt_save_dft(state);
+        draft_size_before = spec_run_draft(state);
+        spec_ckpt_save_tgt(state);
+        spec_ckpt_restore_dft(state);
+    } else {
+        draft_size_before = static_cast<int>(state.draft.size());
+    }
+
     if (!spec_decode_both(state)) { return false; }
 
+    common_sampler* smpl_save = nullptr;
+    if (state.use_ckpt_tgt) {
+        smpl_save = common_sampler_clone(state.smpl);
+    }
     auto ids = common_sampler_sample_and_accept_n(
         state.smpl, state.ctx_tgt, state.draft);
     int accepted = static_cast<int>(ids.size()) - 1;
     if (accepted < 0) { accepted = 0; }
+
+    // Partial acceptance on a FULL-seq_rm context: rollback to
+    // checkpoint, set draft = accepted, re-loop without emitting.
+    if (state.use_ckpt_tgt
+        && static_cast<int>(ids.size()) - 1
+               < static_cast<int>(state.draft.size())) {
+        spec_rollback_partial(state, smpl_save, ids);
+        return true;
+    }
+    if (smpl_save) { common_sampler_free(smpl_save); }
+
     common_speculative_accept(state.spec, state.seq_id, accepted);
     state.n_drafted += draft_size_before;
     state.n_accepted += accepted;
-    state.n_past += accepted;
+    // n_past advances by ids.size() total: one slot for id_last
+    // (the post-id_last position the next id will occupy), plus
+    // `accepted` slots for the drafted tokens the sampler agreed
+    // with. Matches speculative-simple's n_past++ in batch_add +
+    // n_past += ids.size() - 1 sequence.
+    state.n_past += static_cast<int>(ids.size());
 
-    bool stop = false;
-    for (auto id : ids) {
-        auto signal = spec_emit_token(
-            state, id, vocab, max_tokens, on_token, cancel);
-        if (!signal.empty()) { stop = true; break; }
-    }
+    bool stop = spec_commit_accepted(
+        state, ids, vocab, max_tokens, on_token, cancel);
     state.draft.clear();
-    llama_memory_seq_rm(
-        llama_get_memory(state.ctx_tgt), state.seq_id,
-        state.n_past + 1, -1);
-    llama_memory_seq_rm(
-        llama_get_memory(state.ctx_dft), state.seq_id,
-        state.n_past + 1, -1);
+    spec_trim_full_accept(state);
     return !stop;
 }
 
 /**
- * @brief Validate speculative preconditions and gate on FULL seq_rm.
+ * @brief Validate speculative preconditions and reject NO-seq_rm.
+ *
+ * Either FULL or PART seq_rm is acceptable — the kernel has both a
+ * partial-seq_rm fast path (PART) and a checkpoint-based path
+ * (FULL) that mirrors speculative-simple's use_ckpt branches. Only
+ * NO-seq_rm targets/drafts cannot be supported.
+ *
  * @return Empty string on success, diagnostic on failure.
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.1.11
  */
 static std::string spec_check_preconditions(
     bool target_active, bool draft_active,
@@ -1715,22 +1885,28 @@ static std::string spec_check_preconditions(
     int cap_dft = common_context_can_seq_rm(ctx_dft);
     logger->info("Speculative seq_rm capability: target={}, draft={} "
                  "(0=NO, 1=PART, 2=FULL)", cap_tgt, cap_dft);
-    if (cap_tgt != COMMON_CONTEXT_SEQ_RM_TYPE_PART
-        || cap_dft != COMMON_CONTEXT_SEQ_RM_TYPE_PART) {
-        return "speculative kernel requires partial seq_rm on both "
-               "target and draft contexts (FULL-only and NO cases "
-               "need checkpoint-based rollback — deferred to a "
-               "follow-up patch; see decision log #41)";
+    // NO is the only unsupported case — the kernel has both a
+    // partial-seq_rm fast path (PART) AND a checkpoint-based path
+    // (FULL) that mirrors speculative-simple's use_ckpt branches.
+    if (cap_tgt == COMMON_CONTEXT_SEQ_RM_TYPE_NO
+        || cap_dft == COMMON_CONTEXT_SEQ_RM_TYPE_NO) {
+        return "speculative kernel requires at least FULL seq_rm "
+               "(target/draft reported NO seq_rm at all)";
     }
     return std::string{};
 }
 
 /**
  * @brief Initialize the kernel state: clear KV, prefill, sampler,
- *        speculative context, batch. Returns "" on success or a
- *        diagnostic string. Cleans up on failure.
+ *        speculative context, batch, and detect FULL-seq_rm
+ *        checkpoint-mode for target/draft. Returns "" on success or
+ *        a diagnostic string. Cleans up on failure.
+ *
+ * Checkpoint detection runs AFTER `common_speculative_begin` so the
+ * impl's batch is already allocated.
+ *
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.1.11
  */
 static std::string spec_init_run(
     SpeculativeRunState& state, llama_model* model_tgt,
@@ -1775,6 +1951,15 @@ static std::string spec_init_run(
                 state.batch_tgt = llama_batch_init(
                     llama_n_batch(state.ctx_tgt), 0, 1);
                 state.batch_initialized = true;
+                // Checkpoint flow lights up when either context can
+                // only do FULL-sequence removal. Mirrors
+                // speculative-simple's use_ckpt_{tgt,dft}.
+                state.use_ckpt_tgt =
+                    common_context_can_seq_rm(state.ctx_tgt)
+                        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+                state.use_ckpt_dft =
+                    common_context_can_seq_rm(state.ctx_dft)
+                        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
             }
         }
     }

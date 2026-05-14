@@ -50,7 +50,10 @@ std::unique_ptr<ModelOrchestrator> build_speculative_orchestrator(
     const config::BundledModels& registry,
     ParsedConfig& config) {
     auto draft_path = registry.resolve("qwen3_5_0_8b");
-    auto target_path = registry.resolve("qwen3_5_9b");
+    // Qwen3.5-4B as the target — matched dense-transformer family
+    // with the 0.8B draft. Tested 9B previously, returned FULL seq_rm;
+    // checking whether smaller sizes behave differently.
+    auto target_path = registry.resolve("qwen3_5_4b");
     if (!fs::exists(draft_path) || !fs::exists(target_path)) {
         WARN("Qwen3.5 9B target or 0.8B draft GGUF missing — skipping");
         return nullptr;

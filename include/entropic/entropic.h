@@ -539,6 +539,42 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_queue_observer(
                      void* user_data),
     void* user_data);
 
+/* ── Speculative decoding (v2.1.11, gh#36) ─────────────── */
+
+/**
+ * @brief Query whether the configured target/draft pair is compatible
+ *        for speculative decoding.
+ *
+ * Inspects the active main tier (verifier) and the configured draft
+ * model (`inference.speculative.draft_model`) for:
+ *   - target architecture is NOT recurrent (Mamba/RWKV/hybrid)
+ *   - matching tokenizer vocab type, BOS/EOS, vocab size
+ *   - prefix-equal token texts in the overlap range
+ *
+ * No model state is allocated for the query — purely metadata-level
+ * inspection on the already-loaded models. The check is exposed as a
+ * separate entrypoint (rather than only at generate time) so consumers
+ * can validate a planned pairing during configuration and surface a
+ * clear diagnostic before kicking off a turn.
+ *
+ * @param handle Engine handle.
+ * @param[out] compatible 1 if the pair is compatible, 0 otherwise.
+ *             Required (must be non-NULL).
+ * @param[out] diagnostic On `*compatible == 0`, a heap-allocated
+ *             NUL-terminated string identifying the failed rule. On
+ *             compatible pairs, set to NULL. Caller frees with
+ *             `entropic_free_string`. May be NULL if the caller does
+ *             not want the diagnostic text.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle/compatible is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE  — engine not configured.
+ * @version 2.1.11
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_speculative_compat(
+    entropic_handle_t handle,
+    int* compatible,
+    char** diagnostic);
+
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
 /**

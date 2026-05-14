@@ -11,6 +11,7 @@
  */
 
 #include <entropic/inference/orchestrator.h>
+#include <entropic/inference/speculative_compat.h>
 #include <entropic/interfaces/i_inference_backend.h>
 #include <entropic/types/logging.h>
 
@@ -785,6 +786,91 @@ std::string ModelOrchestrator::select_vision_tier() const {
         if (tier.has_capability("vision")) { return name; }
     }
     return "";
+}
+
+/**
+ * @brief Resolve the active main-tier llama_model* for compat lookup.
+ *
+ * @return Pointer to the loaded llama_model, or nullptr when no main
+ *         tier is loaded or the backend is not LlamaCppBackend.
+ * @internal
+ * @version 2.1.11
+ */
+static llama_model* resolve_target_model(
+    const std::shared_ptr<InferenceBackend>& tier_backend) {
+    if (!tier_backend || !tier_backend->is_loaded()) {
+        return nullptr;
+    }
+    auto* llama_be = dynamic_cast<LlamaCppBackend*>(tier_backend.get());
+    return (llama_be == nullptr) ? nullptr : llama_be->llama_model_ptr();
+}
+
+/**
+ * @brief Resolve target+draft llama_model pointers from current state.
+ *
+ * @param[out] target_out Filled with the active main tier's llama_model.
+ * @param[out] draft_out  Filled with the configured draft's llama_model.
+ * @return Empty string on success; otherwise a diagnostic identifying
+ *         which side is missing.
+ * @internal
+ * @version 2.1.11
+ */
+std::string ModelOrchestrator::resolve_speculative_pair(
+    llama_model*& target_out, llama_model*& draft_out) const {
+    target_out = nullptr;
+    draft_out = nullptr;
+    std::string err;
+
+    auto tier_it = tiers_.find(loaded_main_tier_);
+    if (tier_it == tiers_.end()) {
+        err = "no main tier loaded";
+    } else {
+        target_out = resolve_target_model(tier_it->second);
+        if (target_out == nullptr) {
+            err = "main tier backend is not a llama.cpp backend or "
+                  "is not loaded";
+        } else {
+            auto* draft_backend = secondary_loader_.get("draft");
+            if (draft_backend == nullptr || !draft_backend->is_loaded()) {
+                err = "no draft model configured for speculative "
+                      "decoding "
+                      "(set inference.speculative.draft_model)";
+            } else {
+                auto* d = dynamic_cast<LlamaCppBackend*>(draft_backend);
+                draft_out = (d == nullptr) ? nullptr : d->llama_model_ptr();
+                if (draft_out == nullptr) {
+                    err = "draft backend is not a llama.cpp backend";
+                }
+            }
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Speculative compatibility check (target vs draft).
+ *
+ * Reads the active main tier as the target and the `"draft"` slot on
+ * the secondary loader as the draft. Returns a structured diagnostic
+ * the C ABI can forward to consumers.
+ *
+ * @return SpeculativeCompatInfo with compatible flag + diagnostic.
+ * @internal
+ * @version 2.1.11
+ */
+ModelOrchestrator::SpeculativeCompatInfo
+ModelOrchestrator::check_speculative_compat() const {
+    SpeculativeCompatInfo info;
+    llama_model* target_model = nullptr;
+    llama_model* draft_model = nullptr;
+    info.diagnostic = resolve_speculative_pair(target_model, draft_model);
+    if (info.diagnostic.empty()) {
+        auto result = entropic::speculative::check_compat(
+            target_model, draft_model);
+        info.compatible = result.compatible;
+        info.diagnostic = std::move(result.diagnostic);
+    }
+    return info;
 }
 
 /**

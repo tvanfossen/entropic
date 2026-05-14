@@ -3219,4 +3219,44 @@ entropic_error_t entropic_get_diagnostic_prompt(
     return ENTROPIC_OK;
 }
 
+/**
+ * @brief Query speculative-decoding compatibility for the configured
+ *        target/draft pair.
+ *
+ * Delegates to `ModelOrchestrator::check_speculative_compat()`. The
+ * orchestrator owns both sides of the pairing (active main tier as
+ * target, `"draft"` role on the secondary loader as draft) and runs
+ * the architecture + tokenizer rules from
+ * `entropic::speculative::check_compat`.
+ *
+ * @param handle Engine handle.
+ * @param compatible Required out-param: 1 when compatible.
+ * @param diagnostic Optional out-param: heap-allocated diagnostic
+ *        string on incompatibility (NULL on compatible pair). Caller
+ *        frees with entropic_free_string.
+ * @return ENTROPIC_OK / ENTROPIC_ERROR_INVALID_HANDLE /
+ *         ENTROPIC_ERROR_INVALID_STATE.
+ * @internal
+ * @version 2.1.11
+ */
+entropic_error_t entropic_speculative_compat(
+    entropic_handle_t handle,
+    int* compatible,
+    char** diagnostic) {
+    if (handle == nullptr || compatible == nullptr) {
+        return ENTROPIC_ERROR_INVALID_HANDLE;
+    }
+    if (!handle->orchestrator) {
+        return ENTROPIC_ERROR_INVALID_STATE;
+    }
+    auto info = handle->orchestrator->check_speculative_compat();
+    *compatible = info.compatible ? 1 : 0;
+    if (diagnostic != nullptr) {
+        *diagnostic = info.compatible
+                          ? nullptr
+                          : alloc_cstr(info.diagnostic);
+    }
+    return ENTROPIC_OK;
+}
+
 } // extern "C"

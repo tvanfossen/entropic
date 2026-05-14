@@ -39,6 +39,7 @@
 #include <vector>
 
 struct llama_context;  // Forward declaration for adapter management
+struct llama_model;    // Forward declaration for speculative compat (v2.1.11)
 
 namespace entropic {
 
@@ -230,6 +231,34 @@ public:
     bool has_vision_capable_tier() const;
 
     /**
+     * @brief Result of a speculative-decoding compatibility check.
+     *
+     * @version 2.1.11
+     */
+    struct SpeculativeCompatInfo {
+        bool compatible = false;     ///< true when speculative may proceed
+        std::string diagnostic;      ///< Reason on failure (empty on ok)
+    };
+
+    /**
+     * @brief Check whether the currently-configured target/draft pair
+     *        is compatible for speculative decoding.
+     *
+     * Reads the active main tier as the target (verifier) and the
+     * `"draft"` role on the `SecondaryModelLoader` as the proposer.
+     * Returns `compatible=false` with a specific diagnostic when:
+     *   - No main tier is loaded (target unavailable).
+     *   - No draft role is loaded (no proposer configured).
+     *   - `entropic::speculative::check_compat` rejects the pairing
+     *     (recurrent target, tokenizer mismatch, etc.).
+     *
+     * @return SpeculativeCompatInfo.
+     * @utility
+     * @version 2.1.11
+     */
+    SpeculativeCompatInfo check_speculative_compat() const;
+
+    /**
      * @brief Pick the canonical vision-capable tier name (gh#41).
      *
      * Returns the first tier (iteration order of the parsed
@@ -390,6 +419,19 @@ private:
      */
     void resolve_grammar_key(GenerationParams& params,
                              const std::string& tier_name);
+
+    /**
+     * @brief Resolve speculative target/draft llama_model pointers
+     *        from current orchestrator state.
+     *
+     * @param[out] target_out Active main-tier llama_model, or nullptr.
+     * @param[out] draft_out  Configured draft llama_model, or nullptr.
+     * @return Empty string on success; diagnostic on missing side.
+     * @internal
+     * @version 2.1.11
+     */
+    std::string resolve_speculative_pair(
+        llama_model*& target_out, llama_model*& draft_out) const;
 };
 
 } // namespace entropic

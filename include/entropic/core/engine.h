@@ -36,7 +36,9 @@
 #include <entropic/types/session_logger.h>
 
 #include <atomic>
+#include <deque>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -452,6 +454,82 @@ public:
      * @version 2.0.2
      */
     const std::vector<Message>& get_messages() const;
+
+    // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
+
+    /**
+     * @brief Append a user message to the mid-gen queue.
+     *
+     * Bounded FIFO. Enforces `LoopConfig::message_queue_capacity`.
+     * Drained between top-level `run_turn` invocations from inside
+     * `run_turn` itself — never at child-delegation boundaries.
+     *
+     * @param message User input to enqueue.
+     * @return true if enqueued; false if the queue is at capacity.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    bool queue_user_message(const std::string& message);
+
+    /**
+     * @brief Snapshot of the queue depth.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    size_t user_message_queue_depth() const;
+
+    /**
+     * @brief Drop all queued user messages.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void clear_user_message_queue();
+
+    /**
+     * @brief Set the runtime capacity of the mid-gen queue.
+     *
+     * If `cap` is less than the current depth, excess pending
+     * messages are kept (no truncation) but no new enqueues succeed
+     * until the queue drains below the new cap. `cap` of 0 disables
+     * enqueue while leaving the queue otherwise functional.
+     *
+     * @param cap New capacity.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_message_queue_capacity(int cap);
+
+    /**
+     * @brief Whether a top-level run_turn is currently in progress.
+     *
+     * Used by the facade to reject `entropic_queue_user_message` with
+     * `ENTROPIC_ERROR_INVALID_STATE` when there is no in-flight turn
+     * to "queue behind." Thread-safe (atomic load).
+     *
+     * @return true while a top-level run_turn is executing.
+     * @utility
+     * @version 2.1.10
+     */
+    bool is_running() const { return running_flag_.load(); }
+
+    /**
+     * @brief Register an observer that fires when a queued user
+     *        message is consumed and seeded as the next turn.
+     *
+     * Persistent across `set_callbacks()` reassignments — the
+     * streaming entry points overwrite the EngineCallbacks struct
+     * per-call, so the queue observer needs a dedicated slot to
+     * survive both streaming and non-streaming runs.
+     *
+     * @param observer Callback (consumed_text, remaining_depth, ud).
+     *        Pass nullptr to clear.
+     * @param user_data Forwarded to observer.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_queue_observer(
+        void (*observer)(const char*, size_t, void*),
+        void* user_data);
 
     // ── Directive hooks (v2.0.2) ────────────────────────────
 
@@ -976,6 +1054,33 @@ private:
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
     std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
     std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
+
+    // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
+    mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
+    std::deque<std::string> user_message_queue_; ///< FIFO mid-gen queue
+    std::atomic<bool> running_flag_{false};   ///< Top-level run_turn in progress
+    void (*queue_observer_)(const char*, size_t, void*) = nullptr; ///< gh#40 callback
+    void* queue_observer_data_ = nullptr;     ///< Forwarded to queue_observer_
+    /**
+     * @brief Pop one queued message if present.
+     *
+     * Used by run_turn to drain the queue at top-level COMPLETE.
+     * Returns std::nullopt when the queue is empty.
+     *
+     * @threadsafety Thread-safe.
+     * @internal
+     * @version 2.1.10
+     */
+    std::optional<std::string> pop_queued_user_message();
+
+    /**
+     * @brief Fire on_queued_message_consumed callback (gh#40).
+     * @param consumed The popped message.
+     * @param remaining Queue depth after the pop.
+     * @internal
+     * @version 2.1.10
+     */
+    void fire_queue_consumed(const std::string& consumed, size_t remaining);
 
     // ── Conversation state (v2.0.2) ─────────────────────────
     std::vector<Message> conversation_;                    ///< Persistent conversation

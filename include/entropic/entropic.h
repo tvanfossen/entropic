@@ -429,6 +429,116 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_state_observer(
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
 
+/* ── Mid-generation message queue (v2.1.10, gh#40) ────── */
+
+/**
+ * @brief Queue a user message to be injected at the next top-level
+ *        turn boundary.
+ *
+ * The queued message is appended to a bounded FIFO inside the engine
+ * and consumed automatically when the current top-level turn reaches
+ * `AgentState::COMPLETE` — i.e. when the currently-running
+ * `entropic_run` / `entropic_run_streaming` / `entropic_run_messages`*
+ * call finishes its agent loop. The engine then immediately seeds a
+ * fresh turn with the dequeued message under the same per-call
+ * `on_token` wiring, so streaming consumers see a clean per-turn
+ * token stream without protocol changes.
+ *
+ * The queue is NOT a cancellation primitive: it does not interrupt
+ * the in-flight turn. Consumers wanting to stop the current turn
+ * should use `entropic_interrupt`.
+ *
+ * The queue drain triggers only at top-level COMPLETE. Delegation
+ * boundaries (parent loop resuming after a child loop returns) are
+ * NOT drain points — injecting a fresh user message there would
+ * corrupt the parent's reasoning context.
+ *
+ * @threadsafety Thread-safe. Designed to be called from a different
+ *        thread than the one running the agent loop.
+ *
+ * @param handle  Engine handle.
+ * @param message Null-terminated UTF-8 user input text.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — message is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — no run is currently in
+ *           flight on this handle (just call `entropic_run_streaming`
+ *           directly).
+ *         - ENTROPIC_ERROR_QUEUE_FULL — queue is at
+ *           `message_queue_capacity` (default 8). Retry after a turn
+ *           completes, or call `entropic_clear_user_message_queue`.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_queue_user_message(
+    entropic_handle_t handle,
+    const char* message);
+
+/**
+ * @brief Query the current depth of the mid-gen user-message queue.
+ *
+ * Snapshot value — may be stale by the time the caller reads it if
+ * the engine consumes a message concurrently. Intended for consumer
+ * UI feedback ("3 queued"), not for synchronization.
+ *
+ * @threadsafety Thread-safe.
+ *
+ * @param handle Engine handle.
+ * @param count  Out-param: receives the queue depth.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — count is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_user_message_queue_depth(
+    entropic_handle_t handle,
+    size_t* count);
+
+/**
+ * @brief Drop all queued user messages.
+ *
+ * Consumer-initiated retract. Does NOT affect the in-flight turn —
+ * only the not-yet-consumed pending messages are discarded.
+ *
+ * @threadsafety Thread-safe.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_clear_user_message_queue(
+    entropic_handle_t handle);
+
+/**
+ * @brief Register an observer for queue-consumption events.
+ *
+ * Fires immediately before the engine seeds the next turn with a
+ * popped queued message. Lets consumer UIs clear the "queued" badge
+ * for the corresponding scrollback item.
+ *
+ * The `consumed` buffer is valid only for the callback's duration —
+ * copy it if the consumer needs to hold it. `remaining` reflects the
+ * queue depth *after* the pop (i.e. messages still waiting).
+ *
+ * Pass observer=NULL to clear.
+ *
+ * @threadsafety Callback fires from the engine thread between turns.
+ *        Must be thread-safe.
+ *
+ * @param handle    Engine handle.
+ * @param observer  Callback (consumed_text, remaining_depth, user_data).
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_queue_observer(
+    entropic_handle_t handle,
+    void (*observer)(const char* consumed,
+                     size_t remaining,
+                     void* user_data),
+    void* user_data);
+
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
 /**

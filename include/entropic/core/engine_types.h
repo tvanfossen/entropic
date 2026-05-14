@@ -104,6 +104,11 @@ struct LoopConfig {
     /// enough that runaway tool output cannot exhaust the context
     /// budget alone. (Demo ask #6, v2.1.0)
     int max_tool_result_bytes = 16384;
+    /// @brief Capacity of the mid-generation user-message queue
+    /// surfaced by `entropic_queue_user_message`. When the queue is
+    /// at this depth, additional enqueues return
+    /// `ENTROPIC_ERROR_QUEUE_FULL`. (gh#40, v2.1.10)
+    int message_queue_capacity = 8;
 };
 
 /**

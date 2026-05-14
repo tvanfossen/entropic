@@ -151,6 +151,7 @@ add_executable(entropic-core-tests
     core/constitutional_validator_test.cpp
     core/validation_hook_test.cpp
     core/response_generator_test.cpp
+    core/message_queue_test.cpp  # gh#40 (v2.1.10)
 )
 
 target_include_directories(entropic-core-tests PRIVATE
@@ -253,6 +254,8 @@ add_executable(entropic-api-tests
     api/facade_integration_test.cpp
     # v2.1.1 (#3): UTF-8 sanitization at the C-API outbound boundary.
     api/serialize_messages_utf8_test.cpp
+    # v2.1.10 (gh#40): mid-gen user-message queue ABI surface.
+    api/message_queue_abi_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.

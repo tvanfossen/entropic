@@ -2289,28 +2289,49 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
 
 /**
  * @brief Run a single conversation turn (stateful).
+ *
+ * gh#40 (v2.1.10): after the agent loop reaches top-level COMPLETE,
+ * drains any messages enqueued mid-generation via
+ * `queue_user_message` as additional turns under the same call.
+ *
  * @param input User input string.
  * @return Result messages from engine.
  * @internal
- * @version 2.0.2
+ * @version 2.1.10
  */
 std::vector<Message> AgentEngine::run_turn(const std::string& input) {
+    // gh#40 (v2.1.10): wrap the agent loop in a drain loop so any
+    // user messages enqueued mid-generation become subsequent turns
+    // at this single structural top-level COMPLETE boundary. The
+    // running_flag_ gate lets the facade reject
+    // entropic_queue_user_message with INVALID_STATE when no run is
+    // in flight (validation criterion #1).
+    running_flag_.store(true);
     if (conversation_.empty() && !system_prompt_.empty()) {
         Message sys;
         sys.role = "system";
         sys.content = system_prompt_;
         conversation_.push_back(std::move(sys));
     }
-    Message usr;
-    usr.role = "user";
-    usr.content = input;
-    conversation_.push_back(std::move(usr));
+    std::string pending = input;
+    std::vector<Message> result;
+    while (true) {
+        Message usr;
+        usr.role = "user";
+        usr.content = pending;
+        conversation_.push_back(std::move(usr));
 
-    size_t sent_len = conversation_.size();
-    auto result = run(conversation_);  // copy — run() may mutate
-    for (size_t i = sent_len; i < result.size(); ++i) {
-        conversation_.push_back(result[i]);
+        size_t sent_len = conversation_.size();
+        result = run(conversation_);  // copy — run() may mutate
+        for (size_t i = sent_len; i < result.size(); ++i) {
+            conversation_.push_back(result[i]);
+        }
+        auto next = pop_queued_user_message();
+        if (!next.has_value()) { break; }
+        fire_queue_consumed(*next, user_message_queue_depth());
+        pending = std::move(*next);
     }
+    running_flag_.store(false);
     return result;
 }
 
@@ -2328,9 +2349,14 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
  * @param new_messages Messages to add this turn.
  * @return Result messages from the loop.
  * @internal
- * @version 2.1.8
+ * @version 2.1.10
  */
 std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
+    // gh#40 (v2.1.10): mirror the single-string overload's drain
+    // loop. Queued messages enqueued via entropic_queue_user_message
+    // become subsequent plain-text user turns at this top-level
+    // boundary (no content_parts — the queue ABI is text-only).
+    running_flag_.store(true);
     bool caller_has_system = false;
     for (const auto& m : new_messages) {
         if (m.role == "system") { caller_has_system = true; break; }
@@ -2342,15 +2368,27 @@ std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
         sys.content = system_prompt_;
         conversation_.push_back(std::move(sys));
     }
-    for (auto& m : new_messages) {
-        conversation_.push_back(std::move(m));
+    std::vector<Message> pending = std::move(new_messages);
+    std::vector<Message> result;
+    while (true) {
+        for (auto& m : pending) {
+            conversation_.push_back(std::move(m));
+        }
+        size_t sent_len = conversation_.size();
+        result = run(conversation_);
+        for (size_t i = sent_len; i < result.size(); ++i) {
+            conversation_.push_back(result[i]);
+        }
+        auto next = pop_queued_user_message();
+        if (!next.has_value()) { break; }
+        fire_queue_consumed(*next, user_message_queue_depth());
+        Message usr;
+        usr.role = "user";
+        usr.content = std::move(*next);
+        pending.clear();
+        pending.push_back(std::move(usr));
     }
-
-    size_t sent_len = conversation_.size();
-    auto result = run(conversation_);
-    for (size_t i = sent_len; i < result.size(); ++i) {
-        conversation_.push_back(result[i]);
-    }
+    running_flag_.store(false);
     return result;
 }
 
@@ -2517,6 +2555,102 @@ size_t AgentEngine::message_count() const {
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
     return conversation_;
+}
+
+// ── Mid-generation user-message queue (gh#40, v2.1.10) ─────────
+
+/**
+ * @brief Enqueue a user message subject to the configured cap.
+ * @internal
+ * @version 2.1.10
+ */
+bool AgentEngine::queue_user_message(const std::string& message) {
+    std::lock_guard lock(queue_mutex_);
+    int cap = loop_config_.message_queue_capacity;
+    if (cap < 0) { cap = 0; }
+    if (user_message_queue_.size()
+            >= static_cast<size_t>(cap)) {
+        return false;
+    }
+    user_message_queue_.push_back(message);
+    logger->info("queued mid-gen user message: depth={}",
+                 user_message_queue_.size());
+    return true;
+}
+
+/**
+ * @brief Read queue depth under the queue mutex.
+ * @internal
+ * @version 2.1.10
+ */
+size_t AgentEngine::user_message_queue_depth() const {
+    std::lock_guard lock(queue_mutex_);
+    return user_message_queue_.size();
+}
+
+/**
+ * @brief Drop all queued messages atomically.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::clear_user_message_queue() {
+    std::lock_guard lock(queue_mutex_);
+    size_t dropped = user_message_queue_.size();
+    user_message_queue_.clear();
+    if (dropped > 0) {
+        logger->info("cleared mid-gen queue: dropped={}", dropped);
+    }
+}
+
+/**
+ * @brief Update the runtime cap (in-place on LoopConfig).
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_message_queue_capacity(int cap) {
+    std::lock_guard lock(queue_mutex_);
+    loop_config_.message_queue_capacity = cap < 0 ? 0 : cap;
+}
+
+/**
+ * @brief Pop the head of the queue if non-empty (FIFO).
+ * @internal
+ * @version 2.1.10
+ */
+std::optional<std::string>
+AgentEngine::pop_queued_user_message() {
+    std::lock_guard lock(queue_mutex_);
+    if (user_message_queue_.empty()) {
+        return std::nullopt;
+    }
+    std::string front = std::move(user_message_queue_.front());
+    user_message_queue_.pop_front();
+    return front;
+}
+
+/**
+ * @brief Notify the consumer that a queued message is being injected.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::fire_queue_consumed(const std::string& consumed,
+                                      size_t remaining) {
+    if (queue_observer_ != nullptr) {
+        queue_observer_(
+            consumed.c_str(), remaining, queue_observer_data_);
+    }
+}
+
+/**
+ * @brief Persistent slot setter; survives set_callbacks() shuffles.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_queue_observer(
+    void (*observer)(const char*, size_t, void*),
+    void* user_data) {
+    queue_observer_ = observer;
+    queue_observer_data_ = user_data;
 }
 
 // ── Directive hooks (v2.0.2) ────────────────────────────────

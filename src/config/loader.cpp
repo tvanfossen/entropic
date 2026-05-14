@@ -28,7 +28,7 @@ namespace entropic::config {
  * @param[out] config Output model config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 static std::string parse_model_config(
     ryml::ConstNodeRef node,
@@ -54,6 +54,14 @@ static std::string parse_model_config(
     extract(node, "flash_attn", config.flash_attn);
     extract_string_list_opt(node, "allowed_tools", config.allowed_tools);
 
+    /* v1.9.11 mmproj wiring at the loader (gh#42, gh#41): read mmproj
+     * here so the YAML key matches the bundled_models.yaml registry
+     * shape and the orchestrator can declare a tier vision-capable. */
+    std::string mmproj_str;
+    if (extract(node, "mmproj", mmproj_str)) {
+        config.mmproj_path = registry.resolve(mmproj_str);
+    }
+
     return "";
 }
 
@@ -64,7 +72,7 @@ static std::string parse_model_config(
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -92,6 +100,14 @@ static std::string parse_tier_config(
     bool routable_val = false;
     if (extract(node, "routable", routable_val)) {
         config.routable = routable_val;
+    }
+
+    /* gh#41 v2.1.8: tier capabilities. Missing key → ["text"] so
+     * every pre-v2.1.8 tier config remains valid. Configs that
+     * declare capabilities explicitly must include "text" themselves
+     * if the tier still serves text — we don't auto-inject. */
+    if (!extract_string_list(node, "capabilities", config.capabilities)) {
+        config.capabilities = {"text"};
     }
 
     return "";
@@ -376,14 +392,53 @@ static void parse_constitutional_validation_config(
 }
 
 /**
+ * @brief Parse `inference.speculative` YAML node into SpeculativeConfig.
+ *
+ * Off-by-default semantics: missing keys leave the struct defaults
+ * intact (`enabled=false`, `n_draft=16`). The draft model is
+ * configured via a nested `draft:` block that accepts every
+ * ModelConfig field (path, gpu_layers, n_threads, flash_attn,
+ * context_length, use_mlock, etc.); defaults for the kernel come
+ * from `make_default_draft_model_config()`. (v2.1.11 refactor —
+ * earlier flat `draft_model`/`draft_n_gpu_layers`/`draft_cpu_threads`
+ * keys are absorbed into the nested block.)
+ *
+ * @param node YAML node for `inference.speculative`.
+ * @param[out] config Output speculative config.
+ * @internal
+ * @version 2.1.11 [reviewed]
+ */
+static void parse_speculative_config(
+    ryml::ConstNodeRef node,
+    const BundledModels& registry,
+    SpeculativeConfig& config)
+{
+    extract(node, "enabled", config.enabled);
+    extract(node, "n_draft", config.n_draft);
+    // Nested ModelConfig — every llama.cpp knob is consumer-tunable
+    // via `inference.speculative.draft.<field>`. Defaults come from
+    // `make_default_draft_model_config()` (gpu_layers=0, flash_attn=
+    // false, context_length=8192, n_threads=4). (v2.1.11)
+    if (node.has_child("draft")) {
+        auto err = parse_model_config(
+            node["draft"], registry, config.draft);
+        if (!err.empty()) {
+            s_log->warn("inference.speculative.draft parse: {}", err);
+        }
+    }
+}
+
+/**
  * @brief Parse optional config sections that don't return errors.
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 2.0.6
+ * @version 2.1.11
  */
 static void parse_optional_sections(
-    ryml::ConstNodeRef root, ParsedConfig& config)
+    ryml::ConstNodeRef root,
+    const BundledModels& registry,
+    ParsedConfig& config)
 {
     if (root.has_child("generation"))
         parse_generation_config(root["generation"], config.generation);
@@ -398,6 +453,10 @@ static void parse_optional_sections(
     if (root.has_child("inference") && root["inference"].has_child("prompt_cache"))
         parse_prompt_cache_config(root["inference"]["prompt_cache"],
                                   config.prompt_cache);
+    if (root.has_child("inference") && root["inference"].has_child("speculative"))
+        parse_speculative_config(root["inference"]["speculative"],
+                                 registry,
+                                 config.inference.speculative);
     if (root.has_child("constitutional_validation"))
         parse_constitutional_validation_config(
             root["constitutional_validation"],
@@ -418,12 +477,17 @@ static void parse_optional_sections(
 
 /**
  * @brief Parse a config YAML file and overlay onto existing config.
+ *
+ * Passes the bundled-models registry through to optional-section
+ * parsers so `inference.speculative.draft_model` can be resolved
+ * (bundled key or path) at parse time. (v2.1.11)
+ *
  * @param path Path to YAML file.
  * @param registry Bundled models for path resolution.
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::string parse_config_file(
     const std::filesystem::path& path,
@@ -456,7 +520,7 @@ std::string parse_config_file(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, config);
+        parse_optional_sections(root, registry, config);
     }
 
     return err;
@@ -911,12 +975,16 @@ std::string load_layered(
 
 /**
  * @brief Parse a config string (YAML or JSON) and overlay onto config.
+ *
+ * Threads the bundled-models registry through to the optional-section
+ * parser for speculative draft_model resolution (v2.1.11).
+ *
  * @param content Raw config string.
  * @param registry Bundled models for path resolution.
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 static std::string parse_config_string(
     const std::string& content,
@@ -943,7 +1011,7 @@ static std::string parse_config_string(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, config);
+        parse_optional_sections(root, registry, config);
     }
     return err;
 }

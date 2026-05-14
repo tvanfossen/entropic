@@ -104,6 +104,11 @@ struct LoopConfig {
     /// enough that runaway tool output cannot exhaust the context
     /// budget alone. (Demo ask #6, v2.1.0)
     int max_tool_result_bytes = 16384;
+    /// @brief Capacity of the mid-generation user-message queue
+    /// surfaced by `entropic_queue_user_message`. When the queue is
+    /// at this depth, additional enqueues return
+    /// `ENTROPIC_ERROR_QUEUE_FULL`. (gh#40, v2.1.10)
+    int message_queue_capacity = 8;
 };
 
 /**
@@ -372,6 +377,25 @@ struct ToolExecutorHooks {
  * @version 1.8.8
  */
 struct StorageInterface {
+    /// @brief Create a root conversation row.
+    ///
+    /// Called once at `AgentEngine::run()` init when storage is wired
+    /// so the engine's `LoopContext::conversation_id` is populated for
+    /// the rest of the session. Pre-v2.1.12 (gh#48): no callback
+    /// existed, root conversation_id stayed empty, every delegation's
+    /// foreign-key insert into `delegations(parent_conversation_id)`
+    /// failed silently against the empty parent string.
+    ///
+    /// @param title Display title (e.g., session description).
+    /// @param[out] conversation_id Newly created conversation ID.
+    /// @param user_data Opaque pointer.
+    /// @return true on success and `conversation_id` populated.
+    /// @version 2.1.12
+    bool (*create_conversation)(
+        const char* title,
+        std::string& conversation_id,
+        void* user_data) = nullptr;
+
     /// @brief Save a compaction snapshot (full history before compaction).
     /// @param conversation_id Conversation to snapshot.
     /// @param messages_json JSON array of all messages.

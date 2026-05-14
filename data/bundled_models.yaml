@@ -2,6 +2,38 @@
 # Bundled model registry — single source of truth for download URLs and default paths.
 # Referenced by cli_download.py and default_config.yaml.
 # Update this file when switching models or quantizations.
+#
+# ── Naming convention (v2.1.9, gh#44) ─────────────────────────
+# Model entries use <family>_<size_or_variant>, lowercase, underscores:
+#   qwen3_5_9b, qwen3_6_a3b, gemma4_e2b, nemotron3_nano_4b
+# Tier role keys (primary, mid, lightweight, draft, router, …) are a
+# separate concern — they assign a model entry to a runtime role.
+# Tier swapping is a config edit; the registry just lists models.
+#
+# Existing role-keyed entries (primary, primary_mmproj, mid,
+# lightweight) are preserved for backward compatibility. New work
+# should reference the model-keyed entries.
+#
+# ── License footprint ─────────────────────────────────────────
+# Engine: LGPL-3.0-or-later + BISSELL Homecare Inc. linking exception.
+# Model GGUFs are runtime data, not linked code — model licenses do
+# not bind the engine, but redistributors of bundled weights should
+# review per-entry license fields below before shipping.
+# Per-family terms:
+#   Qwen 3.5 / 3.6      → Apache-2.0           (permissive)
+#   Gemma 4             → Gemma Terms of Use   (restrictive — review)
+#   Nemotron 3          → NVIDIA Open Model License (review)
+#
+# ── Quant rationale ───────────────────────────────────────────
+# Single-GPU dev target, one model at a time. Quant choices balance
+# VRAM footprint against quality. UD-IQ3_XXS is reserved for 35B-A3B
+# class MoE; Q8_0 is the default for ≤ 9B; Q4_K_M is the fallback for
+# 20B+ dense without UD quants available.
+
+# ══════════════════════════════════════════════════════════════
+# Role-keyed entries (preserved from v2.1.8 — do not break existing
+# configs that reference these directly)
+# ══════════════════════════════════════════════════════════════
 
 primary:
   name: Qwen3.5-35B-A3B-UD-IQ3_XXS
@@ -9,6 +41,17 @@ primary:
   size_gb: 13.1
   adapter: qwen35
   description: Primary workhorse — all roles (single model architecture)
+  # gh#42 (v2.1.8): Qwen3.5-35B-A3B is tagged image-text-to-text upstream
+  # (vision encoder + paired mmproj). Bundling the F16 mmproj turns the
+  # primary tier into a VLM without a separate VL model bundle. Consumers
+  # that want text-only can override `mmproj: ""` in their tier config.
+  mmproj_key: primary_mmproj
+
+primary_mmproj:
+  name: mmproj-F16
+  url: https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision projector paired with primary (Qwen3.5-35B-A3B, F16)
 
 mid:
   name: Qwen3.5-9B-Q8_0
@@ -25,3 +68,186 @@ lightweight:
   description: Lightweight alternative (8GB+ VRAM)
 
 # router model removed in v2.1.0 — use a dedicated identity for routing instead
+
+# ══════════════════════════════════════════════════════════════
+# Model-keyed entries (v2.1.9 expansion, gh#44)
+# ══════════════════════════════════════════════════════════════
+
+# ── Qwen 3.5 siblings (Apache-2.0) ────────────────────────────
+# Same architecture and adapter as the primary; sized for smaller
+# VRAM budgets or as draft models for speculative decoding (future).
+
+qwen3_5_0_8b:
+  name: Qwen3.5-0.8B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf
+  size_gb: 0.85
+  adapter: qwen35
+  description: Smallest Qwen3.5 — draft / router candidate (Apache-2.0)
+  # License: Apache-2.0. Quant rationale: 0.8B is small enough that
+  # full Q8 preserves quality without VRAM concern.
+
+qwen3_5_2b:
+  name: Qwen3.5-2B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q8_0.gguf
+  size_gb: 2.1
+  adapter: qwen35
+  description: Compact Qwen3.5 — edge / router (Apache-2.0)
+  # License: Apache-2.0. Quant: Q8_0 — small enough to skip
+  # aggressive quantization.
+
+qwen3_5_4b:
+  name: Qwen3.5-4B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q8_0.gguf
+  size_gb: 4.5
+  adapter: qwen35
+  description: Model-keyed alias for the 4B Qwen3.5 (same as `lightweight`)
+  # License: Apache-2.0. Quant: Q8_0.
+
+qwen3_5_9b:
+  name: Qwen3.5-9B-Q8_0
+  url: https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q8_0.gguf
+  size_gb: 9.5
+  adapter: qwen35
+  description: Model-keyed alias for the 9B Qwen3.5 (same as `mid`)
+  # License: Apache-2.0. Quant: Q8_0 — fits comfortably in 12GB VRAM.
+
+# ── Qwen 3.6 (Apache-2.0) ─────────────────────────────────────
+# Next-generation Qwen MoE. Same image-text-to-text tagging as 3.5
+# (vision via paired mmproj); tool calls via qwen3_coder XML format.
+# Distinct adapter class (Qwen36Adapter) preserves clean separation
+# even though tool-call XML happens to overlap with Qwen35Adapter —
+# template/system prompt details may diverge over the 3.x line.
+
+qwen3_6_a3b:
+  name: Qwen3.6-35B-A3B-UD-IQ3_XXS
+  url: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf
+  size_gb: 13.2
+  adapter: qwen36
+  description: Qwen 3.6 35B-A3B MoE — primary candidate, vision-capable
+  # License: Apache-2.0. Quant rationale: UD-IQ3_XXS matches the
+  # Qwen3.5-A3B precedent; 35B MoE class requires aggressive quant
+  # for single-GPU (target 16 GB VRAM with headroom).
+  # Vision: paired mmproj — see qwen3_6_a3b_mmproj.
+  mmproj_key: qwen3_6_a3b_mmproj
+
+qwen3_6_a3b_mmproj:
+  name: Qwen3.6-35B-A3B-mmproj-F16
+  url: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision projector paired with qwen3_6_a3b (F16)
+  # Unique `name` avoids the v2.1.8 `primary_mmproj` filename collision —
+  # mmproj weights are model-specific, so two mmprojs must resolve to
+  # distinct files on disk. The URL still points at the upstream
+  # `mmproj-F16.gguf` filename inside the Qwen3.6 repo; only the local
+  # filename is namespaced.
+
+# ── Gemma 4 (Gemma Terms of Use — review before redistributing) ─
+# Three variants:
+#   - A4B (26B MoE)  — primary-class alternative; Q4_K_M for VRAM fit
+#   - E4B (4B dense) — mid/lightweight alternative
+#   - E2B (2B dense) — edge / router class
+# Tool-call format uses Gemma's channel-based template; see
+# Gemma4Adapter for the parsing strategy decided at implementation time.
+#
+# Multimodal coverage (v2.1.12, gh#51): each variant ships its matching
+# `mmproj-F16.gguf` bundled here. llama.cpp at the current pin
+# (`253ba110b`) has full Gemma 4 projector support:
+#   - `PROJECTOR_TYPE_GEMMA4V` (vision) — clip_graph_gemma4v
+#   - `PROJECTOR_TYPE_GEMMA4A` (audio) — clip_graph_gemma4a +
+#     mtmd_audio_preprocessor_gemma4a
+# Vision flows through the orchestrator's mmproj routing path (v2.1.8
+# gh#41) automatically. Audio inference end-to-end is not wired in
+# entropic at this version — tier `capabilities:` does not yet have an
+# `audio` value (gh#41 only defines `text` / `vision`); follow-up to
+# expose audio as a first-class capability.
+
+gemma4_a4b:
+  name: gemma-4-26B-A4B-it-UD-IQ4_XS
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/gemma-4-26B-A4B-it-UD-IQ4_XS.gguf
+  size_gb: 13.6
+  adapter: gemma4
+  description: Gemma 4 26B-A4B instruct — primary-class alternative (validation opposition to Qwen primary)
+  # License: Gemma Terms of Use (https://ai.google.dev/gemma/terms).
+  # Restrictive vs Apache-2.0; redistributors should review.
+  # Quant rationale: UD-IQ4_XS (Unsloth Dynamic, ~13.6 GB) — the
+  # primary-alternate role exists for validation contrast against
+  # the Qwen primary (different family, different post-training).
+  # IQ4_XS gives the best quality-per-byte at the A4B size while
+  # leaving VRAM headroom matching the Qwen primary's ~13 GB
+  # footprint, so swapping the alternate in/out via tier config
+  # is a like-for-like comparison.
+  # Vision: paired mmproj — see gemma4_a4b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_a4b_mmproj
+
+gemma4_a4b_mmproj:
+  name: gemma-4-26B-A4B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_a4b (F16)
+  # License: Gemma Terms of Use. Unique `name` avoids the
+  # `mmproj-F16.gguf` filename collision pattern documented on
+  # qwen3_6_a3b_mmproj. (v2.1.12, gh#51)
+
+gemma4_e4b:
+  name: gemma-4-E4B-it-Q8_0
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-Q8_0.gguf
+  size_gb: 4.5
+  adapter: gemma4
+  description: Gemma 4 E4B instruct — mid-class alternative
+  # License: Gemma Terms of Use. Quant: Q8_0.
+  # Vision: paired mmproj — see gemma4_e4b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_e4b_mmproj
+
+gemma4_e4b_mmproj:
+  name: gemma-4-E4B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_e4b (F16)
+  # License: Gemma Terms of Use. (v2.1.12, gh#51)
+
+gemma4_e2b:
+  name: gemma-4-E2B-it-Q8_0
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf
+  size_gb: 2.5
+  adapter: gemma4
+  description: Gemma 4 E2B instruct — edge / router class
+  # License: Gemma Terms of Use. Quant: Q8_0.
+  # Vision: paired mmproj — see gemma4_e2b_mmproj (v2.1.12, gh#51).
+  mmproj_key: gemma4_e2b_mmproj
+
+gemma4_e2b_mmproj:
+  name: gemma-4-E2B-it-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 0.9
+  description: Vision/audio projector paired with gemma4_e2b (F16)
+  # License: Gemma Terms of Use. (v2.1.12, gh#51)
+
+# ── Nemotron 3 (NVIDIA Open Model License — review) ───────────
+# Hybrid Mamba-Transformer (nemotron_h GGUF arch). llama.cpp support
+# is integrated via llm_build_mamba_base — Nemotron arch-verification
+# gate passed at session start (see proposal Implementation Log).
+# Tool-call format: qwen3_coder XML (same as Qwen3.5/3.6).
+# Reasoning: emits <think>/</think> as separate special tokens —
+# handled by ChatAdapter::strip_think_blocks.
+#
+# Multimodal status at the current pin (v2.1.12, gh#51): TEXT-ONLY.
+# llama.cpp has `PROJECTOR_TYPE_NEMOTRON_V2_VL` (for v2-family vision)
+# but no `PROJECTOR_TYPE_NEMOTRON_V3_*` exists at pin `253ba110b` —
+# Nemotron-3-Nano-4B has no companion mmproj to bundle. Closing the
+# multimodal coverage gap here would require an upstream change first.
+
+nemotron3_nano_4b:
+  name: NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF/resolve/main/NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf
+  size_gb: 3.1
+  adapter: nemotron3
+  description: Nemotron 3 Nano 4B — hybrid Mamba, reasoning-capable, edge class
+  # License: NVIDIA Open Model License
+  # (https://developer.download.nvidia.com/licenses/nvidia-open-model-license-agreement-june-2024.pdf).
+  # Review before redistribution.
+  # Quant rationale: UD-Q4_K_XL (Unsloth Dynamic, 3.13 GB) — better
+  # quality-per-byte than bare Q4_K_M on reasoning-heavy small
+  # models, with VRAM headroom for the hybrid-Mamba state cache.
+  # NVFP4 / TurboQuant are not in this GGUF repo and would require
+  # a separate (TensorRT-LLM-class) backend; the GGML path here
+  # uses standard llama.cpp K/UD quants only.

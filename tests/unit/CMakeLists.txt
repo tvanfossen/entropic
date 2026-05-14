@@ -5,6 +5,7 @@ add_executable(entropic-tests
     types/logging_test.cpp
     types/content_test.cpp
     types/message_multimodal_test.cpp
+    types/messages_json_test.cpp
 )
 
 target_link_libraries(entropic-tests PRIVATE
@@ -50,6 +51,9 @@ add_executable(entropic-inference-tests
     inference/backend_lifecycle_test.cpp
     inference/adapter_base_test.cpp
     inference/qwen35_adapter_test.cpp
+    inference/qwen36_adapter_test.cpp
+    inference/gemma4_adapter_test.cpp
+    inference/nemotron3_adapter_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp
@@ -113,6 +117,36 @@ target_link_libraries(entropic-grammar-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v2.1.11: Speculative compat helper tests (mock llama_vocab_* symbols
+# at link time — no real model required).
+add_executable(entropic-speculative-compat-tests
+    inference/speculative_compat_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/speculative_compat.cpp
+)
+
+target_include_directories(entropic-speculative-compat-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-speculative-compat-tests PRIVATE
+    entropic-types
+    llama
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# v2.1.11: SecondaryModelLoader role-state tests
+add_executable(entropic-secondary-loader-tests
+    inference/secondary_model_loader_test.cpp
+)
+
+target_link_libraries(entropic-secondary-loader-tests PRIVATE
+    entropic::inference
+    entropic-types
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.9.7: Profile registry + throughput tracker tests
 add_executable(entropic-cap-tests
     inference/profile_registry_test.cpp
@@ -147,6 +181,7 @@ add_executable(entropic-core-tests
     core/constitutional_validator_test.cpp
     core/validation_hook_test.cpp
     core/response_generator_test.cpp
+    core/message_queue_test.cpp  # gh#40 (v2.1.10)
 )
 
 target_include_directories(entropic-core-tests PRIVATE
@@ -249,6 +284,8 @@ add_executable(entropic-api-tests
     api/facade_integration_test.cpp
     # v2.1.1 (#3): UTF-8 sanitization at the C-API outbound boundary.
     api/serialize_messages_utf8_test.cpp
+    # v2.1.10 (gh#40): mid-gen user-message queue ABI surface.
+    api/message_queue_abi_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
@@ -324,6 +361,8 @@ catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-adapter-tests)
+catch_discover_tests(entropic-speculative-compat-tests)
+catch_discover_tests(entropic-secondary-loader-tests)
 catch_discover_tests(entropic-grammar-tests)
 catch_discover_tests(entropic-cap-tests)
 catch_discover_tests(entropic-core-tests)

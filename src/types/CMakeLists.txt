@@ -7,6 +7,7 @@ target_sources(entropic-types PRIVATE
     config.cpp
     content.cpp
     session_logger.cpp
+    messages_json.cpp
 )
 
 target_include_directories(entropic-types PUBLIC
@@ -16,6 +17,10 @@ target_include_directories(entropic-types PUBLIC
 )
 
 target_link_libraries(entropic-types PUBLIC spdlog::spdlog)
+# nlohmann/json is an impl-only dependency of messages_json.cpp;
+# it is not exposed through any types/ header (per architecture-cpp
+# design rule #6). Link as PRIVATE to keep that promise intact.
+target_link_libraries(entropic-types PRIVATE nlohmann_json::nlohmann_json)
 
 target_compile_definitions(entropic-types PRIVATE ENTROPIC_BUILDING_DLL)
 

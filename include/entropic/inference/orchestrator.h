@@ -26,6 +26,7 @@
 #include <entropic/inference/adapter_manager.h>
 #include <entropic/inference/grammar_registry.h>
 #include <entropic/inference/profile_registry.h>
+#include <entropic/inference/secondary_model_loader.h>
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
@@ -38,6 +39,7 @@
 #include <vector>
 
 struct llama_context;  // Forward declaration for adapter management
+struct llama_model;    // Forward declaration for speculative compat (v2.1.11)
 
 namespace entropic {
 
@@ -213,6 +215,83 @@ public:
      */
     void clear_all_prompt_caches();
 
+    /**
+     * @brief Return true if any configured tier declares the
+     *        `"vision"` capability (gh#41, v2.1.8).
+     *
+     * Read-only lookup over the parsed ModelsConfig — does not
+     * touch backend state. Used by the facade's
+     * entropic_run_messages entry point to short-circuit with
+     * `ENTROPIC_ERROR_NO_VISION_TIER` before dispatching a
+     * multimodal turn that no tier can handle.
+     *
+     * @utility
+     * @version 2.1.8
+     */
+    bool has_vision_capable_tier() const;
+
+    /**
+     * @brief Result of a speculative-decoding compatibility check.
+     *
+     * @version 2.1.11
+     */
+    struct SpeculativeCompatInfo {
+        bool compatible = false;     ///< true when speculative may proceed
+        std::string diagnostic;      ///< Reason on failure (empty on ok)
+    };
+
+    /**
+     * @brief Check whether the currently-configured target/draft pair
+     *        is compatible for speculative decoding.
+     *
+     * Reads the active main tier as the target (verifier) and the
+     * `"draft"` role on the `SecondaryModelLoader` as the proposer.
+     * Returns `compatible=false` with a specific diagnostic when:
+     *   - No main tier is loaded (target unavailable).
+     *   - No draft role is loaded (no proposer configured).
+     *   - `entropic::speculative::check_compat` rejects the pairing
+     *     (recurrent target, tokenizer mismatch, etc.).
+     *
+     * @return SpeculativeCompatInfo.
+     * @utility
+     * @version 2.1.11
+     */
+    SpeculativeCompatInfo check_speculative_compat() const;
+
+    /**
+     * @brief Runtime toggle for the speculative-decoding path.
+     *
+     * Lets consumers (and tests) flip speculative on/off without
+     * reinitializing the orchestrator. Defaults to whatever
+     * `inference.speculative.enabled` was in the parsed config at
+     * init time.
+     *
+     * @param enabled true to route through the speculative kernel
+     *        when a compatible draft is loaded.
+     * @utility
+     * @version 2.1.11
+     */
+    void set_speculative_enabled(bool enabled) {
+        config_.inference.speculative.enabled = enabled;
+    }
+
+    /**
+     * @brief Pick the canonical vision-capable tier name (gh#41).
+     *
+     * Returns the first tier (iteration order of the parsed
+     * `models.tiers` map) whose capabilities include `"vision"`,
+     * or empty string if none exists. Multi-tier policy refinements
+     * (e.g. prefer the default tier when it qualifies) can layer on
+     * top later — single-vision-tier deployments are the common
+     * case for v2.1.8 (gh#42 ships the primary tier as the only
+     * vision-capable bundled entry).
+     *
+     * @return Vision tier name, or "" if none configured.
+     * @utility
+     * @version 2.1.8
+     */
+    std::string select_vision_tier() const;
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;
@@ -223,8 +302,18 @@ private:
     /* ── Per-tier adapters (one-to-one, identity-specific) ── */
     std::unordered_map<std::string, std::unique_ptr<ChatAdapter>> adapters_;
 
-    /* ── Router (separate small model, always ACTIVE) ────── */
-    std::shared_ptr<InferenceBackend> router_;
+    /* ── Secondary models (router, draft, future thinking) ── */
+    /**
+     * @brief Role-keyed lifecycle for non-primary models.
+     *
+     * Absorbed the legacy `router_` field in v2.1.11 (gh#27). Router
+     * remains accessible via `secondary_loader_.get("router")`; the
+     * speculative draft slot lands alongside it under the `"draft"`
+     * key (v2.1.11, gh#36).
+     *
+     * @version 2.1.11
+     */
+    SecondaryModelLoader secondary_loader_;
 
     /* ── Routing state ───────────────────────────────────── */
     std::unordered_map<std::string, std::string> tier_map_;  ///< digit → tier name
@@ -334,6 +423,23 @@ private:
     void activate_router(const ParsedConfig& config);
 
     /**
+     * @brief Activate the speculative-draft model if configured.
+     *
+     * Loads the draft GGUF (resolved via the bundled-models registry
+     * or as a literal path) into the secondary loader's `"draft"`
+     * role when `config.inference.speculative.enabled` is true and a
+     * `draft_model` value is set. Logs but does NOT fail engine init
+     * if the draft cannot be loaded — speculative is opt-in, so a
+     * misconfigured draft degrades to plain decode rather than
+     * blocking startup.
+     *
+     * @param config Full engine config.
+     * @internal
+     * @version 2.1.11
+     */
+    void activate_draft(const ParsedConfig& config);
+
+    /**
      * @brief Load bundled grammars from data directory at startup.
      * @version 1.9.3
      */
@@ -347,6 +453,60 @@ private:
      */
     void resolve_grammar_key(GenerationParams& params,
                              const std::string& tier_name);
+
+    /**
+     * @brief Resolve speculative target/draft llama_model pointers
+     *        from current orchestrator state.
+     *
+     * @param[out] target_out Active main-tier llama_model, or nullptr.
+     * @param[out] draft_out  Configured draft llama_model, or nullptr.
+     * @return Empty string on success; diagnostic on missing side.
+     * @internal
+     * @version 2.1.11
+     */
+    std::string resolve_speculative_pair(
+        llama_model*& target_out, llama_model*& draft_out) const;
+
+    /**
+     * @brief Attempt to route through the speculative kernel for
+     *        non-streaming generate. Returns true when the kernel ran
+     *        (result populated); false to fall back to plain decode.
+     * @internal
+     * @version 2.1.11
+     */
+    bool try_speculative_route(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        GenerationResult& result);
+
+    /**
+     * @brief Dispatch a generate call to either the speculative kernel
+     *        (when enabled + pair compatible) or the standard
+     *        non-streaming path. Extracted to keep generate() under
+     *        the SLOC gate.
+     * @internal
+     * @version 2.1.11
+     */
+    GenerationResult run_generate_dispatch(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Same as `try_speculative_route` but for the streaming
+     *        path — passes the per-token callback and cancel flag
+     *        through to the kernel.
+     * @internal
+     * @version 2.1.11
+     */
+    bool try_speculative_route_streaming(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view)> on_token,
+        std::atomic<bool>& cancel,
+        GenerationResult& result);
 };
 
 } // namespace entropic

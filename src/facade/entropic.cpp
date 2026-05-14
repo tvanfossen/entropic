@@ -19,7 +19,9 @@
 #include <entropic/types/logging.h>
 #include "llama_cpp_backend.h"
 #include <entropic/inference/interface_factory.h>
+#include <entropic/inference/orchestrator.h>
 #include <entropic/interfaces/i_inference_backend.h>
+#include <entropic/types/messages_json.h>
 #include "json_serializers.h"
 #include <cstdlib>
 #include <cstring>
@@ -316,6 +318,84 @@ static void rewire_stream_observer(entropic_handle_t h) {
 }
 
 /**
+ * @brief Propagate any pre-configure queue observer to the new engine.
+ *
+ * Sibling of rewire_stream_observer for the mid-gen queue
+ * consumption callback (gh#40, v2.1.10). Re-binds the handle-stored
+ * observer when the AgentEngine is constructed so observers never
+ * miss queue-consumption events on a late-bound engine.
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.10
+ */
+static void rewire_queue_observer(entropic_handle_t h) {
+    if (h->queue_observer != nullptr && h->engine) {
+        h->engine->set_queue_observer(
+            h->queue_observer, h->queue_observer_data);
+    }
+}
+
+/**
+ * @brief Propagate any pre-configure state observer to the new engine.
+ *
+ * gh#40 fallout (v2.1.10): pre-existing behavior wired the observer
+ * via `engine->set_callbacks()`, which is wiped by run_streaming.
+ * Re-bind through the persistent slot so pre-configure registrations
+ * survive engine construction AND streaming runs.
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.10
+ */
+static void rewire_state_observer(entropic_handle_t h) {
+    if (h->state_observer != nullptr && h->engine) {
+        h->engine->set_state_observer(
+            h->state_observer, h->state_observer_data);
+    }
+}
+
+/**
+ * @brief Propagate pre-configure critique callbacks to a newly-
+ *        constructed ConstitutionalValidator (gh#50, v2.1.12).
+ *
+ * Same pattern as rewire_state_observer: the handle owns the
+ * authoritative slot; configure_common reconstructs the validator
+ * each call, so the rewire helper re-applies the consumer's
+ * registered callbacks after every (re)construction.
+ *
+ * @param h Engine handle with validator just constructed (or NULL).
+ * @utility
+ * @version 2.1.12
+ */
+static void rewire_critique_callbacks(entropic_handle_t h) {
+    if ((h->critique_start_cb != nullptr || h->critique_end_cb != nullptr)
+            && h->validator) {
+        h->validator->set_critique_callbacks(
+            h->critique_start_cb,
+            h->critique_end_cb,
+            h->critique_cb_data);
+    }
+}
+
+/**
+ * @brief Re-bind every pre-configure observer to the new engine.
+ *
+ * Aggregates the three rewire helpers so configure_common stays
+ * under the SLOC ceiling. (gh#40 fallout, v2.1.10)
+ *
+ * @param h Engine handle with engine just constructed.
+ * @utility
+ * @version 2.1.12
+ */
+static void rewire_observers(entropic_handle_t h) {
+    rewire_stream_observer(h);
+    rewire_queue_observer(h);
+    rewire_critique_callbacks(h);
+    rewire_state_observer(h);
+}
+
+/**
  * @brief Register per-tier ChildContextInfo with the engine.
  *
  * Extracted from configure_common to keep that function under the
@@ -382,6 +462,28 @@ static bool si_create_delegation(
         target_tier ? target_tier : "",
         task ? task : "",
         max_turns, delegation_id, child_conversation_id);
+}
+
+/**
+ * @brief StorageInterface bridge: create_conversation trampoline.
+ *
+ * Forwards `AgentEngine::run`'s root-conversation creation to the
+ * `SqliteStorageBackend`. Pre-v2.1.12 (gh#48) the interface had no
+ * `create_conversation` callback, so the root conversation row was
+ * never inserted and every subsequent delegation's FK to
+ * `conversations(id)` failed silently against the empty parent id.
+ *
+ * @callback
+ * @version 2.1.12
+ */
+static bool si_create_conversation(
+        const char* title, std::string& conversation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr) { return false; }
+    conversation_id = sb->create_conversation(
+        title ? title : "session", std::nullopt, std::nullopt);
+    return !conversation_id.empty();
 }
 
 /**
@@ -486,11 +588,12 @@ static bool si_load_delegation_with_messages(
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
  * @internal
- * @version 2.1.6
+ * @version 2.1.12
  */
 static entropic::StorageInterface build_storage_iface(
         entropic::SqliteStorageBackend* sb) {
     entropic::StorageInterface si{};
+    si.create_conversation = si_create_conversation;
     si.create_delegation = si_create_delegation;
     si.complete_delegation = si_complete_delegation;
     si.save_conversation = si_save_conversation;
@@ -1180,10 +1283,16 @@ static void start_external_bridge(entropic_handle_t h) {
 
 /**
  * @brief Post-parse config setup: subsystem construction + wiring.
+ *
+ * v2.1.10 (gh#40 + fallout): observer rewiring at engine construction
+ * is bundled into `rewire_observers` so pre-configure stream, queue,
+ * and state observers all survive engine construction AND the
+ * EngineCallbacks shuffle that run_streaming performs.
+ *
  * @param h Engine handle with config populated.
  * @return ENTROPIC_OK or error code.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.10.1
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
@@ -1219,7 +1328,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
         iface, lc, h->config.compaction);
-    rewire_stream_observer(h);
+    rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);
 
@@ -1506,7 +1615,7 @@ entropic_error_t entropic_run(
  * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.1.8
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -1532,6 +1641,173 @@ entropic_error_t entropic_run_streaming(
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("run_streaming: {}", handle->last_error);
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+// ── gh#37 (v2.1.8): multimodal messages entry points ──────────
+
+/**
+ * @brief Parse messages_json and check vision-tier availability (gh#37/gh#41).
+ *
+ * Parses the wire-format messages array via the shared utility and,
+ * if any message carries image content_parts, verifies that the
+ * orchestrator has at least one tier whose `capabilities` includes
+ * `"vision"`. Returns the parsed vector on success; throws on
+ * parse failure (caller catches and maps to ENTROPIC_ERROR_*).
+ *
+ * @param handle Engine handle (already validated by caller).
+ * @param messages_json Caller-provided JSON array string.
+ * @param[out] out_rc Set to ENTROPIC_OK on success, or to a specific
+ *        error code (NO_VISION_TIER) when validation fails.
+ * @return Parsed messages on success, empty vector on failure.
+ * @internal
+ * @version 2.1.8
+ */
+static std::vector<entropic::Message> parse_and_check_vision(
+    entropic_handle_t handle,
+    const char* messages_json,
+    entropic_error_t& out_rc) {
+    auto msgs = entropic::parse_messages_json(messages_json);
+    if (entropic::any_message_has_images(msgs)
+            && handle->orchestrator
+            && !handle->orchestrator->has_vision_capable_tier()) {
+        out_rc = ENTROPIC_ERROR_NO_VISION_TIER;
+        return {};
+    }
+    out_rc = ENTROPIC_OK;
+    return msgs;
+}
+
+/**
+ * @brief Blocking multimodal run (gh#37, v2.1.8).
+ * @internal
+ * @version 2.1.8
+ */
+/**
+ * @brief Inner blocking-run dispatch — no front validation (gh#37).
+ *
+ * Caller has already verified handle, args, and engine pointer.
+ * Parses messages, runs the multimodal vision check, dispatches
+ * the turn, serializes the result, and fires the synthetic
+ * stream-observer completion sentinel. Returns the canonical
+ * entropic_error_t status — single exit.
+ *
+ * @internal
+ * @version 2.1.8
+ */
+static entropic_error_t run_messages_inner(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json) {
+    entropic_error_t vrc = ENTROPIC_OK;
+    auto msgs = parse_and_check_vision(handle, messages_json, vrc);
+    if (vrc != ENTROPIC_OK) { return vrc; }
+    auto result = handle->engine->run_turn(std::move(msgs));
+    *result_json = alloc_cstr(
+        facade_json::serialize_messages(result));
+    if (handle->stream_observer != nullptr) {
+        handle->stream_observer(
+            "", 0, handle->stream_observer_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Blocking multimodal agentic run (gh#37, v2.1.8).
+ *
+ * Front-line argument validation, then dispatches to
+ * run_messages_inner() under a try/catch that maps unexpected
+ * exceptions to ENTROPIC_ERROR_GENERATE_FAILED. See the public
+ * declaration in entropic.h for the full error matrix.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param result_json Out-param: malloc'd JSON result. Caller frees.
+ * @return ENTROPIC_OK or one of the documented error codes.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_run_messages(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK
+            || !messages_json || !result_json || !handle->engine) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return run_messages_inner(handle, messages_json, result_json);
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_messages: {}", handle->last_error);
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+/**
+ * @brief Streaming multimodal run (gh#37, v2.1.8).
+ * @internal
+ * @version 2.1.8
+ */
+/**
+ * @brief Inner streaming dispatch — no front validation (gh#37).
+ * @internal
+ * @version 2.1.8
+ */
+static entropic_error_t run_messages_stream_inner(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    entropic_error_t vrc = ENTROPIC_OK;
+    auto msgs = parse_and_check_vision(handle, messages_json, vrc);
+    if (vrc != ENTROPIC_OK) { return vrc; }
+    int code = handle->engine->run_streaming(
+        std::move(msgs), on_token, user_data, cancel_flag);
+    if (handle->stream_observer != nullptr) {
+        handle->stream_observer(
+            "", 0, handle->stream_observer_data);
+    }
+    return code == 1 ? ENTROPIC_ERROR_CANCELLED : ENTROPIC_OK;
+}
+
+/**
+ * @brief Streaming multimodal agentic run (gh#37, v2.1.8).
+ *
+ * Streaming sibling of entropic_run_messages. Same validation
+ * + try/catch shape; dispatches to run_messages_stream_inner()
+ * under a try/catch. The first token may be delayed by
+ * vision-encoder latency when image content is present.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param on_token Per-token callback (UTF-8 filtered).
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional int*; non-zero cancels.
+ * @return ENTROPIC_OK or one of the documented error codes.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_run_messages_streaming(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK
+            || !messages_json || !on_token || !handle->engine) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    try {
+        return run_messages_stream_inner(
+            handle, messages_json, on_token, user_data, cancel_flag);
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_messages_streaming: {}", handle->last_error);
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
 }
@@ -1644,16 +1920,18 @@ entropic_error_t entropic_set_delegation_callbacks(
 /**
  * @brief Register a state-change observer on the handle.
  *
- * Updates the engine's EngineCallbacks.on_state_change to forward
- * transitions to the registered C observer. (P1-5 follow-up,
- * 2.0.6-rc16.2)
+ * v2.1.10 (gh#40 fallout): routes through the engine's persistent
+ * state_observer slot rather than the legacy
+ * EngineCallbacks.on_state_change. The legacy path is wiped by
+ * run_streaming's set_callbacks() shuffle, which silently broke the
+ * documented external-MCP-bridge use case for streaming runs.
  *
  * @param handle Engine handle.
  * @param observer State observer (NULL to clear).
  * @param user_data Forwarded to observer.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.10
  */
 entropic_error_t entropic_set_state_observer(
     entropic_handle_t handle,
@@ -1663,15 +1941,47 @@ entropic_error_t entropic_set_state_observer(
     handle->state_observer = observer;
     handle->state_observer_data = user_data;
     if (handle->engine) {
-        entropic::EngineCallbacks cb{};
-        cb.on_state_change = [](int state, void* ud) {
-            auto* h = static_cast<entropic_engine*>(ud);
-            if (h->state_observer) {
-                h->state_observer(state, h->state_observer_data);
-            }
-        };
-        cb.user_data = handle;
-        handle->engine->set_callbacks(cb);
+        // gh#40 fallout (v2.1.10): route through the engine's
+        // persistent state-observer slot rather than the legacy
+        // EngineCallbacks::on_state_change. The legacy path is
+        // wiped by run_streaming's set_callbacks() shuffle, so
+        // wiring there silently failed for streaming runs (the
+        // exact bridge use case this API was designed for).
+        handle->engine->set_state_observer(observer, user_data);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register critique start/end callbacks on the handle
+ *        (gh#50, v2.1.12).
+ *
+ * Saves the callback pair on the handle (the authoritative slot)
+ * and re-applies to the current ConstitutionalValidator if one is
+ * already constructed. Subsequent `entropic_configure*` calls
+ * rebuild the validator; the `rewire_critique_callbacks` helper
+ * re-applies this slot from the handle automatically.
+ *
+ * @param handle Engine handle.
+ * @param start_cb Pre-critique callback (NULL to disable).
+ * @param end_cb Post-critique callback (NULL to disable).
+ * @param user_data Forwarded to both callbacks.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.12
+ */
+entropic_error_t entropic_set_critique_callbacks(
+    entropic_handle_t handle,
+    void (*start_cb)(void* user_data),
+    void (*end_cb)(void* user_data),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->critique_start_cb = start_cb;
+    handle->critique_end_cb = end_cb;
+    handle->critique_cb_data = user_data;
+    if (handle->validator) {
+        handle->validator->set_critique_callbacks(
+            start_cb, end_cb, user_data);
     }
     return ENTROPIC_OK;
 }
@@ -1688,6 +1998,87 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->engine) { return ENTROPIC_ERROR_INVALID_STATE; }
     handle->engine->interrupt();
+    return ENTROPIC_OK;
+}
+
+// ── Mid-generation user-message queue (gh#40, v2.1.10) ────────
+
+/**
+ * @brief Enqueue a follow-up user message while a run is in flight.
+ *
+ * Pure passthrough to the engine's thread-safe queue primitive. Does
+ * NOT take api_mutex — `entropic_run_streaming` holds nothing while
+ * the agent loop is running, so this call must be lock-disjoint from
+ * the run path to avoid deadlock. The engine's per-queue mutex
+ * guarantees thread safety on the queue itself.
+ *
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_queue_user_message(
+    entropic_handle_t handle, const char* message) {
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!handle) {
+        rc = ENTROPIC_ERROR_INVALID_HANDLE;
+    } else if (!message) {
+        rc = ENTROPIC_ERROR_INVALID_ARGUMENT;
+    } else if (!handle->engine || !handle->engine->is_running()) {
+        rc = ENTROPIC_ERROR_INVALID_STATE;
+    } else if (!handle->engine->queue_user_message(message)) {
+        rc = ENTROPIC_ERROR_QUEUE_FULL;
+    }
+    return rc;
+}
+
+/**
+ * @brief Snapshot the mid-gen queue depth.
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_user_message_queue_depth(
+    entropic_handle_t handle, size_t* count) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!count) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    *count = handle->engine
+        ? handle->engine->user_message_queue_depth() : 0;
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Drop all queued mid-gen user messages.
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_clear_user_message_queue(
+    entropic_handle_t handle) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (handle->engine) {
+        handle->engine->clear_user_message_queue();
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Register the queue-consumption observer.
+ *
+ * Stores on the handle so pre-configure registration is preserved,
+ * then forwards to the engine if it exists. The engine member is the
+ * source of truth at fire time — set_callbacks() shuffles in the
+ * streaming path do not touch this slot.
+ *
+ * @internal
+ * @version 2.1.10
+ */
+entropic_error_t entropic_set_queue_observer(
+    entropic_handle_t handle,
+    void (*observer)(const char*, size_t, void*),
+    void* user_data) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    handle->queue_observer = observer;
+    handle->queue_observer_data = user_data;
+    if (handle->engine) {
+        handle->engine->set_queue_observer(observer, user_data);
+    }
     return ENTROPIC_OK;
 }
 
@@ -1739,6 +2130,34 @@ entropic_error_t entropic_context_count(
     if (!count) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     *count = handle->engine->message_count();
     return ENTROPIC_OK;
+}
+
+/**
+ * @brief Read current context-window pressure (gh#39, v2.1.8).
+ *
+ * Mirrors the `Context: N/M tokens (P%)` line emitted by
+ * core.context_manager. Reads from the engine's existing
+ * `context_usage(messages)` helper against the current conversation.
+ *
+ * @param handle Engine handle.
+ * @param tokens_used Out-param: tokens in the current conversation.
+ * @param capacity Out-param: active tier's configured context_length.
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.1.8
+ */
+entropic_error_t entropic_context_usage(
+    entropic_handle_t handle,
+    size_t* tokens_used,
+    size_t* capacity) {
+    if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!tokens_used || !capacity) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
+    std::lock_guard lock(handle->api_mutex);
+    auto [used, max] = handle->engine->context_usage(
+        handle->engine->get_messages());
+    *tokens_used = static_cast<size_t>(used);
+    *capacity = static_cast<size_t>(max);
+    return max > 0 ? ENTROPIC_OK : ENTROPIC_ERROR_INVALID_STATE;
 }
 
 /**
@@ -2878,6 +3297,46 @@ entropic_error_t entropic_get_diagnostic_prompt(
         "Be honest and specific. The goal is accurate "
         "self-assessment, not self-defense.\n";
     *prompt_out = alloc_cstr(prompt);
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Query speculative-decoding compatibility for the configured
+ *        target/draft pair.
+ *
+ * Delegates to `ModelOrchestrator::check_speculative_compat()`. The
+ * orchestrator owns both sides of the pairing (active main tier as
+ * target, `"draft"` role on the secondary loader as draft) and runs
+ * the architecture + tokenizer rules from
+ * `entropic::speculative::check_compat`.
+ *
+ * @param handle Engine handle.
+ * @param compatible Required out-param: 1 when compatible.
+ * @param diagnostic Optional out-param: heap-allocated diagnostic
+ *        string on incompatibility (NULL on compatible pair). Caller
+ *        frees with entropic_free_string.
+ * @return ENTROPIC_OK / ENTROPIC_ERROR_INVALID_HANDLE /
+ *         ENTROPIC_ERROR_INVALID_STATE.
+ * @internal
+ * @version 2.1.11
+ */
+entropic_error_t entropic_speculative_compat(
+    entropic_handle_t handle,
+    int* compatible,
+    char** diagnostic) {
+    if (handle == nullptr || compatible == nullptr) {
+        return ENTROPIC_ERROR_INVALID_HANDLE;
+    }
+    if (!handle->orchestrator) {
+        return ENTROPIC_ERROR_INVALID_STATE;
+    }
+    auto info = handle->orchestrator->check_speculative_compat();
+    *compatible = info.compatible ? 1 : 0;
+    if (diagnostic != nullptr) {
+        *diagnostic = info.compatible
+                          ? nullptr
+                          : alloc_cstr(info.diagnostic);
+    }
     return ENTROPIC_OK;
 }
 

@@ -301,12 +301,32 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @param messages System + user messages.
  * @return Final messages.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.12
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     LoopContext ctx;
     ctx.messages = std::move(messages);
     ctx.metrics.start_time = now_seconds();
+
+    // gh#48 (v2.1.12): create the root conversation row when storage
+    // is wired so `ctx.conversation_id` carries a valid FK into
+    // `conversations(id)`. Every downstream delegation copies
+    // `parent_ctx.conversation_id` into `child_ctx.parent_conversation_id`
+    // (`delegation.cpp:387`); without this, the empty string propagates
+    // and every `INSERT INTO delegations` violates the FK silently,
+    // making `entropic.followup` return empty across an entire session.
+    if (storage_.create_conversation != nullptr) {
+        std::string conv_id;
+        if (storage_.create_conversation("session", conv_id,
+                                         storage_.user_data)
+            && !conv_id.empty()) {
+            ctx.conversation_id = std::move(conv_id);
+        } else {
+            logger->warn("Storage create_conversation failed at run() "
+                         "init; delegations will not persist this "
+                         "session (gh#48)");
+        }
+    }
 
     reset_interrupt();
     pause_flag_.store(false);
@@ -619,7 +639,7 @@ bool AgentEngine::should_stop(const LoopContext& ctx) const {
  * @param ctx Loop context.
  * @param state New state.
  * @internal
- * @version 1.9.1
+ * @version 2.1.10
  */
 void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
     auto prev = ctx.state;
@@ -628,6 +648,13 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
     if (callbacks_.on_state_change != nullptr) {
         callbacks_.on_state_change(
             static_cast<int>(state), callbacks_.user_data);
+    }
+    // Persistent slot (gh#40 fallout, v2.1.10): the streaming entry
+    // points overwrite callbacks_ via set_callbacks(), so the legacy
+    // on_state_change is silent for streaming runs. The persistent
+    // slot is unaffected by that shuffle.
+    if (state_observer_ != nullptr) {
+        state_observer_(static_cast<int>(state), state_observer_data_);
     }
 
     // Hook: ON_STATE_CHANGE (v1.9.1)
@@ -2289,28 +2316,106 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
 
 /**
  * @brief Run a single conversation turn (stateful).
+ *
+ * gh#40 (v2.1.10): after the agent loop reaches top-level COMPLETE,
+ * drains any messages enqueued mid-generation via
+ * `queue_user_message` as additional turns under the same call.
+ *
  * @param input User input string.
  * @return Result messages from engine.
  * @internal
- * @version 2.0.2
+ * @version 2.1.10
  */
 std::vector<Message> AgentEngine::run_turn(const std::string& input) {
+    // gh#40 (v2.1.10): wrap the agent loop in a drain loop so any
+    // user messages enqueued mid-generation become subsequent turns
+    // at this single structural top-level COMPLETE boundary. The
+    // running_flag_ gate lets the facade reject
+    // entropic_queue_user_message with INVALID_STATE when no run is
+    // in flight (validation criterion #1).
+    running_flag_.store(true);
     if (conversation_.empty() && !system_prompt_.empty()) {
         Message sys;
         sys.role = "system";
         sys.content = system_prompt_;
         conversation_.push_back(std::move(sys));
     }
-    Message usr;
-    usr.role = "user";
-    usr.content = input;
-    conversation_.push_back(std::move(usr));
+    std::string pending = input;
+    std::vector<Message> result;
+    while (true) {
+        Message usr;
+        usr.role = "user";
+        usr.content = pending;
+        conversation_.push_back(std::move(usr));
 
-    size_t sent_len = conversation_.size();
-    auto result = run(conversation_);  // copy — run() may mutate
-    for (size_t i = sent_len; i < result.size(); ++i) {
-        conversation_.push_back(result[i]);
+        size_t sent_len = conversation_.size();
+        result = run(conversation_);  // copy — run() may mutate
+        for (size_t i = sent_len; i < result.size(); ++i) {
+            conversation_.push_back(result[i]);
+        }
+        auto next = pop_queued_user_message();
+        if (!next.has_value()) { break; }
+        fire_queue_consumed(*next, user_message_queue_depth());
+        pending = std::move(*next);
     }
+    running_flag_.store(false);
+    return result;
+}
+
+/**
+ * @brief Multimodal-aware run_turn overload (gh#37, v2.1.8).
+ *
+ * Takes a pre-built list of messages and preserves their
+ * `content_parts` end-to-end (no string flattening). Each input
+ * message is appended verbatim to the engine's conversation history
+ * before the agent loop runs. If the conversation is empty and the
+ * caller did not supply a system message, the engine's configured
+ * `system_prompt_` is prepended first — matching the single-string
+ * overload's first-turn behavior.
+ *
+ * @param new_messages Messages to add this turn.
+ * @return Result messages from the loop.
+ * @internal
+ * @version 2.1.10
+ */
+std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
+    // gh#40 (v2.1.10): mirror the single-string overload's drain
+    // loop. Queued messages enqueued via entropic_queue_user_message
+    // become subsequent plain-text user turns at this top-level
+    // boundary (no content_parts — the queue ABI is text-only).
+    running_flag_.store(true);
+    bool caller_has_system = false;
+    for (const auto& m : new_messages) {
+        if (m.role == "system") { caller_has_system = true; break; }
+    }
+    if (conversation_.empty() && !system_prompt_.empty()
+            && !caller_has_system) {
+        Message sys;
+        sys.role = "system";
+        sys.content = system_prompt_;
+        conversation_.push_back(std::move(sys));
+    }
+    std::vector<Message> pending = std::move(new_messages);
+    std::vector<Message> result;
+    while (true) {
+        for (auto& m : pending) {
+            conversation_.push_back(std::move(m));
+        }
+        size_t sent_len = conversation_.size();
+        result = run(conversation_);
+        for (size_t i = sent_len; i < result.size(); ++i) {
+            conversation_.push_back(result[i]);
+        }
+        auto next = pop_queued_user_message();
+        if (!next.has_value()) { break; }
+        fire_queue_consumed(*next, user_message_queue_depth());
+        Message usr;
+        usr.role = "user";
+        usr.content = std::move(*next);
+        pending.clear();
+        pending.push_back(std::move(usr));
+    }
+    running_flag_.store(false);
     return result;
 }
 
@@ -2371,6 +2476,85 @@ int AgentEngine::run_streaming(
 }
 
 /**
+ * @brief Concatenate user-role message text for session-log echo.
+ * @param messages Incoming messages for the streaming turn.
+ * @return Newline-joined user text (skips system/assistant turns).
+ * @internal
+ * @version 2.1.8
+ */
+static std::string concat_user_echo(
+    const std::vector<Message>& messages) {
+    std::string echo;
+    for (const auto& m : messages) {
+        if (m.role != "user" || m.content.empty()) { continue; }
+        if (!echo.empty()) { echo += '\n'; }
+        echo += m.content;
+    }
+    return echo;
+}
+
+/**
+ * @brief Multimodal-aware streaming run_turn overload (gh#37, v2.1.8).
+ *
+ * Mirrors the single-string streaming variant — same stream filter,
+ * cancel polling, session logger wiring — but consumes a pre-built
+ * message list with `content_parts` preserved.
+ *
+ * @param new_messages Messages to add this turn.
+ * @param on_token Filtered token callback.
+ * @param user_data Consumer context.
+ * @param cancel_flag Per-token cancel poll, nullable.
+ * @return 0=OK, 1=cancelled, 2=error.
+ * @internal
+ * @version 2.1.8
+ */
+int AgentEngine::run_streaming(
+    std::vector<Message> new_messages,
+    TokenCallback on_token,
+    void* user_data,
+    int* cancel_flag)
+{
+    if (session_logger_) {
+        session_logger_->log_user_input(concat_user_echo(new_messages));
+    }
+
+    StreamThinkFilter filter(on_token, user_data);
+    if (session_logger_ && session_logger_->is_open()) {
+        filter.set_raw_callback(
+            SessionLogger::raw_token_callback,
+            session_logger_);
+    }
+
+    struct Ctx {
+        StreamThinkFilter* filter;
+        int* cancel;
+        AgentEngine* engine;
+    };
+    Ctx sctx{&filter, cancel_flag, this};
+
+    EngineCallbacks cbs{};
+    cbs.on_stream_chunk = [](const char* t, size_t l, void* ud) {
+        auto* c = static_cast<Ctx*>(ud);
+        if (c->cancel && *c->cancel) {
+            c->engine->interrupt();
+            return;
+        }
+        c->filter->on_token(t, l);
+    };
+    cbs.user_data = &sctx;
+    set_callbacks(cbs);
+
+    auto result = run_turn(std::move(new_messages));
+    filter.flush();
+
+    if (session_logger_) {
+        session_logger_->end_turn();
+    }
+    if (cancel_flag && *cancel_flag) { return 1; }
+    return 0;
+}
+
+/**
  * @brief Clear conversation history.
  * @internal
  * @version 2.0.2
@@ -2398,6 +2582,121 @@ size_t AgentEngine::message_count() const {
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
     return conversation_;
+}
+
+// ── Mid-generation user-message queue (gh#40, v2.1.10) ─────────
+
+/**
+ * @brief Enqueue a user message subject to the configured cap.
+ * @internal
+ * @version 2.1.10
+ */
+bool AgentEngine::queue_user_message(const std::string& message) {
+    std::lock_guard lock(queue_mutex_);
+    int cap = loop_config_.message_queue_capacity;
+    if (cap < 0) { cap = 0; }
+    if (user_message_queue_.size()
+            >= static_cast<size_t>(cap)) {
+        return false;
+    }
+    user_message_queue_.push_back(message);
+    logger->info("queued mid-gen user message: depth={}",
+                 user_message_queue_.size());
+    return true;
+}
+
+/**
+ * @brief Read queue depth under the queue mutex.
+ * @internal
+ * @version 2.1.10
+ */
+size_t AgentEngine::user_message_queue_depth() const {
+    std::lock_guard lock(queue_mutex_);
+    return user_message_queue_.size();
+}
+
+/**
+ * @brief Drop all queued messages atomically.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::clear_user_message_queue() {
+    std::lock_guard lock(queue_mutex_);
+    size_t dropped = user_message_queue_.size();
+    user_message_queue_.clear();
+    if (dropped > 0) {
+        logger->info("cleared mid-gen queue: dropped={}", dropped);
+    }
+}
+
+/**
+ * @brief Update the runtime cap (in-place on LoopConfig).
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_message_queue_capacity(int cap) {
+    std::lock_guard lock(queue_mutex_);
+    loop_config_.message_queue_capacity = cap < 0 ? 0 : cap;
+}
+
+/**
+ * @brief Pop the head of the queue if non-empty (FIFO).
+ * @internal
+ * @version 2.1.10
+ */
+std::optional<std::string>
+AgentEngine::pop_queued_user_message() {
+    std::lock_guard lock(queue_mutex_);
+    if (user_message_queue_.empty()) {
+        return std::nullopt;
+    }
+    std::string front = std::move(user_message_queue_.front());
+    user_message_queue_.pop_front();
+    return front;
+}
+
+/**
+ * @brief Notify the consumer that a queued message is being injected.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::fire_queue_consumed(const std::string& consumed,
+                                      size_t remaining) {
+    if (queue_observer_ != nullptr) {
+        queue_observer_(
+            consumed.c_str(), remaining, queue_observer_data_);
+    }
+}
+
+/**
+ * @brief Persistent slot setter; survives set_callbacks() shuffles.
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_queue_observer(
+    void (*observer)(const char*, size_t, void*),
+    void* user_data) {
+    queue_observer_ = observer;
+    queue_observer_data_ = user_data;
+}
+
+/**
+ * @brief Wire the persistent state-observer slot.
+ *
+ * Forwarded to ResponseGenerator so the PAUSED transition that
+ * ResponseGenerator emits during handle_pause also reaches the
+ * persistent slot. The legacy `EngineCallbacks::on_state_change`
+ * remains supported in parallel for in-tree callers (tests etc.).
+ *
+ * @internal
+ * @version 2.1.10
+ */
+void AgentEngine::set_state_observer(
+    void (*observer)(int, void*),
+    void* user_data) {
+    state_observer_ = observer;
+    state_observer_data_ = user_data;
+    response_generator_.set_state_observer(observer, user_data);
 }
 
 // ── Directive hooks (v2.0.2) ────────────────────────────────

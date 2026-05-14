@@ -1,9 +1,50 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
+# Test fixture mirroring data/bundled_models.yaml schema.
+# Real URLs are not exercised here — these entries seed registry-load
+# tests with at least one entry per family supported by v2.1.9.
+
 primary:
   name: Qwen3.5-35B-A3B-UD-IQ3_XXS
   url: https://example.com/primary.gguf
   size_gb: 13.1
   adapter: qwen35
   description: Primary workhorse
+
+# ── v2.1.9 family fixtures (gh#44) ─────────────────────────────
+
+qwen3_5_4b:
+  name: Qwen3.5-4B-Q8_0
+  url: https://example.com/qwen3_5_4b.gguf
+  size_gb: 4.5
+  adapter: qwen35
+  description: Qwen 3.5 4B fixture
+
+qwen3_6_a3b:
+  name: Qwen3.6-35B-A3B-UD-IQ3_XXS
+  url: https://example.com/qwen3_6_a3b.gguf
+  size_gb: 13.2
+  adapter: qwen36
+  description: Qwen 3.6 A3B fixture
+  mmproj_key: qwen3_6_a3b_mmproj
+
+qwen3_6_a3b_mmproj:
+  name: Qwen3.6-35B-A3B-mmproj-F16
+  url: https://example.com/qwen3_6_a3b_mmproj.gguf
+  size_gb: 0.9
+  description: Vision projector fixture for qwen3_6_a3b
+
+gemma4_e2b:
+  name: gemma-4-E2B-it-Q8_0
+  url: https://example.com/gemma4_e2b.gguf
+  size_gb: 2.5
+  adapter: gemma4
+  description: Gemma 4 E2B fixture
+
+nemotron3_nano_4b:
+  name: NVIDIA-Nemotron-3-Nano-4B-Q8_0
+  url: https://example.com/nemotron3_nano_4b.gguf
+  size_gb: 4.5
+  adapter: nemotron3
+  description: Nemotron 3 Nano 4B fixture
 
 # router model removed in v2.1.0

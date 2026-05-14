@@ -299,6 +299,36 @@ struct TierConfig : ModelConfig {
     /// @version 1.9.2
     float adapter_scale = 1.0f;
 
+    /// @brief Declared tier capabilities (gh#41).
+    ///
+    /// Free-form lowercase strings — canonical values are "text" and
+    /// "vision". Missing / empty in YAML resolves to `{"text"}` at
+    /// config-load time so every pre-v2.1.8 tier config stays valid
+    /// without modification. The orchestrator inspects this set when
+    /// it sees a message with image content_parts; if no configured
+    /// tier carries `"vision"`, the run is rejected with
+    /// `ENTROPIC_ERROR_NO_VISION_TIER`.
+    ///
+    /// Order is not significant. Duplicates are tolerated but
+    /// idiomatic configs deduplicate.
+    ///
+    /// @version 2.1.8
+    std::vector<std::string> capabilities;
+
+    /**
+     * @brief Return true if this tier declares the named capability.
+     * @param name Lowercase capability name (e.g., "vision").
+     * @return true if the capabilities vector contains `name`.
+     * @utility
+     * @version 2.1.8
+     */
+    bool has_capability(const std::string& name) const {
+        for (const auto& c : capabilities) {
+            if (c == name) { return true; }
+        }
+        return false;
+    }
+
     /**
      * @brief Get a named parameter derived from tier config fields.
      *
@@ -550,6 +580,130 @@ struct ConstitutionalValidationConfig {
 };
 
 /**
+ * @brief Speculative decoding configuration (v2.1.11, gh#36).
+ *
+ * Off by default. When `enabled` is true and a `draft_model` is set,
+ * the engine loads the draft into the SecondaryModelLoader's `"draft"`
+ * slot at init and routes main-tier generation through
+ * `LlamaCppBackend::do_generate_speculative`.
+ *
+ * Placement axis: `draft_n_gpu_layers` selects CPU (`0`), full GPU
+ * (`-1`), or hybrid partial offload (`>0` and `< model_layers`). The
+ * default of `0` puts the draft on CPU so the GPU stays saturated on
+ * the verifier — minimal VRAM cost.
+ *
+ * @version 2.1.11
+ */
+/**
+ * @brief Build the v2.1.11 default ModelConfig for a speculative
+ *        draft model.
+ *
+ * Differs from the standard tier defaults in three places that the
+ * kernel currently depends on:
+ *  - `gpu_layers = 0` — CPU-resident draft (zero VRAM on top of
+ *    primary). Override to -1 for full GPU when VRAM allows.
+ *  - `flash_attn = false` — required for partial seq_rm support on
+ *    MoE / GQA architectures (the kernel rolls back draft KV after
+ *    each speculative round). Override to true ONLY if your model
+ *    + backend can do partial seq_rm with flash attn enabled.
+ *  - `context_length = 8192` — modest; speculative drafts are
+ *    typically 4–32 tokens per round, no need for a wide window.
+ *  - `n_threads = 4` — works on most laptops; bump to match physical
+ *    core count for higher CPU draft throughput.
+ *
+ * Every other field comes from `ModelConfig`'s standard defaults.
+ *
+ * @utility
+ * @version 2.1.11
+ */
+inline ModelConfig make_default_draft_model_config() {
+    ModelConfig cfg;
+    cfg.gpu_layers = 0;
+    cfg.flash_attn = false;
+    cfg.context_length = 8192;
+    cfg.n_threads = 4;
+    return cfg;
+}
+
+/**
+ * @brief Speculative-decoding configuration (`inference.speculative.*`).
+ *
+ * @par Architecture compatibility (v2.1.11 pin `253ba110b`)
+ *
+ * The orchestrator's `check_speculative_compat()` refuses the
+ * pairing when the target model is recurrent OR hybrid at the
+ * pinned llama.cpp commit. Among bundled primaries today, that
+ * leaves a SINGLE workable family:
+ *
+ * | Bundled key      | llama.cpp arch       | Speculative? |
+ * |------------------|----------------------|--------------|
+ * | qwen3_5_0_8b     | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_2b       | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_4b       | QWEN35 (hybrid SSM)  | refused      |
+ * | qwen3_5_9b       | QWEN35 (hybrid SSM)  | refused      |
+ * | primary (3.5-A3B)| QWEN35MOE (hybrid)   | refused      |
+ * | qwen3_6_a3b      | QWEN35MOE (hybrid)   | refused      |
+ * | nemotron3_nano_4b| NEMOTRON_H (hybrid)  | refused      |
+ * | gemma4_a4b       | GEMMA4 (pure xformer)| **OK**       |
+ * | gemma4_e4b       | GEMMA4 (pure xformer)| **OK**       |
+ * | gemma4_e2b       | GEMMA4 (pure xformer)| **OK**       |
+ *
+ * Bit-identical correctness was verified empirically on the
+ * Gemma 4 family in Session 5 (proposal Implementation Log,
+ * Gate A). Hybrid SSM targets produce divergent KV state across
+ * upstream's split-prefill scheme — the issue is structural to
+ * `common_speculative_*` at this pin, not entropic-side. Consumers
+ * pairing a non-Gemma primary with a Gemma draft (or vice versa)
+ * will also be refused, since the gate looks at the TARGET arch.
+ *
+ * @par Recommended pairings (bundled)
+ *   - target=`gemma4_e4b` + draft=`gemma4_e2b` (CPU): bit-identical,
+ *     measurable speedup on long generations.
+ *   - target=`gemma4_a4b` + draft=`gemma4_e2b` (CPU): more aggressive
+ *     verifier; needs ~16 GB VRAM at modest context.
+ *
+ * Future llama.cpp pins that fix the cross-ubatch SSM state issue
+ * (or alternate non-hybrid Qwen/Llama arches added to the bundled
+ * registry) will widen this set without code change — the gate is
+ * data-driven via `llama_model_is_hybrid` / `llama_model_is_recurrent`.
+ *
+ * @version 2.1.11
+ */
+struct SpeculativeConfig {
+    bool enabled = false;                  ///< Master switch (off by default)
+    int n_draft = 16;                      ///< Window size (proposed tokens)
+
+    /**
+     * @brief Full ModelConfig for the draft model.
+     *
+     * Mirrors how tier configs are structured: every llama.cpp knob
+     * (gpu_layers, n_threads, n_batch, flash_attn, context_length,
+     * use_mlock, cache_type_k/v, tensor_split, ...) is
+     * consumer-tunable from YAML via
+     * `inference.speculative.draft.<field>`. `path` accepts a
+     * bundled-model registry key OR a literal filesystem path;
+     * resolved at config-parse time by `BundledModels::resolve()`.
+     *
+     * Defaults are kernel-aware — see
+     * `make_default_draft_model_config()`.
+     */
+    ModelConfig draft = make_default_draft_model_config();
+};
+
+/**
+ * @brief Inference-side configuration knobs (v2.1.11).
+ *
+ * Sub-tree mirroring the proposal's `inference.*` YAML namespace.
+ * Currently holds speculative decoding only; future inference-level
+ * settings land here rather than spreading across ParsedConfig.
+ *
+ * @version 2.1.11
+ */
+struct InferenceConfig {
+    SpeculativeConfig speculative;         ///< Speculative decoding (gh#36)
+};
+
+/**
  * @brief Full parsed configuration.
  *
  * Aggregates all config sections. C++ equivalent of Python's
@@ -593,6 +747,10 @@ struct ParsedConfig {
 
     /// Constitutional validation pipeline settings.
     ConstitutionalValidationConfig constitutional_validation;
+
+    /// Inference-side knobs (currently speculative decoding only).
+    /// @version 2.1.11
+    InferenceConfig inference;
 };
 
 /**

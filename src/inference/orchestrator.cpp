@@ -11,6 +11,7 @@
  */
 
 #include <entropic/inference/orchestrator.h>
+#include <entropic/inference/speculative_compat.h>
 #include <entropic/interfaces/i_inference_backend.h>
 #include <entropic/types/logging.h>
 
@@ -50,12 +51,14 @@ std::string extract_latest_user_message(const std::vector<Message>& messages) {
  * @brief Initialize orchestrator from parsed config.
  *
  * Creates ONE backend per unique model path. Multiple tiers sharing
- * the same .gguf share a single backend instance.
+ * the same .gguf share a single backend instance. Router instantiation
+ * moved to SecondaryModelLoader in v2.1.11 (gh#27) — this function no
+ * longer touches the router slot directly.
  *
  * @param config Full engine config.
  * @return true on success.
  * @internal
- * @version 2.0.5
+ * @version 2.1.11
  */
 bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
     for (const auto& [name, tier_config] : config.models.tiers) {
@@ -77,9 +80,9 @@ bool ModelOrchestrator::create_tier_backends(const ParsedConfig& config) {
         adapters_[name] = create_adapter(
             tier_config.adapter, name, "" /* prompt resolved later */);
     }
-    if (config.models.router) {
-        router_ = std::make_shared<LlamaCppBackend>();
-    }
+    // Router backend instantiation moved to SecondaryModelLoader
+    // (gh#27, v2.1.11). The loader allocates the role slot lazily on
+    // first ensure_loaded() call from activate_router().
     logger->info("Created {} unique backend(s) for {} tier(s)",
                  model_pool_.size(), tiers_.size());
     return true;
@@ -122,26 +125,58 @@ bool ModelOrchestrator::activate_default_tier(const ParsedConfig& config) {
 }
 
 /**
- * @brief Load and activate the router model if configured.
+ * @brief Load and activate the router model via SecondaryModelLoader.
+ *
+ * Delegates the load/unload lifecycle to `secondary_loader_` under the
+ * `"router"` role (gh#27, v2.1.11). Preserves observable behavior:
+ * router still loads at init when `models.router` is configured.
+ *
  * @param config Parsed engine config.
  * @utility
- * @version 2.0.2
+ * @version 2.1.11
  */
 void ModelOrchestrator::activate_router(const ParsedConfig& config) {
-    if (!router_ || !config.models.router) { return; }
-    if (!router_->load_and_activate(*config.models.router)) {
-        logger->error("Failed to activate router model");
-    } else {
-        logger->info("Activated router model");
-    }
+    if (!config.models.router) { return; }
+    // Lifecycle now lives on SecondaryModelLoader (gh#27, v2.1.11).
+    // Diagnostic-level logging is emitted by the loader itself.
+    secondary_loader_.ensure_loaded("router", *config.models.router);
+}
+
+/**
+ * @brief Activate the speculative-draft model when configured.
+ *
+ * Hands the consumer-supplied `ModelConfig` (from the YAML's
+ * `inference.speculative.draft:` block) directly to the secondary
+ * loader under the `"draft"` role. Speculative is opt-in — a load
+ * failure here is logged and treated as "no draft available"
+ * (degrades to plain decode) rather than blocking engine init.
+ *
+ * @param config Parsed engine config.
+ * @internal
+ * @version 2.1.11 [reviewed]
+ */
+void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
+    const auto& spec = config.inference.speculative;
+    if (!spec.enabled || spec.draft.path.empty()) { return; }
+    // Full ModelConfig comes from the YAML's
+    // `inference.speculative.draft:` block — every llama.cpp knob is
+    // consumer-tunable. Defaults come from
+    // `make_default_draft_model_config()` (gpu_layers=0,
+    // flash_attn=false, context_length=8192, n_threads=4).
+    secondary_loader_.ensure_loaded("draft", spec.draft);
 }
 
 /**
  * @brief Initialize orchestrator: backends, routing, adapters, grammars.
+ *
+ * Adds speculative-draft activation alongside router activation in
+ * v2.1.11 (gh#36) — the draft slot loads when `inference.speculative.
+ * enabled` is true and a `draft_model` is configured.
+ *
  * @param config Parsed engine config.
  * @return true on success.
  * @utility
- * @version 2.0.2
+ * @version 2.1.11
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
@@ -160,6 +195,7 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     build_routing_tables(config);
     if (!activate_default_tier(config)) { return false; }
     activate_router(config);
+    activate_draft(config);      // Speculative draft slot (v2.1.11)
 
     preload_adapters();          // LoRA adapters → WARM (v1.9.2)
     load_bundled_grammars();     // Bundled grammars (v1.9.3)
@@ -168,8 +204,12 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
 
 /**
  * @brief Shutdown — unload all models.
+ *
+ * Main-tier pool is unloaded directly; secondary roles (router, draft,
+ * etc.) are released through `secondary_loader_.shutdown()` (v2.1.11).
+ *
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 void ModelOrchestrator::shutdown() {
     logger->info("Shutting down model orchestrator");
@@ -180,21 +220,110 @@ void ModelOrchestrator::shutdown() {
         }
     }
 
-    if (router_ && router_->is_loaded()) {
-        router_->unload();
+    secondary_loader_.shutdown();
+}
+
+/**
+ * @brief Run a generate call through speculative (if enabled+pair
+ *        compatible) or fall back to plain decode.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult ModelOrchestrator::run_generate_dispatch(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params) {
+    GenerationResult result;
+    bool kernel_ran = config_.inference.speculative.enabled
+        && try_speculative_route(model, messages, params, result);
+    if (!kernel_ran) {
+        result = model->generate(messages, params);
     }
+    return result;
+}
+
+/**
+ * @brief Common implementation: returns true if the speculative
+ *        kernel ran (result populated), false to fall back to plain.
+ *
+ * Centralises the dynamic_cast + compat check shared by both
+ * generate and generate_streaming (v2.1.11, gh#36).
+ *
+ * @internal
+ * @version 2.1.11
+ */
+bool ModelOrchestrator::try_speculative_route_streaming(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>& cancel,
+    GenerationResult& result)
+{
+    auto compat = check_speculative_compat();
+    bool kernel_ran = false;
+    if (!compat.compatible) {
+        logger->info("Speculative requested but pair incompatible "
+                     "({}); using plain decode", compat.diagnostic);
+    } else {
+        auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
+        auto* draft_be = secondary_loader_.get("draft");
+        auto* llama_draft = dynamic_cast<LlamaCppBackend*>(draft_be);
+        if (llama_target == nullptr || llama_draft == nullptr) {
+            logger->info("Speculative compat passed but target/draft "
+                         "is not llama.cpp; using plain decode");
+        } else {
+            auto spec = llama_target->generate_speculative_with_draft(
+                messages, params, on_token, cancel, *llama_draft,
+                config_.inference.speculative.n_draft,
+                config_.inference.speculative.draft.path.string());
+            if (spec.error_code == ENTROPIC_ERROR_NOT_SUPPORTED) {
+                logger->info("Speculative kernel returned NOT_SUPPORTED "
+                             "({}); falling back", spec.error_message);
+            } else {
+                result = std::move(spec);
+                kernel_ran = true;
+            }
+        }
+    }
+    return kernel_ran;
+}
+
+/**
+ * @brief Non-streaming speculative route — wraps the streaming form
+ *        with an empty on_token and a local cancel flag.
+ * @internal
+ * @version 2.1.11
+ */
+bool ModelOrchestrator::try_speculative_route(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    GenerationResult& result)
+{
+    std::atomic<bool> local_cancel{false};
+    return try_speculative_route_streaming(
+        model, messages, params,
+        [](std::string_view){}, local_cancel, result);
 }
 
 // ── Generation ─────────────────────────────────────────────
 
 /**
  * @brief Generate response using routed or explicit tier.
+ *
+ * Speculative routing added in v2.1.11 (gh#36): when the kernel is
+ * configured and the target/draft pair is compatible, dispatches
+ * through `LlamaCppBackend::generate_speculative_with_draft`; falls
+ * back to plain decode otherwise. The dispatch decision is delegated
+ * to `run_generate_dispatch` to keep this method under the SLOC gate.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -229,10 +358,10 @@ GenerationResult ModelOrchestrator::generate(
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
 
-    // Generate
-    auto result = model->generate(messages, resolved_params);
+    // Generate — speculative routing applies here too (v2.1.11, gh#36)
+    GenerationResult result = run_generate_dispatch(
+        model, messages, resolved_params);
 
-    // Parse tool calls via adapter
     auto* adapter = get_adapter(selected);
     if (adapter && !result.content.empty()) {
         result.raw_content = result.content;
@@ -256,9 +385,17 @@ GenerationResult ModelOrchestrator::generate(
 }
 
 /**
- * @brief Streaming generation.
+ * @brief Streaming generation with speculative dispatch.
+ *
+ * Speculative routing added in v2.1.11 (gh#36): when the kernel is
+ * configured and the target/draft pair is compatible, dispatches to
+ * `LlamaCppBackend::generate_speculative_with_draft` via
+ * `try_speculative_route_streaming` with the draft resolved from
+ * `secondary_loader_.get("draft")`. Falls back to plain streaming on
+ * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
+ *
  * @internal
- * @version 1.9.3
+ * @version 2.1.11
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -282,6 +419,20 @@ GenerationResult ModelOrchestrator::generate_streaming(
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
 
+    // Speculative routing (v2.1.11, gh#36): when speculative is
+    // enabled in config AND target/draft pair is compatible, attempt
+    // the speculative kernel. On NOT_SUPPORTED (kernel staged), fall
+    // back to plain streaming. This keeps the v2.1.11 ship-without-
+    // kernel state observable as "plain decode, speculative
+    // requested but deferred."
+    GenerationResult spec_streaming;
+    if (config_.inference.speculative.enabled
+        && try_speculative_route_streaming(
+               model, messages, resolved_params, on_token, cancel,
+               spec_streaming)) {
+        return spec_streaming;
+    }
+
     return model->generate_streaming(messages, resolved_params, on_token, cancel);
 }
 
@@ -289,13 +440,19 @@ GenerationResult ModelOrchestrator::generate_streaming(
 
 /**
  * @brief Route to appropriate tier using router model.
+ *
+ * Guard updated in v2.1.11: routing requires `models.router` to be
+ * configured (was: `router_` non-null). The slot is owned by
+ * `secondary_loader_` since gh#27.
+ *
  * @param messages Current conversation.
  * @return Selected tier name.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
-    if (!config_.routing.enabled || !router_) {
+    if (!config_.routing.enabled
+        || !config_.models.router.has_value()) {
         logger->info("Route: routing disabled, using default '{}'",
                      default_tier_);
         last_routing_result_ = {default_tier_, "", "", "none", 0.0};
@@ -317,10 +474,16 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
 
 /**
  * @brief Classify task using router model (raw completion).
+ *
+ * Fetches the router backend from `secondary_loader_.get("router")`
+ * (v2.1.11). Returns an empty pair if the router slot has not been
+ * loaded — the caller treats that as a routing miss and falls back to
+ * the default tier.
+ *
  * @param messages Conversation history.
- * @return Pair of (tier_name, raw_digit).
+ * @return Pair of (tier_name, raw_digit), or ("","") on miss.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -331,7 +494,13 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     router_params.max_tokens = 1;
     router_params.temperature = 0.0f;
 
-    auto result = router_->complete(user_msg + " ->", router_params);
+    auto* router_backend = secondary_loader_.get("router");
+    if (router_backend == nullptr) {
+        logger->warn("classify_task: router not loaded; returning empty");
+        return {"", ""};
+    }
+    auto result = router_backend->complete(
+        user_msg + " ->", router_params);
     std::string raw = result.content;
 
     // Trim whitespace
@@ -474,8 +643,12 @@ std::string ModelOrchestrator::last_used_tier() const {
 
 /**
  * @brief Currently loaded model tier names.
+ *
+ * Includes `"router"` when the secondary loader reports the role as
+ * loaded (v2.1.11, gh#27 — previously checked the raw `router_` field).
+ *
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::vector<std::string> ModelOrchestrator::loaded_models() const {
     std::vector<std::string> result;
@@ -484,7 +657,7 @@ std::vector<std::string> ModelOrchestrator::loaded_models() const {
             result.push_back(name);
         }
     }
-    if (router_ && router_->is_loaded()) {
+    if (secondary_loader_.is_loaded("router")) {
         result.push_back("router");
     }
     return result;
@@ -493,14 +666,14 @@ std::vector<std::string> ModelOrchestrator::loaded_models() const {
 /**
  * @brief All configured tier names.
  * @internal
- * @version 1.8.2
+ * @version 2.1.11
  */
 std::vector<std::string> ModelOrchestrator::available_models() const {
     std::vector<std::string> result;
     for (const auto& [name, _] : tiers_) {
         result.push_back(name);
     }
-    if (router_) {
+    if (config_.models.router.has_value()) {
         result.push_back("router");
     }
     return result;
@@ -717,18 +890,130 @@ size_t ModelOrchestrator::load_grammars_from(
  * @brief Invalidate prompt caches across every pooled backend.
  *
  * Called on identity content changes so no cached prefix is served
- * against the new system prompt. (P1-7, 2.0.6-rc16)
+ * against the new system prompt. (P1-7, 2.0.6-rc16). Fans out to
+ * secondary roles (router, draft) via SecondaryModelLoader (v2.1.11).
  *
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.1.11
  */
 void ModelOrchestrator::clear_all_prompt_caches() {
     for (auto& [_, backend] : model_pool_) {
         if (backend) { backend->clear_prompt_cache(); }
     }
-    if (router_) { router_->clear_prompt_cache(); }
+    secondary_loader_.clear_all_prompt_caches();
     logger->info("Prompt caches invalidated across all backends "
                  "(identity change)");
+}
+
+/**
+ * @brief Vision-capability lookup (gh#41, v2.1.8).
+ * @return true if any configured tier declares "vision".
+ * @internal
+ * @version 2.1.8
+ */
+bool ModelOrchestrator::has_vision_capable_tier() const {
+    for (const auto& [_, tier] : config_.models.tiers) {
+        if (tier.has_capability("vision")) { return true; }
+    }
+    return false;
+}
+
+/**
+ * @brief First vision-capable tier name (gh#41, v2.1.8).
+ * @return Tier name, or "" if none configured.
+ * @internal
+ * @version 2.1.8
+ */
+std::string ModelOrchestrator::select_vision_tier() const {
+    for (const auto& [name, tier] : config_.models.tiers) {
+        if (tier.has_capability("vision")) { return name; }
+    }
+    return "";
+}
+
+/**
+ * @brief Resolve the active main-tier llama_model* for compat lookup.
+ *
+ * @return Pointer to the loaded llama_model, or nullptr when no main
+ *         tier is loaded or the backend is not LlamaCppBackend.
+ * @internal
+ * @version 2.1.11
+ */
+static llama_model* resolve_target_model(
+    const std::shared_ptr<InferenceBackend>& tier_backend) {
+    if (!tier_backend || !tier_backend->is_loaded()) {
+        return nullptr;
+    }
+    auto* llama_be = dynamic_cast<LlamaCppBackend*>(tier_backend.get());
+    return (llama_be == nullptr) ? nullptr : llama_be->llama_model_ptr();
+}
+
+/**
+ * @brief Resolve target+draft llama_model pointers from current state.
+ *
+ * @param[out] target_out Filled with the active main tier's llama_model.
+ * @param[out] draft_out  Filled with the configured draft's llama_model.
+ * @return Empty string on success; otherwise a diagnostic identifying
+ *         which side is missing.
+ * @internal
+ * @version 2.1.11
+ */
+std::string ModelOrchestrator::resolve_speculative_pair(
+    llama_model*& target_out, llama_model*& draft_out) const {
+    target_out = nullptr;
+    draft_out = nullptr;
+    std::string err;
+
+    auto tier_it = tiers_.find(loaded_main_tier_);
+    if (tier_it == tiers_.end()) {
+        err = "no main tier loaded";
+    } else {
+        target_out = resolve_target_model(tier_it->second);
+        if (target_out == nullptr) {
+            err = "main tier backend is not a llama.cpp backend or "
+                  "is not loaded";
+        } else {
+            auto* draft_backend = secondary_loader_.get("draft");
+            if (draft_backend == nullptr || !draft_backend->is_loaded()) {
+                err = "no draft model configured for speculative "
+                      "decoding "
+                      "(set inference.speculative.draft_model)";
+            } else {
+                auto* d = dynamic_cast<LlamaCppBackend*>(draft_backend);
+                draft_out = (d == nullptr) ? nullptr : d->llama_model_ptr();
+                if (draft_out == nullptr) {
+                    err = "draft backend is not a llama.cpp backend";
+                }
+            }
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Speculative compatibility check (target vs draft).
+ *
+ * Reads the active main tier as the target and the `"draft"` slot on
+ * the secondary loader as the draft. Returns a structured diagnostic
+ * the C ABI can forward to consumers.
+ *
+ * @return SpeculativeCompatInfo with compatible flag + diagnostic.
+ * @internal
+ * @version 2.1.11
+ */
+ModelOrchestrator::SpeculativeCompatInfo
+ModelOrchestrator::check_speculative_compat() const {
+    SpeculativeCompatInfo info;
+    llama_model* target_model = nullptr;
+    llama_model* draft_model = nullptr;
+    info.diagnostic = resolve_speculative_pair(target_model, draft_model);
+    if (info.diagnostic.empty()) {
+        auto result = entropic::speculative::check_compat(
+            target_model, draft_model);
+        info.compatible = result.compatible;
+        info.diagnostic = std::move(result.diagnostic);
+    }
+    return info;
 }
 
 /**

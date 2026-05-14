@@ -161,6 +161,64 @@ static void set_test_rules(
 
 // ── Tests ────────────────────────────────────────────────
 
+SCENARIO("Critique start/end callbacks fire around the generate call "
+         "(gh#50)", "[validation][gh50]") {
+    // Validates the persistent-slot pattern: callbacks register on
+    // the validator directly, survive any number of validate() calls,
+    // fire START before inference_->generate and END after, in that
+    // order, regardless of whether the verdict is compliant or has
+    // violations.
+    GIVEN("a validator with critique callbacks registered") {
+        MockValidationInference mock;
+        mock.responses.push_back(COMPLIANT_JSON);
+        auto iface = make_val_interface(mock);
+
+        ConstitutionalValidationConfig cfg;
+        cfg.enabled = true;
+        ConstitutionalValidator validator(cfg, CONSTITUTION_TEXT);
+        validator.attach(nullptr, &iface);
+        set_test_rules(validator, {"eng"});
+
+        // Use a small std::vector<char> as a fire-order ledger so we
+        // can assert START fires before END.
+        std::vector<char> events;
+        validator.set_critique_callbacks(
+            [](void* ud) {
+                static_cast<std::vector<char>*>(ud)->push_back('S');
+            },
+            [](void* ud) {
+                static_cast<std::vector<char>*>(ud)->push_back('E');
+            },
+            &events);
+
+        WHEN("validate is called once") {
+            validator.validate(
+                "Safe helpful response", "eng", nullptr);
+
+            THEN("START fires before END, exactly once each") {
+                REQUIRE(events.size() == 2);
+                REQUIRE(events[0] == 'S');
+                REQUIRE(events[1] == 'E');
+            }
+        }
+
+        WHEN("the slot is cleared (null callbacks) and validate "
+             "runs in a fresh GIVEN state") {
+            // Catch2 re-runs the GIVEN block per WHEN section, so
+            // `events` is fresh here. After clearing the slot the
+            // validate() should fire NO callbacks at all.
+            validator.set_critique_callbacks(
+                nullptr, nullptr, nullptr);
+            validator.validate(
+                "Safe helpful response", "eng", nullptr);
+
+            THEN("no critique events fire after the slot is cleared") {
+                REQUIRE(events.empty());
+            }
+        }
+    }
+}
+
 SCENARIO("Compliant output returns unchanged", "[validation]") {
     GIVEN("a validator with mock inference returning compliant") {
         MockValidationInference mock;

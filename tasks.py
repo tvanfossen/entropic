@@ -236,7 +236,7 @@ def _write_results_json(test_results, duration_ms):
 
 ## @brief Run tests. Builds first unless --no-build.
 ## @utility
-## @version 1
+## @version 2
 @task(
     help={
         "model": "Include model tests (GPU recommended, writes results.json)",
@@ -287,7 +287,13 @@ def test(  # noqa: CFQ002
         if failed > 0:
             raise SystemExit(1)
     else:
-        c.run(f"ctest --test-dir {build_dir} {ctest_args}")
+        # No --model flag: always exclude the "model" label so a stale
+        # model-test registration in build_dir (e.g., leftover from a
+        # prior --debug cmake reconfigure) can't get picked up and
+        # try to load real GGUFs on the CPU lane. The intent of "no
+        # model flag" is "fast unit tests only," and the label is
+        # authoritative.
+        c.run(f"ctest --test-dir {build_dir} {ctest_args} -LE model")
 
     if coverage:
         c.run(".venv/bin/python scripts/check_coverage.py")

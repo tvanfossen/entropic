@@ -287,6 +287,72 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
     int* cancel_flag);
 
 /**
+ * @brief Multimodal-aware agentic run with messages-array input (gh#37).
+ *
+ * Identical contract to entropic_run() except the input is a JSON
+ * array of message objects (OpenAI-compatible content arrays). Each
+ * message may carry `content` as a string OR as an array of content
+ * parts (`{"type":"text","text":...}` or `{"type":"image","path":...,"url":...}`).
+ * Image content parts survive end-to-end into the inference backend.
+ *
+ * The existing entropic_run() entry point is preserved unchanged
+ * for back-compat; consumers that don't need multimodal input keep
+ * using it (no JSON serialize/parse on their fast path).
+ *
+ * Routing: when any message carries an image part, the orchestrator
+ * routes to a tier whose `capabilities` includes `vision`. If no
+ * such tier is configured, ENTROPIC_ERROR_NO_VISION_TIER is
+ * returned with diagnostics identifying the active tier and any
+ * vision-capable tiers (if any).
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects (UTF-8,
+ *        null-terminated).
+ * @param result_json Out-param: newly allocated JSON result string.
+ *        Caller frees with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — messages_json /
+ *           result_json is NULL or malformed.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_NO_VISION_TIER — image content but no
+ *           vision-capable tier configured (gh#41).
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_messages(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json);
+
+/**
+ * @brief Streaming variant of entropic_run_messages (gh#37).
+ *
+ * Same multimodal input contract as entropic_run_messages, with
+ * per-token streaming through on_token. The first token may be
+ * delayed by vision-encoder latency when image content is present.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param on_token Per-token callback. Must not call back into API.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional int* set to non-zero to cancel.
+ * @return ENTROPIC_OK on success. See entropic_run_messages() for
+ *         error codes.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_messages_streaming(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
  * @brief Set a global stream observer callback.
  *
  * Fires for every token generated from every entry point — interactive
@@ -346,6 +412,48 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_state_observer(
     void* user_data);
 
 /**
+ * @brief Register start/end callbacks for constitutional critique
+ *        generation (gh#50, v2.1.12).
+ *
+ * The constitutional validator's critique pass typically runs for
+ * 20-30 seconds while `AgentState` stays parked at `EXECUTING`
+ * (no transition signals it). Consumers that want a "validating
+ * response…" UI indicator can register these callbacks to bracket
+ * that window precisely.
+ *
+ * `start_cb` fires immediately before the synchronous
+ * `inference_->generate()` call inside `run_critique()`; `end_cb`
+ * fires immediately after it returns (regardless of success or
+ * failure). Both fire even when the critique pass produces no
+ * violations.
+ *
+ * The slot is independent of the legacy `EngineCallbacks` struct —
+ * it survives `entropic_run_streaming`'s internal callback shuffle
+ * and any `entropic_configure*` reconstruction (the handle owns the
+ * authoritative slot and re-applies it to each newly-built
+ * validator). Pass `NULL` for either callback to opt out of just
+ * that edge; pass `NULL` for both to clear the slot.
+ *
+ * @param handle Engine handle.
+ * @param start_cb Pre-critique callback (NULL to disable).
+ * @param end_cb Post-critique callback (NULL to disable).
+ * @param user_data Forwarded to both callbacks verbatim.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Thread-safe. Callbacks may be reassigned at any
+ *               time; the validator snapshots the slot under a
+ *               mutex before each fire so an in-flight critique
+ *               cannot tear a partial reassignment.
+ * @version 2.1.12
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_critique_callbacks(
+    entropic_handle_t handle,
+    void (*start_cb)(void* user_data),
+    void (*end_cb)(void* user_data),
+    void* user_data);
+
+/**
  * @brief Interrupt a running generation.
  *
  * Signals the engine to abort the current entropic_run() or
@@ -362,6 +470,152 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_state_observer(
  * @version 1.8.4
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
+
+/* ── Mid-generation message queue (v2.1.10, gh#40) ────── */
+
+/**
+ * @brief Queue a user message to be injected at the next top-level
+ *        turn boundary.
+ *
+ * The queued message is appended to a bounded FIFO inside the engine
+ * and consumed automatically when the current top-level turn reaches
+ * `AgentState::COMPLETE` — i.e. when the currently-running
+ * `entropic_run` / `entropic_run_streaming` / `entropic_run_messages`*
+ * call finishes its agent loop. The engine then immediately seeds a
+ * fresh turn with the dequeued message under the same per-call
+ * `on_token` wiring, so streaming consumers see a clean per-turn
+ * token stream without protocol changes.
+ *
+ * The queue is NOT a cancellation primitive: it does not interrupt
+ * the in-flight turn. Consumers wanting to stop the current turn
+ * should use `entropic_interrupt`.
+ *
+ * The queue drain triggers only at top-level COMPLETE. Delegation
+ * boundaries (parent loop resuming after a child loop returns) are
+ * NOT drain points — injecting a fresh user message there would
+ * corrupt the parent's reasoning context.
+ *
+ * @threadsafety Thread-safe. Designed to be called from a different
+ *        thread than the one running the agent loop.
+ *
+ * @param handle  Engine handle.
+ * @param message Null-terminated UTF-8 user input text.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — message is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — no run is currently in
+ *           flight on this handle (just call `entropic_run_streaming`
+ *           directly).
+ *         - ENTROPIC_ERROR_QUEUE_FULL — queue is at
+ *           `message_queue_capacity` (default 8). Retry after a turn
+ *           completes, or call `entropic_clear_user_message_queue`.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_queue_user_message(
+    entropic_handle_t handle,
+    const char* message);
+
+/**
+ * @brief Query the current depth of the mid-gen user-message queue.
+ *
+ * Snapshot value — may be stale by the time the caller reads it if
+ * the engine consumes a message concurrently. Intended for consumer
+ * UI feedback ("3 queued"), not for synchronization.
+ *
+ * @threadsafety Thread-safe.
+ *
+ * @param handle Engine handle.
+ * @param count  Out-param: receives the queue depth.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — count is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_user_message_queue_depth(
+    entropic_handle_t handle,
+    size_t* count);
+
+/**
+ * @brief Drop all queued user messages.
+ *
+ * Consumer-initiated retract. Does NOT affect the in-flight turn —
+ * only the not-yet-consumed pending messages are discarded.
+ *
+ * @threadsafety Thread-safe.
+ *
+ * @param handle Engine handle.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_clear_user_message_queue(
+    entropic_handle_t handle);
+
+/**
+ * @brief Register an observer for queue-consumption events.
+ *
+ * Fires immediately before the engine seeds the next turn with a
+ * popped queued message. Lets consumer UIs clear the "queued" badge
+ * for the corresponding scrollback item.
+ *
+ * The `consumed` buffer is valid only for the callback's duration —
+ * copy it if the consumer needs to hold it. `remaining` reflects the
+ * queue depth *after* the pop (i.e. messages still waiting).
+ *
+ * Pass observer=NULL to clear.
+ *
+ * @threadsafety Callback fires from the engine thread between turns.
+ *        Must be thread-safe.
+ *
+ * @param handle    Engine handle.
+ * @param observer  Callback (consumed_text, remaining_depth, user_data).
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @version 2.1.10
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_queue_observer(
+    entropic_handle_t handle,
+    void (*observer)(const char* consumed,
+                     size_t remaining,
+                     void* user_data),
+    void* user_data);
+
+/* ── Speculative decoding (v2.1.11, gh#36) ─────────────── */
+
+/**
+ * @brief Query whether the configured target/draft pair is compatible
+ *        for speculative decoding.
+ *
+ * Inspects the active main tier (verifier) and the configured draft
+ * model (`inference.speculative.draft_model`) for:
+ *   - target architecture is NOT recurrent (Mamba/RWKV/hybrid)
+ *   - matching tokenizer vocab type, BOS/EOS, vocab size
+ *   - prefix-equal token texts in the overlap range
+ *
+ * No model state is allocated for the query — purely metadata-level
+ * inspection on the already-loaded models. The check is exposed as a
+ * separate entrypoint (rather than only at generate time) so consumers
+ * can validate a planned pairing during configuration and surface a
+ * clear diagnostic before kicking off a turn.
+ *
+ * @param handle Engine handle.
+ * @param[out] compatible 1 if the pair is compatible, 0 otherwise.
+ *             Required (must be non-NULL).
+ * @param[out] diagnostic On `*compatible == 0`, a heap-allocated
+ *             NUL-terminated string identifying the failed rule. On
+ *             compatible pairs, set to NULL. Caller frees with
+ *             `entropic_free_string`. May be NULL if the caller does
+ *             not want the diagnostic text.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle/compatible is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE  — engine not configured.
+ * @version 2.1.11
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_speculative_compat(
+    entropic_handle_t handle,
+    int* compatible,
+    char** diagnostic);
 
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
@@ -421,6 +675,33 @@ ENTROPIC_EXPORT entropic_error_t entropic_context_get(
 ENTROPIC_EXPORT entropic_error_t entropic_context_count(
     entropic_handle_t handle,
     size_t* count);
+
+/**
+ * @brief Read current context-window pressure for the active tier.
+ *
+ * Returns the same (used, capacity) pair the engine's
+ * core.context_manager logs at info level. Cheap — counts tokens
+ * across the current conversation against the active tier's
+ * `context_length`. Suitable for ~1 Hz consumer polling (e.g. a
+ * "6727/32768 tokens (20%)" UI gauge).
+ *
+ * @param handle Engine handle.
+ * @param[out] tokens_used Output: tokens currently in the conversation.
+ * @param[out] capacity Output: configured context_length for the
+ *             active tier.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — either out pointer is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine has no active tier
+ *           (rare; before first tier_lock / configure).
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_usage(
+    entropic_handle_t handle,
+    size_t* tokens_used,
+    size_t* capacity);
 
 /**
  * @brief Get loop metrics from the most recent run as JSON.

@@ -10,6 +10,8 @@ set(INFERENCE_SOURCES
     llama_cpp_backend.cpp
     prompt_cache.cpp
     orchestrator.cpp
+    secondary_model_loader.cpp
+    speculative_compat.cpp
     adapter_manager.cpp
     grammar_registry.cpp
     profile_registry.cpp
@@ -20,6 +22,9 @@ set(INFERENCE_SOURCES
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp
     adapters/qwen35_adapter.cpp
+    adapters/qwen36_adapter.cpp
+    adapters/gemma4_adapter.cpp
+    adapters/nemotron3_adapter.cpp
     adapters/adapter_registry.cpp
 )
 
@@ -45,13 +50,16 @@ target_include_directories(${INFERENCE_LIB_NAME}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${PROJECT_SOURCE_DIR}/extern/llama.cpp/vendor  # stb_image.h for image preprocessing
+        ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common  # common.h/sampling.h/speculative.h (v2.1.11)
 )
 
 target_link_libraries(${INFERENCE_LIB_NAME}
     PUBLIC
         entropic-types
+        llama-common
     PRIVATE
         llama
+        mtmd
         nlohmann_json::nlohmann_json
         spdlog::spdlog
 )

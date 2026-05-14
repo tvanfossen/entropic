@@ -185,7 +185,7 @@ struct StreamAccumulator {
  * @param len Token length.
  * @param user_data StreamAccumulator pointer.
  * @internal
- * @version 2.1.5
+ * @version 2.1.12
  */
 static void stream_token_callback(
     const char* token,
@@ -217,6 +217,15 @@ static void stream_token_callback(
         && !acc->interrupted;
     if (just_interrupted) {
         acc->interrupted = true;
+        // gh#49 (v2.1.12): log the cancel-flag raise so a session
+        // log can confirm the per-token interrupt poll observed the
+        // engine-level flag. Pre-v2.1.12 the bissell-llm-studio
+        // repro saw the "Engine interrupted" line on 0->1 transition
+        // but no evidence the per-token poll ever fired — this log
+        // is the first observable receipt of the propagation.
+        logger->info("Stream interrupt observed at token {}; "
+                     "raising backend cancel_flag",
+                     acc->token_index);
         if (acc->cancel_flag != nullptr) {
             *acc->cancel_flag = 1;
         }
@@ -380,11 +389,17 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
 
 /**
  * @brief Handle pause during streaming generation.
+ *
+ * v2.1.10 (gh#40 fallout): fire the persistent state_observer_ slot
+ * in addition to the legacy callbacks_.on_state_change, so consumers
+ * see PAUSED during streaming runs where the legacy callbacks have
+ * been overwritten by run_streaming's set_callbacks() shuffle.
+ *
  * @param ctx Loop context.
  * @param partial Content generated so far.
  * @return Updated content.
  * @internal
- * @version 1.8.4
+ * @version 2.1.10
  */
 std::string ResponseGenerator::handle_pause(
     LoopContext& ctx,
@@ -394,6 +409,14 @@ std::string ResponseGenerator::handle_pause(
         callbacks_.on_state_change(
             static_cast<int>(AgentState::PAUSED),
             callbacks_.user_data);
+    }
+    // gh#40 fallout (v2.1.10): persistent slot fires alongside the
+    // legacy on_state_change so consumers see PAUSED during
+    // streaming runs where the legacy callbacks_ struct has been
+    // overwritten by run_streaming's set_callbacks() shuffle.
+    if (state_observer_ != nullptr) {
+        state_observer_(static_cast<int>(AgentState::PAUSED),
+                        state_observer_data_);
     }
 
     char* injection = nullptr;
@@ -439,28 +462,83 @@ std::string ResponseGenerator::handle_pause(
  * @internal
  * @version 1.8.4
  */
+/**
+ * @brief JSON-escape one string into a growing buffer.
+ * @internal
+ * @version 2.1.8
+ */
+static void json_escape_into(const std::string& s, std::string& out) {
+    for (char c : s) {
+        switch (c) {
+        case '"':  out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\n': out += "\\n";  break;
+        case '\r': out += "\\r";  break;
+        case '\t': out += "\\t";  break;
+        default:   out += c;      break;
+        }
+    }
+}
+
+/**
+ * @brief Serialize a single multimodal content_parts array (gh#37, v2.1.8).
+ *
+ * Emits `[{"type":"text","text":"..."}, {"type":"image","path":"..."}]`
+ * directly — keeps core free of nlohmann/json (design rule #21).
+ *
+ * @internal
+ * @version 2.1.8
+ */
+static void serialize_content_parts(
+    const std::vector<ContentPart>& parts, std::string& out) {
+    out += '[';
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) { out += ','; }
+        if (parts[i].type == ContentPartType::IMAGE) {
+            out += R"({"type":"image","path":")";
+            json_escape_into(parts[i].image_path, out);
+            out += R"(","url":")";
+            json_escape_into(parts[i].image_url, out);
+            out += R"("})";
+        } else {
+            out += R"({"type":"text","text":")";
+            json_escape_into(parts[i].text, out);
+            out += R"("})";
+        }
+    }
+    out += ']';
+}
+
+/**
+ * @brief Serialize a message list to the engine-canonical JSON wire shape.
+ *
+ * Hand-rolled — core has no nlohmann/json dependency (design rule
+ * #21). For messages with non-empty `content_parts`, emits an
+ * OpenAI-style content array so image parts survive the
+ * engine→backend hop (gh#37, v2.1.8). Otherwise emits a plain
+ * `"content":"..."` string.
+ *
+ * @param messages Message vector to serialize.
+ * @return JSON array string ready for entropic_inference_generate.
+ * @internal
+ * @version 2.1.8
+ */
 std::string ResponseGenerator::serialize_messages(
     const std::vector<Message>& messages) {
-    // Minimal JSON serialization — no nlohmann/json dependency.
     std::string json = "[";
     for (size_t i = 0; i < messages.size(); ++i) {
-        if (i > 0) { json += ","; }
-        json += "{\"role\":\"" + messages[i].role
-              + "\",\"content\":\"";
-        // Escape content for JSON
-        for (char c : messages[i].content) {
-            switch (c) {
-            case '"':  json += "\\\""; break;
-            case '\\': json += "\\\\"; break;
-            case '\n': json += "\\n";  break;
-            case '\r': json += "\\r";  break;
-            case '\t': json += "\\t";  break;
-            default:   json += c;      break;
-            }
+        if (i > 0) { json += ','; }
+        json += "{\"role\":\"" + messages[i].role + "\",\"content\":";
+        if (messages[i].content_parts.empty()) {
+            json += '"';
+            json_escape_into(messages[i].content, json);
+            json += '"';
+        } else {
+            serialize_content_parts(messages[i].content_parts, json);
         }
-        json += "\"}";
+        json += '}';
     }
-    json += "]";
+    json += ']';
     return json;
 }
 

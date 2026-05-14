@@ -83,6 +83,9 @@ typedef enum {
     ENTROPIC_ERROR_UNSUPPORTED_URL,          ///< Remote URL not supported — local file or data URI only (v1.9.11)
     ENTROPIC_ERROR_NOT_SUPPORTED,            ///< Capability not supported by this backend (v1.9.13)
     ENTROPIC_ERROR_STATE_INCOMPATIBLE,       ///< State buffer incompatible with current model (v1.9.13)
+    ENTROPIC_ERROR_NO_VISION_TIER,           ///< Image content present but no vision-capable tier (v2.1.8, gh#41)
+    ENTROPIC_ERROR_QUEUE_FULL,               ///< Mid-gen user-message queue at capacity (v2.1.10, gh#40)
+    ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_ARCH, ///< Target/draft architecture is recurrent or hybrid; speculative refused (v2.1.11, gh#36)
 } entropic_error_t;
 
 /**

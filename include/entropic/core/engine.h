@@ -36,7 +36,9 @@
 #include <entropic/types/session_logger.h>
 
 #include <atomic>
+#include <deque>
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -374,6 +376,28 @@ public:
     std::vector<Message> run_turn(const std::string& input);
 
     /**
+     * @brief Run a single conversation turn from a pre-built message list (gh#37).
+     *
+     * Multimodal-aware overload. Each message in `new_messages` is
+     * appended to the engine's conversation history with its
+     * `content_parts` preserved (no string flattening). The agentic
+     * loop runs over the full conversation; replies are appended to
+     * history and returned.
+     *
+     * If the conversation is currently empty AND none of
+     * `new_messages` carries `role == "system"`, the engine prepends
+     * its configured `system_prompt_` first — matching the
+     * single-string overload's behavior.
+     *
+     * @param new_messages Messages to add this turn (typically one
+     *        user message; may include a system message on first
+     *        turn).
+     * @return Full result messages from the engine loop.
+     * @version 2.1.8
+     */
+    std::vector<Message> run_turn(std::vector<Message> new_messages);
+
+    /**
      * @brief Run a streaming conversation turn (stateful).
      *
      * Same as run_turn but with streaming token output. Owns the
@@ -387,6 +411,26 @@ public:
      * @version 2.0.2
      */
     int run_streaming(const std::string& input,
+                      TokenCallback on_token,
+                      void* user_data,
+                      int* cancel_flag);
+
+    /**
+     * @brief Streaming conversation turn from a pre-built message list (gh#37).
+     *
+     * Multimodal-aware streaming overload. Same content_parts
+     * preservation semantics as run_turn(vector<Message>), with
+     * token callback wiring identical to the single-string streaming
+     * variant.
+     *
+     * @param new_messages Messages to add this turn.
+     * @param on_token Consumer token callback (filtered UTF-8).
+     * @param user_data Consumer callback context.
+     * @param cancel_flag Polled per-token, nullable.
+     * @return 0 on success, 1 if cancelled, 2 on error.
+     * @version 2.1.8
+     */
+    int run_streaming(std::vector<Message> new_messages,
                       TokenCallback on_token,
                       void* user_data,
                       int* cancel_flag);
@@ -410,6 +454,105 @@ public:
      * @version 2.0.2
      */
     const std::vector<Message>& get_messages() const;
+
+    // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
+
+    /**
+     * @brief Append a user message to the mid-gen queue.
+     *
+     * Bounded FIFO. Enforces `LoopConfig::message_queue_capacity`.
+     * Drained between top-level `run_turn` invocations from inside
+     * `run_turn` itself — never at child-delegation boundaries.
+     *
+     * @param message User input to enqueue.
+     * @return true if enqueued; false if the queue is at capacity.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    bool queue_user_message(const std::string& message);
+
+    /**
+     * @brief Snapshot of the queue depth.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    size_t user_message_queue_depth() const;
+
+    /**
+     * @brief Drop all queued user messages.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void clear_user_message_queue();
+
+    /**
+     * @brief Set the runtime capacity of the mid-gen queue.
+     *
+     * If `cap` is less than the current depth, excess pending
+     * messages are kept (no truncation) but no new enqueues succeed
+     * until the queue drains below the new cap. `cap` of 0 disables
+     * enqueue while leaving the queue otherwise functional.
+     *
+     * @param cap New capacity.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_message_queue_capacity(int cap);
+
+    /**
+     * @brief Whether a top-level run_turn is currently in progress.
+     *
+     * Used by the facade to reject `entropic_queue_user_message` with
+     * `ENTROPIC_ERROR_INVALID_STATE` when there is no in-flight turn
+     * to "queue behind." Thread-safe (atomic load).
+     *
+     * @return true while a top-level run_turn is executing.
+     * @utility
+     * @version 2.1.10
+     */
+    bool is_running() const { return running_flag_.load(); }
+
+    /**
+     * @brief Register an observer that fires when a queued user
+     *        message is consumed and seeded as the next turn.
+     *
+     * Persistent across `set_callbacks()` reassignments — the
+     * streaming entry points overwrite the EngineCallbacks struct
+     * per-call, so the queue observer needs a dedicated slot to
+     * survive both streaming and non-streaming runs.
+     *
+     * @param observer Callback (consumed_text, remaining_depth, ud).
+     *        Pass nullptr to clear.
+     * @param user_data Forwarded to observer.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_queue_observer(
+        void (*observer)(const char*, size_t, void*),
+        void* user_data);
+
+    /**
+     * @brief Register a persistent state-transition observer.
+     *
+     * The legacy path (`EngineCallbacks::on_state_change`) is wiped
+     * for the duration of `run_streaming` because that method
+     * replaces the full callback struct to install its token
+     * sink. This persistent slot survives every `set_callbacks()`
+     * shuffle so consumers (notably the external MCP bridge that
+     * the entropic_set_state_observer docstring names) actually see
+     * transitions during streaming runs.
+     *
+     * Fires alongside the legacy `on_state_change` slot — neither
+     * supersedes the other. Pass `nullptr` to clear.
+     *
+     * @param observer State-change callback.
+     * @param user_data Forwarded to observer.
+     * @threadsafety Thread-safe.
+     * @version 2.1.10
+     */
+    void set_state_observer(
+        void (*observer)(int state, void* user_data),
+        void* user_data);
 
     // ── Directive hooks (v2.0.2) ────────────────────────────
 
@@ -934,6 +1077,37 @@ private:
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
     std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
     std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
+
+    // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
+    mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
+    std::deque<std::string> user_message_queue_; ///< FIFO mid-gen queue
+    std::atomic<bool> running_flag_{false};   ///< Top-level run_turn in progress
+    void (*queue_observer_)(const char*, size_t, void*) = nullptr; ///< gh#40 callback
+    void* queue_observer_data_ = nullptr;     ///< Forwarded to queue_observer_
+    /// @brief Persistent state-transition observer slot. Survives
+    /// EngineCallbacks shuffles done by run_streaming. (gh#40 fallout)
+    void (*state_observer_)(int, void*) = nullptr;
+    void* state_observer_data_ = nullptr;     ///< Forwarded to state_observer_
+    /**
+     * @brief Pop one queued message if present.
+     *
+     * Used by run_turn to drain the queue at top-level COMPLETE.
+     * Returns std::nullopt when the queue is empty.
+     *
+     * @threadsafety Thread-safe.
+     * @internal
+     * @version 2.1.10
+     */
+    std::optional<std::string> pop_queued_user_message();
+
+    /**
+     * @brief Fire on_queued_message_consumed callback (gh#40).
+     * @param consumed The popped message.
+     * @param remaining Queue depth after the pop.
+     * @internal
+     * @version 2.1.10
+     */
+    void fire_queue_consumed(const std::string& consumed, size_t remaining);
 
     // ── Conversation state (v2.0.2) ─────────────────────────
     std::vector<Message> conversation_;                    ///< Persistent conversation

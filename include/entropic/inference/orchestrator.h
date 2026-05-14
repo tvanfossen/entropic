@@ -213,6 +213,38 @@ public:
      */
     void clear_all_prompt_caches();
 
+    /**
+     * @brief Return true if any configured tier declares the
+     *        `"vision"` capability (gh#41, v2.1.8).
+     *
+     * Read-only lookup over the parsed ModelsConfig — does not
+     * touch backend state. Used by the facade's
+     * entropic_run_messages entry point to short-circuit with
+     * `ENTROPIC_ERROR_NO_VISION_TIER` before dispatching a
+     * multimodal turn that no tier can handle.
+     *
+     * @utility
+     * @version 2.1.8
+     */
+    bool has_vision_capable_tier() const;
+
+    /**
+     * @brief Pick the canonical vision-capable tier name (gh#41).
+     *
+     * Returns the first tier (iteration order of the parsed
+     * `models.tiers` map) whose capabilities include `"vision"`,
+     * or empty string if none exists. Multi-tier policy refinements
+     * (e.g. prefer the default tier when it qualifies) can layer on
+     * top later — single-vision-tier deployments are the common
+     * case for v2.1.8 (gh#42 ships the primary tier as the only
+     * vision-capable bundled entry).
+     *
+     * @return Vision tier name, or "" if none configured.
+     * @utility
+     * @version 2.1.8
+     */
+    std::string select_vision_tier() const;
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;

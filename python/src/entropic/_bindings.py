@@ -96,6 +96,7 @@ class EntropicError(enum.IntEnum):
     UNSUPPORTED_URL = 47
     NOT_SUPPORTED = 48
     STATE_INCOMPATIBLE = 49
+    NO_VISION_TIER = 50  # gh#41 (v2.1.8)
 
 
 class AgentState(enum.IntEnum):
@@ -249,6 +250,32 @@ entropic_run_streaming = _bind(
     ctypes.POINTER(ctypes.c_int),
 )
 
+# gh#37 (v2.1.8): multimodal messages entry points. messages_json is a
+# JSON array (OpenAI-compatible content arrays); content_parts survive
+# end-to-end. See entropic_run() for the back-compat text-only path.
+entropic_run_messages = _bind(
+    "entropic_run_messages",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_char_p,
+    ctypes.POINTER(ctypes.c_char_p),
+)
+"""(handle, messages_json, out_result_json) → entropic_error_t.
+
+The C function allocates ``*out_result_json`` via malloc; callers must
+free it via :data:`entropic_free`.
+"""
+
+entropic_run_messages_streaming = _bind(
+    "entropic_run_messages_streaming",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.c_char_p,
+    TOKEN_CB,
+    ctypes.c_void_p,
+    ctypes.POINTER(ctypes.c_int),
+)
+
 entropic_interrupt = _bind("entropic_interrupt", ctypes.c_int, entropic_handle_t)
 
 entropic_free = _bind("entropic_free", None, ctypes.c_void_p)
@@ -261,6 +288,23 @@ entropic_context_count = _bind(
     entropic_handle_t,
     ctypes.POINTER(ctypes.c_size_t),
 )
+
+# gh#39 (v2.1.8): token-level context pressure for consumer UIs
+# (e.g. "6727/32768 tokens (20%)" gauges). Mirrors the
+# `Context: N/M tokens` line emitted by core.context_manager.
+entropic_context_usage = _bind(
+    "entropic_context_usage",
+    ctypes.c_int,
+    entropic_handle_t,
+    ctypes.POINTER(ctypes.c_size_t),
+    ctypes.POINTER(ctypes.c_size_t),
+)
+"""(handle, out_tokens_used, out_capacity) -> entropic_error_t.
+
+Reads the active tier's current context pressure. Both outputs are
+``size_t``. Returns ``ENTROPIC_ERROR_INVALID_STATE`` before any tier
+is locked.
+"""
 
 # gh#22 (v2.1.5): closes the gh#8 partial gap. The C ABI exposes
 # entropic_context_get(handle, char** out_messages_json) — the engine

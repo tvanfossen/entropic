@@ -1,3 +1,97 @@
+# entropic v2.1.8
+
+Patch release laying the multimodal foundation for v2.2.0. Five
+issues bundle as a coherent slice: facade ABI for multimodal
+messages (**gh#37**), tier-routing on `content_parts` with a new
+`ENTROPIC_ERROR_NO_VISION_TIER` (**gh#41**), bundled mmproj paired
+to the existing Qwen3.5-35B-A3B primary (**gh#42**), OpenAI server
+example accepts `data:` / `file://` / absolute-path image content
+parts (**gh#38**), and a small ride-along token-pressure getter
+(**gh#39**).
+
+> **Scope note (gh#42).** Initial design called for a separate
+> Qwen2.5-VL bundle. Upstream `unsloth/Qwen3.5-35B-A3B-GGUF` is
+> already tagged `image-text-to-text` and ships paired mmproj
+> GGUFs. Pairing the F16 mmproj turns the existing primary tier
+> into a VLM without a parallel model load (~6 GB VRAM saved) and
+> preserves family alignment.
+
+> **Deferred to a follow-up patch.** The runtime mmproj load +
+> mtmd image-encoding path in `LlamaCppBackend` is part of v1.9.11
+> Phases 5–7 (deferred there; not addressed here). v2.1.8 ships
+> the full facade + config + routing slice; end-to-end vision
+> generation lands when the inference-layer work follows. The
+> facade fails fast with `ENTROPIC_ERROR_NO_VISION_TIER` for image
+> content arriving at a non-vision-capable tier, so consumers get
+> a clear signal rather than silent image-part drops.
+
+## Highlights
+
+- **gh#37 (MEDIUM):** Two new C ABI entry points —
+  `entropic_run_messages` and `entropic_run_messages_streaming`.
+  Accept OpenAI-style messages with mixed `text` and `image`
+  content parts. `entropic_run` continues to work unchanged —
+  strictly additive ABI, no JSON ser/parse on the text-only fast
+  path.
+- **gh#41 (MEDIUM):** Tier configs gain a `capabilities` field
+  (default `[text]`). Facade preflight-checks every multimodal
+  turn against `ModelOrchestrator::has_vision_capable_tier()` and
+  returns `ENTROPIC_ERROR_NO_VISION_TIER` (50) when no tier
+  qualifies. Tier-lock semantics preserved — consumers that lock
+  to a text-only tier and then send an image get the error rather
+  than a silent auto-switch.
+- **gh#42 (MEDIUM):** `data/bundled_models.yaml` adds
+  `primary_mmproj` (F16, ~899 MB). `BundledModelEntry` gets a
+  `mmproj_key` field so `entropic download primary` fetches the
+  paired mmproj automatically. `data/default_config.yaml`'s `lead`
+  tier declares `capabilities: [text, vision]` and references the
+  mmproj.
+- **gh#38 (MEDIUM):** `examples/openai-server` accepts `image_url`
+  content parts. `data:image/<mime>;base64,...` URLs decode into
+  per-request tempfiles (RAII-cleaned on every exit path including
+  streaming completion). `file://` and absolute paths pass
+  through. `http(s)://` returns HTTP 400 with a SSRF-aware
+  diagnostic.
+- **gh#39 (LOW):** `entropic_context_usage(handle, *used, *cap)`
+  exposes the token-pressure pair the engine already logs every
+  iteration — direct replacement for the
+  re-tokenize-`entropic_context_get` workaround consumers were
+  using.
+
+## Engine fix surfaced by the audit
+
+- **Core serializer (gh#37 audit):** `ResponseGenerator::serialize_messages`
+  was the structural bottleneck that would have broken multimodal
+  end-to-end even after every other piece landed. It hand-rolled
+  JSON emitting only `role` + `content` (string) — `content_parts`
+  vanished at the engine→backend hop. Extended to emit OpenAI-style
+  content arrays when `content_parts` is non-empty. Still hand-rolled
+  to honor core's no-nlohmann-json rule (design decision #21).
+
+## Breaking changes
+
+None. All ABI additions; existing entry points unchanged.
+
+## Distribution
+
+- Tarball: `entropic-2.1.8-linux-x86_64-{cpu,cuda}.tar.gz` with
+  matching `.sha256` files.
+- PyPI: `pip install entropic-engine==2.1.8` publishes from the
+  release-published trigger.
+
+## Known limitations
+
+- **End-to-end vision generation is gated on the inference-layer
+  follow-up.** v1.9.11 Phases 5–7 (`LlamaCppBackend::do_load`
+  mmproj init, `do_generate` multimodal path via libmtmd,
+  text-only fallback) remain deferred. v2.1.8 wires every
+  facade-side surface so the inference-layer patch is a drop-in.
+- **No HTTP fetch for remote images in the OpenAI server.**
+  `http(s)://` returns 400; consumers download themselves and
+  resend as `data:`.
+
+---
+
 # entropic v2.1.7
 
 Patch release with one architectural fix: **gh#34** — `entropic

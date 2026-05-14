@@ -287,6 +287,72 @@ ENTROPIC_EXPORT entropic_error_t entropic_run_streaming(
     int* cancel_flag);
 
 /**
+ * @brief Multimodal-aware agentic run with messages-array input (gh#37).
+ *
+ * Identical contract to entropic_run() except the input is a JSON
+ * array of message objects (OpenAI-compatible content arrays). Each
+ * message may carry `content` as a string OR as an array of content
+ * parts (`{"type":"text","text":...}` or `{"type":"image","path":...,"url":...}`).
+ * Image content parts survive end-to-end into the inference backend.
+ *
+ * The existing entropic_run() entry point is preserved unchanged
+ * for back-compat; consumers that don't need multimodal input keep
+ * using it (no JSON serialize/parse on their fast path).
+ *
+ * Routing: when any message carries an image part, the orchestrator
+ * routes to a tier whose `capabilities` includes `vision`. If no
+ * such tier is configured, ENTROPIC_ERROR_NO_VISION_TIER is
+ * returned with diagnostics identifying the active tier and any
+ * vision-capable tiers (if any).
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects (UTF-8,
+ *        null-terminated).
+ * @param result_json Out-param: newly allocated JSON result string.
+ *        Caller frees with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — messages_json /
+ *           result_json is NULL or malformed.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_NO_VISION_TIER — image content but no
+ *           vision-capable tier configured (gh#41).
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_messages(
+    entropic_handle_t handle,
+    const char* messages_json,
+    char** result_json);
+
+/**
+ * @brief Streaming variant of entropic_run_messages (gh#37).
+ *
+ * Same multimodal input contract as entropic_run_messages, with
+ * per-token streaming through on_token. The first token may be
+ * delayed by vision-encoder latency when image content is present.
+ *
+ * @param handle Engine handle.
+ * @param messages_json JSON array of message objects.
+ * @param on_token Per-token callback. Must not call back into API.
+ * @param user_data Forwarded to on_token.
+ * @param cancel_flag Optional int* set to non-zero to cancel.
+ * @return ENTROPIC_OK on success. See entropic_run_messages() for
+ *         error codes.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_messages_streaming(
+    entropic_handle_t handle,
+    const char* messages_json,
+    void (*on_token)(const char* token, size_t len, void* user_data),
+    void* user_data,
+    int* cancel_flag);
+
+/**
  * @brief Set a global stream observer callback.
  *
  * Fires for every token generated from every entry point — interactive
@@ -421,6 +487,33 @@ ENTROPIC_EXPORT entropic_error_t entropic_context_get(
 ENTROPIC_EXPORT entropic_error_t entropic_context_count(
     entropic_handle_t handle,
     size_t* count);
+
+/**
+ * @brief Read current context-window pressure for the active tier.
+ *
+ * Returns the same (used, capacity) pair the engine's
+ * core.context_manager logs at info level. Cheap — counts tokens
+ * across the current conversation against the active tier's
+ * `context_length`. Suitable for ~1 Hz consumer polling (e.g. a
+ * "6727/32768 tokens (20%)" UI gauge).
+ *
+ * @param handle Engine handle.
+ * @param[out] tokens_used Output: tokens currently in the conversation.
+ * @param[out] capacity Output: configured context_length for the
+ *             active tier.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — either out pointer is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine has no active tier
+ *           (rare; before first tier_lock / configure).
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @version 2.1.8
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_context_usage(
+    entropic_handle_t handle,
+    size_t* tokens_used,
+    size_t* capacity);
 
 /**
  * @brief Get loop metrics from the most recent run as JSON.

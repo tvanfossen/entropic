@@ -34,6 +34,15 @@ struct BundledModelEntry {
     double size_gb = 0.0;     ///< Model size in GB
     std::string adapter;      ///< Adapter name (e.g., "qwen35")
     std::string description;  ///< Human-readable description
+
+    /// @brief Paired mmproj registry key, or empty (gh#42, v2.1.8).
+    ///
+    /// When non-empty, the base model is multimodal and ships with a
+    /// vision-projector sibling at the named key (typically suffixed
+    /// `_mmproj`). The `entropic download` CLI auto-fetches the
+    /// paired entry; tier configs reference it via `mmproj: <key>`.
+    /// @version 2.1.8
+    std::string mmproj_key;
 };
 
 /**

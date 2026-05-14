@@ -5,6 +5,7 @@ add_executable(entropic-tests
     types/logging_test.cpp
     types/content_test.cpp
     types/message_multimodal_test.cpp
+    types/messages_json_test.cpp
 )
 
 target_link_libraries(entropic-tests PRIVATE

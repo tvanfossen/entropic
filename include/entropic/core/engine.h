@@ -374,6 +374,28 @@ public:
     std::vector<Message> run_turn(const std::string& input);
 
     /**
+     * @brief Run a single conversation turn from a pre-built message list (gh#37).
+     *
+     * Multimodal-aware overload. Each message in `new_messages` is
+     * appended to the engine's conversation history with its
+     * `content_parts` preserved (no string flattening). The agentic
+     * loop runs over the full conversation; replies are appended to
+     * history and returned.
+     *
+     * If the conversation is currently empty AND none of
+     * `new_messages` carries `role == "system"`, the engine prepends
+     * its configured `system_prompt_` first — matching the
+     * single-string overload's behavior.
+     *
+     * @param new_messages Messages to add this turn (typically one
+     *        user message; may include a system message on first
+     *        turn).
+     * @return Full result messages from the engine loop.
+     * @version 2.1.8
+     */
+    std::vector<Message> run_turn(std::vector<Message> new_messages);
+
+    /**
      * @brief Run a streaming conversation turn (stateful).
      *
      * Same as run_turn but with streaming token output. Owns the
@@ -387,6 +409,26 @@ public:
      * @version 2.0.2
      */
     int run_streaming(const std::string& input,
+                      TokenCallback on_token,
+                      void* user_data,
+                      int* cancel_flag);
+
+    /**
+     * @brief Streaming conversation turn from a pre-built message list (gh#37).
+     *
+     * Multimodal-aware streaming overload. Same content_parts
+     * preservation semantics as run_turn(vector<Message>), with
+     * token callback wiring identical to the single-string streaming
+     * variant.
+     *
+     * @param new_messages Messages to add this turn.
+     * @param on_token Consumer token callback (filtered UTF-8).
+     * @param user_data Consumer callback context.
+     * @param cancel_flag Polled per-token, nullable.
+     * @return 0 on success, 1 if cancelled, 2 on error.
+     * @version 2.1.8
+     */
+    int run_streaming(std::vector<Message> new_messages,
                       TokenCallback on_token,
                       void* user_data,
                       int* cancel_flag);

@@ -76,6 +76,7 @@ static const char* const s_error_names[] = {
     "ENTROPIC_ERROR_UNSUPPORTED_URL",         // 47 (v1.9.11)
     "ENTROPIC_ERROR_NOT_SUPPORTED",           // 48 (v1.9.13)
     "ENTROPIC_ERROR_STATE_INCOMPATIBLE",      // 49 (v1.9.13)
+    "ENTROPIC_ERROR_NO_VISION_TIER",          // 50 (v2.1.8, gh#41)
 };
 
 static constexpr int s_error_count =

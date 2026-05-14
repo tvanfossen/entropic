@@ -28,7 +28,7 @@ namespace entropic::config {
  * @param[out] config Output model config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 static std::string parse_model_config(
     ryml::ConstNodeRef node,
@@ -54,6 +54,14 @@ static std::string parse_model_config(
     extract(node, "flash_attn", config.flash_attn);
     extract_string_list_opt(node, "allowed_tools", config.allowed_tools);
 
+    /* v1.9.11 mmproj wiring at the loader (gh#42, gh#41): read mmproj
+     * here so the YAML key matches the bundled_models.yaml registry
+     * shape and the orchestrator can declare a tier vision-capable. */
+    std::string mmproj_str;
+    if (extract(node, "mmproj", mmproj_str)) {
+        config.mmproj_path = registry.resolve(mmproj_str);
+    }
+
     return "";
 }
 
@@ -64,7 +72,7 @@ static std::string parse_model_config(
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.1.8
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -92,6 +100,14 @@ static std::string parse_tier_config(
     bool routable_val = false;
     if (extract(node, "routable", routable_val)) {
         config.routable = routable_val;
+    }
+
+    /* gh#41 v2.1.8: tier capabilities. Missing key → ["text"] so
+     * every pre-v2.1.8 tier config remains valid. Configs that
+     * declare capabilities explicitly must include "text" themselves
+     * if the tier still serves text — we don't auto-inject. */
+    if (!extract_string_list(node, "capabilities", config.capabilities)) {
+        config.capabilities = {"text"};
     }
 
     return "";

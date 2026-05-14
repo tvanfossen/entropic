@@ -301,12 +301,32 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @param messages System + user messages.
  * @return Final messages.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.1.12
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     LoopContext ctx;
     ctx.messages = std::move(messages);
     ctx.metrics.start_time = now_seconds();
+
+    // gh#48 (v2.1.12): create the root conversation row when storage
+    // is wired so `ctx.conversation_id` carries a valid FK into
+    // `conversations(id)`. Every downstream delegation copies
+    // `parent_ctx.conversation_id` into `child_ctx.parent_conversation_id`
+    // (`delegation.cpp:387`); without this, the empty string propagates
+    // and every `INSERT INTO delegations` violates the FK silently,
+    // making `entropic.followup` return empty across an entire session.
+    if (storage_.create_conversation != nullptr) {
+        std::string conv_id;
+        if (storage_.create_conversation("session", conv_id,
+                                         storage_.user_data)
+            && !conv_id.empty()) {
+            ctx.conversation_id = std::move(conv_id);
+        } else {
+            logger->warn("Storage create_conversation failed at run() "
+                         "init; delegations will not persist this "
+                         "session (gh#48)");
+        }
+    }
 
     reset_interrupt();
     pause_flag_.store(false);

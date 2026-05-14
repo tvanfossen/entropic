@@ -441,6 +441,28 @@ static bool si_create_delegation(
 }
 
 /**
+ * @brief StorageInterface bridge: create_conversation trampoline.
+ *
+ * Forwards `AgentEngine::run`'s root-conversation creation to the
+ * `SqliteStorageBackend`. Pre-v2.1.12 (gh#48) the interface had no
+ * `create_conversation` callback, so the root conversation row was
+ * never inserted and every subsequent delegation's FK to
+ * `conversations(id)` failed silently against the empty parent id.
+ *
+ * @callback
+ * @version 2.1.12
+ */
+static bool si_create_conversation(
+        const char* title, std::string& conversation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr) { return false; }
+    conversation_id = sb->create_conversation(
+        title ? title : "session", std::nullopt, std::nullopt);
+    return !conversation_id.empty();
+}
+
+/**
  * @brief StorageInterface bridge: complete_delegation trampoline.
  * @callback
  * @version 2.1.6
@@ -542,11 +564,12 @@ static bool si_load_delegation_with_messages(
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
  * @internal
- * @version 2.1.6
+ * @version 2.1.12
  */
 static entropic::StorageInterface build_storage_iface(
         entropic::SqliteStorageBackend* sb) {
     entropic::StorageInterface si{};
+    si.create_conversation = si_create_conversation;
     si.create_delegation = si_create_delegation;
     si.complete_delegation = si_complete_delegation;
     si.save_conversation = si_save_conversation;

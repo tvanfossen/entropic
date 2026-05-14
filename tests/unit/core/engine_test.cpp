@@ -71,6 +71,44 @@ TEST_CASE("State transitions IDLE->PLANNING->EXECUTING->COMPLETE",
     REQUIRE(states.back() == static_cast<int>(AgentState::COMPLETE));
 }
 
+TEST_CASE("Root conversation created at run() init when storage wired (gh#48)",
+          "[engine][gh48]") {
+    // Pre-v2.1.12 regression: AgentEngine::run default-constructed
+    // LoopContext, leaving ctx.conversation_id empty. Every downstream
+    // delegation copied that empty string into parent_conversation_id
+    // and FK-failed silently against conversations(id). The fix calls
+    // storage_.create_conversation at run() init when wired, and stores
+    // the returned id on the root context.
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    int call_count = 0;
+    std::string captured_title;
+    StorageInterface si{};
+    si.create_conversation = [](const char* title, std::string& out_id,
+                                void* ud) -> bool {
+        auto* state = static_cast<std::pair<int, std::string>*>(ud);
+        state->first++;
+        state->second = title ? title : "";
+        out_id = "11111111-1111-1111-1111-111111111111";
+        return true;
+    };
+    std::pair<int, std::string> state{0, ""};
+    si.user_data = &state;
+    engine.set_storage(si);
+
+    engine.run(make_messages());
+    // create_conversation fires exactly once, with the engine's
+    // chosen root title (not empty).
+    REQUIRE(state.first == 1);
+    REQUIRE_FALSE(state.second.empty());
+    (void) call_count;
+    (void) captured_title;
+}
+
 TEST_CASE("Max iterations stops loop", "[engine]") {
     MockInference mock;
     mock.is_complete = false; // Never complete

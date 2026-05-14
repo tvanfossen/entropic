@@ -229,6 +229,29 @@ SCENARIO("Delegation lifecycle", "[storage][backend]") {
     }
 }
 
+SCENARIO("create_delegation refuses empty parent (gh#48)",
+         "[storage][backend][gh48]") {
+    GIVEN("a storage backend with NO parent conversation") {
+        TempStorage t;
+        WHEN("create_delegation is called with an empty parent_id") {
+            std::string del_id = "preset", child_id = "preset";
+            bool ok = t.storage.create_delegation(
+                "", "lead", "eng", "Implement feature", 10,
+                del_id, child_id);
+            THEN("it returns false and clears the out params") {
+                // Pre-v2.1.12 this returned true (sort of) — the SQL
+                // INSERT FK-failed silently, the bool propagated false
+                // but the unconditional "Created delegation" log
+                // masked the failure. The defense-in-depth fix
+                // rejects an empty parent up front with a clear error.
+                REQUIRE_FALSE(ok);
+                REQUIRE(del_id.empty());
+                REQUIRE(child_id.empty());
+            }
+        }
+    }
+}
+
 SCENARIO("Compaction snapshot saved", "[storage][backend]") {
     GIVEN("A conversation") {
         TempStorage t;

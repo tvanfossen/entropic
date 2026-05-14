@@ -117,6 +117,36 @@ target_link_libraries(entropic-grammar-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# v2.1.11: Speculative compat helper tests (mock llama_vocab_* symbols
+# at link time — no real model required).
+add_executable(entropic-speculative-compat-tests
+    inference/speculative_compat_test.cpp
+    ${PROJECT_SOURCE_DIR}/src/inference/speculative_compat.cpp
+)
+
+target_include_directories(entropic-speculative-compat-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+
+target_link_libraries(entropic-speculative-compat-tests PRIVATE
+    entropic-types
+    llama
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
+# v2.1.11: SecondaryModelLoader role-state tests
+add_executable(entropic-secondary-loader-tests
+    inference/secondary_model_loader_test.cpp
+)
+
+target_link_libraries(entropic-secondary-loader-tests PRIVATE
+    entropic::inference
+    entropic-types
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.9.7: Profile registry + throughput tracker tests
 add_executable(entropic-cap-tests
     inference/profile_registry_test.cpp
@@ -331,6 +361,8 @@ catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-adapter-tests)
+catch_discover_tests(entropic-speculative-compat-tests)
+catch_discover_tests(entropic-secondary-loader-tests)
 catch_discover_tests(entropic-grammar-tests)
 catch_discover_tests(entropic-cap-tests)
 catch_discover_tests(entropic-core-tests)

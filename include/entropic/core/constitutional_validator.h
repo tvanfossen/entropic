@@ -245,6 +245,35 @@ public:
         void (*cb)(int attempt_n, void* user_data), void* user_data);
 
     /**
+     * @brief Register the critique start/end callback pair (gh#50).
+     *
+     * Fires immediately before and after the synchronous
+     * `inference_->generate()` call inside `run_critique()`. Gives
+     * consumer UIs a visible signal for the 20-30s critique window
+     * that previously left `AgentState` parked at `EXECUTING` with
+     * no observable transition. Both callbacks take only the
+     * user_data pointer — consumer correlates timing themselves.
+     *
+     * Persistent-slot pattern: outlives `set_callbacks()` shuffles
+     * (validator owns its own slot, no entanglement with
+     * `EngineCallbacks`). Same survival contract as
+     * `set_attempt_boundary_cb` and the v2.1.10 state observer.
+     *
+     * `start_cb` and `end_cb` are nullable independently; passing
+     * `nullptr` for both clears the slot.
+     *
+     * @param start_cb Fires before the critique generate begins.
+     * @param end_cb   Fires after the critique generate returns.
+     * @param user_data Forwarded to both callbacks.
+     * @threadsafety Thread-safe (guarded by critique_cbs_mutex_).
+     * @version 2.1.12
+     */
+    void set_critique_callbacks(
+        void (*start_cb)(void* user_data),
+        void (*end_cb)(void* user_data),
+        void* user_data);
+
+    /**
      * @brief Get the config (read-only after construction).
      * @return Reference to config.
      * @utility
@@ -596,6 +625,23 @@ private:
     };
     AttemptBoundaryCb attempt_boundary_;
     mutable std::mutex attempt_boundary_mutex_;
+
+    /**
+     * @brief Critique start/end callback pair (gh#50, v2.1.12).
+     *
+     * Snapshotted to a local under `critique_cbs_mutex_` before each
+     * call site to release the lock before invoking consumer code,
+     * mirroring the AttemptBoundaryCb pattern.
+     *
+     * @version 2.1.12
+     */
+    struct CritiqueCallbacks {
+        void (*start_cb)(void*) = nullptr;
+        void (*end_cb)(void*) = nullptr;
+        void* user_data = nullptr;
+    };
+    CritiqueCallbacks critique_cbs_;
+    mutable std::mutex critique_cbs_mutex_;
 };
 
 } // namespace entropic

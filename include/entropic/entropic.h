@@ -412,6 +412,48 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_state_observer(
     void* user_data);
 
 /**
+ * @brief Register start/end callbacks for constitutional critique
+ *        generation (gh#50, v2.1.12).
+ *
+ * The constitutional validator's critique pass typically runs for
+ * 20-30 seconds while `AgentState` stays parked at `EXECUTING`
+ * (no transition signals it). Consumers that want a "validating
+ * response…" UI indicator can register these callbacks to bracket
+ * that window precisely.
+ *
+ * `start_cb` fires immediately before the synchronous
+ * `inference_->generate()` call inside `run_critique()`; `end_cb`
+ * fires immediately after it returns (regardless of success or
+ * failure). Both fire even when the critique pass produces no
+ * violations.
+ *
+ * The slot is independent of the legacy `EngineCallbacks` struct —
+ * it survives `entropic_run_streaming`'s internal callback shuffle
+ * and any `entropic_configure*` reconstruction (the handle owns the
+ * authoritative slot and re-applies it to each newly-built
+ * validator). Pass `NULL` for either callback to opt out of just
+ * that edge; pass `NULL` for both to clear the slot.
+ *
+ * @param handle Engine handle.
+ * @param start_cb Pre-critique callback (NULL to disable).
+ * @param end_cb Post-critique callback (NULL to disable).
+ * @param user_data Forwarded to both callbacks verbatim.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *
+ * @threadsafety Thread-safe. Callbacks may be reassigned at any
+ *               time; the validator snapshots the slot under a
+ *               mutex before each fire so an in-flight critique
+ *               cannot tear a partial reassignment.
+ * @version 2.1.12
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_critique_callbacks(
+    entropic_handle_t handle,
+    void (*start_cb)(void* user_data),
+    void (*end_cb)(void* user_data),
+    void* user_data);
+
+/**
  * @brief Interrupt a running generation.
  *
  * Signals the engine to abort the current entropic_run() or

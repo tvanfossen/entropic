@@ -406,6 +406,23 @@ private:
     void activate_router(const ParsedConfig& config);
 
     /**
+     * @brief Activate the speculative-draft model if configured.
+     *
+     * Loads the draft GGUF (resolved via the bundled-models registry
+     * or as a literal path) into the secondary loader's `"draft"`
+     * role when `config.inference.speculative.enabled` is true and a
+     * `draft_model` value is set. Logs but does NOT fail engine init
+     * if the draft cannot be loaded — speculative is opt-in, so a
+     * misconfigured draft degrades to plain decode rather than
+     * blocking startup.
+     *
+     * @param config Full engine config.
+     * @internal
+     * @version 2.1.11
+     */
+    void activate_draft(const ParsedConfig& config);
+
+    /**
      * @brief Load bundled grammars from data directory at startup.
      * @version 1.9.3
      */

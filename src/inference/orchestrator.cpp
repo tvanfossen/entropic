@@ -143,11 +143,45 @@ void ModelOrchestrator::activate_router(const ParsedConfig& config) {
 }
 
 /**
+ * @brief Activate the speculative-draft model when configured.
+ *
+ * Builds a `ModelConfig` for the draft from the parsed speculative
+ * settings (resolved path, placement knobs) and loads it under the
+ * `"draft"` role on the secondary loader. Speculative is opt-in, so
+ * a load failure here is logged and treated as "no draft available"
+ * (degrades to plain decode) rather than blocking engine init.
+ *
+ * @param config Parsed engine config.
+ * @internal
+ * @version 2.1.11
+ */
+void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
+    const auto& spec = config.inference.speculative;
+    if (!spec.enabled || spec.draft_path.empty()) { return; }
+    ModelConfig draft_cfg;
+    draft_cfg.path = spec.draft_path;
+    draft_cfg.gpu_layers = spec.draft_n_gpu_layers;
+    draft_cfg.n_threads = spec.draft_cpu_threads;
+    draft_cfg.use_mlock = true;
+    draft_cfg.flash_attn = true;
+    // Draft uses a minimal context — it operates over the same prompt
+    // as the verifier but doesn't need its own large window. The
+    // common_speculative layer manages internal sequence state.
+    draft_cfg.context_length = 8192;
+    secondary_loader_.ensure_loaded("draft", draft_cfg);
+}
+
+/**
  * @brief Initialize orchestrator: backends, routing, adapters, grammars.
+ *
+ * Adds speculative-draft activation alongside router activation in
+ * v2.1.11 (gh#36) — the draft slot loads when `inference.speculative.
+ * enabled` is true and a `draft_model` is configured.
+ *
  * @param config Parsed engine config.
  * @return true on success.
  * @utility
- * @version 2.0.2
+ * @version 2.1.11
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
@@ -166,6 +200,7 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     build_routing_tables(config);
     if (!activate_default_tier(config)) { return false; }
     activate_router(config);
+    activate_draft(config);      // Speculative draft slot (v2.1.11)
 
     preload_adapters();          // LoRA adapters → WARM (v1.9.2)
     load_bundled_grammars();     // Bundled grammars (v1.9.3)

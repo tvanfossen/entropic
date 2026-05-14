@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.1.7)
+## Current State (v2.2.0 release prep — develop)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -459,11 +459,19 @@ moves to v2.3 candidate (below).
 
 ---
 
-## v2.2.0 — Multimodal Foundation + Adapter & Model Expansion (in progress)
+## v2.2.0 — Multimodal Foundation + Adapter & Model Expansion (ready for release)
 
-The next minor — committed scope, planned as four patch releases that
-bundle together at the milestone tag. Each patch is internally coherent
-and ships independently; the 2.2.0 tag marks bundle completion.
+All six patches in the bundle (v2.1.7 → v2.1.12) landed on develop.
+The v2.2.0 milestone tag is queued for maintainer execution: model-test
+JSON capture, `develop → main` merge, `inv release-check`, and
+`gh release create`. See `RELEASE_NOTES.md` for the consolidated entry
+and `docs/releasing.md` for the maintainer workflow.
+
+The bundle was planned as four patch releases bundling together at the
+milestone tag; the actual sequence grew by two (v2.1.7 closed
+pre-bundle, v2.1.12 added to absorb consumer-reported fixes that
+surfaced during implementation). Each patch shipped internally
+coherent.
 
 Strictly additive at the C ABI: new symbols, new config keys, new
 bundled-model entries. No removals, no behavioural changes to existing

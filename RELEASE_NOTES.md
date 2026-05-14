@@ -1,3 +1,234 @@
+# entropic v2.2.0
+
+Minor release. The v2.1.x bundle (v2.1.7 → v2.1.12) lands together at
+this tag. **Strictly additive at the C ABI** — no removals, no behavioural
+changes for existing 2.1.x consumers. Six patches under one milestone:
+
+| Patch | Theme |
+|---|---|
+| v2.1.7 | `mcp-bridge` becomes a pure relay (VRAM-orphan fix) |
+| v2.1.8 | Multimodal end-to-end (facade ABI + tier routing + bundled VLM + mtmd integration) |
+| v2.1.9 | Bundled-model registry expansion + 3 new chat adapter families |
+| v2.1.10 | Mid-generation user-message queue ABI |
+| v2.1.11 | Speculative decoding infrastructure + SecondaryModelLoader (kernel gated inert — see Known Limitations) |
+| v2.1.12 | Consumer-reported bug fixes + Gemma 4 mmproj registry closure + critique-visibility callbacks |
+
+## Headline features
+
+**Multimodal end-to-end (v2.1.8).** `entropic_run_messages` accepts
+content_parts with text + image; the orchestrator routes image-bearing
+messages to a vision-capable tier automatically (via the new
+`capabilities:` config field). The bundled primary ships an mmproj.
+The OpenAI server example handles `data:` URLs, `file://`, and
+absolute paths. `http(s)://` returns HTTP 400 (SSRF surface) by
+design. The text-only fast path (`entropic_run`) is preserved
+unchanged.
+
+**3 new chat adapters + 11-key registry (v2.1.9).** Qwen 3.6
+(`Qwen36Adapter`), Gemma 4 (`Gemma4Adapter` covering A4B / E4B /
+E2B), and Nemotron 3 (`Nemotron3Adapter`) join the existing
+`Qwen35Adapter`. Registry uses the `<family>_<size_or_variant>`
+convention; tier role assignment is purely a config concern, so any
+registry key can serve as primary / mid / draft / router. The
+bundled-model fetch tooling (`entropic download <key>`) handles
+mmproj pairing where applicable. License compatibility documented
+per entry.
+
+**Mid-generation user-message queue (v2.1.10).** New ABI lets
+interactive consumers enqueue follow-up messages mid-turn without
+interrupting the active generation. Queued messages drain at
+top-level `AgentState::COMPLETE` only — never at
+parent-resume-after-child boundaries, which is enforced
+structurally by the drain hook's location inside `run_turn`. Cap
+default 8, runtime-tunable. Token-stream protocol unchanged.
+
+**Context-pressure API (v2.1.8).**
+`entropic_context_usage(handle, *used, *capacity)` exposes the
+same numbers `core.context_manager` logs (`Context: N/M tokens`).
+Two scalars, cheap to poll at 1Hz for a UI gauge. No JSON, no heap
+allocation.
+
+**Critique-visibility callbacks (v2.1.12).**
+`entropic_set_critique_callbacks(handle, start_cb, end_cb, ud)`
+fires before and after the constitutional validator's critique
+generation — the 20-30s "validating response…" window that
+previously showed `AgentState::EXECUTING` with no consumer-visible
+signal. Persistent-slot pattern (survives `set_callbacks()`
+shuffles, matches the v2.1.10 state-observer precedent).
+
+**Speculative decoding infrastructure (v2.1.11).** `inference.speculative.*` config schema, `SecondaryModelLoader` unifying router /
+draft / future thinking-model lifecycle, `LlamaCppBackend::do_generate_speculative` wired to `common_speculative_*`,
+capability query `entropic_speculative_compat`, acceptance-rate
+metrics, and a new `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_ARCH`
+guard that refuses recurrent OR hybrid targets at
+config-activation time. **Kernel gated inert** — see Known
+Limitations.
+
+**Storage correctness fix (v2.1.12 gh#48).** Pre-v2.1.12 the root
+`LoopContext` defaulted to an empty `conversation_id`. Every
+delegation copied the empty string into `parent_conversation_id`
+and the resulting INSERT FK-failed silently against
+`conversations(id)`. Net effect: `entropic.followup` returned the
+"no matches" sentinel for every session regardless of how many
+delegations had run. The `delegations` table stayed empty across
+entire sessions. Fixed at engine init; defense-in-depth in the
+storage backend.
+
+## Known limitations
+
+**Speculative decoding kernel is gated inert.** The infrastructure
+ships and the arch guard refuses every unsafe combo cleanly, but
+the bit-identical correctness contract
+(`test_speculative_correctness`) cannot be met at llama.cpp pin
+`253ba110b` for any bundled primary. Catastrophic logit divergence
+at the speculative split-prefill boundary on Qwen3.5, Qwen3.6,
+Nemotron-3, AND Gemma 4. Root cause: upstream
+`speculative-simple.cpp`'s split-prefill assumes pure-transformer
+state continuity across ubatch boundaries; every bundled primary
+carries recurrent state that doesn't carry across. Most modern
+frontier model families released in 2025–2026 are hybrid and
+therefore refused by the arch guard. Path forward (post-2.2.0):
+upstream fix, entropic-side state-management shim, or relaxation
+to statistical-equivalence test. Architecture decision log #41
+captures the full forensics.
+
+**Empirical demo numbers (Gemma 4 E4B target + E2B CPU draft,
+122-token prompt → 600 tokens):** plain decode 15.5 tok/s,
+speculative 7.1 tok/s = 0.46× (slower) despite `accept_rate=0.99`.
+CPU draft is too slow on the dev hardware to amortize. Both-on-GPU
+was not yet tried at the v2.1.11 freeze and may change the
+calculus; tracked as a v2.2.x followup.
+
+**Nemotron-3-Nano-4B is text-only at this pin.** llama.cpp at
+`253ba110b` only exposes `PROJECTOR_TYPE_NEMOTRON_V2_VL` (for the
+v2 Nemotron-Nano family). No v3 projector upstream. Documented in
+`data/bundled_models.yaml`.
+
+**Gemma 4 audio capability is wired but not surfaced.** llama.cpp
+ships `PROJECTOR_TYPE_GEMMA4A` + `mtmd_audio_preprocessor_gemma4a`;
+mmproj is bundled. The tier `capabilities:` field currently only
+defines `text` and `vision`. Audio surfacing is a v2.2.x followup
+when a consumer pulls on it.
+
+**Adapter coverage is partial.** 4 of ~13 families land here:
+Qwen3.5 / Qwen3.6 / Gemma 4 / Nemotron 3. Llama 3.x, Gemma 2/3,
+Mistral / Mixtral, Phi-3/4, DeepSeek, Granite, Command-R remain
+deferred to 2.3.x (umbrella gh#17). Note that some of these
+(Granite-Hybrid, Phi-MoE variants) are classified hybrid at the
+current llama.cpp pin and will be refused by v2.1.11's speculative
+arch guard regardless of adapter availability.
+
+## C ABI compatibility
+
+**Strictly additive.** ABI SONAME unchanged at `2`. Consumers
+compiled against 2.1.x dynamically link to 2.2.0 without
+recompilation. No public symbol removed or repurposed; no error
+code renumbered; no config key removed.
+
+### New C ABI symbols
+
+- `entropic_run_messages(handle, messages_json, *out_result)` (v2.1.8)
+- `entropic_run_messages_streaming(handle, messages_json, cb, ud, *out_result)` (v2.1.8)
+- `entropic_context_usage(handle, *used, *capacity)` (v2.1.8)
+- `entropic_queue_user_message(handle, message)` (v2.1.10)
+- `entropic_user_message_queue_depth(handle, *count)` (v2.1.10)
+- `entropic_clear_user_message_queue(handle)` (v2.1.10)
+- `entropic_set_queue_observer(handle, cb, ud)` (v2.1.10)
+- `entropic_speculative_compat(handle, *compatible, **diagnostic)` (v2.1.11)
+- `entropic_set_critique_callbacks(handle, start_cb, end_cb, ud)` (v2.1.12)
+
+### New error codes
+
+- `ENTROPIC_ERROR_NO_VISION_TIER` (v2.1.8)
+- `ENTROPIC_ERROR_QUEUE_FULL` (v2.1.10)
+- `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_ARCH` (v2.1.11)
+
+### New config schema (additive, safe defaults)
+
+- `tiers.<name>.capabilities: [text, vision, ...]` — defaults to
+  `[text]` when absent (preserves all existing tier configs)
+- `tiers.<name>.mmproj` / `tiers.<name>.mmproj_key` — defaults to
+  unset (text-only behaviour unchanged)
+- `inference.speculative.*` section — `enabled` defaults to `false`
+  (no behavioural change when absent or off)
+- `loop.message_queue_capacity` — defaults to 8
+
+### Persistent-slot observer pattern
+
+Three observer slots now live on `AgentEngine` independent of
+`EngineCallbacks`:
+
+- `set_stream_observer` (pre-existing)
+- `set_queue_observer` (v2.1.10)
+- `set_state_observer` (v2.1.10; replaces the buggy
+  `EngineCallbacks` route on streaming paths)
+- `set_critique_callbacks` (v2.1.12; on `ConstitutionalValidator`,
+  same pattern)
+
+**Consumer note:** if you previously registered an observer via
+`entropic_set_callbacks()` and saw it stop firing on streaming
+runs in 2.1.7, that was the bug v2.1.10 fixed via the persistent-
+slot migration. New observers added in your own code should follow
+the persistent-slot pattern; `set_callbacks()` is documented as a
+footgun for any persistent-style observer.
+
+## Bundled model registry
+
+14 keys total. Naming convention `<family>_<size_or_variant>`.
+Tier role assignment is config-level.
+
+| Key | Family | mmproj | Notes |
+|---|---|---|---|
+| `primary` / `primary_mmproj` | Qwen3.5-35B-A3B + F16 mmproj | ✅ | The v2.1.8 vision-capable default |
+| `qwen3_5_0_8b` / `_2b` / `_4b` / `_9b` | Qwen 3.5 family | — | New v2.1.9 |
+| `qwen3_6_a3b` + `qwen3_6_a3b_mmproj` | Qwen 3.6 | ✅ | New v2.1.9 |
+| `gemma4_e2b` / `_e4b` / `_a4b` + paired mmproj | Gemma 4 | ✅ | New v2.1.9 + v2.1.12 mmproj |
+| `nemotron3_nano_4b` | Nemotron 3 | ❌ | Text-only at this pin |
+| (router) `qwen3_0_6b` | Qwen 3 | — | Existing |
+
+## Per-patch reference
+
+For per-issue commit detail and the implementation logs, see the
+per-patch entries below in this file (v2.1.12 → v2.1.7) and the
+STAGED proposals at `.claude/proposals/STAGED/v2.1.7-*` through
+`v2.1.12-*`.
+
+## Migration notes
+
+**For consumers compiled against 2.1.x:** dynamic-link to 2.2.0
+without recompilation. No source changes required.
+
+**For consumers wanting new features:** add the relevant new
+symbols (`entropic_run_messages`, `entropic_context_usage`, etc.)
+to your bindings. Existing function signatures are unchanged.
+
+**For consumers running observers:** if you have an observer
+registered via the legacy `entropic_set_callbacks()` route, verify
+it still fires on streaming paths. The persistent-slot setters
+(`set_stream_observer`, `set_queue_observer`, `set_state_observer`,
+`set_critique_callbacks`) are the recommended path going forward.
+
+**For consumers configuring tiers:** existing tier configs
+continue to work unchanged. Adding `capabilities:` is optional;
+default is `[text]`.
+
+## Model-test results
+
+Full model/benchmark suite results attached to this GitHub Release
+as `model-results-v2.2.0.json`. Per the project's test-gating
+policy, this is the audit record gating the minor bump. Generated
+on the maintainer's dev hardware (NVIDIA RTX PRO 4000 Blackwell,
+16 GB VRAM); consumers with different hardware will see different
+absolute throughput but the same correctness pass/fail matrix.
+
+## Acknowledgements
+
+Three of the six patches are direct responses to consumer-reported
+issues. Special thanks to the bissell-llm-studio team for the
+detailed root-cause analyses on gh#48, gh#49, and gh#50.
+
+---
+
 # entropic v2.1.12
 
 Patch release closing the gap between v2.1.11 and the v2.2.0 milestone

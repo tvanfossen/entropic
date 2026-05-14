@@ -594,22 +594,56 @@ struct ConstitutionalValidationConfig {
  *
  * @version 2.1.11
  */
+/**
+ * @brief Build the v2.1.11 default ModelConfig for a speculative
+ *        draft model.
+ *
+ * Differs from the standard tier defaults in three places that the
+ * kernel currently depends on:
+ *  - `gpu_layers = 0` — CPU-resident draft (zero VRAM on top of
+ *    primary). Override to -1 for full GPU when VRAM allows.
+ *  - `flash_attn = false` — required for partial seq_rm support on
+ *    MoE / GQA architectures (the kernel rolls back draft KV after
+ *    each speculative round). Override to true ONLY if your model
+ *    + backend can do partial seq_rm with flash attn enabled.
+ *  - `context_length = 8192` — modest; speculative drafts are
+ *    typically 4–32 tokens per round, no need for a wide window.
+ *  - `n_threads = 4` — works on most laptops; bump to match physical
+ *    core count for higher CPU draft throughput.
+ *
+ * Every other field comes from `ModelConfig`'s standard defaults.
+ *
+ * @utility
+ * @version 2.1.11
+ */
+inline ModelConfig make_default_draft_model_config() {
+    ModelConfig cfg;
+    cfg.gpu_layers = 0;
+    cfg.flash_attn = false;
+    cfg.context_length = 8192;
+    cfg.n_threads = 4;
+    return cfg;
+}
+
 struct SpeculativeConfig {
     bool enabled = false;                  ///< Master switch (off by default)
-    /**
-     * @brief Resolved draft-model path (empty when no draft is set).
-     *
-     * Populated at config-parse time by the loader: the YAML key is
-     * `inference.speculative.draft_model` and accepts either a
-     * bundled-model registry key (e.g. `qwen3_5_0_8b`) or a literal
-     * filesystem path. The loader resolves both shapes through
-     * `BundledModels::resolve()` — by the time orchestrator init runs,
-     * this field holds the final on-disk path.
-     */
-    std::filesystem::path draft_path;
     int n_draft = 16;                      ///< Window size (proposed tokens)
-    int draft_n_gpu_layers = 0;            ///< 0 = CPU, -1 = full GPU
-    int draft_cpu_threads = 4;             ///< CPU threads for draft decode
+
+    /**
+     * @brief Full ModelConfig for the draft model.
+     *
+     * Mirrors how tier configs are structured: every llama.cpp knob
+     * (gpu_layers, n_threads, n_batch, flash_attn, context_length,
+     * use_mlock, cache_type_k/v, tensor_split, ...) is
+     * consumer-tunable from YAML via
+     * `inference.speculative.draft.<field>`. `path` accepts a
+     * bundled-model registry key OR a literal filesystem path;
+     * resolved at config-parse time by `BundledModels::resolve()`.
+     *
+     * Defaults are kernel-aware — see
+     * `make_default_draft_model_config()`.
+     */
+    ModelConfig draft = make_default_draft_model_config();
 };
 
 /**

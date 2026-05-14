@@ -145,30 +145,25 @@ void ModelOrchestrator::activate_router(const ParsedConfig& config) {
 /**
  * @brief Activate the speculative-draft model when configured.
  *
- * Builds a `ModelConfig` for the draft from the parsed speculative
- * settings (resolved path, placement knobs) and loads it under the
- * `"draft"` role on the secondary loader. Speculative is opt-in, so
- * a load failure here is logged and treated as "no draft available"
+ * Hands the consumer-supplied `ModelConfig` (from the YAML's
+ * `inference.speculative.draft:` block) directly to the secondary
+ * loader under the `"draft"` role. Speculative is opt-in — a load
+ * failure here is logged and treated as "no draft available"
  * (degrades to plain decode) rather than blocking engine init.
  *
  * @param config Parsed engine config.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
     const auto& spec = config.inference.speculative;
-    if (!spec.enabled || spec.draft_path.empty()) { return; }
-    ModelConfig draft_cfg;
-    draft_cfg.path = spec.draft_path;
-    draft_cfg.gpu_layers = spec.draft_n_gpu_layers;
-    draft_cfg.n_threads = spec.draft_cpu_threads;
-    draft_cfg.use_mlock = true;
-    draft_cfg.flash_attn = true;
-    // Draft uses a minimal context — it operates over the same prompt
-    // as the verifier but doesn't need its own large window. The
-    // common_speculative layer manages internal sequence state.
-    draft_cfg.context_length = 8192;
-    secondary_loader_.ensure_loaded("draft", draft_cfg);
+    if (!spec.enabled || spec.draft.path.empty()) { return; }
+    // Full ModelConfig comes from the YAML's
+    // `inference.speculative.draft:` block — every llama.cpp knob is
+    // consumer-tunable. Defaults come from
+    // `make_default_draft_model_config()` (gpu_layers=0,
+    // flash_attn=false, context_length=8192, n_threads=4).
+    secondary_loader_.ensure_loaded("draft", spec.draft);
 }
 
 /**
@@ -228,16 +223,107 @@ void ModelOrchestrator::shutdown() {
     secondary_loader_.shutdown();
 }
 
+/**
+ * @brief Run a generate call through speculative (if enabled+pair
+ *        compatible) or fall back to plain decode.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult ModelOrchestrator::run_generate_dispatch(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params) {
+    GenerationResult result;
+    bool kernel_ran = config_.inference.speculative.enabled
+        && try_speculative_route(model, messages, params, result);
+    if (!kernel_ran) {
+        result = model->generate(messages, params);
+    }
+    return result;
+}
+
+/**
+ * @brief Common implementation: returns true if the speculative
+ *        kernel ran (result populated), false to fall back to plain.
+ *
+ * Centralises the dynamic_cast + compat check shared by both
+ * generate and generate_streaming (v2.1.11, gh#36).
+ *
+ * @internal
+ * @version 2.1.11
+ */
+bool ModelOrchestrator::try_speculative_route_streaming(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>& cancel,
+    GenerationResult& result)
+{
+    auto compat = check_speculative_compat();
+    bool kernel_ran = false;
+    if (!compat.compatible) {
+        logger->info("Speculative requested but pair incompatible "
+                     "({}); using plain decode", compat.diagnostic);
+    } else {
+        auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
+        auto* draft_be = secondary_loader_.get("draft");
+        auto* llama_draft = dynamic_cast<LlamaCppBackend*>(draft_be);
+        if (llama_target == nullptr || llama_draft == nullptr) {
+            logger->info("Speculative compat passed but target/draft "
+                         "is not llama.cpp; using plain decode");
+        } else {
+            auto spec = llama_target->generate_speculative_with_draft(
+                messages, params, on_token, cancel, *llama_draft,
+                config_.inference.speculative.n_draft,
+                config_.inference.speculative.draft.path.string());
+            if (spec.error_code == ENTROPIC_ERROR_NOT_SUPPORTED) {
+                logger->info("Speculative kernel returned NOT_SUPPORTED "
+                             "({}); falling back", spec.error_message);
+            } else {
+                result = std::move(spec);
+                kernel_ran = true;
+            }
+        }
+    }
+    return kernel_ran;
+}
+
+/**
+ * @brief Non-streaming speculative route — wraps the streaming form
+ *        with an empty on_token and a local cancel flag.
+ * @internal
+ * @version 2.1.11
+ */
+bool ModelOrchestrator::try_speculative_route(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    GenerationResult& result)
+{
+    std::atomic<bool> local_cancel{false};
+    return try_speculative_route_streaming(
+        model, messages, params,
+        [](std::string_view){}, local_cancel, result);
+}
+
 // ── Generation ─────────────────────────────────────────────
 
 /**
  * @brief Generate response using routed or explicit tier.
+ *
+ * Speculative routing added in v2.1.11 (gh#36): when the kernel is
+ * configured and the target/draft pair is compatible, dispatches
+ * through `LlamaCppBackend::generate_speculative_with_draft`; falls
+ * back to plain decode otherwise. The dispatch decision is delegated
+ * to `run_generate_dispatch` to keep this method under the SLOC gate.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.0.0
+ * @version 2.1.11
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -272,10 +358,10 @@ GenerationResult ModelOrchestrator::generate(
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
 
-    // Generate
-    auto result = model->generate(messages, resolved_params);
+    // Generate — speculative routing applies here too (v2.1.11, gh#36)
+    GenerationResult result = run_generate_dispatch(
+        model, messages, resolved_params);
 
-    // Parse tool calls via adapter
     auto* adapter = get_adapter(selected);
     if (adapter && !result.content.empty()) {
         result.raw_content = result.content;
@@ -299,18 +385,17 @@ GenerationResult ModelOrchestrator::generate(
 }
 
 /**
- * @brief Streaming generation.
+ * @brief Streaming generation with speculative dispatch.
  *
- * Speculative routing added in v2.1.11 (gh#36): when
- * `inference.speculative.enabled` is true AND the target/draft pair
- * is compatible, dispatches to
- * `LlamaCppBackend::generate_speculative_with_draft` with the draft
- * resolved from `secondary_loader_.get("draft")`. Falls back to plain
- * streaming on NOT_SUPPORTED or compatibility failure, with a
- * diagnostic logged.
+ * Speculative routing added in v2.1.11 (gh#36): when the kernel is
+ * configured and the target/draft pair is compatible, dispatches to
+ * `LlamaCppBackend::generate_speculative_with_draft` via
+ * `try_speculative_route_streaming` with the draft resolved from
+ * `secondary_loader_.get("draft")`. Falls back to plain streaming on
+ * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.1.11
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -340,35 +425,12 @@ GenerationResult ModelOrchestrator::generate_streaming(
     // back to plain streaming. This keeps the v2.1.11 ship-without-
     // kernel state observable as "plain decode, speculative
     // requested but deferred."
-    if (config_.inference.speculative.enabled) {
-        auto compat = check_speculative_compat();
-        if (compat.compatible) {
-            auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
-            auto* draft_be = secondary_loader_.get("draft");
-            auto* llama_draft = dynamic_cast<LlamaCppBackend*>(draft_be);
-            if (llama_target && llama_draft) {
-                auto spec_result =
-                    llama_target->generate_speculative_with_draft(
-                        messages, resolved_params, on_token, cancel,
-                        *llama_draft,
-                        config_.inference.speculative.n_draft);
-                if (spec_result.error_code
-                        != ENTROPIC_ERROR_NOT_SUPPORTED) {
-                    return spec_result;
-                }
-                logger->info("Speculative kernel returned NOT_SUPPORTED "
-                             "({}); falling back to plain streaming",
-                             spec_result.error_message);
-            } else {
-                logger->info("Speculative compat passed but target or "
-                             "draft is not llama.cpp; using plain "
-                             "streaming");
-            }
-        } else {
-            logger->info("Speculative requested but pair incompatible "
-                         "({}); using plain streaming",
-                         compat.diagnostic);
-        }
+    GenerationResult spec_streaming;
+    if (config_.inference.speculative.enabled
+        && try_speculative_route_streaming(
+               model, messages, resolved_params, on_token, cancel,
+               spec_streaming)) {
+        return spec_streaming;
     }
 
     return model->generate_streaming(messages, resolved_params, on_token, cancel);

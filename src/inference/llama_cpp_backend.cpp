@@ -1560,17 +1560,25 @@ static void spec_build_batch(SpeculativeRunState& state) {
  *        state.error_* on failure.
  * @return true on success, false on decode failure.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static bool spec_decode_both(SpeculativeRunState& state) {
     spec_build_batch(state);
-    if (llama_decode(state.ctx_tgt, state.batch_tgt) != 0) {
+    int rc_tgt = llama_decode(state.ctx_tgt, state.batch_tgt);
+    if (rc_tgt != 0) {
+        logger->error("Speculative target decode failed: rc={}, "
+                      "n_past={}, draft_size={}",
+                      rc_tgt, state.n_past, state.draft.size());
         state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         state.error_message = "target llama_decode failed";
         state.finish_reason = "error";
         return false;
     }
-    if (llama_decode(state.ctx_dft, state.batch_tgt) != 0) {
+    int rc_dft = llama_decode(state.ctx_dft, state.batch_tgt);
+    if (rc_dft != 0) {
+        logger->error("Speculative draft decode failed: rc={}, "
+                      "n_past={}, draft_size={}",
+                      rc_dft, state.n_past, state.draft.size());
         state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         state.error_message = "draft llama_decode failed";
         state.finish_reason = "error";
@@ -1646,7 +1654,7 @@ static std::string spec_emit_token(
  * @brief Drive one accept round: draft → decode → sample-and-accept
  *        → emit tokens. Returns true to continue the outer loop.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static bool spec_accept_round(
     SpeculativeRunState& state,
@@ -1656,6 +1664,14 @@ static bool spec_accept_round(
     std::atomic<bool>& cancel)
 {
     int draft_size_before = spec_run_draft(state);
+    // common_speculative_draft advances the draft's KV cache as it
+    // proposes tokens. Truncate back to the pre-draft boundary so
+    // the upcoming "same batch on draft" decode re-fills positions
+    // [n_past, n_past + draft.size()] cleanly — matches the upstream
+    // speculative-simple checkpoint-restore pattern.
+    llama_memory_seq_rm(
+        llama_get_memory(state.ctx_dft), state.seq_id,
+        state.n_past, -1);
     if (!spec_decode_both(state)) { return false; }
 
     auto ids = common_sampler_sample_and_accept_n(
@@ -1687,23 +1703,26 @@ static bool spec_accept_round(
  * @brief Validate speculative preconditions and gate on FULL seq_rm.
  * @return Empty string on success, diagnostic on failure.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static std::string spec_check_preconditions(
     bool target_active, bool draft_active,
     llama_context* ctx_tgt, llama_context* ctx_dft) {
-    std::string err;
     if (!target_active || !draft_active) {
-        err = "speculative requires ACTIVE target + draft";
-    } else if (common_context_can_seq_rm(ctx_tgt)
-                   != COMMON_CONTEXT_SEQ_RM_TYPE_FULL
-               || common_context_can_seq_rm(ctx_dft)
-                   != COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
-        err = "speculative kernel requires FULL seq_rm on both "
-              "target and draft contexts (partial-acceptance "
-              "checkpointing is deferred to a follow-up patch)";
+        return "speculative requires ACTIVE target + draft";
     }
-    return err;
+    int cap_tgt = common_context_can_seq_rm(ctx_tgt);
+    int cap_dft = common_context_can_seq_rm(ctx_dft);
+    logger->info("Speculative seq_rm capability: target={}, draft={} "
+                 "(0=NO, 1=PART, 2=FULL)", cap_tgt, cap_dft);
+    if (cap_tgt != COMMON_CONTEXT_SEQ_RM_TYPE_PART
+        || cap_dft != COMMON_CONTEXT_SEQ_RM_TYPE_PART) {
+        return "speculative kernel requires partial seq_rm on both "
+               "target and draft contexts (FULL-only and NO cases "
+               "need checkpoint-based rollback — deferred to a "
+               "follow-up patch; see decision log #41)";
+    }
+    return std::string{};
 }
 
 /**
@@ -1711,12 +1730,13 @@ static std::string spec_check_preconditions(
  *        speculative context, batch. Returns "" on success or a
  *        diagnostic string. Cleans up on failure.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 static std::string spec_init_run(
     SpeculativeRunState& state, llama_model* model_tgt,
     const std::vector<llama_token>& tokens,
-    const GenerationParams& params, int n_draft_max) {
+    const GenerationParams& params, int n_draft_max,
+    const std::string& draft_path) {
     state.id_last = tokens.back();
     state.prompt_tgt.assign(tokens.begin(), tokens.end() - 1);
     state.n_past = static_cast<int>(tokens.size()) - 1;
@@ -1740,6 +1760,10 @@ static std::string spec_init_run(
                 (n_draft_max > 0) ? n_draft_max : 16;
             spec_params.draft.ctx_tgt = state.ctx_tgt;
             spec_params.draft.ctx_dft = state.ctx_dft;
+            // Upstream gates DRAFT_SIMPLE on a non-empty draft path
+            // (see common/speculative.cpp:875). Required even though
+            // we provide already-loaded contexts.
+            spec_params.draft.mparams.path = draft_path;
             state.spec = common_speculative_init(spec_params, 1);
             if (!state.spec) {
                 common_sampler_free(state.smpl);
@@ -1836,7 +1860,7 @@ static GenerationResult spec_finalize(
  *        round). Clamped to 16 if non-positive.
  * @return GenerationResult.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -1844,7 +1868,8 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     std::function<void(std::string_view)> on_token,
     std::atomic<bool>& cancel,
     LlamaCppBackend& draft,
-    int n_draft_max)
+    int n_draft_max,
+    const std::string& draft_path)
 {
     auto t0 = entropic::log::now();
     auto pre_err = spec_check_preconditions(
@@ -1870,7 +1895,8 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
             state.ctx_tgt = ctx_;
             state.ctx_dft = draft.ctx_;
             auto init_err = spec_init_run(
-                state, model_, tokens, params, n_draft_max);
+                state, model_, tokens, params, n_draft_max,
+                draft_path);
             if (!init_err.empty()) {
                 spec_cleanup(state);
                 result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,

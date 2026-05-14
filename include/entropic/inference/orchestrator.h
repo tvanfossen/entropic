@@ -259,6 +259,23 @@ public:
     SpeculativeCompatInfo check_speculative_compat() const;
 
     /**
+     * @brief Runtime toggle for the speculative-decoding path.
+     *
+     * Lets consumers (and tests) flip speculative on/off without
+     * reinitializing the orchestrator. Defaults to whatever
+     * `inference.speculative.enabled` was in the parsed config at
+     * init time.
+     *
+     * @param enabled true to route through the speculative kernel
+     *        when a compatible draft is loaded.
+     * @utility
+     * @version 2.1.11
+     */
+    void set_speculative_enabled(bool enabled) {
+        config_.inference.speculative.enabled = enabled;
+    }
+
+    /**
      * @brief Pick the canonical vision-capable tier name (gh#41).
      *
      * Returns the first tier (iteration order of the parsed
@@ -449,6 +466,47 @@ private:
      */
     std::string resolve_speculative_pair(
         llama_model*& target_out, llama_model*& draft_out) const;
+
+    /**
+     * @brief Attempt to route through the speculative kernel for
+     *        non-streaming generate. Returns true when the kernel ran
+     *        (result populated); false to fall back to plain decode.
+     * @internal
+     * @version 2.1.11
+     */
+    bool try_speculative_route(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        GenerationResult& result);
+
+    /**
+     * @brief Dispatch a generate call to either the speculative kernel
+     *        (when enabled + pair compatible) or the standard
+     *        non-streaming path. Extracted to keep generate() under
+     *        the SLOC gate.
+     * @internal
+     * @version 2.1.11
+     */
+    GenerationResult run_generate_dispatch(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Same as `try_speculative_route` but for the streaming
+     *        path — passes the per-token callback and cancel flag
+     *        through to the kernel.
+     * @internal
+     * @version 2.1.11
+     */
+    bool try_speculative_route_streaming(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view)> on_token,
+        std::atomic<bool>& cancel,
+        GenerationResult& result);
 };
 
 } // namespace entropic

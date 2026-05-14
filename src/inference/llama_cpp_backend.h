@@ -196,7 +196,8 @@ public:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel,
         LlamaCppBackend& draft,
-        int n_draft_max);
+        int n_draft_max,
+        const std::string& draft_path);
 
 protected:
     GenerationResult do_complete(

@@ -17,6 +17,9 @@
 
 #include <entropic/types/logging.h>
 
+#include <common.h>
+#include <sampling.h>
+#include <speculative.h>
 #include <mtmd.h>
 #include <mtmd-helper.h>
 
@@ -1391,43 +1394,16 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
 }
 
 /**
- * @brief Speculative streaming generation — kernel staged.
+ * @brief Abstract speculative entry point.
  *
- * See header for the full deferral rationale: the kernel against the
- * v2.1.11-pinned `common_speculative_*` API requires GPU validation
- * for its bit-identical correctness contract; until that lands, this
- * override returns NOT_SUPPORTED and the orchestrator falls through
- * to `do_generate_streaming`. The surrounding infrastructure
- * (compat check, draft slot, config schema, C ABI) is functional and
- * verifiable on CPU.
+ * LlamaCppBackend requires an explicit draft handle, so the abstract
+ * single-backend variant returns NOT_SUPPORTED. The orchestrator
+ * dynamic_casts both target and draft and calls
+ * `generate_speculative_with_draft` directly. (v2.1.11, gh#36)
  *
- * Scope reminder for the kernel session:
- *   - `common_speculative_init(params.speculative, 1)` with target
- *     ctx + draft ctx populated in `params.speculative.draft`.
- *   - `common_speculative_begin(spec, seq_id, prompt_tgt)` once.
- *   - Loop: get_draft_params → draft() → decode tgt + dft on the
- *     speculative batch → `common_sampler_sample_and_accept_n` to
- *     determine accepted prefix → `common_speculative_accept`
- *     accumulating accepted count → fire on_token() per accepted
- *     token (one callback per accepted, not per proposed) → honor
- *     cancel between accept rounds.
- *   - Entropic currently uses `llama_sampler*` (not `common_sampler*`).
- *     Bridging requires either (a) using `common_sampler_*` for
- *     speculative only, with translation between the two sampler
- *     types, or (b) reimplementing sample_and_accept_n logic
- *     against llama_sampler primitives.
- *   - Partial-acceptance / checkpoint restoration may be skipped
- *     for the initial implementation if the target context reports
- *     `COMMON_CONTEXT_SEQ_RM_TYPE_FULL` and full-acceptance is the
- *     common case for the bundled draft pair.
- *
- * @param messages Conversation history (unused in stub).
- * @param params Generation parameters (unused in stub).
- * @param on_token Per-accepted-token callback (unused in stub).
- * @param cancel Cancellation flag (unused in stub).
- * @return GenerationResult with NOT_SUPPORTED + diagnostic.
+ * @return GenerationResult with NOT_SUPPORTED.
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 GenerationResult LlamaCppBackend::do_generate_speculative(
     const std::vector<Message>& /*messages*/,
@@ -1438,10 +1414,474 @@ GenerationResult LlamaCppBackend::do_generate_speculative(
     GenerationResult result;
     result.error_code = ENTROPIC_ERROR_NOT_SUPPORTED;
     result.error_message =
-        "speculative-decoding kernel staged for developer-GPU "
-        "implementation session (v2.1.11 infrastructure ready: "
-        "compat check, draft slot, config schema, C ABI all wired)";
+        "LlamaCppBackend speculative requires an explicit draft "
+        "backend handle — orchestrator dispatches via "
+        "generate_speculative_with_draft";
     result.finish_reason = "error";
+    return result;
+}
+
+namespace {
+
+/**
+ * @brief Map entropic GenerationParams → common_params_sampling.
+ *
+ * The speculative path uses common_sampler (not llama_sampler) so it
+ * can call common_sampler_sample_and_accept_n. Sampler config flows
+ * through entropic's GenerationParams.
+ *
+ * @param params Entropic generation params.
+ * @return Populated common_params_sampling.
+ * @internal
+ * @version 2.1.11
+ */
+common_params_sampling to_common_sampling(
+    const GenerationParams& params) {
+    common_params_sampling cps;
+    cps.temp = params.temperature;
+    cps.top_k = params.top_k;
+    cps.top_p = params.top_p;
+    cps.penalty_repeat = params.repeat_penalty;
+    if (params.seed >= 0) {
+        cps.seed = static_cast<uint32_t>(params.seed);
+    }
+    cps.no_perf = true;
+    return cps;
+}
+
+/**
+ * @brief Prefill a context with all but the last token of `tokens`.
+ *
+ * Used by the speculative kernel: the target and draft both need
+ * `n_past = inp.size() - 1` before the speculation loop, so the loop
+ * can build a batch starting with `id_last` (the trailing input
+ * token) followed by drafted tokens.
+ *
+ * Chunks by `llama_n_batch(ctx)` to handle long prompts.
+ *
+ * @param ctx llama_context to prefill.
+ * @param tokens Full input token sequence.
+ * @return true on success, false on llama_decode failure.
+ * @internal
+ * @version 2.1.11
+ */
+bool spec_prefill_minus_last(
+    llama_context* ctx, const std::vector<llama_token>& tokens) {
+    int total = static_cast<int>(tokens.size()) - 1;
+    if (total <= 0) { return true; }
+    int n_batch = llama_n_batch(ctx);
+    for (int off = 0; off < total; off += n_batch) {
+        int chunk = std::min(n_batch, total - off);
+        llama_batch batch = llama_batch_get_one(
+            const_cast<llama_token*>(tokens.data()) + off, chunk);
+        if (llama_decode(ctx, batch) != 0) { return false; }
+    }
+    return true;
+}
+
+/**
+ * @brief Build an error result for kernel-level failures.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult spec_error(entropic_error_t code, std::string msg) {
+    GenerationResult r;
+    r.error_code = code;
+    r.error_message = std::move(msg);
+    r.finish_reason = "error";
+    return r;
+}
+
+} // anonymous namespace
+
+/**
+ * @brief Bundles per-kernel-run mutable state to keep the loop body
+ *        focused on its responsibility (knots: cognitive ≤ 15, ≤ 3
+ *        returns).
+ * @internal
+ * @version 2.1.11
+ */
+struct SpeculativeRunState {
+    common_speculative* spec = nullptr;
+    common_sampler* smpl = nullptr;
+    llama_context* ctx_tgt = nullptr;
+    llama_context* ctx_dft = nullptr;
+    llama_batch batch_tgt{};
+    bool batch_initialized = false;
+    llama_seq_id seq_id = 0;
+    int n_past = 0;
+    llama_token id_last = 0;
+    std::vector<llama_token> prompt_tgt;
+    std::vector<llama_token> draft;
+    std::string generated;
+    int n_generated = 0;
+    int n_drafted = 0;
+    int n_accepted = 0;
+    bool has_eos = false;
+    std::string finish_reason;
+    entropic_error_t error_code = ENTROPIC_OK;
+    std::string error_message;
+};
+
+/**
+ * @brief Free everything allocated by the kernel.
+ * @param state Kernel state.
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_cleanup(SpeculativeRunState& state) {
+    if (state.spec) { common_speculative_free(state.spec); }
+    if (state.smpl) { common_sampler_free(state.smpl); }
+    if (state.batch_initialized) {
+        llama_batch_free(state.batch_tgt);
+    }
+}
+
+/**
+ * @brief Build the target batch [id_last, draft0, ..., draftN-1].
+ * @param state Kernel state.
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_build_batch(SpeculativeRunState& state) {
+    common_batch_clear(state.batch_tgt);
+    common_batch_add(state.batch_tgt, state.id_last,
+                     state.n_past, {state.seq_id}, true);
+    int pos = state.n_past + 1;
+    for (auto draft_token : state.draft) {
+        common_batch_add(state.batch_tgt, draft_token, pos,
+                         {state.seq_id}, true);
+        ++pos;
+    }
+}
+
+/**
+ * @brief Decode the speculative batch on both contexts. Populates
+ *        state.error_* on failure.
+ * @return true on success, false on decode failure.
+ * @internal
+ * @version 2.1.11
+ */
+static bool spec_decode_both(SpeculativeRunState& state) {
+    spec_build_batch(state);
+    if (llama_decode(state.ctx_tgt, state.batch_tgt) != 0) {
+        state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        state.error_message = "target llama_decode failed";
+        state.finish_reason = "error";
+        return false;
+    }
+    if (llama_decode(state.ctx_dft, state.batch_tgt) != 0) {
+        state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        state.error_message = "draft llama_decode failed";
+        state.finish_reason = "error";
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Trigger draft generation via common_speculative_draft.
+ * @return Number of draft tokens proposed.
+ * @internal
+ * @version 2.1.11
+ */
+static int spec_run_draft(SpeculativeRunState& state) {
+    auto& dp = common_speculative_get_draft_params(
+        state.spec, state.seq_id);
+    dp.drafting = true;
+    dp.n_max = -1;
+    dp.n_past = state.n_past;
+    dp.id_last = state.id_last;
+    dp.prompt = &state.prompt_tgt;
+    dp.result = &state.draft;
+    common_speculative_draft(state.spec);
+    return static_cast<int>(state.draft.size());
+}
+
+/**
+ * @brief Emit on_token for one accepted id, updating state and
+ *        returning a stop signal when terminating conditions apply.
+ *
+ * Outcomes:
+ *  - "" continue;
+ *  - "eos"     hit end-of-generation token (sets finish_reason="stop")
+ *  - "length"  reached max_tokens
+ *  - "cancel"  cancel flag set (sets error_code=CANCELLED)
+ *
+ * @internal
+ * @version 2.1.11
+ */
+static std::string spec_emit_token(
+    SpeculativeRunState& state, llama_token id,
+    const llama_vocab* vocab, int max_tokens,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel)
+{
+    std::string signal;
+    state.prompt_tgt.push_back(state.id_last);
+    state.id_last = id;
+    state.n_generated++;
+    if (llama_vocab_is_eog(vocab, id)) {
+        state.has_eos = true;
+        state.finish_reason = "stop";
+        signal = "eos";
+    } else {
+        const std::string piece =
+            common_token_to_piece(state.ctx_tgt, id);
+        state.generated += piece;
+        if (on_token) { on_token(piece); }
+        if (cancel.load(std::memory_order_acquire)) {
+            state.error_code = ENTROPIC_ERROR_CANCELLED;
+            state.finish_reason = "cancelled";
+            signal = "cancel";
+        } else if (state.n_generated >= max_tokens) {
+            state.finish_reason = "length";
+            signal = "length";
+        }
+    }
+    return signal;
+}
+
+/**
+ * @brief Drive one accept round: draft → decode → sample-and-accept
+ *        → emit tokens. Returns true to continue the outer loop.
+ * @internal
+ * @version 2.1.11
+ */
+static bool spec_accept_round(
+    SpeculativeRunState& state,
+    const llama_vocab* vocab,
+    int max_tokens,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel)
+{
+    int draft_size_before = spec_run_draft(state);
+    if (!spec_decode_both(state)) { return false; }
+
+    auto ids = common_sampler_sample_and_accept_n(
+        state.smpl, state.ctx_tgt, state.draft);
+    int accepted = static_cast<int>(ids.size()) - 1;
+    if (accepted < 0) { accepted = 0; }
+    common_speculative_accept(state.spec, state.seq_id, accepted);
+    state.n_drafted += draft_size_before;
+    state.n_accepted += accepted;
+    state.n_past += accepted;
+
+    bool stop = false;
+    for (auto id : ids) {
+        auto signal = spec_emit_token(
+            state, id, vocab, max_tokens, on_token, cancel);
+        if (!signal.empty()) { stop = true; break; }
+    }
+    state.draft.clear();
+    llama_memory_seq_rm(
+        llama_get_memory(state.ctx_tgt), state.seq_id,
+        state.n_past + 1, -1);
+    llama_memory_seq_rm(
+        llama_get_memory(state.ctx_dft), state.seq_id,
+        state.n_past + 1, -1);
+    return !stop;
+}
+
+/**
+ * @brief Validate speculative preconditions and gate on FULL seq_rm.
+ * @return Empty string on success, diagnostic on failure.
+ * @internal
+ * @version 2.1.11
+ */
+static std::string spec_check_preconditions(
+    bool target_active, bool draft_active,
+    llama_context* ctx_tgt, llama_context* ctx_dft) {
+    std::string err;
+    if (!target_active || !draft_active) {
+        err = "speculative requires ACTIVE target + draft";
+    } else if (common_context_can_seq_rm(ctx_tgt)
+                   != COMMON_CONTEXT_SEQ_RM_TYPE_FULL
+               || common_context_can_seq_rm(ctx_dft)
+                   != COMMON_CONTEXT_SEQ_RM_TYPE_FULL) {
+        err = "speculative kernel requires FULL seq_rm on both "
+              "target and draft contexts (partial-acceptance "
+              "checkpointing is deferred to a follow-up patch)";
+    }
+    return err;
+}
+
+/**
+ * @brief Initialize the kernel state: clear KV, prefill, sampler,
+ *        speculative context, batch. Returns "" on success or a
+ *        diagnostic string. Cleans up on failure.
+ * @internal
+ * @version 2.1.11
+ */
+static std::string spec_init_run(
+    SpeculativeRunState& state, llama_model* model_tgt,
+    const std::vector<llama_token>& tokens,
+    const GenerationParams& params, int n_draft_max) {
+    state.id_last = tokens.back();
+    state.prompt_tgt.assign(tokens.begin(), tokens.end() - 1);
+    state.n_past = static_cast<int>(tokens.size()) - 1;
+
+    llama_memory_clear(llama_get_memory(state.ctx_tgt), true);
+    llama_memory_clear(llama_get_memory(state.ctx_dft), true);
+
+    std::string err;
+    if (!spec_prefill_minus_last(state.ctx_tgt, tokens)
+        || !spec_prefill_minus_last(state.ctx_dft, tokens)) {
+        err = "speculative prefill failed";
+    } else {
+        auto common_sampling = to_common_sampling(params);
+        state.smpl = common_sampler_init(model_tgt, common_sampling);
+        if (!state.smpl) {
+            err = "common_sampler_init failed";
+        } else {
+            common_params_speculative spec_params;
+            spec_params.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+            spec_params.draft.n_max =
+                (n_draft_max > 0) ? n_draft_max : 16;
+            spec_params.draft.ctx_tgt = state.ctx_tgt;
+            spec_params.draft.ctx_dft = state.ctx_dft;
+            state.spec = common_speculative_init(spec_params, 1);
+            if (!state.spec) {
+                common_sampler_free(state.smpl);
+                state.smpl = nullptr;
+                err = "common_speculative_init failed";
+            } else {
+                common_speculative_begin(
+                    state.spec, state.seq_id, state.prompt_tgt);
+                state.batch_tgt = llama_batch_init(
+                    llama_n_batch(state.ctx_tgt), 0, 1);
+                state.batch_initialized = true;
+            }
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Run the accept-round loop until completion / EOS / cancel.
+ * @internal
+ * @version 2.1.11
+ */
+static void spec_run_loop(
+    SpeculativeRunState& state, const llama_vocab* vocab,
+    int max_tokens,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel) {
+    while (state.n_generated < max_tokens) {
+        if (cancel.load(std::memory_order_acquire)) {
+            state.error_code = ENTROPIC_ERROR_CANCELLED;
+            state.finish_reason = "cancelled";
+            break;
+        }
+        if (!spec_accept_round(state, vocab, max_tokens,
+                               on_token, cancel)) {
+            break;
+        }
+    }
+    if (state.finish_reason.empty()) {
+        state.finish_reason = (state.n_generated >= max_tokens)
+                                  ? "length" : "stop";
+    }
+}
+
+/**
+ * @brief Speculative kernel against an explicit draft backend.
+ * @internal
+ * @version 2.1.11
+ */
+/**
+ * @brief Assemble final GenerationResult + log metrics. Helper to
+ *        keep the public entry under SLOC ≤ 50.
+ * @internal
+ * @version 2.1.11
+ */
+static GenerationResult spec_finalize(
+    SpeculativeRunState& state,
+    std::chrono::steady_clock::time_point t0) {
+    GenerationResult result;
+    result.content = state.generated;
+    result.token_count = state.n_generated;
+    result.finish_reason = state.finish_reason;
+    result.error_code = state.error_code;
+    result.error_message = state.error_message;
+    result.generation_time_ms =
+        entropic::log::elapsed_ms(t0, entropic::log::now());
+    if (state.n_drafted > 0) {
+        const float accept_rate =
+            static_cast<float>(state.n_accepted)
+                / static_cast<float>(state.n_drafted);
+        logger->info("Speculative: generated={}, drafted={}, "
+                     "accepted={}, accept_rate={:.3f}",
+                     state.n_generated, state.n_drafted,
+                     state.n_accepted, accept_rate);
+    }
+    spec_cleanup(state);
+    return result;
+}
+
+/**
+ * @brief Public entry point for the speculative-decoding kernel.
+ *
+ * Validates preconditions, tokenizes the prompt, initializes kernel
+ * state, drives the accept-round loop, and finalizes the result.
+ * Each phase is delegated to a static helper to satisfy the
+ * complexity gates (knots: cognitive ≤ 15, SLOC ≤ 50, returns ≤ 3).
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters (samplers, max_tokens, seed).
+ * @param on_token Callback fired once per accepted token.
+ * @param cancel Cancellation flag (polled between accept rounds).
+ * @param draft Draft backend (must be ACTIVE on the same model arch).
+ * @param n_draft_max Maximum draft window size (proposed tokens per
+ *        round). Clamped to 16 if non-positive.
+ * @return GenerationResult.
+ * @internal
+ * @version 2.1.11
+ */
+GenerationResult LlamaCppBackend::generate_speculative_with_draft(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>& cancel,
+    LlamaCppBackend& draft,
+    int n_draft_max)
+{
+    auto t0 = entropic::log::now();
+    auto pre_err = spec_check_preconditions(
+        is_active(), draft.is_active(), ctx_, draft.ctx_);
+    GenerationResult result;
+    if (!pre_err.empty()) {
+        entropic_error_t code =
+            (pre_err.find("requires ACTIVE") != std::string::npos)
+                ? ENTROPIC_ERROR_INVALID_STATE
+                : ENTROPIC_ERROR_NOT_SUPPORTED;
+        result = spec_error(code, std::move(pre_err));
+    } else {
+        auto prompt = apply_chat_template(messages, params);
+        auto tokens = tokenize(prompt, true);
+        if (tokens.size() < 2) {
+            result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+                "speculative prompt must have at least 2 tokens");
+        } else {
+            logger->info("Speculative: {} input tokens, max_tokens={}, "
+                         "n_draft_max={}",
+                         tokens.size(), params.max_tokens, n_draft_max);
+            SpeculativeRunState state;
+            state.ctx_tgt = ctx_;
+            state.ctx_dft = draft.ctx_;
+            auto init_err = spec_init_run(
+                state, model_, tokens, params, n_draft_max);
+            if (!init_err.empty()) {
+                spec_cleanup(state);
+                result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+                                    std::move(init_err));
+            } else {
+                spec_run_loop(state, llama_model_get_vocab(model_),
+                              params.max_tokens, on_token, cancel);
+                result = spec_finalize(state, t0);
+            }
+        }
+    }
     return result;
 }
 

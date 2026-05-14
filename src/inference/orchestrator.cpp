@@ -303,12 +303,14 @@ GenerationResult ModelOrchestrator::generate(
  *
  * Speculative routing added in v2.1.11 (gh#36): when
  * `inference.speculative.enabled` is true AND the target/draft pair
- * is compatible, attempts the speculative kernel via
- * `generate_speculative`. Falls back to plain streaming on
- * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
+ * is compatible, dispatches to
+ * `LlamaCppBackend::generate_speculative_with_draft` with the draft
+ * resolved from `secondary_loader_.get("draft")`. Falls back to plain
+ * streaming on NOT_SUPPORTED or compatibility failure, with a
+ * diagnostic logged.
  *
  * @internal
- * @version 2.1.11
+ * @version 2.1.11 [reviewed]
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -341,14 +343,27 @@ GenerationResult ModelOrchestrator::generate_streaming(
     if (config_.inference.speculative.enabled) {
         auto compat = check_speculative_compat();
         if (compat.compatible) {
-            auto spec_result = model->generate_speculative(
-                messages, resolved_params, on_token, cancel);
-            if (spec_result.error_code != ENTROPIC_ERROR_NOT_SUPPORTED) {
-                return spec_result;
+            auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
+            auto* draft_be = secondary_loader_.get("draft");
+            auto* llama_draft = dynamic_cast<LlamaCppBackend*>(draft_be);
+            if (llama_target && llama_draft) {
+                auto spec_result =
+                    llama_target->generate_speculative_with_draft(
+                        messages, resolved_params, on_token, cancel,
+                        *llama_draft,
+                        config_.inference.speculative.n_draft);
+                if (spec_result.error_code
+                        != ENTROPIC_ERROR_NOT_SUPPORTED) {
+                    return spec_result;
+                }
+                logger->info("Speculative kernel returned NOT_SUPPORTED "
+                             "({}); falling back to plain streaming",
+                             spec_result.error_message);
+            } else {
+                logger->info("Speculative compat passed but target or "
+                             "draft is not llama.cpp; using plain "
+                             "streaming");
             }
-            logger->info("Speculative kernel returned NOT_SUPPORTED — "
-                         "falling back to plain streaming "
-                         "(kernel staged for v2.1.11)");
         } else {
             logger->info("Speculative requested but pair incompatible "
                          "({}); using plain streaming",

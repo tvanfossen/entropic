@@ -66,10 +66,18 @@ SCENARIO("Gemma 4 raw output is captured for tool-call format inspection",
         WHEN("the model produces output") {
             auto result = g_ctx.orchestrator->generate(
                 messages, params, g_ctx.default_tier);
-            THEN("the raw content is logged for empirical refinement") {
-                REQUIRE_FALSE(result.content.empty());
+            THEN("Gemma4Adapter extracts the tool call from raw output") {
+                // Empirical confirmation (2026-05-14): Gemma 4 E2B emits
+                // tagged JSON tool calls — `<tool_call>{"name":"fs.read",
+                // "arguments":{"path":"..."}}</tool_call>` — which the
+                // permissive parser handles via parse_tagged_tool_calls.
+                // cleaned_content is empty when output is tool-call-only;
+                // we assert on raw_content + tool_calls instead.
+                REQUIRE_FALSE(result.raw_content.empty());
                 spdlog::info("Gemma 4 raw output for tool prompt: {}",
                              result.raw_content);
+                REQUIRE(result.tool_calls.size() >= 1);
+                CHECK(result.tool_calls[0].name == "fs.read");
                 CHECK(result.token_count > 0);
                 end_test_log();
             }

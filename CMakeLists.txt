@@ -66,6 +66,18 @@ if(ENTROPIC_CUDA AND NOT ENTROPIC_CPU_ONLY)
     include(CheckLanguage)
     check_language(CUDA)
     if(CMAKE_CUDA_COMPILER)
+        # Default CMAKE_CUDA_ARCHITECTURES to "native" before
+        # enable_language(CUDA) — otherwise CMake's CUDA module
+        # picks 52 (lowest supported for CUDA 12), and llama.cpp's
+        # ggml-cuda/CMakeLists.txt skips its own native-detection
+        # because the value is already defined. Release-path callers
+        # (tasks.py::_build_and_stage) still override with the
+        # comprehensive multi-arch list via -DCMAKE_CUDA_ARCHITECTURES,
+        # so this default only fires for `inv build` / dev workstations.
+        if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+            set(CMAKE_CUDA_ARCHITECTURES "native" CACHE STRING
+                "CUDA architectures (default: native — release builds override)")
+        endif()
         enable_language(CUDA)
         set(ENTROPIC_HAS_CUDA ON)
         message(STATUS "CUDA found: ${CMAKE_CUDA_COMPILER}")

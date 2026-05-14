@@ -71,9 +71,18 @@ SCENARIO("Nemotron 3 emits parseable XML tool calls",
         WHEN("the model is asked to emit a tool call") {
             auto result = g_ctx.orchestrator->generate(
                 messages, params, g_ctx.default_tier);
-            THEN("Nemotron3Adapter strips think blocks from cleaned content") {
-                REQUIRE_FALSE(result.content.empty());
+            THEN("Nemotron3Adapter parses the XML call and strips think blocks") {
+                // Empirical confirmation (2026-05-14): Nemotron 3 emits
+                // <think>...</think> reasoning then a qwen3_coder XML
+                // tool call, e.g. <tool_call><function=read>...
+                // </function></tool_call>. The model picks a function
+                // name from the prompt — may shorten "fs.read" to "read".
+                // We assert the parser extracted SOMETHING and the
+                // think block did not leak into cleaned content.
+                REQUIRE_FALSE(result.raw_content.empty());
+                REQUIRE(result.tool_calls.size() >= 1);
                 CHECK(result.content.find("<think>") == std::string::npos);
+                CHECK(result.content.find("</think>") == std::string::npos);
                 CHECK(result.token_count > 0);
                 end_test_log();
             }

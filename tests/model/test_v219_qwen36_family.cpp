@@ -67,14 +67,14 @@ SCENARIO("Qwen 3.6 emits parseable tool calls",
         WHEN("the model is asked to emit a tool call") {
             auto result = g_ctx.orchestrator->generate(
                 messages, params, g_ctx.default_tier);
-            THEN("the Qwen36Adapter extracts at least one tool call") {
-                REQUIRE_FALSE(result.content.empty());
-                // The orchestrator's adapter is Qwen36Adapter (set by
-                // registry override). If the model emitted a parseable
-                // call the orchestrator surfaces it in result.tool_calls;
-                // we only assert >0 on a best-effort basis — a model
-                // that produces narration without the tool call is a
-                // prompt-following weakness, not an adapter bug.
+            THEN("Qwen36Adapter extracts the tool call") {
+                // raw_content preserves the model output before the
+                // adapter strips tool-call tags; cleaned_content is
+                // empty by design when the entire output IS a tool
+                // call, so we assert on tool_calls + raw_content.
+                REQUIRE_FALSE(result.raw_content.empty());
+                REQUIRE(result.tool_calls.size() >= 1);
+                CHECK(result.tool_calls[0].name == "fs.read");
                 CHECK(result.token_count > 0);
                 end_test_log();
             }

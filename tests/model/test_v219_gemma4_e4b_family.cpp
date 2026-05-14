@@ -66,9 +66,13 @@ SCENARIO("Gemma 4 E4B raw output captured for tool-call format inspection",
         WHEN("the model produces output") {
             auto result = g_ctx.orchestrator->generate(
                 messages, params, g_ctx.default_tier);
-            THEN("raw content is logged for empirical refinement") {
-                REQUIRE_FALSE(result.content.empty());
+            THEN("Gemma4Adapter extracts the tool call from raw output") {
+                REQUIRE_FALSE(result.raw_content.empty());
                 spdlog::info("Gemma 4 E4B raw output: {}", result.raw_content);
+                // Gemma 4 emits tagged JSON tool calls (confirmed on E2B);
+                // E4B uses the same adapter — assert the same contract.
+                REQUIRE(result.tool_calls.size() >= 1);
+                CHECK(result.tool_calls[0].name == "fs.read");
                 CHECK(result.token_count > 0);
                 end_test_log();
             }

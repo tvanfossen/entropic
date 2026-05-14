@@ -56,11 +56,21 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     auto& tier = ctx.config.models.tiers[ctx.config.models.default_tier];
     tier.path = path;
     tier.adapter = entry->adapter;
+    // v2.1.9 family tests are smoke + single-shot tool-call fixtures —
+    // prompts are tens of tokens and max_tokens is 256. Override the
+    // tier's default context_length (typically 32K) down to a small
+    // value so KV cache fits on the dev GPU even for the largest
+    // model (Gemma 4 A4B, 26B params + ~6 GB KV at 4K context).
+    // Production deployments load the full context via config; this
+    // override only scopes the test harness.
+    constexpr int V219_TEST_CTX = 4096;
+    tier.context_length = V219_TEST_CTX;
     ctx.model_path = path.string();
 
-    spdlog::info("v2.1.9 family override: tier={} key={} adapter={} path={}",
+    spdlog::info("v2.1.9 family override: tier={} key={} adapter={} "
+                 "context_length={} path={}",
                  ctx.config.models.default_tier, key, entry->adapter,
-                 path.string());
+                 V219_TEST_CTX, path.string());
     return init_orchestrator(ctx);
 }
 

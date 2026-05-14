@@ -20,6 +20,9 @@ set(INFERENCE_SOURCES
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp
     adapters/qwen35_adapter.cpp
+    adapters/qwen36_adapter.cpp
+    adapters/gemma4_adapter.cpp
+    adapters/nemotron3_adapter.cpp
     adapters/adapter_registry.cpp
 )
 

@@ -388,9 +388,18 @@ def _find_named_frozenset(tree: ast.AST, name: str) -> ast.Call:
 
 
 def _parse_lazy_exports() -> set[str]:
-    init_path = _REPO_ROOT / "python" / "src" / "entropic" / "__init__.py"
-    tree = ast.parse(init_path.read_text())
-    call = _find_named_frozenset(tree, "_LAZY_EXPORTS")
+    """Read the lazy-export manifest without importing librentropic.so.
+
+    v2.2.1 moved the canonical export set into the auto-generated
+    ``_bindings_manifest.py`` (so the generator can keep it in sync with
+    every ENTROPIC_EXPORT in the C header). ``__init__.py`` now imports
+    ``EXPORTS`` from that module; this helper parses the manifest's
+    ``EXPORTS = frozenset({...})`` literal via AST so the test still
+    works in a unit-test environment where the .so may be absent.
+    """
+    manifest_path = _REPO_ROOT / "python" / "src" / "entropic" / "_bindings_manifest.py"
+    tree = ast.parse(manifest_path.read_text())
+    call = _find_named_frozenset(tree, "EXPORTS")
     return _frozenset_arg_strings(call)
 
 

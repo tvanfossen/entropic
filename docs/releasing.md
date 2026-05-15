@@ -34,7 +34,20 @@ Before tagging:
 4. **`RELEASE_NOTES.md` drafted** (see template below).
 5. **CI green** on `develop` head — `gh run list --branch develop --limit 3`
    should show the latest workflow run as "completed / success".
-6. **`develop → main`** merged by the maintainer (Claude does not push).
+6. **Re-run model tests AFTER the VERSION bump rebuild.** Surfaced in
+   v2.2.0 (model test #683): the `version-match` assertion compares
+   `entropic_version()` against the on-disk VERSION file, so any model-
+   test pass collected via `inv test --model --no-build` from a build
+   produced *before* the VERSION bump will fail this assertion. Always
+   re-run `inv build` and `inv test --model` after bumping VERSION; do
+   not reuse the pre-bump build artifacts.
+7. **Verify the pip wrapper covers every ENTROPIC_EXPORT** added since
+   the last minor. As of v2.2.1 this is mechanical: `inv gen-bindings
+   --check` runs in pre-commit and fails loud on drift. The check is
+   self-tested in `tests/unit/test_gen_bindings.py`. Keep this
+   checklist item as belt-and-suspenders against the case where the
+   pre-commit hook is bypassed or the generator itself bit-rots.
+8. **`develop → main`** merged by the maintainer (Claude does not push).
 
 ---
 
@@ -163,10 +176,17 @@ Keep it short — full per-commit narrative belongs in `git log`.
    `pip install entropic-engine==X.Y.Z` in a fresh venv, run
    `entropic install-engine`, confirm `~/.entropic/` was populated
    and `entropic version` works.
-3. **Bump `develop`** to the next development version (e.g., `2.1.1-dev0`)
+3. **Close referenced issues AFTER the release ships, not before.**
+   Surfaced in v2.2.0: closing the issues at merge time produced closure
+   comments that named the release before it existed and could not link
+   the live release URL. Close the gh issues only once the release page
+   is live and the wrapper wheel is on PyPI, so the closure comment can
+   reference `https://github.com/.../releases/tag/${TAG_VERSION}` and
+   `pip install entropic-engine==X.Y.Z`.
+4. **Bump `develop`** to the next development version (e.g., `2.1.1-dev0`)
    only if there's immediate work staged; otherwise leave at `X.Y.Z` until
    the next feature lands.
-4. **Move proposals** absorbed into this release from `STAGED/` to
+5. **Move proposals** absorbed into this release from `STAGED/` to
    `COMPLETE/` via `git mv` (per the proposal workflow in `~/.claude/CLAUDE.md`).
    Use `/review-staged` — never skip the review step.
 

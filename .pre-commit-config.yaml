@@ -28,16 +28,22 @@ repos:
           - --line-length=100
           - --select=E,F,W,I,N,UP,B,C4
           - --ignore=E501
-          - --extend-exclude=vendor
+          - --extend-exclude=vendor,python/src/entropic/_bindings.py,python/src/entropic/_bindings_manifest.py
       - id: ruff-format
+        # v2.2.1: _bindings.py + _bindings_manifest.py are auto-generated;
+        # format is the generator's responsibility. ruff-format reflowing
+        # them would break the inv gen-bindings --check drift detector.
+        exclude: '^(vendor/|python/src/entropic/_bindings(_manifest)?\.py$)'
         args:
           - --line-length=100
-          - --exclude=vendor
 
   - repo: https://github.com/pycqa/flake8
     rev: 7.0.0
     hooks:
       - id: flake8
+        # v2.2.1: skip auto-generated bindings — style is the generator's
+        # responsibility, and reformatting them would break the drift check.
+        exclude: '^python/src/entropic/_bindings(_manifest)?\.py$'
         additional_dependencies:
           - flake8-cognitive-complexity
           - flake8-functions
@@ -66,6 +72,21 @@ repos:
       - id: doxygen-guard
         files: \.(h|hpp|c|cpp|cc|cxx|py)$
         exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
+
+  # ── Bindings drift (gh#55) ──────────────────────────
+  - repo: local
+    hooks:
+      - id: gen-bindings-check
+        name: Python bindings stay in sync with entropic.h
+        # Re-runs the auto-generator and diffs against the committed
+        # _bindings.py / _bindings_manifest.py. Fails loud (exit 1) when
+        # an ENTROPIC_EXPORT or type typedef in the header is not
+        # reflected in the wrapper — the gap that bit v2.1.10/11/12.
+        # Fix: run ``inv gen-bindings`` and commit the regenerated files.
+        entry: .venv/bin/inv gen-bindings --check
+        language: system
+        files: '^(include/entropic/.*\.h|python/src/entropic/_bindings(_manifest)?\.py|scripts/gen_bindings\.py)$'
+        pass_filenames: false
 
   # ── Build & Test Gates ──────────────────────────────
   - repo: local

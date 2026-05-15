@@ -44,58 +44,16 @@ except PackageNotFoundError:  # pragma: no cover — uninstalled source-tree run
     _version_file = Path(__file__).resolve().parents[3] / "VERSION"
     __version__ = _version_file.read_text().strip() if _version_file.exists() else "0.0.0+local"
 
-_LAZY_EXPORTS = frozenset(
-    {
-        "AgentState",
-        "EntropicError",
-        # Issue #8 (v2.1.4): EntropicHookPoint enum + 4 new ABI symbols.
-        "EntropicHookPoint",
-        "HOOK_CB",
-        # gh#22 (v2.1.5): C-ABI-documentation-spelled CFUNCTYPE aliases.
-        "HOOK_CALLBACK_CB",
-        "TOKEN_STREAM_CB",
-        "STATE_OBSERVER_CB",
-        "STREAM_OBSERVER_CB",
-        "TOKEN_CB",
-        # gh#29 (v2.1.5): delegation callbacks — replaces auto-merge.
-        "DELEGATION_START_CB",
-        "DELEGATION_COMPLETE_CB",
-        "EntDecision",
-        "EntDelegationRequest",
-        "EntDelegationResult",
-        "entropic_set_delegation_callbacks",
-        # gh#30 (v2.1.5): validation retry controls.
-        "ATTEMPT_BOUNDARY_CB",
-        "entropic_set_attempt_boundary_cb",
-        "entropic_validation_accept_last",
-        "entropic_validation_resume_retry",
-        "entropic_validation_set_auto_retry",
-        "entropic_alloc",
-        "entropic_api_version",
-        "entropic_configure_dir",
-        "entropic_context_clear",
-        "entropic_context_count",
-        # gh#22 (v2.1.5): closes gh#8 partial gap.
-        "entropic_context_get",
-        # gh#39 (v2.1.8): token-level context pressure.
-        "entropic_context_usage",
-        "entropic_create",
-        "entropic_destroy",
-        "entropic_free",
-        "entropic_handle_t",
-        "entropic_interrupt",
-        "entropic_register_hook",
-        "entropic_register_mcp_server",
-        "entropic_run",
-        "entropic_run_streaming",
-        # gh#37 (v2.1.8): multimodal messages entry points.
-        "entropic_run_messages",
-        "entropic_run_messages_streaming",
-        "entropic_set_state_observer",
-        "entropic_set_stream_observer",
-        "entropic_version",
-    }
-)
+# v2.2.1: the lazy-export set is now derived from the auto-generated
+# manifest emitted by ``scripts/gen_bindings.py``. The manifest module
+# does NOT import ctypes or load librentropic.so, so reading it here
+# preserves the PEP 562 lazy-binding contract: ``entropic install-engine``
+# can run before the .so exists on disk and still ``import entropic``
+# successfully. The set covers every ENTROPIC_EXPORT in the C header
+# plus the IntEnum / Structure / CFUNCTYPE typedefs the generator
+# produces. To audit the surface, read
+# ``python/src/entropic/_bindings_manifest.py``.
+from entropic._bindings_manifest import EXPORTS as _LAZY_EXPORTS
 
 # Issue #8 (v2.1.4): Pythonic facade — top-level re-exports of the
 # decorator + helpers from the per-module surfaces. Keeps `entropic`

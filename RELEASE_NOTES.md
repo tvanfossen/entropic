@@ -1,3 +1,98 @@
+# entropic v2.2.1
+
+Patch release. Closes the pip-wrapper coverage gap surfaced after the
+v2.2.0 cut and ships defense-in-depth that prevents recurrence. The
+v2.2.0 C ABI was correct; the wrapper-sync miss was a Python-layer
+gap that left 9 newly-added symbols + 2 error codes unreachable to
+PyPI consumers. **Strictly additive at both the C ABI and the
+wrapper API** — no symbol removed, no signature changed.
+
+## Highlights
+
+**Full auto-generation of the Python bindings (gh#54, gh#55).**
+The hand-curated `_bindings.py` was the recurring source of drift
+across v2.1.10, v2.1.11, and v2.1.12 — each patch added new
+`ENTROPIC_EXPORT` symbols without the corresponding Python wrapper
+update, and v2.2.0 shipped with 3 of those symbols still unbound.
+v2.2.1 replaces the partial regex generator with a full-fidelity
+bracket-aware C declaration parser (`scripts/gen_bindings.py`) that
+covers every header-declared export by construction. The previous
+"hand-curated subset, ~50 KB wheel" philosophy is retired; the
+generator output is the wrapper.
+
+**New pre-commit hook `gen-bindings-check` (gh#55).** Re-runs the
+generator and diffs against the committed output; drift exits 1
+with a precise diagnostic. The hook is exercised by a unit-level
+self-test that synthesizes a fake `ENTROPIC_EXPORT` and asserts the
+generator emits a binding for it, so the defense-in-depth itself
+stays honest as the project evolves.
+
+## New (now-reachable) wrapper bindings
+
+The C ABI for these shipped in v2.2.0; v2.2.1 adds the Python
+wrapper coverage:
+
+- **Mid-generation message queue (v2.1.10, gh#40):**
+  `entropic_queue_user_message`, `entropic_user_message_queue_depth`,
+  `entropic_clear_user_message_queue`, `entropic_set_queue_observer`,
+  `QUEUE_OBSERVER_CB`, `ENTROPIC_ERROR_QUEUE_FULL`.
+- **Critique-visibility callbacks (v2.1.12, gh#50):**
+  `entropic_set_critique_callbacks`, `CRITIQUE_START_CB`,
+  `CRITIQUE_END_CB`.
+- **Speculative-decoding compat probe (v2.1.11, gh#36):**
+  `entropic_speculative_compat`,
+  `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_ARCH`.
+
+Plus mechanical coverage of every other `ENTROPIC_EXPORT` previously
+unreachable through the wrapper (grammar registry, adapter swap,
+identity management, MCP key auth, audit, profile registry, logprob
+APIs, throughput metrics, compactor registration, etc.). Wheel
+binding count: 86 (was 25).
+
+## C ABI compatibility
+
+**Unchanged.** Zero C/C++ source modifications in this patch. SONAME
+stays at 2. Consumers built against 2.2.0 dynamically link to 2.2.1
+without recompilation.
+
+## Wrapper API compatibility
+
+**Strictly additive.** Every pre-2.2.1 symbol name, signature, and
+import path is preserved. The internal `_bindings.py` file becomes
+auto-generated and now lives alongside an auto-generated
+`_bindings_manifest.py`; `__init__.py` imports the lazy-export
+frozenset from the manifest instead of carrying a hand-curated
+literal. Consumer imports of the form `from entropic import X`
+continue to work unchanged.
+
+The two gh#22 backward-compat CFUNCTYPE aliases (`HOOK_CALLBACK_CB`,
+`TOKEN_STREAM_CB`) are emitted by the generator alongside the
+canonical names.
+
+## Release-process improvements
+
+`docs/releasing.md` gains three items capturing v2.2.0 lessons:
+- Re-run model tests AFTER the VERSION rebuild (test #683
+  `version-match` fails on stale dev builds when run via `--no-build`).
+- Close referenced issues AFTER the release ships, so closure
+  comments can name the live release URL and the PyPI artifact.
+- Verify the pip wrapper covers every new `ENTROPIC_EXPORT` before
+  publish. From v2.2.1 onward this is mechanical via the new
+  pre-commit drift check; the human-readable item stays as
+  belt-and-suspenders.
+
+## Distribution
+
+- CPU tarball: `entropic-2.2.1-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.2.1-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.2.1` then `entropic install-engine`
+
+After upgrading, bissell-llm-studio (and any other consumer) can
+adopt the mid-gen queue (gh#40) and critique callbacks (gh#50) on a
+pip-installed wrapper without ctypes-bypassing the wrapper.
+
+---
+
 # entropic v2.2.0
 
 Minor release. The v2.1.x bundle (v2.1.7 → v2.1.12) lands together at

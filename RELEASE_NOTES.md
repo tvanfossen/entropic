@@ -1,3 +1,68 @@
+# entropic v2.2.3
+
+Patch release. **Bugfix — UTF-8-safe history truncation.** No ABI
+changes, no behavioral changes outside the fixed code path.
+
+## What changed
+
+`sp_get_history` (the state-provider entry point that builds the
+conversation snapshot consumed by `context_inspect` / `inspect
+--target history`) previewed each message with
+`m.content.substr(0, 200) + "..."`. Byte-indexed truncation slices
+through any multi-byte UTF-8 codepoint whose bytes straddle the
+200-byte boundary, producing invalid UTF-8 at the seam. The
+subsequent `arr.dump()` (nlohmann/json) raised `type_error.316`,
+which bubbled out `run_streaming` as
+`ENTROPIC_ERROR_GENERATE_FAILED`. Consumers that did not surface
+the rc visibly saw the turn end silently with no model output.
+
+The fix adds `entropic::facade::utf8_safe_substr` in
+`src/facade/utf8_safe.h`: walk back over UTF-8 continuation bytes
+(`0x80..0xBF`) before the cut so the result is always valid UTF-8
+when the input is. `sp_get_history` uses the helper in place of the
+raw `substr`.
+
+## Why it matters
+
+The bug fires whenever message history contains non-ASCII content
+near the 200-byte preview boundary — most commonly U+FFFD runs
+from `docs.db` builds that decoded non-UTF-8 source files with
+`errors="replace"`. Filed by `bissell-llm-studio` after three
+identical `type_error.316 at index 200: 0x2E` failures in one
+session (the `0x2E` is the first `.` of `"..."` appended after the
+truncated substr).
+
+## Files changed
+
+- `src/facade/utf8_safe.h` — new internal header exposing
+  `entropic::facade::utf8_safe_substr`.
+- `src/facade/entropic.cpp` — `sp_get_history` routes preview
+  truncation through the new helper.
+- `tests/unit/api/utf8_safe_substr_test.cpp` — regression coverage:
+  ASCII boundary, gh#56 repro (199 `a` + 5 `é`), 3-byte U+FFFD,
+  4-byte U+1F600. The fixed `+ "..."` concatenation is asserted
+  parseable by `nlohmann::json`.
+- `tests/unit/CMakeLists.txt` — wires the new test into
+  `entropic-api-tests`.
+
+## Compatibility
+
+- C ABI: unchanged.
+- Python wrapper API: unchanged.
+- Behavior change limited to the preview truncation code path in
+  `sp_get_history`. Pre-fix valid-UTF-8 inputs (no codepoint
+  straddle at byte 200) are unaffected.
+
+No downstream consumer action is required. Consumers that worked
+around the bug by scrubbing non-ASCII content from message history
+may revert that workaround.
+
+## Issue
+
+- [gh#56](https://github.com/tvanfossen/entropic/issues/56)
+
+---
+
 # entropic v2.2.2
 
 Patch release. **License change only — no code, ABI, or behavioral

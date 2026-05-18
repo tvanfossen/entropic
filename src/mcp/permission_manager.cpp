@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file permission_manager.cpp
  * @brief PermissionManager implementation with fnmatch pattern matching.

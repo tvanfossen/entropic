@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file tool_result.h
  * @brief Typed outcome for POST_TOOL_CALL hook consumers.

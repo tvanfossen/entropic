@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.21)
 
 # v2.1.2 (#4): single source of truth. The repo-root VERSION file is the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file qwen36_adapter_test.cpp
  * @brief Tests for Qwen 3.6 XML tool call parsing (v2.1.9, gh#45).

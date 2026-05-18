@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_audit_log.cpp
  * @brief BDD subsystem test — audit entries recorded on tool execution.

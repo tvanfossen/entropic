@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """entropic-engine — Python wrapper over librentropic.so.
 
 The package itself is ~50 KB of pure Python: a ctypes binding shim and

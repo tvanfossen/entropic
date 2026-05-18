@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_v219_qwen36_family.cpp
  * @brief Model test — Qwen 3.6 family bundled GGUF + Qwen36Adapter.

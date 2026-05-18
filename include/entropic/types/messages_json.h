@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file messages_json.h
  * @brief Shared parser: messages-JSON wire format → vector<Message>.

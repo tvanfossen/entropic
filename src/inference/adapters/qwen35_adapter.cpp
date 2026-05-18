@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file qwen35_adapter.cpp
  * @brief Qwen 3.5 adapter implementation.

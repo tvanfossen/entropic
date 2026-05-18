@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file speculative_compat_test.cpp
  * @brief Unit tests for entropic::speculative::check_compat.

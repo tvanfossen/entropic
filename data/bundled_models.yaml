@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Bundled model registry — single source of truth for download URLs and default paths.
 # Referenced by cli_download.py and default_config.yaml.
 # Update this file when switching models or quantizations.
@@ -15,7 +15,7 @@
 # should reference the model-keyed entries.
 #
 # ── License footprint ─────────────────────────────────────────
-# Engine: LGPL-3.0-or-later + BISSELL Homecare Inc. linking exception.
+# Engine: Apache-2.0.
 # Model GGUFs are runtime data, not linked code — model licenses do
 # not bind the engine, but redistributors of bundled weights should
 # review per-entry license fields below before shipping.

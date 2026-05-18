@@ -348,7 +348,7 @@ consumers link against.
 
 ## Conventions
 
-- SPDX headers on every source file: `SPDX-License-Identifier: LGPL-3.0-or-later`
+- SPDX headers on every source file: `SPDX-License-Identifier: Apache-2.0`
 - Pre-commit enforces quality gates (knots, flake8, ruff, doxygen-guard,
   build, tests)
 - Every C/C++ function requires `@brief` and `@version` Doxygen comments

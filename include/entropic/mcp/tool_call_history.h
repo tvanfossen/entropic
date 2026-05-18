@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file tool_call_history.h
  * @brief In-memory ring buffer of recent tool calls for introspection.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file utf8_sanitize_test.cpp
  * @brief Coverage for entropic::mcp::sanitize_utf8 (v2.1.0 #47).

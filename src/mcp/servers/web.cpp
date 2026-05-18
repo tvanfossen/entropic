@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file web.cpp
  * @brief WebServer implementation — web_fetch + web_search placeholders.

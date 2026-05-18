@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file gemma4_adapter.cpp
  * @brief Gemma 4 adapter implementation (v2.1.9, gh#46).

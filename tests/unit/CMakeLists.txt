@@ -286,6 +286,9 @@ add_executable(entropic-api-tests
     api/serialize_messages_utf8_test.cpp
     # v2.1.10 (gh#40): mid-gen user-message queue ABI surface.
     api/message_queue_abi_test.cpp
+    # v2.2.3 (gh#56): sp_get_history must truncate on UTF-8 codepoint
+    # boundaries — direct unit test of the facade-local helper.
+    api/utf8_safe_substr_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.

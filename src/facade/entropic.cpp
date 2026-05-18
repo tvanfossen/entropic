@@ -1085,6 +1085,29 @@ static char* sp_get_history(int max_entries, void* ud) {
 }
 
 /**
+ * @brief State provider: get_residency — VRAM residency snapshot.
+ * @callback
+ *
+ * Backs the engine's introspection surface for "what models are
+ * loaded right now". Mirrors the C ABI `entropic_residency_snapshot`
+ * JSON schema. Returns an empty residency object when the
+ * orchestrator is not yet constructed (pre-configure). (gh#57)
+ *
+ * @param ud Engine handle.
+ * @return JSON object string (caller frees via free()).
+ * @version 2.2.4
+ */
+static char* sp_get_residency(void* ud) {
+    auto* h = static_cast<entropic_engine*>(ud);
+    if (!h || !h->orchestrator) {
+        return strdup("{\"vram_total_bytes\":0,\"vram_budget_bytes\":0,"
+                      "\"vram_headroom_bytes\":0,\"backend\":\"unknown\","
+                      "\"residency\":[]}");
+    }
+    return strdup(h->orchestrator->residency_snapshot_json().c_str());
+}
+
+/**
  * @brief State provider: get_state (runtime environment).
  * @callback
  * @version 2.0.6
@@ -1206,9 +1229,14 @@ static char* sp_load_delegation_conversation(
 
 /**
  * @brief Wire state provider to the EntropicServer.
+ *
+ * v2.2.4 (gh#57): registers the additional `get_residency` callback so
+ * the engine's introspection surface reflects the current VRAM
+ * residency set alongside config/identities/tools/history/metrics.
+ *
  * @param h Engine handle with all subsystems constructed.
  * @internal
- * @version 2.1.6
+ * @version 2.2.4
  */
 static void wire_state_provider(entropic_handle_t h) {
     if (!h->server_manager) { return; }
@@ -1227,6 +1255,8 @@ static void wire_state_provider(entropic_handle_t h) {
     // gh#32 (v2.1.6): storage-backed delegation recall + resume.
     sp.search_delegations = sp_search_delegations;
     sp.load_delegation_conversation = sp_load_delegation_conversation;
+    // gh#57 (v2.2.4): VRAM residency-set snapshot.
+    sp.get_residency = sp_get_residency;
     sp.user_data = h;
     es->set_state_provider(sp);
     s_log->info("State provider wired to entropic server");
@@ -3344,6 +3374,81 @@ entropic_error_t entropic_speculative_compat(
                           : alloc_cstr(info.diagnostic);
     }
     return ENTROPIC_OK;
+}
+
+/* ── VRAM-aware tier residency (v2.2.4, gh#57) ─────────── */
+
+/**
+ * @brief Register a residency observer on the orchestrator.
+ *
+ * Stores the C callback + user_data on the handle and bridges to the
+ * orchestrator's `std::function` slot via a small capture lambda. The
+ * orchestrator fires the lambda synchronously on each load / evict /
+ * activation_swap transition; the lambda forwards to the C callback
+ * with the residency-event enum, tier name, model path, and footprint.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+entropic_error_t entropic_set_residency_observer(
+    entropic_handle_t handle,
+    entropic_residency_observer_t observer,
+    void* user_data) {
+    if (handle == nullptr) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    // Engine-not-configured (no orchestrator yet) and observer==nullptr
+    // both collapse to a no-op set: pre-configure registration is
+    // ignored (consumers must re-register after configure_*), and
+    // an explicit nullptr clears any prior slot. Done as one branch
+    // to stay under the knots return-count gate.
+    entropic::ModelOrchestrator::ResidencyObserverFn fn;
+    if (observer != nullptr) {
+        fn = [observer, user_data](
+            entropic::ModelOrchestrator::ResidencyEvent event,
+            const std::string& tier_name,
+            const std::string& model_path,
+            size_t footprint) {
+            observer(static_cast<entropic_residency_event_t>(event),
+                     tier_name.c_str(),
+                     model_path.c_str(),
+                     footprint,
+                     user_data);
+        };
+    }
+    if (handle->orchestrator) {
+        handle->orchestrator->set_residency_observer(std::move(fn));
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Return the engine's current residency-set snapshot as JSON.
+ *
+ * Delegates to `ModelOrchestrator::residency_snapshot_json` which
+ * holds the swap mutex briefly for a consistent read of the loaded
+ * tier set and footprint accounting. The returned string is
+ * heap-allocated and must be freed by the caller with
+ * `entropic_free_string`.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+entropic_error_t entropic_residency_snapshot(
+    entropic_handle_t handle,
+    char** out_json) {
+    entropic_error_t rc = ENTROPIC_OK;
+    if (handle == nullptr || out_json == nullptr) {
+        rc = ENTROPIC_ERROR_INVALID_HANDLE;
+    } else if (!handle->orchestrator) {
+        rc = ENTROPIC_ERROR_INVALID_STATE;
+    } else {
+        std::string snapshot =
+            handle->orchestrator->residency_snapshot_json();
+        *out_json = alloc_cstr(snapshot);
+        if (*out_json == nullptr) {
+            rc = ENTROPIC_ERROR_OUT_OF_MEMORY;
+        }
+    }
+    return rc;
 }
 
 } // extern "C"

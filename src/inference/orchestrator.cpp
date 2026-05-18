@@ -19,6 +19,10 @@
 #include "adapters/adapter_registry.h"
 
 #include <llama.h>
+#include <nlohmann/json.hpp>
+
+#include <cstdlib>
+#include <filesystem>
 
 namespace entropic {
 
@@ -171,16 +175,24 @@ void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
  *
  * Adds speculative-draft activation alongside router activation in
  * v2.1.11 (gh#36) — the draft slot loads when `inference.speculative.
- * enabled` is true and a `draft_model` is configured.
+ * enabled` is true and a `draft_model` is configured. v2.2.4 (gh#57)
+ * caches the VRAM budget from `ENTROPIC_VRAM_BUDGET_BYTES` so the
+ * residency gate in `get_model` has a number to test against.
  *
  * @param config Parsed engine config.
  * @return true on success.
  * @utility
- * @version 2.1.11
+ * @version 2.2.4
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
     default_tier_ = config.models.default_tier;
+    vram_budget_bytes_ = resolve_vram_budget_bytes();
+    if (vram_budget_bytes_ > 0) {
+        logger->info("[residency] VRAM budget: {} bytes "
+                     "(ENTROPIC_VRAM_BUDGET_BYTES)",
+                     vram_budget_bytes_);
+    }
 
     // Route ggml/llama logs before any model loading
     if (config.ggml_logging && !config.log_dir.empty()) {
@@ -317,13 +329,16 @@ bool ModelOrchestrator::try_speculative_route(
  * through `LlamaCppBackend::generate_speculative_with_draft`; falls
  * back to plain decode otherwise. The dispatch decision is delegated
  * to `run_generate_dispatch` to keep this method under the SLOC gate.
+ * v2.2.4 (gh#57): a refused activation now reports
+ * `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE` via `build_no_model_error`
+ * instead of the generic `GENERATE_FAILED`.
  *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.1.11
+ * @version 2.2.4
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -346,13 +361,7 @@ GenerationResult ModelOrchestrator::generate(
     InferenceBackend* model = get_model(selected);
     double swap_ms = elapsed_ms(t_swap, now());
 
-    if (!model) {
-        GenerationResult err;
-        err.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
-        err.error_message = "No model available for tier: " + selected;
-        err.finish_reason = "error";
-        return err;
-    }
+    if (!model) { return build_no_model_error(selected); }
 
     // Resolve grammar_key → grammar content (v1.9.3)
     GenerationParams resolved_params = params;
@@ -534,36 +543,166 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
  * @internal
  * @version 1.9.2
  */
+/**
+ * @brief Reuse-hit bookkeeping for `get_model`.
+ *
+ * Records the activation timestamp for LRU tracking and fires an
+ * ActivationSwap residency event when the active tier changed (i.e.
+ * multi-resident hit: the new tier was already loaded). Same-tier
+ * reuse simply refreshes the timestamp.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+void ModelOrchestrator::record_activation_reuse(
+    const std::string& tier_name) {
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time_).count();
+    bool tier_changed = (loaded_main_tier_ != tier_name);
+    tier_last_activation_ms_[tier_name] = now_ms;
+    if (!tier_changed) { return; }
+    auto tier_it = config_.models.tiers.find(tier_name);
+    std::string path = tier_it != config_.models.tiers.end()
+        ? tier_it->second.path.string() : "";
+    size_t footprint = tier_footprint_bytes_.count(tier_name)
+        ? tier_footprint_bytes_[tier_name]
+        : estimate_footprint_bytes(tier_name);
+    tier_footprint_bytes_[tier_name] = footprint;
+    loaded_main_tier_ = tier_name;
+    fire_residency_observer(ResidencyEvent::ActivationSwap,
+                            tier_name, path, footprint);
+}
+
+/**
+ * @brief VRAM-budget admission test (gh#57).
+ *
+ * Estimates the tier's footprint, memoizes it, and rejects with
+ * `last_residency_error_ = TIER_MODEL_TOO_LARGE` when the single-tier
+ * estimate exceeds a known engine VRAM budget. Returns true to admit.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+bool ModelOrchestrator::residency_admits(const std::string& tier_name) {
+    size_t footprint = estimate_footprint_bytes(tier_name);
+    if (footprint > 0) {
+        tier_footprint_bytes_[tier_name] = footprint;
+    }
+    if (vram_budget_bytes_ > 0 && footprint > vram_budget_bytes_) {
+        logger->error("[residency] tier '{}' footprint {} bytes "
+                      "exceeds VRAM budget {} bytes — "
+                      "TIER_MODEL_TOO_LARGE (gh#57)",
+                      tier_name, footprint, vram_budget_bytes_);
+        last_residency_error_ = ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE;
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief Cold-path tier activation with residency bookkeeping.
+ *
+ * Drives `load_and_activate` on the backend; on success records the
+ * activation timestamp and fires a `Loaded` residency event.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+/**
+ * @brief Build a typed GenerationResult for a get_model() failure.
+ *
+ * Threads the orchestrator's `last_residency_error_` stash into the
+ * result so the facade surfaces `TIER_MODEL_TOO_LARGE` distinctly from
+ * generic `GENERATE_FAILED`. Always clears the stash.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+GenerationResult ModelOrchestrator::build_no_model_error(
+    const std::string& tier_name) {
+    GenerationResult err;
+    err.finish_reason = "error";
+    if (last_residency_error_ != ENTROPIC_OK) {
+        err.error_code = last_residency_error_;
+        err.error_message = "Tier '" + tier_name + "' model exceeds the "
+                            "engine's VRAM budget (gh#57)";
+        last_residency_error_ = ENTROPIC_OK;
+    } else {
+        err.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        err.error_message = "No model available for tier: " + tier_name;
+    }
+    return err;
+}
+
+/**
+ * @brief Cold-path tier activation with residency bookkeeping.
+ *
+ * Drives `load_and_activate` on the backend; on success records the
+ * activation timestamp and fires a `Loaded` residency event. Returns
+ * the activated backend pointer, or nullptr on activation failure.
+ *
+ * @param tier_name Tier name (must be in `config_.models.tiers`).
+ * @param backend   Backend shared with the tier_map entry.
+ * @return Activated backend, or nullptr.
+ * @internal
+ * @version 2.2.4
+ */
+InferenceBackend* ModelOrchestrator::activate_and_track(
+    const std::string& tier_name,
+    const std::shared_ptr<InferenceBackend>& backend) {
+    auto tier_it = config_.models.tiers.find(tier_name);
+    bool activated = tier_it != config_.models.tiers.end()
+        && backend->load_and_activate(tier_it->second);
+    if (!activated) {
+        logger->error("Failed to activate tier: {}", tier_name);
+        return nullptr;
+    }
+    loaded_main_tier_ = tier_name;
+    last_routing_result_.swap_action = "loaded";
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start_time_).count();
+    tier_last_activation_ms_[tier_name] = now_ms;
+    size_t footprint = tier_footprint_bytes_.count(tier_name)
+        ? tier_footprint_bytes_[tier_name] : 0;
+    fire_residency_observer(ResidencyEvent::Loaded,
+                            tier_name, tier_it->second.path.string(),
+                            footprint);
+    return backend.get();
+}
+
+/**
+ * @brief Get the backend for a tier, loading/swapping/admitting as needed.
+ *
+ * Resolves the tier name (falling back to `routing.fallback_tier` when
+ * unknown), reuses a hot backend or admits + activates a cold one
+ * through the residency gate. Returns nullptr on a refused activation
+ * (with `last_residency_error_` set) or on a real load failure.
+ *
+ * @param tier_name Requested tier name.
+ * @return Backend pointer, or nullptr.
+ * @internal
+ * @version 2.2.4
+ */
 InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
     std::lock_guard<std::mutex> lock(swap_mutex_);
 
     auto it = tiers_.find(tier_name);
+    std::string effective_tier = tier_name;
     if (it == tiers_.end()) {
         it = tiers_.find(config_.routing.fallback_tier);
+        if (it != tiers_.end()) {
+            effective_tier = config_.routing.fallback_tier;
+        }
     }
 
     InferenceBackend* result = nullptr;
-
-    if (it == tiers_.end()) {
-        /* no tier found — result stays nullptr */
-    } else if (it->second->is_active()) {
+    if (it != tiers_.end() && it->second->is_active()) {
         last_routing_result_.swap_action = "reused";
+        record_activation_reuse(effective_tier);
         result = it->second.get();
-    } else {
-        auto& backend = it->second;
-        deactivate_current_if_needed(backend.get());
-
-        auto tier_it = config_.models.tiers.find(tier_name);
-        bool activated = tier_it != config_.models.tiers.end()
-            && backend->load_and_activate(tier_it->second);
-
-        if (activated) {
-            loaded_main_tier_ = tier_name;
-            last_routing_result_.swap_action = "loaded";
-            result = backend.get();
-        } else {
-            logger->error("Failed to activate tier: {}", tier_name);
-        }
+    } else if (it != tiers_.end() && residency_admits(effective_tier)) {
+        deactivate_current_if_needed(it->second.get());
+        result = activate_and_track(effective_tier, it->second);
     }
 
     // Ensure correct LoRA adapter for this tier (v1.9.2)
@@ -582,11 +721,13 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
 /**
  * @brief Deactivate current main tier for swap.
  *
- * keep_warm=true → WARM. keep_warm=false → COLD.
+ * keep_warm=true → WARM. keep_warm=false → COLD. v2.2.4 (gh#57): the
+ * COLD-path unload fires a `ResidencyEvent::Evicted` so the residency
+ * observer sees every "tier model just left VRAM" transition.
  *
  * @param incoming The backend about to be activated.
  * @internal
- * @version 1.9.2
+ * @version 2.2.4
  */
 void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming) {
     auto it = loaded_main_tier_.empty()
@@ -617,7 +758,14 @@ void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming)
         current->deactivate();
     } else {
         logger->info("Unloading {} (keep_warm=false)", loaded_main_tier_);
+        std::string path = cfg_it != config_.models.tiers.end()
+            ? cfg_it->second.path.string() : "";
+        size_t footprint = tier_footprint_bytes_.count(loaded_main_tier_)
+            ? tier_footprint_bytes_[loaded_main_tier_] : 0;
+        std::string evicted_tier = loaded_main_tier_;
         current->unload();
+        fire_residency_observer(ResidencyEvent::Evicted,
+                                evicted_tier, path, footprint);
     }
 }
 
@@ -1080,6 +1228,156 @@ void ModelOrchestrator::resolve_grammar_key(
     logger->info("Grammar resolved: key='{}', {} bytes",
                  key, content.size());
     params.grammar = std::move(content);
+}
+
+// ── VRAM-aware tier residency (v2.2.4, gh#57) ──────────────
+
+/**
+ * @brief Read ENTROPIC_VRAM_BUDGET_BYTES env override.
+ *
+ * Returns the parsed value (decimal bytes) on success, 0 when the
+ * variable is unset, empty, or fails to parse. 0 means "budget
+ * unknown, gate disabled" — see `get_model` for the gate semantics.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+size_t ModelOrchestrator::resolve_vram_budget_bytes() {
+    const char* env = std::getenv("ENTROPIC_VRAM_BUDGET_BYTES");
+    if (env == nullptr || *env == '\0') { return 0; }
+    try {
+        long long v = std::stoll(env);
+        return (v < 0) ? 0 : static_cast<size_t>(v);
+    } catch (...) {
+        return 0;
+    }
+}
+
+/**
+ * @brief Estimate per-tier VRAM footprint.
+ *
+ * Weights file size + context_length × 16 KiB per-token KV estimate +
+ * vram_reserve_mb × 1MiB headroom. Returns 0 when the tier or its
+ * GGUF file is not resolvable. Pure metadata — no model load.
+ *
+ * @internal
+ * @version 2.2.4
+ */
+size_t ModelOrchestrator::estimate_footprint_bytes(
+    const std::string& tier_name) const {
+    auto tier_it = config_.models.tiers.find(tier_name);
+    if (tier_it == config_.models.tiers.end()) { return 0; }
+    const auto& tier_cfg = tier_it->second;
+    std::error_code ec;
+    auto weights = std::filesystem::file_size(tier_cfg.path, ec);
+    if (ec) { return 0; }
+    const size_t kv_per_token = 16ull * 1024ull;
+    size_t kv = static_cast<size_t>(tier_cfg.context_length) * kv_per_token;
+    size_t headroom = static_cast<size_t>(config_.vram_reserve_mb)
+        * 1024ull * 1024ull;
+    return static_cast<size_t>(weights) + kv + headroom;
+}
+
+/**
+ * @brief Public footprint accessor — memoizes via tier_footprint_bytes_.
+ * @internal
+ * @version 2.2.4
+ */
+size_t ModelOrchestrator::tier_footprint_bytes(
+    const std::string& tier_name) const {
+    std::lock_guard<std::mutex> lock(swap_mutex_);
+    auto it = tier_footprint_bytes_.find(tier_name);
+    if (it != tier_footprint_bytes_.end()) { return it->second; }
+    size_t v = estimate_footprint_bytes(tier_name);
+    if (v > 0) {
+        tier_footprint_bytes_[tier_name] = v;
+    }
+    return v;
+}
+
+/**
+ * @brief Register / replace / clear the residency observer.
+ * @internal
+ * @version 2.2.4
+ */
+void ModelOrchestrator::set_residency_observer(ResidencyObserverFn cb) {
+    std::lock_guard<std::mutex> lock(swap_mutex_);
+    residency_observer_ = std::move(cb);
+}
+
+/**
+ * @brief Fire residency observer + INFO-log the event.
+ * @internal
+ * @version 2.2.4
+ */
+void ModelOrchestrator::fire_residency_observer(
+    ResidencyEvent event,
+    const std::string& tier_name,
+    const std::string& model_path,
+    size_t footprint) {
+    const char* event_name = "unknown";
+    switch (event) {
+    case ResidencyEvent::Loaded:         event_name = "loaded"; break;
+    case ResidencyEvent::Evicted:        event_name = "evicted"; break;
+    case ResidencyEvent::ActivationSwap: event_name = "activation_swap"; break;
+    }
+    logger->info("[residency] {} tier='{}' path='{}' footprint={} bytes",
+                 event_name, tier_name, model_path, footprint);
+    if (residency_observer_) {
+        residency_observer_(event, tier_name, model_path, footprint);
+    }
+}
+
+/**
+ * @brief JSON serialization of the current residency set.
+ * @internal
+ * @version 2.2.4
+ */
+std::string ModelOrchestrator::residency_snapshot_json() const {
+    std::lock_guard<std::mutex> lock(swap_mutex_);
+    nlohmann::json j;
+    j["vram_total_bytes"]     = vram_budget_bytes_;
+    j["vram_budget_bytes"]    = vram_budget_bytes_;
+    size_t in_use = 0;
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& [name, backend] : tiers_) {
+        if (!backend || !backend->is_loaded()) { continue; }
+        auto tier_it = config_.models.tiers.find(name);
+        if (tier_it == config_.models.tiers.end()) { continue; }
+        size_t footprint = 0;
+        auto fp_it = tier_footprint_bytes_.find(name);
+        if (fp_it != tier_footprint_bytes_.end()) {
+            footprint = fp_it->second;
+        } else {
+            footprint = estimate_footprint_bytes(name);
+        }
+        in_use += footprint;
+        std::error_code ec;
+        auto weights = std::filesystem::file_size(tier_it->second.path, ec);
+        size_t weights_b = ec ? 0u : static_cast<size_t>(weights);
+        size_t kv = static_cast<size_t>(tier_it->second.context_length)
+            * 16ull * 1024ull;
+        size_t headroom = static_cast<size_t>(config_.vram_reserve_mb)
+            * 1024ull * 1024ull;
+        long long last_ms = 0;
+        auto la = tier_last_activation_ms_.find(name);
+        if (la != tier_last_activation_ms_.end()) { last_ms = la->second; }
+        arr.push_back({
+            {"tier",              name},
+            {"model_path",        tier_it->second.path.string()},
+            {"footprint_bytes",   footprint},
+            {"weights_bytes",     weights_b},
+            {"kv_cache_bytes",    kv},
+            {"headroom_bytes",    headroom},
+            {"last_activation_ms", last_ms}
+        });
+    }
+    j["residency"] = std::move(arr);
+    j["vram_headroom_bytes"] = vram_budget_bytes_ > in_use
+        ? vram_budget_bytes_ - in_use
+        : 0u;
+    j["backend"] = vram_budget_bytes_ > 0 ? "configured" : "unknown";
+    return j.dump();
 }
 
 } // namespace entropic

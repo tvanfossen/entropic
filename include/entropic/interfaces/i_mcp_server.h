@@ -200,6 +200,23 @@ typedef struct {
     char* (*load_delegation_conversation)(const char* delegation_id,
                                           void* user_data);
 
+    /**
+     * @brief Get current VRAM residency-set snapshot (gh#57, v2.2.4).
+     *
+     * Backs the engine's introspection surface for prompt-time
+     * decisioning ("which tier models are loaded right now"). Mirrors
+     * the C ABI `entropic_residency_snapshot` JSON schema exactly.
+     * May be NULL on pre-v2.2.4 engines or before configure_dir runs;
+     * the tool surfaces an empty residency array in that case.
+     *
+     * Caller must free with entropic_free().
+     *
+     * @param user_data Opaque provider state.
+     * @return JSON string (caller frees), or NULL on error.
+     * @version 2.2.4
+     */
+    char* (*get_residency)(void* user_data);
+
     /** @brief Opaque user data passed to all callbacks. */
     void* user_data;
 } entropic_state_provider_t;

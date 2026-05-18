@@ -1,3 +1,118 @@
+# entropic v2.2.4
+
+Patch release. **Bugfix — VRAM-aware tier model lifecycle.** Adds a
+small, strictly additive C ABI surface so consumers can observe
+residency transitions and a distinct typed error when a single tier's
+model alone exceeds the engine's VRAM budget.
+
+## What changed
+
+Engine v2.2.1 framed any aggregate-fit failure during multi-tier
+configuration as `ENTROPIC_ERROR_LOAD_FAILED`. The engine's stated
+role is to abstract VRAM distribution from consumers — they declare
+per-tier model bindings, and the engine decides what to load and when.
+The v1.8.2 single-active-tier swap already implements this for the
+main slot, but had no observable surface for consumers and no
+distinct error code for "this single tier's model alone exceeds total
+VRAM, no eviction will help". v2.2.4 fixes that gap.
+
+### New C ABI (strictly additive)
+
+- `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE` — distinct from
+  `ENTROPIC_ERROR_OUT_OF_MEMORY` and `ENTROPIC_ERROR_LOAD_FAILED`.
+- `entropic_residency_event_t` — `LOADED` / `EVICTED` /
+  `ACTIVATION_SWAP`.
+- `entropic_residency_observer_t` — callback typedef receiving event,
+  tier name, model path, and tracked footprint bytes.
+- `entropic_set_residency_observer(handle, cb, ud)` — observer
+  registration.
+- `entropic_residency_snapshot(handle, **out_json)` — JSON snapshot
+  of the currently-resident set, per-model footprints, the engine's
+  VRAM budget, and headroom. Caller frees with
+  `entropic_free_string`.
+
+No symbols renamed or removed.
+
+### Engine behavior
+
+- Per-tier VRAM footprint accounting: GGUF weights file size +
+  `context_length` × per-token KV estimate + configured
+  `vram_reserve_mb` headroom.
+- `ModelOrchestrator::get_model` refactored into three small helpers
+  (`residency_admits`, `record_activation_reuse`, `activate_and_track`)
+  to stay under the project's cognitive-complexity and SLOC gates.
+- `ResidencyEvent::Loaded` fires on every fresh activation;
+  `ResidencyEvent::Evicted` fires on the unload-path of the existing
+  cold swap; `ResidencyEvent::ActivationSwap` fires when an already-
+  loaded tier is reactivated. Every event is INFO-logged with full
+  state-after (no truncation per project log policy).
+- VRAM budget source: `ENTROPIC_VRAM_BUDGET_BYTES` environment
+  override. CUDA `cudaMemGetInfo` discovery and Metal/ROCm equivalents
+  are intentionally deferred — env var is the supported override
+  surface today and what consumer tests inject. When the budget is 0
+  (unknown), the gate is disabled and the engine preserves prior
+  behavior.
+- `configure_dir` remains lazy at the orchestrator level — only the
+  `default` tier is activated at init; alternate tiers load on first
+  routing/lock through `get_model` (now residency-gated).
+
+### State provider surface
+
+The introspection surface that backs the engine's `inspect` and
+`context_inspect` MCP tools gains a new `get_residency` callback
+mirroring `entropic_residency_snapshot` JSON exactly. This extends
+the `entropic_state_provider_t` interface struct — flagged as an
+interface change per the repo's session protocol.
+
+### Files changed
+
+- `include/entropic/types/error.h`,
+  `src/types/error.cpp` — new error enum + name-table entry.
+- `include/entropic/entropic.h` — new typedef + two exported
+  functions (`entropic_set_residency_observer`,
+  `entropic_residency_snapshot`).
+- `include/entropic/interfaces/i_mcp_server.h` —
+  `entropic_state_provider_t.get_residency` (interface change).
+- `include/entropic/inference/orchestrator.h`,
+  `src/inference/orchestrator.cpp` — residency-set state,
+  footprint estimator, VRAM gate, observer hook, snapshot JSON,
+  `get_model` refactor into three helpers.
+- `src/facade/entropic.cpp` — facade wrappers for the new C ABI
+  entries and the new `sp_get_residency` state provider.
+- `scripts/gen_bindings.py`,
+  `python/src/entropic/_bindings.py`,
+  `python/src/entropic/_bindings_manifest.py` — Python ctypes
+  wrapper regenerated for the new symbols.
+- `tests/unit/inference/residency_test.cpp` — empty-snapshot shape,
+  observer registration/clear, last-error default+clear, error-name
+  stability, ResidencyEvent enum value pinning vs the C ABI enum.
+
+## Compatibility
+
+- C ABI: additive only. `entropic_error_t` gains a new tail value;
+  existing values keep their positions. The new functions, typedef,
+  and enum are new symbols; no existing symbol changed signature.
+- Python wrapper: regenerated; the new functions appear automatically
+  in `entropic._bindings`. Pre-2.2.4 consumers that don't reference
+  the new symbols see no behavior change.
+- Behavior: when `ENTROPIC_VRAM_BUDGET_BYTES` is unset (the default),
+  the residency gate is disabled and the engine behaves identically
+  to v2.2.3.
+
+## Consumer impact
+
+`bissell-llm-studio` and similar multi-tier consumers can revert
+"Apply propagates to all tiers" workarounds: per-tier model
+assignment now works as the engine originally intended, and consumers
+can subscribe to residency events to mirror the engine's
+currently-loaded set in their UIs without polling.
+
+## Issue
+
+- [gh#57](https://github.com/tvanfossen/entropic/issues/57)
+
+---
+
 # entropic v2.2.3
 
 Patch release. **Bugfix — UTF-8-safe history truncation.** No ABI

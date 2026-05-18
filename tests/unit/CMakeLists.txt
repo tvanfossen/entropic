@@ -61,6 +61,9 @@ add_executable(entropic-inference-tests
     inference/vision_adapter_test.cpp
     inference/image_preprocessor_test.cpp
     inference/backend_capabilities_test.cpp
+    # v2.2.4 (gh#57): VRAM-aware tier residency surface — metadata-only
+    # tests that don't require a real GGUF.
+    inference/residency_test.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE

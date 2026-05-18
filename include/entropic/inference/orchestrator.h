@@ -30,7 +30,10 @@
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/inference/adapters/adapter_base.h>
 #include <entropic/types/config.h>
+#include <entropic/types/error.h>
 
+#include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -275,6 +278,110 @@ public:
         config_.inference.speculative.enabled = enabled;
     }
 
+    /* ── VRAM-aware tier residency (v2.2.4, gh#57) ────────── */
+
+    /**
+     * @brief Residency observer event codes — mirror the C ABI enum
+     *        `entropic_residency_event_t` exactly (LOADED=0,
+     *        EVICTED=1, ACTIVATION_SWAP=2).
+     * @version 2.2.4
+     */
+    enum class ResidencyEvent : int {
+        Loaded = 0,
+        Evicted = 1,
+        ActivationSwap = 2,
+    };
+
+    /**
+     * @brief Residency observer callback type (internal C++ form).
+     *
+     * Fires synchronously from inside `get_model` /
+     * `deactivate_current_if_needed` while the swap mutex is held.
+     * Must not call back into the orchestrator on the same thread.
+     *
+     * @param event         Lifecycle event code.
+     * @param tier_name     Tier whose backing model changed VRAM state.
+     * @param model_path    Resolved GGUF path for the model.
+     * @param footprint     Estimated VRAM footprint in bytes.
+     * @callback
+     * @version 2.2.4
+     */
+    using ResidencyObserverFn = std::function<void(
+        ResidencyEvent event,
+        const std::string& tier_name,
+        const std::string& model_path,
+        size_t footprint)>;
+
+    /**
+     * @brief Register a residency observer. Replaces the previous one.
+     *
+     * Passing an empty `std::function` clears the observer.
+     *
+     * @param cb Observer callable, or empty to clear.
+     * @utility
+     * @version 2.2.4
+     */
+    void set_residency_observer(ResidencyObserverFn cb);
+
+    /**
+     * @brief Serialize the current residency set as a JSON string.
+     *
+     * Schema is documented on the C ABI entry point
+     * `entropic_residency_snapshot` (entropic.h). Read-only — takes the
+     * swap mutex briefly to obtain a consistent snapshot.
+     *
+     * @return JSON object string.
+     * @utility
+     * @version 2.2.4
+     */
+    std::string residency_snapshot_json() const;
+
+    /**
+     * @brief Engine-tracked VRAM budget in bytes (0 = unknown).
+     *
+     * Sources, in priority order: `ENTROPIC_VRAM_BUDGET_BYTES`
+     * environment override → CUDA `cudaMemGetInfo` (when the CUDA
+     * inference backend is the active build) → 0. When 0, the
+     * orchestrator does not enforce a per-tier budget gate.
+     *
+     * @utility
+     * @version 2.2.4
+     */
+    size_t vram_budget_bytes() const { return vram_budget_bytes_; }
+
+    /**
+     * @brief Estimated VRAM footprint for a given tier in bytes.
+     *
+     * Sum of GGUF weights file size and a context-length-derived KV
+     * cache estimate plus the configured `vram_reserve_mb` headroom.
+     * Returns 0 if the tier is unknown.
+     *
+     * @param tier_name Tier name.
+     * @utility
+     * @version 2.2.4
+     */
+    size_t tier_footprint_bytes(const std::string& tier_name) const;
+
+    /**
+     * @brief Last residency-related error code, or `ENTROPIC_OK` if none.
+     *
+     * Set by `get_model` when a tier-fit check fails (returns
+     * `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE`). The facade clears it after
+     * translating to the C ABI return code. Independent of the
+     * `last_error_` string carried on individual backends.
+     *
+     * @utility
+     * @version 2.2.4
+     */
+    entropic_error_t last_residency_error() const { return last_residency_error_; }
+
+    /**
+     * @brief Clear `last_residency_error()`.
+     * @utility
+     * @version 2.2.4
+     */
+    void clear_last_residency_error() { last_residency_error_ = ENTROPIC_OK; }
+
     /**
      * @brief Pick the canonical vision-capable tier name (gh#41).
      *
@@ -323,9 +430,102 @@ private:
     RoutingResult last_routing_result_;
     std::vector<std::string> tier_history_;  ///< Recent tiers, max 5
 
-    std::mutex swap_mutex_;  ///< Guards tier swap operations
+    mutable std::mutex swap_mutex_;  ///< Guards tier swap + residency mutations
 
     ParsedConfig config_;
+
+    /* ── Residency tracking (v2.2.4, gh#57) ──────────────── */
+
+    /**
+     * @brief Per-tier VRAM footprint cache (bytes).
+     *
+     * Populated lazily on first `get_model` for a tier from
+     * `estimate_footprint_bytes`. Keys are tier names. Mutable so the
+     * const `tier_footprint_bytes()` / `residency_snapshot_json()`
+     * accessors can memoize on first lookup.
+     * @version 2.2.4
+     */
+    mutable std::unordered_map<std::string, size_t> tier_footprint_bytes_;
+
+    /**
+     * @brief Monotonic ms since orchestrator init at the most recent
+     *        activation of each tier. LRU eviction candidate is the
+     *        lowest value.
+     * @version 2.2.4
+     */
+    std::unordered_map<std::string, long long> tier_last_activation_ms_;
+
+    /**
+     * @brief Engine start point — basis for `tier_last_activation_ms_`.
+     * @version 2.2.4
+     */
+    std::chrono::steady_clock::time_point start_time_{std::chrono::steady_clock::now()};
+
+    /**
+     * @brief Cached VRAM budget in bytes. 0 = unknown / unenforced.
+     *
+     * Resolved at `initialize()` time from `ENTROPIC_VRAM_BUDGET_BYTES`
+     * env var. CUDA `cudaMemGetInfo` integration is intentionally
+     * deferred — the env var is the supported override surface and is
+     * what unit tests inject.
+     * @version 2.2.4
+     */
+    size_t vram_budget_bytes_{0};
+
+    /**
+     * @brief Residency observer (empty = no observer registered).
+     * @version 2.2.4
+     */
+    ResidencyObserverFn residency_observer_;
+
+    /**
+     * @brief Last residency-related error stash (cleared by facade).
+     * @version 2.2.4
+     */
+    entropic_error_t last_residency_error_{ENTROPIC_OK};
+
+    /**
+     * @brief Compute the cached/estimated footprint for a tier in bytes.
+     *
+     * Weights file size (`std::filesystem::file_size` on the resolved
+     * GGUF path) + context-length × per-token-KV estimate (16 KiB) +
+     * `vram_reserve_mb` × 1MiB. Used by the budget gate and by the
+     * snapshot.
+     *
+     * @param tier_name Tier name (must be present in `config_.models.tiers`).
+     * @return Estimated footprint bytes. 0 if the tier or its file is unknown.
+     * @internal
+     * @version 2.2.4
+     */
+    size_t estimate_footprint_bytes(const std::string& tier_name) const;
+
+    /**
+     * @brief Resolve the VRAM budget at initialize time.
+     *
+     * Reads `ENTROPIC_VRAM_BUDGET_BYTES` (decimal bytes). On parse
+     * failure or absence, returns 0 (budget unknown → gate disabled).
+     *
+     * @return Bytes, or 0.
+     * @internal
+     * @version 2.2.4
+     */
+    static size_t resolve_vram_budget_bytes();
+
+    /**
+     * @brief Fire the residency observer if registered.
+     *
+     * @param event       Event code.
+     * @param tier_name   Tier name.
+     * @param model_path  Resolved GGUF path.
+     * @param footprint   Bytes (0 if unknown).
+     * @internal
+     * @version 2.2.4
+     */
+    void fire_residency_observer(
+        ResidencyEvent event,
+        const std::string& tier_name,
+        const std::string& model_path,
+        size_t footprint);
 
     /* ── LoRA adapter management (v1.9.2) ────────────────── */
     AdapterManager lora_manager_;  ///< LoRA adapter lifecycle
@@ -346,6 +546,43 @@ private:
      * @version 1.8.2
      */
     InferenceBackend* get_model(const std::string& tier_name);
+
+    /**
+     * @brief Record activation timestamp and fire ActivationSwap when
+     *        the active tier changes during a reuse hit. Extracted to
+     *        keep `get_model` under the knots SLOC/complexity gate.
+     * @internal
+     * @version 2.2.4
+     */
+    void record_activation_reuse(const std::string& tier_name);
+
+    /**
+     * @brief Run the VRAM-budget gate for a tier. Returns true to
+     *        proceed with load; false (with `last_residency_error_`
+     *        set to `TIER_MODEL_TOO_LARGE`) means refuse the activation.
+     * @internal
+     * @version 2.2.4
+     */
+    bool residency_admits(const std::string& tier_name);
+
+    /**
+     * @brief Load + activate a tier with residency bookkeeping. Returns
+     *        the backend pointer on success, nullptr on failure.
+     * @internal
+     * @version 2.2.4
+     */
+    InferenceBackend* activate_and_track(
+        const std::string& tier_name,
+        const std::shared_ptr<InferenceBackend>& backend);
+
+    /**
+     * @brief Build the failing GenerationResult for a missing/oversize
+     *        tier. Translates the orchestrator's residency-error stash
+     *        into a typed C ABI error code and clears it.
+     * @internal
+     * @version 2.2.4
+     */
+    GenerationResult build_no_model_error(const std::string& tier_name);
 
     /**
      * @brief Deactivate current main tier for swap.

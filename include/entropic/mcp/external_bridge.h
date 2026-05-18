@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file external_bridge.h
  * @brief Unix socket MCP bridge — exposes a running engine to external clients.

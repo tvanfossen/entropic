@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """librentropic.so resolution.
 
 The release tarball extracts as ``<root>/entropic/{bin,lib,include,share}``

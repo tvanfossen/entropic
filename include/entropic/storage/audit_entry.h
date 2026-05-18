@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file audit_entry.h
  * @brief AuditEntry struct and JSON serialization for JSONL audit log.

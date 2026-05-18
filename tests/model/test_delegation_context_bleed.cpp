@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_delegation_context_bleed.cpp
  * @brief Regression test for v2.0.6 — delegated-agent context bleed.

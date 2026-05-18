@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file bundled_models.h
  * @brief Bundled model registry — resolves keys to filesystem paths.

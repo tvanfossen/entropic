@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file health_monitor.h
  * @brief Monitors external MCP server health and triggers reconnection.

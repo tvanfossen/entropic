@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """ABI conformance tests for python/src/entropic/_bindings.py enums.
 
 The hand-curated IntEnums in ``_bindings.py`` mirror C enums declared in

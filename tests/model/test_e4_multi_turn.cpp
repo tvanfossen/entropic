@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_e4_multi_turn.cpp
  * @brief E4: Multi-turn engine calls retain context.

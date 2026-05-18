@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """Test MCP server — minimal echo tool for headless validation.
 
 Provides a single 'echo' tool that returns its input verbatim. Used

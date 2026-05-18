@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_e3_routing.cpp
  * @brief E3: Routing fires on_tier_selected callback.

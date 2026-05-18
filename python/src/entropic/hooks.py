@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """Pythonic facade for entropic engine hooks (#8, v2.1.4).
 
 The C ABI for hooks is callable from Python via ``_bindings.HOOK_CB``

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file interface_factory.cpp
  * @brief InferenceInterface factory — bridges orchestrator to C callbacks.

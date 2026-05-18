@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file backend_capability.h
  * @brief Backend capability flags and metadata for architecture-agnostic queries.

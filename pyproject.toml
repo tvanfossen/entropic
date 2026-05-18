@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 [project]
 name = "entropic-engine"
 # v2.1.2 (#4): version is read from the repo-root VERSION file at sdist /
@@ -7,7 +7,7 @@ name = "entropic-engine"
 dynamic = ["version"]
 description = "Local-first agentic inference engine — Python wrapper over librentropic.so"
 readme = "README.md"
-license = "LGPL-3.0-or-later"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
     {name = "Tristan VanFossen"}

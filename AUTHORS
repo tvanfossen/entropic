@@ -5,9 +5,9 @@ The original copyright holder of Entropic is:
   Tristan VanFossen <vanfosst@gmail.com>
 
 Contributors retain copyright in their own contributions and license
-those contributions to the project under LGPL-3.0-or-later (with the
-linking exception in NOTICE) via the Developer Certificate of Origin
-sign-off described in CONTRIBUTING.md.
+those contributions to the project under the Apache License, Version
+2.0 via the Developer Certificate of Origin sign-off described in
+CONTRIBUTING.md.
 
 The canonical record of who has contributed what is the git commit
 history. This file is not exhaustive; it identifies the original

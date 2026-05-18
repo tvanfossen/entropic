@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 add_library(entropic-facade)
 
 target_sources(entropic-facade PRIVATE

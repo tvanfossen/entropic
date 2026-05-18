@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file sandbox_test.cpp
  * @brief SandboxManager and ScopedSandbox unit tests (gh#29, v2.1.5).

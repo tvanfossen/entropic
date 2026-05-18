@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_v219_gemma4_a4b_family.cpp
  * @brief Model test — Gemma 4 26B-A4B bundled GGUF + Gemma4Adapter.

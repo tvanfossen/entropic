@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_speculative_speedup.cpp
  * @brief Validate the v2.1.11 speculative-decoding speedup gate.

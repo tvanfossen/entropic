@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file mcp_bridge.cpp
  * @brief `entropic mcp-bridge` — stdio↔unix-socket relay for MCP.

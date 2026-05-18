@@ -23,6 +23,7 @@
 #include <entropic/interfaces/i_inference_backend.h>
 #include <entropic/types/messages_json.h>
 #include "json_serializers.h"
+#include "utf8_safe.h"
 #include <cstdlib>
 #include <cstring>
 #include <new>
@@ -1043,16 +1044,21 @@ static char* sp_get_tools(void* ud) {
 
 /**
  * @brief State provider: get_history — conversation context snapshot.
+ * @callback
  *
  * Returns the current conversation as a JSON array of
  * {role, content_preview, token_count_est} objects, suitable for
  * context_inspect MCP tool and inspect --target history. (P2-16)
  *
+ * Content previews are truncated at 200 bytes on a UTF-8 codepoint
+ * boundary via `entropic::facade::utf8_safe_substr` — byte-indexed truncation would
+ * slice multi-byte codepoints and cause `arr.dump()` below to throw
+ * `nlohmann::json::type_error.316` (gh#56).
+ *
  * @param max_entries Maximum messages to return (0 = all).
  * @param ud Engine handle.
  * @return JSON array string (caller frees via free()).
- * @callback
- * @version 2.0.6-rc16
+ * @version 2.2.3
  */
 static char* sp_get_history(int max_entries, void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
@@ -1067,7 +1073,7 @@ static char* sp_get_history(int max_entries, void* ud) {
     for (int i = start; i < static_cast<int>(msgs.size()); ++i) {
         const auto& m = msgs[static_cast<size_t>(i)];
         std::string preview = m.content.size() > 200
-            ? m.content.substr(0, 200) + "..."
+            ? entropic::facade::utf8_safe_substr(m.content, 200) + "..."
             : m.content;
         arr.push_back({
             {"role",             m.role},

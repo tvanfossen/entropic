@@ -101,6 +101,7 @@ class EntropicError(enum.IntEnum):
     NO_VISION_TIER = 50
     QUEUE_FULL = 51
     SPECULATIVE_INCOMPATIBLE_ARCH = 52
+    TIER_MODEL_TOO_LARGE = 53
 
 class AgentState(enum.IntEnum):
     """Mirrors ``entropic_agent_state_t`` from the C header."""
@@ -227,6 +228,7 @@ class EntropicLogprobResult(ctypes.Structure):
 # ── Callback typedefs (named) ─────────────────
 
 HOOK_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_int, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p), ctypes.c_void_p)
+RESIDENCY_OBSERVER_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_void_p)
 DELEGATION_START_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationRequest), ctypes.c_void_p)
 DELEGATION_COMPLETE_CB = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.POINTER(EntDelegationResult), ctypes.c_void_p)
 ATTEMPT_BOUNDARY_CB = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_void_p)
@@ -269,6 +271,8 @@ entropic_user_message_queue_depth = _bind("entropic_user_message_queue_depth", c
 entropic_clear_user_message_queue = _bind("entropic_clear_user_message_queue", ctypes.c_int, entropic_handle_t)
 entropic_set_queue_observer = _bind("entropic_set_queue_observer", ctypes.c_int, entropic_handle_t, QUEUE_OBSERVER_CB, ctypes.c_void_p)
 entropic_speculative_compat = _bind("entropic_speculative_compat", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_char_p))
+entropic_set_residency_observer = _bind("entropic_set_residency_observer", ctypes.c_int, entropic_handle_t, RESIDENCY_OBSERVER_CB, ctypes.c_void_p)
+entropic_residency_snapshot = _bind("entropic_residency_snapshot", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_context_clear = _bind("entropic_context_clear", ctypes.c_int, entropic_handle_t)
 entropic_context_get = _bind("entropic_context_get", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_context_count = _bind("entropic_context_count", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t))

@@ -89,6 +89,8 @@ NAMED_CB_RENAME = {
     "ent_delegation_complete_cb": "DELEGATION_COMPLETE_CB",
     "ent_validation_attempt_boundary_cb": "ATTEMPT_BOUNDARY_CB",
     "entropic_compactor_fn": "COMPACTOR_CB",
+    # v2.2.4, gh#57 — residency observer
+    "entropic_residency_observer_t": "RESIDENCY_OBSERVER_CB",
 }
 
 # Inline function-pointer parameters that pre-2.2.1 had hand-named
@@ -148,6 +150,8 @@ CTYPE_MAP = {
     "entropic_compute_backend_t": "ctypes.c_int",
     "entropic_mcp_access_level_t": "ctypes.c_int",
     "ent_decision_t": "ctypes.c_int",
+    # v2.2.4, gh#57
+    "entropic_residency_event_t": "ctypes.c_int",
 }
 
 # ── Comment & token utilities ──────────────────────────────

@@ -10,7 +10,7 @@ and validation criteria.
 
 ---
 
-## Current State (v2.2.0 release prep — develop)
+## Current State (v2.2.2 shipped — v2.2.3 / v2.2.4 in flight)
 
 - C++20 engine, pure C ABI at every `.so` boundary
 - Unit + regression tests (CPU pre-commit gate)
@@ -585,6 +585,138 @@ Proposal pointer: `.claude/proposals/BACKLOG/v2.1.11-speculative-decoding.md`.
 Cut after v2.1.11 lands. No new code; release notes consolidation and
 the model-test results JSON attached as a Release artifact per the
 project's release process.
+
+### v2.2.1 — Wrapper sync + auto-generated bindings
+
+Closes [gh#54](https://github.com/tvanfossen/entropic/issues/54) and
+[gh#55](https://github.com/tvanfossen/entropic/issues/55) mechanically.
+
+- `scripts/gen_bindings.py` — full-fidelity bracket-aware C declaration
+  parser, replaces the partial regex generator.
+- All 86 `ENTROPIC_EXPORT` functions, 8 typedef enums, 3 ctypes
+  structures, and every named callback typedef auto-generated.
+- `python/src/entropic/_bindings.py` + `_bindings_manifest.py` become
+  generated artifacts (excluded from ruff-format / flake8).
+- `_LAZY_EXPORTS` imported from `_bindings_manifest` instead of a
+  hand-curated literal.
+- Pre-commit hook `gen-bindings-check` re-runs the generator and diffs
+  against committed output — drift = exit 1.
+- Self-test in `tests/unit/test_gen_bindings.py` synthesizes a fake
+  export to verify the generator catches it.
+
+### v2.2.2 — License return to Apache-2.0
+
+Relicense-only patch. `LICENSE` replaced with canonical Apache-2.0,
+`NOTICE` trimmed, ~400 source/test/build files have their
+`SPDX-License-Identifier` headers flipped. No code, ABI, or behavioral
+changes. v2.0.0–v2.2.1 remain under LGPL-3.0-or-later with the
+linking exception they originally shipped under.
+
+### v2.2.3 — UTF-8-safe history truncation
+
+Closes [gh#56](https://github.com/tvanfossen/entropic/issues/56).
+
+Bugfix for the state-provider history preview in
+`src/facade/entropic.cpp:1070`. The byte-indexed `substr(0, 200)`
+truncation slices through multi-byte UTF-8 codepoints in any message
+with non-ASCII content near the 200-byte boundary, producing an
+invalid sequence at the seam. The subsequent `arr.dump()` throws
+`nlohmann::json::type_error.316` and `run_streaming` returns
+`ENTROPIC_ERROR_GENERATE_FAILED` — model output is lost.
+
+- New local helper `utf8_safe_substr` walks back over UTF-8
+  continuation bytes (`0x80..0xBF`) before the cut, guaranteeing the
+  returned prefix is always a valid UTF-8 sequence.
+- `sp_get_history` body bumped to use the helper.
+- Unit test: pushes `"a"*199 + "é"*5` into history, calls the state
+  provider, asserts `json::parse(result).is_array()`.
+
+No ABI changes. Strictly behavioral repair.
+
+Proposal + implementation log: [gh#56](https://github.com/tvanfossen/entropic/issues/56).
+
+### v2.2.4 — VRAM-aware tier model lifecycle (intent restoration)
+
+Closes [gh#57](https://github.com/tvanfossen/entropic/issues/57).
+
+Bugfix framing: the engine's current eager-load-everything behavior
+at `configure_dir` time is a mistranslation of the original design
+intent. The engine is supposed to abstract memory distribution —
+consumers declare per-tier model bindings, and the engine decides
+what, when, and where to load/unload based on its own VRAM
+accounting. Consumers should never see `ENTROPIC_ERROR_LOAD_FAILED`
+for an aggregate-fit problem the engine should be resolving
+internally. v2.2.4 restores that intent.
+
+Extends the v1.8.2 VRAM lifecycle state machine (COLD/WARM/ACTIVE)
+with observable residency-set state + a budget-aware admission gate.
+Single-active swap is retained as the LRU-of-size-1 default; the
+residency-set data structures and observer surface are sized for the
+multi-resident follow-up.
+
+**Engine-owned mechanics (shipped in v2.2.4):**
+
+- Per-model footprint accounting (GGUF weights file size +
+  `context_length` × per-token KV estimate + configured
+  `vram_reserve_mb` headroom).
+- VRAM budget cached at `initialize()` from
+  `ENTROPIC_VRAM_BUDGET_BYTES` env var. When set and a single tier's
+  footprint exceeds it, `get_model` refuses with
+  `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE` instead of attempting a load
+  that would surface late as `ENTROPIC_ERROR_LOAD_FAILED`. When
+  unset, the gate is disabled and behavior matches v2.2.3.
+- Residency-set state in `ModelOrchestrator`: per-tier footprint
+  cache + per-tier last-activation timestamp for LRU recency.
+- Residency observer fires on every Loaded / Evicted /
+  ActivationSwap transition. INFO-logged with full state-after, no
+  truncation.
+- `configure_dir` is already lazy at the orchestrator level — only
+  the default tier activates at init; alternate tiers load on first
+  routing/lock through the (now residency-gated) `get_model`.
+
+**Deferred to follow-up patches** (data structures + ABI already in
+place — no further ABI bump required):
+
+- CUDA `cudaMemGetInfo` budget discovery (env var is the supported
+  override today; Metal / ROCm equivalents carry the same 0 = unknown
+  semantics by construction).
+- Multi-resident coexistence when total footprint fits the budget
+  (current path remains single-active swap).
+- Metrics counter/histogram sink wiring — INFO logs carry the
+  fields today, ready for [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+
+**New ABI surface (strictly additive):**
+
+- `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE` — distinct from
+  `OUT_OF_MEMORY` / `LOAD_FAILED`. Single tier's model alone exceeds
+  total VRAM; eviction won't help; consumer needs to swap registry
+  selection.
+- `entropic_residency_snapshot(handle, char** out_json)` — current
+  residency set + footprints + last-activation timestamps + headroom.
+- `entropic_set_residency_observer(handle, cb, ud)` — callback fires
+  on `loaded`, `evicted`, `activation_swap` events.
+- State-provider extension `sp_get_residency` — engine introspection
+  via the same surface as `sp_get_history`.
+
+**Observability:**
+
+- INFO log on every load/evict/swap with model path + footprint +
+  residency-set state-after. Untruncated per project standards.
+- ERROR log on `TIER_MODEL_TOO_LARGE` with full context.
+- Metrics: counters for `model_loads_total`, `model_evictions_total`,
+  `tier_activation_swaps_total`; histograms for `model_load_seconds`,
+  `model_evict_seconds`. Routed through whatever lands in
+  [gh#26](https://github.com/tvanfossen/entropic/issues/26).
+
+**Out of scope (potential v2.3.x):**
+
+- Cross-handle model sharing (multiple engine instances).
+- Disk-cached weight prefetching.
+- Quantization-on-load.
+- Smarter eviction policies (size-aware, recency+frequency hybrids).
+- Multi-GPU residency placement.
+
+Proposal + implementation log: [gh#57](https://github.com/tvanfossen/entropic/issues/57).
 
 ### Tracked but not in v2.2.0
 

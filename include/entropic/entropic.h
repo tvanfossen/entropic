@@ -617,6 +617,116 @@ ENTROPIC_EXPORT entropic_error_t entropic_speculative_compat(
     int* compatible,
     char** diagnostic);
 
+/* ── VRAM-aware tier residency (v2.2.4, gh#57) ────────── */
+
+/**
+ * @brief Reasons fired by `entropic_residency_observer_t`.
+ *
+ * Stable contract — values are part of the C ABI. New reasons are
+ * appended; existing values do not change.
+ *
+ * @version 2.2.4
+ */
+typedef enum {
+    ENTROPIC_RESIDENCY_LOADED = 0,            ///< Tier model just loaded into VRAM
+    ENTROPIC_RESIDENCY_EVICTED = 1,           ///< Tier model just unloaded to free VRAM
+    ENTROPIC_RESIDENCY_ACTIVATION_SWAP = 2,   ///< Active tier swapped without unload (multi-resident hit)
+} entropic_residency_event_t;
+
+/**
+ * @brief Residency observer callback.
+ *
+ * Fires from the engine thread synchronously with the corresponding
+ * orchestrator lifecycle transition, while the residency-set mutex is
+ * held. The callback MUST NOT call back into entropic on the same
+ * handle — keep it short (log / counter increment / queue-and-return).
+ *
+ * @param event       One of `entropic_residency_event_t`.
+ * @param tier_name   Tier whose backing model entered/left VRAM.
+ *                    NUL-terminated, valid only for the callback's duration.
+ * @param model_path  Resolved GGUF path for the model. NUL-terminated,
+ *                    valid only for the callback's duration.
+ * @param footprint_bytes Tracked VRAM footprint (weights + KV + headroom
+ *                    estimate). 0 if the engine could not estimate.
+ * @param user_data   Opaque pointer registered alongside the callback.
+ * @callback
+ * @version 2.2.4
+ */
+typedef void (*entropic_residency_observer_t)(
+    entropic_residency_event_t event,
+    const char* tier_name,
+    const char* model_path,
+    size_t footprint_bytes,
+    void* user_data);
+
+/**
+ * @brief Register a residency observer on a handle.
+ *
+ * Only one observer per handle. Passing observer=NULL clears it.
+ * Surface for consumer UIs (Models tabs, dashboards) to track which
+ * tier models are currently in VRAM without polling
+ * `entropic_residency_snapshot`.
+ *
+ * @param handle    Engine handle.
+ * @param observer  Callback, or NULL to clear.
+ * @param user_data Forwarded to observer.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ * @version 2.2.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_set_residency_observer(
+    entropic_handle_t handle,
+    entropic_residency_observer_t observer,
+    void* user_data);
+
+/**
+ * @brief Snapshot of the engine's current VRAM residency set.
+ *
+ * Returns a JSON object describing every tier-backing model currently
+ * resident in VRAM, the engine's VRAM budget, and per-model footprint
+ * accounting. Suitable for consumer Models-tab "what is loaded right
+ * now" widgets.
+ *
+ * JSON shape:
+ * @code
+ * {
+ *   "vram_total_bytes":     17179869184,
+ *   "vram_headroom_bytes":   2147483648,
+ *   "vram_budget_bytes":    17179869184,
+ *   "backend":              "cuda",
+ *   "residency": [
+ *     {
+ *       "tier":              "lead_explorer",
+ *       "model_path":        "/.../qwen3_6_a3b.gguf",
+ *       "footprint_bytes":   14000000000,
+ *       "weights_bytes":     13100000000,
+ *       "kv_cache_bytes":      450000000,
+ *       "headroom_bytes":      450000000,
+ *       "last_activation_ms": 12345
+ *     }
+ *   ]
+ * }
+ * @endcode
+ *
+ * `last_activation_ms` is monotonic milliseconds since engine start at
+ * the most recent activation of that tier (lower = older = first LRU
+ * eviction candidate). When VRAM capacity is unknown (non-CUDA build,
+ * detection failed), `vram_total_bytes` is 0 and `backend` is "unknown";
+ * the residency array is still populated.
+ *
+ * @param handle Engine handle.
+ * @param[out] out_json Heap-allocated NUL-terminated JSON string. Caller
+ *             frees with `entropic_free_string`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle/out_json is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_OUT_OF_MEMORY — allocation failed.
+ * @version 2.2.4
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_residency_snapshot(
+    entropic_handle_t handle,
+    char** out_json);
+
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
 /**

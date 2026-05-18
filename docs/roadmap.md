@@ -386,10 +386,11 @@ what exists, validate parity. Each subsystem is independently verifiable.
 
 ## v2.0.0 — Release
 
-- License: LGPL-3.0 + commercial dual license
-  - Named exception: BISSELL Homecare, Inc. — perpetual permissive use
+- License: Apache-2.0 (v2.0.0–v2.2.1 shipped under LGPL-3.0-or-later
+  with a linking exception; v2.2.2 returns to Apache-2.0)
   - Prior Apache 2.0 releases remain Apache 2.0 (irrevocable)
-  - CLA required for external contributors
+  - LGPL releases v2.0.0–v2.2.1 remain under LGPL (irrevocable)
+  - DCO sign-off required for external contributors
 - Stable C API (`entropic.h`, versioned)
 - Three distribution channels:
   1. PyPI wheel with bundled `.so` (CUDA, purpose-built)

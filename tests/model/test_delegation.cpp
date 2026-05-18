@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_delegation.cpp
  * @brief BDD subsystem test — lead delegates to child and receives result.

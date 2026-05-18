@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file speculative_compat.cpp
  * @brief Implementation of the target/draft compatibility check.

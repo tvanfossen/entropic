@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """Pythonic facade for runtime MCP server registration (#8, v2.1.4).
 
 The C ABI ``entropic_register_mcp_server(handle, name, config_json)``

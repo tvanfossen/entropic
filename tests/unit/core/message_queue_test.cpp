@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file message_queue_test.cpp
  * @brief Unit tests for the mid-generation user-message queue (gh#40).

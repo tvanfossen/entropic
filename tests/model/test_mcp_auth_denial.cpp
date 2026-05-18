@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_mcp_auth_denial.cpp
  * @brief BDD subsystem test — identity with READ-only keys is denied WRITE.

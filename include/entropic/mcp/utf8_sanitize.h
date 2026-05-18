@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file utf8_sanitize.h
  * @brief UTF-8 validation + replacement at every system boundary where

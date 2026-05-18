@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # librentropic-mcp.so — base + registry + executor + permissions + manager
 add_library(entropic-mcp OBJECT)
 

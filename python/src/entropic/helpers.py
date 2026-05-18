@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """Consumer-side helpers for the entropic Python wrapper.
 
 These are not part of the C ABI — they are pure-Python conveniences for

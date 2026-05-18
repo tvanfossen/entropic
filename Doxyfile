@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 PROJECT_NAME           = "Entropic"
 # v2.1.2 (#4): PROJECT_NUMBER is injected at build time from the repo-root
 # VERSION file (single source of truth shared with CMakeLists.txt and

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file tool_result_classify_test.cpp
  * @brief Coverage for entropic::mcp::is_effectively_empty and

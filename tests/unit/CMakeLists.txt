@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 add_executable(entropic-tests
     types/error_test.cpp
     types/config_structs_test.cpp

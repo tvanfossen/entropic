@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file gemma4_adapter.h
  * @brief Gemma 4 chat adapter (v2.1.9, gh#46).

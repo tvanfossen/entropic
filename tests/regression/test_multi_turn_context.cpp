@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_multi_turn_context.cpp
  * @brief Regression test from test2: multi-turn context accumulation.

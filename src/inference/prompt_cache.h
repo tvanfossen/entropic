@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file prompt_cache.h
  * @brief Host-memory KV cache state storage with LRU eviction.

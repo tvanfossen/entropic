@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """``entropic install-engine`` — fetch the matching native tarball.
 
 Behaviour:

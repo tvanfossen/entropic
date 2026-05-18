@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file stdio_transport_test.cpp
  * @brief Unit tests for StdioTransport display_name handling (gh#19).

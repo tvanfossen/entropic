@@ -328,6 +328,36 @@ void AdapterManager::unload_all_for_model(
     logger->info("Unloaded {} adapter(s) for model", to_remove.size());
 }
 
+/**
+ * @brief Free every loaded adapter handle (gh#58 close-out, v2.3.0).
+ *
+ * Called from `~ModelOrchestrator` after backends are torn down.
+ * Skips the HOT-deactivation path because the contexts that were
+ * holding the adapter references are already gone — calling
+ * `clear_adapters(ctx)` against a destroyed context would be a
+ * use-after-free.
+ *
+ * @internal
+ * @version 2.3.0
+ */
+void AdapterManager::unload_all() {
+    std::lock_guard<std::mutex> lock(adapter_mutex_);
+    size_t freed = 0;
+    for (auto& [name, entry] : adapters_) {
+        if (entry.handle) {
+            llama_adapter_lora_free(entry.handle);
+            entry.handle = nullptr;
+            ++freed;
+        }
+        entry.state = AdapterState::COLD;
+    }
+    adapters_.clear();
+    active_name_.clear();
+    if (freed > 0) {
+        logger->info("Unloaded all {} adapter(s) on shutdown", freed);
+    }
+}
+
 // ── Queries ─────────────────────────────────────────────────
 
 /**

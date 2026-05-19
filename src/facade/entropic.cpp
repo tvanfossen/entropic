@@ -1648,6 +1648,16 @@ int entropic_api_version(void) {
 }
 
 /**
+ * @brief gh#35: idle-time accessor for host-side idle-exit policies.
+ * @utility
+ * @version 2.3.0
+ */
+int64_t entropic_seconds_since_last_activity(entropic_handle_t handle) {
+    if (!handle || !handle->engine) { return 0; }
+    return handle->engine->seconds_since_last_activity();
+}
+
+/**
  * @brief Allocate memory using the engine's allocator.
  *
  * @return Pointer to allocated memory, or NULL on failure.

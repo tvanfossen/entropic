@@ -85,11 +85,20 @@ qwen3_5_0_8b:
   description: Smallest Qwen3.5 — draft / router candidate (Apache-2.0)
   # License: Apache-2.0. Quant rationale: 0.8B is small enough that
   # full Q8 preserves quality without VRAM concern.
+  # gh#62 (v2.3.0): structured selectors.
+  provider: unsloth
+  family: qwen3_5
+  size_label: 0_8b
+  quant: Q8_0
 
 qwen3_5_2b:
   name: Qwen3.5-2B-Q8_0
   url: https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q8_0.gguf
   size_gb: 2.1
+  provider: unsloth
+  family: qwen3_5
+  size_label: 2b
+  quant: Q8_0
   adapter: qwen35
   description: Compact Qwen3.5 — edge / router (Apache-2.0)
   # License: Apache-2.0. Quant: Q8_0 — small enough to skip
@@ -101,6 +110,10 @@ qwen3_5_4b:
   size_gb: 4.5
   adapter: qwen35
   description: Model-keyed alias for the 4B Qwen3.5 (same as `lightweight`)
+  provider: unsloth
+  family: qwen3_5
+  size_label: 4b
+  quant: Q8_0
   # License: Apache-2.0. Quant: Q8_0.
 
 qwen3_5_9b:
@@ -194,6 +207,10 @@ gemma4_e4b:
   size_gb: 4.5
   adapter: gemma4
   description: Gemma 4 E4B instruct — mid-class alternative
+  provider: unsloth
+  family: gemma4
+  size_label: e4b
+  quant: Q8_0
   # License: Gemma Terms of Use. Quant: Q8_0.
   # Vision: paired mmproj — see gemma4_e4b_mmproj (v2.1.12, gh#51).
   mmproj_key: gemma4_e4b_mmproj
@@ -211,6 +228,10 @@ gemma4_e2b:
   size_gb: 2.5
   adapter: gemma4
   description: Gemma 4 E2B instruct — edge / router class
+  provider: unsloth
+  family: gemma4
+  size_label: e2b
+  quant: Q8_0
   # License: Gemma Terms of Use. Quant: Q8_0.
   # Vision: paired mmproj — see gemma4_e2b_mmproj (v2.1.12, gh#51).
   mmproj_key: gemma4_e2b_mmproj
@@ -240,6 +261,10 @@ nemotron3_nano_4b:
   name: NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL
   url: https://huggingface.co/unsloth/NVIDIA-Nemotron-3-Nano-4B-GGUF/resolve/main/NVIDIA-Nemotron-3-Nano-4B-UD-Q4_K_XL.gguf
   size_gb: 3.1
+  provider: unsloth
+  family: nemotron3
+  size_label: nano_4b
+  quant: UD-Q4_K_XL
   adapter: nemotron3
   description: Nemotron 3 Nano 4B — hybrid Mamba, reasoning-capable, edge class
   # License: NVIDIA Open Model License

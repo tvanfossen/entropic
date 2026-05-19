@@ -49,6 +49,43 @@ SCENARIO("BundledModels loads registry from YAML", "[config][bundled_models]") {
     }
 }
 
+SCENARIO("BundledModels find_by (family, size, quant) (gh#62)",
+         "[config][bundled_models][gh62]") {
+    GIVEN("a registry with at least one structured-selector entry") {
+        entropic::config::BundledModels registry;
+        REQUIRE(registry.load(test_data() / "bundled_models.yaml").empty());
+
+        WHEN("looking up an entry that has all three selectors") {
+            auto key = registry.find_by("qwen3_5", "4b", "Q8_0");
+            THEN("it returns the matching flat key") {
+                REQUIRE(key == "qwen3_5_4b");
+            }
+        }
+
+        WHEN("looking up an entry that doesn't exist") {
+            auto key = registry.find_by("qwen3_5", "4b", "Q3_K_M");
+            THEN("it returns empty string (no synthesis)") {
+                REQUIRE(key.empty());
+            }
+        }
+
+        WHEN("looking up with a missing selector") {
+            auto key = registry.find_by("qwen3_5", "", "Q8_0");
+            THEN("it returns empty (all three selectors are required)") {
+                REQUIRE(key.empty());
+            }
+        }
+
+        WHEN("looking up an entry that hasn't been backfilled") {
+            // `primary` in the fixture has no provider/family/size/quant.
+            auto key = registry.find_by("qwen3_5", "35b_a3b", "UD-IQ3_XXS");
+            THEN("it returns empty (don't match on unset fields)") {
+                REQUIRE(key.empty());
+            }
+        }
+    }
+}
+
 SCENARIO("BundledModels resolves keys to paths", "[config][bundled_models]") {
     GIVEN("A loaded registry") {
         entropic::config::BundledModels registry;

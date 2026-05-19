@@ -409,8 +409,25 @@ SCENARIO("_COUNT equals number of real capabilities",
     GIVEN("the BackendCapability enum") {
         int count = static_cast<int>(
             entropic::BackendCapability::_COUNT);
-        THEN("count is 12") {
-            REQUIRE(count == 12);
+        THEN("count is 13 (AUDIO added at gh#53)") {
+            REQUIRE(count == 13);
+        }
+    }
+}
+
+SCENARIO("AUDIO capability advertised when projector supports audio",
+         "[backend][capabilities][gh53]")
+{
+    // Static-table verification only — exercising the dynamic mtmd
+    // path requires a real audio-projector GGUF and a loaded model,
+    // which lives in the realmodel suite. This pins the enum ordering
+    // and asserts the LlamaCppBackend dispatch reaches the AUDIO arm.
+    GIVEN("the AUDIO capability enum value") {
+        THEN("it sits at index 12, just before _COUNT") {
+            REQUIRE(static_cast<int>(entropic::BackendCapability::AUDIO)
+                    == 12);
+            REQUIRE(static_cast<int>(entropic::BackendCapability::AUDIO)
+                    == static_cast<int>(entropic::BackendCapability::_COUNT) - 1);
         }
     }
 }

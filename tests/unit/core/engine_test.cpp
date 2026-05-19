@@ -503,6 +503,89 @@ SCENARIO("is_delegation_cycle flags ancestor reuse",
     }
 }
 
+// ── gh#64: max_consecutive_failed_delegations guard ──────
+
+SCENARIO("is_delegation_repeat_blocked enforces consecutive cap",
+         "[engine][gh64][delegation]") {
+    GIVEN("an engine with default max_consecutive_failed_delegations=2") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        LoopContext ctx{};
+        ctx.locked_tier = "lead";
+
+        WHEN("there is no prior failed delegation") {
+            THEN("any target is allowed") {
+                REQUIRE_FALSE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+        }
+
+        WHEN("the same target has failed under the cap") {
+            ctx.last_failed_delegation_target = "registrar";
+            ctx.consecutive_failed_delegations = 1;
+            THEN("retrying the target is still allowed") {
+                REQUIRE_FALSE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+        }
+
+        WHEN("the same target has hit the cap") {
+            ctx.last_failed_delegation_target = "registrar";
+            ctx.consecutive_failed_delegations = 2;
+            THEN("retrying the same target is blocked") {
+                REQUIRE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+            AND_THEN("a different target is NOT blocked") {
+                REQUIRE_FALSE(
+                    engine.is_delegation_repeat_blocked(ctx, "researcher"));
+            }
+        }
+
+        WHEN("the cap is exceeded") {
+            ctx.last_failed_delegation_target = "registrar";
+            ctx.consecutive_failed_delegations = 5;
+            THEN("the same target stays blocked") {
+                REQUIRE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+        }
+    }
+}
+
+SCENARIO("max_consecutive_failed_delegations is configurable",
+         "[engine][gh64][delegation]") {
+    GIVEN("an engine configured with cap=4") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_consecutive_failed_delegations = 4;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        LoopContext ctx{};
+        ctx.last_failed_delegation_target = "registrar";
+
+        WHEN("the counter is 3 (under the configured cap)") {
+            ctx.consecutive_failed_delegations = 3;
+            THEN("not blocked") {
+                REQUIRE_FALSE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+        }
+
+        WHEN("the counter is 4 (at the cap)") {
+            ctx.consecutive_failed_delegations = 4;
+            THEN("blocked") {
+                REQUIRE(
+                    engine.is_delegation_repeat_blocked(ctx, "registrar"));
+            }
+        }
+    }
+}
+
 // ── P1-10: external interrupt callback is invoked ────────
 
 SCENARIO("interrupt() fires external interrupt callback once",

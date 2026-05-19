@@ -43,6 +43,7 @@ enum class BackendCapability : int {
     VISION = 9,               ///< Vision / multimodal input (v1.9.11)
     SPECULATIVE_DECODING = 10, ///< Speculative decoding compatibility
     PROMPT_CACHING = 11,      ///< Prompt cache prefix save/load (v1.8.3)
+    AUDIO = 12,               ///< Audio input via mtmd audio projector (gh#53, v2.3.0)
     _COUNT                    ///< Sentinel — must be last. Used for iteration/array sizing.
 };
 

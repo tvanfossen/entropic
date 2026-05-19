@@ -176,7 +176,28 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
         if (parsed) {
             calls.push_back(*parsed);
             logger->info("Parsed tagged tool call: {}", parsed->name);
+        } else {
+            // gh#65: when the regex matches but parse_single_tool_call
+            // returns nullopt, the JSON payload was malformed in a way
+            // try_recover_json could not fix. Log the offending text so
+            // future investigations have something to grep, instead of
+            // silently producing zero tool calls.
+            logger->warn(
+                "Tagged tool_call matched but JSON failed to parse: {}",
+                json_str);
         }
+    }
+    // gh#65: model emitted <tool_call> markup but no regex match.
+    // Most likely cause: tag split across whitespace/encoding the
+    // regex doesn't tolerate. Surface this so the consumer can
+    // capture the raw content for triage instead of seeing a silent
+    // "tool_calls: 0".
+    if (calls.empty()
+        && content.find("<tool_call>") != std::string::npos) {
+        logger->warn(
+            "Content contains '<tool_call>' substring but no tagged "
+            "calls were extracted — possible tag/encoding mismatch. "
+            "Raw content length={}", content.size());
     }
     return calls;
 }

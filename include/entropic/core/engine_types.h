@@ -96,6 +96,16 @@ struct LoopConfig {
     /// effectively disable the hard block while keeping the soft
     /// advisory warning. (#14, v2.1.4)
     int max_consecutive_same_tool_hard_block = -1;
+    /// @brief gh#64: cap on N consecutive failed delegations targeting
+    /// the same tier. When the lead re-delegates to a target that has
+    /// just failed `max_consecutive_failed_delegations` times in a row,
+    /// the engine blocks the call BEFORE dispatching the child loop and
+    /// pushes a `[DELEGATION REJECTED] ... stop retrying` message to
+    /// the lead's context so it pivots or completes. Defaults to 2 —
+    /// any failure deserves a retry; chronic failures don't. Reset
+    /// counter on (a) successful delegation, (b) delegation to a
+    /// different target, or (c) any non-delegation tool call.
+    int max_consecutive_failed_delegations = 2;
     /// @brief Maximum byte length for a single tool's result content
     /// before the engine truncates with a "[... truncated, N more
     /// bytes]" tail. Single global cap; per-tool overrides not yet
@@ -263,6 +273,19 @@ struct LoopContext {
     /// Compared against LoopConfig::max_consecutive_same_tool.
     /// (Demo ask #5, v2.1.0)
     int consecutive_same_tool_calls = 0;
+
+    /// @brief gh#64: target tier of the most recent FAILED delegation
+    /// (DelegationResult.success == false). Empty when last delegation
+    /// succeeded, no delegation has run, or a non-delegation tool ran.
+    std::string last_failed_delegation_target;
+
+    /// @brief gh#64: count of consecutive failed delegations against
+    /// last_failed_delegation_target. Reset on success or target
+    /// switch (intentionally NOT reset on a non-delegation tool call —
+    /// if a lead reads files between two attempts at the same failing
+    /// target, we still want to enforce the cap). Compared against
+    /// LoopConfig::max_consecutive_failed_delegations.
+    int consecutive_failed_delegations = 0;
 };
 
 /**

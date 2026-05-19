@@ -631,6 +631,39 @@ public:
     bool is_delegation_cycle(
         const LoopContext& ctx, const std::string& target) const;
 
+    /**
+     * @brief Predicate: should this delegation be blocked because the
+     *        same target has just failed too many times? (gh#64)
+     *
+     * Returns true when `target` matches `ctx.last_failed_delegation_target`
+     * and `ctx.consecutive_failed_delegations >=
+     * loop_config_.max_consecutive_failed_delegations`. Exposed so
+     * tests can exercise the guard without spinning a full child loop.
+     *
+     * @param ctx Active loop context.
+     * @param target Proposed delegation target tier.
+     * @return true if the delegation should be rejected before dispatch.
+     * @utility
+     * @version 2.3.0
+     */
+    bool is_delegation_repeat_blocked(
+        const LoopContext& ctx, const std::string& target) const;
+
+    /**
+     * @brief gh#35: seconds since the engine last serviced a run().
+     *
+     * Updated at the entry of every run()/run_turn() call. Hosts that
+     * want an idle-exit policy poll this and tear down the engine when
+     * the value exceeds their threshold. Returned as int64 (epoch
+     * seconds delta) so consumers can compare against any unit.
+     *
+     * @return Seconds since last activity. Returns 0 if no run has
+     *         ever happened (no activity to be idle relative to).
+     * @utility
+     * @version 2.3.0
+     */
+    int64_t seconds_since_last_activity() const;
+
 private:
     /**
      * @brief Main loop implementation.
@@ -1082,6 +1115,9 @@ private:
     mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
     std::deque<std::string> user_message_queue_; ///< FIFO mid-gen queue
     std::atomic<bool> running_flag_{false};   ///< Top-level run_turn in progress
+    /// @brief gh#35 (v2.3.0): epoch-seconds timestamp of the most
+    /// recent run()/run_turn() entry. Zero until the first run.
+    std::atomic<int64_t> last_activity_epoch_s_{0};
     void (*queue_observer_)(const char*, size_t, void*) = nullptr; ///< gh#40 callback
     void* queue_observer_data_ = nullptr;     ///< Forwarded to queue_observer_
     /// @brief Persistent state-transition observer slot. Survives

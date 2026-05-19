@@ -64,6 +64,36 @@ static char* alloc_cstr(const std::string& src) {
 
 /* setup_ggml_logging moved to ModelOrchestrator::initialize() — Step 7 */
 
+// gh#58 follow-up (v2.2.6): per-handle last_error. Pre-v2.2.6 the
+// public API in src/types/error.cpp ignored the handle parameter and
+// returned a single thread-local buffer, so every handle->last_error
+// assignment in the facade was unreadable from the consumer side.
+// Thread-local cache here means the returned const char* stays valid
+// until the *same* thread calls entropic_last_error again — matching
+// the documented v1.8.0 contract.
+static thread_local std::string s_last_error_cache;
+static thread_local char s_pre_create_error[512] = "";
+
+/**
+ * @brief Read the per-handle last_error under api_mutex.
+ *
+ * Pre-v2.2.6 the public symbol lived in src/types/error.cpp and
+ * ignored its handle parameter (v1.8.0 TODO never done). Moved here
+ * because the private engine_handle struct is only visible in the
+ * facade. Returns a thread-local cache copy so the pointer stays
+ * valid until the same thread reads again — matches the v1.8.0
+ * contract documented in include/entropic/types/error.h.
+ *
+ * @utility
+ * @version 2.2.6
+ */
+extern "C" const char* entropic_last_error(entropic_handle_t handle) {
+    if (!handle) { return s_pre_create_error; }
+    std::lock_guard lock(handle->api_mutex);
+    s_last_error_cache = handle->last_error;
+    return s_last_error_cache.c_str();
+}
+
 /**
  * @brief Check handle prerequisites for orchestrator APIs.
  * @param h Engine handle.
@@ -1330,19 +1360,64 @@ static void start_external_bridge(entropic_handle_t h) {
  * @internal
  * @version 2.1.10.1
  */
-static entropic_error_t configure_common(entropic_handle_t h) {
+/**
+ * @brief Refuse a second configure on the same handle (gh#58).
+ *
+ * Re-configure would leak raw pointers captured during the first
+ * pass into subsystems that already wired against the original
+ * orchestrator/engine/mcp_auth.
+ *
+ * @internal
+ * @version 2.2.5
+ */
+static entropic_error_t reject_if_configured(entropic_handle_t h) {
+    if (!h->configured.load()) { return ENTROPIC_OK; }
+    h->last_error = "handle already configured";
+    s_log->error("{}", h->last_error);
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Shared body of all entropic_configure* entry points.
+ * @internal
+ * @version 2.2.6
+ */
+/**
+ * @brief Construct the orchestrator + grammar fallback for a handle.
+ *
+ * Extracted from `configure_common` in v2.2.9 to keep SLOC under the
+ * knots gate after v2.2.6's per-handle InterfaceContext wiring grew
+ * the body past 50 lines.
+ *
+ * @internal
+ * @version 2.2.9
+ */
+static entropic_error_t init_orchestrator(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
     if (!h->orchestrator->initialize(h->config)) {
         h->last_error = "orchestrator initialization failed";
         s_log->error("{}", h->last_error);
         return ENTROPIC_ERROR_LOAD_FAILED;
     }
-
-    auto data_dir = entropic::config::resolve_data_dir(h->config);
     // Fallback grammar loading: only if initialize() didn't find
     // grammars via config_dir. Avoids overwriting patched grammars.
     if (h->orchestrator->grammar_registry().size() == 0) {
         h->orchestrator->load_grammars_from(data_dir / "grammars");
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Shared body of all entropic_configure* entry points.
+ * @internal
+ * @version 2.2.9
+ */
+static entropic_error_t configure_common(entropic_handle_t h) {
+    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
+    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
+        return rc;
     }
 
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
@@ -1356,8 +1431,13 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         }, h->orchestrator.get());
     init_mcp_servers(h, data_dir);
 
+    // gh#58 follow-up (v2.2.6): per-handle InterfaceContext. Pre-v2.2.6
+    // build_orchestrator_interface stored the context in a process-
+    // global static, so a second configure freed the first handle's
+    // context and h1.run() segfaulted on a use-after-free.
     h->inference_iface = entropic::build_orchestrator_interface(
-        h->orchestrator.get(), h->config.models.default_tier);
+        h->orchestrator.get(), h->config.models.default_tier,
+        &h->inference_iface_ctx);
     h->inference_iface.get_tool_prompt = facade_get_tool_prompt;
     h->inference_iface.tool_prompt_data = h;
     auto& iface = h->inference_iface;
@@ -1535,6 +1615,12 @@ void entropic_destroy(entropic_handle_t handle) {
     }
 
     entropic_inference_log_silence();
+
+    // gh#58 follow-up (v2.2.6): release per-handle InterfaceContext
+    // before the orchestrator unloads, since the context holds a raw
+    // orchestrator pointer used by the iface callbacks.
+    entropic::destroy_orchestrator_interface(handle->inference_iface_ctx);
+    handle->inference_iface_ctx = nullptr;
 
     // Phase 1+ subsystem teardown will go here in reverse order.
     // Phase 0: struct itself owns hook_registry by value.

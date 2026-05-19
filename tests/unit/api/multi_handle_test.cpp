@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file multi_handle_test.cpp
  * @brief gh#58 — two entropic_handle_t in one process.
@@ -257,5 +257,25 @@ SCENARIO("Three handles can coexist", "[api][gh58][multi-handle]") {
         }
 
         for (auto h : hs) { entropic_destroy(h); }
+    }
+}
+
+// v2.2.9: moved from tests/unit/types/error_test.cpp. The
+// implementation of entropic_last_error moved to src/facade/entropic.cpp
+// in v2.2.6 (gh#58 follow-up — needs visibility of the private
+// engine_handle struct), so the symbol is only linkable from facade-
+// linked test targets. The pre-create (NULL handle) contract is still
+// part of the documented v1.8.0 surface — pin it here.
+SCENARIO("entropic_last_error returns empty string for NULL handle",
+         "[error][facade]") {
+    GIVEN("A NULL handle (pre-creation)") {
+        WHEN("entropic_last_error is called") {
+            const char* msg = entropic_last_error(nullptr);
+
+            THEN("it returns an empty string, not NULL") {
+                REQUIRE(msg != nullptr);
+                REQUIRE(std::strlen(msg) == 0);
+            }
+        }
     }
 }

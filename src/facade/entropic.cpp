@@ -1382,20 +1382,42 @@ static entropic_error_t reject_if_configured(entropic_handle_t h) {
  * @internal
  * @version 2.2.6
  */
-static entropic_error_t configure_common(entropic_handle_t h) {
-    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+/**
+ * @brief Construct the orchestrator + grammar fallback for a handle.
+ *
+ * Extracted from `configure_common` in v2.2.9 to keep SLOC under the
+ * knots gate after v2.2.6's per-handle InterfaceContext wiring grew
+ * the body past 50 lines.
+ *
+ * @internal
+ * @version 2.2.9
+ */
+static entropic_error_t init_orchestrator(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
     if (!h->orchestrator->initialize(h->config)) {
         h->last_error = "orchestrator initialization failed";
         s_log->error("{}", h->last_error);
         return ENTROPIC_ERROR_LOAD_FAILED;
     }
-
-    auto data_dir = entropic::config::resolve_data_dir(h->config);
     // Fallback grammar loading: only if initialize() didn't find
     // grammars via config_dir. Avoids overwriting patched grammars.
     if (h->orchestrator->grammar_registry().size() == 0) {
         h->orchestrator->load_grammars_from(data_dir / "grammars");
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Shared body of all entropic_configure* entry points.
+ * @internal
+ * @version 2.2.9
+ */
+static entropic_error_t configure_common(entropic_handle_t h) {
+    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
+    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
+        return rc;
     }
 
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();

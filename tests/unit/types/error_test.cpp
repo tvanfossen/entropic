@@ -54,18 +54,11 @@ SCENARIO("ENTROPIC_OK is zero", "[error][types]") {
     }
 }
 
-SCENARIO("entropic_last_error returns empty string initially", "[error][types]") {
-    GIVEN("A NULL handle (pre-creation)") {
-        WHEN("entropic_last_error is called") {
-            const char* msg = entropic_last_error(nullptr);
-
-            THEN("it returns an empty string, not NULL") {
-                REQUIRE(msg != nullptr);
-                REQUIRE(std::strlen(msg) == 0);
-            }
-        }
-    }
-}
+// SCENARIO("entropic_last_error returns empty string initially") moved
+// to tests/unit/api/multi_handle_test.cpp in v2.2.9 — the function's
+// implementation moved from src/types/error.cpp to src/facade/entropic.cpp
+// in v2.2.6 (gh#58 follow-up), so the symbol is no longer linkable from
+// the types-only test target.
 
 SCENARIO("Error callback registration rejects NULL handle", "[error][types]") {
     GIVEN("A NULL handle") {

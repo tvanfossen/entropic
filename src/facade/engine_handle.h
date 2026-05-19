@@ -54,6 +54,7 @@ class ConstitutionalValidator;
 class CompactorRegistry;
 struct ParsedConfig;
 class BundledModels;
+struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
 } // namespace entropic
 
 /**
@@ -83,6 +84,9 @@ struct entropic_engine {
     // ── Phase 2: Inference ─────────────────────────────────────
     std::unique_ptr<entropic::ModelOrchestrator> orchestrator; ///< Model pool + routing
     entropic::InferenceInterface inference_iface;              ///< Stable copy for validator lifetime
+    /// Per-handle owned context backing inference_iface.user_data.
+    /// Pre-v2.2.6 this was a process-global static — gh#58 follow-up.
+    entropic::InterfaceContext* inference_iface_ctx = nullptr;
 
     // ── Phase 3: MCP + Identity + Authorization ──────────────
     std::unique_ptr<entropic::ServerManager> server_manager;           ///< MCP server lifecycle

@@ -118,6 +118,25 @@ void finalize_result(GenerationResult& result,
     logger->info("Content:\n{}", result.content);
 }
 
+/**
+ * @brief Map a ModelConfig::cache_type_k/v string to a ggml_type.
+ *
+ * Unknown values fall back to F16 with a logged warning, matching the
+ * llama_context_default_params() default.
+ *
+ * @utility
+ * @version 2.2.7
+ */
+ggml_type parse_kv_cache_type(const std::string& s) {
+    if (s == "f16")  { return GGML_TYPE_F16;  }
+    if (s == "f32")  { return GGML_TYPE_F32;  }
+    if (s == "bf16") { return GGML_TYPE_BF16; }
+    if (s == "q8_0") { return GGML_TYPE_Q8_0; }
+    if (s == "q4_0") { return GGML_TYPE_Q4_0; }
+    logger->warn("Unknown cache_type '{}' — defaulting to f16", s);
+    return GGML_TYPE_F16;
+}
+
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -177,7 +196,16 @@ bool LlamaCppBackend::do_activate() {
     llama_model* new_model = llama_model_load_from_file(
         config().path.c_str(), mparams);
     if (!new_model) {
-        last_error_ = "Failed to reload model with GPU layers";
+        // llama.cpp returns null with no error string — the actual
+        // reason (OOM, CUDA init failure, GGUF parse error, etc.)
+        // only surfaces in ggml's log stream. Point the operator at
+        // it so multi-handle GPU failures (gh#58 v2.2.7 follow-up)
+        // are diagnosable without source-diving llama.cpp.
+        last_error_ = "Failed to reload model with GPU layers "
+                      "(path=" + config().path.string()
+                    + ", gpu_layers=" + std::to_string(config().gpu_layers)
+                    + ") — check llama_ggml.log in the engine's log_dir "
+                      "for the underlying llama.cpp/CUDA error";
         return false;
     }
 
@@ -198,6 +226,15 @@ bool LlamaCppBackend::do_activate() {
     cparams.flash_attn_type = config().flash_attn
         ? LLAMA_FLASH_ATTN_TYPE_ENABLED
         : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // gh#61: cache_type_k/cache_type_v were documented config fields
+    // since v1.8.0 but never wired into llama.cpp. At large n_ctx the
+    // F16 default KV cache OOMs llama_init_from_model on the GPU
+    // (Qwen3.5-4B @ 65k F16 KV ≈ 8 GB, exceeds 1080 Ti's 11 GB once
+    // weights are resident). Mapping the documented strings here
+    // makes the existing q8_0/q4_0/bf16 etc. settings finally take
+    // effect.
+    cparams.type_k = parse_kv_cache_type(config().cache_type_k);
+    cparams.type_v = parse_kv_cache_type(config().cache_type_v);
 
     ctx_ = llama_init_from_model(model_, cparams);
     if (!ctx_) {
@@ -205,8 +242,11 @@ bool LlamaCppBackend::do_activate() {
         return false;
     }
 
-    logger->info("Context created: n_ctx={}, n_batch={}, flash_attn={}",
-              config().context_length, config().n_batch, config().flash_attn);
+    logger->info("Context created: n_ctx={}, n_batch={}, "
+                 "flash_attn={}, type_k={}, type_v={}",
+                 config().context_length, config().n_batch,
+                 config().flash_attn,
+                 config().cache_type_k, config().cache_type_v);
 
     // Initialize prompt cache if not already created
     if (!prompt_cache_) {
@@ -290,6 +330,21 @@ void LlamaCppBackend::do_deactivate() {
     } else {
         logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
     }
+}
+
+/**
+ * @brief Destructor — route to do_unload() so GPU buffers don't leak.
+ *
+ * gh#58 v2.2.7 follow-up: previously the defaulted base destructor
+ * left model_/ctx_/mtmd_ctx_ as raw pointers that were never freed.
+ * On a second handle's GPU model load, llama.cpp's CUDA pool then
+ * failed because the prior buffers were still allocated.
+ *
+ * @internal
+ * @version 2.2.8
+ */
+LlamaCppBackend::~LlamaCppBackend() {
+    do_unload();
 }
 
 /**

@@ -1,3 +1,215 @@
+# entropic v2.2.8
+
+Patch release. **Bugfix — `LlamaCppBackend` GPU buffer leak on
+backend destruction (gh#58 v2.2.7 follow-up).** Caused
+"Failed to reload model with GPU layers" on the next GPU model load
+in the same process — after either a handle destroy or any
+preceding test/scenario that loaded a GPU model and tore it down.
+
+## Root cause
+
+`InferenceBackend::~InferenceBackend()` was defaulted, and no
+concrete backend (`LlamaCppBackend` included) defined its own
+destructor. The class holds raw `llama_model*`, `llama_context*`,
+and `mtmd_context*` pointers. On backend destruction those pointers
+were silently dropped — `llama_model_free` / `llama_free` /
+`mtmd_free` never ran. GPU memory stayed reserved by the process
+but llama.cpp's CUDA pool lost track of it. The next
+`llama_model_load_from_file` with `gpu_layers != 0` failed.
+
+Reproduced locally with the test added at
+`tests/unit/api/multi_handle_test.cpp` (tagged `[.gpu][.realmodel]`,
+needs a real GGUF). Two handles configure cleanly the first
+iteration; the second iteration of the same scenario (Catch2
+re-runs the SCENARIO per THEN block) failed on the second handle.
+With the fix, both iterations succeed.
+
+This matches the consumer's gh#58 v2.2.7 verification where
+`[.multihandle][gpu]` failed at "first" configure: their
+`[.singlehandle][gpu]` runs first in the same process, leaks GPU
+buffers on test teardown, and the multi-handle suite's first
+configure then hits the corrupt CUDA pool.
+
+## Fix
+
+Added `~LlamaCppBackend()` that calls `do_unload()`. Routes through
+the existing teardown that frees `mtmd_ctx_`, `ctx_`, and `model_`
+in the correct order. No new resource management — just the
+destructor that should have been there since v1.8.2.
+
+Calling `do_unload()` from a derived destructor is the correct C++
+pattern; calling it from the base destructor would be unsafe (the
+derived vtable is already gone by then). Future backends must
+follow the same pattern in their own destructors.
+
+## Improved diagnostic
+
+`do_activate()`'s "Failed to reload model with GPU layers" error
+now includes the model path, the requested `gpu_layers`, and
+points the operator at `llama_ggml.log` for the underlying
+llama.cpp/CUDA error. Independent of the destructor fix; useful
+for any future GPU activation failure.
+
+## Tests
+
+`tests/unit/api/multi_handle_test.cpp` — new
+`[.gpu][.realmodel]` scenario that exercises two GPU handles
+across two iterations. Tag dot-prefix excludes it from the default
+test run; opt in via `entropic-api-tests "[.gpu]"`. Override the
+model paths via `ENTROPIC_TEST_GPU_MODEL` and
+`ENTROPIC_TEST_GPU_MODEL_B` env vars (defaults to the
+`~/.entropic/models/` paths used during fix validation).
+
+## Still open
+
+- gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
+# entropic v2.2.7
+
+Patch release. **Bugfix — `cache_type_k`/`cache_type_v` finally wired
+to llama.cpp (gh#61).** Documented config fields since v1.8.0 that
+were never connected to the inference layer.
+
+## Symptom
+
+Configurations declaring `cache_type_k: q8_0` / `cache_type_v: q8_0`
+were silently ignored. The KV cache always ran F16, doubling-to-
+quadrupling its VRAM footprint vs. the declared quantization. At
+large `context_length`, this caused `llama_init_from_model failed`
+in `do_activate()` — the GPU model loads fine but the F16 KV cache
+puts total VRAM over the device's capacity.
+
+Reporter case: Qwen3.5-4B-Q8_0 with `context_length: 65536`,
+`gpu_layers: -1`, `cache_type_k/v: q8_0` on a 1080 Ti (11 GB). F16
+KV at 65k context ≈ 8 GB + ~4.5 GB weights = ~12.5 GB > 11 GB =
+OOM. With the fix, q8_0 KV ≈ 2 GB, total ~7 GB, fits.
+
+## Not a regression
+
+Investigation framed gh#61 as a v2.2.x regression vs. v2.2.1. Git
+archaeology confirms `src/inference/llama_cpp_backend.cpp` is
+byte-identical between v2.2.1 and v2.2.6 (only the license header
+changed). The two-phase warm→activate split existed at v2.1.8.
+The reporter's recollection that this config previously worked
+likely conflates a smaller `context_length` or a different model.
+
+The underlying defect is real regardless: `ModelConfig::cache_type_k`
+and `cache_type_v` are public, documented (`include/entropic/
+types/config.h:158`), parsed by the YAML loader, and have been
+silently dead-code since v1.8.0. Wiring them is the right fix.
+
+## What changed
+
+`src/inference/llama_cpp_backend.cpp::do_activate()` now sets:
+
+```cpp
+cparams.type_k = parse_kv_cache_type(config().cache_type_k);
+cparams.type_v = parse_kv_cache_type(config().cache_type_v);
+```
+
+Supported strings: `f16` (default), `f32`, `bf16`, `q8_0`, `q4_0`.
+Unknown values log a warning and fall back to F16.
+
+The `Context created:` log line now reports `type_k`/`type_v` so
+the active KV quantization is observable in session logs.
+
+## Tests
+
+No new unit tests — exercising this requires a real GGUF on the
+GPU. The fix is validated by the reporter's gh#61 repro (will be
+confirmed when the consumer runs v2.2.7 against their probe).
+
+## Still open
+
+- gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
+# entropic v2.2.6
+
+Patch release. **Bugfix follow-up to gh#58** — fixes the SIGSEGV in
+`run()` on handle #1 after handle #2 configures, and fixes a 5-year-
+old latent bug where `entropic_last_error()` ignored its handle
+parameter and returned a thread-local global. Both bugs surfaced as
+"empty `what()`, null `last_error`" in the consumer's v2.2.5
+verification of gh#58.
+
+## Root causes
+
+### Use-after-free on inference interface (the SEGV)
+
+`src/inference/interface_factory.cpp` held the C-callback `user_data`
+in a **process-global static** `s_ctx`:
+
+```cpp
+static InterfaceContext* s_ctx = nullptr;  // "Leaked intentionally"
+```
+
+Every `configure_common` call did `delete s_ctx; s_ctx = new ...`,
+which silently freed the previous handle's context. The previous
+handle's `inference_iface.{backend_data, orchestrator_data,
+adapter_data}` then pointed at freed memory. The next `run()` on
+handle #1 hit `iface_route()`, dereferenced the dangling
+`InterfaceContext*`, read a garbage `orchestrator` pointer, and
+SEGV'd inside `ModelOrchestrator::route()`.
+
+**Fix:** `build_orchestrator_interface()` now accepts an
+`InterfaceContext** out_context` and the engine handle owns the
+context (`engine_handle::inference_iface_ctx`). `entropic_destroy()`
+calls the new `destroy_orchestrator_interface()` before freeing the
+handle. No process-global state remains.
+
+### `entropic_last_error()` ignored its handle
+
+`src/types/error.cpp` v1.8.0 left a TODO:
+
+```cpp
+extern "C" const char* entropic_last_error(entropic_handle_t handle) {
+    // TODO(v1.8.4): Look up per-handle error state.
+    (void)handle;
+    return s_global_error;
+}
+```
+
+That TODO was never done. Every `handle->last_error = e.what()` in
+the facade (14+ sites) wrote to the handle but the public reader
+returned a thread-local string the handle never touched.
+
+**Fix:** Moved the implementation to `src/facade/entropic.cpp` where
+the private `engine_handle` struct is visible. The reader now copies
+`handle->last_error` under `api_mutex` into a thread-local cache and
+returns the cache pointer (preserving the v1.8.0 contract: valid
+until the same thread's next `entropic_last_error()` call).
+`handle == nullptr` still falls back to a thread-local global for
+pre-create errors.
+
+## Tests
+
+`tests/unit/api/multi_handle_test.cpp` — two new scenarios:
+- `entropic_last_error` returns per-handle state (h1's error
+  doesn't leak into h2's reader).
+- `h1.run() after h2.configure()` does not segfault and
+  `entropic_last_error(h1)` is readable.
+
+The second test reproduced the consumer's SEGV pre-fix and now
+passes. Full ensemble-with-real-models still lives in
+sassafras-class's `test_multi_handle_probe`.
+
+## Still open (filed separately)
+
+- **Per-handle session logger.** v2.2.5 deduped attached sinks but
+  the spdlog logger tree is still process-global, so cpu1/session.log
+  receives cpu2's lines when both handles share a process. End-state
+  fix is per-handle named logger trees touching ~72 `log::get()`
+  sites — out of scope for a patch, targeted at v2.3.0.
+- **GPU activation regression** on 1080 Ti with single 3GB model and
+  10GB free. Probably a v2.2.4 (gh#57) VRAM-aware tier lifecycle
+  side-effect, unrelated to multi-handle.
+
+---
+
 # entropic v2.2.5
 
 Patch release. **Bugfix — N `entropic_handle_t` per process (gh#58).**

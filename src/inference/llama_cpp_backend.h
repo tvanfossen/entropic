@@ -63,6 +63,22 @@ namespace entropic {
 class LlamaCppBackend : public InferenceBackend {
 public:
     /**
+     * @brief Free llama.cpp + mtmd resources on destruction.
+     *
+     * gh#58 v2.2.7 follow-up: the base `InferenceBackend` destructor
+     * is defaulted, so without this override the raw `model_` / `ctx_`
+     * / `mtmd_ctx_` pointers leak when the backend goes out of scope.
+     * GPU buffers held by those objects stay allocated for the
+     * remainder of the process, and the next handle's GPU model load
+     * fails because llama.cpp's CUDA pool sees the prior allocations
+     * as stale-but-occupied.
+     *
+     * @utility
+     * @version 2.2.8
+     */
+    ~LlamaCppBackend() override;
+
+    /**
      * @brief Set prompt cache configuration.
      *
      * Must be called before activate(). The config is consumed when

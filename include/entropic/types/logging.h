@@ -87,6 +87,82 @@ ENTROPIC_EXPORT std::shared_ptr<spdlog::logger> get(const std::string& name);
  */
 ENTROPIC_EXPORT void setup_session(const std::filesystem::path& log_dir);
 
+/**
+ * @brief gh#59 (v2.3.1): register a per-handle session.log file.
+ *
+ * Replaces the old global-mutation behavior of `add_file_sink` for
+ * the multi-handle case. Each handle registers its own log_dir under
+ * a unique `handle_id`. The process-wide HandleAwareSink consults
+ * the calling thread's current_handle_id (set via `HandleLogScope`)
+ * and writes only to that handle's file. No cross-handle bleed.
+ *
+ * Idempotent: registering the same id twice replaces the old sink.
+ * Safe to call before or after `init()`.
+ *
+ * @param handle_id Monotonic handle identifier (engine_handle::log_id).
+ * @param log_dir Directory containing session.log + session_model.log.
+ * @version 2.3.1
+ */
+ENTROPIC_EXPORT void register_handle_log(
+    int handle_id,
+    const std::filesystem::path& log_dir);
+
+/**
+ * @brief gh#59 (v2.3.1): release a handle's session.log file sink.
+ *
+ * Called from `entropic_destroy`. Closes the underlying file sink.
+ * Safe to call on unregistered ids.
+ *
+ * @param handle_id Identifier previously passed to register_handle_log.
+ * @version 2.3.1
+ */
+ENTROPIC_EXPORT void unregister_handle_log(int handle_id);
+
+/**
+ * @brief gh#59 (v2.3.1): RAII guard — sets thread's current handle_id.
+ *
+ * Construct at the top of every `entropic_*` API function so that any
+ * log line emitted on this thread (directly or via subsystems called
+ * from this thread) routes to this handle's session.log via the
+ * HandleAwareSink. Nestable — saves/restores the previous id.
+ *
+ * Cross-thread: when spawning a background thread that should log on
+ * a handle's behalf (external_bridge serve threads), wrap the thread
+ * body in another HandleLogScope.
+ *
+ * @version 2.3.1
+ */
+class ENTROPIC_EXPORT HandleLogScope {
+public:
+    /**
+     * @brief Enter scope; sets thread current handle_id.
+     * @param handle_id The id to bind for this thread.
+     * @return n/a (constructor).
+     * @version 2.3.1
+     */
+    explicit HandleLogScope(int handle_id);
+    /**
+     * @brief Exit scope; restores previous handle_id.
+     * @return n/a (destructor).
+     * @version 2.3.1
+     */
+    ~HandleLogScope();
+    HandleLogScope(const HandleLogScope&) = delete;
+    HandleLogScope& operator=(const HandleLogScope&) = delete;
+private:
+    int prev_id_;
+};
+
+/**
+ * @brief gh#59 (v2.3.1): query the current thread's handle_id.
+ *
+ * Returns 0 if no `HandleLogScope` is active on this thread. Mostly
+ * for tests; production code should rely on the dispatcher routing.
+ *
+ * @version 2.3.1
+ */
+ENTROPIC_EXPORT int current_handle_id();
+
 // ── Timing utilities ──────────────────────────────────────────
 
 /**

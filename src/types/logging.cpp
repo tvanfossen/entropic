@@ -8,20 +8,118 @@
 #include <entropic/types/logging.h>
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/sinks/sink.h>
 #include <algorithm>
 #include <array>
 #include <filesystem>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace entropic::log {
 
 static std::once_flag s_init_flag;
 static std::shared_ptr<spdlog::sinks::stderr_color_sink_mt> s_sink;
-// gh#58: track which session.log paths have been attached. Multiple
-// entropic_handle_t instances calling setup_session() against the same
-// project dir would otherwise attach duplicate sinks, doubling every
-// log line in the file.
+
+// gh#59 (v2.3.1): per-handle log dispatcher. Pre-v2.3.1, setup_session()
+// called add_file_sink() which mutated EVERY registered logger globally
+// — so two handles with different log_dirs would each see the other's
+// log lines fan out into their session.log. The dispatcher solves this:
+// a single sink installed once on the default logger consults a
+// thread_local current_handle_id (set via HandleLogScope at API entry)
+// and dispatches to per-handle file sinks. Logs emitted with no
+// handle_id context are silently dropped from the file (they still hit
+// the shared stderr console attached separately).
+
+/// @brief Thread-local current handle id (0 = no scope active).
+static thread_local int t_current_handle_id = 0;
+
+/// @brief Per-handle file sink dispatcher (installed on default logger).
+class HandleAwareSink final : public spdlog::sinks::sink {
+public:
+    /** @brief Route message to the current thread's handle file sink.
+     * @internal @version 2.3.1 */
+    void log(const spdlog::details::log_msg& msg) override {
+        std::shared_ptr<spdlog::sinks::sink> target;
+        int id = t_current_handle_id;
+        {
+            std::lock_guard lk(mu_);
+            auto it = sinks_.find(id);
+            if (it != sinks_.end()) { target = it->second; }
+        }
+        if (target) { target->log(msg); }
+    }
+
+    /** @brief Flush every registered handle sink. @internal @version 2.3.1 */
+    void flush() override {
+        std::vector<std::shared_ptr<spdlog::sinks::sink>> all;
+        {
+            std::lock_guard lk(mu_);
+            all.reserve(sinks_.size());
+            for (auto& [_, s] : sinks_) { all.push_back(s); }
+        }
+        for (auto& s : all) { s->flush(); }
+    }
+
+    /** @brief Apply pattern to all registered sinks. @internal @version 2.3.1 */
+    void set_pattern(const std::string& pattern) override {
+        std::lock_guard lk(mu_);
+        pattern_ = pattern;
+        for (auto& [_, s] : sinks_) { s->set_pattern(pattern); }
+    }
+
+    /** @brief Spdlog's set_formatter shim. @internal @version 2.3.1 */
+    void set_formatter(std::unique_ptr<spdlog::formatter> f) override {
+        // Forward only the pattern shape; the per-handle file sinks
+        // need their own formatter instances since unique_ptr can't be
+        // shared. spdlog uses set_pattern under the hood for typical
+        // use, so this branch is rarely taken.
+        std::lock_guard lk(mu_);
+        if (!sinks_.empty()) {
+            // Apply the same pattern by cloning via set_pattern when
+            // possible; if formatter is a custom one, only the first
+            // sink gets it. Pragmatic — the codebase always uses
+            // set_pattern via set_default_logger's pattern.
+            auto it = sinks_.begin();
+            it->second->set_formatter(std::move(f));
+        }
+    }
+
+    /** @brief Register/replace the sink for a handle id. @internal @version 2.3.1 */
+    void register_sink(int id, std::shared_ptr<spdlog::sinks::sink> s) {
+        std::lock_guard lk(mu_);
+        sinks_[id] = std::move(s);
+        if (!pattern_.empty()) { sinks_[id]->set_pattern(pattern_); }
+    }
+
+    /** @brief Remove a handle id's sink registration. @internal @version 2.3.1 */
+    void unregister_sink(int id) {
+        std::lock_guard lk(mu_);
+        sinks_.erase(id);
+    }
+
+    /** @brief Snapshot of registered ids (tests + diagnostics).
+     * @internal @version 2.3.1 */
+    std::vector<int> registered_ids() const {
+        std::lock_guard lk(mu_);
+        std::vector<int> ids;
+        ids.reserve(sinks_.size());
+        for (auto& [id, _] : sinks_) { ids.push_back(id); }
+        return ids;
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::unordered_map<int, std::shared_ptr<spdlog::sinks::sink>> sinks_;
+    std::string pattern_;
+};
+
+static std::shared_ptr<HandleAwareSink> s_dispatcher;
+
+// gh#58 (v2.2.5): the v2.2.5 sink-dedup workaround. Kept around for
+// backward compatibility with `setup_session()` callers that don't go
+// through `register_handle_log()` yet (e.g. early-init / test fixtures
+// without a handle id). The dispatcher path (v2.3.1) is preferred.
 static std::mutex s_session_paths_mu;
 static std::unordered_set<std::string> s_session_paths;
 
@@ -39,8 +137,18 @@ void init(spdlog::level::level_enum level) {
     std::call_once(s_init_flag, [level]() {
         s_sink = std::make_shared<spdlog::sinks::stderr_color_sink_mt>();
         s_sink->set_level(level);
-        spdlog::set_default_logger(
-            std::make_shared<spdlog::logger>("entropic", s_sink));
+        // gh#59 (v2.3.1): install the per-handle dispatcher alongside
+        // stderr on the default logger. Subsystems' loggers (created
+        // via get()) inherit both sinks. The dispatcher routes file
+        // writes based on thread_local current handle_id; stderr is
+        // shared across handles (process-global console is acceptable
+        // since operators reading stderr already see everything).
+        s_dispatcher = std::make_shared<HandleAwareSink>();
+        s_dispatcher->set_level(level);
+        auto root = std::make_shared<spdlog::logger>(
+            "entropic",
+            spdlog::sinks_init_list{s_sink, s_dispatcher});
+        spdlog::set_default_logger(root);
         spdlog::set_level(level);
         spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] %v");
     });
@@ -335,6 +443,76 @@ void log_decision(
     const std::string& value)
 {
     logger->info("{}: {} -> {}", label, key, value);
+}
+
+// ── gh#59 (v2.3.1): per-handle dispatcher API ─────────────────
+
+/**
+ * @brief gh#59 public entry — see header.
+ * @utility
+ * @version 2.3.1
+ */
+void register_handle_log(
+    int handle_id, const std::filesystem::path& log_dir)
+{
+    if (handle_id == 0 || log_dir.empty()) { return; }
+    if (!s_dispatcher) { init(spdlog::level::info); }
+
+    auto log_file = log_dir / "session.log";
+    std::filesystem::create_directories(log_file.parent_path());
+    auto file_sink =
+        std::make_shared<spdlog::sinks::basic_file_sink_mt>(
+            log_file.string(), /*truncate=*/true);
+    file_sink->set_level(spdlog::level::trace);
+    file_sink->set_pattern(
+        "[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
+    s_dispatcher->register_sink(handle_id, file_sink);
+
+    // Match the v2.2.5 setup_session behavior: truncate
+    // session_model.log too so a fresh session starts clean.
+    auto model_file = log_dir / "session_model.log";
+    FILE* fp = fopen(model_file.string().c_str(), "w");
+    if (fp) { fclose(fp); }
+
+    spdlog::flush_on(spdlog::level::trace);
+}
+
+/**
+ * @brief gh#59 public entry — see header.
+ * @utility
+ * @version 2.3.1
+ */
+void unregister_handle_log(int handle_id) {
+    if (!s_dispatcher || handle_id == 0) { return; }
+    s_dispatcher->unregister_sink(handle_id);
+}
+
+/**
+ * @brief gh#59 public entry — see header.
+ * @utility
+ * @version 2.3.1
+ */
+int current_handle_id() {
+    return t_current_handle_id;
+}
+
+/**
+ * @brief gh#59 RAII enter — see header.
+ * @utility
+ * @version 2.3.1
+ */
+HandleLogScope::HandleLogScope(int handle_id)
+    : prev_id_(t_current_handle_id) {
+    t_current_handle_id = handle_id;
+}
+
+/**
+ * @brief gh#59 RAII exit — see header.
+ * @utility
+ * @version 2.3.1
+ */
+HandleLogScope::~HandleLogScope() {
+    t_current_handle_id = prev_id_;
 }
 
 } // namespace entropic::log

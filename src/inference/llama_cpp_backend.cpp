@@ -118,6 +118,25 @@ void finalize_result(GenerationResult& result,
     logger->info("Content:\n{}", result.content);
 }
 
+/**
+ * @brief Map a ModelConfig::cache_type_k/v string to a ggml_type.
+ *
+ * Unknown values fall back to F16 with a logged warning, matching the
+ * llama_context_default_params() default.
+ *
+ * @utility
+ * @version 2.2.7
+ */
+ggml_type parse_kv_cache_type(const std::string& s) {
+    if (s == "f16")  { return GGML_TYPE_F16;  }
+    if (s == "f32")  { return GGML_TYPE_F32;  }
+    if (s == "bf16") { return GGML_TYPE_BF16; }
+    if (s == "q8_0") { return GGML_TYPE_Q8_0; }
+    if (s == "q4_0") { return GGML_TYPE_Q4_0; }
+    logger->warn("Unknown cache_type '{}' — defaulting to f16", s);
+    return GGML_TYPE_F16;
+}
+
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -198,6 +217,15 @@ bool LlamaCppBackend::do_activate() {
     cparams.flash_attn_type = config().flash_attn
         ? LLAMA_FLASH_ATTN_TYPE_ENABLED
         : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    // gh#61: cache_type_k/cache_type_v were documented config fields
+    // since v1.8.0 but never wired into llama.cpp. At large n_ctx the
+    // F16 default KV cache OOMs llama_init_from_model on the GPU
+    // (Qwen3.5-4B @ 65k F16 KV ≈ 8 GB, exceeds 1080 Ti's 11 GB once
+    // weights are resident). Mapping the documented strings here
+    // makes the existing q8_0/q4_0/bf16 etc. settings finally take
+    // effect.
+    cparams.type_k = parse_kv_cache_type(config().cache_type_k);
+    cparams.type_v = parse_kv_cache_type(config().cache_type_v);
 
     ctx_ = llama_init_from_model(model_, cparams);
     if (!ctx_) {
@@ -205,8 +233,11 @@ bool LlamaCppBackend::do_activate() {
         return false;
     }
 
-    logger->info("Context created: n_ctx={}, n_batch={}, flash_attn={}",
-              config().context_length, config().n_batch, config().flash_attn);
+    logger->info("Context created: n_ctx={}, n_batch={}, "
+                 "flash_attn={}, type_k={}, type_v={}",
+                 config().context_length, config().n_batch,
+                 config().flash_attn,
+                 config().cache_type_k, config().cache_type_v);
 
     // Initialize prompt cache if not already created
     if (!prompt_cache_) {

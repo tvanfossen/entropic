@@ -1,3 +1,64 @@
+# entropic v2.2.7
+
+Patch release. **Bugfix — `cache_type_k`/`cache_type_v` finally wired
+to llama.cpp (gh#61).** Documented config fields since v1.8.0 that
+were never connected to the inference layer.
+
+## Symptom
+
+Configurations declaring `cache_type_k: q8_0` / `cache_type_v: q8_0`
+were silently ignored. The KV cache always ran F16, doubling-to-
+quadrupling its VRAM footprint vs. the declared quantization. At
+large `context_length`, this caused `llama_init_from_model failed`
+in `do_activate()` — the GPU model loads fine but the F16 KV cache
+puts total VRAM over the device's capacity.
+
+Reporter case: Qwen3.5-4B-Q8_0 with `context_length: 65536`,
+`gpu_layers: -1`, `cache_type_k/v: q8_0` on a 1080 Ti (11 GB). F16
+KV at 65k context ≈ 8 GB + ~4.5 GB weights = ~12.5 GB > 11 GB =
+OOM. With the fix, q8_0 KV ≈ 2 GB, total ~7 GB, fits.
+
+## Not a regression
+
+Investigation framed gh#61 as a v2.2.x regression vs. v2.2.1. Git
+archaeology confirms `src/inference/llama_cpp_backend.cpp` is
+byte-identical between v2.2.1 and v2.2.6 (only the license header
+changed). The two-phase warm→activate split existed at v2.1.8.
+The reporter's recollection that this config previously worked
+likely conflates a smaller `context_length` or a different model.
+
+The underlying defect is real regardless: `ModelConfig::cache_type_k`
+and `cache_type_v` are public, documented (`include/entropic/
+types/config.h:158`), parsed by the YAML loader, and have been
+silently dead-code since v1.8.0. Wiring them is the right fix.
+
+## What changed
+
+`src/inference/llama_cpp_backend.cpp::do_activate()` now sets:
+
+```cpp
+cparams.type_k = parse_kv_cache_type(config().cache_type_k);
+cparams.type_v = parse_kv_cache_type(config().cache_type_v);
+```
+
+Supported strings: `f16` (default), `f32`, `bf16`, `q8_0`, `q4_0`.
+Unknown values log a warning and fall back to F16.
+
+The `Context created:` log line now reports `type_k`/`type_v` so
+the active KV quantization is observable in session logs.
+
+## Tests
+
+No new unit tests — exercising this requires a real GGUF on the
+GPU. The fix is validated by the reporter's gh#61 repro (will be
+confirmed when the consumer runs v2.2.7 against their probe).
+
+## Still open
+
+- gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
 # entropic v2.2.6
 
 Patch release. **Bugfix follow-up to gh#58** — fixes the SIGSEGV in

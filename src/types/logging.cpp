@@ -12,11 +12,18 @@
 #include <array>
 #include <filesystem>
 #include <mutex>
+#include <unordered_set>
 
 namespace entropic::log {
 
 static std::once_flag s_init_flag;
 static std::shared_ptr<spdlog::sinks::stderr_color_sink_mt> s_sink;
+// gh#58: track which session.log paths have been attached. Multiple
+// entropic_handle_t instances calling setup_session() against the same
+// project dir would otherwise attach duplicate sinks, doubling every
+// log line in the file.
+static std::mutex s_session_paths_mu;
+static std::unordered_set<std::string> s_session_paths;
 
 /**
  * @brief Initialize the logging subsystem.
@@ -145,6 +152,16 @@ void setup_session(const std::filesystem::path& log_dir) {
     if (log_dir.empty()) { return; }
 
     auto log_file = log_dir / "session.log";
+    {
+        // gh#58: skip if this exact session.log path is already
+        // attached. Otherwise a second handle for the same project_dir
+        // would double every log line; a third would triple them.
+        std::lock_guard lk(s_session_paths_mu);
+        auto canonical = std::filesystem::weakly_canonical(log_file).string();
+        if (!s_session_paths.insert(canonical).second) {
+            return;
+        }
+    }
     add_file_sink(log_file);
     remove_console_sink();
 

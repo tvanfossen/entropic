@@ -104,7 +104,7 @@ build/docs/
 html/
 latex/
 sqlite3/
-api/
+/api/
 
 # Release tarballs
 dist/

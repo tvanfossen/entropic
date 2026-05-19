@@ -1,3 +1,65 @@
+# entropic v2.2.5
+
+Patch release. **Bugfix — N `entropic_handle_t` per process (gh#58).**
+Three process-global redirect points were silently clobbering each
+other when a consumer instantiated more than one handle. Fixes them,
+adds a re-entry guard on the same handle, and ships a two-handle probe
+test at the C-API level.
+
+## What changed
+
+Consumer pull (sassafras-class ensemble voting): three distinct model
+architectures need to run in one process for anti-hallucination
+cross-architecture voting. The orchestrator was already per-handle and
+already multi-model on a single GPU (speculative draft + main share
+VRAM today). The remaining barrier was three process-globals that
+were not guarded against a second handle.
+
+### Fixes
+
+- **Re-entry guard** on `configure_common` — second `entropic_configure*`
+  call on an already-configured handle now returns
+  `ENTROPIC_ERROR_INVALID_STATE` instead of silently replacing the
+  orchestrator/engine/mcp_auth (which left dangling raw pointers on
+  any subsystem that captured them during the first configure).
+
+- **spdlog session log dedup** — `setup_session()` now tracks attached
+  session.log paths and skips duplicate attach. Two handles in the
+  same project_dir previously caused every log line to be written
+  twice.
+
+- **ggml log redirect** — `entropic_inference_log_to_file()` first call
+  wins. Same-path subsequent calls are idempotent no-ops. Different-path
+  subsequent calls log a warning and decline (llama.cpp's
+  `llama_log_set` is a process-wide slot — only one redirect can be
+  active).
+
+- **External bridge socket** — `ExternalBridge::start()` checks a
+  process-wide set of bound socket paths before calling
+  `create_listen_socket`. Pre-fix, a second handle whose `project_dir`
+  hashed to the same socket path would unlink the live socket out
+  from under handle #1. Now the second bridge declines to start;
+  consumers needing per-handle external MCP must set distinct
+  `external.socket_path` per handle.
+
+### Out of scope (unchanged from issue)
+
+- Cross-handle KV cache sharing.
+- Multi-handle batched inference.
+- Multi-GPU tensor parallel.
+
+### Tests
+
+`tests/unit/api/multi_handle_test.cpp` — three scenarios:
+- Two handles configure independently → both OK
+- Re-configure on one handle → `INVALID_STATE`
+- Three handles coexist → all OK
+
+Full ensemble-with-real-models coverage requires a GPU and lives in
+the consumer's test suite (sassafras-class `test_multi_handle_probe`).
+
+---
+
 # entropic v2.2.4
 
 Patch release. **Bugfix — VRAM-aware tier model lifecycle.** Adds a

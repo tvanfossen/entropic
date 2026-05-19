@@ -19,8 +19,12 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <mutex>
+#include <optional>
 #include <string>
 
 namespace {
@@ -389,6 +393,13 @@ ENTROPIC_EXPORT int entropic_plugin_api_version() {
 // ── Log redirect (v2.0.1) ──────────────────────────────────
 
 static FILE* s_ggml_log_fp = nullptr;
+// llama.cpp's llama_log_set is a single-slot process global. Track
+// the active path so a second handle in the same process gets a
+// predictable answer: same path → no-op (don't truncate the first
+// handle's live log), conflicting path → reject with a warning
+// (rather than clobber).
+static std::mutex s_ggml_log_mu;
+static std::optional<std::string> s_ggml_log_path;
 
 /**
  * @brief Callback that writes to the ggml log file.
@@ -417,19 +428,71 @@ static void ggml_log_noop(enum ggml_log_level /*level*/,
  * @internal
  * @version 2.0.1
  */
-void entropic_inference_log_to_file(const char* path) {
+/**
+ * @brief Close the active ggml log fp and route llama logs to noop.
+ * Caller must hold s_ggml_log_mu.
+ * @internal
+ * @version 2.2.5
+ */
+static void ggml_log_silence_locked() {
     if (s_ggml_log_fp) {
         fclose(s_ggml_log_fp);
         s_ggml_log_fp = nullptr;
     }
-    if (path) {
-        s_ggml_log_fp = fopen(path, "w");
-        if (s_ggml_log_fp) {
-            llama_log_set(ggml_log_to_file, nullptr);
-            return;
-        }
-    }
+    s_ggml_log_path.reset();
     llama_log_set(ggml_log_noop, nullptr);
+}
+
+/**
+ * @brief Resolve path via weakly_canonical, fall back to raw on error.
+ * @internal
+ * @version 2.2.5
+ */
+static std::string canonicalize_or_passthrough(const char* path) {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(path, ec).string();
+    return ec ? std::string(path) : canonical;
+}
+
+/**
+ * @brief Redirect llama/ggml logs to a file or silence them.
+ *
+ * First-call-wins under multi-handle (gh#58): a second handle whose
+ * canonical path differs is rejected with a warning rather than
+ * clobbering the live redirect. Same-path re-call truncates and
+ * reopens (preserves pre-v2.2.5 reset-on-recall behavior).
+ *
+ * @internal
+ * @version 2.2.5
+ */
+void entropic_inference_log_to_file(const char* path) {
+    std::lock_guard lk(s_ggml_log_mu);
+
+    if (!path || path[0] == '\0') {
+        ggml_log_silence_locked();
+        return;
+    }
+    auto canonical = canonicalize_or_passthrough(path);
+
+    // llama_log_set has one process-global slot; first-call wins so a
+    // second handle's redirect cannot clobber the first.
+    if (s_ggml_log_path && *s_ggml_log_path != canonical) {
+        logger->warn(
+            "ggml log redirect already wired to {}; ignoring request for {}",
+            *s_ggml_log_path, canonical);
+        return;
+    }
+
+    FILE* fp = fopen(path, "w");
+    if (!fp) {
+        logger->warn("ggml log fopen failed for {}: {}",
+                     path, std::strerror(errno));
+        return;
+    }
+    if (s_ggml_log_fp) { fclose(s_ggml_log_fp); }
+    s_ggml_log_fp = fp;
+    s_ggml_log_path = canonical;
+    llama_log_set(ggml_log_to_file, nullptr);
 }
 
 /**
@@ -438,11 +501,8 @@ void entropic_inference_log_to_file(const char* path) {
  * @version 2.0.1
  */
 void entropic_inference_log_silence(void) {
-    if (s_ggml_log_fp) {
-        fclose(s_ggml_log_fp);
-        s_ggml_log_fp = nullptr;
-    }
-    llama_log_set(ggml_log_noop, nullptr);
+    std::lock_guard lk(s_ggml_log_mu);
+    ggml_log_silence_locked();
 }
 
 } // extern "C"

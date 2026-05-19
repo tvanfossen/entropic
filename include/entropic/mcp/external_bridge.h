@@ -367,6 +367,7 @@ private:
     entropic_handle_t handle_;                 ///< Engine handle (not owned)
     ExternalMCPConfig config_;                 ///< Config snapshot
     std::filesystem::path socket_path_;        ///< Unix socket path
+    std::string bound_canonical_;              ///< Process-registry key
     int listen_fd_ = -1;                       ///< Listening socket fd
     std::atomic<bool> running_{false};         ///< Accept loop running
     std::thread accept_thread_;                ///< Background accept thread

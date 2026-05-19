@@ -84,6 +84,22 @@ public:
      */
     void shutdown();
 
+    /**
+     * @brief Destructor — routes through `shutdown()` for explicit
+     *        VRAM release on handle teardown (gh#63).
+     *
+     * v2.2.8 already made `~LlamaCppBackend()` call `do_unload()` so
+     * the shared_ptr cascade in this class's default destructor would
+     * release every backend's VRAM. This destructor makes the intent
+     * explicit, emits the "Shutting down model orchestrator" log on
+     * destroy, and protects against any future member that does not
+     * cascade through a shared_ptr<LlamaCppBackend>.
+     *
+     * @utility
+     * @version 2.2.9
+     */
+    ~ModelOrchestrator() { shutdown(); }
+
     /* ── Generation ──────────────────────────────────────── */
 
     /**

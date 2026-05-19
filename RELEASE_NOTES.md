@@ -1,3 +1,71 @@
+# entropic v2.2.8
+
+Patch release. **Bugfix — `LlamaCppBackend` GPU buffer leak on
+backend destruction (gh#58 v2.2.7 follow-up).** Caused
+"Failed to reload model with GPU layers" on the next GPU model load
+in the same process — after either a handle destroy or any
+preceding test/scenario that loaded a GPU model and tore it down.
+
+## Root cause
+
+`InferenceBackend::~InferenceBackend()` was defaulted, and no
+concrete backend (`LlamaCppBackend` included) defined its own
+destructor. The class holds raw `llama_model*`, `llama_context*`,
+and `mtmd_context*` pointers. On backend destruction those pointers
+were silently dropped — `llama_model_free` / `llama_free` /
+`mtmd_free` never ran. GPU memory stayed reserved by the process
+but llama.cpp's CUDA pool lost track of it. The next
+`llama_model_load_from_file` with `gpu_layers != 0` failed.
+
+Reproduced locally with the test added at
+`tests/unit/api/multi_handle_test.cpp` (tagged `[.gpu][.realmodel]`,
+needs a real GGUF). Two handles configure cleanly the first
+iteration; the second iteration of the same scenario (Catch2
+re-runs the SCENARIO per THEN block) failed on the second handle.
+With the fix, both iterations succeed.
+
+This matches the consumer's gh#58 v2.2.7 verification where
+`[.multihandle][gpu]` failed at "first" configure: their
+`[.singlehandle][gpu]` runs first in the same process, leaks GPU
+buffers on test teardown, and the multi-handle suite's first
+configure then hits the corrupt CUDA pool.
+
+## Fix
+
+Added `~LlamaCppBackend()` that calls `do_unload()`. Routes through
+the existing teardown that frees `mtmd_ctx_`, `ctx_`, and `model_`
+in the correct order. No new resource management — just the
+destructor that should have been there since v1.8.2.
+
+Calling `do_unload()` from a derived destructor is the correct C++
+pattern; calling it from the base destructor would be unsafe (the
+derived vtable is already gone by then). Future backends must
+follow the same pattern in their own destructors.
+
+## Improved diagnostic
+
+`do_activate()`'s "Failed to reload model with GPU layers" error
+now includes the model path, the requested `gpu_layers`, and
+points the operator at `llama_ggml.log` for the underlying
+llama.cpp/CUDA error. Independent of the destructor fix; useful
+for any future GPU activation failure.
+
+## Tests
+
+`tests/unit/api/multi_handle_test.cpp` — new
+`[.gpu][.realmodel]` scenario that exercises two GPU handles
+across two iterations. Tag dot-prefix excludes it from the default
+test run; opt in via `entropic-api-tests "[.gpu]"`. Override the
+model paths via `ENTROPIC_TEST_GPU_MODEL` and
+`ENTROPIC_TEST_GPU_MODEL_B` env vars (defaults to the
+`~/.entropic/models/` paths used during fix validation).
+
+## Still open
+
+- gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
 # entropic v2.2.7
 
 Patch release. **Bugfix — `cache_type_k`/`cache_type_v` finally wired

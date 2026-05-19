@@ -1,3 +1,86 @@
+# entropic v2.2.6
+
+Patch release. **Bugfix follow-up to gh#58** — fixes the SIGSEGV in
+`run()` on handle #1 after handle #2 configures, and fixes a 5-year-
+old latent bug where `entropic_last_error()` ignored its handle
+parameter and returned a thread-local global. Both bugs surfaced as
+"empty `what()`, null `last_error`" in the consumer's v2.2.5
+verification of gh#58.
+
+## Root causes
+
+### Use-after-free on inference interface (the SEGV)
+
+`src/inference/interface_factory.cpp` held the C-callback `user_data`
+in a **process-global static** `s_ctx`:
+
+```cpp
+static InterfaceContext* s_ctx = nullptr;  // "Leaked intentionally"
+```
+
+Every `configure_common` call did `delete s_ctx; s_ctx = new ...`,
+which silently freed the previous handle's context. The previous
+handle's `inference_iface.{backend_data, orchestrator_data,
+adapter_data}` then pointed at freed memory. The next `run()` on
+handle #1 hit `iface_route()`, dereferenced the dangling
+`InterfaceContext*`, read a garbage `orchestrator` pointer, and
+SEGV'd inside `ModelOrchestrator::route()`.
+
+**Fix:** `build_orchestrator_interface()` now accepts an
+`InterfaceContext** out_context` and the engine handle owns the
+context (`engine_handle::inference_iface_ctx`). `entropic_destroy()`
+calls the new `destroy_orchestrator_interface()` before freeing the
+handle. No process-global state remains.
+
+### `entropic_last_error()` ignored its handle
+
+`src/types/error.cpp` v1.8.0 left a TODO:
+
+```cpp
+extern "C" const char* entropic_last_error(entropic_handle_t handle) {
+    // TODO(v1.8.4): Look up per-handle error state.
+    (void)handle;
+    return s_global_error;
+}
+```
+
+That TODO was never done. Every `handle->last_error = e.what()` in
+the facade (14+ sites) wrote to the handle but the public reader
+returned a thread-local string the handle never touched.
+
+**Fix:** Moved the implementation to `src/facade/entropic.cpp` where
+the private `engine_handle` struct is visible. The reader now copies
+`handle->last_error` under `api_mutex` into a thread-local cache and
+returns the cache pointer (preserving the v1.8.0 contract: valid
+until the same thread's next `entropic_last_error()` call).
+`handle == nullptr` still falls back to a thread-local global for
+pre-create errors.
+
+## Tests
+
+`tests/unit/api/multi_handle_test.cpp` — two new scenarios:
+- `entropic_last_error` returns per-handle state (h1's error
+  doesn't leak into h2's reader).
+- `h1.run() after h2.configure()` does not segfault and
+  `entropic_last_error(h1)` is readable.
+
+The second test reproduced the consumer's SEGV pre-fix and now
+passes. Full ensemble-with-real-models still lives in
+sassafras-class's `test_multi_handle_probe`.
+
+## Still open (filed separately)
+
+- **Per-handle session logger.** v2.2.5 deduped attached sinks but
+  the spdlog logger tree is still process-global, so cpu1/session.log
+  receives cpu2's lines when both handles share a process. End-state
+  fix is per-handle named logger trees touching ~72 `log::get()`
+  sites — out of scope for a patch, targeted at v2.3.0.
+- **GPU activation regression** on 1080 Ti with single 3GB model and
+  10GB free. Probably a v2.2.4 (gh#57) VRAM-aware tier lifecycle
+  side-effect, unrelated to multi-handle.
+
+---
+
 # entropic v2.2.5
 
 Patch release. **Bugfix — N `entropic_handle_t` per process (gh#58).**

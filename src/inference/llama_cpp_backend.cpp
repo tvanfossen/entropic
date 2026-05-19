@@ -2228,10 +2228,13 @@ bool LlamaCppBackend::do_supports(BackendCapability cap) const {
         return false;
     }
 
-    // Static capabilities: true = always supported
+    // Static capabilities: true = always supported. Length must equal
+    // BackendCapability::_COUNT — trailing entries get appended as new
+    // capabilities are introduced (gh#53 added AUDIO at index 12).
     static constexpr bool always[] = {
         false, false, true, true, true, true,
         false, true,  true, false, false, true,
+        false,  // AUDIO — dynamic only (mtmd_support_audio)
     };
 
     // Dynamic capabilities override the static table
@@ -2241,6 +2244,9 @@ bool LlamaCppBackend::do_supports(BackendCapability cap) const {
               || (cap == BackendCapability::HIDDEN_STATE && is_recurrent())
               || (cap == BackendCapability::VISION
                   && !config().mmproj_path.empty())
+              || (cap == BackendCapability::AUDIO
+                  && mtmd_ctx_ != nullptr
+                  && mtmd_support_audio(mtmd_ctx_))
               || (cap == BackendCapability::SPECULATIVE_DECODING
                   && !is_recurrent());
     }

@@ -16,6 +16,82 @@
 
 #include "adapters/gemma4_adapter.h"
 
+// ── gh#65: consumer-reported content shapes ────────────────
+
+SCENARIO("Gemma4 parses the exact gh#65 content shape",
+         "[gemma4][gh65][parsing]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the exact <tool_call>{json}</tool_call> from the gh#65 report") {
+        // Pulled verbatim from the issue body. The model emits this on
+        // stdin; the consumer reports tool_calls stayed 0.
+        std::string content =
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "List all configured )"
+            R"(subjects for this family."}}</tool_call>)";
+
+        WHEN("parse_tool_calls is called") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("one tool call is extracted with the right name") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+
+            THEN("the target argument round-trips") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("target");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                // arguments[k] is the dump of the JSON value, so a
+                // string value comes back quoted.
+                REQUIRE(it->second.find("registrar") != std::string::npos);
+            }
+
+            THEN("the cleaned content drops the tool_call markup") {
+                REQUIRE(result.cleaned_content.find("<tool_call>")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 still parses tool_call inside a think block",
+         "[gemma4][gh65][parsing]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a model that emits the tool_call inside a <think> block") {
+        // gh#65 hypothesis #4 — if think-stripping ran BEFORE parse,
+        // this would silently lose the tool call. Current Gemma4Adapter
+        // parses on raw content first; this test pins that behavior so
+        // a future refactor doesn't regress.
+        std::string content =
+            "<think>I should call entropic.delegate now.\n"
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "Q"}}</tool_call>)"
+            "</think>"
+            "Some assistant reply text after thinking.";
+
+        WHEN("parse_tool_calls is called") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the tool call is still extracted (parse runs before strip)") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+
+            THEN("the cleaned content drops both the think block and the call") {
+                REQUIRE(result.cleaned_content.find("<think>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<tool_call>")
+                        == std::string::npos);
+                // The post-think assistant text survives.
+                REQUIRE(result.cleaned_content.find(
+                    "Some assistant reply text") != std::string::npos);
+            }
+        }
+    }
+}
+
 // ── Tagged JSON parsing ────────────────────────────────────
 
 SCENARIO("Gemma4 tagged JSON tool call parsing", "[gemma4][parsing]") {

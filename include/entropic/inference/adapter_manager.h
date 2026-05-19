@@ -112,6 +112,25 @@ public:
      */
     void unload_all_for_model(llama_model* model, llama_context* ctx);
 
+    /**
+     * @brief Free every loaded adapter handle (gh#58 close-out, v2.3.0).
+     *
+     * Called by `~ModelOrchestrator` after backends are torn down, so
+     * by the time this runs the llama_contexts that referenced these
+     * adapters are already destroyed and there is no HOT-attachment
+     * to clear. Safe to call repeatedly.
+     *
+     * Without this, the bare `AdapterManager` destructor (defaulted)
+     * dropped raw `llama_adapter_lora*` handles on engine destroy,
+     * leaking each loaded LoRA's VRAM until process exit — the same
+     * pattern that caused gh#58's two-handle GPU regression for
+     * `LlamaCppBackend` in v2.2.8.
+     *
+     * @utility
+     * @version 2.3.0
+     */
+    void unload_all();
+
     /* ── Queries (lock-free where possible) ───────────── */
 
     /**

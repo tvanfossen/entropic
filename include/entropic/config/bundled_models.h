@@ -43,6 +43,20 @@ struct BundledModelEntry {
     /// paired entry; tier configs reference it via `mmproj: <key>`.
     /// @version 2.1.8
     std::string mmproj_key;
+
+    /* ── gh#62: structured selectors (v2.3.0) ──────────────────
+     *
+     * Optional metadata that lets consumers query for a bundled
+     * model by (family, size, quant) instead of remembering a flat
+     * key. All four fields are opt-in — existing YAML entries that
+     * don't declare them still work as before, just without query
+     * support. The eventual end-state (separate issue) is to make
+     * these the primary lookup mode and treat the flat key as a
+     * derived shortcut. */
+    std::string provider;     ///< e.g. "unsloth"
+    std::string family;       ///< e.g. "qwen3_5", "gemma4", "nemotron3"
+    std::string size_label;   ///< e.g. "0_8b", "2b", "4b", "9b", "e2b", "nano_4b"
+    std::string quant;        ///< e.g. "Q8_0", "Q4_K_M", "UD-IQ4_XS"
 };
 
 /**
@@ -104,6 +118,31 @@ public:
      * @version 1.8.1
      */
     const std::unordered_map<std::string, BundledModelEntry>& entries() const;
+
+    /**
+     * @brief Look up a registry key by (family, size, quant) (gh#62).
+     *
+     * Returns the flat key of the first matching entry, or empty
+     * string if no entry matches. All three selectors must match
+     * exactly. Intended for consumers that want to express their
+     * tier config as "qwen3_5 / 4b / Q8_0" without remembering the
+     * historical flat key.
+     *
+     * Until the bundled_models.yaml is fully backfilled with
+     * family/size_label/quant on every entry, this query will return
+     * "" for entries that don't yet declare them — callers should
+     * fall back to direct key lookup.
+     *
+     * @param family Family label (e.g. "qwen3_5").
+     * @param size_label Size label (e.g. "4b").
+     * @param quant Quant label (e.g. "Q8_0").
+     * @return Flat key string, or empty if no match.
+     * @version 2.3.0
+     */
+    std::string find_by(
+        const std::string& family,
+        const std::string& size_label,
+        const std::string& quant) const;
 
     /**
      * @brief Auto-discover and load bundled_models.yaml.

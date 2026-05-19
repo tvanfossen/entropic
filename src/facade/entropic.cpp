@@ -1330,7 +1330,16 @@ static void start_external_bridge(entropic_handle_t h) {
  * @internal
  * @version 2.1.10.1
  */
+// Re-configure would leak raw pointers captured during the first pass.
+static entropic_error_t reject_if_configured(entropic_handle_t h) {
+    if (!h->configured.load()) { return ENTROPIC_OK; }
+    h->last_error = "handle already configured";
+    s_log->error("{}", h->last_error);
+    return ENTROPIC_ERROR_INVALID_STATE;
+}
+
 static entropic_error_t configure_common(entropic_handle_t h) {
+    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
     h->orchestrator = std::make_unique<entropic::ModelOrchestrator>();
     if (!h->orchestrator->initialize(h->config)) {
         h->last_error = "orchestrator initialization failed";

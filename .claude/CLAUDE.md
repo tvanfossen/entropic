@@ -22,13 +22,13 @@ main          <- User handles merges from develop (stable releases)
 - Never push — user reviews and pushes
 - Version bumps per `docs/roadmap.md` — each feature has an assigned version
 
-## Current State (v1.7.x — Python)
+## Current State (v2.2.4 — C++ engine on `main`)
 
-The Python codebase is the behavioral specification for the C++ rewrite.
-v1.7.1 on PyPI is the fallback — frozen, tagged, known working.
-Python coding standards apply to any Python that remains (wrapper, CLI).
+C++ engine is the live implementation. Python remains only as an
+auto-generated wrapper around `entropic.h` (see `python/entropic_native/`)
+plus CLI shims. The v1.7.x Python engine is gone; do not reference it.
 
-## Target State (2.0.0 — C++)
+## C++ Engine Standards
 
 ### Design Rules (from `docs/architecture-cpp.md`)
 
@@ -85,7 +85,7 @@ audit record; capture it via the manual release workflow in
 - Global: `~/.entropic/config.yaml`
 - Project: `.entropic/config.local.yaml`
 - Context: `.entropic/ENTROPIC.md`
-- Model registry: `python/entropic/data/bundled_models.yaml`
+- Model registry: `data/bundled_models.yaml`
 - `path:` resolves bundled model keys (e.g., `primary` → IQ3_XXS path)
 
 ## Session Protocol (MANDATORY — every session)
@@ -115,17 +115,6 @@ flags it — that is a design change requiring user approval.
 
 ## Legacy Cleanup
 
-v1.7.1 on PyPI is the fallback. No legacy code maintained.
-User moves stale files to root-level `.old/` (gitignored) as replacements land.
-Claude does not manage `.old/`.
-
-Files to be cleaned up (by user, when replaced):
-- `docs/` — all except `roadmap.md` and `architecture-cpp.md`
-- `install.sh` — Python-specific, replaced by CMake
-- `.dockerignore` — no Docker in roadmap
-- `vendor/personaplex/` — moves with TUI at v1.7.2
-- `test-manual/` — session artifacts
-- `scripts/` — Python-specific (except model test scripts while Python engine lives)
-- `src/entropic/` — DELETED in v1.9.15
-- `benchmark/results/` — re-run on C++ engine
-- `examples/` — rewritten for C API at v1.9.15
+Pre-C++ artifacts have been removed. If something stale resurfaces,
+the user moves it to root-level `.old/` (gitignored). Claude does not
+manage `.old/`.

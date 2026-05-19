@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file main.cpp
  * @brief PyChess — play chess against a local LLM via the entropic C API.

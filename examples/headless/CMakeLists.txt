@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # Headless example — scripted CI validation for entropic.
 #
 # Standalone build (not part of the main entropic build):

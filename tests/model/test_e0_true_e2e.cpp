@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_e0_true_e2e.cpp
  * @brief E0: True end-to-end — real prompts, real engine, real model.

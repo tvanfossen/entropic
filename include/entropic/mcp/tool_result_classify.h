@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file tool_result_classify.h
  * @brief Byte-level classifiers for tool-result content (#44, v2.1.0).

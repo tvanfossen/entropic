@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file nemotron3_adapter.h
  * @brief Nemotron 3 chat adapter (v2.1.9, gh#47).

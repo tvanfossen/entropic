@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 add_executable(entropic-tests
     types/error_test.cpp
     types/config_structs_test.cpp
@@ -61,6 +61,9 @@ add_executable(entropic-inference-tests
     inference/vision_adapter_test.cpp
     inference/image_preprocessor_test.cpp
     inference/backend_capabilities_test.cpp
+    # v2.2.4 (gh#57): VRAM-aware tier residency surface — metadata-only
+    # tests that don't require a real GGUF.
+    inference/residency_test.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE
@@ -286,6 +289,11 @@ add_executable(entropic-api-tests
     api/serialize_messages_utf8_test.cpp
     # v2.1.10 (gh#40): mid-gen user-message queue ABI surface.
     api/message_queue_abi_test.cpp
+    # v2.2.3 (gh#56): sp_get_history must truncate on UTF-8 codepoint
+    # boundaries — direct unit test of the facade-local helper.
+    api/utf8_safe_substr_test.cpp
+    # v2.2.5 (gh#58): two-handles-in-one-process probe + re-entry guard.
+    api/multi_handle_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.

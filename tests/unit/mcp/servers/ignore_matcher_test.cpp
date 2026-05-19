@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file ignore_matcher_test.cpp
  * @brief Unit tests for IgnoreMatcher (#15, v2.1.4).

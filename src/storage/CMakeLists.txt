@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 # ── librentropic-storage.so ──────────────────────────────
 # v1.8.8: SQLite conversation persistence, session log files,
 # delegation record storage, permission persistence.

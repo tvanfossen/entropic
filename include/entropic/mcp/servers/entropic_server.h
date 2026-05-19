@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file entropic_server.h
  * @brief Entropic MCP server — engine-level tools including introspection.

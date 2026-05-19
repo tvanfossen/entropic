@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """Self-tests for scripts/gen_bindings.py.
 
 @brief Validates the auto-generated bindings drift check actually fires

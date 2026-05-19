@@ -1,9 +1,9 @@
 # Contributing to Entropic
 
 Thanks for your interest in contributing. Entropic is a personal
-project of Tristan VanFossen distributed under LGPL-3.0-or-later
-with the BISSELL Homecare Inc. Linking Exception (see `NOTICE`).
-This document covers the rules for proposing changes.
+project of Tristan VanFossen distributed under the Apache License,
+Version 2.0 (see `LICENSE`). This document covers the rules for
+proposing changes.
 
 ---
 
@@ -57,8 +57,8 @@ PRs without DCO sign-off on every commit will not be merged.
 
 You retain copyright in your contributions. By submitting a change
 under DCO sign-off, you license your contribution to the project
-under LGPL-3.0-or-later (with the linking exception described in
-`NOTICE`). The canonical record of who contributed what is the git
+under the Apache License, Version 2.0. The canonical record of who
+contributed what is the git
 commit history; the `AUTHORS` file identifies the original copyright
 holder of the project as a whole and is not maintained as an
 exhaustive contributor list.

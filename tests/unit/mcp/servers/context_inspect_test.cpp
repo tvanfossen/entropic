@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file context_inspect_test.cpp
  * @brief ContextInspectTool unit tests — context window inspection (P2-16).

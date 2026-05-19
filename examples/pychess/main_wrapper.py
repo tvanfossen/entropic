@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: LGPL-3.0-or-later
+# SPDX-License-Identifier: Apache-2.0
 """PyChess — play chess against a local LLM via the entropic Python wrapper.
 
 Two-tier chess engine: thinker analyzes, auto-chain hands off to executor.

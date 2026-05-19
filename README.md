@@ -465,16 +465,12 @@ professional, legal, medical, or financial advice.
 
 ## License
 
-LGPL-3.0-or-later, with the **BISSELL Homecare Inc. Linking
-Exception** — applications that link `librentropic.so` (static or
-dynamic) are not themselves required to be LGPL-licensed.
-Modifications to Entropic itself remain LGPL.
+Apache-2.0. See [`LICENSE`](LICENSE) for the canonical text and
+[`NOTICE`](NOTICE) for third-party attribution. Contributors retain
+copyright in their contributions; see [`CONTRIBUTING.md`](CONTRIBUTING.md)
+for the DCO sign-off process.
 
-See [`LICENSE`](LICENSE) for the canonical LGPL-3.0 text and
-[`NOTICE`](NOTICE) for provenance, the linking exception, version
-history, and third-party attribution. Contributors retain copyright
-in their contributions; see [`CONTRIBUTING.md`](CONTRIBUTING.md) for
-the DCO sign-off process.
-
-Versions prior to 2.0.0 were released under Apache-2.0 and that
-license continues to apply to those releases.
+Versions 2.0.0 through 2.2.1 were released under LGPL-3.0-or-later
+with a linking exception; those releases remain under that license.
+The relicense to Apache-2.0 takes effect at v2.2.2 and forward, and
+restores the permissive license used for v1.x.

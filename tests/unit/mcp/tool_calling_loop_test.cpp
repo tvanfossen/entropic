@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_tool_calling_loop.cpp
  * @brief End-to-end integration test: generate → parse → execute → generate.

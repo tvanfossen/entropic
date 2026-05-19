@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file llama_cpp_backend.cpp
  * @brief LlamaCppBackend implementation — direct llama.cpp C API.

@@ -51,8 +51,8 @@ include/entropic/entropic.h           Public C API
 lib/librentropic.so                   Shared library (SOVERSION-linked)
 lib/cmake/entropic/                   find_package support
 share/entropic/                       Runtime data (models.yaml, prompts, grammars, tools)
-share/doc/entropic/LICENSE            LGPL-3.0 (canonical)
-share/doc/entropic/NOTICE             Linking exception + attribution
+share/doc/entropic/LICENSE            Apache-2.0 (canonical)
+share/doc/entropic/NOTICE             Third-party attribution
 share/doc/entropic/README.md          This file
 ```
 
@@ -164,16 +164,14 @@ isn't appropriate.
 
 ## Licensing
 
-Entropic is **LGPL-3.0-or-later** with the **BISSELL Homecare Inc.
-Linking Exception** — the only additional permission granted under
-LGPL-3.0 §7. See `share/doc/entropic/LICENSE` (canonical LGPL-3.0
-text) and `share/doc/entropic/NOTICE` (the exception, version
-history, and third-party attribution).
+Entropic is licensed under the **Apache License, Version 2.0**. See
+`share/doc/entropic/LICENSE` for the canonical text and
+`share/doc/entropic/NOTICE` for third-party attribution.
 
-The linking exception runs to every licensee. It explicitly permits
-applications to link `librentropic.so` (statically or dynamically)
-without becoming LGPL-covered themselves. Modifications to Entropic
-itself remain subject to LGPL section 4d.
+Versions 2.0.0 through 2.2.1 were released under LGPL-3.0-or-later
+with a linking exception; those releases remain under that license.
+v2.2.2 and later return to a permissive license (matching the v1.x
+stance).
 
 Bundled inference runtime (`llama.cpp`) is **MIT-licensed**; see its
 upstream repository for attribution text.

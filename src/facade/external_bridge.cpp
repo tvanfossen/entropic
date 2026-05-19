@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file external_bridge.cpp
  * @brief Unix socket MCP bridge implementation.
@@ -24,9 +24,11 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -38,6 +40,15 @@ using json = nlohmann::json;
 namespace entropic {
 
 static auto logger = entropic::log::get("mcp.external_bridge");
+
+// gh#58: process-wide set of socket paths currently bound by an
+// ExternalBridge in this process. Without this, a second handle whose
+// project_dir hashes to the same socket path as a first handle would
+// unlink the live socket out from under handle #1 (see the
+// std::filesystem::remove call in create_listen_socket). With this
+// guard, the second handle declines to start its bridge instead.
+static std::mutex s_bound_sockets_mu;
+static std::unordered_set<std::string> s_bound_sockets;
 
 // Forward declaration
 std::filesystem::path compute_socket_path(
@@ -709,8 +720,38 @@ static bool peer_uid_matches(int client_fd) {
  * @version 2.0.8
  */
 bool ExternalBridge::start() {
+    // Refuse to start if another handle in this process already owns
+    // this socket path. The pre-fix create_listen_socket call unlinks
+    // any existing socket file before binding — that's correct for
+    // crashed-prior-process recovery, but if a live in-process bridge
+    // owned that file, the unlink stole its binding silently. The
+    // claim must happen *before* create_listen_socket so a concurrent
+    // start() on a colliding path cannot pass the check and then race
+    // into the unlink.
+    std::error_code ec;
+    auto canonical =
+        std::filesystem::weakly_canonical(socket_path_, ec).string();
+    if (ec) { canonical = socket_path_.string(); }
+    {
+        std::lock_guard lk(s_bound_sockets_mu);
+        if (!s_bound_sockets.insert(canonical).second) {
+            logger->warn(
+                "External MCP bridge: socket {} already bound by another "
+                "handle in this process; declining to start. Set "
+                "external.socket_path to a distinct path per handle "
+                "if you need per-handle bridges.",
+                canonical);
+            return false;
+        }
+    }
+
     listen_fd_ = create_listen_socket(socket_path_);
-    if (listen_fd_ < 0) { return false; }
+    if (listen_fd_ < 0) {
+        std::lock_guard lk(s_bound_sockets_mu);
+        s_bound_sockets.erase(canonical);
+        return false;
+    }
+    bound_canonical_ = canonical;
 
     running_.store(true);
     accept_thread_ = std::thread(&ExternalBridge::accept_loop, this);
@@ -770,6 +811,16 @@ void ExternalBridge::stop() {
     // Clean up socket file
     std::error_code ec;
     std::filesystem::remove(socket_path_, ec);
+
+    // Release our claim on the canonical path so a later handle in
+    // this process can re-bind. Use the exact string we inserted in
+    // start(); recomputing weakly_canonical here could differ if the
+    // path was deleted mid-run.
+    if (!bound_canonical_.empty()) {
+        std::lock_guard lk(s_bound_sockets_mu);
+        s_bound_sockets.erase(bound_canonical_);
+        bound_canonical_.clear();
+    }
 }
 
 /**

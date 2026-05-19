@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file throughput_tracker.h
  * @brief ThroughputTracker -- real-time throughput measurement and prediction.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file identity_manager.h
  * @brief IdentityManager -- lifecycle management for static and dynamic identities.

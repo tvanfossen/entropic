@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: LGPL-3.0-or-later
+// SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_thread_safety.cpp
  * @brief Concurrency tests for thread-safe engine classes.

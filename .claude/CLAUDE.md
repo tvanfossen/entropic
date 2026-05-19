@@ -6,8 +6,9 @@ Project-specific guidelines. See global `~/.claude/CLAUDE.md` for universal stan
 
 - **Roadmap**: `docs/roadmap.md` — versioned feature plan, version targeting
 - **Architecture**: `docs/architecture-cpp.md` — library decomposition, design rules
-- **Proposals**: `.claude/proposals/ACTIVE/` — per-version implementation plans
-- **Archived**: `.old/proposals/` (gitignored) — absorbed into roadmap, local reference only
+- **Per-version proposals + implementation logs**: **GitHub issues** (`gh issue list`, `gh issue view N`) — design notes in the issue body, implementation log in issue comments. Roadmap entries reference `gh#N`.
+- **Bug reports + feature pulls from consumers**: also GitHub issues — same surface, single source of truth.
+- **Legacy proposal files**: `.claude/proposals/` (pre-2026-05 workflow) — historical only, not maintained in parallel with GitHub issues. Do NOT create new files here. `.old/proposals/` (gitignored) is older archive.
 
 ## Git Branching
 
@@ -21,13 +22,13 @@ main          <- User handles merges from develop (stable releases)
 - Never push — user reviews and pushes
 - Version bumps per `docs/roadmap.md` — each feature has an assigned version
 
-## Current State (v1.7.x — Python)
+## Current State (v2.2.4 — C++ engine on `main`)
 
-The Python codebase is the behavioral specification for the C++ rewrite.
-v1.7.1 on PyPI is the fallback — frozen, tagged, known working.
-Python coding standards apply to any Python that remains (wrapper, CLI).
+C++ engine is the live implementation. Python remains only as an
+auto-generated wrapper around `entropic.h` (see `python/entropic_native/`)
+plus CLI shims. The v1.7.x Python engine is gone; do not reference it.
 
-## Target State (2.0.0 — C++)
+## C++ Engine Standards
 
 ### Design Rules (from `docs/architecture-cpp.md`)
 
@@ -84,17 +85,17 @@ audit record; capture it via the manual release workflow in
 - Global: `~/.entropic/config.yaml`
 - Project: `.entropic/config.local.yaml`
 - Context: `.entropic/ENTROPIC.md`
-- Model registry: `python/entropic/data/bundled_models.yaml`
+- Model registry: `data/bundled_models.yaml`
 - `path:` resolves bundled model keys (e.g., `primary` → IQ3_XXS path)
 
 ## Session Protocol (MANDATORY — every session)
 
 ### Before writing ANY code:
 1. Read `docs/architecture-cpp.md` — full document
-2. Read the proposal for the version being implemented
+2. Read the **GitHub issue** for the version being implemented — issue body + all comments (`gh issue view N --comments`). The issue is the proposal AND the implementation log.
 3. Read ALL interface headers under `include/entropic/interfaces/`
 4. Read the design decision log at the bottom of `docs/architecture-cpp.md`
-5. If building on a prior version's work, read that version's proposal
+5. If building on a prior version's work, read that version's GitHub issue
    AND validate the actual code matches its contract before building on it
 
 ### Before closing any session:
@@ -102,7 +103,10 @@ audit record; capture it via the manual release workflow in
    append it to the design decision log
 2. If any interface header was modified, flag it explicitly in the commit message
    — interface changes are design changes, not implementation details
-3. Update the relevant proposal's implementation log
+3. Post an implementation-log comment to the relevant GitHub issue
+   (`gh issue comment N`) — what was done, what remains, decisions made,
+   files changed. Same structure as the legacy Implementation Log section,
+   just posted to the issue.
 
 ### Interface headers are immutable once written
 The `interfaces/i_*.h` files do not change without a new proposal.
@@ -111,17 +115,6 @@ flags it — that is a design change requiring user approval.
 
 ## Legacy Cleanup
 
-v1.7.1 on PyPI is the fallback. No legacy code maintained.
-User moves stale files to root-level `.old/` (gitignored) as replacements land.
-Claude does not manage `.old/`.
-
-Files to be cleaned up (by user, when replaced):
-- `docs/` — all except `roadmap.md` and `architecture-cpp.md`
-- `install.sh` — Python-specific, replaced by CMake
-- `.dockerignore` — no Docker in roadmap
-- `vendor/personaplex/` — moves with TUI at v1.7.2
-- `test-manual/` — session artifacts
-- `scripts/` — Python-specific (except model test scripts while Python engine lives)
-- `src/entropic/` — DELETED in v1.9.15
-- `benchmark/results/` — re-run on C++ engine
-- `examples/` — rewritten for C API at v1.9.15
+Pre-C++ artifacts have been removed. If something stale resurfaces,
+the user moves it to root-level `.old/` (gitignored). Claude does not
+manage `.old/`.

@@ -56,6 +56,12 @@ std::string BundledModels::load(const std::filesystem::path& path)
             extract(child, "adapter", entry.adapter);
             extract(child, "description", entry.description);
             extract(child, "mmproj_key", entry.mmproj_key);
+            // gh#62 (v2.3.0): optional structured selectors. Entries
+            // that don't declare them stay queryable by flat key only.
+            extract(child, "provider",   entry.provider);
+            extract(child, "family",     entry.family);
+            extract(child, "size_label", entry.size_label);
+            extract(child, "quant",      entry.quant);
 
             if (entry.name.empty()) {
                 err = "bundled model '" + entry.key + "' missing 'name'";
@@ -97,6 +103,32 @@ const BundledModelEntry* BundledModels::get(const std::string& key) const
         return nullptr;
     }
     return &it->second;
+}
+
+/**
+ * @brief gh#62: look up a flat key by (family, size_label, quant).
+ *
+ * Linear scan — entries_.size() is small (< 100 in practice). All
+ * three selectors are required and matched exactly. Returns empty
+ * string when no entry matches OR when the matching entries haven't
+ * been backfilled with structured metadata yet.
+ *
+ * @internal
+ * @version 2.3.0
+ */
+std::string BundledModels::find_by(
+    const std::string& family,
+    const std::string& size_label,
+    const std::string& quant) const
+{
+    for (const auto& [key, entry] : entries_) {
+        if (entry.family == family
+            && entry.size_label == size_label
+            && entry.quant == quant) {
+            return key;
+        }
+    }
+    return "";
 }
 
 /**

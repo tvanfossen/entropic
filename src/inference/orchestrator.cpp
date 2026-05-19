@@ -236,6 +236,20 @@ void ModelOrchestrator::shutdown() {
 }
 
 /**
+ * @brief Orchestrate teardown order (gh#58 close-out). See header.
+ * @utility
+ * @version 2.3.0
+ */
+ModelOrchestrator::~ModelOrchestrator() {
+    // Order matters (gh#58 close-out, v2.3.0):
+    //   1. Backends first → frees llama_contexts.
+    //   2. LoRA adapter handles after → safe because the contexts
+    //      that may have held HOT adapter references are gone.
+    shutdown();
+    lora_manager_.unload_all();
+}
+
+/**
  * @brief Run a generate call through speculative (if enabled+pair
  *        compatible) or fall back to plain decode.
  * @internal

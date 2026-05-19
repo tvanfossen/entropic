@@ -84,6 +84,23 @@ public:
      */
     void shutdown();
 
+    /**
+     * @brief Destructor — invokes shutdown() and AdapterManager::unload_all().
+     *
+     * Pre-v2.3.0 (gh#58 close-out) the orchestrator was destructed
+     * via the defaulted dtor and `shutdown()` was never called. Backend
+     * teardown still happened via `~LlamaCppBackend` (added in v2.2.8),
+     * but `AdapterManager` had no destructor — every loaded LoRA's
+     * `llama_adapter_lora*` leaked. This destructor enforces order:
+     * backends torn down first (frees their llama_contexts), then
+     * adapter handles freed (safe because contexts that referenced
+     * them are gone).
+     *
+     * @utility
+     * @version 2.3.0
+     */
+    ~ModelOrchestrator();
+
     /* ── Generation ──────────────────────────────────────── */
 
     /**

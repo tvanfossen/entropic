@@ -195,6 +195,29 @@ ENTROPIC_EXPORT const char* entropic_version(void);
  */
 ENTROPIC_EXPORT int entropic_api_version(void);
 
+/**
+ * @brief Seconds since the engine last serviced a run (gh#35, v2.3.0).
+ *
+ * Returns the wall-clock seconds delta between now and the entry time
+ * of the most recent `entropic_run*` call on this handle. Returns 0
+ * when no run has ever happened on this handle (no activity to be
+ * idle relative to).
+ *
+ * Intended for host-side idle-exit policies: a headless `entropic
+ * serve` or sassafras-class consumer process can poll this at its own
+ * cadence and call `entropic_destroy` once the engine has been idle
+ * for longer than the host's configured threshold. The engine itself
+ * does NOT auto-exit — that's a host policy decision.
+ *
+ * @param handle Engine handle. May be NULL.
+ * @return Seconds idle, or 0 if handle is NULL / no activity yet.
+ *
+ * @threadsafety Thread-safe.
+ * @version 2.3.0
+ */
+ENTROPIC_EXPORT int64_t entropic_seconds_since_last_activity(
+    entropic_handle_t handle);
+
 /* ── Memory ───────────────────────────────────────────── */
 
 /**

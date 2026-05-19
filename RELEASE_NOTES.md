@@ -66,6 +66,138 @@ model paths via `ENTROPIC_TEST_GPU_MODEL` and
 
 ---
 
+# entropic v2.3.0
+
+Minor release. Bundle of consumer-reported bugfixes (gh#64, gh#65,
+gh#66), the gh#58 close-out singleton/destructor sweep, additive
+config + capability surface (gh#62, gh#53), and a host-policy idle
+accessor (gh#35).
+
+The architectural per-handle logger isolation (gh#59) that was
+originally scoped for this release is **deferred to v2.3.1** —
+shipped scope was already dense and the logger work is genuinely
+3–5 days of careful refactoring that deserves its own release.
+v2.2.5's sink-dedup is the operative bandage; consumers wanting
+strict log isolation should run per-process for now.
+
+## Bug fixes
+
+### gh#64: delegation loop guard
+
+Lead tier was retrying a failing child specialist ~33 times before
+its own iteration cap stopped it (10+ minutes of wasted compute).
+
+`LoopConfig::max_consecutive_failed_delegations` (default 2) caps
+consecutive failed delegations against the same target. When
+exceeded, the next delegation to that target is rejected before
+dispatch with a `[DELEGATION REJECTED] '<target>' has just failed N
+times — stop retrying` message. Counter resets on success or target
+switch; intentionally does NOT reset on non-delegation tool calls
+(if a lead reads files between two attempts at the same failing
+target, the cap still applies).
+
+Predicate `AgentEngine::is_delegation_repeat_blocked(ctx, target)`
+exposed for testing.
+
+### gh#65: gemma4 tool-call diagnostic
+
+Consumer reported `<tool_call>{json}</tool_call>` emitted by
+gemma-4-E4B-it was not registering as a tool call. Hypothesis was
+that `strip_think_blocks` ran before parse and ate the tool call.
+
+Investigated: `Gemma4Adapter::parse_tool_calls` runs the parse on
+raw content BEFORE strip, and both the happy-path content and the
+inside-think-block content parse correctly in unit tests. The bug
+is upstream of `parse_tool_calls` — different content reaches the
+parser than is logged.
+
+Shipped: diagnostic logging in `parse_tagged_tool_calls` for two
+previously-silent failure modes — (a) tag matched but inner JSON
+unparseable, (b) `<tool_call>` substring present but regex didn't
+match. Next investigation has data instead of a silent "tool_calls:
+0". Two new unit tests pin the working parse so a future refactor
+can't regress it.
+
+### gh#66: nemotron3 Q8 crash repro attempt
+
+Could not reproduce on this hardware. Single-handle GPU configure +
+first inference of NVIDIA-Nemotron-3-Nano-4B-Q8_0 succeeds in our
+minimal harness. New `[.nemotron][.gpu][.realmodel]` probe scenario
+documents the working path. Consumer's repro likely involves their
+sassafras MCP child process (PID flagged in the issue body);
+deferred until they capture a SIGSEGV trace with their new handlers.
+
+### gh#58 close-out: AdapterManager leak
+
+`AdapterManager` held raw `llama_adapter_lora*` pointers with no
+destructor — same pattern as the pre-v2.2.8 `LlamaCppBackend` bug.
+On engine destroy, every loaded LoRA's adapter handle leaked.
+
+Fix: `AdapterManager::unload_all()` + `~ModelOrchestrator()` that
+orchestrates teardown order: backends (frees llama_contexts) first,
+then adapter handles (safe because contexts that referenced them
+are gone). Closes the destructor-audit class of bugs that produced
+gh#58 v2.2.5–v2.2.8.
+
+## Additive features
+
+### gh#62: family/size/quant model registry selectors
+
+`BundledModelEntry` gained optional `provider`, `family`,
+`size_label`, `quant` fields. New `BundledModels::find_by(family,
+size_label, quant)` query returns the matching flat key. Existing
+entries that don't declare these stay queryable by flat key only
+(no migration required). `data/bundled_models.yaml` backfilled
+for 6 production entries (qwen3_5 0.8b/2b/4b, gemma4 e2b/e4b,
+nemotron3 nano_4b).
+
+Consumer-facing tier config (`{family, size, quant}` selector at
+the tier level) and CLI extension (`entropic download --family ...`)
+are NOT in this release — registry plumbing is the prerequisite,
+those land when there's a second consumer asking for them.
+
+### gh#53: AUDIO capability
+
+`BackendCapability::AUDIO = 12` added to the enum. `LlamaCppBackend`
+dynamically advertises it when the loaded mtmd context's
+`mtmd_support_audio` returns true. The Gemma 4 audio projector was
+already wired into mtmd init — this just makes it observable
+through the capability query.
+
+### gh#35: idle-time accessor for host idle-exit policies
+
+`entropic_seconds_since_last_activity(handle)` returns wall-clock
+seconds since the most recent `entropic_run*` call. Hosts (TUI,
+`entropic serve`, sassafras-class) poll this at their cadence and
+call `entropic_destroy` once over their threshold. The engine does
+NOT auto-exit — that's a host policy decision. Returns 0 if no run
+has happened yet or handle is NULL.
+
+Additive C API — no breaking change.
+
+## Out of scope (deferred)
+
+- **gh#59 — per-handle spdlog logger isolation.** 3–5 day refactor
+  touching 62 logger declarations + 583 call sites. v2.3.1 target.
+- **gh#62 CLI + tier-config selectors.** Plumbing landed; UX
+  extension waits for second consumer asking.
+- **gh#66 actual fix.** Cannot reproduce without consumer's
+  sassafras-specific environment.
+
+## Tests
+
+- 7 new gh#64 delegation-guard scenario assertions
+- 11 new gh#65 gemma4 tool-call adapter assertions
+- 8 new gh#62 bundled-models find_by assertions
+- 4 new gh#53 audio capability assertions
+- 6 new gh#35 idle accessor assertions
+- 4 new gh#66 nemotron3 GPU probe assertions (opt-in via [.nemotron][.gpu])
+
+Full unit suite green (343 api, 327 inference, 509 core, 194 config
+assertions across the touched suites).
+
+---
+
 # entropic v2.2.7
 
 Patch release. **Bugfix — `cache_type_k`/`cache_type_v` finally wired

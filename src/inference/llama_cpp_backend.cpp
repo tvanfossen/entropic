@@ -196,7 +196,16 @@ bool LlamaCppBackend::do_activate() {
     llama_model* new_model = llama_model_load_from_file(
         config().path.c_str(), mparams);
     if (!new_model) {
-        last_error_ = "Failed to reload model with GPU layers";
+        // llama.cpp returns null with no error string — the actual
+        // reason (OOM, CUDA init failure, GGUF parse error, etc.)
+        // only surfaces in ggml's log stream. Point the operator at
+        // it so multi-handle GPU failures (gh#58 v2.2.7 follow-up)
+        // are diagnosable without source-diving llama.cpp.
+        last_error_ = "Failed to reload model with GPU layers "
+                      "(path=" + config().path.string()
+                    + ", gpu_layers=" + std::to_string(config().gpu_layers)
+                    + ") — check llama_ggml.log in the engine's log_dir "
+                      "for the underlying llama.cpp/CUDA error";
         return false;
     }
 
@@ -321,6 +330,21 @@ void LlamaCppBackend::do_deactivate() {
     } else {
         logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
     }
+}
+
+/**
+ * @brief Destructor — route to do_unload() so GPU buffers don't leak.
+ *
+ * gh#58 v2.2.7 follow-up: previously the defaulted base destructor
+ * left model_/ctx_/mtmd_ctx_ as raw pointers that were never freed.
+ * On a second handle's GPU model load, llama.cpp's CUDA pool then
+ * failed because the prior buffers were still allocated.
+ *
+ * @internal
+ * @version 2.2.8
+ */
+LlamaCppBackend::~LlamaCppBackend() {
+    do_unload();
 }
 
 /**

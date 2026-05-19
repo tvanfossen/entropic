@@ -1,3 +1,73 @@
+# entropic v2.2.9
+
+Patch release. **Quality-gate catch-up release that should have been
+v2.2.8's pre-commit pass.** v2.2.6 through v2.2.8 each landed
+quietly violating the project's pre-commit gates; this release fixes
+the breakage and re-greens the bar without any consumer-visible
+behavior change beyond what v2.2.5–v2.2.8 already documented.
+
+## What was broken
+
+1. **`entropic-tests` link break (v2.2.6 regression).** v2.2.6 moved
+   `entropic_last_error` from `src/types/error.cpp` to
+   `src/facade/entropic.cpp` (gh#58 follow-up — needed visibility of
+   the private `engine_handle` struct), but left
+   `tests/unit/types/error_test.cpp:60` calling the symbol. That
+   test target only links `entropic-types`, which no longer defines
+   it. `inv test --cpu` and pre-commit's "Unit tests" hook both fail
+   at link time. The break survived through v2.2.7 and v2.2.8.
+
+2. **Three knots threshold violations** (LOCKED limits per project
+   policy):
+   - `parse_kv_cache_type` (v2.2.7) — 6 returns vs. threshold 3.
+     Refactored to a lookup-table walk.
+   - `LlamaCppBackend::do_activate` (v2.2.7 + v2.2.8) — 53 SLOC vs.
+     threshold 50 after the cache-type wiring and diagnostic
+     expansion. `build_cparams` helper extracted.
+   - `configure_common` (v2.2.6) — 51 SLOC vs. threshold 50 after
+     the per-handle `InterfaceContext` wiring. `init_orchestrator`
+     helper extracted.
+
+3. **Stale SPDX header** — `tests/unit/api/multi_handle_test.cpp`
+   was added in v2.2.5 (post-Apache-2.0 relicense) with the
+   pre-v2.2.2 `LGPL-3.0-or-later` SPDX identifier. Flipped to
+   Apache-2.0.
+
+## Why this slipped
+
+Pre-commit's `Build` + `Unit tests` hooks would have caught all
+three knots violations and the link break. They didn't, which means
+the gate was bypassed on the v2.2.6 / v2.2.7 / v2.2.8 commits. The
+fix is mechanical; the process gap is the real takeaway.
+
+## Behavior
+
+No ABI change. No new symbols. No removed symbols. No runtime
+behavior change vs. v2.2.8. Code paths previously violating knots
+are byte-equivalent in observable behavior; the helper extractions
+are pure refactors with the same call-edge structure. The relocated
+test pins the same NULL-handle contract.
+
+## Files changed
+
+- `src/facade/entropic.cpp` — `init_orchestrator` helper extracted
+  from `configure_common`.
+- `src/inference/llama_cpp_backend.cpp` — `parse_kv_cache_type`
+  rewritten as a static lookup table; `build_cparams` helper
+  extracted from `do_activate`.
+- `tests/unit/types/error_test.cpp` — `entropic_last_error` NULL
+  scenario removed (lives in facade now).
+- `tests/unit/api/multi_handle_test.cpp` — NULL-handle scenario
+  rehomed here (facade is in scope); SPDX header flipped to
+  Apache-2.0.
+- `VERSION` → `2.2.9`.
+
+## Still open
+
+- gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
 # entropic v2.2.8
 
 Patch release. **Bugfix — `LlamaCppBackend` GPU buffer leak on

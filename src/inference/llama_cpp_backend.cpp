@@ -125,14 +125,19 @@ void finalize_result(GenerationResult& result,
  * llama_context_default_params() default.
  *
  * @utility
- * @version 2.2.7
+ * @version 2.2.9
  */
 ggml_type parse_kv_cache_type(const std::string& s) {
-    if (s == "f16")  { return GGML_TYPE_F16;  }
-    if (s == "f32")  { return GGML_TYPE_F32;  }
-    if (s == "bf16") { return GGML_TYPE_BF16; }
-    if (s == "q8_0") { return GGML_TYPE_Q8_0; }
-    if (s == "q4_0") { return GGML_TYPE_Q4_0; }
+    static const std::pair<const char*, ggml_type> kTable[] = {
+        {"f16",  GGML_TYPE_F16},
+        {"f32",  GGML_TYPE_F32},
+        {"bf16", GGML_TYPE_BF16},
+        {"q8_0", GGML_TYPE_Q8_0},
+        {"q4_0", GGML_TYPE_Q4_0},
+    };
+    for (const auto& [name, type] : kTable) {
+        if (s == name) { return type; }
+    }
     logger->warn("Unknown cache_type '{}' — defaulting to f16", s);
     return GGML_TYPE_F16;
 }
@@ -181,8 +186,48 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
  * @internal
  * @version 2.1.8
  */
+namespace {
+/**
+ * @brief Build llama_context_params from a ModelConfig.
+ *
+ * Extracted from `do_activate` in v2.2.9 to keep SLOC under the knots
+ * gate after v2.2.7 wired cache_type_k/v + the v2.2.8 diagnostic
+ * expansion. gh#61: maps ModelConfig::cache_type_k/cache_type_v
+ * (documented since v1.8.0, dead-code until v2.2.7) into the actual
+ * llama.cpp KV-cache quantization slots.
+ *
+ * @utility
+ * @version 2.2.9
+ */
+llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
+    llama_context_params c = llama_context_default_params();
+    c.n_ctx = static_cast<uint32_t>(cfg.context_length);
+    c.n_batch = static_cast<uint32_t>(cfg.n_batch);
+    c.n_threads = cfg.n_threads > 0
+        ? static_cast<uint32_t>(cfg.n_threads)
+        : std::thread::hardware_concurrency();
+    c.flash_attn_type = cfg.flash_attn
+        ? LLAMA_FLASH_ATTN_TYPE_ENABLED
+        : LLAMA_FLASH_ATTN_TYPE_DISABLED;
+    c.type_k = parse_kv_cache_type(cfg.cache_type_k);
+    c.type_v = parse_kv_cache_type(cfg.cache_type_v);
+    return c;
+}
+} // anonymous namespace
+
+/**
+ * @brief Activate model on GPU (WARM → ACTIVE).
+ *
+ * Reloads model with n_gpu_layers from config, then creates inference
+ * context with KV cache. v2.2.7 (gh#61) wired cache_type_k/v.
+ * v2.2.8 (gh#58 follow-up) added the diagnostic-rich error message.
+ * v2.2.9 extracted the cparams builder to satisfy the SLOC gate.
+ *
+ * @return true on success.
+ * @internal
+ * @version 2.2.9
+ */
 bool LlamaCppBackend::do_activate() {
-    // Reload model with GPU layers
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = config().gpu_layers;
     mparams.use_mmap = true;
@@ -209,32 +254,11 @@ bool LlamaCppBackend::do_activate() {
         return false;
     }
 
-    // Free old CPU-only model, replace with GPU model
-    if (model_) {
-        llama_model_free(model_);
-    }
+    if (model_) { llama_model_free(model_); }
     model_ = new_model;
     vocab_ = llama_model_get_vocab(model_);
 
-    // Create inference context
-    llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = static_cast<uint32_t>(config().context_length);
-    cparams.n_batch = static_cast<uint32_t>(config().n_batch);
-    cparams.n_threads = config().n_threads > 0
-        ? static_cast<uint32_t>(config().n_threads)
-        : std::thread::hardware_concurrency();
-    cparams.flash_attn_type = config().flash_attn
-        ? LLAMA_FLASH_ATTN_TYPE_ENABLED
-        : LLAMA_FLASH_ATTN_TYPE_DISABLED;
-    // gh#61: cache_type_k/cache_type_v were documented config fields
-    // since v1.8.0 but never wired into llama.cpp. At large n_ctx the
-    // F16 default KV cache OOMs llama_init_from_model on the GPU
-    // (Qwen3.5-4B @ 65k F16 KV ≈ 8 GB, exceeds 1080 Ti's 11 GB once
-    // weights are resident). Mapping the documented strings here
-    // makes the existing q8_0/q4_0/bf16 etc. settings finally take
-    // effect.
-    cparams.type_k = parse_kv_cache_type(config().cache_type_k);
-    cparams.type_v = parse_kv_cache_type(config().cache_type_v);
+    llama_context_params cparams = build_cparams(config());
 
     ctx_ = llama_init_from_model(model_, cparams);
     if (!ctx_) {

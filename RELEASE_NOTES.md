@@ -33,6 +33,17 @@ behavior change beyond what v2.2.5–v2.2.8 already documented.
    pre-v2.2.2 `LGPL-3.0-or-later` SPDX identifier. Flipped to
    Apache-2.0.
 
+4. **gh#63 defensive close** — `ModelOrchestrator` had `void shutdown()`
+   but no destructor, so the destroy path relied on the
+   `shared_ptr<InferenceBackend>` cascade reaching v2.2.8's
+   `~LlamaCppBackend()` to release VRAM. Functionally that already
+   closed the leak gh#63 reported against v2.2.4, but the intent was
+   implicit and any future member that did not cascade through a
+   `shared_ptr<LlamaCppBackend>` would silently regress it. Added
+   `~ModelOrchestrator() { shutdown(); }` so the teardown is explicit,
+   emits the "Shutting down model orchestrator" log on every destroy,
+   and is robust to future refactors.
+
 ## Why this slipped
 
 Pre-commit's `Build` + `Unit tests` hooks would have caught all
@@ -60,7 +71,14 @@ test pins the same NULL-handle contract.
 - `tests/unit/api/multi_handle_test.cpp` — NULL-handle scenario
   rehomed here (facade is in scope); SPDX header flipped to
   Apache-2.0.
+- `include/entropic/inference/orchestrator.h` — explicit
+  `~ModelOrchestrator() { shutdown(); }` defensive destructor (gh#63).
 - `VERSION` → `2.2.9`.
+
+## Issue
+
+- [gh#63](https://github.com/tvanfossen/entropic/issues/63) — defensive
+  close; functional fix shipped in v2.2.8 via `~LlamaCppBackend()`.
 
 ## Still open
 

@@ -7,22 +7,11 @@
 
 #include <entropic/types/error.h>
 
-/// @brief Thread-local error message for pre-handle errors (during create).
-static thread_local char s_global_error[512] = "";
-
-/**
- * @brief Get the last error message for a handle.
- * @param handle Engine handle (may be NULL for pre-creation errors).
- * @return Null-terminated error message, or "" if no error.
- * @version 1.8.0
- * @internal
- */
-extern "C" const char* entropic_last_error(entropic_handle_t handle) {
-    // TODO(v1.8.4): Look up per-handle error state.
-    // Pre-handle errors (NULL handle) use thread-local global.
-    (void)handle;
-    return s_global_error;
-}
+/* entropic_last_error moved to src/facade/entropic.cpp in v2.2.6
+ * (gh#58 follow-up). The TODO from v1.8.0 was finally implemented:
+ * the facade can see the private engine_handle struct and read
+ * handle->last_error directly. Pre-create errors still use a
+ * thread-local fallback owned by the facade. */
 
 /// @brief Lookup table: error code → name string.
 static const char* const s_error_names[] = {

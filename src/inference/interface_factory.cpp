@@ -24,17 +24,18 @@ namespace entropic {
 
 /**
  * @brief Holds orchestrator + tier for C callback user_data.
+ *
+ * Owned by the engine handle (since v2.2.6, gh#58 follow-up).
+ * Pre-v2.2.6 a single process-global `s_ctx` was reassigned on
+ * every configure, which broke as soon as two handles existed.
+ *
  * @internal
- * @version 2.0.1
+ * @version 2.2.6
  */
 struct InterfaceContext {
     ModelOrchestrator* orchestrator; ///< Orchestrator pointer
     std::string default_tier;        ///< Default tier name
 };
-
-// Leaked intentionally — lives for the process lifetime.
-// One per configure call. Acceptable tradeoff for C callback safety.
-static InterfaceContext* s_ctx = nullptr;
 
 // ── JSON helpers ───────────────────────────────────────────
 
@@ -254,10 +255,10 @@ static int iface_is_complete(const char* /*content*/,
  */
 InferenceInterface build_orchestrator_interface(
     ModelOrchestrator* orchestrator,
-    const std::string& default_tier) {
-    // Replace previous context (one active at a time)
-    delete s_ctx;
-    s_ctx = new InterfaceContext{orchestrator, default_tier};
+    const std::string& default_tier,
+    InterfaceContext** out_context) {
+    auto* ctx = new InterfaceContext{orchestrator, default_tier};
+    if (out_context) { *out_context = ctx; }
 
     InferenceInterface iface;
     iface.generate = iface_generate;
@@ -267,10 +268,19 @@ InferenceInterface build_orchestrator_interface(
     iface.parse_tool_calls = iface_parse_tool_calls;
     iface.is_response_complete = iface_is_complete;
     iface.free_fn = free;
-    iface.backend_data = s_ctx;
-    iface.orchestrator_data = s_ctx;
-    iface.adapter_data = s_ctx;
+    iface.backend_data = ctx;
+    iface.orchestrator_data = ctx;
+    iface.adapter_data = ctx;
     return iface;
+}
+
+/**
+ * @brief Free a context returned by build_orchestrator_interface().
+ * @internal
+ * @version 2.2.6
+ */
+void destroy_orchestrator_interface(InterfaceContext* context) {
+    delete context;
 }
 
 } // namespace entropic

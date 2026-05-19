@@ -61,6 +61,79 @@ SCENARIO("Double-configure on one handle is refused",
     }
 }
 
+SCENARIO("entropic_last_error returns per-handle state (v2.2.6)",
+         "[api][gh58][multi-handle][last_error]") {
+    GIVEN("two configured handles") {
+        entropic_handle_t h1 = nullptr;
+        entropic_handle_t h2 = nullptr;
+        REQUIRE(entropic_create(&h1) == ENTROPIC_OK);
+        REQUIRE(entropic_create(&h2) == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h1, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h2, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+        WHEN("re-configure is attempted on h1 (sets last_error)") {
+            auto err = entropic_configure(h1, R"({"log_level":"WARN"})");
+            REQUIRE(err == ENTROPIC_ERROR_INVALID_STATE);
+
+            THEN("entropic_last_error(h1) returns the message") {
+                const char* msg = entropic_last_error(h1);
+                REQUIRE(msg != nullptr);
+                // Pre-v2.2.6 this returned a thread-local global that
+                // ignored the handle entirely.
+                REQUIRE(std::string(msg) == "handle already configured");
+            }
+
+            THEN("entropic_last_error(h2) is independent of h1") {
+                const char* msg2 = entropic_last_error(h2);
+                REQUIRE(msg2 != nullptr);
+                REQUIRE(std::string(msg2) != "handle already configured");
+            }
+        }
+
+        entropic_destroy(h1);
+        entropic_destroy(h2);
+    }
+}
+
+SCENARIO("h1.run() after h2.configure() does not segfault (v2.2.6)",
+         "[api][gh58][multi-handle][run]") {
+    // Direct repro of the consumer's gh#58 follow-up symptom. Pre-
+    // v2.2.6 the second configure deleted the first handle's
+    // InterfaceContext (process-global static `s_ctx` in
+    // src/inference/interface_factory.cpp), leaving h1's
+    // inference_iface.user_data dangling. h1.run() then segfaulted in
+    // ModelOrchestrator::route via the iface_route callback.
+    GIVEN("two handles configured without models") {
+        entropic_handle_t h1 = nullptr;
+        entropic_handle_t h2 = nullptr;
+        REQUIRE(entropic_create(&h1) == ENTROPIC_OK);
+        REQUIRE(entropic_create(&h2) == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h1, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h2, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+        WHEN("h1.run() is called after h2.configure()") {
+            char* result = nullptr;
+            auto err = entropic_run(h1, "Say hi.", &result);
+
+            THEN("the call returns (no segfault) and last_error is readable") {
+                // The actual return code with no-model config is a
+                // separate engine concern (today: OK with 0-char
+                // output; arguably should be a no-model error).
+                // What gh#58 needs is: no crash, and last_error is
+                // readable per-handle, regardless of value.
+                (void)err;
+                const char* msg = entropic_last_error(h1);
+                REQUIRE(msg != nullptr);
+            }
+
+            if (result) { entropic_free(result); }
+        }
+
+        entropic_destroy(h1);
+        entropic_destroy(h2);
+    }
+}
+
 SCENARIO("Three handles can coexist", "[api][gh58][multi-handle]") {
     GIVEN("three created handles") {
         entropic_handle_t hs[3] = {nullptr, nullptr, nullptr};

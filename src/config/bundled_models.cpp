@@ -12,10 +12,48 @@
 
 #include <cstdlib>
 #include <vector>
+#include <dlfcn.h>
 
 static auto s_log = entropic::log::get("config");
 
 namespace entropic::config {
+
+namespace {
+
+/**
+ * @brief `<prefix>/share/entropic` derived from librentropic.so's
+ *        on-disk location via dladdr.
+ *
+ * Mirrors data_dir.cpp::share_dir_from_library. Lets registry
+ * discovery find the bundled_models.yaml relative to the installed
+ * library, independent of the build-time CMAKE_INSTALL_PREFIX baked
+ * into CONFIG_ENTROPIC_DATA_DIR. Without this a binary built with one
+ * install prefix (CI/container stage dir, or a build host where the
+ * stage dir is later cleaned) can't find its own registry once
+ * installed elsewhere — every model key fails to resolve and tier
+ * load dies with "Model file not found".
+ *
+ * @return Resolved share dir, or empty if dladdr fails.
+ * @internal
+ * @version 1.0
+ */
+std::filesystem::path share_dir_from_library()
+{
+    Dl_info info = {};
+    if (dladdr(reinterpret_cast<void*>(&share_dir_from_library), &info) == 0
+        || info.dli_fname == nullptr) {
+        return {};
+    }
+    std::error_code ec;
+    auto abs_lib = std::filesystem::absolute(
+        std::filesystem::path(info.dli_fname), ec);
+    if (ec) {
+        return {};
+    }
+    return abs_lib.parent_path().parent_path() / "share" / "entropic";
+}
+
+}  // namespace
 
 /**
  * @brief Load registry from YAML file.
@@ -211,19 +249,39 @@ BundledModels::entries() const
 /**
  * @brief Auto-discover and load bundled_models.yaml.
  *
- * Searches compile-time install path, source tree path, and
- * CWD-relative "data/" for the registry file.
+ * Discovery order (mirrors data_dir.cpp::resolve_data_dir):
+ * ENTROPIC_DATA_DIR env, then binary-relative via dladdr
+ * (<prefix>/share/entropic from librentropic.so's location), then the
+ * compile-time install path, source tree, and CWD-relative "data/"
+ * fallbacks. The dladdr step makes the registry findable on any
+ * install prefix, not just the build host.
  *
  * @return Empty string on success, error message if none found.
  * @internal
- * @version 2.0.1
+ * @version 2.3.6
  */
 std::string BundledModels::auto_discover_and_load() {
-    const std::filesystem::path candidates[] = {
-        std::filesystem::path(CONFIG_ENTROPIC_DATA_DIR) / "bundled_models.yaml",
-        std::filesystem::path(CONFIG_ENTROPIC_SOURCE_DATA_DIR) / "bundled_models.yaml",
-        "data/bundled_models.yaml",
-    };
+    // Discovery order mirrors data_dir.cpp::resolve_data_dir so the
+    // registry is found the same way as prompts/grammars/schemas:
+    //   1. ENTROPIC_DATA_DIR env (explicit operator override)
+    //   2. binary-relative via dladdr (portable across install prefixes)
+    //   3-5. compile-time install path, source tree, CWD (dev/build-host)
+    // Pre-v2.3.6 this list was only 3-5 — purely compile-time/CWD — so
+    // a relocated install (any machine that isn't the build host, incl.
+    // container-staged release binaries) silently loaded zero models.
+    std::vector<std::filesystem::path> candidates;
+    if (const char* env = std::getenv("ENTROPIC_DATA_DIR"); env && *env) {
+        candidates.emplace_back(std::filesystem::path(env) / "bundled_models.yaml");
+    }
+    if (auto from_lib = share_dir_from_library(); !from_lib.empty()) {
+        candidates.emplace_back(from_lib / "bundled_models.yaml");
+    }
+    candidates.emplace_back(
+        std::filesystem::path(CONFIG_ENTROPIC_DATA_DIR) / "bundled_models.yaml");
+    candidates.emplace_back(
+        std::filesystem::path(CONFIG_ENTROPIC_SOURCE_DATA_DIR) / "bundled_models.yaml");
+    candidates.emplace_back("data/bundled_models.yaml");
+
     for (const auto& path : candidates) {
         if (std::filesystem::is_regular_file(path)) {
             auto err = load(path);

@@ -580,30 +580,105 @@ def _pack_tarball(c, stage_dir, version, backend, outdir):
     return artifact_path
 
 
+## @brief Container image for the glibc-portable (Ubuntu 22.04) build.
+## @utility
+## @version 1
+def _docker_base_image(backend):
+    """Return the Ubuntu-22.04-based image for a backend.
+
+    cpu  → plain ubuntu:22.04
+    cuda → nvidia/cuda devel image on 22.04 (ships nvcc + toolkit; the
+           12.8 toolkit is required for sm_100/sm_120 in the arch list).
+
+    Both give a glibc-2.35 userspace so the produced .so runs on
+    Ubuntu 22.04 and every newer glibc (24.04, Debian 12, RHEL 9, ...).
+    """
+    if backend == "cuda":
+        return "nvidia/cuda:12.8.0-devel-ubuntu22.04"
+    return "ubuntu:22.04"
+
+
+## @brief Build one backend inside an Ubuntu-22.04 container for glibc portability.
+## @utility
+## @return Path to the produced .tar.gz.
+## @version 1
+def _build_release_docker(c, backend, version, outdir, jobs, cuda_arches=""):
+    """Run the full build → stage → linkage-check → pack for one backend
+    inside an Ubuntu 22.04 container via scripts/docker_release_build.sh.
+
+    The native host build (24.04) links against glibc 2.39 and won't
+    load on 22.04. This routes the same cmake invocation through a
+    22.04 userspace so the artifact is forward-portable. nvcc
+    cross-compiles for the target SASS arches without needing GPU
+    access, so no --gpus passthrough is required for the build itself.
+
+    The repo is mounted read-only at /src (build dir is container-local
+    under /tmp, so the host tree stays clean of root-owned artifacts);
+    dist/ is mounted read-write at /out and the tarball is chowned back
+    to the invoking user.
+
+    `cuda_arches` (e.g. "75;89;90;120") overrides the default 12-arch
+    SASS list to cut CUDA compile time when targeting a known GPU fleet.
+    """
+    image = _docker_base_image(backend)
+    repo = os.path.abspath(".")
+    out = os.path.abspath(outdir)
+    os.makedirs(out, exist_ok=True)
+    uid, gid = os.getuid(), os.getgid()
+    arch_env = f" -e CUDA_ARCHES={cuda_arches}" if cuda_arches else ""
+    c.run(
+        f"docker run --rm"
+        f"{arch_env}"
+        f" -v {repo}:/src:ro -v {out}:/out"
+        f" {image}"
+        f" bash /src/scripts/docker_release_build.sh"
+        f" {backend} {version} {jobs} {uid} {gid}"
+    )
+    return os.path.join(outdir, f"entropic-{version}-linux-x86_64-{backend}.tar.gz")
+
+
 ## @brief Pre-flight the tag-driven release workflow locally (no publish).
 ## @utility
-## @version 2
+## @version 3
 @task(
     help={
         "version": "Artifact version string (default: CMakeLists project VERSION)",
         "skip_cuda": "Skip the CUDA matrix entry (faster iteration)",
         "outdir": "Output directory for tarballs (default: dist/)",
         "jobs": f"Parallel build jobs (default: {JOBS})",
+        "docker": (
+            "Build inside an Ubuntu 22.04 container so the .so links "
+            "against glibc 2.35 (runs on 22.04+ instead of 24.04-only)."
+        ),
+        "cuda_arches": (
+            "Override the CUDA SASS arch list (e.g. '75;89;90;120') to "
+            "cut compile time for a known GPU fleet. Docker builds only."
+        ),
     }
 )
-def release_check(c, version="", skip_cuda=False, outdir="dist", jobs=JOBS):
-    """Pre-flight the tag-driven release workflow locally.
+def release_check(  # noqa: CFQ002
+    c, version="", skip_cuda=False, outdir="dist", jobs=JOBS, docker=False, cuda_arches=""
+):
+    """Pre-flight the local release build (no tag push, no publish).
 
-    Mirrors .github/workflows/release.yaml's build-package jobs on the
-    local machine — no tag push, no publish. Confidence gate for "the
-    release will succeed" before burning hosted-runner minutes on a
-    paid tier or cutting a real tag.
+    The release is built locally (CUDA compilation needs more memory
+    than hosted CI runners provide), so this task IS the release build,
+    not just a mirror of it.
 
     Produces .tar.gz per backend and verifies:
       - CMake install tree is self-contained (no unresolved deps)
       - CLI launches via install RPATH (no LD_LIBRARY_PATH needed)
       - find_package(entropic 2.0 REQUIRED) consumer build+links+runs
       - CUDA tarball has libcudart linked (Blackwell native SASS present)
+
+    With --docker, each backend is built inside an Ubuntu 22.04
+    container instead of natively. The resulting binaries link against
+    glibc 2.35 and run on Ubuntu 22.04 → 24.x, Debian 12, RHEL 9, etc.
+    — the native 24.04 build only runs on glibc 2.39+ hosts. Docker +
+    nvidia-container-toolkit (for the cuda backend's toolkit image)
+    must be available. The in-container driver does its own linkage +
+    glibc-floor check; the host-side find_package smoke is skipped
+    (the staged tree is inside the container).
     """
     if not version:
         version = _cmake_project_version()
@@ -613,7 +688,14 @@ def release_check(c, version="", skip_cuda=False, outdir="dist", jobs=JOBS):
     tarballs = {}
 
     for backend in backends:
-        print(f"\n══ Release check: {backend} backend ══")
+        mode = "docker / Ubuntu 22.04" if docker else "native"
+        print(f"\n══ Release check: {backend} backend ({mode}) ══")
+        if docker:
+            tarballs[backend] = _build_release_docker(
+                c, backend, version, outdir, jobs, cuda_arches
+            )
+            print(f"  ✓ {tarballs[backend]}")
+            continue
         build_dir = os.path.abspath(os.path.join("build", f"release-{backend}"))
         stage_dir = os.path.abspath(os.path.join(build_dir, "stage", "entropic"))
         shutil.rmtree(build_dir, ignore_errors=True)

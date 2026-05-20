@@ -1,3 +1,67 @@
+# entropic v2.3.6
+
+Patch release. **Relocatable bundled-model registry discovery.** The
+release binaries are now portable to any machine, not just the build
+host.
+
+## The bug
+
+`BundledModels::auto_discover_and_load()` searched only compile-time
+paths (`CONFIG_ENTROPIC_DATA_DIR` = the build's `CMAKE_INSTALL_PREFIX/
+share/entropic`), the source tree, and CWD-relative `data/`. It never
+did binary-relative (dladdr) discovery the way `data_dir.cpp::
+resolve_data_dir()` already does for prompts/grammars/schemas.
+
+Consequence: a binary built with one install prefix couldn't find its
+own `bundled_models.yaml` once installed anywhere else. The registry
+loaded **zero models**, so every tier's model key (`qwen3_6_a3b`,
+etc.) failed to resolve and `configure_dir` died with:
+
+```
+[inference.orchestrator] [error] Model file not found for tier '...': qwen3_6_a3b
+[facade] [error] orchestrator initialization failed
+```
+
+This was masked for native builds because they were run on the same
+machine they were built on (the baked stage path existed locally).
+It surfaced hard with the new Docker/Ubuntu-22.04 release build
+(whose container stage path, `/tmp/release-cuda/...`, never exists at
+runtime) — and it would have hit every downstream consumer machine
+that isn't the build host.
+
+## Fix
+
+`auto_discover_and_load()` now mirrors `resolve_data_dir()`'s
+discovery order:
+
+1. `ENTROPIC_DATA_DIR` env (operator override)
+2. **binary-relative via dladdr** — `<prefix>/share/entropic` derived
+   from `librentropic.so`'s on-disk location (portable across install
+   prefixes)
+3. compile-time install path → source tree → CWD (dev/build-host
+   fallbacks, unchanged)
+
+`src/config/bundled_models.cpp` gains a local `share_dir_from_library()`
+helper (same dladdr pattern as `data_dir.cpp`). Verified end-to-end:
+a container-built binary installed to `~/.entropic/entropic/` now logs
+`pre-loaded 17 bundled model(s) from ~/.entropic/entropic/share/
+entropic/bundled_models.yaml` and `configure_dir` loads the model
+cleanly.
+
+## Release tooling (new in this cut)
+
+Release artifacts are now built via `inv release-check --docker`,
+which compiles inside an Ubuntu 22.04 container so the binaries are
+portable to Ubuntu 22.04+ (not 24.04-only). Three container-vs-
+consumer library gaps are disabled for the distributed binary:
+`GGML_NATIVE=OFF` (portable AVX2 baseline, no `-march=native`
+SIGILL), `GGML_CUDA_NO_VMM=ON` (no libcuda driver-stub link
+dependency), `GGML_CUDA_NCCL=OFF` (no libnccl.so.2 — the CUDA devel
+image ships NCCL and it would otherwise leak into the binary). Glibc
+floor verified ≤ 2.35; CUDA arch coverage sm_50→sm_120.
+
+---
+
 # entropic v2.3.5
 
 Patch release. **Fixes gh#68 properly — at the right layer this time.**

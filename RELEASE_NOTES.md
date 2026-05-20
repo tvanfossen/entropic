@@ -1,3 +1,109 @@
+# entropic v2.3.5
+
+Patch release. **Fixes gh#68 properly — at the right layer this time.**
+v2.3.4 attempted to fix the `<|im_end|>` content leak by flipping
+`detokenize` to `special=false`. Consumer verified the leak persisted
+because Gemma 4 emits the marker as **multi-token regular surface
+tokens** (not as a single special token), so the flag has no effect.
+Real fix lives in the adapter layer.
+
+## Diagnosis (consumer-led)
+
+Quote from gh#68 follow-up:
+
+> Gemma's `<|im_end|>` isn't a single special token in its GGUF vocab —
+> it's emitted as multiple REGULAR surface tokens that spell out the
+> literal string. The model log shows `Generated: 6 tokens` decoding
+> to a 10-character `<|im_end|>`. That's ~1.7 chars per token —
+> consistent with a multi-token regular-surface decomposition like
+> `<`, `|`, `im`, `_`, `end`, `|>`.
+
+Same family as gh#65's asymmetric `<|tool_call>`: chat-template
+artifacts that the tokenizer decomposes into regular tokens, so
+they slip through any "filter special tokens" approach.
+
+## Fix
+
+`Gemma4Adapter::parse_tool_calls` already scrubs `<tool_call>...`
+markup and `<think>` blocks from `cleaned_content`. v2.3.5 adds one
+more regex matching Gemma's chat-template turn-boundary markers:
+
+```cpp
+static const std::regex kGemmaTemplateMarkers(
+    R"(<\|im_end\|?>|<\|im_start\|?>(?:user|assistant|system)?|)"
+    R"(<end_of_turn>|<start_of_turn>(?:user|model)?)");
+cleaned = std::regex_replace(cleaned, kGemmaTemplateMarkers, "");
+```
+
+Covers four marker families plus the asymmetric variants (with /
+without trailing pipe — same shape as gh#65):
+
+- `<|im_end|>` / `<|im_end>`
+- `<|im_start|>[user|assistant|system]` / `<|im_start>[...]`
+- `<end_of_turn>`
+- `<start_of_turn>[user|model]`
+
+## v2.3.4 detokenize change — kept but reframed
+
+The `special=false` change from v2.3.4 stays in the codebase as a
+defensive measure (if any future model emits a chat-template marker
+as a single special token, this filter would catch it). The comment
+is rewritten to make explicit that this is NOT the gh#68 fix — the
+adapter scrub above is.
+
+## Tests removed for false signal
+
+`tests/unit/inference/gh68_detokenize_test.cpp` from v2.3.4 is
+**deleted**. It tested that no SINGLE token decoded to the full
+`<|im_end|>` literal — which passed for the wrong reason. The bug
+was the concatenated multi-token stream producing the literal,
+which that test never exercised. Replaced with adapter-level tests
+that directly assert the fix.
+
+## Tests added
+
+`tests/unit/inference/gemma4_adapter_test.cpp` — 7 new `[gh68]`
+scenarios / 21 assertions:
+
+1. **The exact gh#68 repro**: `"...I don't understand.<|im_end|>"`
+   → `cleaned_content` has no `<|im_end|>`, surrounding prose
+   survives.
+2. **Asymmetric variant** `<|im_end>` (no trailing pipe — parity
+   with gh#65) → scrubbed.
+3. **Turn-open markers** `<|im_start|>` bare and role-suffixed →
+   all forms scrubbed.
+4. **Canonical Gemma 4 markers** `<end_of_turn>` /
+   `<start_of_turn>` → scrubbed.
+5. **gh#68 + gh#65 interaction**: a tool_call followed by
+   `<|im_end|>` → tool_call still parses, cleaned_content has
+   neither.
+6. **Regex over-match defense**: HTML-style tags (`<input>`),
+   operators (`<<`), inequalities (`<` `>`) — all survive intact.
+7. **Degenerate cases**: empty content, marker-only content (the
+   exact 6-token consumer transcript) → no crash, empty output.
+
+Full suite: 142 / 351 / 524 / **362** / 194 — all green. gh#65
+regression check still passes (23/3 unchanged).
+
+## Process miss owned (fifth in a row)
+
+This is the fifth v2.3.x bug from the same root failure mode —
+specifically v2.3.4's variant: I shipped a test that passed for
+the wrong reason. The test asserted "no token decodes to the
+literal" but the actual bug was "concatenated stream decodes to
+the literal." Same family as v2.3.0-v2.3.3's "tested what I built,
+not what shipped."
+
+Pattern to lock in: **when writing a test for a bug, write the
+test that would catch the EXACT user-observed symptom — not a
+weaker proxy.** v2.3.4's test should have been "given content
+that the model emits, does `cleaned_content` still contain the
+marker?" That's the assertion the consumer actually cares about,
+and it would have failed in v2.3.4 → forcing me to look at the
+adapter layer where the real fix lives.
+
+---
+
 # entropic v2.3.4
 
 Patch release. **Two bugs from gh#68 — consumer-diagnosed in

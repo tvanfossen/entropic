@@ -38,8 +38,14 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
     }
     result.tool_calls = std::move(calls);
 
+    // gh#65 (v2.3.3): match the asymmetric open variants here too so
+    // the cleaned_content (what the user sees) doesn't leave stray
+    // `<|tool_call>{json}</tool_call>` markup behind when Gemma 4
+    // emits the pipe-prefixed form. Mirror the openings accepted by
+    // parse_tagged_tool_calls.
     std::string cleaned = std::regex_replace(content,
-        std::regex(R"(<tool_call>\s*[\s\S]*?\s*</tool_call>)"), "");
+        std::regex(R"((?:<tool_call>|<\|tool_call\|?>)\s*[\s\S]*?\s*</tool_call>)"),
+        "");
     cleaned = strip_think_blocks(cleaned);
     result.cleaned_content = std::move(cleaned);
     return result;

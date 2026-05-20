@@ -414,24 +414,27 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
-    // gh#68 (v2.3.4): special=false — special tokens are NOT rendered
-    // to surface text. Pre-v2.3.4 we passed special=true and Gemma 4's
-    // `<|im_end|>` special token decoded to the literal 10-character
-    // string `<|im_end|>` which leaked into the content buffer. That
-    // text then echoed back in the next turn's prompt, the model
-    // re-emitted EOS to escape, and the engine's "no tool call in
-    // this iteration" retry cascade ran to exhaustion.
+    // special=false — special tokens don't render to surface text.
     //
-    // Risk: a model that emits a tool-call channel marker as a single
-    // special token would also be filtered. Mitigation: gh#65 v2.3.3
-    // shows Gemma 4 emits the asymmetric `<|tool_call>` form via
-    // multi-token regular surface tokens (not a single special), so
-    // the gh#65 parse path is unaffected. The asymmetric-form unit
-    // test in gemma4_adapter_test.cpp pins this contract.
+    // History: v2.3.4 (gh#68) flipped this from `true` to `false`
+    // expecting it would fix Gemma 4's `<|im_end|>` content leak.
+    // It did NOT — Gemma 4 emits `<|im_end|>` as multi-token *regular*
+    // surface tokens (the GGUF tokenizer decomposes it into `<`, `|`,
+    // `im`, `_end`, `|>` or similar), not as a single special token.
+    // None of those individual tokens are classified as special, so
+    // this flag has no effect on them.
     //
-    // The streaming generate loop also already short-circuits on
-    // `llama_vocab_is_eog()` BEFORE calling detokenize, so the loop's
-    // stop semantics are independent of this flag.
+    // The actual gh#68 fix lives in `Gemma4Adapter::parse_tool_calls`
+    // (v2.3.5) which scrubs chat-template markers from cleaned_content
+    // at the adapter layer — same surface gh#65 used for the
+    // `<|tool_call>` asymmetric-tag scrub.
+    //
+    // Keeping `special=false` as a defensive measure regardless: any
+    // future model that DOES emit a chat-template marker as a single
+    // special token would be filtered. Zero cost for the current
+    // model fleet. Stop semantics are independent of this flag —
+    // the streaming loop short-circuits on `llama_vocab_is_eog()`
+    // BEFORE calling detokenize.
     char buf[256];
     int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, false);
     if (n < 0) {

@@ -47,6 +47,28 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
         std::regex(R"((?:<tool_call>|<\|tool_call\|?>)\s*[\s\S]*?\s*</tool_call>)"),
         "");
     cleaned = strip_think_blocks(cleaned);
+
+    // gh#68 (v2.3.5): scrub Gemma 4 chat-template turn-boundary
+    // markers from surface content. The v2.3.4 detokenize special=false
+    // change does NOT catch these — Gemma 4 emits them as multi-token
+    // *regular* surface tokens (e.g. `<`, `|`, `im`, `_end`, `|>`)
+    // that llama.cpp doesn't classify as special, so they slip through
+    // detokenize unchanged. Same family of bug as gh#65's asymmetric
+    // `<|tool_call>`: chat-template artifacts spelled by regular tokens.
+    //
+    // Without this scrub, `<|im_end|>` leaked into the assistant
+    // content stream, echoed back into the next turn's prompt, and
+    // the engine's "no tool call this iteration" retry cascade fired
+    // until iteration cap.
+    //
+    // Asymmetric variants are matched explicitly (`\|?`) for parity
+    // with the gh#65 tool-call regex — Gemma 4's tokenizer surface
+    // drops the trailing `|>` on some emit paths.
+    static const std::regex kGemmaTemplateMarkers(
+        R"(<\|im_end\|?>|<\|im_start\|?>(?:user|assistant|system)?|)"
+        R"(<end_of_turn>|<start_of_turn>(?:user|model)?)");
+    cleaned = std::regex_replace(cleaned, kGemmaTemplateMarkers, "");
+
     result.cleaned_content = std::move(cleaned);
     return result;
 }

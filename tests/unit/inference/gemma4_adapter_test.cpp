@@ -244,6 +244,211 @@ SCENARIO("Gemma4 strips think blocks from content", "[gemma4][reasoning]") {
     }
 }
 
+// ── gh#68 (v2.3.5): chat-template marker scrub ─────────────
+
+// Sibling of gh#65: Gemma 4 emits its chat-template markers as
+// multi-token regular surface tokens. They reach the adapter via
+// `content`; the scrub strips them so they never appear in
+// `cleaned_content` (the assistant-visible body).
+//
+// v2.3.4 attempted to fix this at the detokenize layer via
+// `special=false` but it was a no-op for Gemma 4 (the tokens
+// aren't classified as special). v2.3.5 moves the fix to the
+// adapter layer — same surface gh#65 already uses for the
+// asymmetric `<|tool_call>` scrub.
+
+SCENARIO("Gemma4 scrubs <|im_end|> from cleaned_content (gh#68)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a model response ending in <|im_end|> (the exact gh#68 repro)") {
+        // Consumer's transcript: 6 tokens → 10 chars of literal
+        // <|im_end|>. The content lands at the adapter via
+        // `parse_tool_calls(content)`.
+        std::string content = "I am sorry, I don't understand.<|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("cleaned_content has NO <|im_end|> substring") {
+                REQUIRE(result.cleaned_content.find("<|im_end|>")
+                        == std::string::npos);
+            }
+            THEN("the prose preceding the marker survives unchanged") {
+                REQUIRE(result.cleaned_content.find(
+                    "I am sorry, I don't understand.")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs the asymmetric <|im_end> form (gh#68)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    GIVEN("the asymmetric variant (no trailing pipe — same shape as gh#65)") {
+        // If the tokenizer surface drops `|>` on some emit path
+        // (like gh#65 documented for `<|tool_call>`), the scrub
+        // must handle the asymmetric form too.
+        std::string content = "Hello there.<|im_end>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("cleaned_content has no `<|im_end` substring") {
+                // Catches both `<|im_end>` and `<|im_end|>`.
+                REQUIRE(result.cleaned_content.find("<|im_end")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs <|im_start|> turn markers (gh#68)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    GIVEN("content with <|im_start|> turn-open markers (bare + role-suffixed)") {
+        std::string content =
+            "<|im_start|>assistantHere is my reply.<|im_end|>"
+            "<|im_start|>userExtra<|im_end|>"
+            "<|im_start|>Tail";  // bare form, no role suffix
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("no <|im_start| substring remains") {
+                REQUIRE(result.cleaned_content.find("<|im_start")
+                        == std::string::npos);
+            }
+            THEN("the surrounding prose survives") {
+                REQUIRE(result.cleaned_content.find("Here is my reply.")
+                        != std::string::npos);
+                REQUIRE(result.cleaned_content.find("Tail")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs <end_of_turn> and <start_of_turn> markers (gh#68)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    GIVEN("content using the canonical Gemma 4 turn markers") {
+        // Gemma 4's chat template canonically uses `<end_of_turn>` /
+        // `<start_of_turn>`. The pipe-bracket variants are the
+        // tokenizer-decomposed surface forms; both can leak.
+        std::string content =
+            "<start_of_turn>modelMy reply.<end_of_turn>"
+            "<start_of_turn>userFollow-up<end_of_turn>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("neither marker family appears in cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<end_of_turn>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<start_of_turn>")
+                        == std::string::npos);
+            }
+            THEN("prose survives") {
+                REQUIRE(result.cleaned_content.find("My reply.")
+                        != std::string::npos);
+                REQUIRE(result.cleaned_content.find("Follow-up")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 marker scrub doesn't eat tool_call content (gh#68 "
+         "interaction with gh#65)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    GIVEN("a turn that emits both a tool_call AND a trailing <|im_end|>") {
+        // Realistic shape: model emits delegate then end-of-turn.
+        // Tool call should still parse; cleaned_content should be
+        // empty (or whitespace) — both the tool_call markup AND the
+        // turn marker should be gone.
+        std::string content =
+            R"(<|tool_call>{"name":"entropic.delegate",)"
+            R"("arguments":{"target":"x","task":"y"}}</tool_call>)"
+            "<|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the tool call still parses (gh#65 path intact)") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+            THEN("cleaned_content has neither tool_call markup nor <|im_end|>") {
+                REQUIRE(result.cleaned_content.find("<|tool_call")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("</tool_call>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<|im_end")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 marker scrub preserves angle-bracket content that ISN'T a "
+         "template marker (gh#68 regression check)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    GIVEN("content with regex-tempting but non-template angle-bracket text") {
+        // Defense: scrub regex must not over-match. Plain HTML-style
+        // tags, math notation, code snippets containing angle brackets
+        // must survive intact.
+        std::string content =
+            "Use the operator `<<` for left-shift. "
+            "Set `<input type=\"text\">` in your HTML. "
+            "Inequalities: `x < y && y > z`.";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("all the angle-bracket prose survives intact") {
+                REQUIRE(result.cleaned_content.find("`<<`")
+                        != std::string::npos);
+                REQUIRE(result.cleaned_content.find("<input type=")
+                        != std::string::npos);
+                REQUIRE(result.cleaned_content.find("x < y && y > z")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 marker scrub handles empty + whitespace-only content "
+         "(gh#68 degenerate cases)",
+         "[gemma4][gh68][marker-scrub]") {
+    entropic::Gemma4Adapter adapter("lead", "test");
+
+    WHEN("content is empty") {
+        auto result = adapter.parse_tool_calls("");
+        THEN("cleaned_content is empty, no crash") {
+            REQUIRE(result.cleaned_content == "");
+            REQUIRE(result.tool_calls.empty());
+        }
+    }
+
+    WHEN("content is ONLY a turn marker (the gh#68 6-token decoded path)") {
+        // The actual consumer transcript: 6 tokens, all 10 chars of
+        // <|im_end|>. After scrub, cleaned_content should be empty.
+        auto result = adapter.parse_tool_calls("<|im_end|>");
+        THEN("cleaned_content is empty (no leak)") {
+            REQUIRE(result.cleaned_content == "");
+        }
+    }
+}
+
 // ── Chat format / no-op tool result ────────────────────────
 
 SCENARIO("Gemma4 reports GGUF-embedded chat format", "[gemma4][format]") {

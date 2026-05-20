@@ -1,3 +1,79 @@
+# entropic v2.3.3
+
+Patch release. **Bugfix — gh#65 asymmetric `<|tool_call>` open tag.**
+The consumer captured a real-prompt repro tonight (2026-05-19): Gemma 4
+emits `<|tool_call>` (with a leading `<|` pipe prefix) on the open
+side and plain `</tool_call>` on the close side. v2.3.0's regex
+required a plain `<tool_call>` open → zero matches → engine looped on
+the no-tool-call retry banner until iteration cap.
+
+## Root cause
+
+`Gemma 4`'s special token `<|tool_call|>` decodes through llama.cpp's
+current pin (`253ba110b`) as `<|tool_call>` — the trailing `|>` is
+lost in the surface form. The model then emits this asymmetric form
+every time it picks a delegation/pipeline tool. The
+`parse_tagged_tool_calls` regex at `src/inference/adapters/adapter_base.cpp:168`
+matched only plain `<tool_call>`, so Gemma 4's actual output produced
+zero tool calls — the engine retried, the model emitted the same
+asymmetric form, repeat until cap.
+
+My v2.3.0 "I couldn't repro" came from a simpler test prompt that hit
+the `entropic.complete` branch (which emits plain `<tool_call>`). The
+asymmetric form only appears when the model chooses
+`entropic.delegate` / `entropic.pipeline`.
+
+My v2.3.0 diagnostic warning ("`Content contains '<tool_call>'
+substring but no tagged calls extracted`") also didn't fire — the
+substring it checked for was `<tool_call>`, but the model emits
+`<|tool_call>`. The diagnostic now checks both `<tool_call>` and
+`<|tool_call` substrings.
+
+## Fix
+
+Regex extended to accept three open variants:
+
+```
+(?:<tool_call>|<\|tool_call\|?>)\s*([\s\S]*?)\s*</tool_call>
+```
+
+Open: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`. Close stays
+`</tool_call>` (what the consumer's transcripts consistently show).
+
+Mirrored in `Gemma4Adapter::parse_tool_calls`'s cleaned-content
+regex so the asymmetric markup is also stripped from what the user
+sees, not just from the parsed call set.
+
+## Tests
+
+`tests/unit/inference/gemma4_adapter_test.cpp` — three new `[gh65]`
+scenarios:
+
+1. The consumer's exact asymmetric transcript (verbatim) — one
+   delegate call extracted with `target=curriculum`.
+2. The triple-call shape from the full session log — three
+   asymmetric calls back-to-back with `<|im_end|>` interleaved.
+   All three parse.
+3. Defensive: fully-symmetric `<|tool_call|>...</tool_call>` form
+   in case a future llama.cpp pin restores the trailing `|>`.
+
+12 new assertions. Plain `<tool_call>` happy-path tests still pass
+(the regex change is purely additive). Full inference suite green
+(341 assertions, 95 test cases).
+
+## Process miss I'm owning
+
+This is the third v2.3.x miss in a row tied to the same root failure
+mode: validating what I built rather than what shipped against real
+model output. v2.3.0 shipped the parser-handles-the-content tests but
+not the actual-model-output coverage. The fix had to wait for the
+consumer to capture the real transcript and bisect it. The right
+fix-forward pattern: when a parser-level bug report says "model
+output doesn't match," paste the consumer's reported content verbatim
+into a unit test BEFORE assuming my code path handles it.
+
+---
+
 # entropic v2.2.9
 
 Patch release. **Quality-gate catch-up release that should have been

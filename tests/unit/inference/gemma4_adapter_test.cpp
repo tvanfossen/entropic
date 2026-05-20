@@ -55,6 +55,85 @@ SCENARIO("Gemma4 parses the exact gh#65 content shape",
     }
 }
 
+SCENARIO("Gemma4 parses asymmetric <|tool_call>...</tool_call> "
+         "(gh#65 v2.3.3 consumer repro)",
+         "[gemma4][gh65][parsing]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the asymmetric tag the consumer captured from gemma-4-E4B-it-Q8_0") {
+        // Verbatim from gh#65 v2.3.3 follow-up comment. Open tag has
+        // a leading `<|` pipe prefix (the Gemma 4 special token
+        // surface form under llama.cpp's current pin); close tag is
+        // plain `</tool_call>`. Pre-v2.3.3 this matched 0 calls and
+        // the engine looped on the no-tool-call retry banner.
+        std::string content =
+            R"(<|tool_call>{"name": "entropic.delegate", )"
+            R"("arguments": {"target": "curriculum", )"
+            R"("task": "List all existing classes or lessons available in the system."}})"
+            R"(</tool_call>)";
+
+        WHEN("parse_tool_calls is called") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("one delegate call is extracted") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+                auto it = result.tool_calls[0].arguments.find("target");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("curriculum") != std::string::npos);
+            }
+
+            THEN("the cleaned content strips the asymmetric markup") {
+                REQUIRE(result.cleaned_content.find("<|tool_call")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("</tool_call>")
+                        == std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("the consumer's full transcript — three asymmetric calls + im_end") {
+        // Same shape as the actual repro: model emits the asymmetric
+        // call three times back to back with <|im_end|> turn markers
+        // interleaved. All three should parse.
+        std::string content =
+            R"(<|tool_call>{"name":"entropic.delegate","arguments":{"target":"a","task":"x"}}</tool_call>)"
+            "\n"
+            R"(<|tool_call>{"name":"entropic.delegate","arguments":{"target":"b","task":"y"}}</tool_call>)"
+            "\n<|im_end|>\n"
+            R"(<|tool_call>{"name":"entropic.delegate","arguments":{"target":"c","task":"z"}}</tool_call>)"
+            "\n<|im_end|>\n";
+
+        WHEN("parse_tool_calls is called") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("all three calls are extracted") {
+                REQUIRE(result.tool_calls.size() == 3);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+                REQUIRE(result.tool_calls[1].name == "entropic.delegate");
+                REQUIRE(result.tool_calls[2].name == "entropic.delegate");
+            }
+        }
+    }
+
+    GIVEN("the fully-symmetric special-token form <|tool_call|>...<|/tool_call|>") {
+        // Defensive — if a future llama.cpp pin decodes the special
+        // token to its true symmetric form, accept it too. Close tag
+        // we still expect to land as </tool_call> in practice; if
+        // <|/tool_call|> shows up we'll need a separate fix.
+        std::string content =
+            R"(<|tool_call|>{"name":"entropic.delegate","arguments":{"target":"a","task":"x"}}</tool_call>)";
+
+        WHEN("parse_tool_calls is called") {
+            auto result = adapter.parse_tool_calls(content);
+            THEN("the call is extracted") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+        }
+    }
+}
+
 SCENARIO("Gemma4 still parses tool_call inside a think block",
          "[gemma4][gh65][parsing]") {
     entropic::Gemma4Adapter adapter("lead", "test identity");

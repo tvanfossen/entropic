@@ -257,30 +257,29 @@ static void remove_console_sink() {
  * @version 2.0.6
  */
 void setup_session(const std::filesystem::path& log_dir) {
+    // gh#67 (v2.3.2): historically this function attached a file sink
+    // to the global spdlog logger tree and removed the stderr sink so
+    // a single-handle process routed cleanly to session.log. After
+    // v2.3.1 (gh#59) introduced per-handle routing via the
+    // HandleAwareSink dispatcher, calling `register_handle_log()` from
+    // configure_dir + configure_from_file already attaches the
+    // handle's session.log file as a per-handle sink. If setup_session
+    // ALSO does the legacy global add_file_sink path, every log line
+    // ends up written twice — once via the dispatcher, once via the
+    // duplicated global sink. That's the v2.3.1 doubled-line + SEGV
+    // regression.
+    //
+    // The function stays in the public ABI because external callers
+    // (TUI launchers, test harnesses) may call it directly. It now
+    // does only the side-effect-free part: truncate session_model.log
+    // so a fresh session starts clean. File-sink wiring is owned by
+    // `register_handle_log()` exclusively.
     if (log_dir.empty()) { return; }
-
-    auto log_file = log_dir / "session.log";
-    {
-        // gh#58: skip if this exact session.log path is already
-        // attached. Otherwise a second handle for the same project_dir
-        // would double every log line; a third would triple them.
-        std::lock_guard lk(s_session_paths_mu);
-        auto canonical = std::filesystem::weakly_canonical(log_file).string();
-        if (!s_session_paths.insert(canonical).second) {
-            return;
-        }
-    }
-    add_file_sink(log_file);
-    remove_console_sink();
-
     auto model_file = log_dir / "session_model.log";
-    std::filesystem::create_directories(model_file.parent_path());
+    std::error_code ec;
+    std::filesystem::create_directories(model_file.parent_path(), ec);
     FILE* fp = fopen(model_file.string().c_str(), "w");
     if (fp) { fclose(fp); }
-
-    auto logger = get("log");
-    logger->info("session log: {}", log_file.string());
-    logger->info("model log: {}", model_file.string());
 }
 
 // ── Content escaping ──────────────────────────────────────────

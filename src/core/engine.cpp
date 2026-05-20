@@ -642,6 +642,29 @@ bool AgentEngine::is_delegation_repeat_blocked(
  * @utility
  * @version 2.3.0
  */
+/**
+ * @brief gh#68 fold logic — see header.
+ * @utility
+ * @version 2.3.4
+ */
+bool AgentEngine::fold_complete_into_assistant(
+    LoopContext& ctx, const Message& tool_result_msg) const {
+    auto tn_it = tool_result_msg.metadata.find("tool_name");
+    if (tn_it == tool_result_msg.metadata.end()
+        || tn_it->second != "entropic.complete") {
+        return false;
+    }
+    if (ctx.messages.empty()) { return false; }
+    auto& last = ctx.messages.back();
+    if (last.role != "assistant" || !last.content.empty()) {
+        return false;
+    }
+    auto sum_it = ctx.metadata.find("explicit_completion_summary");
+    if (sum_it == ctx.metadata.end()) { return false; }
+    last.content = sum_it->second;
+    return true;
+}
+
 int64_t AgentEngine::seconds_since_last_activity() const {
     auto last = last_activity_epoch_s_.load();
     if (last == 0) { return 0; }
@@ -1146,6 +1169,9 @@ void AgentEngine::process_tool_results(
     logger->info("[TOOLS] {} call(s) -> {} result message(s)",
                  tool_calls.size(), results.size());
     for (auto& msg : results) {
+        if (fold_complete_into_assistant(ctx, msg)) {
+            continue;  // gh#68: folded; skip pushing JSON user message
+        }
         ctx.messages.push_back(std::move(msg));
     }
 

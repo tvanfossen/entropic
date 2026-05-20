@@ -69,6 +69,10 @@ add_executable(entropic-inference-tests
     # v2.2.4 (gh#57): VRAM-aware tier residency surface — metadata-only
     # tests that don't require a real GGUF.
     inference/residency_test.cpp
+    # v2.3.4 (gh#68): real-model detokenize tests (tagged [.realmodel],
+    # excluded from default run). Verify special=false filters EOS /
+    # <|im_end|> while passing regular text through unchanged.
+    inference/gh68_detokenize_test.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE

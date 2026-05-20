@@ -664,6 +664,35 @@ public:
      */
     int64_t seconds_since_last_activity() const;
 
+    /**
+     * @brief gh#68 (v2.3.4): fold entropic.complete summary into the
+     *        prior assistant message, suppressing the JSON tool-result
+     *        user message that would otherwise land in history.
+     *
+     * Returns true when the message was folded (caller should NOT push
+     * it). Returns false when the message should be pushed as-is.
+     *
+     * Conservative — only folds when ALL of:
+     *   1. `msg.metadata["tool_name"] == "entropic.complete"`
+     *   2. `ctx.messages.back()` exists and has `role == "assistant"`
+     *   3. that assistant message has empty `content` (typically the
+     *      post-strip body when the model emitted only a tool_call)
+     *   4. `ctx.metadata["explicit_completion_summary"]` is populated
+     *      (set by `dir_complete` before this runs)
+     *
+     * If the model also emitted prose around the tool_call, the
+     * assistant body is non-empty and we leave both messages alone
+     * to avoid silently overwriting legitimate text.
+     *
+     * Public so unit tests can exercise the predicate without
+     * spinning the full engine loop + mocking the tool executor.
+     *
+     * @utility
+     * @version 2.3.4
+     */
+    bool fold_complete_into_assistant(
+        LoopContext& ctx, const Message& tool_result_msg) const;
+
 private:
     /**
      * @brief Main loop implementation.

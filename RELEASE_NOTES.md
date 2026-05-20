@@ -1,3 +1,118 @@
+# entropic v2.3.4
+
+Patch release. **Two bugs from gh#68 — consumer-diagnosed in
+sequence.** Both shipped together because the second (EOS leak in
+detokenize) was the visible symptom but the first (entropic.complete
+result stored as user-role JSON instead of folded into the assistant
+message) was the load-bearing chat-flow bug.
+
+## Fix #1: entropic.complete history shape (load-bearing)
+
+Pre-v2.3.4, when a tier emitted `entropic.complete` with a `summary`
+arg, the tool's result was pushed into history as a `role=user` JSON
+message of shape `{"action":"complete","summary":"..."}`. The
+just-pushed post-strip assistant message was empty (the model only
+emitted `<|tool_call>...</tool_call>` markup, which the adapter
+stripped). From the model's POV on the next turn, the conversation
+read:
+
+```
+user: class list?
+assistant: (empty)
+user: {"action":"complete","summary":"I am sorry..."}
+user: retrieve the class list?
+```
+
+Incoherent. The model never "said" anything. Some other user wrote
+JSON about it. Turn 2 → model retreated to EOS → EOS leaked as text
+(fix #2 below) → engine's "no tool call this iteration" retry
+cascade → ERROR.
+
+**Fix.** In `AgentEngine::process_tool_results`, before pushing each
+tool-result message into history, check if it's an `entropic.complete`
+result AND the prior assistant message is empty. If both, fold the
+summary text from `ctx.metadata["explicit_completion_summary"]`
+(stashed by `dir_complete`) into the assistant message body and skip
+the JSON user-role push.
+
+**Conservative.** Only folds when the assistant body is empty — if
+the model emitted prose around the tool_call, the prose stays and
+the tool result still lands as a user message (no silent data loss).
+
+The fold logic is extracted to a public predicate
+`AgentEngine::fold_complete_into_assistant(ctx, msg) -> bool` so
+unit tests exercise it without spinning the full engine loop or
+mocking the tool executor.
+
+## Fix #2: EOS leak in detokenize
+
+`LlamaCppBackend::detokenize` called `llama_token_to_piece` with
+`special=true`. Gemma 4's `<|im_end|>` special token (which is
+distinct from the EOS token llama.cpp's `is_eog` check catches)
+decoded to the literal 10-character string `<|im_end|>` and leaked
+into the content buffer.
+
+**Fix.** Pass `special=false` so special tokens never render to
+surface text. The streaming loop already short-circuits on
+`llama_vocab_is_eog()` BEFORE calling detokenize, so stop semantics
+are unaffected by the flag change.
+
+**Risk audit.** A model emitting a tool-call channel marker as a
+single special token would also be filtered. gh#65 v2.3.3 showed
+Gemma 4 emits the asymmetric `<|tool_call>` form via multi-token
+regular surface tokens (not a single special), so the gh#65 parse
+path is unaffected. The asymmetric-form unit test in
+`gemma4_adapter_test.cpp` pins this contract (verified passing
+post-fix: 23 assertions in 3 cases).
+
+## Tests
+
+**Fix #1** (`tests/unit/core/engine_test.cpp`, `[engine][gh68]`):
+7 scenarios / 15 assertions covering:
+- Happy path: empty assistant + summary in metadata → folded.
+- Refusal when assistant has prose (don't overwrite).
+- Refusal for non-entropic.complete tool results.
+- Refusal when last message isn't assistant (e.g., system reminder).
+- Refusal when metadata summary missing (never invent content).
+- Refusal on empty message history (no crash on `back()`).
+- Multi-byte UTF-8 summary round-trips intact.
+
+**Fix #2** (`tests/unit/inference/gh68_detokenize_test.cpp`,
+`[backend][gh68][.realmodel]`): real Gemma 4 model load (CPU only,
+2.5 GB), tokenize `<|im_end|>`, detokenize each resulting token,
+assert no token renders the literal string. Plus a positive-
+coverage scenario: regular text 'hello' tokenizes and round-trips
+through detokenize unchanged (proves `special=false` doesn't
+collateral-damage real content). Tag dot-prefix excludes from
+default run; opt in via `entropic-inference-tests "[gh68]"`.
+Override the GGUF path via `ENTROPIC_TEST_GEMMA_MODEL` env.
+
+12 real-model assertions. **Total v2.3.4 new coverage: 27
+assertions across 9 scenarios, split across both bugs and both
+test tiers (unit + realmodel).**
+
+Full suite green: 144 / 349 / **524** / 341 / 194 across the five
+touched suites.
+
+## Process miss owned (third in a row)
+
+This is the **fourth** v2.3.x bug from the same root failure mode:
+shipping a fix without exercising the realistic invocation paths.
+- v2.3.0 misattributed deferral
+- v2.3.1 double-sink (didn't test combined call path)
+- v2.3.3 asymmetric tool_call (parser test used wrong model-output variant)
+- v2.3.4 history-shape (consumer caught what my v2.3.0 → v2.3.3
+  fixes couldn't, because none exercised the chat-flow assistant
+  message lineage)
+
+The fold-predicate refactor in this release is the right shape for
+catching #2 of those four (testable in isolation against the real
+data flow); the `[.realmodel]` test scaffolding is the right shape
+for catching #3 and #4 (cheap-to-run-on-demand integration coverage
+with real model outputs).
+
+---
+
 # entropic v2.3.3
 
 Patch release. **Bugfix — gh#65 asymmetric `<|tool_call>` open tag.**

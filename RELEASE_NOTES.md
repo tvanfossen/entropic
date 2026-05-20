@@ -154,6 +154,73 @@ model paths via `ENTROPIC_TEST_GPU_MODEL` and
 
 ---
 
+# entropic v2.3.2
+
+Patch release. **Bugfix — v2.3.1 double-sink regression (gh#67).**
+Reverts v2.3.1's accidental coexistence of the legacy global file
+sink and the new per-handle dispatcher. Symptoms: every log line
+written twice; post-configure SEGV (exit 139) in single-handle
+launches.
+
+## Root cause
+
+v2.3.1 introduced `register_handle_log()` to attach a per-handle
+session.log via the new `HandleAwareSink` dispatcher. But
+`entropic_configure_dir` / `entropic_configure_from_file` still
+called the legacy `setup_session()` first — and `setup_session()`
+still did `add_file_sink(log_file)` which mutated the global spdlog
+logger tree (the v2.0.1 behavior the gh#59 rewrite was supposed to
+retire). Result: each log line written via two sinks pointing at
+the same file. The SEGV lands downstream of the duplicate-sink
+state on process teardown.
+
+The bisect was clean and the consumer's hypothesis was correct:
+"added a sink instead of replacing the global one."
+
+## Fix
+
+`setup_session()` no longer mutates the global logger tree. It now
+only truncates `session_model.log` (the session-log filesystem
+side-effect that's not owned by the dispatcher). All session.log
+sink wiring is owned exclusively by `register_handle_log()`. The
+function stays in the public ABI for backward compatibility with
+external callers; the global-mutation `add_file_sink()` symbol also
+remains for callers that explicitly opt into process-wide sinks.
+
+## Regression test
+
+`tests/unit/types/logging_test.cpp` — "setup_session +
+register_handle_log don't double-write": calls both (mirroring
+what `configure_dir` does), emits a single line, asserts the
+marker appears exactly once in `session.log`. Verified the test
+fails on pre-fix v2.3.1 code (marker appears twice) and passes
+on v2.3.2.
+
+## Why this slipped past v2.3.1
+
+The v2.3.1 unit tests for gh#59 (per-handle isolation) called
+`register_handle_log()` directly and asserted cross-handle
+isolation. They did NOT mirror the full `configure_dir` call path
+which invokes `setup_session()` AND `register_handle_log()`. The
+new gh#67 test fills that gap. Process lesson: when an internal
+refactor adds a new path alongside a legacy one, the test must
+exercise the COMBINED call site, not just the new function.
+
+## Tests
+
+144 / 349 / 509 / 329 / 194 assertions across the five touched
+unit suites, all green. GPU multi-handle scenario (the gh#58
+v2.2.8 acceptance test) confirmed still passing.
+
+## Consumer guidance
+
+Symlinking `librentropic.so.2 → librentropic.so.2.3.0` was the
+right v2.3.1 workaround. After v2.3.2 ships, bumping the symlink
+forward restores both the per-handle log isolation (gh#59) and
+clean startup.
+
+---
+
 # entropic v2.3.1
 
 Patch release. **Bugfix — per-handle spdlog logger isolation (gh#59).**

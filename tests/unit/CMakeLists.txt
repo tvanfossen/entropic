@@ -10,6 +10,11 @@ add_executable(entropic-tests
 
 target_link_libraries(entropic-tests PRIVATE
     entropic-types
+    # gh#59 (v2.3.1): entropic_last_error moved to facade in v2.2.6.
+    # entropic-tests' error_test.cpp still tests it (NULL-handle path),
+    # so link the facade. Latent link break since v2.2.6 — surfaced
+    # when the gh#59 logging rewrite forced this target to rebuild.
+    entropic-facade
     spdlog::spdlog
     Catch2::Catch2WithMain
 )

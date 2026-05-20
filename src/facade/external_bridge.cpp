@@ -754,7 +754,15 @@ bool ExternalBridge::start() {
     bound_canonical_ = canonical;
 
     running_.store(true);
-    accept_thread_ = std::thread(&ExternalBridge::accept_loop, this);
+    // gh#59 (v2.3.1): the accept thread (and the per-client serve
+    // threads it spawns) need to log on this handle's behalf — install
+    // a HandleLogScope at the top of each thread body so spdlog lines
+    // route through HandleAwareSink to this handle's session.log.
+    int log_id = handle_ ? handle_->log_id : 0;
+    accept_thread_ = std::thread([this, log_id]() {
+        entropic::log::HandleLogScope scope(log_id);
+        accept_loop();
+    });
 
     logger->info("External MCP bridge listening on {}",
                  socket_path_.string());
@@ -896,7 +904,12 @@ void ExternalBridge::accept_loop() {
         // Capture a raw pointer for the thread body so the unique_ptr
         // can stay in client_threads_ without aliasing.
         ClientThread* raw = ct.get();
-        ct->thread = std::thread([this, raw]() {
+        // gh#59 (v2.3.1): propagate the handle log scope into the
+        // per-client thread so its `serve_client` logs route to the
+        // owning handle's session.log.
+        int log_id = handle_ ? handle_->log_id : 0;
+        ct->thread = std::thread([this, raw, log_id]() {
+            entropic::log::HandleLogScope scope(log_id);
             serve_client(raw->fd);
             ::close(raw->fd);
             raw->fd = -1;
@@ -1105,7 +1118,11 @@ void ExternalBridge::run_async_ask(
         tasks_[task_id] = std::move(t);
     }
 
-    std::thread([this, prompt, task_id, client_fd]() {
+    // gh#59 (v2.3.1): the async-ask worker runs entropic_run on this
+    // handle's behalf — scope its logs to the owning handle.
+    int log_id = handle_ ? handle_->log_id : 0;
+    std::thread([this, prompt, task_id, client_fd, log_id]() {
+        entropic::log::HandleLogScope scope(log_id);
         update_task_phase(task_id, "running", "running");
         attach_phase_observer(task_id);
 

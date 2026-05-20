@@ -155,6 +155,55 @@ SCENARIO("HandleLogScope nests correctly (gh#59)",
     }
 }
 
+SCENARIO("setup_session + register_handle_log don't double-write "
+         "(gh#67 v2.3.1 regression)",
+         "[logging][types][gh67]") {
+    // gh#67: v2.3.1's setup_session() still added a file sink to the
+    // global spdlog tree even though register_handle_log() (also
+    // called from configure_dir) attached the same file via the
+    // dispatcher. Every log line ended up written twice. This test
+    // would have caught it pre-ship.
+    GIVEN("a handle log dir and BOTH setup_session + register_handle_log "
+          "called against it") {
+        entropic::log::init(spdlog::level::info);
+
+        auto base = std::filesystem::temp_directory_path() / "gh67-dup";
+        std::filesystem::remove_all(base);
+        std::filesystem::create_directories(base);
+        constexpr int ID = 3001;
+
+        // Mirror what entropic_configure_dir does: call BOTH.
+        entropic::log::setup_session(base);
+        entropic::log::register_handle_log(ID, base);
+
+        WHEN("a single line is emitted under the handle's scope") {
+            auto logger = entropic::log::get("gh67.dup.probe");
+            {
+                entropic::log::HandleLogScope scope(ID);
+                logger->info("UNIQUE-DUP-CHECK-marker");
+            }
+            spdlog::default_logger()->flush();
+            logger->flush();
+
+            std::ifstream in(base / "session.log");
+            std::ostringstream ss;
+            ss << in.rdbuf();
+            auto contents = ss.str();
+
+            THEN("the marker appears exactly once in session.log") {
+                size_t pos = contents.find("UNIQUE-DUP-CHECK-marker");
+                REQUIRE(pos != std::string::npos);
+                size_t second = contents.find(
+                    "UNIQUE-DUP-CHECK-marker", pos + 1);
+                INFO("file contents:\n" << contents);
+                REQUIRE(second == std::string::npos);
+            }
+        }
+
+        entropic::log::unregister_handle_log(ID);
+    }
+}
+
 SCENARIO("Lines emitted with no handle scope route nowhere by handle "
          "(gh#59)",
          "[logging][types][gh59]") {

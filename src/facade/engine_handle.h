@@ -33,6 +33,7 @@
 #include <entropic/storage/backend.h>
 #include <entropic/types/config.h>
 #include <entropic/types/error.h>
+#include <entropic/types/logging.h>
 
 #include <atomic>
 #include <memory>
@@ -76,6 +77,11 @@ struct entropic_engine {
     std::string last_error;                   ///< Per-handle error message
     std::atomic<bool> configured{false};      ///< True after configure()
     std::atomic<bool> running{false};         ///< True during run()
+    /// @brief gh#59 (v2.3.1): unique handle id for per-handle log
+    /// routing via `entropic::log::HandleAwareSink`. Monotonic
+    /// 1.. (0 is reserved for "no handle scope"). Set in
+    /// `entropic_create`.
+    int log_id = 0;
 
     // ── Phase 1: Configuration ────────────────────────────────
     entropic::ParsedConfig config;                    ///< Parsed config
@@ -144,3 +150,37 @@ struct entropic_engine {
     /// @brief Forwarded to both callbacks.
     void* critique_cb_data = nullptr;
 };
+
+namespace entropic {
+
+/**
+ * @brief gh#59 (v2.3.1): RAII guard combining api_mutex + log scope.
+ *
+ * Drop-in replacement for the v2.0.0–v2.3.0 pattern
+ * `std::lock_guard lock(handle->api_mutex);`. Acquires the per-handle
+ * mutex AND installs the per-handle log scope so any spdlog line
+ * emitted from this thread routes through the HandleAwareSink to the
+ * right session.log. Destructor releases both in correct order
+ * (log scope first, then mutex).
+ *
+ * Single-call refactor target — every facade entry point that used
+ * `std::lock_guard lock(handle->api_mutex)` now uses this.
+ *
+ * @utility
+ * @version 2.3.1
+ */
+class HandleApiLock {
+public:
+    /** @brief Lock handle mutex + enter log scope. @version 2.3.1 */
+    explicit HandleApiLock(entropic_handle_t h)
+        : lock_(h->api_mutex), log_scope_(h->log_id) {}
+    HandleApiLock(const HandleApiLock&) = delete;
+    HandleApiLock& operator=(const HandleApiLock&) = delete;
+private:
+    // Order matters: api_mutex acquired first, log_scope second.
+    // Destruction reverses (scope first, mutex second) — fine.
+    std::lock_guard<std::mutex> lock_;
+    entropic::log::HandleLogScope log_scope_;
+};
+
+}  // namespace entropic

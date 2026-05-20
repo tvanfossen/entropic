@@ -85,20 +85,28 @@ public:
     void shutdown();
 
     /**
-     * @brief Destructor — routes through `shutdown()` for explicit
-     *        VRAM release on handle teardown (gh#63).
+     * @brief Destructor — invokes shutdown() and AdapterManager::unload_all().
      *
-     * v2.2.8 already made `~LlamaCppBackend()` call `do_unload()` so
-     * the shared_ptr cascade in this class's default destructor would
-     * release every backend's VRAM. This destructor makes the intent
-     * explicit, emits the "Shutting down model orchestrator" log on
-     * destroy, and protects against any future member that does not
-     * cascade through a shared_ptr<LlamaCppBackend>.
+     * Combines two fixes:
+     * - gh#63 (v2.2.9): make `shutdown()` actually run on destroy, so
+     *   VRAM release on handle teardown is explicit rather than relying
+     *   on the shared_ptr<LlamaCppBackend> cascade. Pre-v2.2.9 nothing
+     *   called shutdown() during the destroy path.
+     * - gh#58 close-out (v2.3.0): also call `AdapterManager::unload_all()`
+     *   so loaded LoRA `llama_adapter_lora*` handles don't leak. Pre-
+     *   v2.3.0 `AdapterManager` had no destructor — same shape as the
+     *   pre-v2.2.8 `LlamaCppBackend` leak.
+     *
+     * Teardown order matters: backends first (frees llama_contexts),
+     * then adapter handles (safe because the contexts that referenced
+     * HOT adapters are gone). Out-of-line so the .cpp can stage the
+     * two calls in the right sequence and keep the header free of
+     * implementation noise.
      *
      * @utility
-     * @version 2.2.9
+     * @version 2.3.0
      */
-    ~ModelOrchestrator() { shutdown(); }
+    ~ModelOrchestrator();
 
     /* ── Generation ──────────────────────────────────────── */
 

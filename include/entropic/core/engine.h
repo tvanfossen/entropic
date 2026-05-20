@@ -631,6 +631,68 @@ public:
     bool is_delegation_cycle(
         const LoopContext& ctx, const std::string& target) const;
 
+    /**
+     * @brief Predicate: should this delegation be blocked because the
+     *        same target has just failed too many times? (gh#64)
+     *
+     * Returns true when `target` matches `ctx.last_failed_delegation_target`
+     * and `ctx.consecutive_failed_delegations >=
+     * loop_config_.max_consecutive_failed_delegations`. Exposed so
+     * tests can exercise the guard without spinning a full child loop.
+     *
+     * @param ctx Active loop context.
+     * @param target Proposed delegation target tier.
+     * @return true if the delegation should be rejected before dispatch.
+     * @utility
+     * @version 2.3.0
+     */
+    bool is_delegation_repeat_blocked(
+        const LoopContext& ctx, const std::string& target) const;
+
+    /**
+     * @brief gh#35: seconds since the engine last serviced a run().
+     *
+     * Updated at the entry of every run()/run_turn() call. Hosts that
+     * want an idle-exit policy poll this and tear down the engine when
+     * the value exceeds their threshold. Returned as int64 (epoch
+     * seconds delta) so consumers can compare against any unit.
+     *
+     * @return Seconds since last activity. Returns 0 if no run has
+     *         ever happened (no activity to be idle relative to).
+     * @utility
+     * @version 2.3.0
+     */
+    int64_t seconds_since_last_activity() const;
+
+    /**
+     * @brief gh#68 (v2.3.4): fold entropic.complete summary into the
+     *        prior assistant message, suppressing the JSON tool-result
+     *        user message that would otherwise land in history.
+     *
+     * Returns true when the message was folded (caller should NOT push
+     * it). Returns false when the message should be pushed as-is.
+     *
+     * Conservative — only folds when ALL of:
+     *   1. `msg.metadata["tool_name"] == "entropic.complete"`
+     *   2. `ctx.messages.back()` exists and has `role == "assistant"`
+     *   3. that assistant message has empty `content` (typically the
+     *      post-strip body when the model emitted only a tool_call)
+     *   4. `ctx.metadata["explicit_completion_summary"]` is populated
+     *      (set by `dir_complete` before this runs)
+     *
+     * If the model also emitted prose around the tool_call, the
+     * assistant body is non-empty and we leave both messages alone
+     * to avoid silently overwriting legitimate text.
+     *
+     * Public so unit tests can exercise the predicate without
+     * spinning the full engine loop + mocking the tool executor.
+     *
+     * @utility
+     * @version 2.3.4
+     */
+    bool fold_complete_into_assistant(
+        LoopContext& ctx, const Message& tool_result_msg) const;
+
 private:
     /**
      * @brief Main loop implementation.
@@ -1082,6 +1144,9 @@ private:
     mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
     std::deque<std::string> user_message_queue_; ///< FIFO mid-gen queue
     std::atomic<bool> running_flag_{false};   ///< Top-level run_turn in progress
+    /// @brief gh#35 (v2.3.0): epoch-seconds timestamp of the most
+    /// recent run()/run_turn() entry. Zero until the first run.
+    std::atomic<int64_t> last_activity_epoch_s_{0};
     void (*queue_observer_)(const char*, size_t, void*) = nullptr; ///< gh#40 callback
     void* queue_observer_data_ = nullptr;     ///< Forwarded to queue_observer_
     /// @brief Persistent state-transition observer slot. Survives

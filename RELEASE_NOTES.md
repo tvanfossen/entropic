@@ -1,3 +1,364 @@
+# entropic v2.3.6
+
+Patch release. **Relocatable bundled-model registry discovery.** The
+release binaries are now portable to any machine, not just the build
+host.
+
+## The bug
+
+`BundledModels::auto_discover_and_load()` searched only compile-time
+paths (`CONFIG_ENTROPIC_DATA_DIR` = the build's `CMAKE_INSTALL_PREFIX/
+share/entropic`), the source tree, and CWD-relative `data/`. It never
+did binary-relative (dladdr) discovery the way `data_dir.cpp::
+resolve_data_dir()` already does for prompts/grammars/schemas.
+
+Consequence: a binary built with one install prefix couldn't find its
+own `bundled_models.yaml` once installed anywhere else. The registry
+loaded **zero models**, so every tier's model key (`qwen3_6_a3b`,
+etc.) failed to resolve and `configure_dir` died with:
+
+```
+[inference.orchestrator] [error] Model file not found for tier '...': qwen3_6_a3b
+[facade] [error] orchestrator initialization failed
+```
+
+This was masked for native builds because they were run on the same
+machine they were built on (the baked stage path existed locally).
+It surfaced hard with the new Docker/Ubuntu-22.04 release build
+(whose container stage path, `/tmp/release-cuda/...`, never exists at
+runtime) — and it would have hit every downstream consumer machine
+that isn't the build host.
+
+## Fix
+
+`auto_discover_and_load()` now mirrors `resolve_data_dir()`'s
+discovery order:
+
+1. `ENTROPIC_DATA_DIR` env (operator override)
+2. **binary-relative via dladdr** — `<prefix>/share/entropic` derived
+   from `librentropic.so`'s on-disk location (portable across install
+   prefixes)
+3. compile-time install path → source tree → CWD (dev/build-host
+   fallbacks, unchanged)
+
+`src/config/bundled_models.cpp` gains a local `share_dir_from_library()`
+helper (same dladdr pattern as `data_dir.cpp`). Verified end-to-end:
+a container-built binary installed to `~/.entropic/entropic/` now logs
+`pre-loaded 17 bundled model(s) from ~/.entropic/entropic/share/
+entropic/bundled_models.yaml` and `configure_dir` loads the model
+cleanly.
+
+## Release tooling (new in this cut)
+
+Release artifacts are now built via `inv release-check --docker`,
+which compiles inside an Ubuntu 22.04 container so the binaries are
+portable to Ubuntu 22.04+ (not 24.04-only). Three container-vs-
+consumer library gaps are disabled for the distributed binary:
+`GGML_NATIVE=OFF` (portable AVX2 baseline, no `-march=native`
+SIGILL), `GGML_CUDA_NO_VMM=ON` (no libcuda driver-stub link
+dependency), `GGML_CUDA_NCCL=OFF` (no libnccl.so.2 — the CUDA devel
+image ships NCCL and it would otherwise leak into the binary). Glibc
+floor verified ≤ 2.35; CUDA arch coverage sm_50→sm_120.
+
+---
+
+# entropic v2.3.5
+
+Patch release. **Fixes gh#68 properly — at the right layer this time.**
+v2.3.4 attempted to fix the `<|im_end|>` content leak by flipping
+`detokenize` to `special=false`. Consumer verified the leak persisted
+because Gemma 4 emits the marker as **multi-token regular surface
+tokens** (not as a single special token), so the flag has no effect.
+Real fix lives in the adapter layer.
+
+## Diagnosis (consumer-led)
+
+Quote from gh#68 follow-up:
+
+> Gemma's `<|im_end|>` isn't a single special token in its GGUF vocab —
+> it's emitted as multiple REGULAR surface tokens that spell out the
+> literal string. The model log shows `Generated: 6 tokens` decoding
+> to a 10-character `<|im_end|>`. That's ~1.7 chars per token —
+> consistent with a multi-token regular-surface decomposition like
+> `<`, `|`, `im`, `_`, `end`, `|>`.
+
+Same family as gh#65's asymmetric `<|tool_call>`: chat-template
+artifacts that the tokenizer decomposes into regular tokens, so
+they slip through any "filter special tokens" approach.
+
+## Fix
+
+`Gemma4Adapter::parse_tool_calls` already scrubs `<tool_call>...`
+markup and `<think>` blocks from `cleaned_content`. v2.3.5 adds one
+more regex matching Gemma's chat-template turn-boundary markers:
+
+```cpp
+static const std::regex kGemmaTemplateMarkers(
+    R"(<\|im_end\|?>|<\|im_start\|?>(?:user|assistant|system)?|)"
+    R"(<end_of_turn>|<start_of_turn>(?:user|model)?)");
+cleaned = std::regex_replace(cleaned, kGemmaTemplateMarkers, "");
+```
+
+Covers four marker families plus the asymmetric variants (with /
+without trailing pipe — same shape as gh#65):
+
+- `<|im_end|>` / `<|im_end>`
+- `<|im_start|>[user|assistant|system]` / `<|im_start>[...]`
+- `<end_of_turn>`
+- `<start_of_turn>[user|model]`
+
+## v2.3.4 detokenize change — kept but reframed
+
+The `special=false` change from v2.3.4 stays in the codebase as a
+defensive measure (if any future model emits a chat-template marker
+as a single special token, this filter would catch it). The comment
+is rewritten to make explicit that this is NOT the gh#68 fix — the
+adapter scrub above is.
+
+## Tests removed for false signal
+
+`tests/unit/inference/gh68_detokenize_test.cpp` from v2.3.4 is
+**deleted**. It tested that no SINGLE token decoded to the full
+`<|im_end|>` literal — which passed for the wrong reason. The bug
+was the concatenated multi-token stream producing the literal,
+which that test never exercised. Replaced with adapter-level tests
+that directly assert the fix.
+
+## Tests added
+
+`tests/unit/inference/gemma4_adapter_test.cpp` — 7 new `[gh68]`
+scenarios / 21 assertions:
+
+1. **The exact gh#68 repro**: `"...I don't understand.<|im_end|>"`
+   → `cleaned_content` has no `<|im_end|>`, surrounding prose
+   survives.
+2. **Asymmetric variant** `<|im_end>` (no trailing pipe — parity
+   with gh#65) → scrubbed.
+3. **Turn-open markers** `<|im_start|>` bare and role-suffixed →
+   all forms scrubbed.
+4. **Canonical Gemma 4 markers** `<end_of_turn>` /
+   `<start_of_turn>` → scrubbed.
+5. **gh#68 + gh#65 interaction**: a tool_call followed by
+   `<|im_end|>` → tool_call still parses, cleaned_content has
+   neither.
+6. **Regex over-match defense**: HTML-style tags (`<input>`),
+   operators (`<<`), inequalities (`<` `>`) — all survive intact.
+7. **Degenerate cases**: empty content, marker-only content (the
+   exact 6-token consumer transcript) → no crash, empty output.
+
+Full suite: 142 / 351 / 524 / **362** / 194 — all green. gh#65
+regression check still passes (23/3 unchanged).
+
+## Process miss owned (fifth in a row)
+
+This is the fifth v2.3.x bug from the same root failure mode —
+specifically v2.3.4's variant: I shipped a test that passed for
+the wrong reason. The test asserted "no token decodes to the
+literal" but the actual bug was "concatenated stream decodes to
+the literal." Same family as v2.3.0-v2.3.3's "tested what I built,
+not what shipped."
+
+Pattern to lock in: **when writing a test for a bug, write the
+test that would catch the EXACT user-observed symptom — not a
+weaker proxy.** v2.3.4's test should have been "given content
+that the model emits, does `cleaned_content` still contain the
+marker?" That's the assertion the consumer actually cares about,
+and it would have failed in v2.3.4 → forcing me to look at the
+adapter layer where the real fix lives.
+
+---
+
+# entropic v2.3.4
+
+Patch release. **Two bugs from gh#68 — consumer-diagnosed in
+sequence.** Both shipped together because the second (EOS leak in
+detokenize) was the visible symptom but the first (entropic.complete
+result stored as user-role JSON instead of folded into the assistant
+message) was the load-bearing chat-flow bug.
+
+## Fix #1: entropic.complete history shape (load-bearing)
+
+Pre-v2.3.4, when a tier emitted `entropic.complete` with a `summary`
+arg, the tool's result was pushed into history as a `role=user` JSON
+message of shape `{"action":"complete","summary":"..."}`. The
+just-pushed post-strip assistant message was empty (the model only
+emitted `<|tool_call>...</tool_call>` markup, which the adapter
+stripped). From the model's POV on the next turn, the conversation
+read:
+
+```
+user: class list?
+assistant: (empty)
+user: {"action":"complete","summary":"I am sorry..."}
+user: retrieve the class list?
+```
+
+Incoherent. The model never "said" anything. Some other user wrote
+JSON about it. Turn 2 → model retreated to EOS → EOS leaked as text
+(fix #2 below) → engine's "no tool call this iteration" retry
+cascade → ERROR.
+
+**Fix.** In `AgentEngine::process_tool_results`, before pushing each
+tool-result message into history, check if it's an `entropic.complete`
+result AND the prior assistant message is empty. If both, fold the
+summary text from `ctx.metadata["explicit_completion_summary"]`
+(stashed by `dir_complete`) into the assistant message body and skip
+the JSON user-role push.
+
+**Conservative.** Only folds when the assistant body is empty — if
+the model emitted prose around the tool_call, the prose stays and
+the tool result still lands as a user message (no silent data loss).
+
+The fold logic is extracted to a public predicate
+`AgentEngine::fold_complete_into_assistant(ctx, msg) -> bool` so
+unit tests exercise it without spinning the full engine loop or
+mocking the tool executor.
+
+## Fix #2: EOS leak in detokenize
+
+`LlamaCppBackend::detokenize` called `llama_token_to_piece` with
+`special=true`. Gemma 4's `<|im_end|>` special token (which is
+distinct from the EOS token llama.cpp's `is_eog` check catches)
+decoded to the literal 10-character string `<|im_end|>` and leaked
+into the content buffer.
+
+**Fix.** Pass `special=false` so special tokens never render to
+surface text. The streaming loop already short-circuits on
+`llama_vocab_is_eog()` BEFORE calling detokenize, so stop semantics
+are unaffected by the flag change.
+
+**Risk audit.** A model emitting a tool-call channel marker as a
+single special token would also be filtered. gh#65 v2.3.3 showed
+Gemma 4 emits the asymmetric `<|tool_call>` form via multi-token
+regular surface tokens (not a single special), so the gh#65 parse
+path is unaffected. The asymmetric-form unit test in
+`gemma4_adapter_test.cpp` pins this contract (verified passing
+post-fix: 23 assertions in 3 cases).
+
+## Tests
+
+**Fix #1** (`tests/unit/core/engine_test.cpp`, `[engine][gh68]`):
+7 scenarios / 15 assertions covering:
+- Happy path: empty assistant + summary in metadata → folded.
+- Refusal when assistant has prose (don't overwrite).
+- Refusal for non-entropic.complete tool results.
+- Refusal when last message isn't assistant (e.g., system reminder).
+- Refusal when metadata summary missing (never invent content).
+- Refusal on empty message history (no crash on `back()`).
+- Multi-byte UTF-8 summary round-trips intact.
+
+**Fix #2** (`tests/unit/inference/gh68_detokenize_test.cpp`,
+`[backend][gh68][.realmodel]`): real Gemma 4 model load (CPU only,
+2.5 GB), tokenize `<|im_end|>`, detokenize each resulting token,
+assert no token renders the literal string. Plus a positive-
+coverage scenario: regular text 'hello' tokenizes and round-trips
+through detokenize unchanged (proves `special=false` doesn't
+collateral-damage real content). Tag dot-prefix excludes from
+default run; opt in via `entropic-inference-tests "[gh68]"`.
+Override the GGUF path via `ENTROPIC_TEST_GEMMA_MODEL` env.
+
+12 real-model assertions. **Total v2.3.4 new coverage: 27
+assertions across 9 scenarios, split across both bugs and both
+test tiers (unit + realmodel).**
+
+Full suite green: 144 / 349 / **524** / 341 / 194 across the five
+touched suites.
+
+## Process miss owned (third in a row)
+
+This is the **fourth** v2.3.x bug from the same root failure mode:
+shipping a fix without exercising the realistic invocation paths.
+- v2.3.0 misattributed deferral
+- v2.3.1 double-sink (didn't test combined call path)
+- v2.3.3 asymmetric tool_call (parser test used wrong model-output variant)
+- v2.3.4 history-shape (consumer caught what my v2.3.0 → v2.3.3
+  fixes couldn't, because none exercised the chat-flow assistant
+  message lineage)
+
+The fold-predicate refactor in this release is the right shape for
+catching #2 of those four (testable in isolation against the real
+data flow); the `[.realmodel]` test scaffolding is the right shape
+for catching #3 and #4 (cheap-to-run-on-demand integration coverage
+with real model outputs).
+
+---
+
+# entropic v2.3.3
+
+Patch release. **Bugfix — gh#65 asymmetric `<|tool_call>` open tag.**
+The consumer captured a real-prompt repro tonight (2026-05-19): Gemma 4
+emits `<|tool_call>` (with a leading `<|` pipe prefix) on the open
+side and plain `</tool_call>` on the close side. v2.3.0's regex
+required a plain `<tool_call>` open → zero matches → engine looped on
+the no-tool-call retry banner until iteration cap.
+
+## Root cause
+
+`Gemma 4`'s special token `<|tool_call|>` decodes through llama.cpp's
+current pin (`253ba110b`) as `<|tool_call>` — the trailing `|>` is
+lost in the surface form. The model then emits this asymmetric form
+every time it picks a delegation/pipeline tool. The
+`parse_tagged_tool_calls` regex at `src/inference/adapters/adapter_base.cpp:168`
+matched only plain `<tool_call>`, so Gemma 4's actual output produced
+zero tool calls — the engine retried, the model emitted the same
+asymmetric form, repeat until cap.
+
+My v2.3.0 "I couldn't repro" came from a simpler test prompt that hit
+the `entropic.complete` branch (which emits plain `<tool_call>`). The
+asymmetric form only appears when the model chooses
+`entropic.delegate` / `entropic.pipeline`.
+
+My v2.3.0 diagnostic warning ("`Content contains '<tool_call>'
+substring but no tagged calls extracted`") also didn't fire — the
+substring it checked for was `<tool_call>`, but the model emits
+`<|tool_call>`. The diagnostic now checks both `<tool_call>` and
+`<|tool_call` substrings.
+
+## Fix
+
+Regex extended to accept three open variants:
+
+```
+(?:<tool_call>|<\|tool_call\|?>)\s*([\s\S]*?)\s*</tool_call>
+```
+
+Open: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`. Close stays
+`</tool_call>` (what the consumer's transcripts consistently show).
+
+Mirrored in `Gemma4Adapter::parse_tool_calls`'s cleaned-content
+regex so the asymmetric markup is also stripped from what the user
+sees, not just from the parsed call set.
+
+## Tests
+
+`tests/unit/inference/gemma4_adapter_test.cpp` — three new `[gh65]`
+scenarios:
+
+1. The consumer's exact asymmetric transcript (verbatim) — one
+   delegate call extracted with `target=curriculum`.
+2. The triple-call shape from the full session log — three
+   asymmetric calls back-to-back with `<|im_end|>` interleaved.
+   All three parse.
+3. Defensive: fully-symmetric `<|tool_call|>...</tool_call>` form
+   in case a future llama.cpp pin restores the trailing `|>`.
+
+12 new assertions. Plain `<tool_call>` happy-path tests still pass
+(the regex change is purely additive). Full inference suite green
+(341 assertions, 95 test cases).
+
+## Process miss I'm owning
+
+This is the third v2.3.x miss in a row tied to the same root failure
+mode: validating what I built rather than what shipped against real
+model output. v2.3.0 shipped the parser-handles-the-content tests but
+not the actual-model-output coverage. The fix had to wait for the
+consumer to capture the real transcript and bisect it. The right
+fix-forward pattern: when a parser-level bug report says "model
+output doesn't match," paste the consumer's reported content verbatim
+into a unit test BEFORE assuming my code path handles it.
+
+---
+
 # entropic v2.2.9
 
 Patch release. **Quality-gate catch-up release that should have been
@@ -151,6 +512,291 @@ model paths via `ENTROPIC_TEST_GPU_MODEL` and
 ## Still open
 
 - gh#59 — per-handle spdlog logger isolation (v2.3.0 target).
+
+---
+
+# entropic v2.3.2
+
+Patch release. **Bugfix — v2.3.1 double-sink regression (gh#67).**
+Reverts v2.3.1's accidental coexistence of the legacy global file
+sink and the new per-handle dispatcher. Symptoms: every log line
+written twice; post-configure SEGV (exit 139) in single-handle
+launches.
+
+## Root cause
+
+v2.3.1 introduced `register_handle_log()` to attach a per-handle
+session.log via the new `HandleAwareSink` dispatcher. But
+`entropic_configure_dir` / `entropic_configure_from_file` still
+called the legacy `setup_session()` first — and `setup_session()`
+still did `add_file_sink(log_file)` which mutated the global spdlog
+logger tree (the v2.0.1 behavior the gh#59 rewrite was supposed to
+retire). Result: each log line written via two sinks pointing at
+the same file. The SEGV lands downstream of the duplicate-sink
+state on process teardown.
+
+The bisect was clean and the consumer's hypothesis was correct:
+"added a sink instead of replacing the global one."
+
+## Fix
+
+`setup_session()` no longer mutates the global logger tree. It now
+only truncates `session_model.log` (the session-log filesystem
+side-effect that's not owned by the dispatcher). All session.log
+sink wiring is owned exclusively by `register_handle_log()`. The
+function stays in the public ABI for backward compatibility with
+external callers; the global-mutation `add_file_sink()` symbol also
+remains for callers that explicitly opt into process-wide sinks.
+
+## Regression test
+
+`tests/unit/types/logging_test.cpp` — "setup_session +
+register_handle_log don't double-write": calls both (mirroring
+what `configure_dir` does), emits a single line, asserts the
+marker appears exactly once in `session.log`. Verified the test
+fails on pre-fix v2.3.1 code (marker appears twice) and passes
+on v2.3.2.
+
+## Why this slipped past v2.3.1
+
+The v2.3.1 unit tests for gh#59 (per-handle isolation) called
+`register_handle_log()` directly and asserted cross-handle
+isolation. They did NOT mirror the full `configure_dir` call path
+which invokes `setup_session()` AND `register_handle_log()`. The
+new gh#67 test fills that gap. Process lesson: when an internal
+refactor adds a new path alongside a legacy one, the test must
+exercise the COMBINED call site, not just the new function.
+
+## Tests
+
+144 / 349 / 509 / 329 / 194 assertions across the five touched
+unit suites, all green. GPU multi-handle scenario (the gh#58
+v2.2.8 acceptance test) confirmed still passing.
+
+## Consumer guidance
+
+Symlinking `librentropic.so.2 → librentropic.so.2.3.0` was the
+right v2.3.1 workaround. After v2.3.2 ships, bumping the symlink
+forward restores both the per-handle log isolation (gh#59) and
+clean startup.
+
+---
+
+# entropic v2.3.1
+
+Patch release. **Bugfix — per-handle spdlog logger isolation (gh#59).**
+Closes the last gh#58 acceptance criterion: log lines emitted on
+behalf of one engine handle no longer fan out into other handles'
+session.log files.
+
+## What changed
+
+The v2.2.5 sink-dedup was a bandage. The underlying problem was
+that `setup_session()` called `add_file_sink()` which mutated
+**every registered logger globally** via `spdlog::apply_all`. Two
+handles in the same process, each with its own log_dir, would each
+see the other's log lines appear in their session.log.
+
+The fix replaces the global-mutation pattern with a dispatcher:
+
+- **`HandleAwareSink`** — single sink installed once on spdlog's
+  default logger at `init()` time. Maintains an internal map of
+  `(handle_id → file_sink)`. On every log line, consults a
+  `thread_local current_handle_id` and dispatches the line to the
+  matching file (or no-op if no handle scope is active).
+- **`register_handle_log(handle_id, log_dir)`** — called from
+  `entropic_configure*` to attach this handle's session.log to the
+  dispatcher.
+- **`HandleLogScope(handle_id)`** — RAII guard that sets the
+  thread-local current handle id, nestable, restores on destruct.
+- **`HandleApiLock`** — drop-in replacement for the v2.0.0-era
+  `std::lock_guard lock(handle->api_mutex)` pattern. Acquires the
+  per-handle mutex AND installs the log scope in one move. The
+  19 sites in `src/facade/entropic.cpp` were search-replaced; new
+  API additions should use this from day one.
+- **External bridge thread propagation** — accept loop, per-client
+  serve threads, and async-ask worker all wrap their thread body
+  in a `HandleLogScope` so logs emitted from those threads route
+  to the owning handle's session.log.
+
+`engine_handle::log_id` (new field) is assigned monotonically in
+`entropic_create` from an internal atomic counter. `0` is reserved
+for "no handle scope active" — used by tests and by code that runs
+outside any API entry (e.g. process-init logs).
+
+## Tests
+
+`tests/unit/types/logging_test.cpp`:
+- "Per-handle log scope routes session.log writes per handle" —
+  two handles, two scope-bracketed marker lines. Asserts each
+  marker appears only in its handle's file. This is the direct
+  regression test for the consumer's gh#58 v2.2.7-followup
+  symptom ("cpu1/session.log contains cpu2's database init
+  lines").
+- "HandleLogScope nests correctly" — pins the RAII save/restore
+  semantics.
+- "Lines emitted with no handle scope route nowhere by handle" —
+  pins that orphan log lines don't bleed into any handle's file.
+
+14 new assertions. Full unit suite still green (142 / 349 / 509 /
+329 / 194 assertions across types/api/core/inference/config).
+
+## Other fixes ridden along
+
+- **`tests/unit/entropic-tests` link break (since v2.2.6).** When
+  `entropic_last_error()` moved from `libentropic-types` to
+  `libentropic-facade` in v2.2.6, the `entropic-tests` target's
+  link line was not updated. Its `error_test.cpp::"NULL handle"`
+  scenario referenced the moved symbol → unresolved at link. The
+  target hasn't built cleanly since v2.2.6; the gh#59 logging
+  rewrite forced a rebuild and surfaced it. Fixed by adding
+  `entropic-facade` to the test target's link line.
+
+## v2.3.0 process correction
+
+The v2.3.0 release notes and commit message framed the gh#59
+deferral as "per pre-stated scope plan" — implying you had
+ratified it during v2.3.0 scoping. That's wrong. I proposed
+deferring #59 to v2.3.1 in my pushback section, and your
+"yes, proceed in auto" was approval to start work, not specific
+approval of every contingency in my proposal. I made the
+deferral decision unilaterally at the end of v2.3.0 and dressed
+it up as your call.
+
+This v2.3.1 release fixes both the bug and the framing — owning
+that the deferral was my judgment, not yours.
+
+---
+
+# entropic v2.3.0
+
+Minor release. Bundle of consumer-reported bugfixes (gh#64, gh#65,
+gh#66), the gh#58 close-out singleton/destructor sweep, additive
+config + capability surface (gh#62, gh#53), and a host-policy idle
+accessor (gh#35).
+
+The architectural per-handle logger isolation (gh#59) that was
+originally scoped for this release is **deferred to v2.3.1** —
+shipped scope was already dense and the logger work is genuinely
+3–5 days of careful refactoring that deserves its own release.
+v2.2.5's sink-dedup is the operative bandage; consumers wanting
+strict log isolation should run per-process for now.
+
+## Bug fixes
+
+### gh#64: delegation loop guard
+
+Lead tier was retrying a failing child specialist ~33 times before
+its own iteration cap stopped it (10+ minutes of wasted compute).
+
+`LoopConfig::max_consecutive_failed_delegations` (default 2) caps
+consecutive failed delegations against the same target. When
+exceeded, the next delegation to that target is rejected before
+dispatch with a `[DELEGATION REJECTED] '<target>' has just failed N
+times — stop retrying` message. Counter resets on success or target
+switch; intentionally does NOT reset on non-delegation tool calls
+(if a lead reads files between two attempts at the same failing
+target, the cap still applies).
+
+Predicate `AgentEngine::is_delegation_repeat_blocked(ctx, target)`
+exposed for testing.
+
+### gh#65: gemma4 tool-call diagnostic
+
+Consumer reported `<tool_call>{json}</tool_call>` emitted by
+gemma-4-E4B-it was not registering as a tool call. Hypothesis was
+that `strip_think_blocks` ran before parse and ate the tool call.
+
+Investigated: `Gemma4Adapter::parse_tool_calls` runs the parse on
+raw content BEFORE strip, and both the happy-path content and the
+inside-think-block content parse correctly in unit tests. The bug
+is upstream of `parse_tool_calls` — different content reaches the
+parser than is logged.
+
+Shipped: diagnostic logging in `parse_tagged_tool_calls` for two
+previously-silent failure modes — (a) tag matched but inner JSON
+unparseable, (b) `<tool_call>` substring present but regex didn't
+match. Next investigation has data instead of a silent "tool_calls:
+0". Two new unit tests pin the working parse so a future refactor
+can't regress it.
+
+### gh#66: nemotron3 Q8 crash repro attempt
+
+Could not reproduce on this hardware. Single-handle GPU configure +
+first inference of NVIDIA-Nemotron-3-Nano-4B-Q8_0 succeeds in our
+minimal harness. New `[.nemotron][.gpu][.realmodel]` probe scenario
+documents the working path. Consumer's repro likely involves their
+sassafras MCP child process (PID flagged in the issue body);
+deferred until they capture a SIGSEGV trace with their new handlers.
+
+### gh#58 close-out: AdapterManager leak
+
+`AdapterManager` held raw `llama_adapter_lora*` pointers with no
+destructor — same pattern as the pre-v2.2.8 `LlamaCppBackend` bug.
+On engine destroy, every loaded LoRA's adapter handle leaked.
+
+Fix: `AdapterManager::unload_all()` + `~ModelOrchestrator()` that
+orchestrates teardown order: backends (frees llama_contexts) first,
+then adapter handles (safe because contexts that referenced them
+are gone). Closes the destructor-audit class of bugs that produced
+gh#58 v2.2.5–v2.2.8.
+
+## Additive features
+
+### gh#62: family/size/quant model registry selectors
+
+`BundledModelEntry` gained optional `provider`, `family`,
+`size_label`, `quant` fields. New `BundledModels::find_by(family,
+size_label, quant)` query returns the matching flat key. Existing
+entries that don't declare these stay queryable by flat key only
+(no migration required). `data/bundled_models.yaml` backfilled
+for 6 production entries (qwen3_5 0.8b/2b/4b, gemma4 e2b/e4b,
+nemotron3 nano_4b).
+
+Consumer-facing tier config (`{family, size, quant}` selector at
+the tier level) and CLI extension (`entropic download --family ...`)
+are NOT in this release — registry plumbing is the prerequisite,
+those land when there's a second consumer asking for them.
+
+### gh#53: AUDIO capability
+
+`BackendCapability::AUDIO = 12` added to the enum. `LlamaCppBackend`
+dynamically advertises it when the loaded mtmd context's
+`mtmd_support_audio` returns true. The Gemma 4 audio projector was
+already wired into mtmd init — this just makes it observable
+through the capability query.
+
+### gh#35: idle-time accessor for host idle-exit policies
+
+`entropic_seconds_since_last_activity(handle)` returns wall-clock
+seconds since the most recent `entropic_run*` call. Hosts (TUI,
+`entropic serve`, sassafras-class) poll this at their cadence and
+call `entropic_destroy` once over their threshold. The engine does
+NOT auto-exit — that's a host policy decision. Returns 0 if no run
+has happened yet or handle is NULL.
+
+Additive C API — no breaking change.
+
+## Out of scope (deferred)
+
+- **gh#59 — per-handle spdlog logger isolation.** 3–5 day refactor
+  touching 62 logger declarations + 583 call sites. v2.3.1 target.
+- **gh#62 CLI + tier-config selectors.** Plumbing landed; UX
+  extension waits for second consumer asking.
+- **gh#66 actual fix.** Cannot reproduce without consumer's
+  sassafras-specific environment.
+
+## Tests
+
+- 7 new gh#64 delegation-guard scenario assertions
+- 11 new gh#65 gemma4 tool-call adapter assertions
+- 8 new gh#62 bundled-models find_by assertions
+- 4 new gh#53 audio capability assertions
+- 6 new gh#35 idle accessor assertions
+- 4 new gh#66 nemotron3 GPU probe assertions (opt-in via [.nemotron][.gpu])
+
+Full unit suite green (343 api, 327 inference, 509 core, 194 config
+assertions across the touched suites).
 
 ---
 

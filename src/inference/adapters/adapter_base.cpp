@@ -165,7 +165,17 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
     const std::string& content) const
 {
     std::vector<ToolCall> calls;
-    std::regex pattern(R"(<tool_call>\s*([\s\S]*?)\s*</tool_call>)");
+    // gh#65 (v2.3.3): accept asymmetric open tags. Gemma 4 emits
+    // `<|tool_call>` (pipe-prefixed open, plain close) — the special
+    // token `<|tool_call|>` decodes through llama.cpp's current pin
+    // as `<|tool_call>` (trailing `|>` lost). Pre-v2.3.3 the regex
+    // required a plain `<tool_call>` open, so Gemma 4's actual output
+    // produced 0 tool calls and the engine looped on the retry banner.
+    // Open alternatives: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`.
+    // Close tag stays `</tool_call>` — that's what the consumer's
+    // transcripts consistently show.
+    std::regex pattern(
+        R"((?:<tool_call>|<\|tool_call\|?>)\s*([\s\S]*?)\s*</tool_call>)");
 
     auto begin = std::sregex_iterator(content.begin(), content.end(), pattern);
     auto end = std::sregex_iterator();
@@ -176,7 +186,29 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
         if (parsed) {
             calls.push_back(*parsed);
             logger->info("Parsed tagged tool call: {}", parsed->name);
+        } else {
+            // gh#65: when the regex matches but parse_single_tool_call
+            // returns nullopt, the JSON payload was malformed in a way
+            // try_recover_json could not fix. Log the offending text so
+            // future investigations have something to grep, instead of
+            // silently producing zero tool calls.
+            logger->warn(
+                "Tagged tool_call matched but JSON failed to parse: {}",
+                json_str);
         }
+    }
+    // gh#65: model emitted tool_call markup but no regex match.
+    // Catches both plain `<tool_call>` and pipe-prefixed `<|tool_call`
+    // substrings — if neither matched the full pattern, surface the
+    // raw content's length so the consumer can attach it for triage
+    // instead of seeing a silent "tool_calls: 0".
+    if (calls.empty()
+        && (content.find("<tool_call>") != std::string::npos
+            || content.find("<|tool_call") != std::string::npos)) {
+        logger->warn(
+            "Content contains tool_call markup but no tagged calls "
+            "were extracted — possible tag/encoding mismatch. "
+            "Raw content length={}", content.size());
     }
     return calls;
 }

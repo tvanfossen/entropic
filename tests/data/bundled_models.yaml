@@ -18,6 +18,11 @@ qwen3_5_4b:
   size_gb: 4.5
   adapter: qwen35
   description: Qwen 3.5 4B fixture
+  # gh#62 (v2.3.0): structured selectors fixture for find_by() tests.
+  provider: unsloth
+  family: qwen3_5
+  size_label: 4b
+  quant: Q8_0
 
 qwen3_6_a3b:
   name: Qwen3.6-35B-A3B-UD-IQ3_XXS

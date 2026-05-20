@@ -438,13 +438,34 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
+    // special=false — special tokens don't render to surface text.
+    //
+    // History: v2.3.4 (gh#68) flipped this from `true` to `false`
+    // expecting it would fix Gemma 4's `<|im_end|>` content leak.
+    // It did NOT — Gemma 4 emits `<|im_end|>` as multi-token *regular*
+    // surface tokens (the GGUF tokenizer decomposes it into `<`, `|`,
+    // `im`, `_end`, `|>` or similar), not as a single special token.
+    // None of those individual tokens are classified as special, so
+    // this flag has no effect on them.
+    //
+    // The actual gh#68 fix lives in `Gemma4Adapter::parse_tool_calls`
+    // (v2.3.5) which scrubs chat-template markers from cleaned_content
+    // at the adapter layer — same surface gh#65 used for the
+    // `<|tool_call>` asymmetric-tag scrub.
+    //
+    // Keeping `special=false` as a defensive measure regardless: any
+    // future model that DOES emit a chat-template marker as a single
+    // special token would be filtered. Zero cost for the current
+    // model fleet. Stop semantics are independent of this flag —
+    // the streaming loop short-circuits on `llama_vocab_is_eog()`
+    // BEFORE calling detokenize.
     char buf[256];
-    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, true);
+    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, false);
     if (n < 0) {
         // Buffer too small — retry with exact size
         std::vector<char> large(static_cast<size_t>(-n));
         n = llama_token_to_piece(vocab_, token, large.data(),
-                                 static_cast<int32_t>(large.size()), 0, true);
+                                 static_cast<int32_t>(large.size()), 0, false);
         if (n > 0) {
             return std::string(large.data(), static_cast<size_t>(n));
         }
@@ -2252,10 +2273,13 @@ bool LlamaCppBackend::do_supports(BackendCapability cap) const {
         return false;
     }
 
-    // Static capabilities: true = always supported
+    // Static capabilities: true = always supported. Length must equal
+    // BackendCapability::_COUNT — trailing entries get appended as new
+    // capabilities are introduced (gh#53 added AUDIO at index 12).
     static constexpr bool always[] = {
         false, false, true, true, true, true,
         false, true,  true, false, false, true,
+        false,  // AUDIO — dynamic only (mtmd_support_audio)
     };
 
     // Dynamic capabilities override the static table
@@ -2265,6 +2289,9 @@ bool LlamaCppBackend::do_supports(BackendCapability cap) const {
               || (cap == BackendCapability::HIDDEN_STATE && is_recurrent())
               || (cap == BackendCapability::VISION
                   && !config().mmproj_path.empty())
+              || (cap == BackendCapability::AUDIO
+                  && mtmd_ctx_ != nullptr
+                  && mtmd_support_audio(mtmd_ctx_))
               || (cap == BackendCapability::SPECULATIVE_DECODING
                   && !is_recurrent());
     }

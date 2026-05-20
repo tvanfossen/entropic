@@ -237,6 +237,107 @@ SCENARIO("Two GPU-resident handles can coexist (v2.2.8 target)",
     }
 }
 
+SCENARIO("entropic_seconds_since_last_activity returns 0 before any run "
+         "(gh#35)",
+         "[api][gh35][idle]") {
+    GIVEN("a configured handle that has not yet run") {
+        entropic_handle_t h = nullptr;
+        REQUIRE(entropic_create(&h) == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+        WHEN("seconds_since_last_activity is queried") {
+            auto idle = entropic_seconds_since_last_activity(h);
+            THEN("it returns 0 — no activity yet means no idle clock") {
+                REQUIRE(idle == 0);
+            }
+        }
+
+        WHEN("queried on a NULL handle") {
+            auto idle = entropic_seconds_since_last_activity(nullptr);
+            THEN("it returns 0 safely") {
+                REQUIRE(idle == 0);
+            }
+        }
+
+        entropic_destroy(h);
+    }
+}
+
+// gh#66 repro probe: Nemotron3 Q8 single-handle first-inference.
+// Consumer reports silent process death on first inference of Q8
+// nemotron via sassafras. Tagged [.nemotron][.gpu][.realmodel] —
+// excluded from default run. Override path via
+// ENTROPIC_TEST_NEMOTRON_Q8.
+SCENARIO("Nemotron3-Nano-4B Q8 first inference does not crash (gh#66)",
+         "[api][gh66][.nemotron][.gpu][.realmodel]") {
+    const char* override_path = std::getenv("ENTROPIC_TEST_NEMOTRON_Q8");
+    std::string model_path;
+    if (override_path) {
+        model_path = override_path;
+    } else {
+        const char* home = std::getenv("HOME");
+        model_path = std::string(home ? home : "/tmp")
+                   + "/.entropic/models/NVIDIA-Nemotron-3-Nano-4B-Q8_0.gguf";
+    }
+
+    GIVEN("a single handle configured with nemotron3 Q8 on GPU") {
+        // Match the consumer's config minus their sassafras tool surface.
+        // 2K context to isolate the load-and-first-inference question
+        // from KV cache concerns.
+        char buf[2048];
+        std::snprintf(buf, sizeof(buf),
+            "{"
+            "\"log_level\":\"info\","
+            "\"log_dir\":\"/tmp/entropic-gh66\","
+            "\"ggml_logging\":true,"
+            "\"models\":{"
+                "\"default\":\"lead\","
+                "\"lead\":{"
+                    "\"path\":\"%s\","
+                    "\"adapter\":\"nemotron3\","
+                    "\"context_length\":2048,"
+                    "\"gpu_layers\":-1,"
+                    "\"cache_type_k\":\"q8_0\","
+                    "\"cache_type_v\":\"q8_0\","
+                    "\"flash_attn\":true"
+                "}"
+            "}"
+            "}",
+            model_path.c_str());
+
+        entropic_handle_t h = nullptr;
+        REQUIRE(entropic_create(&h) == ENTROPIC_OK);
+
+        WHEN("configure + a short run are attempted") {
+            auto cfg_err = entropic_configure(h, buf);
+            INFO("configure last_error: "
+                 << (entropic_last_error(h) ?
+                     entropic_last_error(h) : "(null)"));
+
+            THEN("configure does not throw and returns OK") {
+                REQUIRE(cfg_err == ENTROPIC_OK);
+            }
+
+            if (cfg_err == ENTROPIC_OK) {
+                char* result = nullptr;
+                auto run_err = entropic_run(h, "hi", &result);
+                AND_THEN("first inference does not crash") {
+                    INFO("run last_error: "
+                         << (entropic_last_error(h) ?
+                             entropic_last_error(h) : "(null)"));
+                    // Acceptance is "no crash and run() returns a code,
+                    // even if generation itself errors." Crash mode is
+                    // SIGSEGV which Catch2 reports as fatal.
+                    REQUIRE(run_err != ENTROPIC_ERROR_INVALID_HANDLE);
+                }
+                if (result) { entropic_free(result); }
+            }
+        }
+
+        entropic_destroy(h);
+    }
+}
+
 SCENARIO("Three handles can coexist", "[api][gh58][multi-handle]") {
     GIVEN("three created handles") {
         entropic_handle_t hs[3] = {nullptr, nullptr, nullptr};

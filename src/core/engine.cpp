@@ -304,6 +304,13 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @version 2.1.12
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
+    // gh#35: update activity timestamp at run() entry so any host
+    // polling `seconds_since_last_activity` for an idle-exit policy
+    // sees a fresh value as soon as work begins.
+    last_activity_epoch_s_.store(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
     LoopContext ctx;
     ctx.messages = std::move(messages);
     ctx.metrics.start_time = now_seconds();
@@ -616,6 +623,54 @@ bool AgentEngine::is_delegation_cycle(
         if (anc == target) { return true; }
     }
     return false;
+}
+
+/**
+ * @brief gh#64: predicate for the consecutive-failure cap. See header.
+ * @utility
+ * @version 2.3.0
+ */
+bool AgentEngine::is_delegation_repeat_blocked(
+    const LoopContext& ctx, const std::string& target) const {
+    return target == ctx.last_failed_delegation_target
+        && ctx.consecutive_failed_delegations
+               >= loop_config_.max_consecutive_failed_delegations;
+}
+
+/**
+ * @brief gh#35: idle accessor. See header.
+ * @utility
+ * @version 2.3.0
+ */
+/**
+ * @brief gh#68 fold logic — see header.
+ * @utility
+ * @version 2.3.4
+ */
+bool AgentEngine::fold_complete_into_assistant(
+    LoopContext& ctx, const Message& tool_result_msg) const {
+    auto tn_it = tool_result_msg.metadata.find("tool_name");
+    if (tn_it == tool_result_msg.metadata.end()
+        || tn_it->second != "entropic.complete") {
+        return false;
+    }
+    if (ctx.messages.empty()) { return false; }
+    auto& last = ctx.messages.back();
+    if (last.role != "assistant" || !last.content.empty()) {
+        return false;
+    }
+    auto sum_it = ctx.metadata.find("explicit_completion_summary");
+    if (sum_it == ctx.metadata.end()) { return false; }
+    last.content = sum_it->second;
+    return true;
+}
+
+int64_t AgentEngine::seconds_since_last_activity() const {
+    auto last = last_activity_epoch_s_.load();
+    if (last == 0) { return 0; }
+    auto now = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    return now > last ? (now - last) : 0;
 }
 
 /**
@@ -1114,6 +1169,9 @@ void AgentEngine::process_tool_results(
     logger->info("[TOOLS] {} call(s) -> {} result message(s)",
                  tool_calls.size(), results.size());
     for (auto& msg : results) {
+        if (fold_complete_into_assistant(ctx, msg)) {
+            continue;  // gh#68: folded; skip pushing JSON user message
+        }
         ctx.messages.push_back(std::move(msg));
     }
 
@@ -1704,6 +1762,31 @@ static void push_delegation_result(LoopContext& ctx,
 }
 
 /**
+ * @brief Append a "stop retrying same target" reject message (gh#64).
+ *
+ * Triggered when the lead emits a delegation to a target that has
+ * just failed `max_consecutive_failed_delegations` times in a row.
+ * The lead is told concretely what to do next: respond to the user
+ * or try a different target.
+ *
+ * @internal
+ * @version 2.3.0
+ */
+static void push_delegation_repeat_blocked(
+    LoopContext& ctx, const std::string& target, int n) {
+    Message reject;
+    reject.role = "user";
+    reject.content = "[DELEGATION REJECTED] '" + target
+        + "' has just failed " + std::to_string(n)
+        + " times in a row. Stop retrying this target. Either "
+          "respond to the user with what you have, or delegate to "
+          "a different tier.";
+    ctx.metadata["failure_reason"] = "delegation_repeat_blocked";
+    ctx.metadata["failure_target"] = target;
+    ctx.messages.push_back(std::move(reject));
+}
+
+/**
  * @brief Execute a pending delegation from the tool result directives.
  *
  * On successful delegation the state transitions to COMPLETE unless the
@@ -1734,6 +1817,21 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
         return;
     }
 
+    // gh#64: refuse re-delegation to a target that has just failed N
+    // times in a row. Pre-fix, a lead retrying a Q4 specialist that
+    // couldn't emit a tool call would burn 30+ identical delegations
+    // before its own iteration cap stopped it.
+    if (is_delegation_repeat_blocked(ctx, pending.target)) {
+        logger->warn("Delegation rejected: '{}' failed {}x in a row "
+                     "(>= max_consecutive_failed_delegations={})",
+                     pending.target,
+                     ctx.consecutive_failed_delegations,
+                     loop_config_.max_consecutive_failed_delegations);
+        push_delegation_repeat_blocked(
+            ctx, pending.target, ctx.consecutive_failed_delegations);
+        return;
+    }
+
     set_state(ctx, AgentState::DELEGATING);
 
     // gh#32 (v2.1.6): resume_delegation tool emits a directive with
@@ -1761,6 +1859,17 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto result = run_pending_delegation(
         ctx, pending, std::move(resume_history));
     push_delegation_result(ctx, pending.target, result);
+
+    // gh#64: track consecutive failures against the same target.
+    if (result.success) {
+        ctx.last_failed_delegation_target.clear();
+        ctx.consecutive_failed_delegations = 0;
+    } else if (pending.target == ctx.last_failed_delegation_target) {
+        ++ctx.consecutive_failed_delegations;
+    } else {
+        ctx.last_failed_delegation_target = pending.target;
+        ctx.consecutive_failed_delegations = 1;
+    }
 
     fire_delegation_complete(ctx, pending.target, result);
     fire_delegate_complete_hook(pending.target, result.success,

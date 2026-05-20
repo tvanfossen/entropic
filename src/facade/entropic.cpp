@@ -89,7 +89,7 @@ static thread_local char s_pre_create_error[512] = "";
  */
 extern "C" const char* entropic_last_error(entropic_handle_t handle) {
     if (!handle) { return s_pre_create_error; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     s_last_error_cache = handle->last_error;
     return s_last_error_cache.c_str();
 }
@@ -184,13 +184,22 @@ entropic_error_t entropic_create(entropic_handle_t* handle) {
     }
     entropic::log::init(spdlog::level::info);
     entropic_inference_log_silence();  // silent until configure enables
-    s_log->info("entropic_create() — v{}", CONFIG_ENTROPIC_VERSION_STRING);
 
     auto* engine = new (std::nothrow) entropic_engine();
     if (engine == nullptr) {
         *handle = nullptr;
         return ENTROPIC_ERROR_OUT_OF_MEMORY;
     }
+
+    // gh#59 (v2.3.1): assign a monotonic log id. Used by the
+    // HandleAwareSink dispatcher to route session.log writes to the
+    // right file when multiple handles coexist. 0 is reserved for
+    // "no handle scope active."
+    static std::atomic<int> s_log_id_counter{0};
+    engine->log_id = ++s_log_id_counter;
+
+    s_log->info("entropic_create() — v{} (log_id={})",
+                CONFIG_ENTROPIC_VERSION_STRING, engine->log_id);
 
     *handle = engine;
     return ENTROPIC_OK;
@@ -1486,7 +1495,7 @@ entropic_error_t entropic_configure(
                        : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
 
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
 
     handle->bundled_models.auto_discover_and_load();
 
@@ -1516,7 +1525,7 @@ entropic_error_t entropic_configure_from_file(
                        : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
 
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
 
     handle->bundled_models.auto_discover_and_load();
 
@@ -1534,6 +1543,12 @@ entropic_error_t entropic_configure_from_file(
     // their YAML declares log_dir.
     if (!handle->config.log_dir.empty()) {
         entropic::log::setup_session(handle->config.log_dir);
+        // gh#59 (v2.3.1): also register the per-handle dispatcher
+        // file sink so log lines emitted within this handle's
+        // HandleLogScope route to this handle's session.log and
+        // nowhere else.
+        entropic::log::register_handle_log(
+            handle->log_id, handle->config.log_dir);
     }
 
     return configure_common(handle);
@@ -1558,11 +1573,16 @@ entropic_error_t entropic_configure_dir(
         return ENTROPIC_ERROR_INVALID_HANDLE;
     }
 
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
 
     // Session logging FIRST — capture everything from preload through init.
     if (project_dir && project_dir[0] != '\0') {
         entropic::log::setup_session(project_dir);
+        // gh#59 (v2.3.1): per-handle dispatcher registration. Routes
+        // session.log writes for this handle's HandleLogScope-tagged
+        // threads to this handle's file only — no cross-handle bleed.
+        entropic::log::register_handle_log(
+            handle->log_id, project_dir);
     }
 
     handle->bundled_models.auto_discover_and_load();
@@ -1622,6 +1642,11 @@ void entropic_destroy(entropic_handle_t handle) {
     entropic::destroy_orchestrator_interface(handle->inference_iface_ctx);
     handle->inference_iface_ctx = nullptr;
 
+    // gh#59 (v2.3.1): release the per-handle session.log file sink so
+    // a subsequent handle that happens to reuse the same log_id can
+    // open the file fresh. Safe on never-registered ids.
+    entropic::log::unregister_handle_log(handle->log_id);
+
     // Phase 1+ subsystem teardown will go here in reverse order.
     // Phase 0: struct itself owns hook_registry by value.
     delete handle;
@@ -1645,6 +1670,16 @@ const char* entropic_version(void) {
  */
 int entropic_api_version(void) {
     return 2;
+}
+
+/**
+ * @brief gh#35: idle-time accessor for host-side idle-exit policies.
+ * @utility
+ * @version 2.3.0
+ */
+int64_t entropic_seconds_since_last_activity(entropic_handle_t handle) {
+    if (!handle || !handle->engine) { return 0; }
+    return handle->engine->seconds_since_last_activity();
 }
 
 /**
@@ -1983,7 +2018,7 @@ entropic_error_t entropic_validation_resume_retry(
     entropic_handle_t handle) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->validator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     return handle->validator->resume_retry();
 }
 
@@ -1996,7 +2031,7 @@ entropic_error_t entropic_validation_accept_last(
     entropic_handle_t handle) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!handle->validator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     return handle->validator->accept_last();
 }
 
@@ -2215,7 +2250,7 @@ entropic_error_t entropic_set_queue_observer(
  */
 entropic_error_t entropic_context_clear(entropic_handle_t handle) {
     if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     handle->engine->clear_conversation();
     return ENTROPIC_OK;
 }
@@ -2232,7 +2267,7 @@ entropic_error_t entropic_context_get(
     entropic_handle_t handle, char** messages_json) {
     if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!messages_json) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     *messages_json = alloc_cstr(
         facade_json::serialize_messages(handle->engine->get_messages()));
     return ENTROPIC_OK;
@@ -2274,7 +2309,7 @@ entropic_error_t entropic_context_usage(
     size_t* capacity) {
     if (!handle || !handle->engine) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     if (!tokens_used || !capacity) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
-    std::lock_guard lock(handle->api_mutex);
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
     auto [used, max] = handle->engine->context_usage(
         handle->engine->get_messages());
     *tokens_used = static_cast<size_t>(used);
@@ -2329,7 +2364,7 @@ entropic_error_t entropic_adapter_load(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto tier = handle->config.models.find_tier_by_path(base_model_path);
         if (tier.empty()) {
             throw std::runtime_error("no tier for model: "
@@ -2369,7 +2404,7 @@ entropic_error_t entropic_adapter_unload(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto& mgr = handle->orchestrator->adapter_manager();
         auto info = mgr.info(adapter_name);
         if (info.state == entropic::AdapterState::COLD) {
@@ -2407,7 +2442,7 @@ entropic_error_t entropic_adapter_swap(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto tier = handle->orchestrator->last_used_tier();
         auto* base = handle->orchestrator->get_backend(tier);
         auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(base);
@@ -2530,7 +2565,7 @@ entropic_error_t entropic_grammar_register(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         bool ok = handle->orchestrator->grammar_registry()
             .register_grammar(key, gbnf_content);
         s_log->info("grammar_register: key={} ok={}", key, ok);
@@ -2563,7 +2598,7 @@ entropic_error_t entropic_grammar_register_file(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         bool ok = handle->orchestrator->grammar_registry()
             .register_from_file(key, path);
         s_log->info("grammar_register_file: key={} ok={}", key, ok);
@@ -2595,7 +2630,7 @@ entropic_error_t entropic_grammar_deregister(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         bool ok = handle->orchestrator->grammar_registry().deregister(key);
         s_log->info("grammar_deregister: key={} ok={}", key, ok);
         return ok ? ENTROPIC_OK : ENTROPIC_ERROR_GRAMMAR_NOT_FOUND;
@@ -2711,7 +2746,7 @@ entropic_error_t entropic_profile_register(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto j = nlohmann::json::parse(profile_json);
         entropic::GPUResourceProfile p;
         p.name = j.value("name", "");
@@ -2751,7 +2786,7 @@ entropic_error_t entropic_profile_deregister(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         bool ok = handle->orchestrator->profile_registry().deregister(name);
         s_log->info("profile_deregister: name={} ok={}", name, ok);
         return ok ? ENTROPIC_OK : ENTROPIC_ERROR_PROFILE_NOT_FOUND;
@@ -3211,7 +3246,7 @@ entropic_error_t entropic_get_logprobs(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto* backend = require_active_backend(handle, model_id);
         auto lr = backend->evaluate_logprobs(tokens, n_tokens);
         result->n_tokens = lr.n_tokens;
@@ -3256,7 +3291,7 @@ entropic_error_t entropic_compute_perplexity(
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
     try {
-        std::lock_guard lock(handle->api_mutex);
+        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
         auto* backend = require_active_backend(handle, model_id);
         *perplexity = backend->compute_perplexity(tokens, n_tokens);
         return ENTROPIC_OK;

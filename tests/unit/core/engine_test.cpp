@@ -807,3 +807,232 @@ SCENARIO("budget_exhausted child is relayed partial to lead (E2)",
         }
     }
 }
+
+// ── gh#68 (v2.3.4): entropic.complete history shape ─────────
+
+namespace gh68 {
+
+/// @brief Build a context with one empty assistant message + the
+/// summary stashed in metadata as `dir_complete` would have done.
+static entropic::LoopContext make_ctx_post_dir_complete(
+    const std::string& summary) {
+    entropic::LoopContext ctx;
+    ctx.messages.push_back({"user", "class list?"});
+    ctx.messages.push_back({"assistant", ""});  // post-adapter-strip
+    ctx.metadata["explicit_completion_summary"] = summary;
+    return ctx;
+}
+
+/// @brief Build the tool-result message that ToolExecutor produces
+/// for entropic.complete pre-fix.
+static entropic::Message make_complete_result_msg() {
+    entropic::Message m;
+    m.role = "user";
+    m.content =
+        R"({"action":"complete","summary":"I am sorry, I don't understand."})";
+    m.metadata["tool_name"] = "entropic.complete";
+    m.metadata["tool_call_id"] = "call_1";
+    return m;
+}
+
+}  // namespace gh68
+
+SCENARIO("fold_complete_into_assistant: happy path folds summary "
+         "into empty assistant message (gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx with empty assistant + completion summary in metadata") {
+        auto ctx = gh68::make_ctx_post_dir_complete(
+            "I am sorry, I don't understand.");
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold_complete_into_assistant is called") {
+            bool folded = engine.fold_complete_into_assistant(ctx, result);
+
+            THEN("it returns true (caller should skip pushing)") {
+                REQUIRE(folded == true);
+            }
+
+            THEN("assistant message body is replaced with the summary") {
+                REQUIRE(ctx.messages.size() == 2);  // user + assistant
+                REQUIRE(ctx.messages.back().role == "assistant");
+                REQUIRE(ctx.messages.back().content
+                        == "I am sorry, I don't understand.");
+            }
+
+            THEN("no extra messages appended") {
+                REQUIRE(ctx.messages.size() == 2);
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: refuses when assistant has prose "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx where the assistant message already has prose content") {
+        // Real-world variant: model emitted "Sure, here goes." THEN
+        // <tool_call>...</tool_call>. Adapter-stripped result still has
+        // the prose. We must NOT overwrite prose with the summary.
+        auto ctx = gh68::make_ctx_post_dir_complete("summary text");
+        ctx.messages.back().content = "Sure, here goes.";
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold_complete_into_assistant is called") {
+            bool folded = engine.fold_complete_into_assistant(ctx, result);
+
+            THEN("it returns false (caller pushes JSON normally)") {
+                REQUIRE(folded == false);
+            }
+            THEN("the prose assistant body is unchanged") {
+                REQUIRE(ctx.messages.back().content == "Sure, here goes.");
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: refuses for non-complete tools "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx ready to fold but the tool result is entropic.delegate") {
+        auto ctx = gh68::make_ctx_post_dir_complete("would-be summary");
+        entropic::Message delegate_result;
+        delegate_result.role = "user";
+        delegate_result.content = R"({"action":"delegate","target":"x"})";
+        delegate_result.metadata["tool_name"] = "entropic.delegate";
+
+        WHEN("fold is called") {
+            bool folded = engine.fold_complete_into_assistant(
+                ctx, delegate_result);
+
+            THEN("it returns false — only entropic.complete is folded") {
+                REQUIRE(folded == false);
+            }
+            THEN("the empty assistant body stays empty") {
+                REQUIRE(ctx.messages.back().content.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: refuses when last msg isn't assistant "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx where the most recent message is a system reminder, not assistant") {
+        auto ctx = gh68::make_ctx_post_dir_complete("summary");
+        ctx.messages.push_back({"system", "[engine] reminder"});
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold is called") {
+            bool folded = engine.fold_complete_into_assistant(ctx, result);
+            THEN("it returns false") {
+                REQUIRE(folded == false);
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: refuses when metadata summary missing "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx with empty assistant but no explicit_completion_summary metadata") {
+        entropic::LoopContext ctx;
+        ctx.messages.push_back({"user", "q"});
+        ctx.messages.push_back({"assistant", ""});
+        // Intentionally NOT setting metadata — simulates a state where
+        // dir_complete hasn't run yet, or some other path that lacks
+        // the stashed summary.
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold is called") {
+            bool folded = engine.fold_complete_into_assistant(ctx, result);
+            THEN("it returns false — never invent content from thin air") {
+                REQUIRE(folded == false);
+            }
+            THEN("assistant body stays empty (no spurious mutation)") {
+                REQUIRE(ctx.messages.back().content.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: refuses on empty message history "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx with zero messages (degenerate but possible during init)") {
+        entropic::LoopContext ctx;
+        ctx.metadata["explicit_completion_summary"] = "x";
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold is called") {
+            THEN("it returns false without crashing on empty back()") {
+                REQUIRE_NOTHROW(
+                    engine.fold_complete_into_assistant(ctx, result));
+                REQUIRE_FALSE(
+                    engine.fold_complete_into_assistant(ctx, result));
+            }
+        }
+    }
+}
+
+SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
+         "(gh#68)",
+         "[engine][gh68][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("ctx with a multi-byte UTF-8 summary in metadata") {
+        // Mix of ASCII, multi-byte Unicode (em-dash, smart quotes,
+        // emoji) — exercises that we're not splitting bytes anywhere.
+        std::string summary =
+            "I don't understand — does \"class list\" mean "
+            "subjects or schedules? 🤔";
+        auto ctx = gh68::make_ctx_post_dir_complete(summary);
+        auto result = gh68::make_complete_result_msg();
+
+        WHEN("fold is called") {
+            engine.fold_complete_into_assistant(ctx, result);
+            THEN("the full UTF-8 summary lands intact") {
+                REQUIRE(ctx.messages.back().content == summary);
+            }
+        }
+    }
+}

@@ -438,13 +438,31 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
+    // gh#68 (v2.3.4): special=false — special tokens are NOT rendered
+    // to surface text. Pre-v2.3.4 we passed special=true and Gemma 4's
+    // `<|im_end|>` special token decoded to the literal 10-character
+    // string `<|im_end|>` which leaked into the content buffer. That
+    // text then echoed back in the next turn's prompt, the model
+    // re-emitted EOS to escape, and the engine's "no tool call in
+    // this iteration" retry cascade ran to exhaustion.
+    //
+    // Risk: a model that emits a tool-call channel marker as a single
+    // special token would also be filtered. Mitigation: gh#65 v2.3.3
+    // shows Gemma 4 emits the asymmetric `<|tool_call>` form via
+    // multi-token regular surface tokens (not a single special), so
+    // the gh#65 parse path is unaffected. The asymmetric-form unit
+    // test in gemma4_adapter_test.cpp pins this contract.
+    //
+    // The streaming generate loop also already short-circuits on
+    // `llama_vocab_is_eog()` BEFORE calling detokenize, so the loop's
+    // stop semantics are independent of this flag.
     char buf[256];
-    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, true);
+    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, false);
     if (n < 0) {
         // Buffer too small — retry with exact size
         std::vector<char> large(static_cast<size_t>(-n));
         n = llama_token_to_piece(vocab_, token, large.data(),
-                                 static_cast<int32_t>(large.size()), 0, true);
+                                 static_cast<int32_t>(large.size()), 0, false);
         if (n > 0) {
             return std::string(large.data(), static_cast<size_t>(n));
         }

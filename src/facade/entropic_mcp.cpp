@@ -58,6 +58,49 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
  * @internal
  * @version 2.1.4
  */
+/**
+ * @brief Parse an ExternalServerConfig from register-mcp JSON.
+ *
+ * Extracted from entropic_register_mcp_server to keep it knots-clean.
+ * Env vars on the block list are skipped with a warning.
+ *
+ * @param name Server name.
+ * @param j Parsed config JSON.
+ * @return Populated ExternalServerConfig.
+ * @utility
+ * @version 2.3.7
+ */
+static entropic::ExternalServerConfig parse_external_server_spec(
+    const char* name, const nlohmann::json& j) {
+    entropic::ExternalServerConfig spec;
+    spec.name = name;
+    spec.command = j.value("command", "");
+    spec.url = j.value("url", "");
+    spec.transport = j.value("transport",
+        spec.url.empty() ? "stdio" : "sse");
+    if (j.contains("args") && j["args"].is_array()) {
+        spec.args = j["args"].get<std::vector<std::string>>();
+    }
+    if (j.contains("env") && j["env"].is_object()) {
+        for (auto& [key, val] : j["env"].items()) {
+            if (entropic::is_blocked_env_var(key)) {
+                logger->warn("register_mcp_server '{}': blocked env var "
+                             "'{}' — skipping", name, key);
+                continue;
+            }
+            if (val.is_string()) {
+                spec.env[key] = val.get<std::string>();
+            }
+        }
+    }
+    return spec;
+}
+
+/**
+ * @brief Register an external MCP server from JSON config (C ABI).
+ * @internal
+ * @version 2.3.7
+ */
 extern "C" ENTROPIC_EXPORT entropic_error_t
 entropic_register_mcp_server(
     entropic_handle_t handle,
@@ -71,28 +114,7 @@ entropic_register_mcp_server(
 
     try {
         auto j = nlohmann::json::parse(config_json);
-        entropic::ExternalServerConfig spec;
-        spec.name = name;
-        spec.command = j.value("command", "");
-        spec.url = j.value("url", "");
-        spec.transport = j.value("transport",
-            spec.url.empty() ? "stdio" : "sse");
-        if (j.contains("args") && j["args"].is_array()) {
-            spec.args = j["args"].get<std::vector<std::string>>();
-        }
-        if (j.contains("env") && j["env"].is_object()) {
-            for (auto& [key, val] : j["env"].items()) {
-                if (entropic::is_blocked_env_var(key)) {
-                    logger->warn(
-                        "register_mcp_server '{}': blocked env var "
-                        "'{}' — skipping", name, key);
-                    continue;
-                }
-                if (val.is_string()) {
-                    spec.env[key] = val.get<std::string>();
-                }
-            }
-        }
+        auto spec = parse_external_server_spec(name, j);
         handle->server_manager->connect_external_server(spec);
         logger->info("register_mcp_server: name='{}' env_keys={}",
                      name, spec.env.size());

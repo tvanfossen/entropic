@@ -1159,26 +1159,25 @@ std::regex compile_grep_or_error(const std::string& pattern,
  * @internal
  * @version 2.1.4
  */
-ServerResponse GrepTool::execute(const std::string& args_json) {
-    auto args = json::parse(args_json);
-    auto pattern = args.at("pattern").get<std::string>();
-    auto file_glob = args.value("glob", std::string("*"));
-
-    std::string err;
-    auto re = compile_grep_or_error(pattern, err);
-    if (!err.empty()) { return {err, {}}; }
-
-    auto file_patterns = expand_braces(file_glob);
+/**
+ * @brief Walk the tree applying the glob/ignore filter and grep files.
+ * @param root Search root.
+ * @param file_patterns Brace-expanded glob patterns.
+ * @param re Compiled content regex.
+ * @param ignore Ignore matcher.
+ * @return Up to MAX_GREP_RESULTS match objects.
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<json> grep_search(
+    const fs::path& root, const std::vector<std::string>& file_patterns,
+    const std::regex& re, const IgnoreMatcher& ignore) {
     constexpr int MAX_GREP_RESULTS = 100;
     std::vector<json> matches;
-    auto root = server_.root_dir();
-    const auto& ignore = server_.ignore();
     auto it = fs::recursive_directory_iterator(
         root, fs::directory_options::skip_permission_denied);
-
     for (auto& entry : it) {
-        if (static_cast<int>(matches.size()) >=
-            MAX_GREP_RESULTS) {
+        if (static_cast<int>(matches.size()) >= MAX_GREP_RESULTS) {
             break;
         }
         auto action = classify_glob_entry(entry, root, file_patterns,
@@ -1189,6 +1188,26 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
             grep_file(entry.path(), re, matches, MAX_GREP_RESULTS);
         }
     }
+    return matches;
+}
+
+/**
+ * @brief Execute grep: compile regex, walk the tree, collect matches.
+ * @internal
+ * @version 2.3.7
+ */
+ServerResponse GrepTool::execute(const std::string& args_json) {
+    auto args = json::parse(args_json);
+    auto pattern = args.at("pattern").get<std::string>();
+    auto file_glob = args.value("glob", std::string("*"));
+
+    std::string err;
+    auto re = compile_grep_or_error(pattern, err);
+    if (!err.empty()) { return {err, {}}; }
+
+    auto file_patterns = expand_braces(file_glob);
+    auto matches = grep_search(server_.root_dir(), file_patterns, re,
+                               server_.ignore());
 
     logger->info("Grep '{}': {} matches (after ignore filtering)",
                  pattern, matches.size());
@@ -1308,7 +1327,7 @@ static int compute_max_read_bytes(const FilesystemConfig& config,
  * @param data_dir Path to bundled data directory.
  * @param model_context_bytes Model context window in bytes.
  * @internal
- * @version 2.1.4
+ * @version 2.3.7
  */
 FilesystemServer::FilesystemServer(
     const fs::path& root_dir,
@@ -1321,20 +1340,8 @@ FilesystemServer::FilesystemServer(
       max_read_bytes_(compute_max_read_bytes(
           config, model_context_bytes)) {
 
-    read_file_ = std::make_unique<ReadFileTool>(*this, data_dir);
-    write_file_ = std::make_unique<WriteFileTool>(*this, data_dir);
-    edit_file_ = std::make_unique<EditFileTool>(*this, data_dir);
-    glob_ = std::make_unique<GlobTool>(*this, data_dir);
-    grep_ = std::make_unique<GrepTool>(*this, data_dir);
-    list_dir_ = std::make_unique<ListDirectoryTool>(
-        *this, data_dir);
-
-    register_tool(read_file_.get());
-    register_tool(write_file_.get());
-    register_tool(edit_file_.get());
-    register_tool(glob_.get());
-    register_tool(grep_.get());
-    register_tool(list_dir_.get());
+    create_fs_tools(data_dir);
+    register_fs_tools();
 
     // Issue #15 (v2.1.4): load .gitignore + .explorerignore so glob,
     // grep, and read_file can filter out build artifacts and vendor
@@ -1346,6 +1353,35 @@ FilesystemServer::FilesystemServer(
                  root_dir_.string(),
                  max_read_bytes_,
                  ignore_.rule_count());
+}
+
+/**
+ * @brief Construct the six filesystem tool instances (ctor step 1).
+ * @param data_dir Directory holding tool JSON definitions.
+ * @internal
+ * @version 2.3.7
+ */
+void FilesystemServer::create_fs_tools(const std::string& data_dir) {
+    read_file_ = std::make_unique<ReadFileTool>(*this, data_dir);
+    write_file_ = std::make_unique<WriteFileTool>(*this, data_dir);
+    edit_file_ = std::make_unique<EditFileTool>(*this, data_dir);
+    glob_ = std::make_unique<GlobTool>(*this, data_dir);
+    grep_ = std::make_unique<GrepTool>(*this, data_dir);
+    list_dir_ = std::make_unique<ListDirectoryTool>(*this, data_dir);
+}
+
+/**
+ * @brief Register the six filesystem tools (ctor step 2).
+ * @internal
+ * @version 2.3.7
+ */
+void FilesystemServer::register_fs_tools() {
+    register_tool(read_file_.get());
+    register_tool(write_file_.get());
+    register_tool(edit_file_.get());
+    register_tool(glob_.get());
+    register_tool(grep_.get());
+    register_tool(list_dir_.get());
 }
 
 /**

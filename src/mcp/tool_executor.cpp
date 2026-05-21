@@ -335,12 +335,28 @@ static std::string validate_tool_args(
 }
 
 /**
+ * @brief Extract the "result" text from an MCP result JSON envelope.
+ * @param result_json Raw result string from the server.
+ * @return j["result"] if parseable, else the raw string verbatim.
+ * @utility
+ * @version 2.3.7
+ */
+static std::string parse_tool_result_text(const std::string& result_json) {
+    try {
+        auto j = nlohmann::json::parse(result_json);
+        return j.value("result", result_json);
+    } catch (...) {
+        return result_json;
+    }
+}
+
+/**
  * @brief Execute a single tool call.
  * @param ctx Loop context.
  * @param call Tool call.
  * @return (result message, raw result string).
  * @internal
- * @version 2.1.1
+ * @version 2.3.7
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -368,30 +384,14 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
 
     ctx.metrics.tool_calls++;
 
-    // Parse result
-    std::string result_text;
-    try {
-        auto j = nlohmann::json::parse(result_json);
-        result_text = j.value("result", result_json);
-    } catch (...) {
-        result_text = result_json;
-    }
-
+    std::string result_text = parse_tool_result_text(result_json);
 
     // P1-11 (2.0.6-rc16): stash into history ring buffer so the
     // constitutional validator revision prompt (and diagnostic tools)
     // can surface prior-iteration tool calls without re-reading
     // messages[].
-    ToolCallRecord rec;
-    rec.sequence = ++history_seq_;
-    rec.tool_name = call.name;
-    rec.params_summary = summarize_params(args_json);
-    rec.status = (result_text.rfind("error", 0) == 0)
-        ? "error" : "success";
-    rec.result_summary = truncate_result(result_text, 200);
-    rec.elapsed_ms = static_cast<double>(ms);
-    rec.iteration = ctx.metrics.iterations;
-    history_.record(rec);
+    record_tool_history(call, args_json, result_text, ms,
+                        ctx.metrics.iterations);
 
     fire_tool_complete_callback(call, result_text, ms);
 
@@ -402,6 +402,32 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     msg.metadata["tool_name"] = call.name;
 
     return {std::move(msg), result_json};
+}
+
+/**
+ * @brief Stash a finished tool call in the history ring buffer.
+ * @param call The tool call.
+ * @param args_json Serialized args.
+ * @param result_text Parsed result text.
+ * @param ms Elapsed milliseconds.
+ * @param iteration Loop iteration.
+ * @internal
+ * @version 2.3.7
+ */
+void ToolExecutor::record_tool_history(const ToolCall& call,
+                                       const std::string& args_json,
+                                       const std::string& result_text,
+                                       long long ms, int iteration) {
+    ToolCallRecord rec;
+    rec.sequence = ++history_seq_;
+    rec.tool_name = call.name;
+    rec.params_summary = summarize_params(args_json);
+    rec.status = (result_text.rfind("error", 0) == 0)
+        ? "error" : "success";
+    rec.result_summary = truncate_result(result_text, 200);
+    rec.elapsed_ms = static_cast<double>(ms);
+    rec.iteration = iteration;
+    history_.record(rec);
 }
 
 /**
@@ -680,7 +706,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.1.1
+ * @version 2.3.7
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -705,41 +731,43 @@ std::vector<Message> ToolExecutor::process_single_call(
     auto [msg, raw_result] = execute_tool(ctx, call);
     auto exec_ms = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - exec_start).count();
-    // #46 (v2.1.0): cap result content at LoopConfig.max_tool_result_bytes
-    // so a single runaway tool can't exhaust the context budget. Cap=0
-    // disables. Truncated form retains a "[... truncated, N more bytes]"
-    // tail so downstream classification (#44) and identity prompts can
-    // see that output was lost rather than the tool actually returning
-    // a short result. Applied BEFORE classification so kind reflects
-    // the bounded form, and BEFORE record_tool_call so the duplicate
-    // cache stores what the model actually saw.
-    apply_result_size_cap(msg.content);
-    ctx.effective_tool_calls++;
-    msg.metadata["added_at_iteration"] =
-        std::to_string(ctx.metrics.iterations);
-    record_tool_call(ctx, call, raw_result);
 
-    // #44 (v2.1.0): honest byte-level signal so identity prompts can
-    // teach pivot-on-empty rules and so error responses don't leak as
-    // ok. Order matters — error trumps empty.
-    ToolResultKind kind;
-    if (mcp::looks_like_tool_error(msg.content)) {
-        kind = ToolResultKind::error;
-    } else if (mcp::is_effectively_empty(msg.content)) {
-        kind = ToolResultKind::ok_empty;
-    } else {
-        kind = ToolResultKind::ok;
+    finalize_tool_call(ctx, call, msg, raw_result, exec_ms);
+
+    return {std::move(msg)};
+}
+
+/**
+ * @brief Classify a tool result by its content (error/empty/ok).
+ * @param content Result content (already size-capped).
+ * @return ToolResultKind — error trumps empty trumps ok (#44).
+ * @utility
+ * @version 2.3.7
+ */
+static ToolResultKind classify_tool_result(const std::string& content) {
+    if (mcp::looks_like_tool_error(content)) {
+        return ToolResultKind::error;
     }
-    fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind, msg);
+    if (mcp::is_effectively_empty(content)) {
+        return ToolResultKind::ok_empty;
+    }
+    return ToolResultKind::ok;
+}
 
-    // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive
-    // calls of the same tool regardless of arg similarity (exact-arg
-    // duplicates are caught earlier by recent_tool_calls). When the
-    // count reaches the configured threshold, populate
-    // pending_anti_spiral_warning so the next turn's system reminder
-    // tells the model to pivot tools or complete.
-    update_anti_spiral_tracking(ctx, call.name);
-
+/**
+ * @brief Emit the per-tool-call info log line.
+ * @param ctx Loop context.
+ * @param call The tool call.
+ * @param exec_ms Execution time (ms).
+ * @param raw_result Raw server result (for size).
+ * @param kind Classified result kind.
+ * @internal
+ * @version 2.3.7
+ */
+void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
+                                 double exec_ms,
+                                 const std::string& raw_result,
+                                 ToolResultKind kind) {
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
     logger->info("[tool_call] iter={} tier={} tool={} args={} "
@@ -748,11 +776,45 @@ std::vector<Message> ToolExecutor::process_single_call(
                  ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
                  call.name, args_log, exec_ms,
                  raw_result.size(), result_kind_to_string(kind));
+}
+
+/**
+ * @brief Post-execution processing for a tool call.
+ * @param ctx Loop context.
+ * @param call The tool call.
+ * @param[in,out] msg Result message (content may be capped).
+ * @param raw_result Raw server result string.
+ * @param exec_ms Execution time (ms).
+ * @internal
+ * @version 2.3.7
+ */
+void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
+                                      Message& msg,
+                                      const std::string& raw_result,
+                                      double exec_ms) {
+    // #46 (v2.1.0): cap result content at LoopConfig.max_tool_result_bytes
+    // so a single runaway tool can't exhaust the context budget. Applied
+    // BEFORE classification so kind reflects the bounded form, and BEFORE
+    // record_tool_call so the duplicate cache stores what the model saw.
+    apply_result_size_cap(msg.content);
+    ctx.effective_tool_calls++;
+    msg.metadata["added_at_iteration"] =
+        std::to_string(ctx.metrics.iterations);
+    record_tool_call(ctx, call, raw_result);
+
+    // #44 (v2.1.0): honest byte-level signal — error trumps empty.
+    ToolResultKind kind = classify_tool_result(msg.content);
+    fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind, msg);
+
+    // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive
+    // same-tool calls; at threshold, populate pending_anti_spiral_warning
+    // so the next turn's reminder tells the model to pivot or complete.
+    update_anti_spiral_tracking(ctx, call.name);
+
+    log_tool_call(ctx, call, exec_ms, raw_result, kind);
 
     extract_and_process_directives(ctx, raw_result);
     run_post_tool_hooks(ctx);
-
-    return {std::move(msg)};
 }
 
 /**
@@ -1143,6 +1205,32 @@ static std::vector<std::string> extract_pipeline_stages(
  * @internal
  * @version 2.1.6
  */
+/**
+ * @brief Build a CompleteDirective from a result JSON (issue #10).
+ * @param result_json Tool result JSON.
+ * @return CompleteDirective with summary + typed gap/suggested fields.
+ * @utility
+ * @version 2.3.7
+ */
+static std::unique_ptr<Directive> build_complete_directive(
+    const nlohmann::json& result_json) {
+    auto cd = std::make_unique<CompleteDirective>(
+        result_json.value("summary", ""));
+    cd->coverage_gap = result_json.value("coverage_gap", false);
+    cd->gap_description = result_json.value("gap_description", "");
+    if (result_json.contains("suggested_files")
+        && result_json["suggested_files"].is_array()) {
+        cd->suggested_files =
+            result_json["suggested_files"].get<std::vector<std::string>>();
+    }
+    return cd;
+}
+
+/**
+ * @brief Build a Directive from a parsed directive + result JSON.
+ * @internal
+ * @version 2.3.7
+ */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
     auto type_str = d.value("type", "");
@@ -1160,20 +1248,7 @@ static std::unique_ptr<Directive> build_directive(
             result_json.value("max_turns", -1),
             result_json.value("delegation_id", ""));
     } else if (type_str == "complete") {
-        // Issue #10 (v2.1.4): coverage_gap + gap_description +
-        // suggested_files extend CompleteDirective so consumers can
-        // branch on typed fields.
-        auto cd = std::make_unique<CompleteDirective>(
-            result_json.value("summary", ""));
-        cd->coverage_gap = result_json.value("coverage_gap", false);
-        cd->gap_description = result_json.value("gap_description", "");
-        if (result_json.contains("suggested_files")
-            && result_json["suggested_files"].is_array()) {
-            cd->suggested_files =
-                result_json["suggested_files"]
-                    .get<std::vector<std::string>>();
-        }
-        result = std::move(cd);
+        result = build_complete_directive(result_json);
     } else if (type_str == "pipeline") {
         result = std::make_unique<PipelineDirective>(
             extract_pipeline_stages(result_json),

@@ -40,6 +40,70 @@ static void fire_hook_info(const HookInterface& hooks,
     }
 }
 
+/**
+ * @brief Build + fire the ON_LOOP_START info hook.
+ * @param hooks Hook interface.
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.3.7
+ */
+static void fire_loop_start_hook(const HookInterface& hooks,
+                                 const LoopContext& ctx) {
+    std::string json = "{\"message_count\":"
+        + std::to_string(ctx.messages.size())
+        + ",\"delegation_depth\":"
+        + std::to_string(ctx.delegation_depth) + "}";
+    fire_hook_info(hooks, ENTROPIC_HOOK_ON_LOOP_START, json.c_str());
+}
+
+/**
+ * @brief Build + fire the ON_LOOP_END info hook.
+ * @param hooks Hook interface.
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.3.7
+ */
+static void fire_loop_end_hook(const HookInterface& hooks,
+                               const LoopContext& ctx) {
+    std::string json = "{\"final_state\":\""
+        + std::string(agent_state_name(ctx.state))
+        + "\",\"iterations\":"
+        + std::to_string(ctx.metrics.iterations) + "}";
+    fire_hook_info(hooks, ENTROPIC_HOOK_ON_LOOP_END, json.c_str());
+}
+
+/**
+ * @brief Build + fire the ON_LOOP_ITERATION info hook.
+ * @param hooks Hook interface.
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.3.7
+ */
+static void fire_loop_iteration_hook(const HookInterface& hooks,
+                                     const LoopContext& ctx) {
+    std::string json = "{\"iteration\":"
+        + std::to_string(ctx.metrics.iterations)
+        + ",\"state\":\"" + agent_state_name(ctx.state)
+        + "\",\"consecutive_errors\":"
+        + std::to_string(ctx.consecutive_errors) + "}";
+    fire_hook_info(hooks, ENTROPIC_HOOK_ON_LOOP_ITERATION, json.c_str());
+}
+
+/**
+ * @brief Build + fire the ON_CONTEXT_ASSEMBLE info hook.
+ * @param hooks Hook interface.
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.3.7
+ */
+static void fire_context_assemble_hook(const HookInterface& hooks,
+                                       const LoopContext& ctx) {
+    std::string json = "{\"message_count\":"
+        + std::to_string(ctx.messages.size()) + "}";
+    fire_hook_info(hooks, ENTROPIC_HOOK_ON_CONTEXT_ASSEMBLE,
+                   json.c_str());
+}
+
 // Forward declaration
 static void remove_anchor_messages(LoopContext& ctx,
                                     const std::string& key);
@@ -301,7 +365,7 @@ void AgentEngine::run_loop(LoopContext& ctx) {
  * @param messages System + user messages.
  * @return Final messages.
  * @internal
- * @version 2.1.12
+ * @version 2.3.7
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     // gh#35: update activity timestamp at run() entry so any host
@@ -315,25 +379,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     ctx.messages = std::move(messages);
     ctx.metrics.start_time = now_seconds();
 
-    // gh#48 (v2.1.12): create the root conversation row when storage
-    // is wired so `ctx.conversation_id` carries a valid FK into
-    // `conversations(id)`. Every downstream delegation copies
-    // `parent_ctx.conversation_id` into `child_ctx.parent_conversation_id`
-    // (`delegation.cpp:387`); without this, the empty string propagates
-    // and every `INSERT INTO delegations` violates the FK silently,
-    // making `entropic.followup` return empty across an entire session.
-    if (storage_.create_conversation != nullptr) {
-        std::string conv_id;
-        if (storage_.create_conversation("session", conv_id,
-                                         storage_.user_data)
-            && !conv_id.empty()) {
-            ctx.conversation_id = std::move(conv_id);
-        } else {
-            logger->warn("Storage create_conversation failed at run() "
-                         "init; delegations will not persist this "
-                         "session (gh#48)");
-        }
-    }
+    init_session_conversation(ctx);
 
     reset_interrupt();
     pause_flag_.store(false);
@@ -344,6 +390,44 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     loop(ctx);
 
     ctx.metrics.end_time = now_seconds();
+    accumulate_run_metrics(ctx);
+    logger->info("Loop complete: {} iterations, {}ms",
+                 ctx.metrics.iterations, ctx.metrics.duration_ms());
+    return ctx.messages;
+}
+
+/**
+ * @brief Create the root conversation row for a run (gh#48).
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.3.7
+ */
+void AgentEngine::init_session_conversation(LoopContext& ctx) {
+    // gh#48 (v2.1.12): create the root conversation row when storage
+    // is wired so `ctx.conversation_id` carries a valid FK into
+    // `conversations(id)`. Every downstream delegation copies
+    // `parent_ctx.conversation_id` into `child_ctx.parent_conversation_id`
+    // (`delegation.cpp:387`); without this, the empty string propagates
+    // and every `INSERT INTO delegations` violates the FK silently,
+    // making `entropic.followup` return empty across an entire session.
+    if (storage_.create_conversation == nullptr) { return; }
+    std::string conv_id;
+    if (storage_.create_conversation("session", conv_id, storage_.user_data)
+        && !conv_id.empty()) {
+        ctx.conversation_id = std::move(conv_id);
+    } else {
+        logger->warn("Storage create_conversation failed at run() init; "
+                     "delegations will not persist this session (gh#48)");
+    }
+}
+
+/**
+ * @brief Fold a finished run's metrics into the per-tier totals.
+ * @param ctx Loop context (with completed metrics).
+ * @internal
+ * @version 2.3.7
+ */
+void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
     last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
     // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
     auto& tm = per_tier_metrics_[
@@ -353,26 +437,16 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
     tm.tokens_used += ctx.metrics.tokens_used;
     tm.errors      += ctx.metrics.errors;
     tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
-    logger->info("Loop complete: {} iterations, {}ms",
-                 ctx.metrics.iterations, ctx.metrics.duration_ms());
-    return ctx.messages;
 }
 
 /**
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.3.7
  */
 void AgentEngine::loop(LoopContext& ctx) {
-    // Hook: ON_LOOP_START (v1.9.1)
-    {
-        std::string json = "{\"message_count\":"
-            + std::to_string(ctx.messages.size())
-            + ",\"delegation_depth\":"
-            + std::to_string(ctx.delegation_depth) + "}";
-        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_START, json.c_str());
-    }
+    fire_loop_start_hook(hooks_, ctx);  // ON_LOOP_START (v1.9.1)
 
     while (!should_stop(ctx)) {
         ctx.metrics.iterations++;
@@ -411,21 +485,14 @@ void AgentEngine::loop(LoopContext& ctx) {
         set_state(ctx, AgentState::COMPLETE);
     }
 
-    // Hook: ON_LOOP_END (v1.9.1)
-    {
-        std::string json = "{\"final_state\":\""
-            + std::string(agent_state_name(ctx.state))
-            + "\",\"iterations\":"
-            + std::to_string(ctx.metrics.iterations) + "}";
-        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_END, json.c_str());
-    }
+    fire_loop_end_hook(hooks_, ctx);  // ON_LOOP_END (v1.9.1)
 }
 
 /**
  * @brief Execute a single loop iteration.
  * @param ctx Loop context.
  * @internal
- * @version 2.1.1-rc1
+ * @version 2.3.7
  */
 void AgentEngine::execute_iteration(LoopContext& ctx) {
     logger->info("[LOOP] iter {}/{} state={} msgs={}",
@@ -434,27 +501,13 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
                  agent_state_name(ctx.state),
                  ctx.messages.size());
 
-    // Hook: ON_LOOP_ITERATION (v1.9.1)
-    {
-        std::string json = "{\"iteration\":"
-            + std::to_string(ctx.metrics.iterations)
-            + ",\"state\":\"" + agent_state_name(ctx.state)
-            + "\",\"consecutive_errors\":"
-            + std::to_string(ctx.consecutive_errors) + "}";
-        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_LOOP_ITERATION, json.c_str());
-    }
+    fire_loop_iteration_hook(hooks_, ctx);  // ON_LOOP_ITERATION (v1.9.1)
 
     context_manager_.refresh_context_limit(ctx, 0);
     context_manager_.prune_old_tool_results(ctx);
     context_manager_.check_compaction(ctx);
 
-    // Hook: ON_CONTEXT_ASSEMBLE (v1.9.1)
-    {
-        std::string json = "{\"message_count\":"
-            + std::to_string(ctx.messages.size()) + "}";
-        fire_hook_info(hooks_, ENTROPIC_HOOK_ON_CONTEXT_ASSEMBLE,
-                       json.c_str());
-    }
+    fire_context_assemble_hook(hooks_, ctx);  // ON_CONTEXT_ASSEMBLE (v1.9.1)
 
     set_state(ctx, AgentState::EXECUTING);
 
@@ -466,6 +519,18 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
 
     auto result = response_generator_.generate_response(ctx);
     dispatch_post_generate(ctx, result);
+    process_generation_result(ctx, result);
+}
+
+/**
+ * @brief Turn a generation result into the next loop state.
+ * @param ctx Loop context.
+ * @param result Generation result.
+ * @internal
+ * @version 2.3.7
+ */
+void AgentEngine::process_generation_result(LoopContext& ctx,
+                                            GenerateResult& result) {
     auto [cleaned, tool_calls] = parse_tool_calls(result.content);
     logger->info("[ITER] finish={}, {} tool call(s), {} chars",
                  result.finish_reason, tool_calls.size(),
@@ -638,33 +703,30 @@ bool AgentEngine::is_delegation_repeat_blocked(
 }
 
 /**
- * @brief gh#35: idle accessor. See header.
- * @utility
- * @version 2.3.0
- */
-/**
  * @brief gh#68 fold logic — see header.
  * @utility
- * @version 2.3.4
+ * @version 2.3.7
  */
 bool AgentEngine::fold_complete_into_assistant(
     LoopContext& ctx, const Message& tool_result_msg) const {
     auto tn_it = tool_result_msg.metadata.find("tool_name");
-    if (tn_it == tool_result_msg.metadata.end()
-        || tn_it->second != "entropic.complete") {
-        return false;
-    }
-    if (ctx.messages.empty()) { return false; }
+    bool is_complete = tn_it != tool_result_msg.metadata.end()
+        && tn_it->second == "entropic.complete";
+    if (!is_complete || ctx.messages.empty()) { return false; }
     auto& last = ctx.messages.back();
-    if (last.role != "assistant" || !last.content.empty()) {
-        return false;
-    }
     auto sum_it = ctx.metadata.find("explicit_completion_summary");
-    if (sum_it == ctx.metadata.end()) { return false; }
+    bool foldable = last.role == "assistant" && last.content.empty()
+        && sum_it != ctx.metadata.end();
+    if (!foldable) { return false; }
     last.content = sum_it->second;
     return true;
 }
 
+/**
+ * @brief gh#35: idle accessor. See header.
+ * @utility
+ * @version 2.3.0
+ */
 int64_t AgentEngine::seconds_since_last_activity() const {
     auto last = last_activity_epoch_s_.load();
     if (last == 0) { return 0; }
@@ -1307,6 +1369,39 @@ static std::string build_tool_manifest(
 }
 
 /**
+ * @brief Format one tool-result message for the evidence block.
+ * @param msg Tool-result message.
+ * @param chars_per_result Per-result truncation budget.
+ * @return Formatted "## <tool> [iter N]\n<src|truncated>\n\n" entry.
+ * @utility
+ * @version 2.3.7
+ */
+static std::string format_tool_evidence_entry(const Message& msg,
+                                              size_t chars_per_result) {
+    auto orig = msg.metadata.find("original_content");
+    const std::string& src = (orig != msg.metadata.end())
+                           ? orig->second
+                           : msg.content;
+    auto iter = msg.metadata.find("added_at_iteration");
+    std::string out = "## ";
+    out += msg.metadata.at("tool_name");
+    if (iter != msg.metadata.end()) {
+        out += " [iter " + iter->second + "]";
+    }
+    out += "\n";
+    if (src.size() <= chars_per_result) {
+        out += src;
+    } else {
+        out += src.substr(0, chars_per_result);
+        out += "\n[... truncated, "
+             + std::to_string(src.size() - chars_per_result)
+             + " more chars]";
+    }
+    out += "\n\n";
+    return out;
+}
+
+/**
  * @brief Build un-pruned tool-result evidence for the validator.
  *
  * Issue #5 (v2.1.3): the validator's critique prompt previously
@@ -1331,7 +1426,7 @@ static std::string build_tool_manifest(
  * @param chars_per_result Per-result truncation budget.
  * @return Evidence block, empty if no tool results in messages.
  * @utility
- * @version 2.1.3
+ * @version 2.3.7
  */
 static std::string build_tool_evidence(
     const std::vector<Message>& messages,
@@ -1356,27 +1451,7 @@ static std::string build_tool_evidence(
              + " earlier tool results elided for length)\n";
     }
     for (size_t i = start; i < tool_msgs.size(); ++i) {
-        const auto& msg = *tool_msgs[i];
-        auto orig = msg.metadata.find("original_content");
-        const std::string& src = (orig != msg.metadata.end())
-                               ? orig->second
-                               : msg.content;
-        auto iter = msg.metadata.find("added_at_iteration");
-        out += "## ";
-        out += msg.metadata.at("tool_name");
-        if (iter != msg.metadata.end()) {
-            out += " [iter " + iter->second + "]";
-        }
-        out += "\n";
-        if (src.size() <= chars_per_result) {
-            out += src;
-        } else {
-            out += src.substr(0, chars_per_result);
-            out += "\n[... truncated, "
-                 + std::to_string(src.size() - chars_per_result)
-                 + " more chars]";
-        }
-        out += "\n\n";
+        out += format_tool_evidence_entry(*tool_msgs[i], chars_per_result);
     }
     return out;
 }
@@ -1787,6 +1862,44 @@ static void push_delegation_repeat_blocked(
 }
 
 /**
+ * @brief Apply the pre-run delegation guards (depth/cycle/repeat).
+ * @param ctx Loop context.
+ * @param pending The delegation about to run.
+ * @return true if rejected (rejection message already pushed).
+ * @internal
+ * @version 2.3.7
+ */
+bool AgentEngine::reject_delegation_if_guarded(
+    LoopContext& ctx, const PendingDelegation& pending) {
+    bool rejected = true;
+    if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
+        logger->warn("Delegation rejected: depth {} >= max {}",
+                     ctx.delegation_depth, MAX_DELEGATION_DEPTH);
+        push_delegation_rejected(ctx);
+    } else if (is_delegation_cycle(ctx, pending.target)) {
+        // P1-9: reject A→B→A and longer cycles before running a child.
+        logger->warn("Delegation rejected: cycle on target tier '{}'",
+                     pending.target);
+        push_delegation_cycle_rejected(ctx, pending.target);
+    } else if (is_delegation_repeat_blocked(ctx, pending.target)) {
+        // gh#64: refuse re-delegation to a target that has just failed
+        // N times in a row. Pre-fix, a lead retrying a Q4 specialist
+        // that couldn't emit a tool call would burn 30+ identical
+        // delegations before its own iteration cap stopped it.
+        logger->warn("Delegation rejected: '{}' failed {}x in a row "
+                     "(>= max_consecutive_failed_delegations={})",
+                     pending.target,
+                     ctx.consecutive_failed_delegations,
+                     loop_config_.max_consecutive_failed_delegations);
+        push_delegation_repeat_blocked(
+            ctx, pending.target, ctx.consecutive_failed_delegations);
+    } else {
+        rejected = false;
+    }
+    return rejected;
+}
+
+/**
  * @brief Execute a pending delegation from the tool result directives.
  *
  * On successful delegation the state transitions to COMPLETE unless the
@@ -1802,35 +1915,7 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
     ctx.pending_delegation.reset();
 
-    if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
-        logger->warn("Delegation rejected: depth {} >= max {}",
-                     ctx.delegation_depth, MAX_DELEGATION_DEPTH);
-        push_delegation_rejected(ctx);
-        return;
-    }
-
-    // P1-9: reject A→B→A and longer cycles before running a child.
-    if (is_delegation_cycle(ctx, pending.target)) {
-        logger->warn("Delegation rejected: cycle on target tier '{}'",
-                     pending.target);
-        push_delegation_cycle_rejected(ctx, pending.target);
-        return;
-    }
-
-    // gh#64: refuse re-delegation to a target that has just failed N
-    // times in a row. Pre-fix, a lead retrying a Q4 specialist that
-    // couldn't emit a tool call would burn 30+ identical delegations
-    // before its own iteration cap stopped it.
-    if (is_delegation_repeat_blocked(ctx, pending.target)) {
-        logger->warn("Delegation rejected: '{}' failed {}x in a row "
-                     "(>= max_consecutive_failed_delegations={})",
-                     pending.target,
-                     ctx.consecutive_failed_delegations,
-                     loop_config_.max_consecutive_failed_delegations);
-        push_delegation_repeat_blocked(
-            ctx, pending.target, ctx.consecutive_failed_delegations);
-        return;
-    }
+    if (reject_delegation_if_guarded(ctx, pending)) { return; }
 
     set_state(ctx, AgentState::DELEGATING);
 
@@ -2487,12 +2572,14 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
  * @internal
  * @version 2.1.10
  */
-std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
-    // gh#40 (v2.1.10): mirror the single-string overload's drain
-    // loop. Queued messages enqueued via entropic_queue_user_message
-    // become subsequent plain-text user turns at this top-level
-    // boundary (no content_parts — the queue ABI is text-only).
-    running_flag_.store(true);
+/**
+ * @brief Prepend the configured system prompt if this turn needs it.
+ * @param new_messages The messages the caller is adding this turn.
+ * @internal
+ * @version 2.3.7
+ */
+void AgentEngine::seed_system_prompt(
+    const std::vector<Message>& new_messages) {
     bool caller_has_system = false;
     for (const auto& m : new_messages) {
         if (m.role == "system") { caller_has_system = true; break; }
@@ -2504,6 +2591,41 @@ std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
         sys.content = system_prompt_;
         conversation_.push_back(std::move(sys));
     }
+}
+
+/**
+ * @brief Pull the next queued user message into `pending` (gh#40).
+ * @param pending Out: cleared and set to the next user turn.
+ * @return true if a queued message was dequeued; false if empty.
+ * @internal
+ * @version 2.3.7
+ */
+bool AgentEngine::prepare_next_turn(std::vector<Message>& pending) {
+    auto next = pop_queued_user_message();
+    if (!next.has_value()) { return false; }
+    fire_queue_consumed(*next, user_message_queue_depth());
+    Message usr;
+    usr.role = "user";
+    usr.content = std::move(*next);
+    pending.clear();
+    pending.push_back(std::move(usr));
+    return true;
+}
+
+/**
+ * @brief Run a stateful turn, draining any queued user messages (gh#40).
+ * @param new_messages Messages to add this turn.
+ * @return Full result messages from the engine loop.
+ * @internal
+ * @version 2.3.7
+ */
+std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
+    // gh#40 (v2.1.10): mirror the single-string overload's drain
+    // loop. Queued messages enqueued via entropic_queue_user_message
+    // become subsequent plain-text user turns at this top-level
+    // boundary (no content_parts — the queue ABI is text-only).
+    running_flag_.store(true);
+    seed_system_prompt(new_messages);
     std::vector<Message> pending = std::move(new_messages);
     std::vector<Message> result;
     while (true) {
@@ -2515,14 +2637,7 @@ std::vector<Message> AgentEngine::run_turn(std::vector<Message> new_messages) {
         for (size_t i = sent_len; i < result.size(); ++i) {
             conversation_.push_back(result[i]);
         }
-        auto next = pop_queued_user_message();
-        if (!next.has_value()) { break; }
-        fire_queue_consumed(*next, user_message_queue_depth());
-        Message usr;
-        usr.role = "user";
-        usr.content = std::move(*next);
-        pending.clear();
-        pending.push_back(std::move(usr));
+        if (!prepare_next_turn(pending)) { break; }
     }
     running_flag_.store(false);
     return result;

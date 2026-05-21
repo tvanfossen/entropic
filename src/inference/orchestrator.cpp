@@ -336,6 +336,48 @@ bool ModelOrchestrator::try_speculative_route(
 // ── Generation ─────────────────────────────────────────────
 
 /**
+ * @brief Run the tier's adapter over a result to split tool calls.
+ * @param adapter Adapter for the selected tier (may be null).
+ * @param[in,out] result Generation result (content split, tools set).
+ * @utility
+ * @version 2.3.7
+ */
+static void apply_adapter_parse(ChatAdapter* adapter,
+                                GenerationResult& result) {
+    if (!adapter || result.content.empty()) { return; }
+    result.raw_content = result.content;
+    auto parsed = adapter->parse_tool_calls(result.content);
+    result.content = parsed.cleaned_content;
+    result.tool_calls = std::move(parsed.tool_calls);
+}
+
+/**
+ * @brief Log the per-orchestration tier/adapter/timing summary.
+ * @param result Generation result (carries timings).
+ * @param selected Selected tier name.
+ * @param adapter_name Adapter that ran.
+ * @param params Resolved params (for grammar info).
+ * @param routing_ms Routing time.
+ * @param swap_ms Model-swap time.
+ * @utility
+ * @version 2.3.7
+ */
+static void log_orchestration(const GenerationResult& result,
+                              const std::string& selected,
+                              const std::string& adapter_name,
+                              const GenerationParams& params,
+                              double routing_ms, double swap_ms) {
+    logger->info("Orchestration: tier={}, adapter={}, grammar={}",
+                 selected, adapter_name,
+                 params.grammar.empty() ? "unconstrained"
+                                        : params.grammar_key);
+    logger->info("Total: {:.0f}ms (route={:.0f}ms, swap={:.0f}ms, "
+                 "gen={:.0f}ms)",
+                 result.total_ms, routing_ms, swap_ms,
+                 result.generation_time_ms);
+}
+
+/**
  * @brief Generate response using routed or explicit tier.
  *
  * Speculative routing added in v2.1.11 (gh#36): when the kernel is
@@ -352,7 +394,7 @@ bool ModelOrchestrator::try_speculative_route(
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.2.4
+ * @version 2.3.7
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -385,25 +427,13 @@ GenerationResult ModelOrchestrator::generate(
     GenerationResult result = run_generate_dispatch(
         model, messages, resolved_params);
 
-    auto* adapter = get_adapter(selected);
-    if (adapter && !result.content.empty()) {
-        result.raw_content = result.content;
-        auto parsed = adapter->parse_tool_calls(result.content);
-        result.content = parsed.cleaned_content;
-        result.tool_calls = std::move(parsed.tool_calls);
-    }
+    apply_adapter_parse(get_adapter(selected), result);
 
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
     result.total_ms = elapsed_ms(t_start, now());
-    logger->info("Orchestration: tier={}, adapter={}, grammar={}",
-                 selected, last_routing_result_.adapter_name,
-                 resolved_params.grammar.empty()
-                     ? "unconstrained" : resolved_params.grammar_key);
-    logger->info("Total: {:.0f}ms (route={:.0f}ms, swap={:.0f}ms, "
-                 "gen={:.0f}ms)",
-                 result.total_ms, routing_ms, swap_ms,
-                 result.generation_time_ms);
+    log_orchestration(result, selected, last_routing_result_.adapter_name,
+                      resolved_params, routing_ms, swap_ms);
     return result;
 }
 
@@ -695,7 +725,7 @@ InferenceBackend* ModelOrchestrator::activate_and_track(
  * @param tier_name Requested tier name.
  * @return Backend pointer, or nullptr.
  * @internal
- * @version 2.2.4
+ * @version 2.3.7
  */
 InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
     std::lock_guard<std::mutex> lock(swap_mutex_);
@@ -721,15 +751,27 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
 
     // Ensure correct LoRA adapter for this tier (v1.9.2)
     if (result) {
-        auto* llama_backend = dynamic_cast<LlamaCppBackend*>(result);
-        llama_context* ctx = llama_backend
-            ? llama_backend->llama_context_ptr() : nullptr;
-        double adapter_ms = ensure_adapter_for_tier(tier_name, ctx);
-        last_routing_result_.adapter_swap_ms = adapter_ms;
-        last_routing_result_.adapter_name = lora_manager_.active_adapter();
+        ensure_tier_lora(tier_name, result);
     }
 
     return result;
+}
+
+/**
+ * @brief Ensure the active tier's LoRA adapter is loaded.
+ * @param tier_name Tier whose adapter to ensure.
+ * @param result Active backend.
+ * @internal
+ * @version 2.3.7
+ */
+void ModelOrchestrator::ensure_tier_lora(const std::string& tier_name,
+                                         InferenceBackend* result) {
+    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(result);
+    llama_context* ctx = llama_backend
+        ? llama_backend->llama_context_ptr() : nullptr;
+    double adapter_ms = ensure_adapter_for_tier(tier_name, ctx);
+    last_routing_result_.adapter_swap_ms = adapter_ms;
+    last_routing_result_.adapter_name = lora_manager_.active_adapter();
 }
 
 /**
@@ -741,7 +783,7 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
  *
  * @param incoming The backend about to be activated.
  * @internal
- * @version 2.2.4
+ * @version 2.3.7
  */
 void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming) {
     auto it = loaded_main_tier_.empty()
@@ -755,32 +797,42 @@ void ModelOrchestrator::deactivate_current_if_needed(InferenceBackend* incoming)
         return;
     }
 
-    auto& current = it->second;
-    auto cfg_it = config_.models.tiers.find(loaded_main_tier_);
-    bool keep_warm = cfg_it != config_.models.tiers.end() && cfg_it->second.keep_warm;
-
     // Cascade: unload adapters for this base model (v1.9.2)
-    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(current.get());
+    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(it->second.get());
     if (llama_backend) {
         lora_manager_.unload_all_for_model(
             llama_backend->llama_model_ptr(),
             llama_backend->llama_context_ptr());
     }
 
+    unload_or_warm_current(it->second.get());
+}
+
+/**
+ * @brief Warm-deactivate or cold-unload the current main tier.
+ * @param current The backend leaving the active slot.
+ * @internal
+ * @version 2.3.7
+ */
+void ModelOrchestrator::unload_or_warm_current(InferenceBackend* current) {
+    auto cfg_it = config_.models.tiers.find(loaded_main_tier_);
+    bool keep_warm = cfg_it != config_.models.tiers.end()
+        && cfg_it->second.keep_warm;
+
     if (keep_warm) {
         logger->info("Deactivating {} (keep_warm=true)", loaded_main_tier_);
         current->deactivate();
-    } else {
-        logger->info("Unloading {} (keep_warm=false)", loaded_main_tier_);
-        std::string path = cfg_it != config_.models.tiers.end()
-            ? cfg_it->second.path.string() : "";
-        size_t footprint = tier_footprint_bytes_.count(loaded_main_tier_)
-            ? tier_footprint_bytes_[loaded_main_tier_] : 0;
-        std::string evicted_tier = loaded_main_tier_;
-        current->unload();
-        fire_residency_observer(ResidencyEvent::Evicted,
-                                evicted_tier, path, footprint);
+        return;
     }
+    logger->info("Unloading {} (keep_warm=false)", loaded_main_tier_);
+    std::string path = cfg_it != config_.models.tiers.end()
+        ? cfg_it->second.path.string() : "";
+    size_t footprint = tier_footprint_bytes_.count(loaded_main_tier_)
+        ? tier_footprint_bytes_[loaded_main_tier_] : 0;
+    std::string evicted_tier = loaded_main_tier_;
+    current->unload();
+    fire_residency_observer(ResidencyEvent::Evicted,
+                            evicted_tier, path, footprint);
 }
 
 // ── Queries ────────────────────────────────────────────────
@@ -1347,6 +1399,44 @@ void ModelOrchestrator::fire_residency_observer(
  * @internal
  * @version 2.2.4
  */
+/**
+ * @brief Build one residency-snapshot JSON entry.
+ * @param name Tier name.
+ * @param path Model file path.
+ * @param context_length Tier context length (for KV estimate).
+ * @param footprint Resolved footprint bytes.
+ * @param vram_reserve_mb Configured headroom reserve.
+ * @param last_ms Last activation time (ms).
+ * @return JSON entry object.
+ * @utility
+ * @version 2.3.7
+ */
+static nlohmann::json make_residency_entry(
+    const std::string& name, const std::filesystem::path& path,
+    int context_length, size_t footprint, int vram_reserve_mb,
+    long long last_ms) {
+    std::error_code ec;
+    auto weights = std::filesystem::file_size(path, ec);
+    size_t weights_b = ec ? 0u : static_cast<size_t>(weights);
+    size_t kv = static_cast<size_t>(context_length) * 16ull * 1024ull;
+    size_t headroom = static_cast<size_t>(vram_reserve_mb)
+        * 1024ull * 1024ull;
+    return {
+        {"tier",               name},
+        {"model_path",         path.string()},
+        {"footprint_bytes",    footprint},
+        {"weights_bytes",      weights_b},
+        {"kv_cache_bytes",     kv},
+        {"headroom_bytes",     headroom},
+        {"last_activation_ms", last_ms}
+    };
+}
+
+/**
+ * @brief Serialize the current VRAM residency snapshot to JSON.
+ * @internal
+ * @version 2.3.7
+ */
 std::string ModelOrchestrator::residency_snapshot_json() const {
     std::lock_guard<std::mutex> lock(swap_mutex_);
     nlohmann::json j;
@@ -1358,33 +1448,16 @@ std::string ModelOrchestrator::residency_snapshot_json() const {
         if (!backend || !backend->is_loaded()) { continue; }
         auto tier_it = config_.models.tiers.find(name);
         if (tier_it == config_.models.tiers.end()) { continue; }
-        size_t footprint = 0;
         auto fp_it = tier_footprint_bytes_.find(name);
-        if (fp_it != tier_footprint_bytes_.end()) {
-            footprint = fp_it->second;
-        } else {
-            footprint = estimate_footprint_bytes(name);
-        }
+        size_t footprint = (fp_it != tier_footprint_bytes_.end())
+            ? fp_it->second : estimate_footprint_bytes(name);
         in_use += footprint;
-        std::error_code ec;
-        auto weights = std::filesystem::file_size(tier_it->second.path, ec);
-        size_t weights_b = ec ? 0u : static_cast<size_t>(weights);
-        size_t kv = static_cast<size_t>(tier_it->second.context_length)
-            * 16ull * 1024ull;
-        size_t headroom = static_cast<size_t>(config_.vram_reserve_mb)
-            * 1024ull * 1024ull;
-        long long last_ms = 0;
         auto la = tier_last_activation_ms_.find(name);
-        if (la != tier_last_activation_ms_.end()) { last_ms = la->second; }
-        arr.push_back({
-            {"tier",              name},
-            {"model_path",        tier_it->second.path.string()},
-            {"footprint_bytes",   footprint},
-            {"weights_bytes",     weights_b},
-            {"kv_cache_bytes",    kv},
-            {"headroom_bytes",    headroom},
-            {"last_activation_ms", last_ms}
-        });
+        long long last_ms = (la != tier_last_activation_ms_.end())
+            ? la->second : 0;
+        arr.push_back(make_residency_entry(
+            name, tier_it->second.path, tier_it->second.context_length,
+            footprint, config_.vram_reserve_mb, last_ms));
     }
     j["residency"] = std::move(arr);
     j["vram_headroom_bytes"] = vram_budget_bytes_ > in_use

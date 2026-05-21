@@ -45,6 +45,39 @@ std::string read_file_contents(const std::filesystem::path& path) {
  * @internal
  * @version 1.9.3
  */
+/**
+ * @brief Build a bundled GrammarEntry from a .gbnf file.
+ * @param path Grammar file path.
+ * @return Entry, or nullopt if the file is empty/unreadable.
+ * @utility
+ * @version 2.3.7
+ */
+static std::optional<GrammarEntry> build_grammar_entry(
+    const std::filesystem::path& path) {
+    std::string content = read_file_contents(path);
+    if (content.empty()) {
+        logger->warn("Empty or unreadable grammar file: {}", path.string());
+        return std::nullopt;
+    }
+    std::string error = GrammarRegistry::validate(content);
+    GrammarEntry ge;
+    ge.key = path.stem().string();
+    ge.gbnf_content = std::move(content);
+    ge.source = "bundled";
+    ge.validated = error.empty();
+    ge.error = std::move(error);
+    if (!ge.validated) {
+        logger->warn("Bundled grammar '{}' has validation errors: {}",
+                     ge.key, ge.error);
+    }
+    return ge;
+}
+
+/**
+ * @brief Load all bundled .gbnf grammars from a directory.
+ * @internal
+ * @version 2.3.7
+ */
 size_t GrammarRegistry::load_bundled(
     const std::filesystem::path& grammar_dir)
 {
@@ -59,30 +92,13 @@ size_t GrammarRegistry::load_bundled(
         if (entry.path().extension() != ".gbnf") {
             continue;
         }
-
-        std::string key = entry.path().stem().string();
-        std::string content = read_file_contents(entry.path());
-        if (content.empty()) {
-            logger->warn("Empty or unreadable grammar file: {}",
-                         entry.path().string());
+        auto ge = build_grammar_entry(entry.path());
+        if (!ge) {
             continue;
         }
-
-        std::string error = validate(content);
-        GrammarEntry ge;
-        ge.key = key;
-        ge.gbnf_content = std::move(content);
-        ge.source = "bundled";
-        ge.validated = error.empty();
-        ge.error = std::move(error);
-
-        if (!ge.validated) {
-            logger->warn("Bundled grammar '{}' has validation errors: {}",
-                         key, ge.error);
-        }
-
+        std::string key = ge->key;
         std::lock_guard<std::mutex> lock(registry_mutex_);
-        grammars_[key] = std::move(ge);
+        grammars_[key] = std::move(*ge);
         ++count;
     }
 

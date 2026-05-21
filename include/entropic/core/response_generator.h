@@ -97,6 +97,22 @@ private:
     GenerateResult generate_batch(LoopContext& ctx);
 
     /**
+     * @brief Inject prompts + serialize messages/params for a turn.
+     *
+     * Shared prep extracted from generate_streaming/generate_batch to
+     * keep both knots-clean. Injects tool prompt + engine-state
+     * reminder, logs, and serializes.
+     *
+     * @param ctx Loop context.
+     * @param mode Label for the log line ("stream"/"batch").
+     * @return {messages_json, params_json}.
+     * @internal
+     * @version 2.3.7
+     */
+    std::pair<std::string, std::string> prepare_prompts(
+        LoopContext& ctx, const char* mode);
+
+    /**
      * @brief Handle pause during streaming generation.
      * @param ctx Loop context.
      * @param partial Content generated so far.

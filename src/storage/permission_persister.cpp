@@ -167,12 +167,54 @@ static std::string join_lines(const std::vector<std::string>& lines) {
 }
 
 /**
+ * @brief Insert a permission item into the parsed YAML lines.
+ *
+ * Handles the three cases — missing permissions: block, missing
+ * allow/deny list, and existing list — mutating `lines` in place.
+ *
+ * @param lines Parsed config lines (mutated).
+ * @param pattern Permission pattern (for the already-present check).
+ * @param perms_key The "permissions:" key line.
+ * @param list_line The "  allow:"/"  deny:" line.
+ * @param item The "    - <pattern>" item line.
+ * @return true if `item` was inserted (write needed); false if the
+ *         pattern was already present.
+ * @internal
+ * @version 2.3.7
+ */
+static bool insert_permission_item(std::vector<std::string>& lines,
+                                   std::string_view pattern,
+                                   const std::string& perms_key,
+                                   const std::string& list_line,
+                                   const std::string& item) {
+    auto perms_it = std::find(lines.begin(), lines.end(), perms_key);
+    if (perms_it == lines.end()) {
+        lines.push_back(perms_key);
+        lines.push_back(list_line);
+        lines.push_back(item);
+    } else if (auto list_it = std::find(perms_it, lines.end(), list_line);
+               list_it == lines.end()) {
+        auto pos = find_section_end(lines, perms_it);
+        lines.insert(pos, item);
+        lines.insert(pos, list_line);
+    } else {
+        size_t idx = static_cast<size_t>(
+            std::distance(lines.begin(), list_it));
+        if (list_contains(lines, idx, pattern)) {
+            return false;
+        }
+        lines.insert(find_list_end(lines, idx), item);
+    }
+    return true;
+}
+
+/**
  * @brief Save a permission pattern to the YAML config.
  * @param pattern Permission pattern.
  * @param allow true for allow list, false for deny list.
  * @return true on success.
  * @internal
- * @version 2.0.0
+ * @version 2.3.7
  */
 bool PermissionPersister::save_permission(std::string_view pattern,
                                           bool allow) {
@@ -184,25 +226,8 @@ bool PermissionPersister::save_permission(std::string_view pattern,
     std::string list_line = std::string("  ") + list_key + ":";
     std::string item = "    - " + std::string(pattern);
 
-    auto perms_it = std::find(lines.begin(), lines.end(), perms_key);
-    if (perms_it == lines.end()) {
-        lines.push_back(perms_key);
-        lines.push_back(list_line);
-        lines.push_back(item);
-    } else {
-        auto list_it = std::find(perms_it, lines.end(), list_line);
-        if (list_it == lines.end()) {
-            auto pos = find_section_end(lines, perms_it);
-            lines.insert(pos, item);
-            lines.insert(pos, list_line);
-        } else {
-            size_t idx = static_cast<size_t>(
-                std::distance(lines.begin(), list_it));
-            if (list_contains(lines, idx, pattern)) {
-                return true;
-            }
-            lines.insert(find_list_end(lines, idx), item);
-        }
+    if (!insert_permission_item(lines, pattern, perms_key, list_line, item)) {
+        return true;  // already present — nothing to write
     }
 
     if (!write_file(config_path_, join_lines(lines))) {

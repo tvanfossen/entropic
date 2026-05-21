@@ -154,6 +154,58 @@ private:
         LoopContext& ctx, const ToolCall& call);
 
     /**
+     * @brief Stash a finished tool call in the history ring buffer.
+     *
+     * Extracted from execute_tool to keep it knots-clean (P1-11).
+     *
+     * @param call The tool call.
+     * @param args_json Serialized args (for the params summary).
+     * @param result_text Parsed result text (for status/summary).
+     * @param ms Elapsed milliseconds.
+     * @param iteration Loop iteration the call ran in.
+     * @internal
+     * @version 2.3.7
+     */
+    void record_tool_history(const ToolCall& call,
+                             const std::string& args_json,
+                             const std::string& result_text,
+                             long long ms, int iteration);
+
+    /**
+     * @brief Post-execution processing for a tool call.
+     *
+     * Extracted from process_single_call to keep it knots-clean. Caps
+     * the result, records duplicate-detection state, classifies the
+     * result kind, fires the post-tool hook, updates anti-spiral
+     * tracking, logs, and processes emitted directives.
+     *
+     * @param ctx Loop context.
+     * @param call The tool call.
+     * @param[in,out] msg Result message (content may be capped).
+     * @param raw_result Raw server result string.
+     * @param exec_ms Execution time (ms).
+     * @internal
+     * @version 2.3.7
+     */
+    void finalize_tool_call(LoopContext& ctx, const ToolCall& call,
+                            Message& msg, const std::string& raw_result,
+                            double exec_ms);
+
+    /**
+     * @brief Emit the per-tool-call info log line.
+     * @param ctx Loop context.
+     * @param call The tool call.
+     * @param exec_ms Execution time (ms).
+     * @param raw_result Raw server result (for size).
+     * @param kind Classified result kind.
+     * @internal
+     * @version 2.3.7
+     */
+    void log_tool_call(LoopContext& ctx, const ToolCall& call,
+                       double exec_ms, const std::string& raw_result,
+                       ToolResultKind kind);
+
+    /**
      * @brief Generate duplicate detection key: name + sorted args.
      * @param call Tool call.
      * @return Key string.

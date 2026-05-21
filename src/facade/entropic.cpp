@@ -1418,23 +1418,19 @@ static entropic_error_t init_orchestrator(
 }
 
 /**
- * @brief Shared body of all entropic_configure* entry points.
+ * @brief Build the engine + inference interfaces (configure step 2).
+ *
+ * Extracted from configure_common to keep it knots-clean. Creates the
+ * MCP-auth + identity managers, the per-handle orchestrator interface
+ * (gh#58), the AgentEngine, and rewires observers/interrupt/tools.
+ *
+ * @param h Engine handle.
+ * @param data_dir Resolved data directory.
  * @internal
- * @version 2.3.7
+ * @version 2.3.8
  */
-static entropic_error_t configure_common(entropic_handle_t h) {
-    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
-    // gh#59 follow-up (v2.3.7): honor console_logging before any init
-    // logging fires. When false, strip the stderr console sink so the
-    // file sink (already installed by setup_session) is the only route
-    // — TUI consumers paint to fd 2 and can't tolerate engine output
-    // there. Default (true) is a no-op; operators keep stderr logs.
-    entropic::log::set_console_enabled(h->config.console_logging);
-    auto data_dir = entropic::config::resolve_data_dir(h->config);
-    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
-        return rc;
-    }
-
+static void init_engine_and_interfaces(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
     h->mcp_auth = std::make_unique<entropic::MCPAuthorizationManager>();
     h->identity_manager = std::make_unique<entropic::IdentityManager>(
         entropic::IdentityManagerConfig{});
@@ -1455,20 +1451,32 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         &h->inference_iface_ctx);
     h->inference_iface.get_tool_prompt = facade_get_tool_prompt;
     h->inference_iface.tool_prompt_data = h;
-    auto& iface = h->inference_iface;
     auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
-        iface, lc, h->config.compaction);
+        h->inference_iface, lc, h->config.compaction);
     rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);
+}
 
+/**
+ * @brief Assemble prompts + wire validation/persistence (config step 3).
+ *
+ * Extracted from configure_common to keep it knots-clean.
+ *
+ * @param h Engine handle.
+ * @param data_dir Resolved data directory.
+ * @internal
+ * @version 2.3.8
+ */
+static void wire_prompts_and_persistence(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
     auto shared_prefix = build_shared_prompt_prefix(h, data_dir);
     populate_tier_info(h, data_dir, shared_prefix);
     cache_tier_allowed_tools(h, data_dir);
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
 
-    wire_hooks_and_validator(h, iface, shared_prefix);
+    wire_hooks_and_validator(h, h->inference_iface, shared_prefix);
     wire_tier_validation_rules(h);
 
     init_persistence(h);
@@ -1479,6 +1487,28 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     if (h->session_logger) {
         h->engine->set_session_logger(h->session_logger.get());
     }
+}
+
+/**
+ * @brief Shared body of all entropic_configure* entry points.
+ * @internal
+ * @version 2.3.8
+ */
+static entropic_error_t configure_common(entropic_handle_t h) {
+    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    // gh#59 follow-up (v2.3.7): honor console_logging before any init
+    // logging fires. When false, strip the stderr console sink so the
+    // file sink (already installed by setup_session) is the only route
+    // — TUI consumers paint to fd 2 and can't tolerate engine output
+    // there. Default (true) is a no-op; operators keep stderr logs.
+    entropic::log::set_console_enabled(h->config.console_logging);
+    auto data_dir = entropic::config::resolve_data_dir(h->config);
+    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
+        return rc;
+    }
+
+    init_engine_and_interfaces(h, data_dir);
+    wire_prompts_and_persistence(h, data_dir);
 
     h->configured.store(true);
     start_external_bridge(h);

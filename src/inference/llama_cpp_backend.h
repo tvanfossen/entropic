@@ -500,6 +500,30 @@ protected:
     void init_mmproj_if_configured();
 
     /**
+     * @brief Load the GGUF model onto the GPU (do_activate step 1).
+     *
+     * Extracted from do_activate to keep it knots-clean. Sets model_ +
+     * vocab_ on success; sets last_error_ and returns false otherwise.
+     *
+     * @return true on success.
+     * @internal
+     * @version 2.3.7
+     */
+    bool load_gpu_model();
+
+    /**
+     * @brief Create the llama context + prompt cache (do_activate step 2).
+     *
+     * Extracted from do_activate. Builds ctx_ from model_ and the
+     * configured context params, then lazily creates the prompt cache.
+     *
+     * @return true on success; sets last_error_ on failure.
+     * @internal
+     * @version 2.3.7
+     */
+    bool create_inference_context();
+
+    /**
      * @brief Run mtmd_tokenize + mtmd_helper_eval_chunks on a prompt.
      * @param prompt Marker-substituted chat-formatted prompt.
      * @param bitmaps Loaded image bitmaps in marker order (borrowed).

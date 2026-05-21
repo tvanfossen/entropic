@@ -90,6 +90,33 @@ public:
     void check_compaction(LoopContext& ctx, bool force = false);
 
     /**
+     * @brief Fire ON_PRE_COMPACT; report whether compaction was cancelled.
+     *
+     * Extracted from check_compaction to keep it knots-clean.
+     *
+     * @param ctx Loop context.
+     * @param force Whether this is a forced compaction.
+     * @return true if a hook cancelled compaction.
+     * @internal
+     * @version 2.3.7
+     */
+    bool fire_pre_compact_hook(LoopContext& ctx, bool force);
+
+    /**
+     * @brief Fire post-compaction callbacks + ON_POST_COMPACT hook.
+     *
+     * Extracted from check_compaction to keep it knots-clean.
+     *
+     * @param ctx Loop context.
+     * @param old_count Token count before compaction.
+     * @param new_count Token count after compaction.
+     * @internal
+     * @version 2.3.7
+     */
+    void fire_post_compact_hooks(LoopContext& ctx, int old_count,
+                                 int new_count);
+
+    /**
      * @brief Set the hook dispatch interface.
      * @param hooks Hook dispatch interface.
      * @utility

@@ -13,6 +13,7 @@
 #include <nlohmann/json.hpp>
 
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 #include <dlfcn.h>
@@ -429,13 +430,44 @@ static void parse_speculative_config(
 }
 
 /**
- * @brief Parse optional config sections that don't return errors.
+ * @brief Parse the nested optional config sub-sections.
  * @param root YAML root node.
+ * @param registry Bundled models for path resolution.
  * @param config Config to populate.
  * @internal
  * @version 2.3.7
  */
-static void parse_optional_sections(
+/**
+ * @brief Parse the nested inference.* sub-sections, if present.
+ * @param root YAML root node.
+ * @param registry Bundled models for path resolution.
+ * @param config Config to populate.
+ * @internal
+ * @version 2.3.7
+ */
+static void parse_inference_subsections(
+    ryml::ConstNodeRef root,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    if (!root.has_child("inference")) { return; }
+    auto inf = root["inference"];
+    if (inf.has_child("prompt_cache"))
+        parse_prompt_cache_config(inf["prompt_cache"], config.prompt_cache);
+    if (inf.has_child("speculative"))
+        parse_speculative_config(inf["speculative"], registry,
+                                 config.inference.speculative);
+}
+
+/**
+ * @brief Parse the nested optional config sub-sections.
+ * @param root YAML root node.
+ * @param registry Bundled models for path resolution.
+ * @param config Config to populate.
+ * @internal
+ * @version 2.3.7
+ */
+static void parse_optional_subsections(
     ryml::ConstNodeRef root,
     const BundledModels& registry,
     ParsedConfig& config)
@@ -450,18 +482,23 @@ static void parse_optional_sections(
         parse_compaction_config(root["compaction"], config.compaction);
     if (root.has_child("lsp"))
         parse_lsp_config(root["lsp"], config.lsp);
-    if (root.has_child("inference") && root["inference"].has_child("prompt_cache"))
-        parse_prompt_cache_config(root["inference"]["prompt_cache"],
-                                  config.prompt_cache);
-    if (root.has_child("inference") && root["inference"].has_child("speculative"))
-        parse_speculative_config(root["inference"]["speculative"],
-                                 registry,
-                                 config.inference.speculative);
+    parse_inference_subsections(root, registry, config);
     if (root.has_child("constitutional_validation"))
         parse_constitutional_validation_config(
             root["constitutional_validation"],
             config.constitutional_validation);
+}
 
+/**
+ * @brief Extract the top-level scalar/path config fields.
+ * @param root YAML root node.
+ * @param config Config to populate.
+ * @internal
+ * @version 2.3.7
+ */
+static void extract_scalar_fields(ryml::ConstNodeRef root,
+                                  ParsedConfig& config)
+{
     extract(root, "log_level", config.log_level);
     extract(root, "inject_model_context", config.inject_model_context);
     extract(root, "vram_reserve_mb", config.vram_reserve_mb);
@@ -477,6 +514,49 @@ static void parse_optional_sections(
 }
 
 /**
+ * @brief Parse optional config sections that don't return errors.
+ * @param root YAML root node.
+ * @param config Config to populate.
+ * @internal
+ * @version 2.3.7
+ */
+static void parse_optional_sections(
+    ryml::ConstNodeRef root,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    parse_optional_subsections(root, registry, config);
+    extract_scalar_fields(root, config);
+}
+
+/**
+ * @brief Parse the top-level models/routing/optional sections.
+ * @param root YAML root node.
+ * @param registry Bundled models for path resolution.
+ * @param[in,out] config Config to overlay onto.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.3.7
+ */
+static std::string parse_top_sections(
+    ryml::ConstNodeRef root,
+    const BundledModels& registry,
+    ParsedConfig& config)
+{
+    std::string err;
+    if (root.has_child("models")) {
+        err = parse_models_config(root["models"], registry, config.models);
+    }
+    if (err.empty() && root.has_child("routing")) {
+        err = parse_routing_config(root["routing"], config.routing);
+    }
+    if (err.empty()) {
+        parse_optional_sections(root, registry, config);
+    }
+    return err;
+}
+
+/**
  * @brief Parse a config YAML file and overlay onto existing config.
  *
  * Passes the bundled-models registry through to optional-section
@@ -488,43 +568,27 @@ static void parse_optional_sections(
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
- * @version 2.1.11
+ * @version 2.3.7
  */
 std::string parse_config_file(
     const std::filesystem::path& path,
     const BundledModels& registry,
     ParsedConfig& config)
 {
-    std::string err;
-
     auto content = read_file(path);
     if (content.empty()) {
-        err = "cannot read config file: " + path.string();
+        return "cannot read config file: " + path.string();
     }
 
-    ryml::Tree tree;
-    ryml::ConstNodeRef root;
-    if (err.empty()) {
-        tree = ryml::parse_in_arena(
-            ryml::to_csubstr(path.string()),
-            ryml::to_csubstr(content));
-        root = tree.rootref();
-        if (!root.is_map()) {
-            err = "config file root is not a YAML mapping: " + path.string();
-        }
+    ryml::Tree tree = ryml::parse_in_arena(
+        ryml::to_csubstr(path.string()),
+        ryml::to_csubstr(content));
+    ryml::ConstNodeRef root = tree.rootref();
+    if (!root.is_map()) {
+        return "config file root is not a YAML mapping: " + path.string();
     }
 
-    if (err.empty() && root.has_child("models")) {
-        err = parse_models_config(root["models"], registry, config.models);
-    }
-    if (err.empty() && root.has_child("routing")) {
-        err = parse_routing_config(root["routing"], config.routing);
-    }
-    if (err.empty()) {
-        parse_optional_sections(root, registry, config);
-    }
-
-    return err;
+    return parse_top_sections(root, registry, config);
 }
 
 /**
@@ -704,13 +768,15 @@ static ExternalServerEntry parse_mcp_json_entry(
  * @utility
  * @version 2.0.3
  */
-static void discover_mcp_json(
-    const std::filesystem::path& project_dir,
-    ParsedConfig& config) {
-    if (project_dir.empty()) { return; }
-    auto path = project_dir / ".mcp.json";
-    if (!std::filesystem::exists(path)) { return; }
-
+/**
+ * @brief Read + validate the mcpServers object from a .mcp.json file.
+ * @param path Path to .mcp.json.
+ * @return The mcpServers object node, or nullopt if missing/malformed.
+ * @internal
+ * @version 2.3.7
+ */
+static std::optional<nlohmann::json> read_mcp_servers(
+    const std::filesystem::path& path) {
     std::ifstream f(path);
     nlohmann::json j;
     if (f.is_open()) {
@@ -723,16 +789,30 @@ static void discover_mcp_json(
                  && j["mcpServers"].is_object();
     if (!valid) {
         s_log->warn(".mcp.json missing/malformed: {}", path.string());
-        return;
+        return std::nullopt;
     }
+    return j["mcpServers"];
+}
+
+/**
+ * @brief Discover + merge external MCP servers from <dir>/.mcp.json.
+ * @internal
+ * @version 2.3.7
+ */
+static void discover_mcp_json(
+    const std::filesystem::path& project_dir,
+    ParsedConfig& config) {
+    if (project_dir.empty()) { return; }
+    auto path = project_dir / ".mcp.json";
+    if (!std::filesystem::exists(path)) { return; }
+    auto servers = read_mcp_servers(path);
+    if (!servers) { return; }
 
     int added = 0;
-    for (auto it = j["mcpServers"].begin();
-         it != j["mcpServers"].end(); ++it) {
+    for (auto it = servers->begin(); it != servers->end(); ++it) {
         const std::string& name = it.key();
         if (config.mcp.external_servers.count(name)) {
-            s_log->info(".mcp.json: {} already in config, skipping",
-                         name);
+            s_log->info(".mcp.json: {} already in config, skipping", name);
             continue;
         }
         config.mcp.external_servers[name] = parse_mcp_json_entry(

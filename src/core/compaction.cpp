@@ -172,13 +172,66 @@ CompactionResult CompactionManager::check_and_compact(
 }
 
 /**
+ * @brief Partition messages (from `start`) into user/assistant/stripped.
+ * @param messages Input messages.
+ * @param start First index to classify (skips system).
+ * @param[out] user_msgs source==user messages.
+ * @param[out] assistant_msgs assistant-role messages.
+ * @param[out] stripped_count Count of dropped messages.
+ * @utility
+ * @version 2.3.7
+ */
+static void partition_messages(const std::vector<Message>& messages,
+                               size_t start,
+                               std::vector<const Message*>& user_msgs,
+                               std::vector<const Message*>& assistant_msgs,
+                               int& stripped_count) {
+    stripped_count = 0;
+    for (size_t i = start; i < messages.size(); ++i) {
+        const auto& msg = messages[i];
+        auto src = msg.metadata.find("source");
+        if (src != msg.metadata.end() && src->second == "user") {
+            user_msgs.push_back(&msg);
+        } else if (msg.role == "assistant") {
+            assistant_msgs.push_back(&msg);
+        } else {
+            ++stripped_count;
+        }
+    }
+}
+
+/**
+ * @brief Assemble the compacted list: system, summary, users, last asst.
+ * @param system_msg Optional system message (kept first).
+ * @param summary_msg The synthesized summary message.
+ * @param user_msgs Preserved user messages.
+ * @param assistant_msgs Assistant messages (only the last is kept).
+ * @return Compacted message list.
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<Message> assemble_compacted(
+    const Message* system_msg, Message summary_msg,
+    const std::vector<const Message*>& user_msgs,
+    const std::vector<const Message*>& assistant_msgs) {
+    std::vector<Message> result;
+    if (system_msg != nullptr) { result.push_back(*system_msg); }
+    result.push_back(std::move(summary_msg));
+    for (const auto* m : user_msgs) { result.push_back(*m); }
+    if (!assistant_msgs.empty()) {
+        result.push_back(*assistant_msgs.back());
+    }
+    return result;
+}
+
+/**
  * @brief Perform value-density compaction.
  * @param messages Input messages.
  * @param summary Output: generated summary.
  * @param stripped_count Output: messages stripped.
  * @return Compacted message list.
  * @internal
- * @version 2.0.0
+ * @version 2.3.7
  */
 std::vector<Message> CompactionManager::compact(
     const std::vector<Message>& messages,
@@ -193,19 +246,8 @@ std::vector<Message> CompactionManager::compact(
 
     std::vector<const Message*> user_msgs;
     std::vector<const Message*> assistant_msgs;
-    stripped_count = 0;
-
-    for (size_t i = start; i < messages.size(); ++i) {
-        const auto& msg = messages[i];
-        auto src = msg.metadata.find("source");
-        if (src != msg.metadata.end() && src->second == "user") {
-            user_msgs.push_back(&msg);
-        } else if (msg.role == "assistant") {
-            assistant_msgs.push_back(&msg);
-        } else {
-            ++stripped_count;
-        }
-    }
+    partition_messages(messages, start, user_msgs, assistant_msgs,
+                       stripped_count);
 
     std::vector<Message> working(messages.begin() + static_cast<long>(start),
                                  messages.end());
@@ -217,18 +259,8 @@ std::vector<Message> CompactionManager::compact(
     summary_msg.content = format_summary(
         summary, static_cast<int>(working.size()));
 
-    std::vector<Message> result;
-    if (system_msg != nullptr) {
-        result.push_back(*system_msg);
-    }
-    result.push_back(std::move(summary_msg));
-    for (const auto* m : user_msgs) {
-        result.push_back(*m);
-    }
-    if (!assistant_msgs.empty()) {
-        result.push_back(*assistant_msgs.back());
-    }
-    return result;
+    return assemble_compacted(system_msg, std::move(summary_msg),
+                              user_msgs, assistant_msgs);
 }
 
 /**

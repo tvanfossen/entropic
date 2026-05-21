@@ -398,6 +398,32 @@ public:
     std::vector<Message> run_turn(std::vector<Message> new_messages);
 
     /**
+     * @brief Prepend the configured system prompt if this turn needs it.
+     *
+     * Extracted from run_turn to keep it knots-clean. Seeds
+     * conversation_ with system_prompt_ only when the conversation is
+     * empty and the caller didn't supply its own system message.
+     *
+     * @param new_messages The messages the caller is adding this turn.
+     * @internal
+     * @version 2.3.7
+     */
+    void seed_system_prompt(const std::vector<Message>& new_messages);
+
+    /**
+     * @brief Pull the next queued user message into `pending` (gh#40).
+     *
+     * Extracted from run_turn's drain loop. Pops one queued message,
+     * fires ON_QUEUE_CONSUMED, and replaces `pending` with it.
+     *
+     * @param pending Out: cleared and set to the next user turn.
+     * @return true if a queued message was dequeued; false if empty.
+     * @internal
+     * @version 2.3.7
+     */
+    bool prepare_next_turn(std::vector<Message>& pending);
+
+    /**
      * @brief Run a streaming conversation turn (stateful).
      *
      * Same as run_turn but with streaming token output. Owns the
@@ -695,6 +721,31 @@ public:
 
 private:
     /**
+     * @brief Create the root conversation row for a run (gh#48).
+     *
+     * Extracted from run() to keep it knots-clean. Sets
+     * ctx.conversation_id when storage is wired so delegations carry
+     * a valid FK; logs a warning (non-fatal) on failure.
+     *
+     * @param ctx Loop context.
+     * @internal
+     * @version 2.3.7
+     */
+    void init_session_conversation(LoopContext& ctx);
+
+    /**
+     * @brief Fold a finished run's metrics into the per-tier totals.
+     *
+     * Extracted from run() to keep it knots-clean. Snapshots
+     * last_metrics_ and accumulates into per_tier_metrics_.
+     *
+     * @param ctx Loop context (with completed metrics).
+     * @internal
+     * @version 2.3.7
+     */
+    void accumulate_run_metrics(LoopContext& ctx);
+
+    /**
      * @brief Main loop implementation.
      * @param ctx Loop context.
      * @version 1.8.4
@@ -846,6 +897,22 @@ private:
     void execute_pending_delegation(LoopContext& ctx);           ///< @internal
 
     /**
+     * @brief Apply the pre-run delegation guards (depth/cycle/repeat).
+     *
+     * Extracted from execute_pending_delegation to keep it knots-clean.
+     * On rejection, logs and pushes the appropriate rejection message
+     * into ctx, then reports true so the caller bails in one return.
+     *
+     * @param ctx Loop context.
+     * @param pending The delegation about to run.
+     * @return true if the delegation was rejected (already handled).
+     * @internal
+     * @version 2.3.7
+     */
+    bool reject_delegation_if_guarded(LoopContext& ctx,
+                                      const PendingDelegation& pending);
+
+    /**
      * @brief Execute a pending pipeline after tool processing.
      * @param ctx Loop context with pending_pipeline set.
      * @version 1.8.6
@@ -939,6 +1006,22 @@ private:
      */
     void dispatch_post_generate(LoopContext& ctx,
                                 GenerateResult& result);
+
+    /**
+     * @brief Turn a generation result into the next loop state.
+     *
+     * Post-generate processing extracted to keep execute_iteration
+     * knots-clean: parse tool calls, append the assistant message,
+     * dispatch tool results (or the no-tool decision), then run any
+     * pending delegation/pipeline the turn produced.
+     *
+     * @param ctx Loop context.
+     * @param result Generation result (already post-processed).
+     * @internal
+     * @version 2.3.7
+     */
+    void process_generation_result(LoopContext& ctx,
+                                   GenerateResult& result);
 
     /**
      * @brief Fire ON_COMPLETE pre-hook for summary validation.

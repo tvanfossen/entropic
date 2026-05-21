@@ -253,11 +253,63 @@ static void stream_token_callback(
 }
 
 /**
+ * @brief Resolve a stream's finish_reason from rc + content size.
+ *
+ * gh#20 (v2.1.5) resolution order: CANCELLED → "interrupted";
+ * error with partial content → "partial"; error with none → "error";
+ * clean → "stop".
+ *
+ * @param rc Backend return code.
+ * @param content_size Accumulated content length.
+ * @return finish_reason string.
+ * @utility
+ * @version 2.3.7
+ */
+static std::string resolve_stream_finish_reason(int rc,
+                                                size_t content_size) {
+    std::string reason;
+    if (rc == ENTROPIC_ERROR_CANCELLED) {
+        logger->info("Stream cancelled by interrupt after {} chars",
+                     content_size);
+        reason = "interrupted";
+    } else if (rc != 0 && content_size > 0) {
+        logger->warn("Stream failed (rc={}) after {} chars — "
+                     "preserving partial", rc, content_size);
+        reason = "partial";
+    } else if (rc != 0) {
+        logger->error("Stream failed (rc={}) with no partial content", rc);
+        reason = "error";
+    } else {
+        reason = "stop";
+    }
+    return reason;
+}
+
+/**
+ * @brief Inject prompts + serialize messages/params for a turn.
+ * @param ctx Loop context.
+ * @param mode Label for the log line ("stream"/"batch").
+ * @return {messages_json, params_json}.
+ * @internal
+ * @version 2.3.7
+ */
+std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
+    LoopContext& ctx, const char* mode) {
+    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
+    messages = inject_engine_state_reminder(messages, ctx);
+    logger->info("Generate ({}): tier={}, {} messages",
+                 mode, ctx.locked_tier, messages.size());
+    log_prompt(messages, ctx.locked_tier);
+    return {serialize_messages(messages),
+            build_params_json(ctx.locked_tier)};
+}
+
+/**
  * @brief Generate via streaming.
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.5
+ * @version 2.3.7
  */
 GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
     if (inference_.generate_stream == nullptr) {
@@ -265,13 +317,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         return generate_batch(ctx);
     }
 
-    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
-    messages = inject_engine_state_reminder(messages, ctx);
-    logger->info("Generate (stream): tier={}, {} messages",
-                 ctx.locked_tier, messages.size());
-    log_prompt(messages, ctx.locked_tier);
-    auto msgs_json = serialize_messages(messages);
-    auto params_json = build_params_json(ctx.locked_tier);
+    auto [msgs_json, params_json] = prepare_prompts(ctx, "stream");
 
     int cancel_flag = 0;
     StreamAccumulator acc;
@@ -295,33 +341,8 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
         &cancel_flag, inference_.backend_data);
 
     GenerateResult result;
-    // gh#20 (v2.1.5): finish reason resolution order:
-    //   - rc == ENTROPIC_ERROR_CANCELLED: backend honored the cancel
-    //     flag — preserve accumulated content as the interrupted
-    //     turn's output instead of dropping it.
-    //   - rc != 0 and content non-empty: backend errored mid-stream
-    //     but the consumer saw some tokens — surface as "partial".
-    //   - rc != 0 and content empty: backend errored before any
-    //     tokens emitted — surface as "error".
-    //   - rc == 0 and consumer-side interrupt fired: the backend
-    //     finished naturally just after the interrupt landed; the
-    //     model's full output is the correct response. Marking
-    //     "interrupted" here would discard a complete tool call.
-    //   - rc == 0 otherwise: clean stop.
-    if (rc == ENTROPIC_ERROR_CANCELLED) {
-        logger->info("Stream cancelled by interrupt after {} chars",
-                     acc.content.size());
-        result.finish_reason = "interrupted";
-    } else if (rc != 0 && !acc.content.empty()) {
-        logger->warn("Stream failed (rc={}) after {} chars — preserving partial",
-                     rc, acc.content.size());
-        result.finish_reason = "partial";
-    } else if (rc != 0) {
-        logger->error("Stream failed (rc={}) with no partial content", rc);
-        result.finish_reason = "error";
-    } else {
-        result.finish_reason = "stop";
-    }
+    result.finish_reason = resolve_stream_finish_reason(rc,
+                                                        acc.content.size());
     // Issue #3 (v2.1.1): inbound boundary from llama_cpp. Models can emit
     // malformed UTF-8 mid-stream (partial multi-byte runs under XML-tool-call
     // pressure, decoder desyncs). Sanitize ONCE at message-finalization,
@@ -340,7 +361,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @param ctx Loop context.
  * @return Generation result.
  * @internal
- * @version 2.1.1
+ * @version 2.3.7
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr) {
@@ -348,13 +369,7 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
         return {"", "[]", "error"};
     }
 
-    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
-    messages = inject_engine_state_reminder(messages, ctx);
-    logger->info("Generate (batch): tier={}, {} messages",
-                 ctx.locked_tier, messages.size());
-    log_prompt(messages, ctx.locked_tier);
-    auto msgs_json = serialize_messages(messages);
-    auto params_json = build_params_json(ctx.locked_tier);
+    auto [msgs_json, params_json] = prepare_prompts(ctx, "batch");
     char* result_json = nullptr;
 
     int rc = inference_.generate(

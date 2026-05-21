@@ -64,19 +64,37 @@ char* alloc_string(const std::string& s) {
  * @internal
  * @version 1.8.2
  */
+/**
+ * @brief Assign j[key] to out if present (typed by out).
+ * @param j Parsed JSON.
+ * @param key Field name.
+ * @param[out] out Destination; unchanged when key absent.
+ * @utility
+ * @version 2.3.7
+ */
+template <typename T>
+static void set_if(const nlohmann::json& j, const char* key, T& out) {
+    if (j.contains(key)) { out = j[key].get<T>(); }
+}
+
+/**
+ * @brief Parse a ModelConfig from a JSON config string.
+ * @internal
+ * @version 2.3.7
+ */
 entropic::ModelConfig parse_config_json(const char* json_str) {
     entropic::ModelConfig config;
     auto j = nlohmann::json::parse(json_str);
 
-    if (j.contains("path"))           config.path = j["path"].get<std::string>();
-    if (j.contains("adapter"))        config.adapter = j["adapter"].get<std::string>();
-    if (j.contains("context_length")) config.context_length = j["context_length"].get<int>();
-    if (j.contains("gpu_layers"))     config.gpu_layers = j["gpu_layers"].get<int>();
-    if (j.contains("keep_warm"))      config.keep_warm = j["keep_warm"].get<bool>();
-    if (j.contains("use_mlock"))      config.use_mlock = j["use_mlock"].get<bool>();
-    if (j.contains("n_batch"))        config.n_batch = j["n_batch"].get<int>();
-    if (j.contains("n_threads"))      config.n_threads = j["n_threads"].get<int>();
-    if (j.contains("flash_attn"))     config.flash_attn = j["flash_attn"].get<bool>();
+    set_if(j, "path", config.path);
+    set_if(j, "adapter", config.adapter);
+    set_if(j, "context_length", config.context_length);
+    set_if(j, "gpu_layers", config.gpu_layers);
+    set_if(j, "keep_warm", config.keep_warm);
+    set_if(j, "use_mlock", config.use_mlock);
+    set_if(j, "n_batch", config.n_batch);
+    set_if(j, "n_threads", config.n_threads);
+    set_if(j, "flash_attn", config.flash_attn);
 
     return config;
 }

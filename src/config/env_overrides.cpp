@@ -40,61 +40,59 @@ static bool parse_bool(const std::string& val)
 }
 
 /**
+ * @brief Apply one ENTROPIC_* override if the env var is set.
+ *
+ * Reads `key`; on a non-empty value logs it and hands it to `setter`.
+ * Collapses the repeated get/check/log/assign block so the dispatcher
+ * stays knots-clean.
+ *
+ * @param key Environment variable name.
+ * @param setter Invoked with the value when present.
+ * @utility
+ * @version 2.3.7
+ */
+template <typename Setter>
+static void apply_env(const char* key, Setter setter) {
+    auto val = get_env(key);
+    if (val.empty()) { return; }
+    s_log->info("Env override: {}={}", key, val);
+    setter(val);
+}
+
+/**
  * @brief Apply ENTROPIC_* environment variable overrides.
  * @param[in,out] config Config to override.
- * @version 1.8.1
+ * @version 2.3.7
  * @utility
  */
 void apply_env_overrides(ParsedConfig& config)
 {
-    auto val = get_env("ENTROPIC_LOG_LEVEL");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_LOG_LEVEL={}", val);
-        config.log_level = val;
-    }
-
-    val = get_env("ENTROPIC_MODELS__DEFAULT");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_MODELS__DEFAULT={}", val);
-        config.models.default_tier = val;
-    }
-
-    val = get_env("ENTROPIC_ROUTING__ENABLED");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_ROUTING__ENABLED={}", val);
-        config.routing.enabled = parse_bool(val);
-    }
-
-    val = get_env("ENTROPIC_ROUTING__FALLBACK_TIER");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_ROUTING__FALLBACK_TIER={}", val);
-        config.routing.fallback_tier = val;
-    }
-
-    val = get_env("ENTROPIC_COMPACTION__THRESHOLD_PERCENT");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_COMPACTION__THRESHOLD_PERCENT={}",
-                  val);
-        config.compaction.threshold_percent = std::stof(val);
-    }
-
-    val = get_env("ENTROPIC_COMPACTION__ENABLED");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_COMPACTION__ENABLED={}", val);
-        config.compaction.enabled = parse_bool(val);
-    }
-
-    val = get_env("ENTROPIC_VRAM_RESERVE_MB");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_VRAM_RESERVE_MB={}", val);
-        config.vram_reserve_mb = std::stoi(val);
-    }
-
-    val = get_env("ENTROPIC_CONFIG_DIR");
-    if (!val.empty()) {
-        s_log->info("Env override: ENTROPIC_CONFIG_DIR={}", val);
-        config.config_dir = std::filesystem::path(val);
-    }
+    apply_env("ENTROPIC_LOG_LEVEL",
+              [&](const std::string& v) { config.log_level = v; });
+    apply_env("ENTROPIC_MODELS__DEFAULT",
+              [&](const std::string& v) { config.models.default_tier = v; });
+    apply_env("ENTROPIC_ROUTING__ENABLED",
+              [&](const std::string& v) {
+                  config.routing.enabled = parse_bool(v);
+              });
+    apply_env("ENTROPIC_ROUTING__FALLBACK_TIER",
+              [&](const std::string& v) { config.routing.fallback_tier = v; });
+    apply_env("ENTROPIC_COMPACTION__THRESHOLD_PERCENT",
+              [&](const std::string& v) {
+                  config.compaction.threshold_percent = std::stof(v);
+              });
+    apply_env("ENTROPIC_COMPACTION__ENABLED",
+              [&](const std::string& v) {
+                  config.compaction.enabled = parse_bool(v);
+              });
+    apply_env("ENTROPIC_VRAM_RESERVE_MB",
+              [&](const std::string& v) {
+                  config.vram_reserve_mb = std::stoi(v);
+              });
+    apply_env("ENTROPIC_CONFIG_DIR",
+              [&](const std::string& v) {
+                  config.config_dir = std::filesystem::path(v);
+              });
 }
 
 } // namespace entropic::config

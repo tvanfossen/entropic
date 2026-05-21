@@ -165,6 +165,20 @@ private:
                            WatchEntry& entry);
 
     /**
+     * @brief Handle a successful reconnect: refresh tools, mark
+     *        connected, enqueue the event.
+     *
+     * Extracted from attempt_reconnect to keep it knots-clean.
+     *
+     * @param name Server name.
+     * @param entry Watch entry (mutated to connected).
+     * @internal
+     * @version 2.3.7
+     */
+    void on_reconnect_success(const std::string& name,
+                              WatchEntry& entry);
+
+    /**
      * @brief Post a status change event to the queue.
      * @param name Server name.
      * @param old_status Previous status.

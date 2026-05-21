@@ -225,9 +225,22 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
  *
  * @return true on success.
  * @internal
- * @version 2.2.9
+ * @version 2.3.7
  */
 bool LlamaCppBackend::do_activate() {
+    if (!load_gpu_model()) { return false; }
+    if (!create_inference_context()) { return false; }
+    init_mmproj_if_configured();
+    return true;
+}
+
+/**
+ * @brief Load the GGUF model onto the GPU (do_activate step 1).
+ * @return true on success; sets last_error_ on failure.
+ * @internal
+ * @version 2.3.7
+ */
+bool LlamaCppBackend::load_gpu_model() {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = config().gpu_layers;
     mparams.use_mmap = true;
@@ -257,7 +270,16 @@ bool LlamaCppBackend::do_activate() {
     if (model_) { llama_model_free(model_); }
     model_ = new_model;
     vocab_ = llama_model_get_vocab(model_);
+    return true;
+}
 
+/**
+ * @brief Create the llama context + prompt cache (do_activate step 2).
+ * @return true on success; sets last_error_ on failure.
+ * @internal
+ * @version 2.3.7
+ */
+bool LlamaCppBackend::create_inference_context() {
     llama_context_params cparams = build_cparams(config());
 
     ctx_ = llama_init_from_model(model_, cparams);
@@ -279,8 +301,6 @@ bool LlamaCppBackend::do_activate() {
         logger->info("Prompt cache initialized: max_bytes={}",
                      prompt_cache_config_.max_bytes);
     }
-
-    init_mmproj_if_configured();
     return true;
 }
 
@@ -627,18 +647,51 @@ float LlamaCppBackend::extract_token_logprob(
  * @param params Generation parameters.
  * @return Formatted prompt string.
  * @internal
- * @version 1.8.2
+ * @version 2.3.7
  */
-std::string LlamaCppBackend::apply_chat_template(
-    const std::vector<Message>& messages,
-    const GenerationParams& params) const
-{
-    // Convert to llama_chat_message array
+/**
+ * @brief Convert engine messages to llama_chat_message views.
+ * @param messages Source messages (must outlive the returned views).
+ * @return Vector of {role, content} c_str pointers into `messages`.
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<llama_chat_message> to_llama_chat(
+    const std::vector<Message>& messages) {
     std::vector<llama_chat_message> chat_msgs;
     chat_msgs.reserve(messages.size());
     for (const auto& msg : messages) {
         chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
     }
+    return chat_msgs;
+}
+
+/**
+ * @brief Plain "role: content" join used when templating fails.
+ * @param messages Conversation history.
+ * @return Concatenated fallback prompt.
+ * @utility
+ * @version 2.3.7
+ */
+static std::string concat_messages_fallback(
+    const std::vector<Message>& messages) {
+    std::string fallback;
+    for (const auto& msg : messages) {
+        fallback += msg.role + ": " + msg.content + "\n";
+    }
+    return fallback;
+}
+
+/**
+ * @brief Render the chat template for messages (fallback on failure).
+ * @internal
+ * @version 2.3.7
+ */
+std::string LlamaCppBackend::apply_chat_template(
+    const std::vector<Message>& messages,
+    const GenerationParams& params) const
+{
+    auto chat_msgs = to_llama_chat(messages);
 
     // First call: measure required buffer size
     int n = llama_chat_apply_template(
@@ -646,12 +699,7 @@ std::string LlamaCppBackend::apply_chat_template(
         true, nullptr, 0);
     if (n < 0) {
         logger->error("llama_chat_apply_template failed (size query)");
-        // Fallback: concatenate messages directly
-        std::string fallback;
-        for (const auto& msg : messages) {
-            fallback += msg.role + ": " + msg.content + "\n";
-        }
-        return fallback;
+        return concat_messages_fallback(messages);
     }
 
     std::vector<char> buf(static_cast<size_t>(n + 1));
@@ -1922,6 +1970,36 @@ static bool spec_commit_accepted(
  * @internal
  * @version 2.1.11 [reviewed]
  */
+/**
+ * @brief Draft tokens for a speculative round (or reuse carry-over).
+ *
+ * Extracted from spec_accept_round. When state.draft is empty, runs
+ * the draft model under checkpoint save/restore; otherwise reuses the
+ * carried-over partial draft.
+ *
+ * @param state Speculative run state.
+ * @return Number of tokens drafted this round.
+ * @utility
+ * @version 2.3.7
+ */
+static int spec_prepare_draft(SpeculativeRunState& state) {
+    // Skip drafting if the previous round restored a partial accept
+    // into state.draft (carry-over from rollback).
+    if (!state.draft.empty()) {
+        return static_cast<int>(state.draft.size());
+    }
+    spec_ckpt_save_dft(state);
+    int drafted = spec_run_draft(state);
+    spec_ckpt_save_tgt(state);
+    spec_ckpt_restore_dft(state);
+    return drafted;
+}
+
+/**
+ * @brief Run one speculative accept round; return false to stop.
+ * @internal
+ * @version 2.3.7
+ */
 static bool spec_accept_round(
     SpeculativeRunState& state,
     const llama_vocab* vocab,
@@ -1929,17 +2007,7 @@ static bool spec_accept_round(
     std::function<void(std::string_view)>& on_token,
     std::atomic<bool>& cancel)
 {
-    // Skip drafting if the previous round restored a partial accept
-    // into state.draft (carry-over from rollback).
-    int draft_size_before = 0;
-    if (state.draft.empty()) {
-        spec_ckpt_save_dft(state);
-        draft_size_before = spec_run_draft(state);
-        spec_ckpt_save_tgt(state);
-        spec_ckpt_restore_dft(state);
-    } else {
-        draft_size_before = static_cast<int>(state.draft.size());
-    }
+    int draft_size_before = spec_prepare_draft(state);
 
     if (!spec_decode_both(state)) { return false; }
 
@@ -2034,6 +2102,64 @@ static std::string spec_check_preconditions(
  * @internal
  * @version 2.1.11
  */
+/**
+ * @brief Init the sampler + speculative decoder for a run.
+ *
+ * Extracted from spec_init_run to keep it knots-clean. Returns "" on
+ * success after wiring state.smpl/spec/batch + checkpoint flags;
+ * returns a diagnostic and cleans up on failure.
+ *
+ * @param state Speculative run state.
+ * @param model_tgt Target model (for the sampler).
+ * @param params Generation params.
+ * @param n_draft_max Draft cap (<=0 → 16).
+ * @param draft_path Draft model path (gates DRAFT_SIMPLE upstream).
+ * @return Empty on success, diagnostic on failure.
+ * @utility
+ * @version 2.3.7
+ */
+static std::string spec_init_sampler_and_decoder(
+    SpeculativeRunState& state, llama_model* model_tgt,
+    const GenerationParams& params, int n_draft_max,
+    const std::string& draft_path) {
+    auto common_sampling = to_common_sampling(params);
+    state.smpl = common_sampler_init(model_tgt, common_sampling);
+    if (!state.smpl) { return "common_sampler_init failed"; }
+
+    common_params_speculative spec_params;
+    spec_params.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
+    spec_params.draft.n_max = (n_draft_max > 0) ? n_draft_max : 16;
+    spec_params.draft.ctx_tgt = state.ctx_tgt;
+    spec_params.draft.ctx_dft = state.ctx_dft;
+    // Upstream gates DRAFT_SIMPLE on a non-empty draft path
+    // (see common/speculative.cpp:875). Required even though we
+    // provide already-loaded contexts.
+    spec_params.draft.mparams.path = draft_path;
+    state.spec = common_speculative_init(spec_params, 1);
+    if (!state.spec) {
+        common_sampler_free(state.smpl);
+        state.smpl = nullptr;
+        return "common_speculative_init failed";
+    }
+
+    common_speculative_begin(state.spec, state.seq_id, state.prompt_tgt);
+    state.batch_tgt = llama_batch_init(llama_n_batch(state.ctx_tgt), 0, 1);
+    state.batch_initialized = true;
+    // Checkpoint flow lights up when either context can only do
+    // FULL-sequence removal. Mirrors speculative-simple's
+    // use_ckpt_{tgt,dft}.
+    state.use_ckpt_tgt = common_context_can_seq_rm(state.ctx_tgt)
+        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+    state.use_ckpt_dft = common_context_can_seq_rm(state.ctx_dft)
+        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
+    return "";
+}
+
+/**
+ * @brief Initialize speculative run state (prefill + sampler + decoder).
+ * @internal
+ * @version 2.3.7
+ */
 static std::string spec_init_run(
     SpeculativeRunState& state, llama_model* model_tgt,
     const std::vector<llama_token>& tokens,
@@ -2046,50 +2172,12 @@ static std::string spec_init_run(
     llama_memory_clear(llama_get_memory(state.ctx_tgt), true);
     llama_memory_clear(llama_get_memory(state.ctx_dft), true);
 
-    std::string err;
     if (!spec_prefill_minus_last(state.ctx_tgt, tokens)
         || !spec_prefill_minus_last(state.ctx_dft, tokens)) {
-        err = "speculative prefill failed";
-    } else {
-        auto common_sampling = to_common_sampling(params);
-        state.smpl = common_sampler_init(model_tgt, common_sampling);
-        if (!state.smpl) {
-            err = "common_sampler_init failed";
-        } else {
-            common_params_speculative spec_params;
-            spec_params.types = {COMMON_SPECULATIVE_TYPE_DRAFT_SIMPLE};
-            spec_params.draft.n_max =
-                (n_draft_max > 0) ? n_draft_max : 16;
-            spec_params.draft.ctx_tgt = state.ctx_tgt;
-            spec_params.draft.ctx_dft = state.ctx_dft;
-            // Upstream gates DRAFT_SIMPLE on a non-empty draft path
-            // (see common/speculative.cpp:875). Required even though
-            // we provide already-loaded contexts.
-            spec_params.draft.mparams.path = draft_path;
-            state.spec = common_speculative_init(spec_params, 1);
-            if (!state.spec) {
-                common_sampler_free(state.smpl);
-                state.smpl = nullptr;
-                err = "common_speculative_init failed";
-            } else {
-                common_speculative_begin(
-                    state.spec, state.seq_id, state.prompt_tgt);
-                state.batch_tgt = llama_batch_init(
-                    llama_n_batch(state.ctx_tgt), 0, 1);
-                state.batch_initialized = true;
-                // Checkpoint flow lights up when either context can
-                // only do FULL-sequence removal. Mirrors
-                // speculative-simple's use_ckpt_{tgt,dft}.
-                state.use_ckpt_tgt =
-                    common_context_can_seq_rm(state.ctx_tgt)
-                        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
-                state.use_ckpt_dft =
-                    common_context_can_seq_rm(state.ctx_dft)
-                        == COMMON_CONTEXT_SEQ_RM_TYPE_FULL;
-            }
-        }
+        return "speculative prefill failed";
     }
-    return err;
+    return spec_init_sampler_and_decoder(
+        state, model_tgt, params, n_draft_max, draft_path);
 }
 
 /**
@@ -2173,6 +2261,54 @@ static GenerationResult spec_finalize(
  * @internal
  * @version 2.1.11 [reviewed]
  */
+/**
+ * @brief Run the speculative loop over already-tokenized input.
+ *
+ * Extracted from generate_speculative_with_draft to keep it
+ * knots-clean. Inits the run state, drives the accept-round loop, and
+ * finalizes; cleans up + returns a typed error if init fails.
+ *
+ * @param ctx_tgt Target context.
+ * @param ctx_dft Draft context.
+ * @param model_tgt Target model (sampler + vocab).
+ * @param tokens Prompt tokens (>= 2).
+ * @param params Generation parameters.
+ * @param on_token Per-accepted-token callback.
+ * @param cancel Cancellation flag.
+ * @param n_draft_max Draft window cap.
+ * @param draft_path Draft model path.
+ * @param t0 Start timestamp for timing.
+ * @return GenerationResult.
+ * @utility
+ * @version 2.3.7
+ */
+static GenerationResult spec_run_from_tokens(
+    llama_context* ctx_tgt, llama_context* ctx_dft, llama_model* model_tgt,
+    const std::vector<llama_token>& tokens, const GenerationParams& params,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel, int n_draft_max,
+    const std::string& draft_path,
+    std::chrono::steady_clock::time_point t0) {
+    SpeculativeRunState state;
+    state.ctx_tgt = ctx_tgt;
+    state.ctx_dft = ctx_dft;
+    auto init_err = spec_init_run(state, model_tgt, tokens, params,
+                                  n_draft_max, draft_path);
+    if (!init_err.empty()) {
+        spec_cleanup(state);
+        return spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+                          std::move(init_err));
+    }
+    spec_run_loop(state, llama_model_get_vocab(model_tgt),
+                  params.max_tokens, on_token, cancel);
+    return spec_finalize(state, t0);
+}
+
+/**
+ * @brief Speculative generation against a draft model (gh#36).
+ * @internal
+ * @version 2.3.7
+ */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
     const GenerationParams& params,
@@ -2202,21 +2338,9 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
             logger->info("Speculative: {} input tokens, max_tokens={}, "
                          "n_draft_max={}",
                          tokens.size(), params.max_tokens, n_draft_max);
-            SpeculativeRunState state;
-            state.ctx_tgt = ctx_;
-            state.ctx_dft = draft.ctx_;
-            auto init_err = spec_init_run(
-                state, model_, tokens, params, n_draft_max,
-                draft_path);
-            if (!init_err.empty()) {
-                spec_cleanup(state);
-                result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
-                                    std::move(init_err));
-            } else {
-                spec_run_loop(state, llama_model_get_vocab(model_),
-                              params.max_tokens, on_token, cancel);
-                result = spec_finalize(state, t0);
-            }
+            result = spec_run_from_tokens(
+                ctx_, draft.ctx_, model_, tokens, params, on_token,
+                cancel, n_draft_max, draft_path, t0);
         }
     }
     return result;

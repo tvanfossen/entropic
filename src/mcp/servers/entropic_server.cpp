@@ -82,6 +82,19 @@ public:
         const std::string& args_json) const override;
 
 private:
+    /**
+     * @brief Apply an add/update/remove action to the todo list.
+     *
+     * Extracted from execute() to keep it knots-clean.
+     *
+     * @param action One of "add" / "update" / "remove".
+     * @param args Parsed tool arguments.
+     * @internal
+     * @version 2.3.7
+     */
+    void apply_todo_action(const std::string& action,
+                           const nlohmann::json& args);
+
     std::vector<TodoItem> items_; ///< Todo list state
 
     /**
@@ -131,10 +144,15 @@ std::string TodoTool::format_list() const {
  * @internal
  * @version 1.8.5
  */
-ServerResponse TodoTool::execute(const std::string& args_json) {
-    auto args = nlohmann::json::parse(args_json);
-    std::string action = args.at("action").get<std::string>();
-
+/**
+ * @brief Apply an add/update/remove action to the todo list.
+ * @param action One of "add" / "update" / "remove".
+ * @param args Parsed tool arguments.
+ * @internal
+ * @version 2.3.7
+ */
+void TodoTool::apply_todo_action(const std::string& action,
+                                 const nlohmann::json& args) {
     if (action == "add") {
         std::string content = args.at("content").get<std::string>();
         items_.push_back({content, "pending"});
@@ -150,23 +168,30 @@ ServerResponse TodoTool::execute(const std::string& args_json) {
         auto idx = args.at("index").get<size_t>();
         if (idx < items_.size()) {
             logger->info("[todo] remove #{}", idx);
-            items_.erase(items_.begin() +
-                         static_cast<ptrdiff_t>(idx));
+            items_.erase(items_.begin() + static_cast<ptrdiff_t>(idx));
         }
     }
+}
 
-    std::string list_text = format_list();
+/**
+ * @brief Execute the todo tool (add/update/remove) and emit directives.
+ * @internal
+ * @version 2.3.7
+ */
+ServerResponse TodoTool::execute(const std::string& args_json) {
+    auto args = nlohmann::json::parse(args_json);
+    std::string action = args.at("action").get<std::string>();
+
+    apply_todo_action(action, args);
 
     nlohmann::json result;
-    result["todo_state"] = list_text;
+    result["todo_state"] = format_list();
     result["action"] = action;
 
     Directive anchor_d;
     anchor_d.type = ENTROPIC_DIRECTIVE_CONTEXT_ANCHOR;
-
     Directive notify_d;
     notify_d.type = ENTROPIC_DIRECTIVE_NOTIFY_PRESENTER;
-
     return {result.dump(), {anchor_d, notify_d}};
 }
 
@@ -1340,33 +1365,26 @@ int EntropicServer::register_delegation_tools(
  * @param tools_dir Path to tools directory.
  * @return Number of tools registered.
  * @internal
- * @version 2.1.6
+ * @version 2.3.7
  */
 int EntropicServer::register_introspection_tools(
     const std::string& tools_dir) {
-    auto diagnose_def = load_tool_definition(
-        "diagnose", "entropic", tools_dir);
     diagnose_ = std::make_unique<DiagnoseTool>(
-        std::move(diagnose_def));
+        load_tool_definition("diagnose", "entropic", tools_dir));
     register_tool(diagnose_.get());
 
-    auto inspect_def = load_tool_definition(
-        "inspect", "entropic", tools_dir);
     inspect_ = std::make_unique<InspectTool>(
-        std::move(inspect_def));
+        load_tool_definition("inspect", "entropic", tools_dir));
     register_tool(inspect_.get());
 
-    auto ctx_def = load_tool_definition(
-        "context_inspect", "entropic", tools_dir);
     context_inspect_ = std::make_unique<ContextInspectTool>(
-        std::move(ctx_def));
+        load_tool_definition("context_inspect", "entropic", tools_dir));
     register_tool(context_inspect_.get());
 
     // gh#32 (v2.1.6): followup is read-only and consumes the same
     // state_provider plumbing as diagnose/inspect.
-    auto followup_def = load_tool_definition(
-        "followup", "entropic", tools_dir);
-    followup_ = std::make_unique<FollowupTool>(std::move(followup_def));
+    followup_ = std::make_unique<FollowupTool>(
+        load_tool_definition("followup", "entropic", tools_dir));
     register_tool(followup_.get());
 
     return 4;

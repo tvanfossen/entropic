@@ -256,6 +256,7 @@ entropic_configure_dir = _bind("entropic_configure_dir", ctypes.c_int, entropic_
 entropic_destroy = _bind("entropic_destroy", None, entropic_handle_t)
 entropic_version = _bind("entropic_version", ctypes.c_char_p)
 entropic_api_version = _bind("entropic_api_version", ctypes.c_int)
+entropic_seconds_since_last_activity = _bind("entropic_seconds_since_last_activity", ctypes.c_int64, entropic_handle_t)
 entropic_alloc = _bind("entropic_alloc", ctypes.c_void_p, ctypes.c_size_t)
 entropic_free = _bind("entropic_free", None, ctypes.c_void_p)
 entropic_run = _bind("entropic_run", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))

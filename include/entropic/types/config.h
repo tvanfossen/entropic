@@ -745,6 +745,13 @@ struct ParsedConfig {
     /// Default false — when off, ggml/llama output is silenced entirely.
     bool ggml_logging = false;
 
+    /// Emit engine spdlog output to the stderr console sink.
+    /// Default true (operators reading stderr see everything). TUI
+    /// consumers that paint to fd 2 must set this false so engine log
+    /// lines don't corrupt the screen — with it off, logs route to the
+    /// per-handle session.log file sink only. (gh#59 follow-up, v2.3.7)
+    bool console_logging = true;
+
     /// Constitutional validation pipeline settings.
     ConstitutionalValidationConfig constitutional_validation;
 

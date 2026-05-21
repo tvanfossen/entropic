@@ -56,62 +56,66 @@ std::filesystem::path share_dir_from_library()
 }  // namespace
 
 /**
+ * @brief Parse one bundled-model YAML entry into `entry`.
+ * @param child YAML node for the entry.
+ * @param[out] entry Populated entry.
+ * @return Empty on success, error message if 'name' is missing.
+ * @internal
+ * @version 2.3.7
+ */
+static std::string parse_bundled_entry(ryml::ConstNodeRef child,
+                                       BundledModelEntry& entry)
+{
+    entry.key = to_string(child.key());
+    extract(child, "name", entry.name);
+    extract(child, "url", entry.url);
+    extract(child, "size_gb", entry.size_gb);
+    extract(child, "adapter", entry.adapter);
+    extract(child, "description", entry.description);
+    extract(child, "mmproj_key", entry.mmproj_key);
+    // gh#62 (v2.3.0): optional structured selectors. Entries that
+    // don't declare them stay queryable by flat key only.
+    extract(child, "provider",   entry.provider);
+    extract(child, "family",     entry.family);
+    extract(child, "size_label", entry.size_label);
+    extract(child, "quant",      entry.quant);
+    if (entry.name.empty()) {
+        return "bundled model '" + entry.key + "' missing 'name'";
+    }
+    return "";
+}
+
+/**
  * @brief Load registry from YAML file.
  * @param path Path to bundled_models.yaml.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.1.8
+ * @version 2.3.7
  */
 std::string BundledModels::load(const std::filesystem::path& path)
 {
-    std::string err;
-
     auto content = read_file(path);
     if (content.empty()) {
-        err = "cannot read " + path.string();
+        return "cannot read " + path.string();
     }
 
-    ryml::Tree tree;
-    ryml::ConstNodeRef root;
-    if (err.empty()) {
-        tree = ryml::parse_in_arena(
-            ryml::to_csubstr(path.string()),
-            ryml::to_csubstr(content));
-        root = tree.rootref();
-
-        if (!root.is_map()) {
-            err = "bundled_models.yaml root is not a mapping";
-        }
+    ryml::Tree tree = ryml::parse_in_arena(
+        ryml::to_csubstr(path.string()),
+        ryml::to_csubstr(content));
+    ryml::ConstNodeRef root = tree.rootref();
+    if (!root.is_map()) {
+        return "bundled_models.yaml root is not a mapping";
     }
 
-    if (err.empty()) {
-        for (auto child : root) {
-            BundledModelEntry entry;
-            entry.key = to_string(child.key());
-            extract(child, "name", entry.name);
-            extract(child, "url", entry.url);
-            extract(child, "size_gb", entry.size_gb);
-            extract(child, "adapter", entry.adapter);
-            extract(child, "description", entry.description);
-            extract(child, "mmproj_key", entry.mmproj_key);
-            // gh#62 (v2.3.0): optional structured selectors. Entries
-            // that don't declare them stay queryable by flat key only.
-            extract(child, "provider",   entry.provider);
-            extract(child, "family",     entry.family);
-            extract(child, "size_label", entry.size_label);
-            extract(child, "quant",      entry.quant);
-
-            if (entry.name.empty()) {
-                err = "bundled model '" + entry.key + "' missing 'name'";
-                break;
-            }
-
-            s_log->info("Registered bundled model: {} -> {} ({:.1f} GB)",
-                      entry.key, entry.name, entry.size_gb);
-            entries_[entry.key] = std::move(entry);
-        }
+    std::string err;
+    for (auto child : root) {
+        BundledModelEntry entry;
+        err = parse_bundled_entry(child, entry);
+        if (!err.empty()) { break; }
+        s_log->info("Registered bundled model: {} -> {} ({:.1f} GB)",
+                    entry.key, entry.name, entry.size_gb);
+        entries_[entry.key] = std::move(entry);
     }
-
     return err;
 }
 

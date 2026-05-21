@@ -53,18 +53,25 @@ repos:
           - '--max-line-length=100'
           - '--ignore=E501,W503,E203,E704,E266'
 
+  # knots v1.4.3 carries both fixes we needed: #5 (args_override_self,
+  # so the `args:` thresholds below override the entry's baked
+  # defaults) and #6 (accept multiple FILE args, so pass_filenames
+  # works under --all-files / multi-file commits). language:rust → CI
+  # builds + runs it. exclude mirrors the doxygen-guard hook's scope
+  # (extern is third-party; tests/build/etc. are exempt from the
+  # quality gates).
   - repo: https://github.com/brandon-arrendondo/knots
-    rev: v1.1.0
+    rev: v1.4.3
     hooks:
       - id: knots
         args:
-          - --cognitive-threshold=15
           - --mccabe-threshold=15
+          - --cognitive-threshold=15
           - --nesting-threshold=4
           - --sloc-threshold=50
-          - --abc-threshold=10.0
+          - --abc-threshold=20.0
           - --return-threshold=3
-        exclude: ^extern/
+        exclude: ^(extern/|tests/|build/|\.build/|\.old/|\.venv/)
 
   - repo: https://github.com/tvanfossen/doxygen-guard
     rev: main

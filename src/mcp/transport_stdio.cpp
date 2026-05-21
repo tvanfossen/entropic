@@ -287,6 +287,42 @@ void StdioTransport::interrupt() {
 }
 
 /**
+ * @brief Build a NULL-terminated argv from command + args.
+ * @param command Executable.
+ * @param args Argument list.
+ * @return char* vector (pointers into command/args; must outlive use).
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<char*> build_argv(const std::string& command,
+                                     const std::vector<std::string>& args) {
+    std::vector<char*> argv;
+    argv.push_back(const_cast<char*>(command.c_str()));
+    for (const auto& arg : args) {
+        argv.push_back(const_cast<char*>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    return argv;
+}
+
+/**
+ * @brief Build a NULL-terminated envp from env strings.
+ * @param env_strs "KEY=VALUE" strings.
+ * @return char* vector (pointers into env_strs; must outlive use).
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<char*> build_envp(
+    const std::vector<std::string>& env_strs) {
+    std::vector<char*> envp;
+    for (const auto& e : env_strs) {
+        envp.push_back(const_cast<char*>(e.c_str()));
+    }
+    envp.push_back(nullptr);
+    return envp;
+}
+
+/**
  * @brief Spawn child process using posix_spawn with file actions.
  * @param stdin_r Child stdin read end (dup2'd to STDIN_FILENO).
  * @param stdout_w Child stdout write end (dup2'd to STDOUT_FILENO).
@@ -294,7 +330,7 @@ void StdioTransport::interrupt() {
  * @param env_strs Merged environment strings.
  * @return true on success, child_pid_ set.
  * @utility
- * @version 2.1.5
+ * @version 2.3.7
  */
 bool StdioTransport::spawn_child(
     int stdin_r, int stdout_w, int stderr_w,
@@ -306,20 +342,8 @@ bool StdioTransport::spawn_child(
     posix_spawn_file_actions_adddup2(&actions, stdout_w, STDOUT_FILENO);
     posix_spawn_file_actions_adddup2(&actions, stderr_w, STDERR_FILENO);
 
-    // Build argv: [command, args..., nullptr]
-    std::vector<char*> argv;
-    argv.push_back(const_cast<char*>(command_.c_str()));
-    for (const auto& arg : args_) {
-        argv.push_back(const_cast<char*>(arg.c_str()));
-    }
-    argv.push_back(nullptr);
-
-    // Build envp
-    std::vector<char*> envp;
-    for (const auto& e : env_strs) {
-        envp.push_back(const_cast<char*>(e.c_str()));
-    }
-    envp.push_back(nullptr);
+    auto argv = build_argv(command_, args_);
+    auto envp = build_envp(env_strs);
 
     int err = posix_spawnp(
         &child_pid_, command_.c_str(), &actions,

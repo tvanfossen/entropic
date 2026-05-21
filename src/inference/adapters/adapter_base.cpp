@@ -302,6 +302,48 @@ std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
 // ── JSON recovery ──────────────────────────────────────────
 
 /**
+ * @brief Parse a brace/quote-fixed JSON string into a ToolCall.
+ * @param fixed Cleaned JSON string (may still be invalid → throws).
+ * @return ToolCall if it has a "name", else nullopt.
+ * @utility
+ * @version 2.3.7
+ */
+static std::optional<ToolCall> parse_recovered_tool_call(
+    const std::string& fixed) {
+    auto j = nlohmann::json::parse(fixed);
+    if (!j.contains("name")) { return std::nullopt; }
+    ToolCall tc;
+    tc.id = generate_uuid();
+    tc.name = j["name"].get<std::string>();
+    auto args = j.value("arguments",
+                        j.value("parameters", nlohmann::json::object()));
+    for (auto& [k, v] : args.items()) {
+        tc.arguments[k] = v.dump();
+    }
+    return tc;
+}
+
+/**
+ * @brief Last-ditch recovery: pull a tool name out via regex.
+ * @param json_str Original (possibly unparseable) string.
+ * @return ToolCall with just id+name, or nullopt if no name found.
+ * @utility
+ * @version 2.3.7
+ */
+static std::optional<ToolCall> regex_recovered_tool_call(
+    const std::string& json_str) {
+    std::regex name_pattern(R"re("name"\s*:\s*"([^"]+)")re");
+    std::smatch match;
+    if (!std::regex_search(json_str, match, name_pattern)) {
+        return std::nullopt;
+    }
+    ToolCall tc;
+    tc.id = generate_uuid();
+    tc.name = match[1].str();
+    return tc;
+}
+
+/**
  * @brief Attempt JSON recovery on malformed tool call string.
  *
  * Tries: trailing comma removal, quote normalization, brace matching.
@@ -309,7 +351,7 @@ std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
  * @param json_str Potentially malformed JSON.
  * @return Recovered ToolCall if successful.
  * @internal
- * @version 1.8.2
+ * @version 2.3.7
  */
 std::optional<ToolCall> ChatAdapter::try_recover_json(
     const std::string& json_str) const
@@ -321,27 +363,9 @@ std::optional<ToolCall> ChatAdapter::try_recover_json(
 
     logger->info("JSON recovery attempt: {} chars", json_str.size());
     try {
-        auto j = nlohmann::json::parse(fixed);
-        if (j.contains("name")) {
-            ToolCall tc;
-            tc.id = generate_uuid();
-            tc.name = j["name"].get<std::string>();
-            auto args = j.value("arguments", j.value("parameters", nlohmann::json::object()));
-            for (auto& [k, v] : args.items()) {
-                tc.arguments[k] = v.dump();
-            }
-            return tc;
-        }
+        if (auto tc = parse_recovered_tool_call(fixed)) { return tc; }
     } catch (...) {
-        // Final fallback: extract name via regex
-        std::regex name_pattern(R"re("name"\s*:\s*"([^"]+)")re");
-        std::smatch match;
-        if (std::regex_search(json_str, match, name_pattern)) {
-            ToolCall tc;
-            tc.id = generate_uuid();
-            tc.name = match[1].str();
-            return tc;
-        }
+        return regex_recovered_tool_call(json_str);
     }
     return std::nullopt;
 }

@@ -69,6 +69,23 @@ static void bind_opt_text(sqlite3_stmt* stmt, int idx,
     }
 }
 
+/**
+ * @brief Bind optional int to a parameter position (NULL if unset).
+ * @param stmt Prepared statement.
+ * @param idx Parameter index (1-based).
+ * @param val Value to bind.
+ * @utility
+ * @version 2.3.7
+ */
+static void bind_opt_int(sqlite3_stmt* stmt, int idx,
+                         const std::optional<int>& val) {
+    if (val) {
+        sqlite3_bind_int(stmt, idx, *val);
+    } else {
+        sqlite3_bind_null(stmt, idx);
+    }
+}
+
 // ── SqliteStorageBackend ──────────────────────────────────
 
 /**
@@ -135,13 +152,75 @@ std::string SqliteStorageBackend::create_conversation(
     return rec.id;
 }
 
+namespace {
+
+/// One message row staged for INSERT INTO messages.
+struct MessageRow {
+    std::string id;
+    std::string role;
+    std::string content;
+    std::string tool_calls;
+    std::string tool_results;
+    long long token_count;
+    bool is_compacted;
+    std::optional<std::string> tier;
+};
+
+/**
+ * @brief Build a MessageRow from one message JSON object.
+ * @param m Message JSON.
+ * @return Populated row (new uuid, defaulted fields).
+ * @utility
+ * @version 2.3.7
+ */
+MessageRow build_message_row(const json& m) {
+    MessageRow r;
+    r.id = generate_uuid();
+    r.role = m.value("role", "");
+    r.content = m.value("content", "");
+    r.tool_calls = m.contains("tool_calls") ? m["tool_calls"].dump() : "[]";
+    r.tool_results =
+        m.contains("tool_results") ? m["tool_results"].dump() : "[]";
+    r.token_count = m.value("token_count", 0);
+    r.is_compacted = m.value("is_compacted", false);
+    if (m.contains("identity_tier") && !m["identity_tier"].is_null()) {
+        r.tier = m["identity_tier"].get<std::string>();
+    }
+    return r;
+}
+
+/**
+ * @brief Bind a MessageRow to the messages INSERT statement.
+ * @param s Prepared statement.
+ * @param conversation_id Owning conversation.
+ * @param now created_at timestamp.
+ * @param r Row to bind.
+ * @utility
+ * @version 2.3.7
+ */
+void bind_message_insert(sqlite3_stmt* s, const std::string& conversation_id,
+                         const std::string& now, const MessageRow& r) {
+    sqlite3_bind_text(s, 1, r.id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 2, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 3, r.role.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 4, r.content.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 5, r.tool_calls.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(s, 6, r.tool_results.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(s, 7, r.token_count);
+    sqlite3_bind_text(s, 8, now.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(s, 9, r.is_compacted ? 1 : 0);
+    bind_opt_text(s, 10, r.tier);
+}
+
+}  // namespace
+
 /**
  * @brief Save messages to a conversation.
  * @param conversation_id Conversation ID.
  * @param messages_json JSON array of message objects.
  * @return true on success.
  * @internal
- * @version 2.0.0
+ * @version 2.3.7
  */
 bool SqliteStorageBackend::save_messages(
         const std::string& conversation_id,
@@ -160,40 +239,64 @@ bool SqliteStorageBackend::save_messages(
         return false;
     }
 
+    static constexpr const char* kInsertSql =
+        "INSERT INTO messages "
+        "(id, conversation_id, role, content, tool_calls, tool_results, "
+        "token_count, created_at, is_compacted, identity_tier) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     for (const auto& m : msgs) {
-        auto msg_id = generate_uuid();
-        auto role = m.value("role", "");
-        auto content = m.value("content", "");
-        auto tool_calls = m.contains("tool_calls") ? m["tool_calls"].dump() : "[]";
-        auto tool_results = m.contains("tool_results") ? m["tool_results"].dump() : "[]";
-        auto token_count = m.value("token_count", 0);
-        auto is_compacted = m.value("is_compacted", false);
-        std::optional<std::string> tier;
-        if (m.contains("identity_tier") && !m["identity_tier"].is_null()) {
-            tier = m["identity_tier"].get<std::string>();
-        }
-
-        db_.execute(
-            "INSERT INTO messages "
-            "(id, conversation_id, role, content, tool_calls, tool_results, "
-            "token_count, created_at, is_compacted, identity_tier) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [&](sqlite3_stmt* s) {
-                sqlite3_bind_text(s, 1, msg_id.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(s, 2, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(s, 3, role.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(s, 4, content.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(s, 5, tool_calls.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(s, 6, tool_results.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_int64(s, 7, token_count);
-                sqlite3_bind_text(s, 8, now.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_int(s, 9, is_compacted ? 1 : 0);
-                bind_opt_text(s, 10, tier);
-            });
+        auto row = build_message_row(m);
+        db_.execute(kInsertSql, [&](sqlite3_stmt* s) {
+            bind_message_insert(s, conversation_id, now, row);
+        });
     }
 
     return true;
 }
+
+namespace {
+
+/**
+ * @brief Map a conversations row to its JSON object.
+ * @param s Stepped statement (SELECT * FROM conversations).
+ * @return JSON conversation object.
+ * @utility
+ * @version 2.3.7
+ */
+json conversation_row_to_json(sqlite3_stmt* s) {
+    json o;
+    o["id"] = col_text(s, 0);
+    o["title"] = col_text(s, 1);
+    o["created_at"] = col_text(s, 2);
+    o["updated_at"] = col_text(s, 3);
+    o["project_path"] = col_opt_text(s, 4).value_or("");
+    o["model_id"] = col_opt_text(s, 5).value_or("");
+    o["metadata"] = json::parse(col_text(s, 6), nullptr, false);
+    return o;
+}
+
+/**
+ * @brief Map a messages row to its JSON object.
+ * @param s Stepped statement (SELECT * FROM messages).
+ * @return JSON message object.
+ * @utility
+ * @version 2.3.7
+ */
+json message_row_to_json(sqlite3_stmt* s) {
+    json m;
+    m["id"] = col_text(s, 0);
+    m["role"] = col_text(s, 2);
+    m["content"] = col_text(s, 3);
+    m["tool_calls"] = json::parse(col_text(s, 4), nullptr, false);
+    m["tool_results"] = json::parse(col_text(s, 5), nullptr, false);
+    m["token_count"] = sqlite3_column_int64(s, 6);
+    m["created_at"] = col_text(s, 7);
+    m["is_compacted"] = sqlite3_column_int(s, 8) != 0;
+    m["identity_tier"] = col_opt_text(s, 9).value_or("");
+    return m;
+}
+
+}  // namespace
 
 /**
  * @brief Load a conversation with its messages.
@@ -201,7 +304,7 @@ bool SqliteStorageBackend::save_messages(
  * @param[out] result_json JSON result.
  * @return true if found.
  * @internal
- * @version 1.8.8
+ * @version 2.3.7
  */
 bool SqliteStorageBackend::load_conversation(
         const std::string& conversation_id,
@@ -212,15 +315,7 @@ bool SqliteStorageBackend::load_conversation(
         [&](sqlite3_stmt* s) {
             sqlite3_bind_text(s, 1, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
         },
-        [&](sqlite3_stmt* s) {
-            conv_obj["id"] = col_text(s, 0);
-            conv_obj["title"] = col_text(s, 1);
-            conv_obj["created_at"] = col_text(s, 2);
-            conv_obj["updated_at"] = col_text(s, 3);
-            conv_obj["project_path"] = col_opt_text(s, 4).value_or("");
-            conv_obj["model_id"] = col_opt_text(s, 5).value_or("");
-            conv_obj["metadata"] = json::parse(col_text(s, 6), nullptr, false);
-        });
+        [&](sqlite3_stmt* s) { conv_obj = conversation_row_to_json(s); });
 
     if (!found) return false;
 
@@ -232,17 +327,7 @@ bool SqliteStorageBackend::load_conversation(
             sqlite3_bind_text(s, 1, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
         },
         [&](sqlite3_stmt* s) {
-            json msg;
-            msg["id"] = col_text(s, 0);
-            msg["role"] = col_text(s, 2);
-            msg["content"] = col_text(s, 3);
-            msg["tool_calls"] = json::parse(col_text(s, 4), nullptr, false);
-            msg["tool_results"] = json::parse(col_text(s, 5), nullptr, false);
-            msg["token_count"] = sqlite3_column_int64(s, 6);
-            msg["created_at"] = col_text(s, 7);
-            msg["is_compacted"] = sqlite3_column_int(s, 8) != 0;
-            msg["identity_tier"] = col_opt_text(s, 9).value_or("");
-            messages.push_back(std::move(msg));
+            messages.push_back(message_row_to_json(s));
         });
 
     json result;
@@ -381,7 +466,7 @@ bool SqliteStorageBackend::search_conversations(
  * @param s Prepared statement.
  * @param rec Delegation record (read-only).
  * @internal
- * @version 2.1.12
+ * @version 2.3.7
  */
 static void bind_delegation_insert(sqlite3_stmt* s,
                                    const DelegationRecord& rec) {
@@ -395,11 +480,7 @@ static void bind_delegation_insert(sqlite3_stmt* s,
     sqlite3_bind_text(s, 5, rec.target_tier.c_str(),
                       -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(s, 6, rec.task.c_str(), -1, SQLITE_TRANSIENT);
-    if (rec.max_turns) {
-        sqlite3_bind_int(s, 7, *rec.max_turns);
-    } else {
-        sqlite3_bind_null(s, 7);
-    }
+    bind_opt_int(s, 7, rec.max_turns);
     sqlite3_bind_text(s, 8, rec.status.c_str(), -1, SQLITE_TRANSIENT);
     bind_opt_text(s, 9, rec.result_summary);
     sqlite3_bind_text(s, 10, rec.created_at.c_str(),
@@ -535,13 +616,67 @@ bool SqliteStorageBackend::complete_delegation(
         });
 }
 
+namespace {
+
+/**
+ * @brief Map a full delegations row to its JSON object.
+ * @param s Stepped statement (SELECT * FROM delegations).
+ * @return JSON delegation object (all columns).
+ * @utility
+ * @version 2.3.7
+ */
+json delegation_row_to_json(sqlite3_stmt* s) {
+    json entry;
+    entry["id"] = col_text(s, 0);
+    entry["parent_conversation_id"] = col_text(s, 1);
+    entry["child_conversation_id"] = col_text(s, 2);
+    entry["delegating_tier"] = col_text(s, 3);
+    entry["target_tier"] = col_text(s, 4);
+    entry["task"] = col_text(s, 5);
+    auto mt = sqlite3_column_int(s, 6);
+    entry["max_turns"] = (sqlite3_column_type(s, 6) == SQLITE_NULL)
+                             ? json(nullptr) : json(mt);
+    entry["status"] = col_text(s, 7);
+    entry["result_summary"] = col_opt_text(s, 8).value_or("");
+    entry["created_at"] = col_text(s, 9);
+    entry["completed_at"] = col_opt_text(s, 10).value_or("");
+    return entry;
+}
+
+/**
+ * @brief Map a delegations row to a search-result summary object.
+ *
+ * Subset of delegation_row_to_json: omits max_turns + created_at, which
+ * search results historically don't carry.
+ *
+ * @param s Stepped statement (SELECT * FROM delegations).
+ * @return JSON summary object.
+ * @utility
+ * @version 2.3.7
+ */
+json delegation_summary_to_json(sqlite3_stmt* s) {
+    json entry;
+    entry["id"] = col_text(s, 0);
+    entry["parent_conversation_id"] = col_text(s, 1);
+    entry["child_conversation_id"] = col_text(s, 2);
+    entry["delegating_tier"] = col_text(s, 3);
+    entry["target_tier"] = col_text(s, 4);
+    entry["task"] = col_text(s, 5);
+    entry["status"] = col_text(s, 7);
+    entry["result_summary"] = col_opt_text(s, 8).value_or("");
+    entry["completed_at"] = col_opt_text(s, 10).value_or("");
+    return entry;
+}
+
+}  // namespace
+
 /**
  * @brief Get delegations for a parent conversation.
  * @param conversation_id Parent conversation ID.
  * @param[out] result_json JSON array of delegation records.
  * @return true on success.
  * @internal
- * @version 1.8.8
+ * @version 2.3.7
  */
 bool SqliteStorageBackend::get_delegations(
         const std::string& conversation_id,
@@ -555,21 +690,7 @@ bool SqliteStorageBackend::get_delegations(
             sqlite3_bind_text(s, 1, conversation_id.c_str(), -1, SQLITE_TRANSIENT);
         },
         [&](sqlite3_stmt* s) {
-            json entry;
-            entry["id"] = col_text(s, 0);
-            entry["parent_conversation_id"] = col_text(s, 1);
-            entry["child_conversation_id"] = col_text(s, 2);
-            entry["delegating_tier"] = col_text(s, 3);
-            entry["target_tier"] = col_text(s, 4);
-            entry["task"] = col_text(s, 5);
-            auto mt = sqlite3_column_int(s, 6);
-            entry["max_turns"] = (sqlite3_column_type(s, 6) == SQLITE_NULL)
-                                     ? json(nullptr) : json(mt);
-            entry["status"] = col_text(s, 7);
-            entry["result_summary"] = col_opt_text(s, 8).value_or("");
-            entry["created_at"] = col_text(s, 9);
-            entry["completed_at"] = col_opt_text(s, 10).value_or("");
-            arr.push_back(std::move(entry));
+            arr.push_back(delegation_row_to_json(s));
         });
 
     result_json = arr.dump();
@@ -582,7 +703,7 @@ bool SqliteStorageBackend::get_delegations(
  * @param[out] result_json Object JSON of the delegation row.
  * @return true if found and parsed.
  * @internal
- * @version 2.1.6
+ * @version 2.3.7
  */
 bool SqliteStorageBackend::get_delegation_by_id(
         const std::string& delegation_id,
@@ -597,19 +718,7 @@ bool SqliteStorageBackend::get_delegation_by_id(
         },
         [&](sqlite3_stmt* s) {
             found = true;
-            entry["id"] = col_text(s, 0);
-            entry["parent_conversation_id"] = col_text(s, 1);
-            entry["child_conversation_id"] = col_text(s, 2);
-            entry["delegating_tier"] = col_text(s, 3);
-            entry["target_tier"] = col_text(s, 4);
-            entry["task"] = col_text(s, 5);
-            auto mt = sqlite3_column_int(s, 6);
-            entry["max_turns"] = (sqlite3_column_type(s, 6) == SQLITE_NULL)
-                                     ? json(nullptr) : json(mt);
-            entry["status"] = col_text(s, 7);
-            entry["result_summary"] = col_opt_text(s, 8).value_or("");
-            entry["created_at"] = col_text(s, 9);
-            entry["completed_at"] = col_opt_text(s, 10).value_or("");
+            entry = delegation_row_to_json(s);
         });
     if (!found) {
         return false;
@@ -630,7 +739,7 @@ bool SqliteStorageBackend::get_delegation_by_id(
  * @param[out] result_json JSON array of delegation rows.
  * @return true on success.
  * @internal
- * @version 2.1.6
+ * @version 2.3.7
  */
 bool SqliteStorageBackend::search_delegations(
         const std::string& query, int max_results,
@@ -646,17 +755,7 @@ bool SqliteStorageBackend::search_delegations(
             sqlite3_bind_int(s, 2, max_results);
         },
         [&](sqlite3_stmt* s) {
-            json entry;
-            entry["id"] = col_text(s, 0);
-            entry["parent_conversation_id"] = col_text(s, 1);
-            entry["child_conversation_id"] = col_text(s, 2);
-            entry["delegating_tier"] = col_text(s, 3);
-            entry["target_tier"] = col_text(s, 4);
-            entry["task"] = col_text(s, 5);
-            entry["status"] = col_text(s, 7);
-            entry["result_summary"] = col_opt_text(s, 8).value_or("");
-            entry["completed_at"] = col_opt_text(s, 10).value_or("");
-            arr.push_back(std::move(entry));
+            arr.push_back(delegation_summary_to_json(s));
         });
     result_json = arr.dump();
     return true;

@@ -615,6 +615,33 @@ private:
     void deactivate_current_if_needed(InferenceBackend* incoming);
 
     /**
+     * @brief Ensure the active tier's LoRA adapter is loaded.
+     *
+     * Extracted from get_model to keep it knots-clean. Swaps the
+     * LoRA adapter for `result`'s backend and records the timing +
+     * active-adapter name on last_routing_result_.
+     *
+     * @param tier_name Tier whose adapter to ensure.
+     * @param result Active backend (LoRA applied to its context).
+     * @internal
+     * @version 2.3.7
+     */
+    void ensure_tier_lora(const std::string& tier_name,
+                          InferenceBackend* result);
+
+    /**
+     * @brief Warm-deactivate or cold-unload the current main tier.
+     *
+     * Extracted from deactivate_current_if_needed. keep_warm=true →
+     * deactivate; false → unload + fire Evicted residency event.
+     *
+     * @param current The backend leaving the active slot.
+     * @internal
+     * @version 2.3.7
+     */
+    void unload_or_warm_current(InferenceBackend* current);
+
+    /**
      * @brief Classify task using router model.
      * @version 1.8.2
      */

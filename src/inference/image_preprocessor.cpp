@@ -135,41 +135,50 @@ ImagePreprocessor::ImagePreprocessor(const ImagePreprocessConfig& config)
     : config_(config) {}
 
 /**
+ * @brief Validate + read an image file fully into a byte buffer.
+ * @param path File path.
+ * @param max_file_size Reject files larger than this.
+ * @return File bytes.
+ * @throws std::runtime_error if missing, oversized, or unreadable.
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<uint8_t> read_image_bytes(
+    const std::filesystem::path& path, size_t max_file_size) {
+    if (!std::filesystem::exists(path)) {
+        logger->error("Image file not found: {}", path.string());
+        throw std::runtime_error("Image file not found: " + path.string());
+    }
+    auto file_size = std::filesystem::file_size(path);
+    if (file_size > max_file_size) {
+        logger->error("Image file too large: {} bytes (max {})",
+                      file_size, max_file_size);
+        throw std::runtime_error(
+            "Image exceeds max file size ("
+            + std::to_string(file_size) + " > "
+            + std::to_string(max_file_size) + ")");
+    }
+    std::ifstream file(path, std::ios::binary);
+    if (!file) {
+        throw std::runtime_error("Cannot open image file: " + path.string());
+    }
+    std::vector<uint8_t> buf(static_cast<size_t>(file_size));
+    file.read(reinterpret_cast<char*>(buf.data()),
+              static_cast<std::streamsize>(file_size));
+    return buf;
+}
+
+/**
  * @brief Preprocess an image from file path.
  * @param path File path to image.
  * @return Preprocessed image ready for vision encoder.
  * @throws std::runtime_error on invalid format, oversized, or read error.
  * @internal
- * @version 1.9.11
+ * @version 2.3.7
  */
 PreprocessedImage ImagePreprocessor::preprocess_file(
     const std::filesystem::path& path) {
-    if (!std::filesystem::exists(path)) {
-        logger->error("Image file not found: {}", path.string());
-        throw std::runtime_error(
-            "Image file not found: " + path.string());
-    }
-
-    auto file_size = std::filesystem::file_size(path);
-    if (file_size > config_.max_file_size) {
-        logger->error("Image file too large: {} bytes (max {})",
-                      file_size, config_.max_file_size);
-        throw std::runtime_error(
-            "Image exceeds max file size ("
-            + std::to_string(file_size) + " > "
-            + std::to_string(config_.max_file_size) + ")");
-    }
-
-    std::ifstream file(path, std::ios::binary);
-    if (!file) {
-        throw std::runtime_error(
-            "Cannot open image file: " + path.string());
-    }
-
-    std::vector<uint8_t> buf(static_cast<size_t>(file_size));
-    file.read(reinterpret_cast<char*>(buf.data()),
-              static_cast<std::streamsize>(file_size));
-
+    auto buf = read_image_bytes(path, config_.max_file_size);
     auto img = decode(buf.data(), buf.size(), path.string());
     img.source_path = path.string();
     resize_if_needed(img);

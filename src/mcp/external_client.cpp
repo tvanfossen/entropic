@@ -124,38 +124,41 @@ std::string ExternalMCPClient::execute(
 }
 
 /**
+ * @brief Names in `a` not in `b` (sorted set difference).
+ * @param a Superset candidate.
+ * @param b Set to subtract.
+ * @return a \ b as a vector.
+ * @utility
+ * @version 2.3.7
+ */
+static std::vector<std::string> names_diff(
+    const std::set<std::string>& a, const std::set<std::string>& b) {
+    std::vector<std::string> out;
+    std::set_difference(a.begin(), a.end(), b.begin(), b.end(),
+                        std::back_inserter(out));
+    return out;
+}
+
+/**
  * @brief Re-query tools/list and diff against cache.
  * @return Pair of (added, removed) tool name vectors.
  * @internal
- * @version 1.8.7
+ * @version 2.3.7
  */
 std::pair<std::vector<std::string>, std::vector<std::string>>
 ExternalMCPClient::refresh_tools() {
-
-    std::set<std::string> old_names;
-    {
+    auto snapshot = [this] {
         std::lock_guard<std::mutex> lock(tools_mutex_);
-        old_names.insert(cached_tool_names_.begin(),
-                         cached_tool_names_.end());
-    }
+        return std::set<std::string>(cached_tool_names_.begin(),
+                                     cached_tool_names_.end());
+    };
 
+    std::set<std::string> old_names = snapshot();
     query_tools();
+    std::set<std::string> new_names = snapshot();
 
-    std::set<std::string> new_names;
-    {
-        std::lock_guard<std::mutex> lock(tools_mutex_);
-        new_names.insert(cached_tool_names_.begin(),
-                         cached_tool_names_.end());
-    }
-
-    std::vector<std::string> added;
-    std::vector<std::string> removed;
-    std::set_difference(new_names.begin(), new_names.end(),
-                        old_names.begin(), old_names.end(),
-                        std::back_inserter(added));
-    std::set_difference(old_names.begin(), old_names.end(),
-                        new_names.begin(), new_names.end(),
-                        std::back_inserter(removed));
+    auto added = names_diff(new_names, old_names);
+    auto removed = names_diff(old_names, new_names);
 
     logger->info("Server '{}' tools refreshed: +{} -{}",
                  name_, added.size(), removed.size());

@@ -443,7 +443,7 @@ private:
  * @param repo_dir Repository root directory.
  * @param data_dir Path to bundled data directory.
  * @internal
- * @version 1.8.5
+ * @version 2.3.7
  */
 GitServer::GitServer(
     const std::filesystem::path& repo_dir,
@@ -451,8 +451,20 @@ GitServer::GitServer(
     : MCPServerBase("git")
     , repo_dir_(repo_dir) {
 
-    std::string tools_dir = data_dir + "/tools";
+    create_git_tools(data_dir + "/tools");
+    register_git_tools();
 
+    logger->info("GitServer initialized: repo='{}'",
+                 repo_dir_.string());
+}
+
+/**
+ * @brief Construct the eight git tool instances (ctor step 1).
+ * @param tools_dir Directory holding the tool JSON definitions.
+ * @internal
+ * @version 2.3.7
+ */
+void GitServer::create_git_tools(const std::string& tools_dir) {
     status_ = std::make_unique<GitStatusTool>(
         load_tool_definition("status", "git", tools_dir), *this);
     diff_ = std::make_unique<GitDiffTool>(
@@ -469,7 +481,14 @@ GitServer::GitServer(
         load_tool_definition("add", "git", tools_dir), *this);
     reset_ = std::make_unique<GitResetTool>(
         load_tool_definition("reset", "git", tools_dir), *this);
+}
 
+/**
+ * @brief Register the eight git tools with the base server (step 2).
+ * @internal
+ * @version 2.3.7
+ */
+void GitServer::register_git_tools() {
     register_tool(status_.get());
     register_tool(diff_.get());
     register_tool(log_.get());
@@ -478,9 +497,6 @@ GitServer::GitServer(
     register_tool(checkout_.get());
     register_tool(add_.get());
     register_tool(reset_.get());
-
-    logger->info("GitServer initialized: repo='{}'",
-                 repo_dir_.string());
 }
 
 /**

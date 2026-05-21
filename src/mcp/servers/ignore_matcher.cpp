@@ -366,7 +366,7 @@ void IgnoreMatcher::load_file(const fs::path& path,
 /**
  * @brief Load all .gitignore files (recursive) + .explorerignore.
  * @internal
- * @version 2.1.4
+ * @version 2.3.7
  */
 void IgnoreMatcher::load(const fs::path& root) {
     rules_.clear();
@@ -380,10 +380,25 @@ void IgnoreMatcher::load(const fs::path& root) {
     fs::path root_gi = canonical_root / ".gitignore";
     if (fs::exists(root_gi)) { load_file(root_gi, ""); }
 
+    load_nested_gitignores(canonical_root, root_gi);
+
+    fs::path explorer = canonical_root / ".explorerignore";
+    if (fs::exists(explorer)) { load_file(explorer, ""); }
+}
+
+/**
+ * @brief Recursively load nested .gitignore files under the root.
+ * @param canonical_root Canonical project root.
+ * @param root_gi The root .gitignore (skipped during the scan).
+ * @internal
+ * @version 2.3.7
+ */
+void IgnoreMatcher::load_nested_gitignores(
+    const fs::path& canonical_root, const fs::path& root_gi) {
     // Recursively discover .gitignore files in subdirectories. We skip
-    // the root one (already loaded) and also skip directories that the
-    // accumulated rule set already excludes (avoids descending into
-    // node_modules just to find an irrelevant .gitignore).
+    // the root one (already loaded) and directories the accumulated
+    // rule set already excludes (avoids descending into node_modules
+    // just to find an irrelevant .gitignore).
     try {
         auto it = fs::recursive_directory_iterator(
             canonical_root,
@@ -399,9 +414,6 @@ void IgnoreMatcher::load(const fs::path& root) {
     } catch (const std::exception& e) {
         logger->warn("Recursive gitignore scan aborted: {}", e.what());
     }
-
-    fs::path explorer = canonical_root / ".explorerignore";
-    if (fs::exists(explorer)) { load_file(explorer, ""); }
 }
 
 /**

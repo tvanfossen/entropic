@@ -58,6 +58,21 @@ public:
     const std::filesystem::path& repo_dir() const;
 
 private:
+    /**
+     * @brief Construct the eight git tool instances (ctor step 1).
+     * @param tools_dir Directory holding the tool JSON definitions.
+     * @internal
+     * @version 2.3.7
+     */
+    void create_git_tools(const std::string& tools_dir);
+
+    /**
+     * @brief Register the eight git tools with the base server (step 2).
+     * @internal
+     * @version 2.3.7
+     */
+    void register_git_tools();
+
     std::filesystem::path repo_dir_; ///< Repository root
 
     std::unique_ptr<GitStatusTool> status_;

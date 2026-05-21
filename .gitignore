@@ -109,3 +109,4 @@ sqlite3/
 # Release tarballs
 dist/
 .claude/scheduled_tasks.lock
+/report.txt

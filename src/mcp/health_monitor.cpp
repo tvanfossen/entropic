@@ -199,7 +199,7 @@ void HealthMonitor::check_server(
  * @param name Server name.
  * @param entry Watch entry.
  * @utility
- * @version 1.8.7
+ * @version 2.3.7
  */
 void HealthMonitor::attempt_reconnect(
     const std::string& name,
@@ -227,25 +227,8 @@ void HealthMonitor::attempt_reconnect(
     logger->info("Reconnecting to '{}' (attempt {})",
                  name, entry.reconnect_attempt + 1);
 
-    bool ok = entry.client->connect();
-    if (ok) {
-        auto [added, removed] = entry.client->refresh_tools();
-        entry.status = "connected";
-        entry.reconnect_attempt = 0;
-
-        HealthEvent evt;
-        evt.server_name = name;
-        evt.old_status = "reconnecting";
-        evt.new_status = "connected";
-        evt.added_tools = std::move(added);
-        evt.removed_tools = std::move(removed);
-        {
-            std::lock_guard<std::mutex> lock(event_mutex_);
-            event_queue_.push_back(std::move(evt));
-        }
-
-        logger->info("Server '{}' reconnected", name);
-        entry.next_action = std::chrono::steady_clock::now();
+    if (entry.client->connect()) {
+        on_reconnect_success(name, entry);
         return;
     }
 
@@ -257,6 +240,34 @@ void HealthMonitor::attempt_reconnect(
 
     logger->info("Server '{}' reconnect failed, "
                  "retry in {}ms", name, delay);
+}
+
+/**
+ * @brief Handle a successful reconnect: refresh, mark, enqueue event.
+ * @param name Server name.
+ * @param entry Watch entry (mutated to connected).
+ * @internal
+ * @version 2.3.7
+ */
+void HealthMonitor::on_reconnect_success(const std::string& name,
+                                         WatchEntry& entry) {
+    auto [added, removed] = entry.client->refresh_tools();
+    entry.status = "connected";
+    entry.reconnect_attempt = 0;
+
+    HealthEvent evt;
+    evt.server_name = name;
+    evt.old_status = "reconnecting";
+    evt.new_status = "connected";
+    evt.added_tools = std::move(added);
+    evt.removed_tools = std::move(removed);
+    {
+        std::lock_guard<std::mutex> lock(event_mutex_);
+        event_queue_.push_back(std::move(evt));
+    }
+
+    logger->info("Server '{}' reconnected", name);
+    entry.next_action = std::chrono::steady_clock::now();
 }
 
 /**

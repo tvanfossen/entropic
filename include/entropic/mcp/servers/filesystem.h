@@ -154,6 +154,21 @@ public:
     const IgnoreMatcher& ignore() const;
 
 private:
+    /**
+     * @brief Construct the six filesystem tool instances (ctor step 1).
+     * @param data_dir Directory holding tool JSON definitions.
+     * @internal
+     * @version 2.3.7
+     */
+    void create_fs_tools(const std::string& data_dir);
+
+    /**
+     * @brief Register the six filesystem tools (ctor step 2).
+     * @internal
+     * @version 2.3.7
+     */
+    void register_fs_tools();
+
     std::filesystem::path root_dir_;  ///< Project root
     FilesystemConfig config_;         ///< Filesystem config
     int max_read_bytes_ = 0;          ///< Size gate limit

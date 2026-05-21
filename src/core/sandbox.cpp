@@ -449,12 +449,31 @@ static bool capture_diff(
 }
 
 /**
+ * @brief Strip a directory prefix `p` from the front of `line`.
+ * @param[in,out] line Path line to trim in place.
+ * @param p Prefix directory (a trailing slash is added if missing).
+ * @utility
+ * @version 2.3.7
+ */
+static void trim_path_prefix(std::string& line, std::string p) {
+    if (!p.empty() && p.back() != '/') { p += '/'; }
+    size_t n = 0;
+    if (line.rfind(p, 0) == 0) {
+        n = p.size();
+    } else if (!p.empty() && p.front() == '/'
+               && line.rfind(p.substr(1), 0) == 0) {
+        n = p.size() - 1;
+    }
+    if (n > 0) { line.erase(0, n); }
+}
+
+/**
  * @brief List files differing between `base` and `head` via `diff -rq`-style logic.
  * @param base Snapshot directory.
  * @param head Final sandbox directory.
  * @return Vector of relative paths.
  * @utility
- * @version 2.1.5-cb
+ * @version 2.3.7
  */
 static std::vector<std::filesystem::path> diff_files(
     const std::filesystem::path& base,
@@ -464,25 +483,14 @@ static std::vector<std::filesystem::path> diff_files(
                       + shell_quote(base) + " " + shell_quote(head);
     std::string out;
     run_capture(cmd, out);
-    auto trim_one = [](std::string& line, std::string p) {
-        if (!p.empty() && p.back() != '/') { p += '/'; }
-        size_t n = 0;
-        if (line.rfind(p, 0) == 0) {
-            n = p.size();
-        } else if (!p.empty() && p.front() == '/'
-                   && line.rfind(p.substr(1), 0) == 0) {
-            n = p.size() - 1;
-        }
-        if (n > 0) { line.erase(0, n); }
-    };
     std::istringstream iss(out);
     std::string line;
     auto base_s = base.string();
     auto head_s = head.string();
     while (std::getline(iss, line)) {
         if (line.empty()) { continue; }
-        trim_one(line, base_s);
-        trim_one(line, head_s);
+        trim_path_prefix(line, base_s);
+        trim_path_prefix(line, head_s);
         changed.emplace_back(line);
     }
     return changed;

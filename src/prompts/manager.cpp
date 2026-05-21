@@ -97,12 +97,38 @@ const char* prompt_type_to_string(PromptType type)
 }
 
 /**
+ * @brief Map a frontmatter type string to a PromptType.
+ * @param type_str Frontmatter "type" value.
+ * @param path Prompt path (for the error message).
+ * @param[out] err Set to a diagnostic on an unknown type.
+ * @return The PromptType (default-constructed on unknown).
+ * @utility
+ * @version 2.3.7
+ */
+static PromptType prompt_type_from_string(
+    const std::string& type_str, const std::filesystem::path& path,
+    std::string& err) {
+    PromptType t{};
+    if (type_str == "constitution") {
+        t = PromptType::CONSTITUTION;
+    } else if (type_str == "app_context") {
+        t = PromptType::APP_CONTEXT;
+    } else if (type_str == "identity") {
+        t = PromptType::IDENTITY;
+    } else {
+        err = "prompt file " + path.string()
+              + " has unknown type '" + type_str + "'";
+    }
+    return t;
+}
+
+/**
  * @brief Parse a prompt file: validate frontmatter, return body.
  * @param path Path to .md prompt file.
  * @param expected_type Expected frontmatter type.
  * @param[out] result Output: type, version, body.
  * @return Empty string on success, error on failure.
- * @version 1.8.2
+ * @version 2.3.7
  * @utility
  */
 std::string parse_prompt_file(
@@ -134,16 +160,7 @@ std::string parse_prompt_file(
 
     PromptType actual_type{};
     if (err.empty()) {
-        if (type_str == "constitution") {
-            actual_type = PromptType::CONSTITUTION;
-        } else if (type_str == "app_context") {
-            actual_type = PromptType::APP_CONTEXT;
-        } else if (type_str == "identity") {
-            actual_type = PromptType::IDENTITY;
-        } else {
-            err = "prompt file " + path.string()
-                  + " has unknown type '" + type_str + "'";
-        }
+        actual_type = prompt_type_from_string(type_str, path, err);
     }
 
     if (err.empty() && actual_type != expected_type) {
@@ -225,6 +242,34 @@ static void extract_benchmark(
  * @version 2.0.6-rc18
  * @internal
  */
+/**
+ * @brief Extract the scalar sampler/loop/flag fields of an identity.
+ * @param root YAML root node.
+ * @param[out] fm Identity frontmatter to populate.
+ * @utility
+ * @version 2.3.7
+ */
+static void extract_identity_flags(ryml::ConstNodeRef root,
+                                   IdentityFrontmatter& fm) {
+    extract(root, "max_output_tokens", fm.max_output_tokens);
+    extract(root, "temperature", fm.temperature);
+    extract(root, "repeat_penalty", fm.repeat_penalty);
+    extract(root, "enable_thinking", fm.enable_thinking);
+    extract(root, "interstitial", fm.interstitial);
+    extract(root, "routable", fm.routable);
+    extract(root, "explicit_completion", fm.explicit_completion);
+    extract(root, "relay_single_delegate", fm.relay_single_delegate);
+    // E6 (2.0.6-rc18): per-identity loop + tool-call caps
+    extract(root, "max_iterations", fm.max_iterations);
+    extract(root, "max_tool_calls_per_turn", fm.max_tool_calls_per_turn);
+    extract_string_list(root, "validation_rules", fm.validation_rules);
+}
+
+/**
+ * @brief Extract all identity frontmatter fields into the struct.
+ * @internal
+ * @version 2.3.7
+ */
 static void extract_identity_fields(
     ryml::ConstNodeRef root, IdentityFrontmatter& fm)
 {
@@ -246,18 +291,7 @@ static void extract_identity_fields(
     extract_string_list_opt(root, "allowed_tools", fm.allowed_tools);
     extract_string_list_opt(root, "bash_commands", fm.bash_commands);
 
-    extract(root, "max_output_tokens", fm.max_output_tokens);
-    extract(root, "temperature", fm.temperature);
-    extract(root, "repeat_penalty", fm.repeat_penalty);
-    extract(root, "enable_thinking", fm.enable_thinking);
-    extract(root, "interstitial", fm.interstitial);
-    extract(root, "routable", fm.routable);
-    extract(root, "explicit_completion", fm.explicit_completion);
-    extract(root, "relay_single_delegate", fm.relay_single_delegate);
-    // E6 (2.0.6-rc18): per-identity loop + tool-call caps
-    extract(root, "max_iterations", fm.max_iterations);
-    extract(root, "max_tool_calls_per_turn", fm.max_tool_calls_per_turn);
-    extract_string_list(root, "validation_rules", fm.validation_rules);
+    extract_identity_flags(root, fm);
 
     extract_phases(root, fm);
     extract_benchmark(root, fm);

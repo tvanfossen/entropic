@@ -160,7 +160,39 @@ ent_decision_t DelegationManager::fire_start_cb(
  * @param sandbox_result Patch artifact.
  * @param result         Original delegation result.
  * @internal
- * @version 2.1.6
+ * @version 2.3.7
+ */
+/**
+ * @brief Fill the C-ABI delegation-result struct from C++ values.
+ * @param sb_info Sandbox identity.
+ * @param sandbox_result Patch artifact.
+ * @param result Original delegation result.
+ * @param files_c NULL-terminated touched-files array (must outlive use).
+ * @param files_len Number of touched files.
+ * @return Filled ent_delegation_result_t (borrows the inputs).
+ * @utility
+ * @version 2.3.7
+ */
+static ent_delegation_result_t build_delegation_result_struct(
+    const SandboxInfo& sb_info, const SandboxResult& sandbox_result,
+    const DelegationResult& result,
+    const std::vector<const char*>& files_c, size_t files_len) {
+    ent_delegation_result_t res{};
+    res.delegation_id     = sb_info.delegation_id.c_str();
+    res.target_tier       = result.target_tier.c_str();
+    res.success           = result.success ? 1 : 0;
+    res.summary           = result.summary.c_str();
+    res.patch             = sandbox_result.patch.c_str();
+    res.patch_len         = sandbox_result.patch.size();
+    res.files_touched     = files_c.data();
+    res.files_touched_len = files_len;
+    return res;
+}
+
+/**
+ * @brief Deliver a finished sandbox patch to the completion callback.
+ * @internal
+ * @version 2.3.7
  */
 void DelegationManager::deliver_sandbox_result(
     const SandboxInfo& sb_info,
@@ -183,29 +215,11 @@ void DelegationManager::deliver_sandbox_result(
     for (const auto& s : files_owned) { files_c.push_back(s.c_str()); }
     files_c.push_back(nullptr);
 
-    ent_delegation_result_t res{};
-    res.delegation_id     = sb_info.delegation_id.c_str();
-    res.target_tier       = result.target_tier.c_str();
-    res.success           = result.success ? 1 : 0;
-    res.summary           = result.summary.c_str();
-    res.patch             = sandbox_result.patch.c_str();
-    res.patch_len         = sandbox_result.patch.size();
-    res.files_touched     = files_c.data();
-    res.files_touched_len = files_owned.size();
+    ent_delegation_result_t res = build_delegation_result_struct(
+        sb_info, sandbox_result, result, files_c, files_owned.size());
 
-    // Exception shield: a buggy consumer must never unwind through
-    // the engine. Treat throw as REJECT so the patch is preserved on
-    // disk for inspection (gh#29 hardening — same policy as
-    // fire_start_cb).
-    ent_decision_t decision;
-    try {
-        decision = delegation_complete_cb_(&res, delegation_cb_data_);
-    } catch (...) {
-        logger->warn("delegation_complete_cb threw for {}; treating as "
-                     "REJECT (patch preserved to pending/)",
-                     sb_info.delegation_id);
-        decision = ENT_DECISION_REJECT;
-    }
+    ent_decision_t decision =
+        invoke_complete_cb(res, sb_info.delegation_id);
     if (decision == ENT_DECISION_REJECT) {
         persist_pending_patch(sb_info, sandbox_result,
                               "consumer REJECTED");
@@ -215,6 +229,28 @@ void DelegationManager::deliver_sandbox_result(
                      sb_info.delegation_id,
                      sandbox_result.files_touched.size(),
                      sandbox_result.patch.size());
+    }
+}
+
+/**
+ * @brief Invoke delegation_complete_cb_ under an exception shield.
+ * @param res Filled result struct.
+ * @param delegation_id For the warn log on throw.
+ * @return Consumer decision (REJECT on throw, gh#29).
+ * @internal
+ * @version 2.3.7
+ */
+ent_decision_t DelegationManager::invoke_complete_cb(
+    const ent_delegation_result_t& res, const std::string& delegation_id) {
+    // Exception shield: a buggy consumer must never unwind through the
+    // engine. Treat throw as REJECT so the patch is preserved on disk
+    // for inspection (gh#29 hardening — same policy as fire_start_cb).
+    try {
+        return delegation_complete_cb_(&res, delegation_cb_data_);
+    } catch (...) {
+        logger->warn("delegation_complete_cb threw for {}; treating as "
+                     "REJECT (patch preserved to pending/)", delegation_id);
+        return ENT_DECISION_REJECT;
     }
 }
 

@@ -430,6 +430,21 @@ private:
         const DelegationResult& result);
 
     /**
+     * @brief Invoke delegation_complete_cb_ under an exception shield.
+     *
+     * Extracted from deliver_sandbox_result. A throwing consumer is
+     * treated as REJECT so the patch is preserved (gh#29 hardening).
+     *
+     * @param res Filled result struct.
+     * @param delegation_id For the warn log on throw.
+     * @return The consumer's decision (REJECT on throw).
+     * @internal
+     * @version 2.3.7
+     */
+    ent_decision_t invoke_complete_cb(const ent_delegation_result_t& res,
+                                      const std::string& delegation_id);
+
+    /**
      * @brief Persist a patch to pending/ + log a WARN message.
      *
      * Extracted from `deliver_sandbox_result` to keep that function

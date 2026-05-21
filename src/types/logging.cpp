@@ -11,6 +11,7 @@
 #include <spdlog/sinks/sink.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <filesystem>
 #include <mutex>
 #include <unordered_map>
@@ -116,6 +117,14 @@ private:
 
 static std::shared_ptr<HandleAwareSink> s_dispatcher;
 
+// gh#59 follow-up (v2.3.7): once the console sink is disabled
+// (set_console_enabled(false)), this flag makes get() strip s_sink
+// from every logger it creates afterward. Without it, loggers built
+// lazily during a turn re-inherit s_sink by copying the default
+// logger's sink list, leaking engine output to fd 2 — which is the
+// TUI's paint stream.
+static std::atomic<bool> s_console_disabled{false};
+
 // gh#58 (v2.2.5): the v2.2.5 sink-dedup workaround. Kept around for
 // backward compatibility with `setup_session()` callers that don't go
 // through `register_handle_log()` yet (e.g. early-init / test fixtures
@@ -196,7 +205,7 @@ void add_file_sink(const std::filesystem::path& path) {
  *
  * @param name Logger name.
  * @return Shared pointer to the logger.
- * @version 1.10.4
+ * @version 2.3.7
  * @internal
  */
 std::shared_ptr<spdlog::logger> get(const std::string& name) {
@@ -211,9 +220,46 @@ std::shared_ptr<spdlog::logger> get(const std::string& name) {
     auto new_logger = std::make_shared<spdlog::logger>(
         name, default_logger->sinks().begin(),
         default_logger->sinks().end());
+    // gh#59 follow-up (v2.3.7): if the console was disabled, the
+    // default logger may still carry s_sink (or a copy raced in);
+    // strip it so this lazily-created logger doesn't leak to stderr.
+    if (s_console_disabled.load() && s_sink) {
+        auto& sinks = new_logger->sinks();
+        sinks.erase(
+            std::remove(sinks.begin(), sinks.end(), s_sink),
+            sinks.end());
+    }
     new_logger->set_level(default_logger->level());
     spdlog::register_logger(new_logger);
     return new_logger;
+}
+
+/**
+ * @brief Enable/disable the stderr console sink process-wide.
+ * @param enabled false strips s_sink everywhere + flags get().
+ * @utility
+ * @version 2.3.7
+ */
+void set_console_enabled(bool enabled) {
+    if (enabled) {
+        return;  // default state; nothing installed/removed here
+    }
+    s_console_disabled.store(true);
+    if (!s_sink) {
+        return;
+    }
+    // Strip s_sink from the default logger so future get() copies a
+    // clean list, and from every already-registered logger.
+    auto strip = [](std::shared_ptr<spdlog::logger> l) {
+        auto& sinks = l->sinks();
+        sinks.erase(
+            std::remove(sinks.begin(), sinks.end(), s_sink),
+            sinks.end());
+    };
+    if (auto dl = spdlog::default_logger()) {
+        strip(dl);
+    }
+    spdlog::apply_all(strip);
 }
 
 /**

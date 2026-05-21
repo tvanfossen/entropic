@@ -103,6 +103,7 @@ EXPORTS = frozenset(
         "entropic_run_messages",
         "entropic_run_messages_streaming",
         "entropic_run_streaming",
+        "entropic_seconds_since_last_activity",
         "entropic_serialize_mcp_keys",
         "entropic_set_attempt_boundary_cb",
         "entropic_set_critique_callbacks",

@@ -88,6 +88,24 @@ ENTROPIC_EXPORT std::shared_ptr<spdlog::logger> get(const std::string& name);
 ENTROPIC_EXPORT void setup_session(const std::filesystem::path& log_dir);
 
 /**
+ * @brief Enable or disable the stderr console sink process-wide.
+ *
+ * When disabled, the shared stderr sink (s_sink) is stripped from the
+ * default logger and every registered logger, and a process-global
+ * flag makes `get()` filter it out of any logger created afterwards.
+ * Engine output then routes to the per-handle file sink only.
+ *
+ * TUI consumers that paint to fd 2 (stderr) MUST disable this — an
+ * engine log line on fd 2 corrupts the painted screen. Default state
+ * (console enabled) is unchanged for operator/CLI consumers.
+ *
+ * @param enabled true to keep the console sink (default), false to
+ *        remove it everywhere including future loggers.
+ * @version 2.3.7
+ */
+ENTROPIC_EXPORT void set_console_enabled(bool enabled);
+
+/**
  * @brief gh#59 (v2.3.1): register a per-handle session.log file.
  *
  * Replaces the old global-mutation behavior of `add_file_sink` for
@@ -130,6 +148,7 @@ ENTROPIC_EXPORT void unregister_handle_log(int handle_id);
  * a handle's behalf (external_bridge serve threads), wrap the thread
  * body in another HandleLogScope.
  *
+ * @internal
  * @version 2.3.1
  */
 class ENTROPIC_EXPORT HandleLogScope {

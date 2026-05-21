@@ -433,7 +433,7 @@ static void parse_speculative_config(
  * @param root YAML root node.
  * @param config Config to populate.
  * @internal
- * @version 2.1.11
+ * @version 2.3.7
  */
 static void parse_optional_sections(
     ryml::ConstNodeRef root,
@@ -468,6 +468,7 @@ static void parse_optional_sections(
     extract_path(root, "config_dir", config.config_dir);
     extract_path(root, "log_dir", config.log_dir);
     extract(root, "ggml_logging", config.ggml_logging);
+    extract(root, "console_logging", config.console_logging);
 
     extract_tri_state_path(root, "constitution",
                            config.constitution, config.constitution_disabled);

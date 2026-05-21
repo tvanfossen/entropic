@@ -1420,10 +1420,16 @@ static entropic_error_t init_orchestrator(
 /**
  * @brief Shared body of all entropic_configure* entry points.
  * @internal
- * @version 2.2.9
+ * @version 2.3.7
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    // gh#59 follow-up (v2.3.7): honor console_logging before any init
+    // logging fires. When false, strip the stderr console sink so the
+    // file sink (already installed by setup_session) is the only route
+    // — TUI consumers paint to fd 2 and can't tolerate engine output
+    // there. Default (true) is a no-op; operators keep stderr logs.
+    entropic::log::set_console_enabled(h->config.console_logging);
     auto data_dir = entropic::config::resolve_data_dir(h->config);
     if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
         return rc;

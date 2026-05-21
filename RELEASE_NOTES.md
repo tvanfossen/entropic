@@ -1,3 +1,57 @@
+# entropic v2.3.7
+
+Patch release. **`console_logging` config to silence the stderr sink.**
+Lets a consumer that paints to fd 2 (a TUI) keep the engine's spdlog
+output off the terminal entirely — routed to the per-handle file sink
+only.
+
+## The bug
+
+The stderr console sink (`s_sink`, a `stderr_color_sink_mt`) is created
+once in `log::init()` and attached to the default logger. Every logger
+created lazily during a turn goes through `log::get()`, which builds the
+new logger by **copying the default logger's sink list** — so each one
+re-inherits `s_sink` and writes to stderr.
+
+`setup_session()` calls `remove_console_sink()`, but that only does
+`spdlog::apply_all(...)` over already-registered loggers; it does not
+prevent `get()` from copying `s_sink` into loggers created *after*
+session setup. The result: generation-time loggers still leak to
+stderr no matter what.
+
+For a CLI/operator that's fine (and desirable). For a Textual TUI it's
+fatal — Textual paints the screen to fd 2 (`sys.__stderr__`), so an
+engine log line on stderr corrupts the painted frame (intermittent
+flash-then-restore mid-stream). The downstream consumer had to clamp
+its log level to WARNING to keep the flooding tolerable, which threw
+away the entire INFO-level delegation/generation transcript from the
+session log.
+
+## Fix
+
+New `config.console_logging` (bool, default **true** — unchanged
+behavior for existing consumers). When false:
+
+- `log::set_console_enabled(false)` strips `s_sink` from the default
+  logger **and** every registered logger, and
+- sets a process-global flag that makes `log::get()` filter `s_sink`
+  out of any logger it creates afterward.
+
+So once disabled, no logger — existing or lazily created later — carries
+the stderr sink. Engine output routes to the per-handle `session.log`
+file sink only. Wired into `configure_common()` (all configure paths)
+right after config parse, before any init logging fires.
+
+C ABI / wrapper: strictly additive — one new config field. Drop-in for
+any 2.3.x-compiled consumer; absent the field, `console_logging`
+defaults true and behavior is identical to 2.3.6.
+
+**Consumer impact (bissell):** set `console_logging: false` in the
+engine defaults and restore `log_level: INFO` — the TUI flash is gone
+and the full transcript is captured to `session.log` again.
+
+---
+
 # entropic v2.3.6
 
 Patch release. **Relocatable bundled-model registry discovery.** The

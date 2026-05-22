@@ -16,15 +16,20 @@
  *   `--special` to surface them; programmatic generation receives the
  *   tokens already detokenised, so the adapter's base-class
  *   `strip_think_blocks` / `extract_thinking` handle them naturally.
- * - **Tool-call format:** vLLM uses the `qwen3_coder` parser — the
- *   same XML function-call format as Qwen 3.5 / 3.6:
+ * - **Tool-call format:** the vLLM docs advertise the `qwen3_coder` XML
+ *   parser, but empirical capture (gh#70, v2.3.8) showed the bundled
+ *   `nemotron_h` GGUFs actually emit a **DSML invoke** format at every
+ *   precision (Q4_K_XL / Q8_0 / BF16):
  *   @code
- *   <tool_call>
- *   <function=tool.name>
- *   <parameter=key>value</parameter>
- *   </function>
- *   </tool_call>
+ *   <｜DSML｜function_calls>
+ *   <｜DSML｜invoke name="tool.name">
+ *   <｜DSML｜parameter name="key" string="value"/>
+ *   </｜DSML｜invoke>
+ *   </｜DSML｜function_calls>
  *   @endcode
+ *   (fullwidth-pipe `｜` = U+FF5C; self-closing typed parameter tags).
+ *   The adapter parses DSML first, then falls back to the qwen XML and
+ *   tagged-JSON paths for rigged-prompt / mixed-format consumers.
  * - **Reasoning trace:** yes — handled by base-class think-block
  *   primitives; no Nemotron-specific override needed.
  *
@@ -32,7 +37,7 @@
  *
  * Internal to inference .so.
  *
- * @version 2.1.9
+ * @version 2.3.8
  */
 
 #pragma once
@@ -66,10 +71,10 @@ public:
     std::string chat_format() const override { return ""; }
 
     /**
-     * @brief Parse XML function calls; fall back to tagged JSON.
+     * @brief Parse DSML invoke calls; fall back to qwen XML, then tagged JSON.
      * @param content Raw model output.
      * @return ParseResult.
-     * @version 2.1.9
+     * @version 2.3.8
      */
     ParseResult parse_tool_calls(const std::string& content) const override;
 
@@ -86,15 +91,45 @@ public:
 
 protected:
     /**
-     * @brief Format tools as a `<tools>` JSON array, OpenAI function shape.
+     * @brief Format tools as a `<tools>` JSON array, then teach DSML invoke.
      * @param tool_jsons Tool definition JSON strings.
      * @return Section to inject into the system prompt.
-     * @version 2.1.9
+     * @version 2.3.8
      */
     std::string format_tools(
         const std::vector<std::string>& tool_jsons) const override;
 
 private:
+    /**
+     * @brief Parse `<｜DSML｜invoke name="X">...</｜DSML｜invoke>` blocks.
+     *
+     * Primary parser for Nemotron 3 (gh#70). Matches each invoke block
+     * (whether or not wrapped in `<｜DSML｜function_calls>`) and extracts
+     * its self-closing typed parameter tags.
+     *
+     * @param content Model output.
+     * @return Vector of parsed tool calls.
+     * @internal
+     * @version 2.3.8
+     */
+    std::vector<ToolCall> parse_dsml_function_calls(
+        const std::string& content) const;
+
+    /**
+     * @brief Extract `<｜DSML｜parameter name="K" string="V"/>` pairs.
+     *
+     * Accepts the `string` / `int` / `bool` / `value` typed attribute
+     * keywords; the captured value is stored verbatim (no JSON quoting),
+     * matching the qwen XML parameter convention.
+     *
+     * @param invoke_body Invoke block body text.
+     * @return Map of parameter key -> value.
+     * @internal
+     * @version 2.3.8
+     */
+    std::unordered_map<std::string, std::string> extract_dsml_parameters(
+        const std::string& invoke_body) const;
+
     /**
      * @brief Parse `<function=name><parameter=key>value</parameter></function>` blocks.
      * @param content Model output.

@@ -107,6 +107,25 @@ public:
     }
 
     /**
+     * @brief Clear prompt/KV caches before each scenario for isolation.
+     *
+     * The orchestrator is loaded once and shared across scenarios; under
+     * Catch2's randomized scenario order, a prior scenario's cached prompt
+     * prefix could otherwise condition the next scenario's generation
+     * (e.g. the smoke math answer flipped when the toolcall battery ran
+     * first). Clearing per case makes every scenario start from a clean
+     * model state regardless of order.
+     *
+     * @utility
+     * @version 2.3.8
+     */
+    void testCaseStarting(Catch::TestCaseInfo const& /*tc*/) override {
+        if (g_ctx.orchestrator) {
+            g_ctx.orchestrator->clear_all_prompt_caches();
+        }
+    }
+
+    /**
      * @brief Shutdown orchestrator at end of run if it loaded.
      * @utility
      * @version 2.1.9

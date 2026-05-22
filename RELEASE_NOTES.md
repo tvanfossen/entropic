@@ -1,3 +1,99 @@
+# entropic v2.3.8
+
+Patch release. **Two new-family adapters now parse the tool-call format
+their models actually emit (gh#69, gh#70), plus a CPU-only adapter
+acceptance gate (gh#71) that would have caught both before ship.**
+
+## The bugs
+
+Both Gemma 4 and Nemotron 3 shipped with a tool-call parser keyed to a
+format the model never produces under the production prompt, so every
+turn registered "no tool call" and the agent loop spiralled to the
+iteration cap — **0/6 completion** in both cases.
+
+- **gh#69 — gemma4:** Gemma 4 (E2B + E4B) emits tool calls inside a
+  ChatML-style channel whose opening header is `<|im_start|>tool_call`
+  with a plain `</tool_call>` close (asymmetric). The base parser only
+  accepted `<tool_call>` / `<|tool_call>` / `<|tool_call|>`, so the
+  channel form matched zero calls and the header leaked into the
+  assistant body.
+- **gh#70 — nemotron3:** the `nemotron_h` GGUFs emit a **DSML invoke**
+  format (`<｜DSML｜invoke name="X">…</｜DSML｜invoke>`, fullwidth-pipe
+  `｜` = U+FF5C) at every precision (Q4_K_XL / Q8_0 / BF16), not the
+  qwen3_coder XML the adapter parsed and taught. BF16 full weights
+  produced coherent calls in the wrong format → 0 calls extracted.
+
+## Fixes
+
+- **gh#69:** `parse_tagged_tool_calls` (base) accepts `<|im_start|>tool_call`
+  as a fourth open variant; the Gemma4 cleaning regex mirrors it; and
+  `kGemmaTemplateMarkers` scrubs a stray `<|im_start|>tool_call` channel
+  header.
+- **gh#70:** new `parse_dsml_function_calls` + `extract_dsml_parameters`
+  in `Nemotron3Adapter` (primary parser); `format_tools` rewritten to
+  teach DSML; `clean_content` scrubs three DSML layers (the
+  `function_calls` wrapper, bare `invoke` blocks, and any remaining
+  `<｜…｜>` channel token — catches `<｜begin▁of▁sentence｜>` BOS spam on
+  lower quants). The qwen XML and tagged-JSON paths stay as backstops.
+
+## The methodology fix (gh#71)
+
+Both bugs passed the old suite because the unit tests were tautological
+(fed the adapter the format it assumes) and the model-tier tool-call
+tests rigged the prompt and were SKIP-gated. New
+`tests/unit/inference/adapter_acceptance_test.cpp` is a per-adapter gate
+built on **verbatim consumer-captured emits** with strict assertions
+(exact call count + names + args + zero `cleaned_content` leakage) and
+**no SKIP** — it runs every commit on every CI machine, no model or GPU.
+Dispositively verified: with the v2.3.8 source fix removed, the six
+`[gh69]` / `[gh70]` scenarios fail; the qwen positive anchors pass
+regardless.
+
+## Real-model guarantee (gh#71-phase-2)
+
+The CPU gate proves the parser; a model-tier gate now proves the
+**adapter end-to-end on the real GGUFs**. The previously rigged toolcall
+scenarios in `tests/model/test_v219_{nemotron3,gemma4_*}_family.cpp` were
+rewritten to drive generation under the **production prompt** (constitution
++ identity + the adapter's own `format_tools`, via
+`production_emission_helpers.h`) and assert that every *named* emission
+parses, with zero leakage. Per-scenario `clear_all_prompt_caches()`
+removes cross-scenario state bleed. Verified on the bundled GGUFs (GPU):
+
+| Model | Result |
+|---|---|
+| NVIDIA-Nemotron-3-Nano-4B (Q4_K_XL) | 3/3 — emits DSML, parsed |
+| gemma-4-E4B-it (Q8_0) | 3/3 |
+| gemma-4-26B-A4B-it (IQ4_XS) | 3/3 |
+| gemma-4-E2B-it (Q8_0) | 1/3 — see below |
+
+Dispositive: reverting the nemotron3 DSML parser drops it to 2/3 and the
+gate fails.
+
+**`tool_name` alias (adapter robustness).** The E2B run surfaced that
+weaker models emit the tool name under `tool_name` / `function` /
+`function_name` instead of `name`. The base parser now accepts these
+aliases (one shared `tool_call_from_json` helper across the tagged,
+bare-JSON, and recovery paths). Pinned by a verbatim CPU fixture.
+
+**Finding — Gemma 4 E2B is not a reliable tool-calling tier.** Under the
+production prompt E2B omits the function name *entirely* on some prompts
+(`<tool_call>{"path":"/etc/hostname"}</tool_call>` — no name). The
+adapter correctly refuses to fabricate a tool from bare args (guessing
+would be a fragile heuristic), so E2B parses only its named calls. The
+gh#69 channel-form fix is necessary but **not sufficient** to make E2B a
+tool tier; E4B / A4B are the tool-calling Gemma variants. E2B's model
+test asserts the adapter contract (no named call dropped) but not the
+strict per-prompt rate.
+
+## Consumer impact
+
+Rebuild against `librentropic.so.2` (v2.3.8) restores tool-calling on
+gemma-4-E2B/E4B and NVIDIA-Nemotron-3-Nano-4B (all quants). No ABI
+change — drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.7
 
 Patch release. **`console_logging` config to silence the stderr sink.**

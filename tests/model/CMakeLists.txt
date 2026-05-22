@@ -83,6 +83,10 @@ add_model_test(test-context-bleed         test_delegation_context_bleed.cpp)
 add_model_test(test-v219-qwen36       test_v219_qwen36_family.cpp)
 add_model_test(test-v219-gemma4-e2b   test_v219_gemma4_family.cpp)
 add_model_test(test-v219-gemma4-e4b   test_v219_gemma4_e4b_family.cpp)
+# v2.3.8 (gh#62): cross-quant tool-call consistency for E4B at UD-Q4_K_XL.
+# Same adapter + battery + assertions as the Q8_0 sibling above; the
+# different binary makes a quant regression visible in the release gate.
+add_model_test(test-v219-gemma4-e4b-q4 test_v219_gemma4_e4b_q4_family.cpp)
 add_model_test(test-v219-gemma4-a4b   test_v219_gemma4_a4b_family.cpp)
 add_model_test(test-v219-nemotron3    test_v219_nemotron3_family.cpp)
 

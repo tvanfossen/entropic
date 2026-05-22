@@ -41,6 +41,54 @@ std::string generate_uuid() {
     return "tc-" + std::to_string(counter.fetch_add(1, std::memory_order_relaxed));
 }
 
+/**
+ * @brief Extract a tool name from a JSON call object, accepting aliases.
+ *
+ * gh#71-phase-2: weaker models (e.g. Gemma 4 E2B) emit the tool name
+ * under `tool_name` / `function` / `function_name` instead of the
+ * canonical `name`. These are well-formed calls in everything but the
+ * key spelling — accept the common aliases rather than drop the call.
+ * A call with no name key under any alias is genuinely unparseable
+ * (the function is unknown) and yields an empty string.
+ *
+ * @param j Parsed JSON tool-call object.
+ * @return The tool name, or empty string if no name key is present.
+ * @internal
+ * @version 2.3.8
+ */
+std::string tool_name_from_json(const nlohmann::json& j) {
+    for (const char* key : {"name", "tool_name", "function", "function_name"}) {
+        if (j.contains(key) && j[key].is_string()) {
+            return j[key].get<std::string>();
+        }
+    }
+    return "";
+}
+
+/**
+ * @brief Build a ToolCall from a parsed JSON object (name + args), or nullopt.
+ *
+ * Single source of truth for JSON-object -> ToolCall conversion, shared
+ * by the tagged, bare-JSON, and recovery paths so the name-alias and
+ * arguments/parameters handling stay consistent. Returns nullopt when no
+ * tool name is present under any accepted alias.
+ *
+ * @param j Parsed JSON tool-call object.
+ * @return Populated ToolCall, or nullopt if nameless.
+ * @internal
+ * @version 2.3.8
+ */
+std::optional<ToolCall> tool_call_from_json(const nlohmann::json& j) {
+    std::string name = tool_name_from_json(j);
+    if (name.empty()) { return std::nullopt; }
+    ToolCall tc;
+    tc.id = generate_uuid();
+    tc.name = std::move(name);
+    auto args = j.value("arguments", j.value("parameters", nlohmann::json::object()));
+    for (auto& [k, v] : args.items()) { tc.arguments[k] = v.dump(); }
+    return tc;
+}
+
 } // anonymous namespace
 
 // ── Constructor ────────────────────────────────────────────
@@ -159,7 +207,7 @@ bool ChatAdapter::is_response_complete(
  * @param content Model output content.
  * @return Vector of parsed tool calls.
  * @internal
- * @version 1.8.2
+ * @version 2.3.8
  */
 std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
     const std::string& content) const
@@ -171,11 +219,20 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
     // as `<|tool_call>` (trailing `|>` lost). Pre-v2.3.3 the regex
     // required a plain `<tool_call>` open, so Gemma 4's actual output
     // produced 0 tool calls and the engine looped on the retry banner.
-    // Open alternatives: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`.
-    // Close tag stays `</tool_call>` — that's what the consumer's
-    // transcripts consistently show.
+    //
+    // gh#69 (v2.3.8): add `<|im_start|>tool_call` as a fourth open
+    // variant. Gemma 4 (E2B + E4B) emits its tool calls inside a
+    // ChatML-style channel whose opening header is `<|im_start|>tool_call`
+    // but whose close is the plain `</tool_call>` — an asymmetric pair
+    // the prior three alternatives didn't cover, so both Gemma 4 sizes
+    // scored 0/6 completion (agent loop spiralled to the iteration cap).
+    //
+    // Open alternatives: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`,
+    // `<|im_start|>tool_call`. Close tag stays `</tool_call>` — that's
+    // what the consumer's transcripts consistently show.
     std::regex pattern(
-        R"((?:<tool_call>|<\|tool_call\|?>)\s*([\s\S]*?)\s*</tool_call>)");
+        R"((?:<tool_call>|<\|tool_call\|?>|<\|im_start\|>tool_call)\s*)"
+        R"(([\s\S]*?)\s*</tool_call>)");
 
     auto begin = std::sregex_iterator(content.begin(), content.end(), pattern);
     auto end = std::sregex_iterator();
@@ -197,14 +254,16 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
                 json_str);
         }
     }
-    // gh#65: model emitted tool_call markup but no regex match.
-    // Catches both plain `<tool_call>` and pipe-prefixed `<|tool_call`
-    // substrings — if neither matched the full pattern, surface the
-    // raw content's length so the consumer can attach it for triage
-    // instead of seeing a silent "tool_calls: 0".
+    // gh#65/gh#69: model emitted tool_call markup but no regex match.
+    // Catches plain `<tool_call>`, pipe-prefixed `<|tool_call`, and the
+    // Gemma 4 channel header `<|im_start|>tool_call` substrings — if
+    // none matched the full pattern, surface the raw content's length so
+    // the consumer can attach it for triage instead of seeing a silent
+    // "tool_calls: 0".
     if (calls.empty()
         && (content.find("<tool_call>") != std::string::npos
-            || content.find("<|tool_call") != std::string::npos)) {
+            || content.find("<|tool_call") != std::string::npos
+            || content.find("<|im_start|>tool_call") != std::string::npos)) {
         logger->warn(
             "Content contains tool_call markup but no tagged calls "
             "were extracted — possible tag/encoding mismatch. "
@@ -220,7 +279,7 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
  * @param content Model output.
  * @return Vector of tool calls from bare JSON lines.
  * @internal
- * @version 1.8.3
+ * @version 2.3.8
  */
 std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
     const std::string& content) const
@@ -235,21 +294,17 @@ std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
         if (start == std::string::npos) continue;
         std::string_view stripped(line.data() + start, line.size() - start);
 
-        if (stripped.front() != '{' || stripped.find("\"name\"") == std::string_view::npos) {
+        // Gate on a name key under any accepted alias (gh#71-phase-2):
+        // a bare `{"name":...}` or `{"tool_name":...}` line is a call.
+        if (stripped.front() != '{'
+            || (stripped.find("name") == std::string_view::npos)) {
             continue;
         }
 
         try {
             auto j = nlohmann::json::parse(stripped);
-            if (j.contains("name")) {
-                ToolCall tc;
-                tc.id = generate_uuid();
-                tc.name = j["name"].get<std::string>();
-                auto args = j.value("arguments", j.value("parameters", nlohmann::json::object()));
-                for (auto& [k, v] : args.items()) {
-                    tc.arguments[k] = v.dump();
-                }
-                calls.push_back(tc);
+            if (auto tc = tool_call_from_json(j)) {
+                calls.push_back(*tc);
             }
         } catch (...) {
             // Skip unparseable lines
@@ -304,23 +359,14 @@ std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
 /**
  * @brief Parse a brace/quote-fixed JSON string into a ToolCall.
  * @param fixed Cleaned JSON string (may still be invalid → throws).
- * @return ToolCall if it has a "name", else nullopt.
+ * @return ToolCall if it has a name (any alias), else nullopt.
  * @utility
- * @version 2.3.7
+ * @version 2.3.8
  */
 static std::optional<ToolCall> parse_recovered_tool_call(
     const std::string& fixed) {
     auto j = nlohmann::json::parse(fixed);
-    if (!j.contains("name")) { return std::nullopt; }
-    ToolCall tc;
-    tc.id = generate_uuid();
-    tc.name = j["name"].get<std::string>();
-    auto args = j.value("arguments",
-                        j.value("parameters", nlohmann::json::object()));
-    for (auto& [k, v] : args.items()) {
-        tc.arguments[k] = v.dump();
-    }
-    return tc;
+    return tool_call_from_json(j);
 }
 
 /**
@@ -409,21 +455,14 @@ std::string ChatAdapter::format_tools(
  * @param json_str JSON string from tagged block.
  * @return Parsed ToolCall or nullopt.
  * @internal
- * @version 1.8.2
+ * @version 2.3.8
  */
 std::optional<ToolCall> ChatAdapter::parse_single_tool_call(
     const std::string& json_str) const
 {
     try {
         auto j = nlohmann::json::parse(json_str);
-        if (j.contains("name")) {
-            ToolCall tc;
-            tc.id = generate_uuid();
-            tc.name = j["name"].get<std::string>();
-            auto args = j.value("arguments", j.value("parameters", nlohmann::json::object()));
-            for (auto& [k, v] : args.items()) {
-                tc.arguments[k] = v.dump();
-            }
+        if (auto tc = tool_call_from_json(j)) {
             return tc;
         }
     } catch (...) {

@@ -4,11 +4,12 @@
  * @brief Gemma 4 adapter implementation (v2.1.9, gh#46).
  *
  * Permissive multi-format tool parser, GGUF-embedded chat template,
- * shared base-class think-block stripping. See header for the open
- * question on Gemma 4's native tool-call syntax — to be refined at
- * the v2.1.9 model-test phase.
+ * shared base-class think-block stripping. The v2.3.8 work (gh#69)
+ * resolved the open question on Gemma 4's native tool-call syntax: the
+ * model emits a ChatML-style channel with the asymmetric open header
+ * `<|im_start|>tool_call` and a plain `</tool_call>` close.
  *
- * @version 2.1.9
+ * @version 2.3.8
  */
 
 #include "gemma4_adapter.h"
@@ -20,14 +21,16 @@ namespace entropic {
 /**
  * @brief Parse tool calls from Gemma 4 output.
  *
- * Tries tagged JSON first (`<tool_call>{...}</tool_call>`), then
- * bare-JSON lines as a fallback. The base class handles malformed
- * JSON recovery transparently when either path is exercised.
+ * Tries tagged JSON first (`<tool_call>{...}</tool_call>` and the
+ * asymmetric `<|tool_call>` / `<|im_start|>tool_call` channel variants
+ * the base parser now accepts), then bare-JSON lines as a fallback.
+ * The base class handles malformed JSON recovery transparently when
+ * either path is exercised.
  *
  * @param content Raw model output.
  * @return ParseResult with cleaned content and any extracted calls.
  * @internal
- * @version 2.1.9
+ * @version 2.3.8
  */
 ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
     ParseResult result;
@@ -38,13 +41,15 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
     }
     result.tool_calls = std::move(calls);
 
-    // gh#65 (v2.3.3): match the asymmetric open variants here too so
-    // the cleaned_content (what the user sees) doesn't leave stray
-    // `<|tool_call>{json}</tool_call>` markup behind when Gemma 4
-    // emits the pipe-prefixed form. Mirror the openings accepted by
-    // parse_tagged_tool_calls.
+    // gh#65 (v2.3.3) / gh#69 (v2.3.8): match the asymmetric open
+    // variants here too so the cleaned_content (what the user sees)
+    // doesn't leave stray `<|tool_call>{json}</tool_call>` or
+    // `<|im_start|>tool_call ... </tool_call>` markup behind when
+    // Gemma 4 emits the pipe-prefixed or channel-header form. Mirror
+    // the openings accepted by parse_tagged_tool_calls.
     std::string cleaned = std::regex_replace(content,
-        std::regex(R"((?:<tool_call>|<\|tool_call\|?>)\s*[\s\S]*?\s*</tool_call>)"),
+        std::regex(R"((?:<tool_call>|<\|tool_call\|?>|<\|im_start\|>tool_call))"
+                   R"(\s*[\s\S]*?\s*</tool_call>)"),
         "");
     cleaned = strip_think_blocks(cleaned);
 
@@ -64,8 +69,15 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
     // Asymmetric variants are matched explicitly (`\|?`) for parity
     // with the gh#65 tool-call regex — Gemma 4's tokenizer surface
     // drops the trailing `|>` on some emit paths.
+    //
+    // gh#69 (v2.3.8): `tool_call` joins the channel-role list so a
+    // stray `<|im_start|>tool_call` header (one whose `</tool_call>`
+    // close didn't pair up, e.g. a truncated emit) is scrubbed instead
+    // of leaking into the assistant-visible body. The paired
+    // `<|im_start|>tool_call ... </tool_call>` block is already removed
+    // above; this catches the degenerate unpaired header.
     static const std::regex kGemmaTemplateMarkers(
-        R"(<\|im_end\|?>|<\|im_start\|?>(?:user|assistant|system)?|)"
+        R"(<\|im_end\|?>|<\|im_start\|?>(?:user|assistant|system|tool_call)?|)"
         R"(<end_of_turn>|<start_of_turn>(?:user|model)?)");
     cleaned = std::regex_replace(cleaned, kGemmaTemplateMarkers, "");
 

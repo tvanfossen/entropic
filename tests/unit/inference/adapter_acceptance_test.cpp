@@ -290,6 +290,56 @@ SCENARIO("Nemotron3 format_tools teaches the DSML invoke format (gh#70)",
     }
 }
 
+// ── gh#71-phase-2: weak-model emit shapes (Gemma 4 E2B) ────
+
+SCENARIO("Gemma4 accepts the tool_name key alias (E2B verbatim emit)",
+         "[adapter-acceptance][gemma4][gh71][tool-name-alias]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E2B emit using tool_name instead of name") {
+        // Captured from gemma-4-E2B-it-Q8_0 under the production prompt:
+        // a well-formed call in everything but the key spelling.
+        std::string content =
+            R"(<tool_call>{"tool_name": "entropic.followup", )"
+            R"("arguments": {"query": "findme"}}</tool_call>)";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the tool_name alias resolves to a parsed call") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.followup");
+                REQUIRE(result.tool_calls[0].arguments.at("query")
+                        == "\"findme\"");
+                REQUIRE(result.cleaned_content.find("tool_call")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 correctly rejects a nameless tool call (E2B limitation)",
+         "[adapter-acceptance][gemma4][gh71]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a verbatim E2B emit with arguments but NO tool name") {
+        // gemma-4-E2B-it omits the function name entirely on some
+        // prompts. There is no honest way to recover which tool this is
+        // (guessing from arg shape is a fragile heuristic), so the
+        // adapter MUST return zero calls — this pins that deliberate
+        // behavior so a future "recovery" hack doesn't sneak in.
+        std::string content = R"(<tool_call>{"path": "/etc/hostname"}</tool_call>)";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("no tool call is fabricated from a nameless payload") {
+                REQUIRE(result.tool_calls.empty());
+            }
+        }
+    }
+}
+
 // ── Positive anchors: already-correct adapters ─────────────
 
 SCENARIO("Qwen36 parses its native qwen3_coder XML emit",

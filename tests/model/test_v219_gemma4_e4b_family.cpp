@@ -5,18 +5,28 @@
  *
  * Loads `gemma4_e4b` (Gemma 4 E4B instruct, ~4.5 GB Q8_0), the
  * mid-class Gemma 4 alternative. Exercises first-token smoke
- * generation and captures raw output for tool-call format
- * inspection. Same adapter as the E2B / A4B siblings — this test
- * covers validation criterion #6 for the E4B GGUF specifically.
+ * generation and — under the REAL production prompt (constitution +
+ * identity + the adapter's own `format_tools`) — guarantees that the
+ * tool-call format the model emits is extracted by Gemma4Adapter
+ * (gh#69 / gh#71-phase-2).
+ *
+ * The v2.1.9 version of the toolcall scenario rigged the prompt (spelled
+ * out the `<tool_call>{json}` tag in the system message) and asserted
+ * `name == "fs.read"` — template-copying, not emission. It missed that
+ * Gemma 4 actually emits the `<|im_start|>tool_call` channel form
+ * (gh#69). This version drives the adapter's real format_tools and
+ * asserts the adapter never misses a real emission.
  *
  * Requires: GPU with >= 8 GB VRAM, model on disk
  *           (`entropic download gemma4_e4b`).
- * Run:      ctest -L model
+ * Run:      ctest -L model   (release gate — must PASS, not SKIP, when
+ *           the GGUF is present)
  *
- * @version 2.1.9
+ * @version 2.3.8
  */
 
 #include "v219_family_test_helpers.h"
+#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
@@ -46,34 +56,43 @@ SCENARIO("Gemma 4 E4B GGUF loads and generates first token",
     }
 }
 
-// ── Tool-call observation ──────────────────────────────────
+// ── Real-emission tool-call guarantee (gh#69 / gh#71-phase-2) ──
 
-SCENARIO("Gemma 4 E4B raw output captured for tool-call format inspection",
+SCENARIO("Gemma 4 E4B tool calls parse under the production prompt",
          "[model][v219][gemma4][e4b][toolcall]")
 {
     if (!g_ctx.initialized) {
         SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
     }
-    GIVEN("a prompt requesting a tool call") {
+    GIVEN("the adapter's own format_tools over the production system prompt") {
         start_test_log("v219_gemma4_e4b_toolcall");
-        auto params = test_gen_params();
-        params.max_tokens = 256;
-        auto messages = make_messages(
-            "You may call tools using the format <tool_call>"
-            "{\"name\":\"tool.name\",\"arguments\":{...}}</tool_call>.",
-            "Call a tool named fs.read with parameter path set to "
-            "/etc/hostname. Emit only the tool call.");
-        WHEN("the model produces output") {
-            auto result = g_ctx.orchestrator->generate(
-                messages, params, g_ctx.default_tier);
-            THEN("Gemma4Adapter extracts the tool call from raw output") {
-                REQUIRE_FALSE(result.raw_content.empty());
-                spdlog::info("Gemma 4 E4B raw output: {}", result.raw_content);
-                // Gemma 4 emits tagged JSON tool calls (confirmed on E2B);
-                // E4B uses the same adapter — assert the same contract.
-                REQUIRE(result.tool_calls.size() >= 1);
-                CHECK(result.tool_calls[0].name == "fs.read");
-                CHECK(result.token_count > 0);
+        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
+        REQUIRE(adapter != nullptr);
+
+        // Native tool-call markers the adapter claims to handle: the
+        // gh#69 channel header plus the asymmetric / plain tagged forms.
+        const std::vector<std::string> markers = {
+            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
+
+        WHEN("a battery of tool-directed prompts runs through the live model") {
+            // Single THEN: Catch2 re-runs WHEN once per leaf section, and
+            // each battery run is several live generations — keep it to one.
+            auto outcome = run_emission_battery(
+                adapter, production_base(), standard_tool_jsons(),
+                standard_tool_battery(), markers);
+
+            THEN("the adapter parses every named emission, well-formed, no leak") {
+                // gh#69 failure condition: model emits a named call,
+                // adapter returns zero and the loop spirals. Every NAMED
+                // emission MUST parse.
+                REQUIRE_FALSE(outcome.named_missed);
+                // Production path elicits AND parses a real call for
+                // EVERY directed prompt — the "completely functioning"
+                // guarantee. E4B (mid-class) is capable enough to hit this.
+                REQUIRE(outcome.parsed == outcome.total);
+                // Well-formed names, no native markup left in cleaned_content.
+                REQUIRE_FALSE(outcome.malformed);
+                REQUIRE_FALSE(outcome.leaked);
                 end_test_log();
             }
         }

@@ -13,21 +13,24 @@
  * replicate the template here — `chat_format()` returns the empty
  * string so llama.cpp applies the GGUF-stored template directly.
  *
- * @par Tool-call format (open question — see Implementation Log)
- * Upstream documentation surveyed at v2.1.9 session start describes
- * Gemma 4 as having "native function calling" but does not show the
- * exact raw output syntax. Until the format is verified empirically
- * via the v2.1.9 model tests, this adapter uses a permissive parser:
- *   1. Primary: tagged JSON `<tool_call>{"name":..., "arguments":...}
- *      </tool_call>` — base class `parse_tagged_tool_calls`. We bias
- *      the model toward this format via the tool-injection prompt.
+ * @par Tool-call format (resolved at v2.3.8, gh#69)
+ * Empirical capture from gemma-4-E2B-it / E4B-it confirmed Gemma 4
+ * emits tool calls inside a ChatML-style channel: opening header
+ * `<|im_start|>tool_call`, JSON body, plain `</tool_call>` close (an
+ * asymmetric pair). Both sizes scored 0/6 completion before the fix
+ * because none of the prior open variants matched that header. The
+ * adapter parses with this layered strategy:
+ *   1. Primary: tagged JSON via base `parse_tagged_tool_calls`, which
+ *      now accepts `<tool_call>`, `<|tool_call>`, `<|tool_call|>`, and
+ *      the `<|im_start|>tool_call` channel header (gh#69) — all closed
+ *      by `</tool_call>`.
  *   2. Fallback: bare-JSON lines containing `"name"` — base class
  *      `parse_bare_json_tool_calls`.
  *   3. Final fallback: malformed-JSON recovery via the base class.
  *
- * When the model-test phase nails down the actual format, override
- * `parse_tool_calls` here with a Gemma-specific extractor and bump
- * `@version`.
+ * Surface scrubbing (`parse_tool_calls` in the .cpp) removes the
+ * channel block and any stray `<|im_start|>tool_call` / `<|im_end|>`
+ * turn markers so they never reach the assistant-visible body.
  *
  * @par Reasoning
  * Gemma 4 emits a channel-tagged thought block. If the GGUF template

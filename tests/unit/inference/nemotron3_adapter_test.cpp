@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @file nemotron3_adapter_test.cpp
- * @brief Tests for Nemotron 3 adapter (v2.1.9, gh#47).
+ * @brief Tests for Nemotron 3 adapter (v2.1.9, gh#47; v2.3.8, gh#70/gh#71).
  *
- * Nemotron 3 uses the qwen3_coder XML tool-call format and emits
- * `<think>...</think>` blocks for reasoning traces (separate special
- * tokens at the GGUF level; surfaced as inline text after detokenisation).
+ * These cases exercise the qwen3_coder XML and tagged-JSON **backstop**
+ * paths plus `<think>` reasoning-trace stripping. The model's *native*
+ * emit is DSML invoke, not XML — that correction (gh#70) and the
+ * verbatim-emit acceptance coverage that proves it live in
+ * `adapter_acceptance_test.cpp`. gh#71 flagged the prior version of this
+ * header for stating the qwen-XML assumption as fact; it does not.
  *
- * @version 2.1.9
+ * @version 2.3.8
  */
 
 #include <catch2/catch_test_macros.hpp>

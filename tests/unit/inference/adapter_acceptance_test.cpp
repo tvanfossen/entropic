@@ -157,6 +157,88 @@ SCENARIO("Gemma4 channel call preserves trailing assistant prose (gh#69)",
     }
 }
 
+// ── Prior gemma4 regressions (gh#65 + gh#68) ──────────────
+
+SCENARIO("Gemma4 parses the gh#65 asymmetric <|tool_call> form",
+         "[adapter-acceptance][gemma4][gh65]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim gh#65 v2.3.3 consumer-report emit") {
+        // Asymmetric open `<|tool_call>` (pipe-prefixed, no trailing
+        // `|>`), plain `</tool_call>` close — the v2.3.3 fix added
+        // this variant; the gh#69 fix must not have regressed it.
+        std::string content =
+            R"(<|tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "List all configured )"
+            R"(subjects for this family."}}</tool_call>)";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("exactly one delegate call is extracted") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+                REQUIRE(result.tool_calls[0].arguments.count("target") == 1);
+            }
+            THEN("no tool-call markup leaks into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|tool_call")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("</tool_call>")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs the gh#68 <|im_end|> turn-marker leak",
+         "[adapter-acceptance][gemma4][gh68]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim gh#68 consumer-report emit") {
+        // 10-char literal `<|im_end|>` leaked into the assistant body
+        // before the v2.3.5 template-marker scrub; the gh#69 channel
+        // parser must not have re-exposed that text.
+        std::string content =
+            "I am sorry, I don't understand what 'class list' means."
+            "<|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the turn marker is stripped") {
+                REQUIRE(result.cleaned_content.find("<|im_end")
+                        == std::string::npos);
+            }
+            THEN("the assistant prose survives intact") {
+                REQUIRE(result.cleaned_content.find("I am sorry")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 format_system_prompt emits a non-empty tools section",
+         "[adapter-acceptance][gemma4]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a single tool definition") {
+        std::vector<std::string> tools = {
+            R"({"name": "entropic.delegate", "description": "Delegate a task",)"
+            R"( "inputSchema": {"type": "object"}})"};
+
+        WHEN("format_system_prompt assembles the prompt") {
+            std::string prompt = adapter.format_system_prompt("base", tools);
+
+            THEN("the tool name reaches the model") {
+                REQUIRE(prompt.find("entropic.delegate") != std::string::npos);
+            }
+            THEN("the assembled prompt is not empty") {
+                REQUIRE_FALSE(prompt.empty());
+            }
+        }
+    }
+}
+
 // ── gh#70: Nemotron 3 DSML invoke form ─────────────────────
 
 SCENARIO("Nemotron3 parses the gh#70 BF16 DSML followup emit",
@@ -285,6 +367,33 @@ SCENARIO("Nemotron3 format_tools teaches the DSML invoke format (gh#70)",
             }
             THEN("the tool name still reaches the model in the <tools> block") {
                 REQUIRE(prompt.find("entropic.delegate") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Nemotron3 still parses the qwen3_coder XML backstop",
+         "[adapter-acceptance][nemotron3][backstop]") {
+    entropic::Nemotron3Adapter adapter("lead", "test identity");
+
+    GIVEN("a rigged-prompt qwen XML emit (pre-v2.3.8 default path)") {
+        // The DSML primary path (gh#70) added a new parser; the qwen XML
+        // path stays parseable so a downstream consumer who rigs the
+        // prompt to force XML still gets a call.
+        std::string content =
+            "<function=entropic.delegate>\n"
+            "<parameter=target>researcher</parameter>\n"
+            "<parameter=task>find files</parameter>\n"
+            "</function>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the qwen-XML call still parses with both params") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+                REQUIRE(result.tool_calls[0].arguments.at("target")
+                        == "researcher");
             }
         }
     }

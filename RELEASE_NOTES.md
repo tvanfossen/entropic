@@ -49,6 +49,43 @@ Dispositively verified: with the v2.3.8 source fix removed, the six
 `[gh69]` / `[gh70]` scenarios fail; the qwen positive anchors pass
 regardless.
 
+## Real-model guarantee (gh#71-phase-2)
+
+The CPU gate proves the parser; a model-tier gate now proves the
+**adapter end-to-end on the real GGUFs**. The previously rigged toolcall
+scenarios in `tests/model/test_v219_{nemotron3,gemma4_*}_family.cpp` were
+rewritten to drive generation under the **production prompt** (constitution
++ identity + the adapter's own `format_tools`, via
+`production_emission_helpers.h`) and assert that every *named* emission
+parses, with zero leakage. Per-scenario `clear_all_prompt_caches()`
+removes cross-scenario state bleed. Verified on the bundled GGUFs (GPU):
+
+| Model | Result |
+|---|---|
+| NVIDIA-Nemotron-3-Nano-4B (Q4_K_XL) | 3/3 — emits DSML, parsed |
+| gemma-4-E4B-it (Q8_0) | 3/3 |
+| gemma-4-26B-A4B-it (IQ4_XS) | 3/3 |
+| gemma-4-E2B-it (Q8_0) | 1/3 — see below |
+
+Dispositive: reverting the nemotron3 DSML parser drops it to 2/3 and the
+gate fails.
+
+**`tool_name` alias (adapter robustness).** The E2B run surfaced that
+weaker models emit the tool name under `tool_name` / `function` /
+`function_name` instead of `name`. The base parser now accepts these
+aliases (one shared `tool_call_from_json` helper across the tagged,
+bare-JSON, and recovery paths). Pinned by a verbatim CPU fixture.
+
+**Finding — Gemma 4 E2B is not a reliable tool-calling tier.** Under the
+production prompt E2B omits the function name *entirely* on some prompts
+(`<tool_call>{"path":"/etc/hostname"}</tool_call>` — no name). The
+adapter correctly refuses to fabricate a tool from bare args (guessing
+would be a fragile heuristic), so E2B parses only its named calls. The
+gh#69 channel-form fix is necessary but **not sufficient** to make E2B a
+tool tier; E4B / A4B are the tool-calling Gemma variants. E2B's model
+test asserts the adapter contract (no named call dropped) but not the
+strict per-prompt rate.
+
 ## Consumer impact
 
 Rebuild against `librentropic.so.2` (v2.3.8) restores tool-calling on

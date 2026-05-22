@@ -5,19 +5,27 @@
  *
  * Loads `gemma4_a4b` (Gemma 4 26B-A4B instruct, UD-IQ4_XS ~13.6 GB) —
  * the primary-class alternative used as a validation contrast against
- * the Qwen primary. Exercises first-token smoke generation and
- * captures raw output for tool-call format inspection. Same
- * `Gemma4Adapter` as the E-series; this test covers validation
- * criterion #6 for the A4B variant specifically.
+ * the Qwen primary. Exercises first-token smoke generation and — under
+ * the REAL production prompt (constitution + identity + the adapter's
+ * own `format_tools`) — guarantees tool-call extraction via
+ * Gemma4Adapter (gh#69 / gh#71-phase-2). Same `Gemma4Adapter` as the
+ * E-series.
+ *
+ * The v2.1.9 toolcall scenario rigged the prompt and asserted
+ * `name == "fs.read"`. This version drives the real format_tools and
+ * asserts the adapter never misses a real emission. NOTE: the 26B-A4B
+ * GGUF + KV does not fit a 16 GB GPU, so this SKIPs there; it is the
+ * release gate for hosts with >= ~20 GB VRAM.
  *
  * Requires: GPU with >= 16 GB VRAM, model on disk
  *           (`entropic download gemma4_a4b`).
  * Run:      ctest -L model
  *
- * @version 2.1.9
+ * @version 2.3.8
  */
 
 #include "v219_family_test_helpers.h"
+#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_A4B>)
@@ -47,34 +55,32 @@ SCENARIO("Gemma 4 A4B GGUF loads and generates first token",
     }
 }
 
-// ── Tool-call observation ──────────────────────────────────
+// ── Real-emission tool-call guarantee (gh#69 / gh#71-phase-2) ──
 
-SCENARIO("Gemma 4 A4B raw output captured for tool-call format inspection",
+SCENARIO("Gemma 4 A4B tool calls parse under the production prompt",
          "[model][v219][gemma4][a4b][toolcall]")
 {
     if (!g_ctx.initialized) {
         SKIP("gemma4_a4b GGUF not present — run `entropic download gemma4_a4b`");
     }
-    GIVEN("a prompt requesting a tool call") {
+    GIVEN("the adapter's own format_tools over the production system prompt") {
         start_test_log("v219_gemma4_a4b_toolcall");
-        auto params = test_gen_params();
-        params.max_tokens = 256;
-        auto messages = make_messages(
-            "You may call tools using the format <tool_call>"
-            "{\"name\":\"tool.name\",\"arguments\":{...}}</tool_call>.",
-            "Call a tool named fs.read with parameter path set to "
-            "/etc/hostname. Emit only the tool call.");
-        WHEN("the model produces output") {
-            auto result = g_ctx.orchestrator->generate(
-                messages, params, g_ctx.default_tier);
-            THEN("Gemma4Adapter extracts the tool call from raw output") {
-                REQUIRE_FALSE(result.raw_content.empty());
-                spdlog::info("Gemma 4 A4B raw output: {}", result.raw_content);
-                // Same contract as E2B/E4B — Gemma 4 family emits tagged
-                // JSON tool calls.
-                REQUIRE(result.tool_calls.size() >= 1);
-                CHECK(result.tool_calls[0].name == "fs.read");
-                CHECK(result.token_count > 0);
+        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
+        REQUIRE(adapter != nullptr);
+
+        const std::vector<std::string> markers = {
+            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
+
+        WHEN("a battery of tool-directed prompts runs through the live model") {
+            auto outcome = run_emission_battery(
+                adapter, production_base(), standard_tool_jsons(),
+                standard_tool_battery(), markers);
+
+            THEN("the adapter parses every named emission, well-formed, no leak") {
+                REQUIRE_FALSE(outcome.named_missed);
+                REQUIRE(outcome.parsed == outcome.total);
+                REQUIRE_FALSE(outcome.malformed);
+                REQUIRE_FALSE(outcome.leaked);
                 end_test_log();
             }
         }

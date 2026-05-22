@@ -222,6 +222,31 @@ gemma4_e4b_mmproj:
   description: Vision/audio projector paired with gemma4_e4b (F16)
   # License: Gemma Terms of Use. (v2.1.12, gh#51)
 
+# v2.3.8: 4-bit E4B sibling so the full model fits a 16 GB GPU with
+# all layers offloaded (Q8_0 split GPU+CPU on that hardware). Same
+# adapter / mmproj / license as gemma4_e4b. Tagged with the gh#62
+# selector fields so find_by(family=gemma4, size_label=e4b,
+# quant=UD-Q4_K_XL) resolves to this entry alongside the Q8_0 variant.
+gemma4_e4b_q4:
+  name: gemma-4-E4B-it-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q4_K_XL.gguf
+  size_gb: 4.8
+  adapter: gemma4
+  description: Gemma 4 E4B instruct — mid-class alternative, 4-bit (fits 16 GB GPU fully offloaded)
+  provider: unsloth
+  family: gemma4
+  size_label: e4b
+  quant: UD-Q4_K_XL
+  # License: Gemma Terms of Use. Quant: UD-Q4_K_XL (Unsloth Dynamic
+  # 4-bit, ~4.77 GB) — half the Q8_0 footprint while preserving
+  # reasoning quality on this size class; the entire model fits on a
+  # 16 GB GPU with KV + compute headroom at 4 K context, whereas the
+  # Q8_0 entry (7.8 GB) lands a partial CPU split there. Unsloth does
+  # not publish a UD-IQ4_XS for E4B (the A4B sibling uses that quant);
+  # UD-Q4_K_XL is the equivalent dynamic 4-bit option here.
+  # Vision: shares the gemma4_e4b mmproj (same upstream repo).
+  mmproj_key: gemma4_e4b_mmproj
+
 gemma4_e2b:
   name: gemma-4-E2B-it-Q8_0
   url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf

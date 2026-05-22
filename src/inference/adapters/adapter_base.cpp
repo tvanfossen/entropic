@@ -159,7 +159,7 @@ bool ChatAdapter::is_response_complete(
  * @param content Model output content.
  * @return Vector of parsed tool calls.
  * @internal
- * @version 1.8.2
+ * @version 2.3.8
  */
 std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
     const std::string& content) const
@@ -171,11 +171,20 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
     // as `<|tool_call>` (trailing `|>` lost). Pre-v2.3.3 the regex
     // required a plain `<tool_call>` open, so Gemma 4's actual output
     // produced 0 tool calls and the engine looped on the retry banner.
-    // Open alternatives: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`.
-    // Close tag stays `</tool_call>` — that's what the consumer's
-    // transcripts consistently show.
+    //
+    // gh#69 (v2.3.8): add `<|im_start|>tool_call` as a fourth open
+    // variant. Gemma 4 (E2B + E4B) emits its tool calls inside a
+    // ChatML-style channel whose opening header is `<|im_start|>tool_call`
+    // but whose close is the plain `</tool_call>` — an asymmetric pair
+    // the prior three alternatives didn't cover, so both Gemma 4 sizes
+    // scored 0/6 completion (agent loop spiralled to the iteration cap).
+    //
+    // Open alternatives: `<tool_call>`, `<|tool_call>`, `<|tool_call|>`,
+    // `<|im_start|>tool_call`. Close tag stays `</tool_call>` — that's
+    // what the consumer's transcripts consistently show.
     std::regex pattern(
-        R"((?:<tool_call>|<\|tool_call\|?>)\s*([\s\S]*?)\s*</tool_call>)");
+        R"((?:<tool_call>|<\|tool_call\|?>|<\|im_start\|>tool_call)\s*)"
+        R"(([\s\S]*?)\s*</tool_call>)");
 
     auto begin = std::sregex_iterator(content.begin(), content.end(), pattern);
     auto end = std::sregex_iterator();
@@ -197,14 +206,16 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
                 json_str);
         }
     }
-    // gh#65: model emitted tool_call markup but no regex match.
-    // Catches both plain `<tool_call>` and pipe-prefixed `<|tool_call`
-    // substrings — if neither matched the full pattern, surface the
-    // raw content's length so the consumer can attach it for triage
-    // instead of seeing a silent "tool_calls: 0".
+    // gh#65/gh#69: model emitted tool_call markup but no regex match.
+    // Catches plain `<tool_call>`, pipe-prefixed `<|tool_call`, and the
+    // Gemma 4 channel header `<|im_start|>tool_call` substrings — if
+    // none matched the full pattern, surface the raw content's length so
+    // the consumer can attach it for triage instead of seeing a silent
+    // "tool_calls: 0".
     if (calls.empty()
         && (content.find("<tool_call>") != std::string::npos
-            || content.find("<|tool_call") != std::string::npos)) {
+            || content.find("<|tool_call") != std::string::npos
+            || content.find("<|im_start|>tool_call") != std::string::npos)) {
         logger->warn(
             "Content contains tool_call markup but no tagged calls "
             "were extracted — possible tag/encoding mismatch. "

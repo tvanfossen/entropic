@@ -59,6 +59,10 @@ add_executable(entropic-inference-tests
     inference/qwen36_adapter_test.cpp
     inference/gemma4_adapter_test.cpp
     inference/nemotron3_adapter_test.cpp
+    # v2.3.8 (gh#71): per-adapter acceptance gate — verbatim consumer
+    # emits, strict asserts, no SKIP. Catches gh#69 + gh#70 format
+    # mismatches at the CPU layer on every commit.
+    inference/adapter_acceptance_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp

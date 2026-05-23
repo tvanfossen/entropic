@@ -1,3 +1,29 @@
+# entropic v2.3.9
+
+Test-only patch. **No source changes, no ABI change** — drop-in for
+any 2.3.x-compiled consumer. Adds four backstop / regression
+scenarios to `tests/unit/inference/adapter_acceptance_test.cpp`
+that the v2.3.8 ship omitted:
+
+- **`[gh65]`** — Gemma4 asymmetric `<|tool_call>` open form (v2.3.3
+  fix). Locks in that the gh#69 channel-form parser didn't regress
+  the prior asymmetric variant.
+- **`[gh68]`** — Gemma4 `<|im_end|>` turn-marker scrub (v2.3.5 fix).
+  Asserts the marker scrub stands on its own, independent of the
+  gh#69 `kGemmaTemplateMarkers` extension.
+- **Gemma4 format_system_prompt smoke** — tool name reaches the model,
+  prompt is non-empty. Catches a refactor that silently empties the
+  tool block.
+- **Nemotron3 qwen-XML backstop** — v2.3.8 RELEASE_NOTES promised the
+  qwen XML path "stays as a backstop"; this now asserts it. A rigged
+  prompt forcing XML still extracts a call after the DSML primary
+  was added.
+
+`[adapter-acceptance]` count: 15 scenarios / 65 assertions
+(was 11 / 51 in v2.3.8).
+
+---
+
 # entropic v2.3.8
 
 Patch release. **Two new-family adapters now parse the tool-call format

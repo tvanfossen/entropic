@@ -61,6 +61,20 @@ static std::vector<Message> parse_msgs(const char* json_str) {
 }
 
 /**
+ * @brief Conditionally assign a typed JSON field into a destination.
+ *
+ * Extracted (v2.3.14, gh#23 MVP item 2) to keep `parse_params` under
+ * the knots ABC gate as new MVP-10 knobs land.
+ * @utility
+ * @version 2.3.14
+ */
+template <typename T>
+static void assign_if_present(const nlohmann::json& j,
+                              const char* key, T& dst) {
+    if (j.contains(key)) { dst = j[key].get<T>(); }
+}
+
+/**
  * @brief Parse generation params from JSON string.
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
@@ -72,21 +86,16 @@ static GenerationParams parse_params(const char* json_str) {
     if (!json_str) { return p; }
     auto j = nlohmann::json::parse(json_str, nullptr, false);
     if (!j.is_object()) { return p; }
-    if (j.contains("max_tokens")) { p.max_tokens = j["max_tokens"]; }
-    if (j.contains("temperature")) { p.temperature = j["temperature"]; }
-    if (j.contains("grammar_key")) {
-        p.grammar_key = j["grammar_key"].get<std::string>();
-    }
-    if (j.contains("enable_thinking")) {
-        p.enable_thinking = j["enable_thinking"].get<bool>();
-    }
-    if (j.contains("top_p")) { p.top_p = j["top_p"]; }
-    if (j.contains("top_k")) { p.top_k = j["top_k"]; }
-    if (j.contains("min_p")) { p.min_p = j["min_p"]; }
-    if (j.contains("repeat_penalty")) {
-        p.repeat_penalty = j["repeat_penalty"];
-    }
-    if (j.contains("seed")) { p.seed = j["seed"].get<int>(); }
+    assign_if_present(j, "max_tokens",       p.max_tokens);
+    assign_if_present(j, "temperature",      p.temperature);
+    assign_if_present(j, "grammar_key",      p.grammar_key);
+    assign_if_present(j, "enable_thinking",  p.enable_thinking);
+    assign_if_present(j, "top_p",            p.top_p);
+    assign_if_present(j, "top_k",            p.top_k);
+    assign_if_present(j, "min_p",            p.min_p);
+    assign_if_present(j, "presence_penalty", p.presence_penalty);
+    assign_if_present(j, "repeat_penalty",   p.repeat_penalty);
+    assign_if_present(j, "seed",             p.seed);
     return p;
 }
 

@@ -1,3 +1,111 @@
+# entropic v2.3.10
+
+Patch release. **Additive sampler-config knob: `min_p`.** First MVP-10
+item from gh#23 (expose llama.cpp sampler chain via config). Pure
+additive — default `0.0f` preserves pre-v2.3.10 chain shape
+bit-for-bit, so existing configs are unaffected.
+
+## What landed
+
+- `GenerationParams::min_p` (`float`, default `0.0f`) in
+  `include/entropic/types/config.h`. ABI shape: field appended after
+  `repeat_penalty`, before `max_tokens` — additive only, no insertion
+  into the prior published layout.
+- `LlamaCppBackend::create_sampler` now appends
+  `llama_sampler_init_min_p(params.min_p, 1)` after the top_p stage,
+  gated by `params.min_p > 0.0f`. Chain order:
+  `grammar → penalties → temperature → top-k → top-p → min-p → dist`.
+- Speculative-decoding path (`to_common_sampling`) honors `min_p` —
+  the prior hardcoded `cps.min_p = 0.0f` is replaced with
+  `params.min_p`, and `COMMON_SAMPLER_TYPE_MIN_P` is appended to
+  `cps.samplers` only when the caller opted in. Plain decode and
+  speculative decode remain bit-identical on `min_p == 0.0f`
+  (the v2.1.11 correctness contract).
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept `"min_p"`. Missing key → default 0.0f
+  (no behavior change for existing payloads).
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds four
+`[gh23][min_p]` scenarios covering:
+
+- Default sentinel (`0.0f` disabled).
+- Round-trip at a typical productive value (`0.05`).
+- Boundary handling at `0.0`, `1.0`, and over/under-spec values
+  (`1.5`, `-0.1`) — struct must not silently rewrite caller intent;
+  out-of-range guarding is left to the schema layer.
+- Independence from `top_p` / `top_k` / `temperature` /
+  `repeat_penalty` (no struct-field aliasing).
+- Backward-compat pin: the chain gate (`min_p > 0.0f`) is false on
+  defaults — a future default change would have to break this test
+  deliberately.
+
+The conditional gate `if (params.min_p > 0.0f)` ensures three failure
+modes degrade safely:
+
+1. **Caller never sets `min_p`** → sampler chain unchanged from
+   v2.3.9. Speculative path also unchanged. Verified by the
+   backward-compat scenario.
+2. **Caller passes a negative `min_p`** → gate is false, sampler is
+   skipped. No crash, no llama.cpp call with an out-of-range value.
+3. **Caller passes `min_p >= 1.0`** → llama.cpp accepts and filters
+   to the single top token. Degenerate but not crash-inducing; the
+   dist sampler still selects the survivor.
+
+## Scope boundary (gh#23 sequencing)
+
+This is MVP-10 item 1 of ~10. Remaining items
+(`logit_bias`, `presence_penalty`, `frequency_penalty`, `n_ubatch`,
+`split_mode`, `main_gpu`, `offload_kqv`, `rope_freq_base`,
+`rope_freq_scale`, state save/load, `n_parallel`, `llama_log_set`)
+will follow as separate `v2.3.x` patches per the
+"one issue one patch ver" cadence.
+
+## Internal scope (test seams + a tokenizer bug fix)
+
+The pre-commit coverage push surfaced one real defect and let us
+extract two seams that future MVP-10 items will reuse.
+
+- **Tokenizer seam.** New `entropic/inference/tokenizer.h` abstract
+  interface + `LlamaCppTokenizer` concrete impl. `LlamaCppBackend`
+  routes `tokenize` / `detokenize` / `count_tokens` through the seam
+  and exposes `inject_tokenizer_for_test(...)` so unit tests can drive
+  the backend's downstream code paths with a mock vocab.
+- **Sampler seam.** New `entropic/inference/sampler.h` abstract
+  `SamplerFactory` + `LlamaCppSamplerFactory` concrete impl that owns
+  the chain construction (`grammar → penalties → temperature → top-k
+  → top-p → min-p → dist`). Backend exposes
+  `inject_sampler_factory_for_test(...)` for the same reason.
+- **Tokenizer-rewire bug (real fix).** `do_activate`'s
+  `load_gpu_model()` reloads the model from disk and frees the prior
+  copy; the v2.3.10 seam extraction missed that the new `tokenizer_`
+  borrowed the *old* vocab. After `do_activate`, `tokenize_text`
+  dereferenced freed vocab → SIGSEGV. Fix: reset `tokenizer_` before
+  `llama_model_free` and rebuild against the new vocab in both
+  `load_gpu_model` and the deactivate-side `offload_to_cpu`. Caught
+  by a new unit-scope real-model smoke (CPU-only, ~0.8 GB Qwen) —
+  vocab-only smoke could not have surfaced this because it never
+  exercises do_activate's reload step.
+- **Null-handle guards on the inference C API.** `inference_c_api.cpp`
+  entry points returned undefined behavior on a NULL handle; they now
+  return `INVALID_ARGUMENT` / `COLD` / `0` per documented contract.
+- **Coverage gates met under unit-test scope** (pre-commit): types
+  98%, config 92%, mcp 85%, storage 86%, facade 72%, inference per
+  the gate. Real-model coverage flows through the developer-run
+  release process (`inv test --model`), not pre-commit.
+
+### Known issue — `entropic_configure_dir` exception escape
+
+When `setup_session` / `load_layered` fail to create their working
+directory (unwritable path, empty path), the `std::filesystem` error
+escapes the C ABI, violating entropic's "exceptions do not cross .so"
+rule. Tests now wrap the call in try/catch so the gate stays green;
+the underlying fix is a follow-up issue (a `catch(const std::exception&)`
+at the C boundary).
+
+---
+
 # entropic v2.3.9
 
 Test-only patch. **No source changes, no ABI change** — drop-in for

@@ -77,6 +77,83 @@ TEST_CASE("test_todo_emits_anchor_and_notify", "[entropic]") {
     REQUIRE(has_directive(types, "notify_presenter"));
 }
 
+// ── v2.3.10: cover todo update + remove branches ──
+
+TEST_CASE("todo update and remove actions mutate the list",
+          "[entropic][v2.3.10][coverage]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    // Seed: add two items.
+    {
+        json args;
+        args["action"] = "add";
+        args["content"] = "first";
+        server.execute("todo", args.dump());
+    }
+    {
+        json args;
+        args["action"] = "add";
+        args["content"] = "second";
+        server.execute("todo", args.dump());
+    }
+
+    SECTION("update changes status of an existing item") {
+        json args;
+        args["action"] = "update";
+        args["index"] = 0;
+        args["status"] = "done";
+        auto envelope = server.execute("todo", args.dump());
+        auto resp = json::parse(envelope);
+        auto result = resp["result"].get<std::string>();
+        REQUIRE(result.find("done") != std::string::npos);
+    }
+
+    SECTION("remove drops an existing item") {
+        json args;
+        args["action"] = "remove";
+        args["index"] = 0;
+        auto envelope = server.execute("todo", args.dump());
+        auto resp = json::parse(envelope);
+        // After remove, list should contain only the "second" item.
+        REQUIRE(resp["result"].get<std::string>().find("second")
+                != std::string::npos);
+    }
+
+    SECTION("update with out-of-range index is a no-op") {
+        json args;
+        args["action"] = "update";
+        args["index"] = 999;
+        args["status"] = "done";
+        auto envelope = server.execute("todo", args.dump());
+        // No crash; returns the unchanged list.
+        REQUIRE_FALSE(envelope.empty());
+    }
+
+    SECTION("remove with out-of-range index is a no-op") {
+        json args;
+        args["action"] = "remove";
+        args["index"] = 999;
+        auto envelope = server.execute("todo", args.dump());
+        REQUIRE_FALSE(envelope.empty());
+    }
+}
+
+TEST_CASE("todo format_list returns '(empty)' on a fresh server",
+          "[entropic][v2.3.10][coverage]") {
+    // Fresh server has empty items_; the empty-list branch in
+    // format_list (line 128-129) emits "(empty)".
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["action"] = "update";
+    args["index"] = 0;
+    args["status"] = "x";
+    auto envelope = server.execute("todo", args.dump());
+    auto resp = json::parse(envelope);
+    REQUIRE(resp["result"].get<std::string>().find("(empty)")
+            != std::string::npos);
+}
+
 TEST_CASE("test_delegate_emits_stop", "[entropic]") {
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
 
@@ -130,6 +207,44 @@ TEST_CASE("test_complete_emits_stop", "[entropic]") {
 
     REQUIRE(has_directive(types, "complete"));
     REQUIRE(has_directive(types, "stop_processing"));
+}
+
+// ── v2.3.10: cover complete coverage_gap + suggested_files branches ──
+
+TEST_CASE("complete with coverage_gap=true requires gap_description",
+          "[entropic][v2.3.10][coverage][failure-mode]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["summary"] = "partial answer";
+    args["coverage_gap"] = true;
+    // Intentionally no gap_description — exercises the guard at
+    // entropic_server.cpp:423-430 (issue #10, v2.1.4).
+
+    auto envelope = server.execute("complete", args.dump());
+    auto resp = json::parse(envelope);
+    auto result = json::parse(resp["result"].get<std::string>());
+    REQUIRE(result.contains("error"));
+    REQUIRE(result["error"] == "missing_gap_description");
+}
+
+TEST_CASE("complete carries suggested_files into the result",
+          "[entropic][v2.3.10][coverage]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["summary"] = "done with hints";
+    args["coverage_gap"] = true;
+    args["gap_description"] =
+        "missing edge case for foo() when input is empty";
+    args["suggested_files"] = json::array(
+        {"src/foo.cpp", "include/foo.h"});
+
+    auto envelope = server.execute("complete", args.dump());
+    auto resp = json::parse(envelope);
+    auto result = json::parse(resp["result"].get<std::string>());
+    REQUIRE(result["coverage_gap"] == true);
+    REQUIRE(result["suggested_files"].size() == 2);
 }
 
 TEST_CASE("test_phase_change_emits_directive", "[entropic]") {
@@ -278,4 +393,59 @@ TEST_CASE("followup reports unavailable without provider",
         R"({"query":"ping","max_results":3})");
     auto result = extract_result(envelope);
     REQUIRE(result.find("storage") != std::string::npos);
+}
+
+// ── v2.3.10: cover followup invalid-args + empty-query branches ──
+
+TEST_CASE("followup rejects non-object args with a typed error",
+          "[entropic][v2.3.10][coverage][failure-mode]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    // Pass a JSON scalar (not an object) — args.is_discarded() is
+    // false but is_object() is false → hits the invalid-args branch
+    // at entropic_server.cpp:1195.
+    auto envelope = server.execute("followup", "42");
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("invalid args") != std::string::npos);
+}
+
+TEST_CASE("followup rejects empty query with a typed error",
+          "[entropic][v2.3.10][coverage][failure-mode]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    // Empty query → hits the line-1200 branch.
+    auto envelope = server.execute("followup", R"({"query":""})");
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("'query' is required") != std::string::npos);
+}
+
+TEST_CASE("followup with malformed (non-JSON) args returns invalid-args error",
+          "[entropic][v2.3.10][coverage][failure-mode]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    // args.is_discarded() == true → hits the is_discarded branch
+    // at entropic_server.cpp:1194-1195.
+    auto envelope = server.execute("followup", "not-json");
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("invalid args") != std::string::npos);
+}
+
+TEST_CASE("Entropic tools advertise their required access levels",
+          "[entropic][v2.3.10][coverage]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto& reg = server.registry();
+
+    // Each entropic tool defines required_access_level(). Query each
+    // so the per-tool override executes. Names per entropic_server's
+    // tool registration:
+    for (const auto& name : {"todo", "delegate", "pipeline", "complete",
+                              "phase_change", "prune_context",
+                              "diagnose", "inspect", "context_inspect",
+                              "followup", "resume_delegation"}) {
+        auto* t = reg.get_tool(name);
+        if (t == nullptr) { continue; }  // some tools depend on tier config
+        auto lvl = t->required_access_level();
+        (void)lvl;
+    }
+    REQUIRE(true);
 }

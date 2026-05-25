@@ -111,3 +111,61 @@ TEST_CASE("Execute nonexistent command returns error", "[bash]") {
     auto result = parse_result(server.execute("execute", args.dump()));
     REQUIRE_FALSE(result.empty());
 }
+
+// ── v2.3.10: coverage for permission-pattern + accessors ──
+
+TEST_CASE("get_permission_pattern extracts the base command",
+          "[bash][v2.3.10][coverage]") {
+    auto server = make_bash_server();
+
+    SECTION("multi-word command — base is the first token") {
+        json args;
+        args["command"] = "ls -la /tmp";
+        auto pat = server.get_permission_pattern(
+            "bash.execute", args.dump());
+        REQUIRE(pat.find("ls") != std::string::npos);
+        REQUIRE(pat.find("*") != std::string::npos);
+    }
+
+    SECTION("single-word command — base equals the whole command") {
+        json args;
+        args["command"] = "pwd";
+        auto pat = server.get_permission_pattern(
+            "bash.execute", args.dump());
+        REQUIRE(pat.find("pwd") != std::string::npos);
+    }
+
+    SECTION("malformed JSON args — falls back to 'unknown' base") {
+        // The catch path replaces base with "unknown".
+        auto pat = server.get_permission_pattern(
+            "bash.execute", "not-json");
+        REQUIRE(pat.find("unknown") != std::string::npos);
+    }
+}
+
+TEST_CASE("load_tool_definition throws when the JSON file is missing",
+          "[tool_base][v2.3.10][coverage][failure-mode]") {
+    REQUIRE_THROWS_AS(
+        entropic::load_tool_definition(
+            "does_not_exist_v2310", "bash", "/tmp/nonexistent-data-dir"),
+        std::runtime_error);
+}
+
+TEST_CASE("BashServer working_dir setter/getter + timeout accessor",
+          "[bash][v2.3.10][coverage]") {
+    auto server = make_bash_server();
+
+    auto initial = server.working_dir();
+    REQUIRE(server.set_working_dir(std::filesystem::temp_directory_path()
+                                     .string()));
+    auto updated = server.working_dir();
+    REQUIRE(updated == std::filesystem::temp_directory_path());
+
+    // timeout() simply returns the constructed timeout; just call it
+    // for coverage and assert non-negative.
+    REQUIRE(server.timeout() >= 0);
+
+    // Reset back so any subsequent test in this binary isn't surprised
+    // by a different cwd.
+    server.set_working_dir(initial.string());
+}

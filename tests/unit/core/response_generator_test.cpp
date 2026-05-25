@@ -842,6 +842,214 @@ static int mock_cancel_branch_stream(
 
 } // namespace
 
+// ── v2.3.10: backstop coverage for serializer, tool-prompt injection,
+//             routing failures, batch error paths, observer slots ───
+
+static int mock_get_tool_prompt_ok(const char*, char** r, void*) {
+    *r = strdup("[tools]\n- foo"); return 0;
+}
+static int mock_get_tool_prompt_none(const char*, char** r, void*) {
+    *r = nullptr; return 1;
+}
+static int mock_route_failing(const char*, char**, void*) { return 1; }
+static int mock_generate_failing(const char*, const char*, char**, void*) {
+    return 1;
+}
+static int mock_generate_empty(
+    const char*, const char*, char** r, void*) { *r = strdup(""); return 0; }
+static std::string g_captured_params;
+static int mock_generate_capturing_params(
+    const char*, const char* params, char** r, void*) {
+    g_captured_params = params != nullptr ? std::string(params) : "";
+    *r = strdup("ok"); return 0;
+}
+namespace {
+LoopContext make_ctx_for_gen(const std::string& tier = "default") {
+    LoopContext ctx{}; ctx.state = AgentState::EXECUTING;
+    ctx.locked_tier = tier;
+    ctx.messages.push_back({"user", "x"});
+    return ctx;
+}
+InferenceInterface make_capturing_iface() {
+    InferenceInterface iface{};
+    iface.generate = mock_generate_capturing;
+    iface.free_fn = mock_free;
+    iface.is_response_complete = mock_is_complete;
+    return iface;
+}
+} // namespace
+
+TEST_CASE("Routing fallback + tier callback + tool prompt branches "
+          "[v2.3.10][core][response_generator_coverage]",
+          "[core][response_generator]") {
+    EngineCallbacks cb{}; GenerationEvents ev{};
+
+    SECTION("route() failure falls back to 'default'") {
+        auto iface = make_mock_inference();
+        iface.route = mock_route_failing;
+        ResponseGenerator gen(iface, make_loop_config(), cb, ev);
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.messages.push_back({"user", "t"});
+        gen.generate_response(ctx);
+        REQUIRE(ctx.locked_tier == "default");
+    }
+    SECTION("pre-locked ctx fires on_tier_selected callback") {
+        struct Cap { std::string tier; } cap;
+        auto iface = make_mock_inference();
+        EngineCallbacks cb2{};
+        cb2.on_tier_selected = [](const char* t, void* ud) {
+            static_cast<Cap*>(ud)->tier = t;
+        };
+        cb2.user_data = &cap;
+        ResponseGenerator gen(iface, make_loop_config(), cb2, ev);
+        auto ctx = make_ctx_for_gen("arch");
+        gen.generate_response(ctx);
+        REQUIRE(cap.tier == "arch");
+    }
+    SECTION("get_tool_prompt returns tools -> system msg augmented") {
+        auto iface = make_capturing_iface();
+        iface.get_tool_prompt = mock_get_tool_prompt_ok;
+        ResponseGenerator gen(iface, make_loop_config(), cb, ev);
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "lead";
+        ctx.messages.push_back({"system", "base prompt"});
+        ctx.messages.push_back({"user", "go"});
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        REQUIRE(g_captured_msgs.find("[tools]") != std::string::npos);
+        REQUIRE(g_captured_msgs.find("- foo") != std::string::npos);
+        REQUIRE(g_captured_msgs.find("base prompt") != std::string::npos);
+        REQUIRE(ctx.messages[0].content == "base prompt");
+    }
+    SECTION("get_tool_prompt rc != 0 -> NOT augmented") {
+        auto iface = make_capturing_iface();
+        iface.get_tool_prompt = mock_get_tool_prompt_none;
+        ResponseGenerator gen(iface, make_loop_config(), cb, ev);
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING;
+        ctx.locked_tier = "lead";
+        ctx.messages.push_back({"system", "base prompt"});
+        ctx.messages.push_back({"user", "go"});
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        REQUIRE(g_captured_msgs.find("[tools]") == std::string::npos);
+        REQUIRE(g_captured_msgs.find("base prompt") != std::string::npos);
+    }
+}
+
+TEST_CASE("Serializer: JSON-escape, multimodal parts, tier params "
+          "[v2.3.10][core][response_generator_coverage]",
+          "[core][response_generator]") {
+    EngineCallbacks cb{}; GenerationEvents ev{};
+    auto cfg = make_loop_config();
+
+    SECTION("special characters JSON-escaped") {
+        auto iface = make_capturing_iface();
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING; ctx.locked_tier = "lead";
+        ctx.messages.push_back({"system", "\"hi\"\nx\ty\\z\rd"});
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        for (const char* s : {"\\\"hi\\\"", "\\n", "\\t", "\\\\", "\\r"}) {
+            REQUIRE(g_captured_msgs.find(s) != std::string::npos);
+        }
+    }
+    SECTION("TEXT + IMAGE content_parts emitted as OpenAI array (gh#37)") {
+        auto iface = make_capturing_iface();
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        LoopContext ctx{};
+        ctx.state = AgentState::EXECUTING; ctx.locked_tier = "lead";
+        Message m; m.role = "user";
+        ContentPart t; t.type = ContentPartType::TEXT; t.text = "see:";
+        m.content_parts.push_back(std::move(t));
+        ContentPart i; i.type = ContentPartType::IMAGE;
+        i.image_path = "/tmp/x.png"; i.image_url = "data:png;base64,X";
+        m.content_parts.push_back(std::move(i));
+        ctx.messages.push_back(std::move(m));
+        g_captured_msgs.clear();
+        gen.generate_response(ctx);
+        for (const char* s : {"\"type\":\"text\"", "see:",
+                              "\"type\":\"image\"", "/tmp/x.png",
+                              "base64,X"}) {
+            REQUIRE(g_captured_msgs.find(s) != std::string::npos);
+        }
+    }
+    SECTION("build_params_json embeds the locked tier") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing_params;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        auto ctx = make_ctx_for_gen("researcher");
+        g_captured_params.clear();
+        gen.generate_response(ctx);
+        REQUIRE(g_captured_params.find("\"tier\":\"researcher\"")
+                != std::string::npos);
+    }
+}
+
+TEST_CASE("generate_batch error/empty paths + setter round-trips "
+          "[v2.3.10][core][response_generator_coverage]",
+          "[core][response_generator]") {
+    EngineCallbacks cb{}; GenerationEvents ev{};
+    auto cfg = make_loop_config();
+
+    SECTION("generate returns non-zero -> finish_reason 'error'") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_failing;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        auto ctx = make_ctx_for_gen();
+        auto r = gen.generate_response(ctx);
+        REQUIRE(r.finish_reason == "error");
+        REQUIRE(r.content.empty());
+    }
+    SECTION("empty content -> observer NOT fired") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_empty;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        struct S { int calls = 0; } sink;
+        gen.set_stream_observer(
+            [](const char*, size_t, void* ud) {
+                static_cast<S*>(ud)->calls++;
+            }, &sink);
+        auto ctx = make_ctx_for_gen();
+        auto r = gen.generate_response(ctx);
+        REQUIRE(r.finish_reason == "stop");
+        REQUIRE(r.content.empty());
+        REQUIRE(sink.calls == 0);
+    }
+    SECTION("set_state_observer + set_hooks setters round-trip") {
+        auto iface = make_mock_inference();
+        ResponseGenerator gen(iface, cfg, cb, ev);
+        int sentinel = 0;
+        gen.set_state_observer([](int, void*) {}, &sentinel);
+        gen.set_hooks(HookInterface{});
+        auto ctx = make_ctx_for_gen();
+        REQUIRE(gen.generate_response(ctx).finish_reason == "stop");
+    }
+}
+
+TEST_CASE("Streaming null-fn falls back to batch path "
+          "[v2.3.10][core][response_generator_coverage]",
+          "[core][response_generator]") {
+    EngineCallbacks cb{}; GenerationEvents ev{};
+    auto cfg = make_loop_config(); cfg.stream_output = true;
+    auto iface = make_mock_inference();
+    iface.generate_stream = nullptr;
+    ResponseGenerator gen(iface, cfg, cb, ev);
+    auto ctx = make_ctx_for_gen();
+    auto r = gen.generate_response(ctx);
+    REQUIRE(r.content == "Hello from mock");
+    REQUIRE(r.finish_reason == "stop");
+}
+
 SCENARIO("generate_streaming preserves content on backend-cancel "
          "and reports finish_reason=interrupted",
          "[core][response_generator][gh20][v2.1.5]") {

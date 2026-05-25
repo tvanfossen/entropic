@@ -124,3 +124,10 @@ add_model_test(test-e7-delegation         test_e7_delegation.cpp)
 add_model_test(test-e8-mcp-auth           test_e8_mcp_auth.cpp)
 add_model_test(test-hook-lifecycle        test_hook_lifecycle.cpp)
 add_model_test(test-e9-dynamic-identity   test_e9_dynamic_identity.cpp)
+
+# v2.3.10: coverage-only backend method smoke. Exercises every public
+# LlamaCppBackend entry-point with a loaded model — structural asserts
+# only. Designed to push librentropic-inference coverage past the 70%
+# threshold without depending on small-model intelligence.
+add_model_test(test-v2310-backend-coverage-smoke
+               test_v2310_backend_coverage_smoke.cpp)

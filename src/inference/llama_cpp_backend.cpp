@@ -14,6 +14,8 @@
  */
 
 #include "llama_cpp_backend.h"
+#include "llama_cpp_sampler.h"
+#include "llama_cpp_tokenizer.h"
 
 #include <entropic/types/logging.h>
 
@@ -119,6 +121,29 @@ void finalize_result(GenerationResult& result,
 }
 
 /**
+ * @brief Build a fully-finalized GenerationResult for sampler-init failure.
+ *
+ * Extracted in v2.3.10 to keep do_generate_text_only and
+ * do_generate_streaming_text_only within the knots SLOC + ABC budgets
+ * after the sampler-seam refactor added the null-sampler check.
+ * @param t0 Generation start time, passed through to finalize_result.
+ * @return GenerationResult with error_code=GENERATE_FAILED, error_message
+ *         set, finish_reason="error", and timing fields populated.
+ * @utility
+ * @version 2.3.10
+ */
+GenerationResult sampler_init_error(
+    std::chrono::steady_clock::time_point t0)
+{
+    GenerationResult r;
+    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+    r.error_message = "Sampler factory not initialized";
+    r.finish_reason = "error";
+    finalize_result(r, t0);
+    return r;
+}
+
+/**
  * @brief Map a ModelConfig::cache_type_k/v string to a ggml_type.
  *
  * Unknown values fall back to F16 with a logged warning, matching the
@@ -171,6 +196,10 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
 
     vocab_ = llama_model_get_vocab(model_);
     is_recurrent_ = llama_model_is_recurrent(model_);
+    // v2.3.10: wire the Tokenizer seam now that vocab_ is valid.
+    // Lifetime: tokenizer_ borrows vocab_; do_unload resets
+    // tokenizer_ BEFORE freeing the model so the borrow never dangles.
+    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     logger->info("Model loaded (CPU): {} tokens in vocab, recurrent={}",
               llama_vocab_n_tokens(vocab_), is_recurrent_);
     return true;
@@ -230,6 +259,12 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
 bool LlamaCppBackend::do_activate() {
     if (!load_gpu_model()) { return false; }
     if (!create_inference_context()) { return false; }
+    // v2.3.10: wire the Sampler seam once ctx_ / vocab_ are live.
+    // Lifetime: factory borrows ctx_ + vocab_; do_deactivate /
+    // do_unload reset sampler_factory_ BEFORE freeing those handles
+    // so the borrow never dangles.
+    sampler_factory_ = std::make_unique<LlamaCppSamplerFactory>(
+        ctx_, vocab_);
     init_mmproj_if_configured();
     return true;
 }
@@ -267,9 +302,14 @@ bool LlamaCppBackend::load_gpu_model() {
         return false;
     }
 
+    // v2.3.10: tokenizer_ borrows the old vocab_. Reset it BEFORE we
+    // free the old model so the borrow never dangles, then re-create
+    // against the new vocab below.
+    tokenizer_.reset();
     if (model_) { llama_model_free(model_); }
     model_ = new_model;
     vocab_ = llama_model_get_vocab(model_);
+    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     return true;
 }
 
@@ -347,6 +387,9 @@ void LlamaCppBackend::init_mmproj_if_configured() {
  * @version 2.1.8
  */
 void LlamaCppBackend::do_deactivate() {
+    // v2.3.10: sampler factory borrows ctx_ + vocab_. Release it
+    // BEFORE freeing the context so the borrow never dangles.
+    sampler_factory_.reset();
     // v2.1.8: mtmd holds a reference to the live llama_model — free
     // it before the GPU model is unloaded below.
     if (mtmd_ctx_ != nullptr) {
@@ -368,9 +411,14 @@ void LlamaCppBackend::do_deactivate() {
     llama_model* cpu_model = llama_model_load_from_file(
         config().path.c_str(), mparams);
     if (cpu_model) {
+        // v2.3.10: same vocab-handoff rule as load_gpu_model — reset
+        // tokenizer_ before freeing the GPU model, then rewire to the
+        // CPU model's vocab.
+        tokenizer_.reset();
         llama_model_free(model_);
         model_ = cpu_model;
         vocab_ = llama_model_get_vocab(model_);
+        tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     } else {
         logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
     }
@@ -392,6 +440,46 @@ LlamaCppBackend::~LlamaCppBackend() {
 }
 
 /**
+ * @brief Wire a mock Tokenizer for unit tests + mark the backend
+ *        as WARM so is_loaded()-gated public methods route to it.
+ *
+ * Implementation note: state_ is set directly to WARM here rather
+ * than via the normal load() path because there's no underlying
+ * model. The destructor's do_unload() handles cleanup — the
+ * tokenizer_.reset() happens BEFORE the (nullptr) model_/vocab_
+ * are touched, so no dangling-borrow risk.
+ *
+ * @internal
+ * @version 2.3.10
+ */
+void LlamaCppBackend::inject_tokenizer_for_test(
+    std::unique_ptr<Tokenizer> tokenizer)
+{
+    tokenizer_ = std::move(tokenizer);
+    state_.store(ModelState::WARM, std::memory_order_release);
+}
+
+/**
+ * @brief Wire a mock SamplerFactory for unit tests (v2.3.10 seam).
+ *
+ * Sister hook to `inject_tokenizer_for_test`. Does NOT touch
+ * `state_` — the decode loop's `is_loaded()`-gated entry points
+ * are already covered by the tokenizer seam, and Sampler tests
+ * exercise the factory at a finer grain than full backend
+ * lifecycle. Tests that need a "WARM" backend can chain both
+ * inject_*_for_test calls (tokenizer flips state, sampler
+ * factory then plugs in without disturbing it).
+ *
+ * @internal
+ * @version 2.3.10
+ */
+void LlamaCppBackend::inject_sampler_factory_for_test(
+    std::unique_ptr<SamplerFactory> factory)
+{
+    sampler_factory_ = std::move(factory);
+}
+
+/**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
  * @version 2.1.8
@@ -400,6 +488,14 @@ void LlamaCppBackend::do_unload() {
     if (prompt_cache_) {
         prompt_cache_->clear();
     }
+    // v2.3.10: sampler factory borrows ctx_ + vocab_ — release it
+    // BEFORE the context/model are freed below so the borrow never
+    // points into freed memory. (do_deactivate normally releases
+    // this earlier; this reset is the WARM→COLD safety net.)
+    sampler_factory_.reset();
+    // v2.3.10: tokenizer borrows vocab_ — release it BEFORE the model
+    // is freed so the borrow never points into freed memory.
+    tokenizer_.reset();
     // v2.1.8: mtmd must be freed before the underlying llama_model.
     if (mtmd_ctx_ != nullptr) {
         mtmd_free(mtmd_ctx_);
@@ -430,24 +526,15 @@ void LlamaCppBackend::do_unload() {
 std::vector<llama_token> LlamaCppBackend::tokenize(
     const std::string& text, bool add_special) const
 {
-    // First call: get required size
-    int n = llama_tokenize(vocab_, text.c_str(),
-                           static_cast<int32_t>(text.size()),
-                           nullptr, 0, add_special, true);
-    if (n < 0) {
-        n = -n;
-    }
-
-    std::vector<llama_token> tokens(static_cast<size_t>(n));
-    int actual = llama_tokenize(vocab_, text.c_str(),
-                                static_cast<int32_t>(text.size()),
-                                tokens.data(), n, add_special, true);
-    if (actual < 0) {
-        logger->error("Tokenization failed for text of length {}", text.size());
-        return {};
-    }
-    tokens.resize(static_cast<size_t>(actual));
-    return tokens;
+    // v2.3.10: route through the Tokenizer seam. tokenizer_ is set
+    // in do_load (real impl) or via inject_tokenizer_for_test (mock).
+    // Returns empty when no tokenizer is wired — matches the prior
+    // failure-path return shape.
+    if (!tokenizer_) { return {}; }
+    auto ids = tokenizer_->tokenize(text, add_special);
+    // llama_token is int32_t; vector conversion is a copy through
+    // iterators since the value type matches.
+    return {ids.begin(), ids.end()};
 }
 
 /**
@@ -458,40 +545,12 @@ std::vector<llama_token> LlamaCppBackend::tokenize(
  * @version 1.8.2
  */
 std::string LlamaCppBackend::detokenize(llama_token token) const {
-    // special=false — special tokens don't render to surface text.
-    //
-    // History: v2.3.4 (gh#68) flipped this from `true` to `false`
-    // expecting it would fix Gemma 4's `<|im_end|>` content leak.
-    // It did NOT — Gemma 4 emits `<|im_end|>` as multi-token *regular*
-    // surface tokens (the GGUF tokenizer decomposes it into `<`, `|`,
-    // `im`, `_end`, `|>` or similar), not as a single special token.
-    // None of those individual tokens are classified as special, so
-    // this flag has no effect on them.
-    //
-    // The actual gh#68 fix lives in `Gemma4Adapter::parse_tool_calls`
-    // (v2.3.5) which scrubs chat-template markers from cleaned_content
-    // at the adapter layer — same surface gh#65 used for the
-    // `<|tool_call>` asymmetric-tag scrub.
-    //
-    // Keeping `special=false` as a defensive measure regardless: any
-    // future model that DOES emit a chat-template marker as a single
-    // special token would be filtered. Zero cost for the current
-    // model fleet. Stop semantics are independent of this flag —
-    // the streaming loop short-circuits on `llama_vocab_is_eog()`
-    // BEFORE calling detokenize.
-    char buf[256];
-    int n = llama_token_to_piece(vocab_, token, buf, sizeof(buf), 0, false);
-    if (n < 0) {
-        // Buffer too small — retry with exact size
-        std::vector<char> large(static_cast<size_t>(-n));
-        n = llama_token_to_piece(vocab_, token, large.data(),
-                                 static_cast<int32_t>(large.size()), 0, false);
-        if (n > 0) {
-            return std::string(large.data(), static_cast<size_t>(n));
-        }
-        return "";
-    }
-    return std::string(buf, static_cast<size_t>(n));
+    // v2.3.10: route through Tokenizer seam. The special=false /
+    // gh#68 history + defensive rationale now lives in
+    // LlamaCppTokenizer::detokenize. Returns empty when no
+    // tokenizer is wired — matches prior failure-path return.
+    if (!tokenizer_) { return {}; }
+    return tokenizer_->detokenize(static_cast<int32_t>(token));
 }
 
 /**
@@ -717,65 +776,31 @@ std::string LlamaCppBackend::apply_chat_template(
 // ── Sampler ────────────────────────────────────────────────
 
 /**
- * @brief Create sampler chain from generation params.
+ * @brief Build a Sampler for one generation via the v2.3.10 seam.
  *
- * Chain order per llama.cpp convention:
- * grammar → penalties → temperature → top-k → top-p → dist
+ * Pre-v2.3.10 this method built a `llama_sampler*` chain inline.
+ * v2.3.10 moves chain construction into `LlamaCppSamplerFactory`
+ * (see `llama_cpp_sampler.cpp`); this entry stays as a thin
+ * wrapper so the four legacy callers (`decode_loop`,
+ * `run_sampling_loop`, `do_generate_text_only`,
+ * `do_generate_streaming_text_only`) remain one-liners.
  *
- * seed < 0 maps to LLAMA_DEFAULT_SEED (random). (P2-14)
+ * Returns nullptr when no factory has been wired — a guarded
+ * fallback for the COLD-state code path that exists for
+ * defensiveness (production callers only reach this from
+ * ACTIVE-only code paths, where do_activate has already
+ * installed the production factory).
  *
  * @param params Generation parameters.
- * @return Sampler chain (caller frees).
+ * @return Owned Sampler, or nullptr if no factory installed.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.3.10
  */
-llama_sampler* LlamaCppBackend::create_sampler(
+std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
     const GenerationParams& params) const
 {
-    llama_sampler_chain_params chain_params = llama_sampler_chain_default_params();
-    llama_sampler* chain = llama_sampler_chain_init(chain_params);
-
-    // Grammar constraint (applied first)
-    if (!params.grammar.empty()) {
-        llama_sampler* grammar = llama_sampler_init_grammar(
-            vocab_, params.grammar.c_str(), "root");
-        if (grammar) {
-            llama_sampler_chain_add(chain, grammar);
-        }
-    }
-
-    // Repetition penalty
-    if (params.repeat_penalty != 1.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_penalties(
-                64, params.repeat_penalty, 0.0f, 0.0f));
-    }
-
-    // Temperature
-    if (params.temperature > 0.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_temp(params.temperature));
-    }
-
-    // Top-K
-    if (params.top_k > 0) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_top_k(params.top_k));
-    }
-
-    // Top-P (nucleus sampling)
-    if (params.top_p < 1.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_top_p(params.top_p, 1));
-    }
-
-    // Final distribution sampler — use caller seed or LLAMA_DEFAULT_SEED
-    uint32_t seed = params.seed < 0
-        ? LLAMA_DEFAULT_SEED
-        : static_cast<uint32_t>(params.seed);
-    llama_sampler_chain_add(chain, llama_sampler_init_dist(seed));
-
-    return chain;
+    if (!sampler_factory_) { return nullptr; }
+    return sampler_factory_->create(params);
 }
 
 // ── Decode loop ────────────────────────────────────────────
@@ -809,21 +834,27 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
 
 /**
  * @brief Generate one token and append to output.
- * @param sampler Sampler chain.
+ *
+ * v2.3.10: routes per-token draw through the Sampler seam
+ * (`sampler.sample()`) instead of calling `llama_sampler_sample`
+ * directly. The production LlamaCppSampler captured ctx_ at
+ * construction; mocks bypass llama.cpp entirely.
+ *
+ * @param sampler Sampler used for the per-token draw.
  * @param generated Accumulated output string (mutated).
  * @param on_token Streaming callback (may be nullptr).
  * @param stop Stop sequences.
  * @return "continue", "stop", "eos", or "error".
  * @internal
- * @version 1.8.2
+ * @version 2.3.10
  */
 std::string LlamaCppBackend::step_token(
-    llama_sampler* sampler,
+    Sampler& sampler,
     std::string& generated,
     std::function<void(std::string_view)>& on_token,
     const std::vector<std::string>& stop)
 {
-    llama_token new_token = llama_sampler_sample(sampler, ctx_, -1);
+    llama_token new_token = sampler.sample();
 
     if (new_token == llama_vocab_eos(vocab_)
         || llama_vocab_is_eog(vocab_, new_token)) {
@@ -861,13 +892,19 @@ GenerationResult LlamaCppBackend::decode_loop(
     std::atomic<bool>* cancel)
 {
     GenerationResult result;
-    llama_sampler* sampler = create_sampler(params);
+    // v2.3.10: Sampler seam — factory installed in do_activate.
+    auto sampler = create_sampler(params);
+    if (!sampler) {
+        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        result.error_message = "Sampler factory not initialized";
+        result.finish_reason = "error";
+        return result;
+    }
 
     if (!run_prefill(tokens)) {
         result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         result.error_message = "Prefill decode failed";
         result.finish_reason = "error";
-        llama_sampler_free(sampler);
         return result;
     }
 
@@ -882,7 +919,7 @@ GenerationResult LlamaCppBackend::decode_loop(
             break;
         }
 
-        auto status = step_token(sampler, generated, on_token, params.stop);
+        auto status = step_token(*sampler, generated, on_token, params.stop);
         if (status == "continue") {
             ++n_generated;
         } else {
@@ -898,7 +935,6 @@ GenerationResult LlamaCppBackend::decode_loop(
         result.finish_reason = "length";
     }
 
-    llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
     return result;
@@ -1300,7 +1336,15 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
     const std::chrono::steady_clock::time_point& t0)
 {
     GenerationResult result;
-    auto* sampler = create_sampler(params);
+    // v2.3.10: Sampler seam.
+    auto sampler = create_sampler(params);
+    if (!sampler) {
+        result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        result.error_message = "Sampler factory not initialized";
+        result.finish_reason = "error";
+        finalize_result(result, t0);
+        return result;
+    }
     std::string generated;
     int n_generated = 0;
     while (n_generated < params.max_tokens) {
@@ -1311,7 +1355,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
             break;
         }
         auto status = step_token(
-            sampler, generated, on_token, params.stop);
+            *sampler, generated, on_token, params.stop);
         if (status == "continue") { ++n_generated; continue; }
         result.finish_reason = (status == "error") ? "error" : "stop";
         if (status == "error") {
@@ -1323,7 +1367,6 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
             && result.finish_reason.empty()) {
         result.finish_reason = "length";
     }
-    llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
     finalize_result(result, t0);
@@ -1418,21 +1461,22 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
               tokens.size(), params.max_tokens);
     log_sampler_config(params);
 
-    GenerationResult result;
-    llama_sampler* sampler = create_sampler(params);
+    // v2.3.10: Sampler seam.
+    auto sampler = create_sampler(params);
+    if (!sampler) { return sampler_init_error(t0); }
 
     if (!run_prefill_cached(tokens, sys, messages, params)) {
-        llama_sampler_free(sampler);
         return prefill_error();
     }
 
+    GenerationResult result;
     std::string generated;
     int n_generated = 0;
     std::function<void(std::string_view)> no_cb = nullptr;
 
     while (n_generated < params.max_tokens) {
         auto status = step_token(
-            sampler, generated, no_cb, params.stop);
+            *sampler, generated, no_cb, params.stop);
         if (status == "continue") { ++n_generated; }
         else {
             result.finish_reason =
@@ -1449,7 +1493,6 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
         result.finish_reason = "length";
     }
 
-    llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
     finalize_result(result, t0);
@@ -1504,12 +1547,13 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
               tokens.size(), params.max_tokens);
     log_sampler_config(params);
 
-    GenerationResult result;
-    auto* sampler = create_sampler(params);
+    // v2.3.10: Sampler seam.
+    auto sampler = create_sampler(params);
+    if (!sampler) { return sampler_init_error(t0); }
     if (!run_prefill_cached(tokens, sys, messages, params)) {
-        llama_sampler_free(sampler);
         return prefill_error();
     }
+    GenerationResult result;
     std::string generated;
     int n_generated = 0;
     while (n_generated < params.max_tokens) {
@@ -1519,7 +1563,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
             break;
         }
         auto status = step_token(
-            sampler, generated, on_token, params.stop);
+            *sampler, generated, on_token, params.stop);
         if (status == "continue") { ++n_generated; }
         else {
             result.finish_reason =
@@ -1534,7 +1578,6 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
         && result.finish_reason.empty()) {
         result.finish_reason = "length";
     }
-    llama_sampler_free(sampler);
     result.content = generated;
     result.token_count = n_generated;
     finalize_result(result, t0);
@@ -1597,19 +1640,24 @@ common_params_sampling to_common_sampling(
     // Mirror entropic's standard sampler chain ordering so the
     // speculative path produces output bit-identical to plain decode
     // (the v2.1.11 correctness contract). Entropic's `create_sampler`
-    // builds: penalties → top_k → top_p → temperature → dist, AND
-    // SKIPS the temperature sampler when temp == 0 (greedy mode).
+    // builds: penalties → top_k → top_p → min_p → temperature → dist,
+    // AND SKIPS the temperature sampler when temp == 0 (greedy mode).
     // common_sampler appends an extended-temperature sampler that
     // differs subtly from "no temp at all" — we omit it for temp=0
-    // to match entropic exactly. Also strip the additional filters
-    // (min_p, top_n_sigma, dry, xtc, typical_p) in the default chain.
+    // to match entropic exactly. min_p (v2.3.10, gh#23) appended only
+    // when caller opted in (params.min_p > 0); 0.0 preserves the
+    // pre-v2.3.10 chain shape bit-for-bit. Other extended filters
+    // (top_n_sigma, dry, xtc, typical_p) remain stripped.
     cps.samplers = {COMMON_SAMPLER_TYPE_PENALTIES,
                     COMMON_SAMPLER_TYPE_TOP_K,
                     COMMON_SAMPLER_TYPE_TOP_P};
+    if (params.min_p > 0.0f) {
+        cps.samplers.push_back(COMMON_SAMPLER_TYPE_MIN_P);
+    }
     if (params.temperature > 0.0f) {
         cps.samplers.push_back(COMMON_SAMPLER_TYPE_TEMPERATURE);
     }
-    cps.min_p = 0.0f;
+    cps.min_p = params.min_p;
     cps.dry_multiplier = 0.0f;
     cps.top_n_sigma = -1.0f;
     return cps;

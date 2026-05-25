@@ -222,13 +222,23 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 2.0.6-rc16 — added seed
+ * @version 2.3.10 — added min_p (gh#23 MVP item 1)
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
     float top_p = 0.9f;                      ///< Nucleus sampling threshold
     int top_k = 40;                          ///< Top-K sampling
     float repeat_penalty = 1.1f;             ///< Repetition penalty
+
+    /// @brief Min-p nucleus sampling threshold (gh#23 MVP item 1).
+    /// Filters tokens whose probability is below `min_p * P(top_token)`.
+    /// `0.0` (default) disables — preserves pre-v2.3.10 behavior bit-for-bit.
+    /// Typical productive range: 0.01–0.2. Values >= 1.0 filter every
+    /// non-top token (degenerate but not crash-inducing; the dist sampler
+    /// still selects the single survivor).
+    /// @version 2.3.10
+    float min_p = 0.0f;
+
     int max_tokens = 4096;                   ///< Maximum tokens to generate
 
     /// @brief RNG seed for reproducible sampling. -1 = random (default).

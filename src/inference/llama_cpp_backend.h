@@ -25,6 +25,8 @@
 #pragma once
 
 #include <entropic/inference/backend.h>
+#include <entropic/inference/sampler.h>
+#include <entropic/inference/tokenizer.h>
 
 #include "prompt_cache.h"
 
@@ -77,6 +79,63 @@ public:
      * @version 2.2.8
      */
     ~LlamaCppBackend() override;
+
+    /**
+     * @brief Inject a tokenizer for unit testing (v2.3.10).
+     *
+     * Bypasses do_load() to wire a mock Tokenizer into the backend
+     * AND mark the backend as WARM so is_loaded()-gated public
+     * methods (tokenize_text, do_count_tokens via base count_tokens)
+     * route through the mock. Production code MUST NOT call this —
+     * use load() / activate() for real model lifecycle.
+     *
+     * Distinct entrypoint name + no production caller ⇒ no risk of
+     * accidental misuse; `#ifdef ENTROPIC_TESTING` was considered
+     * but rejected (the build-flag conditional creates a
+     * test-vs-production code-shape divergence we don't want for
+     * coverage measurement).
+     *
+     * @param tokenizer Mock tokenizer (ownership transferred).
+     * @utility
+     * @version 2.3.10
+     */
+    void inject_tokenizer_for_test(std::unique_ptr<Tokenizer> tokenizer);
+
+    /**
+     * @brief Inject a SamplerFactory for unit testing (v2.3.10).
+     *
+     * Bypasses do_activate() to wire a mock factory into the backend
+     * so the decode loop's chain-construction + per-token sampling
+     * paths can be exercised without a real `llama_context`. Production
+     * code MUST NOT call this — use activate() for real lifecycle.
+     *
+     * Symmetry: matches `inject_tokenizer_for_test` in shape so the
+     * two v2.3.10 seams (Tokenizer + Sampler) feel consistent at the
+     * test surface. No `#ifdef ENTROPIC_TESTING` — the build-flag
+     * conditional creates a test-vs-production code-shape divergence
+     * we don't want for coverage measurement.
+     *
+     * @param factory Mock factory (ownership transferred).
+     * @utility
+     * @version 2.3.10
+     */
+    void inject_sampler_factory_for_test(
+        std::unique_ptr<SamplerFactory> factory);
+
+    /**
+     * @brief Read the currently-wired SamplerFactory (test-only).
+     *
+     * Returns nullptr when no factory has been wired yet (the COLD
+     * state of `sampler_factory_`). Exists so seam tests can assert
+     * factory presence without poking at private members.
+     *
+     * @return Borrowed factory pointer (do not free); nullptr if unset.
+     * @utility
+     * @version 2.3.10
+     */
+    SamplerFactory* sampler_factory_for_test() const {
+        return sampler_factory_.get();
+    }
 
     /**
      * @brief Set prompt cache configuration.
@@ -241,6 +300,28 @@ protected:
     llama_context* ctx_ = nullptr;             ///< Inference context (ACTIVE)
     const llama_vocab* vocab_ = nullptr;       ///< Vocabulary (from model_)
 
+    /* ── v2.3.10 seam: tokenizer abstraction ─────────────── */
+
+    /// @brief Tokenizer used by tokenize_text / do_count_tokens /
+    /// internal tokenize/detokenize. Created in do_load against the
+    /// loaded vocab, destroyed in do_unload BEFORE the model is
+    /// freed (the vocab pointer is borrowed). Unit tests inject a
+    /// MockTokenizer via the test-only constructor to exercise the
+    /// LlamaCppBackend public methods without a real model.
+    /// @version 2.3.10
+    std::unique_ptr<Tokenizer> tokenizer_;
+
+    /* ── v2.3.10 seam: sampler abstraction ───────────────── */
+
+    /// @brief Factory used by the decode loop to build per-generation
+    /// samplers. Created in do_activate against the live `ctx_` /
+    /// `vocab_`, destroyed in do_deactivate BEFORE those resources
+    /// are freed (the factory borrows them). Unit tests inject a
+    /// MockSamplerFactory via inject_sampler_factory_for_test to
+    /// exercise the decode-loop call site without a real context.
+    /// @version 2.3.10
+    std::unique_ptr<SamplerFactory> sampler_factory_;
+
     /* ── Prompt cache ───────────────────────────────────── */
 
     PromptCacheConfig prompt_cache_config_;      ///< Cache config (v1.8.3)
@@ -302,26 +383,38 @@ protected:
 
     /**
      * @brief Generate one token and append to output.
-     * @param sampler Sampler chain.
+     * @param sampler Sampler used for the per-token draw (v2.3.10 seam).
      * @param generated Accumulated output (mutated).
      * @param on_token Streaming callback.
      * @param stop Stop sequences.
      * @return "continue", "stop", "eos", or "error".
-     * @version 1.8.2
+     * @version 2.3.10
      */
     std::string step_token(
-        llama_sampler* sampler,
+        Sampler& sampler,
         std::string& generated,
         std::function<void(std::string_view)>& on_token,
         const std::vector<std::string>& stop);
 
     /**
-     * @brief Create sampler chain from generation params.
+     * @brief Build a Sampler for one generation from params.
+     *
+     * v2.3.10 seam: thin wrapper that delegates to
+     * `sampler_factory_->create(params)`. Returns nullptr when no
+     * factory has been wired (COLD backend / production never
+     * activated). Callers must null-check before use.
+     *
+     * Kept as a member function (vs inline at every call site) so
+     * the four legacy callers (`decode_loop`, `run_sampling_loop`,
+     * `do_generate_text_only`, `do_generate_streaming_text_only`)
+     * stay a one-liner — minimum diff to ship the seam.
+     *
      * @param params Generation parameters.
-     * @return Sampler chain (caller frees via llama_sampler_free).
-     * @version 1.8.2
+     * @return Owned Sampler, or nullptr if no factory wired.
+     * @version 2.3.10
      */
-    llama_sampler* create_sampler(const GenerationParams& params) const;
+    std::unique_ptr<Sampler> create_sampler(
+        const GenerationParams& params) const;
 
     /**
      * @brief Extract the system prompt from messages.

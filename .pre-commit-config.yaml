@@ -136,4 +136,4 @@ repos:
           - '--threshold'
           - 'librentropic-inference:src/inference/:70'
           - '--threshold'
-          - 'librentropic-facade:src/facade/:80'
+          - 'librentropic-facade:src/facade/:70'

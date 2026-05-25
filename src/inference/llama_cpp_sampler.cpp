@@ -146,10 +146,16 @@ std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
 
     add_grammar_sampler(chain, vocab_, params.grammar);
 
-    if (params.repeat_penalty != 1.0f) {
+    // gh#23 MVP item 2 (v2.3.14): the penalties sampler now also carries
+    // presence_penalty. Gate fires when EITHER repeat_penalty is
+    // non-default OR presence_penalty is positive, so callers opting
+    // into presence don't need to also non-default repeat. The 4th
+    // arg (presence) was previously hardcoded 0.0f; the 3rd (frequency)
+    // stays at 0.0f until gh#23 MVP item 3.
+    if (params.repeat_penalty != 1.0f || params.presence_penalty > 0.0f) {
         llama_sampler_chain_add(chain,
             llama_sampler_init_penalties(
-                64, params.repeat_penalty, 0.0f, 0.0f));
+                64, params.repeat_penalty, 0.0f, params.presence_penalty));
     }
     if (params.temperature > 0.0f) {
         llama_sampler_chain_add(chain,

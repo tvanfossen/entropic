@@ -19,6 +19,7 @@ SCENARIO("GenerationParams defaults", "[params][defaults]") {
             REQUIRE(params.top_k == 40);
             REQUIRE(params.repeat_penalty == 1.1f);
             REQUIRE(params.min_p == 0.0f);  // gh#23: 0.0 = disabled sentinel
+            REQUIRE(params.presence_penalty == 0.0f);  // gh#23 v2.3.14: 0.0 = disabled
             REQUIRE(params.reasoning_budget == -1);
             REQUIRE(params.enable_thinking == true);
             REQUIRE(params.grammar.empty());
@@ -157,6 +158,84 @@ SCENARIO("seed field round-trips through GenerationParams",
         entropic::GenerationParams p;
         THEN("seed defaults to -1 (random)") {
             REQUIRE(p.seed == -1);
+        }
+    }
+}
+
+// ── gh#23 v2.3.14: presence_penalty sampler knob ──────────
+
+SCENARIO("presence_penalty field round-trips through GenerationParams",
+         "[params][presence_penalty][gh23]")
+{
+    GIVEN("a default GenerationParams") {
+        entropic::GenerationParams p;
+        THEN("presence_penalty defaults to 0.0 (disabled sentinel)") {
+            REQUIRE(p.presence_penalty == 0.0f);
+        }
+    }
+
+    GIVEN("presence_penalty set to a typical productive value") {
+        entropic::GenerationParams p;
+        p.presence_penalty = 0.6f;
+        THEN("the value reads back unchanged") {
+            REQUIRE(p.presence_penalty == 0.6f);
+        }
+    }
+
+    GIVEN("presence_penalty at boundary values") {
+        entropic::GenerationParams p;
+        WHEN("set to 0.0") { p.presence_penalty = 0.0f;
+            THEN("reads 0.0") { REQUIRE(p.presence_penalty == 0.0f); } }
+        WHEN("set to 1.0") { p.presence_penalty = 1.0f;
+            THEN("reads 1.0") { REQUIRE(p.presence_penalty == 1.0f); } }
+        WHEN("set to 2.0 (upper typical range)") { p.presence_penalty = 2.0f;
+            THEN("reads 2.0") { REQUIRE(p.presence_penalty == 2.0f); } }
+        WHEN("set to -0.5 (negative, model invokes 'discourage absent')") {
+            p.presence_penalty = -0.5f;
+            THEN("reads -0.5 — schema layer is responsible for clamping") {
+                REQUIRE(p.presence_penalty == -0.5f);
+            }
+        }
+    }
+}
+
+SCENARIO("presence_penalty is independent of other penalty/sampling knobs",
+         "[params][presence_penalty][gh23]")
+{
+    GIVEN("presence_penalty modified") {
+        entropic::GenerationParams p;
+        p.presence_penalty = 0.5f;
+        THEN("repeat_penalty / min_p / top_p / top_k / temperature stay at default") {
+            REQUIRE(p.repeat_penalty == 1.1f);
+            REQUIRE(p.min_p == 0.0f);
+            REQUIRE(p.top_p == 0.9f);
+            REQUIRE(p.top_k == 40);
+            REQUIRE(p.temperature == 0.7f);
+        }
+    }
+}
+
+SCENARIO("presence_penalty default still gates the penalties sampler OFF "
+         "alongside default repeat_penalty",
+         "[params][presence_penalty][gh23][backward-compat]")
+{
+    // The penalties-sampler gate in create_sampler is now
+    // `if (repeat_penalty != 1.0 || presence_penalty > 0.0)`.
+    // With BOTH at defaults, the gate must stay false so the chain
+    // is bit-identical to pre-v2.3.14.
+    GIVEN("a default GenerationParams") {
+        entropic::GenerationParams p;
+        THEN("repeat_penalty == 1.1 (default, != 1.0 → sampler stays ON for back-compat)") {
+            REQUIRE(p.repeat_penalty == 1.1f);
+            REQUIRE(p.presence_penalty == 0.0f);
+        }
+    }
+    GIVEN("repeat_penalty explicitly set to 1.0 AND presence_penalty default") {
+        entropic::GenerationParams p;
+        p.repeat_penalty = 1.0f;
+        THEN("both penalty knobs are now disabled — sampler stage skipped") {
+            REQUIRE(p.repeat_penalty == 1.0f);
+            REQUIRE(p.presence_penalty == 0.0f);
         }
     }
 }

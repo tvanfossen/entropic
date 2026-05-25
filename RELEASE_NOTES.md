@@ -1,3 +1,68 @@
+# entropic v2.3.14
+
+Patch release. **Additive sampler-config knob: `presence_penalty`.**
+Second MVP-10 item from gh#23 (expose llama.cpp sampler chain via
+config). Pure additive — default `0.0f` preserves pre-v2.3.14 chain
+shape bit-for-bit, so existing configs are unaffected.
+
+## What landed
+
+- `GenerationParams::presence_penalty` (`float`, default `0.0f`) in
+  `include/entropic/types/config.h`. Appended after `min_p`, before
+  `max_tokens` — additive ABI only, no insertion into the prior
+  published layout.
+- `LlamaCppBackend::create_sampler` (plain decode path, via the
+  v2.3.10 Sampler seam) now passes `params.presence_penalty` as the
+  4th argument to `llama_sampler_init_penalties` (previously hardcoded
+  to `0.0f`). The gate that controls whether the penalties sampler is
+  added to the chain expands to fire when EITHER `repeat_penalty !=
+  1.0` OR `presence_penalty > 0.0` — so callers opting in to presence
+  don't need to also non-default repeat.
+- Speculative-decoding path (`to_common_sampling`) sets
+  `cps.penalty_present = params.presence_penalty`. Default `0.0f`
+  preserves bit-for-bit speculative output (the v2.1.11 correctness
+  contract).
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept `"presence_penalty"`. Missing key →
+  default `0.0f` (no behavior change for existing payloads).
+
+The 3rd argument to `llama_sampler_init_penalties`
+(`frequency_penalty`) remains hardcoded `0.0f` — that lands as
+v2.3.15 (gh#23 MVP item 3).
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][presence_penalty]` scenarios covering:
+
+- Default sentinel (`0.0f` disabled).
+- Round-trip at a typical productive value (`0.6`).
+- Boundary handling at `0.0`, `1.0`, `2.0`, and a negative value
+  (`-0.5`) — struct must not silently rewrite caller intent; clamping
+  belongs to the schema layer.
+- Independence from `repeat_penalty` / `min_p` / `top_p` / `top_k` /
+  `temperature` (no struct-field aliasing).
+- Backward-compat pin: the new sampler gate
+  (`repeat_penalty != 1.0 || presence_penalty > 0.0`) stays ON on
+  defaults (repeat = 1.1) — a future default change would have to
+  break this test deliberately.
+
+The default base-case scenario also gains a
+`REQUIRE(presence_penalty == 0.0f)` assertion alongside the existing
+`min_p == 0.0f` line.
+
+## Scope boundary (gh#23 sequencing)
+
+This is MVP-10 item 2 of ~10. Remaining items
+(`frequency_penalty`, `logit_bias`, `n_ubatch`, `split_mode`,
+`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`, state
+save/load, `n_parallel`, `llama_log_set`) will follow as separate
+`v2.3.x` patches per the "one issue one patch ver" cadence. The
+seams added in v2.3.10 (Tokenizer + SamplerFactory) make each new
+knob a tight, isolated diff.
+
+---
+
 # entropic v2.3.13
 
 Patch release. **C-ABI exception barrier on configure entry points (gh#74).**

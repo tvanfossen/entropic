@@ -222,7 +222,7 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 2.3.10 — added min_p (gh#23 MVP item 1)
+ * @version 2.3.14 — added presence_penalty (gh#23 MVP item 2)
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -238,6 +238,17 @@ struct GenerationParams {
     /// still selects the single survivor).
     /// @version 2.3.10
     float min_p = 0.0f;
+
+    /// @brief Presence-penalty term in llama.cpp's penalties sampler (gh#23 MVP item 2).
+    /// Subtracts a constant from any token that has appeared at least
+    /// once in the recent window. `0.0` (default) disables — preserves
+    /// pre-v2.3.14 chain bit-for-bit. Typical range: 0.0–2.0.
+    /// Pairs with `repeat_penalty` (multiplicative) and the future
+    /// `frequency_penalty` (per-occurrence linear); the penalties
+    /// sampler runs all three together, so any non-default value here
+    /// activates the stage even when `repeat_penalty == 1.0`.
+    /// @version 2.3.14
+    float presence_penalty = 0.0f;
 
     int max_tokens = 4096;                   ///< Maximum tokens to generate
 

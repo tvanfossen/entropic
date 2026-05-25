@@ -24,13 +24,68 @@
 #include <entropic/types/messages_json.h>
 #include "json_serializers.h"
 #include "utf8_safe.h"
+
+#include <nlohmann/json.hpp>
+
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <new>
 #include <stdexcept>
 #include <string>
 
 static auto s_log = entropic::log::get("facade");
+
+/**
+ * @brief Run a C-API entry-point body inside an exception barrier.
+ *
+ * gh#74 (v2.3.13): every `extern "C"` function in this translation
+ * unit MUST guarantee that no C++ exception escapes back into the
+ * caller (per `docs/architecture-cpp.md`'s "exceptions do not cross
+ * .so boundaries" rule). Wraps the body in try/catch and maps the
+ * three exception families we've actually seen to documented error
+ * codes:
+ *
+ *   - `std::filesystem::filesystem_error` → `ENTROPIC_ERROR_IO`
+ *   - `nlohmann::json::exception`         → `ENTROPIC_ERROR_INVALID_CONFIG`
+ *   - any other `std::exception`          → `ENTROPIC_ERROR_INTERNAL`
+ *
+ * The handle's `last_error` is populated with `what()` when handle is
+ * non-null so consumers can read it via `entropic_last_error()`. Logs
+ * at error level on every catch so the operator sees the exception
+ * type alongside the C error code that surfaced.
+ *
+ * Rolled out incrementally — v2.3.13 covers the three configure
+ * entry points that gh#74 reported as visibly leaking. Other extern-C
+ * functions can wrap their bodies the same way as needed.
+ *
+ * @param handle Engine handle for `last_error` write (may be NULL).
+ * @param fn Body returning the natural success / error code.
+ * @return `fn()`'s return value on no exception; mapped error code
+ *         otherwise.
+ * @utility
+ * @version 2.3.13
+ */
+template <typename Fn>
+static entropic_error_t c_api_try(entropic_handle_t handle, Fn&& fn) {
+    entropic_error_t rc = ENTROPIC_ERROR_INTERNAL;
+    try {
+        rc = fn();
+    } catch (const std::filesystem::filesystem_error& e) {
+        if (handle) { handle->last_error = e.what(); }
+        s_log->error("c_api filesystem_error: {}", e.what());
+        rc = ENTROPIC_ERROR_IO;
+    } catch (const nlohmann::json::exception& e) {
+        if (handle) { handle->last_error = e.what(); }
+        s_log->error("c_api json::exception: {}", e.what());
+        rc = ENTROPIC_ERROR_INVALID_CONFIG;
+    } catch (const std::exception& e) {
+        if (handle) { handle->last_error = e.what(); }
+        s_log->error("c_api std::exception: {}", e.what());
+        rc = ENTROPIC_ERROR_INTERNAL;
+    }
+    return rc;
+}
 
 /**
  * @brief Allocate a C string copy via the engine allocator.
@@ -1517,6 +1572,24 @@ static entropic_error_t configure_common(entropic_handle_t h) {
 }
 
 /**
+ * @brief entropic_configure body — wrapped by `c_api_try` in the public entry.
+ * @internal
+ * @version 2.3.13
+ */
+static entropic_error_t do_configure_json(
+    entropic_handle_t handle, const char* config_json) {
+    handle->bundled_models.auto_discover_and_load();
+    auto err = entropic::config::load_config_from_string(
+        config_json, handle->bundled_models, handle->config);
+    if (!err.empty()) {
+        handle->last_error = err;
+        s_log->error("configure: {}", err);
+        return ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    return configure_common(handle);
+}
+
+/**
  * @brief Configure the engine from a JSON/YAML config string.
  *
  * @return ENTROPIC_OK on success.
@@ -1530,19 +1603,38 @@ entropic_error_t entropic_configure(
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
                        : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
-
     entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    return c_api_try(handle,
+        [&]() { return do_configure_json(handle, config_json); });
+}
 
+/**
+ * @brief entropic_configure_from_file body — wrapped by `c_api_try`.
+ * @internal
+ * @version 2.3.13
+ */
+static entropic_error_t do_configure_from_file(
+    entropic_handle_t handle, const char* config_path) {
     handle->bundled_models.auto_discover_and_load();
-
-    auto err = entropic::config::load_config_from_string(
-        config_json, handle->bundled_models, handle->config);
+    auto err = entropic::config::load_config_from_file(
+        config_path, handle->bundled_models, handle->config);
     if (!err.empty()) {
         handle->last_error = err;
-        s_log->error("configure: {}", err);
+        s_log->error("configure_from_file: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
     }
-
+    // Parity with configure_dir: if the parsed config specifies a
+    // log_dir, start session logging there. Without this, consumers
+    // using the file-based API get no session.log on disk even when
+    // their YAML declares log_dir.
+    if (!handle->config.log_dir.empty()) {
+        entropic::log::setup_session(handle->config.log_dir);
+        // gh#59 (v2.3.1): per-handle dispatcher file sink so log lines
+        // emitted within this handle's HandleLogScope route to this
+        // handle's session.log only.
+        entropic::log::register_handle_log(
+            handle->log_id, handle->config.log_dir);
+    }
     return configure_common(handle);
 }
 
@@ -1560,34 +1652,45 @@ entropic_error_t entropic_configure_from_file(
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
                        : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
-
     entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    return c_api_try(handle,
+        [&]() { return do_configure_from_file(handle, config_path); });
+}
 
+/**
+ * @brief entropic_configure_dir body — wrapped by `c_api_try`.
+ * @internal
+ * @version 2.3.13
+ */
+static entropic_error_t do_configure_dir(
+    entropic_handle_t handle, const char* project_dir) {
+    // Session logging FIRST — capture everything from preload through init.
+    if (project_dir && project_dir[0] != '\0') {
+        entropic::log::setup_session(project_dir);
+        // gh#59 (v2.3.1): per-handle dispatcher registration. Routes
+        // session.log writes for this handle's HandleLogScope-tagged
+        // threads to this handle's file only — no cross-handle bleed.
+        entropic::log::register_handle_log(handle->log_id, project_dir);
+    }
     handle->bundled_models.auto_discover_and_load();
-
-    auto err = entropic::config::load_config_from_file(
-        config_path, handle->bundled_models, handle->config);
+    std::filesystem::path proj_dir = (project_dir && project_dir[0] != '\0')
+        ? project_dir : "";
+    auto err = entropic::config::load_layered(
+        proj_dir, "default_config.yaml",
+        handle->bundled_models, handle->config);
     if (!err.empty()) {
         handle->last_error = err;
-        s_log->error("configure_from_file: {}", err);
+        s_log->error("configure_dir: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
     }
-
-    // Parity with configure_dir: if the parsed config specifies a
-    // log_dir, start session logging there. Without this, consumers
-    // using the file-based API get no session.log on disk even when
-    // their YAML declares log_dir.
-    if (!handle->config.log_dir.empty()) {
-        entropic::log::setup_session(handle->config.log_dir);
-        // gh#59 (v2.3.1): also register the per-handle dispatcher
-        // file sink so log lines emitted within this handle's
-        // HandleLogScope route to this handle's session.log and
-        // nowhere else.
-        entropic::log::register_handle_log(
-            handle->log_id, handle->config.log_dir);
+    auto rc = configure_common(handle);
+    // gh#31 (v2.1.6): propagate the configured project_dir into the
+    // engine so `AgentEngine::get_repo_dir()` uses it as the sandbox
+    // snapshot source.
+    if (rc == ENTROPIC_OK && handle->engine && !proj_dir.empty()) {
+        handle->engine->set_project_dir(std::filesystem::absolute(proj_dir));
     }
-
-    return configure_common(handle);
+    return rc;
 }
 
 /**
@@ -1605,47 +1708,10 @@ entropic_error_t entropic_configure_from_file(
 entropic_error_t entropic_configure_dir(
     entropic_handle_t handle,
     const char* project_dir) {
-    if (!handle) {
-        return ENTROPIC_ERROR_INVALID_HANDLE;
-    }
-
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
     entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-
-    // Session logging FIRST — capture everything from preload through init.
-    if (project_dir && project_dir[0] != '\0') {
-        entropic::log::setup_session(project_dir);
-        // gh#59 (v2.3.1): per-handle dispatcher registration. Routes
-        // session.log writes for this handle's HandleLogScope-tagged
-        // threads to this handle's file only — no cross-handle bleed.
-        entropic::log::register_handle_log(
-            handle->log_id, project_dir);
-    }
-
-    handle->bundled_models.auto_discover_and_load();
-
-    std::filesystem::path proj_dir = (project_dir && project_dir[0] != '\0')
-        ? project_dir : "";
-    auto err = entropic::config::load_layered(
-        proj_dir, "default_config.yaml",
-        handle->bundled_models, handle->config);
-    if (!err.empty()) {
-        handle->last_error = err;
-        s_log->error("configure_dir: {}", err);
-        return ENTROPIC_ERROR_INVALID_CONFIG;
-    }
-
-    auto rc = configure_common(handle);
-
-    // gh#31 (v2.1.6): propagate the configured project_dir into the
-    // engine so `AgentEngine::get_repo_dir()` uses it as the sandbox
-    // snapshot source. Pre-2.1.6 this was silently dropped and the
-    // engine used CWD, snapshotting whatever directory the consumer
-    // launched from.
-    if (rc == ENTROPIC_OK && handle->engine && !proj_dir.empty()) {
-        handle->engine->set_project_dir(std::filesystem::absolute(proj_dir));
-    }
-
-    return rc;
+    return c_api_try(handle,
+        [&]() { return do_configure_dir(handle, project_dir); });
 }
 
 /**

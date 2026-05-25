@@ -10,6 +10,7 @@
  * (which mock the Tokenizer interface).
  *
  * @internal
+ * @internal
  * @version 2.3.10
  */
 
@@ -24,9 +25,27 @@ static auto logger = entropic::log::get("inference.tokenizer");
 
 namespace entropic {
 
+/**
+ * @brief Construct a tokenizer borrowing a llama_vocab pointer.
+ *
+ * vocab is borrowed, not owned — its lifetime must outlive this
+ * object. LlamaCppBackend resets the tokenizer before freeing the
+ * backing llama_model so the borrow never dangles.
+ * @internal
+ * @version 2.3.10
+ */
 LlamaCppTokenizer::LlamaCppTokenizer(const llama_vocab* vocab)
     : vocab_(vocab) {}
 
+/**
+ * @brief Encode text into token ids via the wrapped vocab.
+ * @param text Input string (any UTF-8).
+ * @param add_special True to prepend BOS / model-defined special tokens.
+ * @return Token id vector. Empty if vocab_ is null or llama_tokenize
+ *         returned a negative actual-count on the sized retry.
+ * @internal
+ * @version 2.3.10
+ */
 std::vector<int32_t> LlamaCppTokenizer::tokenize(
     const std::string& text, bool add_special) const
 {
@@ -51,6 +70,19 @@ std::vector<int32_t> LlamaCppTokenizer::tokenize(
     return tokens;
 }
 
+/**
+ * @brief Decode a single token id to its surface string.
+ *
+ * special=false — special tokens (BOS, EOS, channel markers) do not
+ * render to surface text. History (gh#68, gh#65): defensive flag is
+ * kept regardless of whether the current model fleet emits special
+ * tokens, since the seam is shared across families.
+ * @param token Token id to decode.
+ * @return Surface string. Empty when vocab_ is null or the retry
+ *         decode returned non-positive.
+ * @internal
+ * @version 2.3.10
+ */
 std::string LlamaCppTokenizer::detokenize(int32_t token) const {
     if (vocab_ == nullptr) { return {}; }
 
@@ -60,18 +92,16 @@ std::string LlamaCppTokenizer::detokenize(int32_t token) const {
     char buf[256];
     int n = llama_token_to_piece(
         vocab_, token, buf, sizeof(buf), 0, false);
-    if (n < 0) {
-        // Buffer too small — retry with exact size.
-        std::vector<char> large(static_cast<size_t>(-n));
-        n = llama_token_to_piece(vocab_, token, large.data(),
-                                 static_cast<int32_t>(large.size()),
-                                 0, false);
-        if (n > 0) {
-            return std::string(large.data(), static_cast<size_t>(n));
-        }
-        return "";
-    }
-    return std::string(buf, static_cast<size_t>(n));
+    if (n >= 0) { return std::string(buf, static_cast<size_t>(n)); }
+
+    // Buffer too small — retry with exact size. n holds -required_size.
+    std::vector<char> large(static_cast<size_t>(-n));
+    n = llama_token_to_piece(vocab_, token, large.data(),
+                             static_cast<int32_t>(large.size()),
+                             0, false);
+    return n > 0
+        ? std::string(large.data(), static_cast<size_t>(n))
+        : std::string{};
 }
 
 } // namespace entropic

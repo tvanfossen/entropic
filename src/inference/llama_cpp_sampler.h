@@ -82,6 +82,7 @@ public:
      *
      * @return Borrowed `llama_sampler*` (never null for the
      *         production Sampler; do not free).
+     * @internal
      * @version 2.3.10
      */
     llama_sampler* native_chain() const { return chain_; }

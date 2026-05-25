@@ -68,6 +68,7 @@ public:
      *
      * @param text UTF-8 input.
      * @return Token count (>= 0). Returns 0 on empty input.
+     * @internal
      * @version 2.3.10
      */
     virtual int count_tokens(const std::string& text) const {

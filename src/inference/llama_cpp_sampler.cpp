@@ -14,6 +14,7 @@
  * LlamaCppBackend tests (which mock the SamplerFactory).
  *
  * @internal
+ * @internal
  * @version 2.3.10
  */
 
@@ -38,6 +39,7 @@ namespace {
  * construction stays exactly where the original logic lived.
  *
  * @utility
+ * @internal
  * @version 2.3.10
  */
 void add_grammar_sampler(llama_sampler* chain,
@@ -58,6 +60,7 @@ void add_grammar_sampler(llama_sampler* chain,
  * v2.3.10 from `llama_cpp_backend.cpp` together with chain building.
  *
  * @utility
+ * @internal
  * @version 2.3.10
  */
 uint32_t resolve_dist_seed(int caller_seed) {
@@ -70,9 +73,19 @@ uint32_t resolve_dist_seed(int caller_seed) {
 
 // ── LlamaCppSampler ────────────────────────────────────────
 
+/**
+ * @brief Construct an LlamaCppSampler wrapping a pre-built sampler chain.
+ * @internal
+ * @version 2.3.10
+ */
 LlamaCppSampler::LlamaCppSampler(llama_sampler* chain, llama_context* ctx)
     : chain_(chain), ctx_(ctx) {}
 
+/**
+ * @brief Free the underlying llama.cpp sampler chain.
+ * @internal
+ * @version 2.3.10
+ */
 LlamaCppSampler::~LlamaCppSampler() {
     if (chain_) {
         llama_sampler_free(chain_);
@@ -80,11 +93,22 @@ LlamaCppSampler::~LlamaCppSampler() {
     }
 }
 
+/**
+ * @brief Sample one token from the current logits via the wrapped chain.
+ * @return Sampled token id, or -1 if the chain or context is missing.
+ * @internal
+ * @version 2.3.10
+ */
 int32_t LlamaCppSampler::sample() {
     if (chain_ == nullptr || ctx_ == nullptr) { return -1; }
     return llama_sampler_sample(chain_, ctx_, -1);
 }
 
+/**
+ * @brief Reset stateful samplers (e.g. repeat-penalty history) on the chain.
+ * @internal
+ * @version 2.3.10
+ */
 void LlamaCppSampler::reset() {
     if (chain_ != nullptr) {
         llama_sampler_reset(chain_);
@@ -93,10 +117,26 @@ void LlamaCppSampler::reset() {
 
 // ── LlamaCppSamplerFactory ─────────────────────────────────
 
+/**
+ * @brief Construct a factory bound to a llama_context + vocab.
+ * @internal
+ * @version 2.3.10
+ */
 LlamaCppSamplerFactory::LlamaCppSamplerFactory(
     llama_context* ctx, const llama_vocab* vocab)
     : ctx_(ctx), vocab_(vocab) {}
 
+/**
+ * @brief Build the v2.3.10 sampler chain from GenerationParams.
+ *
+ * Chain order: grammar → penalties → temperature → top-k → top-p →
+ * min-p → dist. Each stage is gated by its parameter so the default
+ * chain stays bit-identical to pre-v2.3.10.
+ * @param params Generation parameters driving each stage's gate.
+ * @return Owned Sampler that wraps the constructed llama.cpp chain.
+ * @internal
+ * @version 2.3.10
+ */
 std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
     const GenerationParams& params)
 {

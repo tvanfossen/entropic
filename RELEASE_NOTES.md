@@ -1,3 +1,81 @@
+# entropic v2.3.13
+
+Patch release. **C-ABI exception barrier on configure entry points (gh#74).**
+The three configure functions (`entropic_configure`,
+`entropic_configure_from_file`, `entropic_configure_dir`) wrap their
+bodies in a new `c_api_try` template helper so `std::filesystem` and
+`nlohmann::json` exceptions from the loader path map to documented
+error codes instead of escaping into the caller — restoring the
+"exceptions do not cross .so boundaries" rule documented in
+`docs/architecture-cpp.md`.
+
+No ABI change — internal C++ wiring only. Drop-in for any 2.3.x
+consumer.
+
+## The bug
+
+Pre-2.3.13, calling `entropic_configure_dir(h, "")` or
+`entropic_configure_dir(h, "/dev/null/cannot_be_a_dir")` let a
+`std::filesystem::filesystem_error` thrown from `setup_session()` or
+`load_layered()` escape the `extern "C"` boundary. A C consumer
+(including the auto-generated Python wrapper) sees an unhandled
+exception terminate the process instead of an error code it can
+inspect.
+
+Surfaced during the v2.3.10 coverage push (gh#74); tests there caught
+the throw with try/catch as a workaround.
+
+## The fix
+
+New template helper in `src/facade/entropic.cpp`:
+
+```cpp
+template <typename Fn>
+static entropic_error_t c_api_try(entropic_handle_t handle, Fn&& fn);
+```
+
+Wraps the body in try/catch and maps:
+
+- `std::filesystem::filesystem_error` → `ENTROPIC_ERROR_IO`
+- `nlohmann::json::exception`         → `ENTROPIC_ERROR_INVALID_CONFIG`
+- any other `std::exception`          → `ENTROPIC_ERROR_INTERNAL`
+
+Populates `handle->last_error` with `what()` so consumers can retrieve
+it via `entropic_last_error()`. Logs at error level on every catch.
+
+Applied to:
+
+- `entropic_configure`           (`config_json` string body)
+- `entropic_configure_from_file` (YAML file body)
+- `entropic_configure_dir`       (layered loader body — gh#74's case)
+
+The NULL-handle / NULL-argument guards stay OUTSIDE the wrapper so
+those continue to return `INVALID_HANDLE` / `INVALID_ARGUMENT` without
+spinning up the lambda.
+
+## Tests
+
+`tests/unit/api/entropic_capi_test.cpp`:
+
+- The pre-2.3.13 try/catch workarounds in the `[configure]` cases are
+  replaced with `REQUIRE_NOTHROW(...)` assertions — the contract now
+  is "no exception, return an error code".
+- New `[gh74]` scenario: `entropic_configure_dir` with `/dev/null/cannot_be_a_dir`
+  asserts the function returns non-OK without throwing (pre-fix it
+  threw `filesystem_error`).
+
+## Scope boundary
+
+This wraps the three configure entry points only — the configure
+functions are the ones gh#74 actually reported as visibly leaking. The
+remaining ~57 `extern "C"` functions in `entropic.cpp` (e.g.
+`entropic_run`, `entropic_register_*`, query getters) don't currently
+call paths that throw, but a future patch can apply `c_api_try` to
+each as part of belt-and-suspenders hardening. The helper is in
+place; rollout is mechanical when needed.
+
+---
+
 # entropic v2.3.12
 
 Patch release. **Gemma4 adapter: parse the E4B Q8 `<|tool_call>call:NAME{args}<tool_call|>` malformed wrapper (gh#73).**

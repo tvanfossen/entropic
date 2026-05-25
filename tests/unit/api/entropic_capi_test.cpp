@@ -1807,11 +1807,10 @@ TEST_CASE("entropic_seconds_since_last_activity on configured handle returns >=0
 
 // ── configure_dir happy-path on a writable tmp dir ──────────────────
 
-// Note: entropic_configure_dir currently lets std::filesystem exceptions
-// escape across the C ABI when setup_session / load_layered hit unwritable
-// dirs or empty paths — violates entropic's "exceptions don't cross .so"
-// rule. Tracked as a follow-up issue; tests catch + ignore for now so
-// they drive the configure_dir entry-point coverage.
+// v2.3.13 (gh#74): the C ABI now wraps every configure entry point in
+// `c_api_try`, so filesystem / JSON exceptions never escape into the
+// caller — they map to documented error codes. Tests assert no
+// exception (via REQUIRE_NOTHROW) instead of swallowing after the fact.
 
 TEST_CASE("entropic_configure_dir on a tmp dir runs the loader path",
           "[v2.3.10][entropic_capi][configure][configured]") {
@@ -1819,27 +1818,29 @@ TEST_CASE("entropic_configure_dir on a tmp dir runs the loader path",
     auto tmp = std::filesystem::temp_directory_path() /
                ("entropic_capi_cfg_dir_" + std::to_string(getpid()));
     std::filesystem::create_directories(tmp);
-    try {
-        auto rc = entropic_configure_dir(h, tmp.c_str());
-        (void)rc;
-    } catch (const std::exception&) {
-        // Known defect: exception escapes the C API.
-    }
+    REQUIRE_NOTHROW(entropic_configure_dir(h, tmp.c_str()));
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
-    SUCCEED();
 }
 
-TEST_CASE("entropic_configure_dir with empty string path runs the loader path",
-          "[v2.3.10][entropic_capi][configure][configured]") {
+TEST_CASE("entropic_configure_dir with empty string path returns an error code, not an exception",
+          "[v2.3.10][entropic_capi][configure][configured][gh74]") {
     CreatedOnlyHandle h;
-    try {
-        auto rc = entropic_configure_dir(h, "");
-        (void)rc;
-    } catch (const std::exception&) {
-        // Known defect: exception escapes the C API.
-    }
-    SUCCEED();
+    entropic_error_t rc = ENTROPIC_OK;
+    REQUIRE_NOTHROW(rc = entropic_configure_dir(h, ""));
+    (void)rc;  // Outcome depends on the loader's tolerance of "" project_dir;
+               // the contract is just that no exception escapes.
+}
+
+TEST_CASE("entropic_configure_dir on /dev/null subpath returns an error, not an exception",
+          "[v2.3.10][entropic_capi][configure][configured][gh74]") {
+    CreatedOnlyHandle h;
+    entropic_error_t rc = ENTROPIC_OK;
+    // /dev/null is a character device; any subdirectory create fails
+    // with ENOTDIR. Pre-v2.3.13 this threw std::filesystem_error out
+    // of the C ABI; v2.3.13's c_api_try maps it to ENTROPIC_ERROR_IO.
+    REQUIRE_NOTHROW(rc = entropic_configure_dir(h, "/dev/null/cannot_be_a_dir"));
+    REQUIRE(rc != ENTROPIC_OK);
 }
 
 // ── Validation accept_last / resume_retry on configured-no-validator ─

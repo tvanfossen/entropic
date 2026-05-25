@@ -194,9 +194,17 @@ static bool insert_permission_item(std::vector<std::string>& lines,
         lines.push_back(item);
     } else if (auto list_it = std::find(perms_it, lines.end(), list_line);
                list_it == lines.end()) {
+        // v2.3.10: previously this block did
+        //     lines.insert(pos, item); lines.insert(pos, list_line);
+        // — but `pos` is invalidated after the first insert (vector
+        // iterator-invalidation rules), so the second insert ran on a
+        // stale iterator (UB; surfaces as SIGSEGV on glibc). Now we
+        // insert the sub-key (`  deny:` or `  allow:`) first, then the
+        // item one slot past it. Surfaced by the v2.3.10 coverage
+        // tests for permission_persister.
         auto pos = find_section_end(lines, perms_it);
-        lines.insert(pos, item);
-        lines.insert(pos, list_line);
+        pos = lines.insert(pos, list_line);
+        lines.insert(pos + 1, item);
     } else {
         size_t idx = static_cast<size_t>(
             std::distance(lines.begin(), list_it));

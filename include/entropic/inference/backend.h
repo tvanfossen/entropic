@@ -626,8 +626,17 @@ protected:
      */
     void set_hooks(const HookInterface& hooks) { hooks_ = hooks; }
 
-private:
+protected:
+    /// @brief State transition slot accessible to subclasses for
+    /// test-only injection. Pre-v2.3.10 this lived in the private
+    /// section, blocking LlamaCppBackend::inject_tokenizer_for_test
+    /// from flipping the backend into WARM without a real model.
+    /// Production code path (load/activate/etc) still owns the
+    /// normal transitions; this opens just a side door for mocks.
+    /// @version 2.3.10
     std::atomic<ModelState> state_{ModelState::COLD};
+
+private:
     ModelConfig config_;
     std::mutex transition_mutex_;  ///< Guards state TRANSITIONS only
     std::mutex eval_mutex_;        ///< Guards evaluation calls (separate from generation) (v1.9.10)

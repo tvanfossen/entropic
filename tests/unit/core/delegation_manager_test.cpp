@@ -808,3 +808,309 @@ TEST_CASE("complete_cb REJECT writes patch to pending/<id>.patch",
     CHECK(found);
     fs::remove_all(project);
 }
+
+// ── v2.3.10: backstop coverage scenarios (gh#23) ─────────
+// Resume delegation (gh#32), storage records, exception shields,
+// log_child_result warn branch, and mid-pipeline failure paths.
+
+#include <stdexcept>
+
+namespace v2310 {
+
+/// Capture child context state on entry to the loop.
+struct CapturedCtx {
+    std::vector<Message> seen;
+    int call_count = 0;
+};
+
+static void capture_loop(LoopContext& ctx, void* ud) {
+    auto* c = static_cast<CapturedCtx*>(ud);
+    c->seen = ctx.messages;
+    c->call_count++;
+    Message a;
+    a.role = "assistant";
+    a.content = "done";
+    ctx.messages.push_back(std::move(a));
+    ctx.state = AgentState::COMPLETE;
+}
+
+/// Build a simple two-message seed history.
+static std::vector<Message> seed_history(bool with_system) {
+    std::vector<Message> seed;
+    if (with_system) {
+        Message s; s.role = "system"; s.content = "PRIOR SYSTEM";
+        seed.push_back(s);
+    }
+    Message u; u.role = "user"; u.content = "earlier turn";
+    seed.push_back(u);
+    Message a; a.role = "assistant"; a.content = "earlier reply";
+    seed.push_back(a);
+    return seed;
+}
+
+/// Mock storage capturing delegation lifecycle events.
+struct MockStorage {
+    int create_called = 0;
+    int complete_called = 0;
+    std::string parent_id, delegating_tier, target_tier, task;
+    std::string status, summary;
+};
+
+static bool mock_create_delegation(
+    const char* pid, const char* dt, const char* tt, const char* tk,
+    int /*mt*/, std::string& did, std::string& ccid, void* ud) {
+    auto* m = static_cast<MockStorage*>(ud);
+    m->create_called++;
+    m->parent_id = pid ? pid : "";
+    m->delegating_tier = dt ? dt : "";
+    m->target_tier = tt ? tt : "";
+    m->task = tk ? tk : "";
+    did = "del-1";
+    ccid = "child-conv-1";
+    return true;
+}
+
+static bool mock_complete_delegation(
+    const char* /*did*/, const char* st, const char* sm, void* ud) {
+    auto* m = static_cast<MockStorage*>(ud);
+    m->complete_called++;
+    m->status = st ? st : "";
+    m->summary = sm ? sm : "";
+    return true;
+}
+
+} // namespace v2310
+
+TEST_CASE("execute_resume_delegation handles seed history variants",
+          "[v2.3.10][core][delegation_coverage]") {
+    using namespace v2310;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    CapturedCtx cap;
+    DelegationManager mgr(capture_loop, &cap, tier_res);
+    LoopContext parent;
+
+    SECTION("no system in seed -> tier system prompt prepended") {
+        cap = {};
+        mgr.execute_resume_delegation(
+            parent, "researcher", "follow up", seed_history(false));
+        REQUIRE(cap.seen.size() == 4);  // sys + 2 seed + new user
+        CHECK(cap.seen.front().role == "system");
+        CHECK(cap.seen.back().role == "user");
+        CHECK(cap.seen.back().content.find("follow up")
+              != std::string::npos);
+    }
+    SECTION("seed already has system -> preserved") {
+        cap = {};
+        mgr.execute_resume_delegation(
+            parent, "eng", "next", seed_history(true));
+        REQUIRE(cap.seen.size() == 4);  // system + user + assistant + new user
+        CHECK(cap.seen.front().content == "PRIOR SYSTEM");
+    }
+}
+
+TEST_CASE("execute_resume_delegation precondition rejections",
+          "[v2.3.10][core][delegation_coverage]") {
+    MockChildLoop loop_mock;
+
+    SECTION("unknown tier short-circuits") {
+        MockTierResolution tier_mock;
+        tier_mock.tier_valid = false;
+        auto tier_res = make_mock_tier_res(tier_mock);
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        LoopContext parent;
+        auto result = mgr.execute_resume_delegation(
+            parent, "ghost", "task", {});
+        CHECK_FALSE(result.success);
+        CHECK(result.summary.find("Unknown tier") != std::string::npos);
+        CHECK(loop_mock.call_count == 0);
+    }
+    SECTION("start_cb REJECT short-circuits") {
+        MockTierResolution tier_mock;
+        auto tier_res = make_mock_tier_res(tier_mock);
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        auto rej = [](const ent_delegation_request_t*, void*) {
+            return ENT_DECISION_REJECT;
+        };
+        mgr.set_delegation_callbacks(rej, nullptr, nullptr);
+        LoopContext parent;
+        auto result = mgr.execute_resume_delegation(
+            parent, "eng", "task", {});
+        CHECK_FALSE(result.success);
+        CHECK(loop_mock.call_count == 0);
+    }
+}
+
+TEST_CASE("Storage interface lifecycle integration",
+          "[v2.3.10][core][delegation_coverage]") {
+    using namespace v2310;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    MockStorage mock_storage;
+    StorageInterface storage_iface{};
+    storage_iface.create_delegation = mock_create_delegation;
+    storage_iface.complete_delegation = mock_complete_delegation;
+    storage_iface.user_data = &mock_storage;
+
+    // Note on `delegating_tier`: backend.h documents this argument as the
+    // tier that *initiated* the delegation (parent), but the implementation
+    // in delegation.cpp derives `src_tier` from `child_ctx.locked_tier`,
+    // which is set to the *target* tier just before the create call. The
+    // tests below pin the current behavior (target tier passed) — the
+    // doc/code mismatch is tracked separately, out of v2.3.10 scope.
+
+    SECTION("success path -> create + complete with completed status") {
+        MockChildLoop loop_mock;
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        mgr.set_storage(&storage_iface);
+        LoopContext parent;
+        auto result = mgr.execute_delegation(parent, "eng", "ship it");
+        CHECK(result.success);
+        CHECK(mock_storage.create_called == 1);
+        CHECK(mock_storage.complete_called == 1);
+        CHECK(mock_storage.delegating_tier == "eng");
+        CHECK(mock_storage.target_tier == "eng");
+        CHECK(mock_storage.task == "ship it");
+        CHECK(mock_storage.status == "completed");
+    }
+    SECTION("failed loop -> status=failed (delegating_tier = target)") {
+        auto stuck_loop = [](LoopContext& ctx, void*) {
+            ctx.state = AgentState::IDLE;
+        };
+        DelegationManager mgr(stuck_loop, nullptr, tier_res);
+        mgr.set_storage(&storage_iface);
+        LoopContext parent;
+        parent.locked_tier = "lead";
+        auto result = mgr.execute_delegation(parent, "eng", "task");
+        CHECK_FALSE(result.success);
+        CHECK(mock_storage.delegating_tier == "eng");
+        CHECK(mock_storage.status == "failed");
+    }
+    SECTION("NULL storage callbacks are a no-op") {
+        MockChildLoop loop_mock;
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        StorageInterface empty{};
+        mgr.set_storage(&empty);
+        LoopContext parent;
+        CHECK(mgr.execute_delegation(parent, "eng", "task").success);
+    }
+}
+
+TEST_CASE("log_child_result emits warn branch for terminal_reason",
+          "[v2.3.10][core][delegation_coverage]") {
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+    auto loop_fn = [](LoopContext& ctx, void*) {
+        ctx.metadata["terminal_reason"] = "budget_exhausted";
+        Message m; m.role = "assistant"; m.content = "synth";
+        ctx.messages.push_back(std::move(m));
+        ctx.state = AgentState::COMPLETE;
+    };
+    DelegationManager mgr(loop_fn, nullptr, tier_res);
+    LoopContext parent;
+    auto result = mgr.execute_delegation(parent, "eng", "task");
+    // COMPLETE + non-empty terminal_reason -> success=false (warn branch).
+    CHECK_FALSE(result.success);
+    CHECK(result.terminal_reason == "budget_exhausted");
+}
+
+TEST_CASE("Exception shields treat throwing callbacks as REJECT",
+          "[v2.3.10][core][delegation_coverage]") {
+    using namespace gh29_cb_tests;
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    SECTION("throwing start_cb -> delegation rejected, child not run") {
+        MockChildLoop loop_mock;
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        auto throw_start =
+            [](const ent_delegation_request_t*, void*) -> ent_decision_t {
+            throw std::runtime_error("buggy");
+        };
+        mgr.set_delegation_callbacks(throw_start, nullptr, nullptr);
+        LoopContext parent;
+        auto result = mgr.execute_delegation(parent, "eng", "task");
+        CHECK_FALSE(result.success);
+        CHECK(result.summary.find("rejected") != std::string::npos);
+        CHECK(loop_mock.call_count == 0);
+    }
+    SECTION("throwing complete_cb -> patch persisted to pending/") {
+        ScopedHomeDeleg home;
+        auto project = make_project();
+        auto throw_complete =
+            [](const ent_delegation_result_t*, void*) -> ent_decision_t {
+            throw std::runtime_error("buggy");
+        };
+        SandboxManager sandbox(project);
+        DelegationManager mgr(edit_loop, nullptr, tier_res, project,
+                              &sandbox);
+        auto chdir_fn = +[](const std::filesystem::path& p, void*) {
+            std::error_code ec;
+            std::filesystem::current_path(p, ec);
+        };
+        mgr.set_dir_swap(chdir_fn, nullptr);
+        mgr.set_delegation_callbacks(nullptr, throw_complete, nullptr);
+        LoopContext parent;
+        auto saved = std::filesystem::current_path();
+        mgr.execute_delegation(parent, "eng", "edit a.txt");
+        std::filesystem::current_path(saved);
+
+        bool found = false;
+        auto sb_root = home.tmp_home / ".entropic" / "sandbox";
+        if (std::filesystem::exists(sb_root)) {
+            for (auto& sess :
+                     std::filesystem::directory_iterator(sb_root)) {
+                if (std::filesystem::exists(
+                        sess.path() / "pending" / "d1.patch")) {
+                    found = true;
+                }
+            }
+        }
+        CHECK(found);
+        std::filesystem::remove_all(project);
+    }
+}
+
+TEST_CASE("Pipeline mid-stream failure paths break the loop",
+          "[v2.3.10][core][delegation_coverage]") {
+    SECTION("unknown tier on stage 1 stops after stage 0") {
+        auto resolve =
+            [](const std::string& name, void*) -> ChildContextInfo {
+            ChildContextInfo info;
+            info.valid = (name == "a");
+            info.system_prompt = "sys";
+            return info;
+        };
+        TierResolutionInterface tier_res{};
+        tier_res.resolve_tier = resolve;
+
+        int call_count = 0;
+        auto loop_fn = [](LoopContext& ctx, void* ud) {
+            (*static_cast<int*>(ud))++;
+            Message m; m.role = "assistant"; m.content = "ok";
+            ctx.messages.push_back(std::move(m));
+            ctx.state = AgentState::COMPLETE;
+        };
+        DelegationManager mgr(loop_fn, &call_count, tier_res);
+        LoopContext parent;
+        auto result = mgr.execute_pipeline(parent, {"a", "b"}, "do it");
+        CHECK_FALSE(result.success);
+        CHECK(result.summary.find("Unknown tier") != std::string::npos);
+        CHECK(call_count == 1);
+    }
+    SECTION("non-COMPLETE child state breaks pipeline after first stage") {
+        MockTierResolution tier_mock;
+        auto tier_res = make_mock_tier_res(tier_mock);
+        int call_count = 0;
+        auto stuck_loop = [](LoopContext& ctx, void* ud) {
+            (*static_cast<int*>(ud))++;
+            ctx.state = AgentState::IDLE;
+        };
+        DelegationManager mgr(stuck_loop, &call_count, tier_res);
+        LoopContext parent;
+        auto result = mgr.execute_pipeline(
+            parent, {"a", "b", "c"}, "task");
+        CHECK_FALSE(result.success);
+        CHECK(call_count == 1);
+    }
+}

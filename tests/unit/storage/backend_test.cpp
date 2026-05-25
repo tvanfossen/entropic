@@ -295,3 +295,72 @@ SCENARIO("Storage statistics", "[storage][backend]") {
         }
     }
 }
+
+// ── v2.3.10: coverage for delegation lookup + search ──
+
+SCENARIO("get_delegation_by_id retrieves a single delegation row",
+         "[storage][backend][v2.3.10][coverage]") {
+    TempStorage t;
+    auto parent = t.storage.create_conversation("parent-2310");
+    std::string del_id, child;
+    REQUIRE(t.storage.create_delegation(
+        parent, "lead", "eng", "task-2310", 3, del_id, child));
+    t.storage.complete_delegation(del_id, "completed", "row-summary");
+
+    WHEN("get_delegation_by_id is called with the known id") {
+        std::string out;
+        bool found = t.storage.get_delegation_by_id(del_id, out);
+
+        THEN("the row is found and JSON serialized") {
+            REQUIRE(found);
+            auto j = json::parse(out);
+            REQUIRE(j["id"] == del_id);
+            REQUIRE(j["status"] == "completed");
+        }
+    }
+
+    WHEN("get_delegation_by_id is called with an unknown id") {
+        std::string out;
+        bool found = t.storage.get_delegation_by_id(
+            "no-such-delegation", out);
+        THEN("it returns false (no exception)") {
+            REQUIRE_FALSE(found);
+        }
+    }
+}
+
+SCENARIO("search_delegations finds completed rows by substring",
+         "[storage][backend][v2.3.10][coverage]") {
+    TempStorage t;
+    auto parent = t.storage.create_conversation("search-parent");
+    std::string del_id, child;
+    REQUIRE(t.storage.create_delegation(
+        parent, "lead", "eng", "do thing", 5, del_id, child));
+    t.storage.complete_delegation(
+        del_id, "completed", "found-the-magic-token");
+
+    WHEN("search_delegations finds the matching summary") {
+        std::string out;
+        bool ok = t.storage.search_delegations(
+            "magic-token", 5, out);
+        THEN("at least one row returns") {
+            REQUIRE(ok);
+            auto arr = json::parse(out);
+            REQUIRE(arr.size() >= 1);
+            REQUIRE(arr[0]["result_summary"]
+                    .get<std::string>().find("magic-token")
+                    != std::string::npos);
+        }
+    }
+
+    WHEN("search_delegations finds nothing") {
+        std::string out;
+        bool ok = t.storage.search_delegations(
+            "missing-substring-xyz", 5, out);
+        THEN("the result is an empty JSON array") {
+            REQUIRE(ok);
+            auto arr = json::parse(out);
+            REQUIRE(arr.empty());
+        }
+    }
+}

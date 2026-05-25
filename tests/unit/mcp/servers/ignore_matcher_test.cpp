@@ -235,3 +235,60 @@ TEST_CASE("IgnoreMatcher::load is idempotent; re-load clears "
     m.load(tmp.path()); // second call should not double-count.
     REQUIRE(m.rule_count() == first_count);
 }
+
+// ── v2.3.10: coverage for emit_escape, '?' glob, and malformed regex ──
+
+TEST_CASE("IgnoreMatcher handles '?' single-char glob",
+          "[mcp][ignore_matcher][v2.3.10][coverage]") {
+    TempDir tmp;
+    // emit_one's '?' branch → out += "[^/]"
+    write_file(tmp.path() / ".gitignore", "file?.tmp\n");
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    CHECK(m.is_ignored("file1.tmp", false));
+    CHECK(m.is_ignored("fileX.tmp", false));
+    // '?' does not match '/'
+    CHECK_FALSE(m.is_ignored("file/.tmp", false));
+    // '?' matches exactly one char
+    CHECK_FALSE(m.is_ignored("file12.tmp", false));
+}
+
+TEST_CASE("IgnoreMatcher compiles patterns containing backslash escapes",
+          "[mcp][ignore_matcher][v2.3.10][coverage]") {
+    TempDir tmp;
+    // emit_escape branch (lines 139-145 in ignore_matcher.cpp): the
+    // pattern compiler sees `\` and consumes the next char as a
+    // literal. Different shells / git versions disagree on the exact
+    // surface behavior; the coverage assertion is just that load()
+    // accepts the pattern without throwing and the rule registers.
+    write_file(tmp.path() / ".gitignore", "\\*.txt\n");
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    REQUIRE(m.rule_count() >= 1);
+    // A "normal" filename without a literal `*` must not match —
+    // the escape kept `*` as literal rather than glob-wildcard.
+    CHECK_FALSE(m.is_ignored("normal.txt", false));
+}
+
+TEST_CASE("IgnoreMatcher tolerates a malformed character class",
+          "[mcp][ignore_matcher][v2.3.10][coverage][failure-mode]") {
+    TempDir tmp;
+    // An unclosed character class `[abc` would produce a regex syntax
+    // error if not handled defensively. compile_or_never's catch path
+    // (lines 278-282 in src/mcp/servers/ignore_matcher.cpp) substitutes
+    // a never-match regex `(?!)`. Concrete shape: a `[` without `]`
+    // emits a backslash-escaped character class that std::regex rejects
+    // on some platforms — the compile-fallback must keep load() from
+    // throwing.
+    write_file(tmp.path() / ".gitignore",
+               "[unclosed\nvalid.log\n");
+    IgnoreMatcher m;
+    m.load(tmp.path());
+
+    // The valid pattern still applies even if the malformed one is dropped.
+    CHECK(m.is_ignored("valid.log", false));
+    // The malformed pattern matches nothing.
+    CHECK_FALSE(m.is_ignored("unclosed", false));
+}

@@ -6,6 +6,7 @@ add_executable(entropic-tests
     types/content_test.cpp
     types/message_multimodal_test.cpp
     types/messages_json_test.cpp
+    types/session_logger_test.cpp
 )
 
 target_link_libraries(entropic-tests PRIVATE
@@ -73,6 +74,30 @@ add_executable(entropic-inference-tests
     # v2.2.4 (gh#57): VRAM-aware tier residency surface — metadata-only
     # tests that don't require a real GGUF.
     inference/residency_test.cpp
+    # v2.3.10: C ABI surface coverage via MockBackend reinterpret_cast
+    inference/inference_c_api_test.cpp
+    # v2.3.10 top-up (gh#23): InferenceInterface factory coverage —
+    # drives parse_msgs / parse_params / extract_tier / iface_* C
+    # callbacks against an empty ModelOrchestrator (no real model
+    # required — orchestrator returns build_no_model_error).
+    inference/interface_factory_test.cpp
+    # v2.3.10: LlamaCppBackend ↔ Tokenizer seam coverage via MockTokenizer
+    inference/tokenizer_seam_test.cpp
+    # v2.3.10: LlamaCppBackend ↔ Sampler seam coverage via MockSamplerFactory
+    inference/sampler_seam_test.cpp
+    # v2.3.10: REAL llama.cpp paths for LlamaCppTokenizer + do_load /
+    # do_unload using vocab-only ggml-vocab-*.gguf fixtures (CPU-only,
+    # sub-100MB). Pushes llama_cpp_tokenizer.cpp 0% → ~100% and the
+    # load/unload portions of llama_cpp_backend.cpp 4% → ~20-35%
+    # without needing real-weight models. Links `llama` directly for
+    # the vocab-only model load helper.
+    inference/vocab_only_smoke_test.cpp
+    # v2.3.10: Unit-scope real-model smoke. Loads
+    # $HOME/.entropic/models/Qwen3.5-0.8B-Q8_0.gguf (~0.8GB, CPU-only)
+    # to drive load → activate → generate → deactivate → unload paths
+    # in llama_cpp_backend.cpp that vocab-only smoke can't reach.
+    # WARN-skips when the model is absent so the suite still runs.
+    inference/backend_real_model_smoke_test.cpp
 )
 
 target_include_directories(entropic-inference-tests PRIVATE
@@ -82,14 +107,23 @@ target_include_directories(entropic-inference-tests PRIVATE
 target_link_libraries(entropic-inference-tests PRIVATE
     entropic::inference
     entropic-types
+    # v2.3.10: vocab_only_smoke_test.cpp calls the llama.cpp C API
+    # directly (llama_model_load_from_file with vocab_only=true) to
+    # build a borrowed llama_vocab* for the LlamaCppTokenizer real-vocab
+    # smoke. The other inference tests only need entropic::inference,
+    # so this link is specifically for the vocab-only smoke path.
+    llama
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     Catch2::Catch2WithMain
 )
 
 # v1.9.11: Test data directory for image preprocessor tests
+# v2.3.10: ENTROPIC_SOURCE_DIR resolves extern/llama.cpp/models/
+# ggml-vocab-*.gguf fixtures for vocab_only_smoke_test.cpp.
 target_compile_definitions(entropic-inference-tests PRIVATE
     TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
+    ENTROPIC_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
 )
 
 # v1.9.2: Adapter manager tests (uses mock llama.cpp adapter symbols)
@@ -194,6 +228,8 @@ add_executable(entropic-core-tests
     core/validation_hook_test.cpp
     core/response_generator_test.cpp
     core/message_queue_test.cpp  # gh#40 (v2.1.10)
+    # v2.3.10: backstop coverage for streaming <think> tag filter
+    core/stream_think_filter_test.cpp
 )
 
 target_include_directories(entropic-core-tests PRIVATE
@@ -228,6 +264,8 @@ add_executable(entropic-mcp-tests
     mcp/external_client_test.cpp
     mcp/reconnect_policy_test.cpp
     mcp/mcp_json_discovery_test.cpp
+    # v2.3.10: SSE transport coverage
+    mcp/transport_sse_test.cpp
     # v1.9.4: MCP authorization tests
     mcp/mcp_key_set_test.cpp
     mcp/mcp_authorization_test.cpp
@@ -303,6 +341,13 @@ add_executable(entropic-api-tests
     api/utf8_safe_substr_test.cpp
     # v2.2.5 (gh#58): two-handles-in-one-process probe + re-entry guard.
     api/multi_handle_test.cpp
+    # v2.3.8: facade coverage gap — JSON serializers private header.
+    api/json_serializers_test.cpp
+    # v2.3.8: facade coverage gap — MCP C API NULL/INVALID_STATE branches.
+    api/entropic_mcp_test.cpp
+    # v2.3.10: facade coverage gap — entropic.cpp NULL/unconfigured-handle
+    # branches across the full C API surface.
+    api/entropic_capi_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.

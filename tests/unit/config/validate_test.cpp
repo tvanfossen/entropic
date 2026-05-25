@@ -242,4 +242,133 @@ SCENARIO("CompactionConfig validation", "[config][validate]") {
             }
         }
     }
+
+    // ── v2.3.10: cover remaining failure branches ──
+
+    GIVEN("threshold_percent below the 0.5 floor") {
+        CompactionConfig cfg;
+        cfg.threshold_percent = 0.3f;
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a threshold_percent error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("threshold_percent") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("preserve_recent_turns above the cap") {
+        CompactionConfig cfg;
+        cfg.threshold_percent = 0.75f;
+        cfg.warning_threshold_percent = 0.6f;
+        cfg.preserve_recent_turns = 99;
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a preserve_recent_turns error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("preserve_recent_turns")
+                        != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("tool_result_ttl below 1") {
+        CompactionConfig cfg;
+        cfg.threshold_percent = 0.75f;
+        cfg.warning_threshold_percent = 0.6f;
+        cfg.preserve_recent_turns = 3;
+        cfg.tool_result_ttl = 0;
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a tool_result_ttl error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("tool_result_ttl") != std::string::npos);
+            }
+        }
+    }
+}
+
+// ── v2.3.10: cover remaining ModelConfig + ModelsConfig branches ──
+
+SCENARIO("ModelConfig validation — failure modes",
+         "[config][validate][v2.3.10][failure-mode]") {
+    GIVEN("context_length below the 512 floor") {
+        ModelConfig cfg;
+        cfg.context_length = 256;
+        cfg.adapter = "qwen35";
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a context_length error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("context_length") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("context_length above the ceiling") {
+        ModelConfig cfg;
+        cfg.context_length = 999999;
+        cfg.adapter = "qwen35";
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a context_length error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("context_length") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("empty adapter") {
+        ModelConfig cfg;
+        cfg.adapter.clear();
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with an adapter-empty error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("adapter") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("n_batch below 1") {
+        ModelConfig cfg;
+        cfg.adapter = "qwen35";
+        cfg.n_batch = 0;
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with an n_batch error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("n_batch") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("ModelsConfig validation — default tier must exist",
+         "[config][validate][v2.3.10]") {
+    GIVEN("a ModelsConfig whose default points at a missing tier") {
+        ModelsConfig cfg;
+        cfg.default_tier = "missing";
+        TierConfig tier;
+        tier.adapter = "qwen35";
+        cfg.tiers["lead"] = tier;
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it fails with a 'default tier' error") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("default tier") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("an empty tiers map") {
+        ModelsConfig cfg;
+        cfg.default_tier = "anything";
+        WHEN("validate is called") {
+            auto err = validate(cfg);
+            THEN("it passes (no tiers means no default-tier check)") {
+                REQUIRE(err.empty());
+            }
+        }
+    }
 }

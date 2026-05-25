@@ -89,3 +89,32 @@ TEST_CASE("Duplicate registration warns", "[tool_registry]") {
     registry.register_tool(&t2); // should warn, not crash
     REQUIRE(registry.has_tool("dupe"));
 }
+
+// ── v2.3.10: coverage for null-tool path + get_definitions ──
+
+TEST_CASE("register_tool with nullptr is a logged no-op",
+          "[tool_registry][v2.3.10][coverage][failure-mode]") {
+    ToolRegistry registry;
+    registry.register_tool(nullptr);  // hits the null-guard warn branch
+    REQUIRE_FALSE(registry.has_tool(""));
+}
+
+TEST_CASE("get_definitions returns one pointer per registered tool",
+          "[tool_registry][v2.3.10][coverage]") {
+    ToolRegistry registry;
+    EchoTool a("alpha-2310");
+    EchoTool b("beta-2310");
+    registry.register_tool(&a);
+    registry.register_tool(&b);
+
+    auto defs = registry.get_definitions();
+    REQUIRE(defs.size() == 2);
+    // Two distinct ToolDefinition pointers were returned.
+    REQUIRE(defs[0] != defs[1]);
+}
+
+TEST_CASE("get_definitions on an empty registry returns an empty vector",
+          "[tool_registry][v2.3.10][coverage]") {
+    ToolRegistry registry;
+    REQUIRE(registry.get_definitions().empty());
+}

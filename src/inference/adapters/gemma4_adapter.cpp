@@ -17,6 +17,8 @@
 
 #include "gemma4_adapter.h"
 
+#include <nlohmann/json.hpp>
+
 #include <regex>
 
 namespace entropic {
@@ -61,6 +63,116 @@ static std::string cut_at_fabricated_turn(const std::string& content) {
 }
 
 /**
+ * @brief Normalize Gemma 4 E4B Q8 JSON5-ish args into strict JSON.
+ *
+ * Three transforms (gh#73):
+ *   1. `<|"|>` (the model's confused escape sequence for `"`) → `"`.
+ *   2. Bare keys after `{` or `,` get quoted: `{key:` → `{"key":`.
+ *   3. Trailing commas before `}` or `]` get dropped.
+ *
+ * Pure regex pass — non-throwing. Returns the transformed string;
+ * caller is responsible for catching `nlohmann::json::parse` failures
+ * when the input still isn't valid JSON after normalization.
+ * @utility
+ * @version 2.3.12
+ */
+static std::string normalize_call_args_json(const std::string& args_body) {
+    std::string s = args_body;
+    // 1. <|"|> → "
+    static const std::regex kQuoteEscape(R"(<\|"\|>)");
+    s = std::regex_replace(s, kQuoteEscape, "\"");
+    // 2. Bare keys: insert quotes around identifier when preceded by
+    //    `{`, `,`, or whitespace following one of those, and followed
+    //    by `:`. Keys are [A-Za-z_][\w]*.
+    static const std::regex kBareKey(R"(([{,]\s*)([A-Za-z_][\w]*)\s*:)");
+    s = std::regex_replace(s, kBareKey, "$1\"$2\":");
+    // 3. Drop trailing commas before close brace/bracket.
+    static const std::regex kTrailingComma(R"(,\s*([}\]]))");
+    s = std::regex_replace(s, kTrailingComma, "$1");
+    return s;
+}
+
+/**
+ * @brief Try to materialize a ToolCall from a `call:` body's args.
+ *
+ * Normalizes the args body, parses it as JSON, and populates the
+ * ToolCall's arguments map + canonical arguments_json dump. Returns
+ * `false` when normalization yields un-parseable JSON or a non-object
+ * root — caller drops the match in that case.
+ *
+ * @param name Tool name already captured from the wrapper.
+ * @param args_body Raw `{...}` body content (without the braces).
+ * @param out Populated on success.
+ * @return true when args parsed successfully into an object.
+ * @utility
+ * @version 2.3.12
+ */
+static bool build_call_prefix_tool(
+    const std::string& name,
+    const std::string& args_body,
+    ToolCall& out)
+{
+    // Wrap in `{}` BEFORE normalize so the bare-key regex (which
+    // requires `{` or `,` before each key) catches the leading key
+    // too — without the wrapper the first key has no preceding `{`.
+    std::string normalized =
+        normalize_call_args_json("{" + args_body + "}");
+    try {
+        auto j = nlohmann::json::parse(normalized);
+        if (!j.is_object()) { return false; }
+        out.name = name;
+        out.arguments_json = j.dump();
+        for (auto kv = j.begin(); kv != j.end(); ++kv) {
+            out.arguments[kv.key()] = kv.value().is_string()
+                ? kv.value().get<std::string>()
+                : kv.value().dump();
+        }
+        return true;
+    } catch (const nlohmann::json::exception&) {
+        return false;
+    }
+}
+
+/**
+ * @brief Parse Gemma 4 E4B Q8 `<|tool_call>call:NAME{args}<tool_call|>` form.
+ *
+ * Third fallback parser (after tagged + bare-JSON) for the malformed
+ * tool-call wrapper observed in production on Gemma 4 E4B Q8 (gh#73).
+ * Three deviations from gh#69's accepted set:
+ *   - `call:` prefix before the tool name.
+ *   - Non-JSON args (`{student_id:2}`, no quotes around keys).
+ *   - Asymmetric close `<tool_call|>` (pipe-before-`>`).
+ *
+ * Each parsed call gets its full canonical JSON written to
+ * `ToolCall::arguments_json` so dispatch-passthrough consumers see a
+ * normalized shape. Argument keys are exposed in the `arguments` map
+ * as string-stringified JSON values.
+ *
+ * @param content Raw model output (after `cut_at_fabricated_turn`).
+ * @return Vector of recovered tool calls. Empty when no matching
+ *         wrapper is found OR every match's args fail to normalize.
+ * @utility
+ * @version 2.3.12
+ */
+static std::vector<ToolCall> parse_call_prefix_tool_calls(
+    const std::string& content)
+{
+    static const std::regex kCallPrefix(
+        R"(<\|tool_call\|?>\s*call\s*:\s*([\w.]+)\s*\{([\s\S]*?)\}\s*<tool_call\|>)");
+    std::vector<ToolCall> calls;
+    auto begin = std::sregex_iterator(
+        content.begin(), content.end(), kCallPrefix);
+    auto end = std::sregex_iterator{};
+    for (auto it = begin; it != end; ++it) {
+        ToolCall tc;
+        if (build_call_prefix_tool((*it)[1].str(), (*it)[2].str(), tc)) {
+            calls.push_back(std::move(tc));
+        }
+    }
+    return calls;
+}
+
+/**
  * @brief Parse tool calls from Gemma 4 output.
  *
  * Tries tagged JSON first (`<tool_call>{...}</tool_call>` and the
@@ -87,17 +199,25 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
     if (calls.empty()) {
         calls = parse_bare_json_tool_calls(trimmed);
     }
+    // gh#73 (v2.3.12): third fallback for the E4B Q8 malformed
+    // `<|tool_call>call:NAME{args}<tool_call|>` wrapper. Runs only
+    // when the tagged + bare-JSON paths both came up empty so we
+    // don't double-extract calls that the canonical paths handled.
+    if (calls.empty()) {
+        calls = parse_call_prefix_tool_calls(trimmed);
+    }
     result.tool_calls = std::move(calls);
 
-    // gh#65 (v2.3.3) / gh#69 (v2.3.8): match the asymmetric open
-    // variants here too so the cleaned_content (what the user sees)
-    // doesn't leave stray `<|tool_call>{json}</tool_call>` or
-    // `<|im_start|>tool_call ... </tool_call>` markup behind when
-    // Gemma 4 emits the pipe-prefixed or channel-header form. Mirror
-    // the openings accepted by parse_tagged_tool_calls.
+    // gh#65 (v2.3.3) / gh#69 (v2.3.8) / gh#73 (v2.3.12): match the
+    // asymmetric open + close variants here too so the cleaned_content
+    // (what the user sees) doesn't leave stray
+    // `<|tool_call>{json}</tool_call>`, `<|im_start|>tool_call ... </tool_call>`,
+    // or `<|tool_call>call:NAME{...}<tool_call|>` markup behind when
+    // Gemma 4 emits the pipe-prefixed, channel-header, or call-prefix
+    // form. Mirror the openings + closings accepted by the parsers.
     std::string cleaned = std::regex_replace(trimmed,
         std::regex(R"((?:<tool_call>|<\|tool_call\|?>|<\|im_start\|>tool_call))"
-                   R"(\s*[\s\S]*?\s*</tool_call>)"),
+                   R"(\s*[\s\S]*?\s*(?:</tool_call>|<tool_call\|>))"),
         "");
     cleaned = strip_think_blocks(cleaned);
 

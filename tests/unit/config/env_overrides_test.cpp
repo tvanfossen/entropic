@@ -112,3 +112,140 @@ SCENARIO("Unset env vars leave config unchanged", "[config][env]") {
         }
     }
 }
+
+// ── v2.3.10: coverage for remaining ENTROPIC_* env vars ────────
+
+SCENARIO("ENTROPIC_MODELS__DEFAULT overrides default tier",
+         "[config][env][v2.3.10]") {
+    GIVEN("a config with a non-default tier name") {
+        entropic::ParsedConfig config;
+        config.models.default_tier = "lead";
+
+        WHEN("ENTROPIC_MODELS__DEFAULT is set") {
+            EnvGuard guard("ENTROPIC_MODELS__DEFAULT", "researcher");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("default tier reflects env value") {
+                REQUIRE(config.models.default_tier == "researcher");
+            }
+        }
+    }
+}
+
+SCENARIO("ENTROPIC_ROUTING__FALLBACK_TIER overrides fallback",
+         "[config][env][v2.3.10]") {
+    GIVEN("a config with a default fallback tier") {
+        entropic::ParsedConfig config;
+        config.routing.fallback_tier = "lead";
+
+        WHEN("ENTROPIC_ROUTING__FALLBACK_TIER is set") {
+            EnvGuard guard("ENTROPIC_ROUTING__FALLBACK_TIER", "eng");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("fallback tier reflects env value") {
+                REQUIRE(config.routing.fallback_tier == "eng");
+            }
+        }
+    }
+}
+
+SCENARIO("ENTROPIC_COMPACTION__ENABLED toggles compaction",
+         "[config][env][v2.3.10]") {
+    GIVEN("a config with compaction enabled") {
+        entropic::ParsedConfig config;
+        config.compaction.enabled = true;
+
+        WHEN("ENTROPIC_COMPACTION__ENABLED is set to false") {
+            EnvGuard guard("ENTROPIC_COMPACTION__ENABLED", "false");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("compaction is disabled") {
+                REQUIRE(config.compaction.enabled == false);
+            }
+        }
+    }
+
+    GIVEN("a config with compaction disabled") {
+        entropic::ParsedConfig config;
+        config.compaction.enabled = false;
+
+        WHEN("ENTROPIC_COMPACTION__ENABLED is set to 1") {
+            EnvGuard guard("ENTROPIC_COMPACTION__ENABLED", "1");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("compaction is enabled (parse_bool accepts '1')") {
+                REQUIRE(config.compaction.enabled == true);
+            }
+        }
+    }
+}
+
+SCENARIO("ENTROPIC_VRAM_RESERVE_MB overrides VRAM reserve",
+         "[config][env][v2.3.10]") {
+    GIVEN("a default config") {
+        entropic::ParsedConfig config;
+
+        WHEN("ENTROPIC_VRAM_RESERVE_MB is set to 2048") {
+            EnvGuard guard("ENTROPIC_VRAM_RESERVE_MB", "2048");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("vram_reserve_mb reflects env value") {
+                REQUIRE(config.vram_reserve_mb == 2048);
+            }
+        }
+    }
+}
+
+SCENARIO("ENTROPIC_CONFIG_DIR overrides config_dir path",
+         "[config][env][v2.3.10]") {
+    GIVEN("a default config") {
+        entropic::ParsedConfig config;
+
+        WHEN("ENTROPIC_CONFIG_DIR is set") {
+            EnvGuard guard("ENTROPIC_CONFIG_DIR", "/tmp/entropic-test");
+            entropic::config::apply_env_overrides(config);
+
+            THEN("config_dir is updated") {
+                REQUIRE(config.config_dir == "/tmp/entropic-test");
+            }
+        }
+    }
+}
+
+SCENARIO("parse_bool accepts every truth alias",
+         "[config][env][v2.3.10][parse_bool]") {
+    // parse_bool is internal but is exercised transitively via
+    // ENTROPIC_ROUTING__ENABLED and ENTROPIC_COMPACTION__ENABLED.
+    // Cover each alias once so the four branches of parse_bool
+    // (true/True/TRUE, yes, 1, else=false) all execute.
+    entropic::ParsedConfig config;
+
+    GIVEN("env value 'true'") {
+        EnvGuard g("ENTROPIC_ROUTING__ENABLED", "true");
+        entropic::config::apply_env_overrides(config);
+        THEN("routing enables") { REQUIRE(config.routing.enabled == true); }
+    }
+
+    GIVEN("env value 'True'") {
+        config.routing.enabled = false;
+        EnvGuard g("ENTROPIC_ROUTING__ENABLED", "True");
+        entropic::config::apply_env_overrides(config);
+        THEN("routing enables") { REQUIRE(config.routing.enabled == true); }
+    }
+
+    GIVEN("env value 'yes'") {
+        config.routing.enabled = false;
+        EnvGuard g("ENTROPIC_ROUTING__ENABLED", "yes");
+        entropic::config::apply_env_overrides(config);
+        THEN("routing enables") { REQUIRE(config.routing.enabled == true); }
+    }
+
+    GIVEN("env value 'no' (falsy alias)") {
+        config.routing.enabled = true;
+        EnvGuard g("ENTROPIC_ROUTING__ENABLED", "no");
+        entropic::config::apply_env_overrides(config);
+        THEN("routing disables (not a recognized truthy alias)") {
+            REQUIRE(config.routing.enabled == false);
+        }
+    }
+}

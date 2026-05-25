@@ -503,3 +503,83 @@ SCENARIO("Hook count for all 22 hook points", "[hooks]") {
         }
     }
 }
+
+// ── v2.3.10: backstop coverage for catch(...) and post/info paths ──
+/// Hook that throws a non-std::exception value (catches `...`).
+static int unknown_throwing_hook(
+    entropic_hook_point_t, const char*, char**, void*) { throw 42; }
+
+TEST_CASE("HookRegistry exception-handling paths "
+          "[v2.3.10][core][hook_registry_coverage]", "[hooks]") {
+    SECTION("fire_pre catch(...) for non-std exceptions") {
+        HookRegistry reg; int count = 0;
+        reg.register_hook(ENTROPIC_HOOK_PRE_GENERATE,
+                          unknown_throwing_hook, nullptr, 0);
+        reg.register_hook(ENTROPIC_HOOK_PRE_GENERATE,
+                          counting_hook, &count, 1);
+        char* out = nullptr;
+        int rc = reg.fire_pre(ENTROPIC_HOOK_PRE_GENERATE, "{}", &out);
+        free(out);
+        REQUIRE(rc == 0);
+        REQUIRE(count == 1);
+    }
+    SECTION("fire_post catches std::exception") {
+        HookRegistry reg; int count = 0;
+        reg.register_hook(ENTROPIC_HOOK_POST_GENERATE,
+                          throwing_hook, nullptr, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_GENERATE,
+                          counting_hook, &count, 1);
+        char* out = nullptr;
+        reg.fire_post(ENTROPIC_HOOK_POST_GENERATE, "{}", &out);
+        free(out);
+        REQUIRE(count == 1);
+    }
+    SECTION("fire_post catch(...) for non-std exceptions") {
+        HookRegistry reg; int count = 0;
+        reg.register_hook(ENTROPIC_HOOK_POST_GENERATE,
+                          unknown_throwing_hook, nullptr, 0);
+        reg.register_hook(ENTROPIC_HOOK_POST_GENERATE,
+                          counting_hook, &count, 1);
+        char* out = nullptr;
+        reg.fire_post(ENTROPIC_HOOK_POST_GENERATE, "{}", &out);
+        free(out);
+        REQUIRE(count == 1);
+    }
+    SECTION("fire_info catches std::exception") {
+        HookRegistry reg; int count = 0;
+        reg.register_hook(ENTROPIC_HOOK_ON_LOOP_ITERATION,
+                          throwing_hook, nullptr, 0);
+        reg.register_hook(ENTROPIC_HOOK_ON_LOOP_ITERATION,
+                          counting_hook, &count, 1);
+        reg.fire_info(ENTROPIC_HOOK_ON_LOOP_ITERATION, "{}");
+        REQUIRE(count == 1);
+    }
+    SECTION("fire_info catch(...) for non-std exceptions") {
+        HookRegistry reg; int count = 0;
+        reg.register_hook(ENTROPIC_HOOK_ON_LOOP_ITERATION,
+                          unknown_throwing_hook, nullptr, 0);
+        reg.register_hook(ENTROPIC_HOOK_ON_LOOP_ITERATION,
+                          counting_hook, &count, 1);
+        reg.fire_info(ENTROPIC_HOOK_ON_LOOP_ITERATION, "{}");
+        REQUIRE(count == 1);
+    }
+    SECTION("invalid hook point is rejected across all APIs") {
+        HookRegistry reg;
+        char* p = reinterpret_cast<char*>(0x1);
+        REQUIRE(reg.fire_pre(ENTROPIC_HOOK_COUNT_, "{}", &p) == 0);
+        REQUIRE(p == nullptr);
+        p = reinterpret_cast<char*>(0x1);
+        reg.fire_post(ENTROPIC_HOOK_COUNT_, "{}", &p);
+        REQUIRE(p == nullptr);
+        reg.fire_info(ENTROPIC_HOOK_COUNT_, "{}");
+        REQUIRE(reg.hook_count(ENTROPIC_HOOK_COUNT_) == 0);
+        REQUIRE(reg.deregister_hook(ENTROPIC_HOOK_COUNT_, noop_hook, nullptr)
+                == ENTROPIC_ERROR_INVALID_CONFIG);
+    }
+    SECTION("empty post-hook list returns NULL without iteration") {
+        HookRegistry reg;
+        char* out = reinterpret_cast<char*>(0x1);
+        reg.fire_post(ENTROPIC_HOOK_POST_GENERATE, "{}", &out);
+        REQUIRE(out == nullptr);
+    }
+}

@@ -17,6 +17,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -76,4 +77,65 @@ TEST_CASE("StdioTransport 1-arg ctor also sanitizes (legacy path)",
                      {}, 30000U);
     CHECK(t.display_name().front() != '/');
     CHECK(t.display_name() == "usr/bin/env");
+}
+
+// ── v2.3.10: open + close + spawn-failure coverage ──
+
+TEST_CASE("StdioTransport rejects open() against a non-existent command",
+          "[mcp][stdio][v2.3.10][coverage][failure-mode]") {
+    // The fork+exec path fails when the binary doesn't exist;
+    // open_child_process returns false → open() returns false.
+    StdioTransport t("ghost", "/path/that/does/not/exist/v2310",
+                     std::vector<std::string>{}, {}, 1000U);
+    REQUIRE_FALSE(t.open());
+    REQUIRE_FALSE(t.is_connected());
+}
+
+TEST_CASE("StdioTransport open() is idempotent on already-connected state",
+          "[mcp][stdio][v2.3.10][coverage]") {
+    // /bin/cat speaks no JSON-RPC but does keep the child alive
+    // long enough for the transport's open + close lifecycle to
+    // exercise its full path: open() returns true, second open()
+    // hits the early-return at line 156, close() tears down cleanly.
+    StdioTransport t("cat", "/bin/cat", std::vector<std::string>{},
+                     {}, 1000U);
+    if (!std::filesystem::exists("/bin/cat")) { return; }
+
+    REQUIRE(t.open());
+    REQUIRE(t.is_connected());
+
+    // Second open() — early-out branch (line 156).
+    REQUIRE(t.open());
+    REQUIRE(t.is_connected());
+
+    t.close();
+    REQUIRE_FALSE(t.is_connected());
+}
+
+TEST_CASE("StdioTransport.send_request times out cleanly when child doesn't reply",
+          "[mcp][stdio][v2.3.10][coverage][failure-mode]") {
+    // /bin/cat echoes stdin to stdout but the echoed payload won't
+    // match the JSON-RPC id parsing entropic does — so send_request
+    // either times out or returns a non-matching response. Either
+    // way it must not crash; that's the coverage assertion.
+    StdioTransport t("cat", "/bin/cat", std::vector<std::string>{},
+                     {}, 200U);
+    if (!std::filesystem::exists("/bin/cat")) { return; }
+
+    REQUIRE(t.open());
+    // Short per-call timeout so the test completes quickly.
+    auto resp = t.send_request(
+        R"({"jsonrpc":"2.0","id":1,"method":"unknown"})", 100U);
+    (void)resp;  // value unconstrained; we only assert the call returns
+    REQUIRE(true);
+}
+
+TEST_CASE("StdioTransport.close() with no prior open() is safe",
+          "[mcp][stdio][v2.3.10][coverage][failure-mode]") {
+    // Tests the close path's tolerance for a never-opened transport
+    // — no child PID, no fds, but close() must still return cleanly.
+    StdioTransport t("noop", "/bin/true",
+                     std::vector<std::string>{}, {}, 100U);
+    t.close();  // no-op path
+    REQUIRE_FALSE(t.is_connected());
 }

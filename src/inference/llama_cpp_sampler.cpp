@@ -1,0 +1,138 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * @file llama_cpp_sampler.cpp
+ * @brief LlamaCppSampler + LlamaCppSamplerFactory implementation
+ *        (v2.3.10 seam impl).
+ *
+ * Chain construction logic was lifted verbatim from the legacy
+ * `LlamaCppBackend::create_sampler`. The gates (`temperature > 0`,
+ * `repeat_penalty != 1`, etc.) and ordering
+ * (grammar → penalties → temperature → top-k → top-p → min-p → dist)
+ * are unchanged. This file is uncovered by the CPU-only unit-test
+ * gate by design — its job is to be a thin pass-through to llama.cpp.
+ * Coverage of the LOGIC that consumes Samplers lives in
+ * LlamaCppBackend tests (which mock the SamplerFactory).
+ *
+ * @internal
+ * @version 2.3.10
+ */
+
+#include "llama_cpp_sampler.h"
+#include <entropic/types/logging.h>
+
+#include <llama.h>
+
+#include <cstdint>
+#include <memory>
+
+static auto logger = entropic::log::get("inference.sampler");
+
+namespace entropic {
+
+namespace {
+
+/**
+ * @brief Append grammar sampler to chain when a grammar string is set.
+ *
+ * Lifted from `llama_cpp_backend.cpp` (v2.3.10) so the gh#23 chain
+ * construction stays exactly where the original logic lived.
+ *
+ * @utility
+ * @version 2.3.10
+ */
+void add_grammar_sampler(llama_sampler* chain,
+                         const llama_vocab* vocab,
+                         const std::string& grammar) {
+    if (grammar.empty()) { return; }
+    llama_sampler* g = llama_sampler_init_grammar(
+        vocab, grammar.c_str(), "root");
+    if (g) {
+        llama_sampler_chain_add(chain, g);
+    }
+}
+
+/**
+ * @brief Resolve caller-supplied seed to a llama-compatible uint32.
+ *
+ * P2-14: negative seed maps to LLAMA_DEFAULT_SEED (random). Lifted
+ * v2.3.10 from `llama_cpp_backend.cpp` together with chain building.
+ *
+ * @utility
+ * @version 2.3.10
+ */
+uint32_t resolve_dist_seed(int caller_seed) {
+    return caller_seed < 0
+        ? LLAMA_DEFAULT_SEED
+        : static_cast<uint32_t>(caller_seed);
+}
+
+} // anonymous namespace
+
+// ── LlamaCppSampler ────────────────────────────────────────
+
+LlamaCppSampler::LlamaCppSampler(llama_sampler* chain, llama_context* ctx)
+    : chain_(chain), ctx_(ctx) {}
+
+LlamaCppSampler::~LlamaCppSampler() {
+    if (chain_) {
+        llama_sampler_free(chain_);
+        chain_ = nullptr;
+    }
+}
+
+int32_t LlamaCppSampler::sample() {
+    if (chain_ == nullptr || ctx_ == nullptr) { return -1; }
+    return llama_sampler_sample(chain_, ctx_, -1);
+}
+
+void LlamaCppSampler::reset() {
+    if (chain_ != nullptr) {
+        llama_sampler_reset(chain_);
+    }
+}
+
+// ── LlamaCppSamplerFactory ─────────────────────────────────
+
+LlamaCppSamplerFactory::LlamaCppSamplerFactory(
+    llama_context* ctx, const llama_vocab* vocab)
+    : ctx_(ctx), vocab_(vocab) {}
+
+std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
+    const GenerationParams& params)
+{
+    llama_sampler_chain_params chain_params =
+        llama_sampler_chain_default_params();
+    llama_sampler* chain = llama_sampler_chain_init(chain_params);
+
+    add_grammar_sampler(chain, vocab_, params.grammar);
+
+    if (params.repeat_penalty != 1.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_penalties(
+                64, params.repeat_penalty, 0.0f, 0.0f));
+    }
+    if (params.temperature > 0.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_temp(params.temperature));
+    }
+    if (params.top_k > 0) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_k(params.top_k));
+    }
+    if (params.top_p < 1.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_top_p(params.top_p, 1));
+    }
+    // Min-P (gh#23 MVP item 1, v2.3.10) — gated so default 0.0f is no-op
+    if (params.min_p > 0.0f) {
+        llama_sampler_chain_add(chain,
+            llama_sampler_init_min_p(params.min_p, 1));
+    }
+
+    llama_sampler_chain_add(chain,
+        llama_sampler_init_dist(resolve_dist_seed(params.seed)));
+
+    return std::make_unique<LlamaCppSampler>(chain, ctx_);
+}
+
+} // namespace entropic

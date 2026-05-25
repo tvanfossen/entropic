@@ -210,3 +210,18 @@ TEST_CASE("test_wrap_around_correctness", "[tool_call_history]") {
     REQUIRE(a[1].sequence == 3);
     REQUIRE(a[2].sequence == 4);  // newest
 }
+
+// ── v2.3.10: cover record_to_json error_detail branch ──
+
+TEST_CASE("to_json includes error_detail when set",
+          "[tool_call_history][v2.3.10][coverage]") {
+    ToolCallHistory h(5);
+    ToolCallRecord rec{1, "tool.fail", "k", "error",
+                       "partial result", 1.0,
+                       "OOM during read", 1};
+    h.record(rec);
+    auto out = h.to_json(0);
+    auto j = nlohmann::json::parse(out);
+    REQUIRE(j.size() == 1);
+    REQUIRE(j[0]["error_detail"] == "OOM during read");
+}

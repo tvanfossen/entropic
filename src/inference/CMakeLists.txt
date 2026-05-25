@@ -8,6 +8,8 @@
 set(INFERENCE_SOURCES
     backend.cpp
     llama_cpp_backend.cpp
+    llama_cpp_sampler.cpp
+    llama_cpp_tokenizer.cpp
     prompt_cache.cpp
     orchestrator.cpp
     secondary_model_loader.cpp

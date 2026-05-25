@@ -73,3 +73,40 @@ TEST_CASE("SecondaryModelLoader: get_shared returns empty for unknown role",
     auto sp = loader.get_shared("router");
     REQUIRE_FALSE(static_cast<bool>(sp));
 }
+
+// ── v2.3.10 [secondary_loader_topup] ──────────────────────
+// Repeated failed loads, multi-role independence, shutdown safety.
+
+TEST_CASE("SecondaryModelLoader v2.3.10 topup — failure isolation + idempotency",
+          "[v2.3.10][inference][secondary_loader_topup]") {
+    entropic::SecondaryModelLoader loader;
+    entropic::ModelConfig cfg;
+    cfg.gpu_layers = 0;
+    cfg.n_threads = 1;
+    cfg.context_length = 256;
+
+    // Failed load twice on the same path — no stale-slot leak.
+    cfg.path = "/no/such/repeat.gguf";
+    REQUIRE_FALSE(loader.ensure_loaded("draft", cfg));
+    REQUIRE_FALSE(loader.ensure_loaded("draft", cfg));
+    REQUIRE(loader.get("draft") == nullptr);
+    REQUIRE_FALSE(loader.is_loaded("draft"));
+    REQUIRE_FALSE(static_cast<bool>(loader.get_shared("draft")));
+    REQUIRE(loader.loaded_roles().empty());
+
+    // Different roles all fail independently — no cross-contamination.
+    cfg.path = "/no/such/router.gguf";
+    REQUIRE_FALSE(loader.ensure_loaded("router", cfg));
+    cfg.path = "/no/such/thinking.gguf";
+    REQUIRE_FALSE(loader.ensure_loaded("thinking", cfg));
+    REQUIRE(loader.get("router") == nullptr);
+    REQUIRE(loader.get("thinking") == nullptr);
+    REQUIRE_FALSE(loader.release_role("router"));
+    REQUIRE_FALSE(loader.release_role("thinking"));
+
+    // shutdown after failures + ensure_loaded still works after shutdown.
+    loader.shutdown();
+    REQUIRE(loader.loaded_roles().empty());
+    cfg.path = "/no/such/after_shutdown.gguf";
+    REQUIRE_FALSE(loader.ensure_loaded("draft", cfg));
+}

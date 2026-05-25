@@ -103,7 +103,7 @@
     {
       "name": "coverage",
       "displayName": "Coverage (gcov)",
-      "description": "Debug build with gcov instrumentation. Mutually exclusive with sanitizers.",
+      "description": "Debug build with gcov instrumentation. CPU-only, unit tests only — CI runner has no CUDA toolchain and model tests are fragile (segfault-on-exit, model file deps). Real-model coverage flows through the developer-run release process (inv test --model), not pre-commit. Mutually exclusive with sanitizers.",
       "inherits": "dev",
       "cacheVariables": {
         "ENTROPIC_COVERAGE": "ON"

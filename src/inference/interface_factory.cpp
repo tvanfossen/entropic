@@ -82,6 +82,7 @@ static GenerationParams parse_params(const char* json_str) {
     }
     if (j.contains("top_p")) { p.top_p = j["top_p"]; }
     if (j.contains("top_k")) { p.top_k = j["top_k"]; }
+    if (j.contains("min_p")) { p.min_p = j["min_p"]; }
     if (j.contains("repeat_penalty")) {
         p.repeat_penalty = j["repeat_penalty"];
     }

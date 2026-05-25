@@ -1036,3 +1036,602 @@ SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
         }
     }
 }
+
+// ── v2.3.10 coverage push — engine.cpp uncovered regions ──
+
+#include <entropic/core/directives.h>
+#include <entropic/interfaces/i_hook_handler.h>
+#include <entropic/types/hooks.h>
+
+namespace v2310 {
+
+struct HookCap {
+    std::vector<int> pre, post, info;
+    bool cancel = false;
+    int cancel_point = -1;
+    std::string post_mod, pre_mod;
+};
+
+inline HookInterface make_hooks(HookCap* c) {
+    HookInterface hi{};
+    hi.registry = c;
+    hi.fire_pre = [](void* r, entropic_hook_point_t p,
+                     const char*, char** out) -> int {
+        auto* c = static_cast<HookCap*>(r);
+        c->pre.push_back(static_cast<int>(p));
+        if (!c->pre_mod.empty()) {
+            *out = static_cast<char*>(std::malloc(c->pre_mod.size() + 1));
+            std::memcpy(*out, c->pre_mod.c_str(), c->pre_mod.size() + 1);
+        }
+        return (c->cancel && (c->cancel_point < 0
+            || c->cancel_point == static_cast<int>(p))) ? 1 : 0;
+    };
+    hi.fire_post = [](void* r, entropic_hook_point_t p,
+                      const char*, char** out) {
+        auto* c = static_cast<HookCap*>(r);
+        c->post.push_back(static_cast<int>(p));
+        if (!c->post_mod.empty()) {
+            *out = static_cast<char*>(std::malloc(c->post_mod.size() + 1));
+            std::memcpy(*out, c->post_mod.c_str(), c->post_mod.size() + 1);
+        }
+    };
+    hi.fire_info = [](void* r, entropic_hook_point_t p, const char*) {
+        static_cast<HookCap*>(r)->info.push_back(static_cast<int>(p));
+    };
+    return hi;
+}
+
+inline bool has(const std::vector<int>& v, int x) {
+    return std::find(v.begin(), v.end(), x) != v.end();
+}
+inline char* malloc_str(const char* s) {
+    auto n = std::strlen(s);
+    auto* p = static_cast<char*>(std::malloc(n + 1));
+    std::memcpy(p, s, n + 1);
+    return p;
+}
+
+}  // namespace v2310
+
+SCENARIO("hook dispatch: info / PRE_GENERATE cancel / POST_GENERATE rewrite / ON_ERROR",
+         "[v2.3.10][core][engine_coverage][hooks]") {
+    SECTION("info hooks fire across loop boundaries") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap;
+        engine.set_hooks(v2310::make_hooks(&cap));
+        engine.run(make_messages());
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_LOOP_START));
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_LOOP_END));
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_LOOP_ITERATION));
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_CONTEXT_ASSEMBLE));
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_STATE_CHANGE));
+    }
+    SECTION("PRE_GENERATE cancellation short-circuits inference") {
+        MockInference mock; mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 5; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap; cap.cancel = true;
+        cap.cancel_point = ENTROPIC_HOOK_PRE_GENERATE;
+        engine.set_hooks(v2310::make_hooks(&cap));
+        engine.run(make_messages());
+        REQUIRE(mock.generate_call_count == 0);
+        REQUIRE(engine.last_loop_metrics().iterations < 5);
+    }
+    SECTION("POST_GENERATE hook may rewrite assistant content") {
+        MockInference mock; mock.response = "original";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap; cap.post_mod = "rewritten by hook";
+        engine.set_hooks(v2310::make_hooks(&cap));
+        auto result = engine.run(make_messages());
+        REQUIRE(result.back().content == "rewritten by hook");
+        REQUIRE(v2310::has(cap.post, ENTROPIC_HOOK_POST_GENERATE));
+    }
+    SECTION("ON_ERROR info hook fires when state hits ERROR") {
+        MockInference mock; mock.response = "no tools"; mock.tier = "lead";
+        mock.is_complete = false;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 10; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap;
+        engine.set_hooks(v2310::make_hooks(&cap));
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& t, const std::string& p,
+                                void*) -> std::string {
+            return (t == "lead" && p == "explicit_completion") ? "true" : "";
+        };
+        engine.set_tier_resolution(tri);
+        LoopContext ctx; ctx.messages = make_messages();
+        ctx.locked_tier = "lead";
+        engine.run_loop(ctx);
+        REQUIRE(v2310::has(cap.info, ENTROPIC_HOOK_ON_ERROR));
+    }
+}
+
+SCENARIO("dir_complete: hook rejection + coverage_gap metadata",
+         "[v2.3.10][core][engine_coverage][directives]") {
+    SECTION("ON_COMPLETE rejection reverts to prior state with feedback") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap; cap.cancel = true;
+        cap.cancel_point = ENTROPIC_HOOK_ON_COMPLETE;
+        cap.pre_mod = "cite sources";
+        engine.set_hooks(v2310::make_hooks(&cap));
+        LoopContext ctx; ctx.messages = make_messages();
+        ctx.state = AgentState::EXECUTING;
+        CompleteDirective cd("draft");
+        std::vector<const Directive*> list{&cd};
+        engine.directive_processor().process(ctx, list);
+        REQUIRE(ctx.state == AgentState::EXECUTING);
+        bool found = false;
+        for (const auto& m : ctx.messages) {
+            if (m.content.rfind("[CITATION VALIDATION]", 0) == 0) {
+                found = true; break;
+            }
+        }
+        REQUIRE(found);
+    }
+    SECTION("coverage_gap fields persist into ctx.metadata") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        CompleteDirective cd("partial");
+        cd.coverage_gap = true;
+        cd.gap_description = "missing X";
+        cd.suggested_files = {"a.cpp", "b.h"};
+        LoopContext ctx; ctx.messages = make_messages();
+        std::vector<const Directive*> list{&cd};
+        engine.directive_processor().process(ctx, list);
+        REQUIRE(ctx.metadata["coverage_gap"] == "true");
+        REQUIRE(ctx.metadata["gap_description"] == "missing X");
+        REQUIRE(ctx.metadata["suggested_files_json"].find("a.cpp")
+                != std::string::npos);
+        REQUIRE(ctx.metadata["explicit_completion_summary"] == "partial");
+        REQUIRE(ctx.state == AgentState::COMPLETE);
+    }
+}
+
+SCENARIO("directive handlers cover the remaining types",
+         "[v2.3.10][core][engine_coverage][directives]") {
+    MockInference mock; auto iface = make_mock_interface(mock);
+    LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+    auto proc = [&](LoopContext& c, const Directive& d) {
+        std::vector<const Directive*> l{&d};
+        return engine.directive_processor().process(c, l);
+    };
+    LoopContext ctx;
+    StopProcessingDirective sp;
+    REQUIRE(proc(ctx, sp).stop_processing);
+    TierChangeDirective tc("researcher", "auto");
+    auto otc = proc(ctx, tc);
+    REQUIRE(ctx.locked_tier == "researcher");
+    REQUIRE(otc.tier_changed);
+    PipelineDirective pd({"a", "b"}, "t");
+    REQUIRE(proc(ctx, pd).stop_processing);
+    REQUIRE(ctx.pending_pipeline.has_value());
+    ClearSelfTodosDirective ctd;
+    REQUIRE_NOTHROW(proc(ctx, ctd));
+    InjectContextDirective ic("hi", "system");
+    REQUIRE(proc(ctx, ic).injected_messages.size() == 1);
+    InjectContextDirective ic_empty("", "user");
+    REQUIRE(proc(ctx, ic_empty).injected_messages.empty());
+
+    // Prune walks tool-result messages without throwing.
+    LoopContext pctx;
+    Message tr; tr.role = "user"; tr.content = "stale";
+    tr.metadata["tool_name"] = "fs.read";
+    pctx.messages.push_back(tr);
+    PruneMessagesDirective pm(0);
+    REQUIRE_NOTHROW(proc(pctx, pm));
+
+    PhaseChangeDirective pc("review");
+    proc(ctx, pc);
+    REQUIRE(ctx.active_phase == "review");
+
+    std::string key_seen;
+    EngineCallbacks cbs;
+    cbs.on_presenter_notify = [](const char* k, const char*, void* ud) {
+        *static_cast<std::string*>(ud) = k ? k : "";
+    };
+    cbs.user_data = &key_seen;
+    engine.set_callbacks(cbs);
+    NotifyPresenterDirective np("status", "{}");
+    proc(ctx, np);
+    REQUIRE(key_seen == "status");
+
+    LoopContext actx;
+    ContextAnchorDirective add("k1", "pinned");
+    proc(actx, add);
+    REQUIRE(actx.messages.size() == 1);
+    REQUIRE(actx.messages.front().metadata.at("anchor_key") == "k1");
+    ContextAnchorDirective del("k1", "");
+    proc(actx, del);
+    for (const auto& m : actx.messages) {
+        REQUIRE_FALSE(m.metadata.count("anchor_key"));
+    }
+}
+
+namespace v2310 {
+struct DelegInjector {
+    enum Kind { DELEG, RESUME, PIPELINE } kind;
+    PendingDelegation pd;
+    PendingPipeline pp;
+    bool fired = false;
+};
+inline ToolExecutionInterface deleg_executor(DelegInjector* state) {
+    ToolExecutionInterface t{};
+    t.user_data = state;
+    t.process_tool_calls = [](LoopContext& ctx,
+                              const std::vector<ToolCall>&,
+                              void* ud) -> std::vector<Message> {
+        auto* s = static_cast<DelegInjector*>(ud);
+        if (s->fired) { return {}; }
+        s->fired = true;
+        if (s->kind == DelegInjector::PIPELINE) {
+            ctx.pending_pipeline = s->pp;
+        } else {
+            ctx.pending_delegation = s->pd;
+        }
+        return {};
+    };
+    return t;
+}
+inline bool msg_contains(const LoopContext& ctx, const std::string& s) {
+    for (const auto& m : ctx.messages) {
+        if (m.content.find(s) != std::string::npos) { return true; }
+    }
+    return false;
+}
+}  // namespace v2310
+
+SCENARIO("delegation guards reject depth/cycle/repeat/pipeline-depth",
+         "[v2.3.10][core][engine_coverage][delegation]") {
+    using DI = v2310::DelegInjector;
+    auto run_guard = [](DI& st, LoopContext& ctx) {
+        MockInference mock;
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"x","arguments":{}}])");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 1; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_tool_executor(v2310::deleg_executor(&st));
+        ctx.messages = make_messages();
+        engine.run_loop(ctx);
+    };
+    SECTION("pipeline rejected at MAX_DELEGATION_DEPTH") {
+        DI st{DI::PIPELINE, {}, PendingPipeline{{"a","b"}, "t"}, false};
+        LoopContext ctx; ctx.delegation_depth = AgentEngine::MAX_DELEGATION_DEPTH;
+        run_guard(st, ctx);
+        REQUIRE(v2310::msg_contains(ctx, "[PIPELINE REJECTED]"));
+    }
+    SECTION("delegation rejected on ancestor cycle") {
+        DI st{DI::DELEG, PendingDelegation{"lead", "go", -1}, {}, false};
+        LoopContext ctx; ctx.locked_tier = "eng";
+        ctx.delegation_ancestor_tiers = {"lead"};
+        run_guard(st, ctx);
+        REQUIRE(v2310::msg_contains(ctx, "Circular delegation"));
+        REQUIRE(ctx.metadata["failure_reason"] == "delegation_cycle");
+    }
+    SECTION("delegation rejected at MAX_DELEGATION_DEPTH") {
+        DI st{DI::DELEG, PendingDelegation{"eng", "go", -1}, {}, false};
+        LoopContext ctx; ctx.delegation_depth = AgentEngine::MAX_DELEGATION_DEPTH;
+        run_guard(st, ctx);
+        REQUIRE(v2310::msg_contains(ctx, "Maximum delegation"));
+    }
+    SECTION("delegation rejected on repeat-block") {
+        DI st{DI::DELEG, PendingDelegation{"researcher", "go", -1}, {}, false};
+        LoopContext ctx;
+        ctx.last_failed_delegation_target = "researcher";
+        ctx.consecutive_failed_delegations = 2;
+        run_guard(st, ctx);
+        REQUIRE(v2310::msg_contains(ctx, "Stop retrying this target"));
+        REQUIRE(ctx.metadata["failure_reason"]
+                == "delegation_repeat_blocked");
+    }
+}
+
+SCENARIO("resume_delegation failure paths surface typed errors",
+         "[v2.3.10][core][engine_coverage][delegation][resume]") {
+    auto run_resume = [](StorageInterface* si, const std::string& expect) {
+        MockInference mock;
+        mock.tool_calls_queue.push_back(R"([{"name":"x","arguments":{}}])");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 1; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        if (si) { engine.set_storage(*si); }
+        v2310::DelegInjector st{v2310::DelegInjector::DELEG,
+            PendingDelegation{"", "task", -1, "del-id"}, {}, false};
+        engine.set_tool_executor(v2310::deleg_executor(&st));
+        LoopContext ctx; ctx.messages = make_messages();
+        engine.run_loop(ctx);
+        REQUIRE(v2310::msg_contains(ctx, expect));
+    };
+    SECTION("storage unavailable") {
+        run_resume(nullptr, "[DELEGATION FAILED: resume_delegation]");
+    }
+    SECTION("unknown delegation_id") {
+        StorageInterface si{};
+        si.load_delegation_with_messages = [](const char*, std::string&,
+                                              void*) { return false; };
+        run_resume(&si, "unknown delegation_id");
+    }
+    SECTION("malformed payload") {
+        StorageInterface si{};
+        si.load_delegation_with_messages = [](const char*, std::string& o,
+                                              void*) {
+            o = "not json"; return true;
+        };
+        run_resume(&si, "malformed storage payload");
+    }
+    SECTION("missing target_tier") {
+        StorageInterface si{};
+        si.load_delegation_with_messages = [](const char*, std::string& o,
+                                              void*) {
+            o = R"({"messages":[]})"; return true;
+        };
+        run_resume(&si, "target_tier missing");
+    }
+}
+
+SCENARIO("validation_provider variants are all non-fatal",
+         "[v2.3.10][core][engine_coverage][validation]") {
+    auto run = [](char* (*fn)(void*)) {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        engine.set_validation_provider(fn, nullptr);
+        REQUIRE_NOTHROW(engine.run(make_messages()));
+    };
+    SECTION("rejected with violations") {
+        run([](void*) -> char* { return v2310::malloc_str(
+            R"({"verdict":"rejected","violations":["a","b"]})"); });
+    }
+    SECTION("rejected with no violations array (fallback)") {
+        run([](void*) -> char* { return v2310::malloc_str(
+            R"({"verdict":"rejected_v2"})"); });
+    }
+    SECTION("malformed JSON") {
+        run([](void*) -> char* {
+            return v2310::malloc_str("{not json"); });
+    }
+    SECTION("nullptr return + approved verdict (skip path)") {
+        run([](void*) -> char* { return nullptr; });
+        run([](void*) -> char* { return v2310::malloc_str(
+            R"({"verdict":"approved"})"); });
+    }
+}
+
+SCENARIO("queue capacity / cap mutation / clear / observer / state slot",
+         "[v2.3.10][core][engine_coverage][queue]") {
+    SECTION("capacity enforced + dynamic resize + clear + negative") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.message_queue_capacity = 2;
+        CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        REQUIRE(engine.queue_user_message("a"));
+        REQUIRE(engine.queue_user_message("b"));
+        REQUIRE_FALSE(engine.queue_user_message("c"));
+        REQUIRE(engine.user_message_queue_depth() == 2);
+        engine.set_message_queue_capacity(5);
+        REQUIRE(engine.queue_user_message("c"));
+        engine.clear_user_message_queue();
+        REQUIRE(engine.user_message_queue_depth() == 0);
+        engine.set_message_queue_capacity(-7);
+        REQUIRE_FALSE(engine.queue_user_message("d"));
+    }
+    SECTION("observer fires once on drain + is_running clears") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        engine.queue_user_message("queued follow-up");
+        struct S { int fired = 0; std::string text; size_t remaining = 0; };
+        S s;
+        engine.set_queue_observer(
+            [](const char* t, size_t r, void* ud) {
+                auto* x = static_cast<S*>(ud);
+                x->fired++; x->text = t ? t : ""; x->remaining = r;
+            }, &s);
+        engine.run_turn(std::string("first"));
+        REQUIRE(s.fired == 1);
+        REQUIRE(s.text == "queued follow-up");
+        REQUIRE_FALSE(engine.is_running());
+    }
+    SECTION("persistent state observer captures terminal COMPLETE") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        std::vector<int> states;
+        engine.set_state_observer(
+            [](int s, void* ud) {
+                static_cast<std::vector<int>*>(ud)->push_back(s);
+            }, &states);
+        engine.run(make_messages());
+        REQUIRE_FALSE(states.empty());
+        REQUIRE(states.back() == static_cast<int>(AgentState::COMPLETE));
+    }
+}
+
+SCENARIO("run_turn seeds system prompt only when conversation is empty",
+         "[v2.3.10][core][engine_coverage][conversation]") {
+    auto count_sys = [](const std::vector<Message>& v) {
+        size_t n = 0;
+        for (const auto& m : v) { if (m.role == "system") { ++n; } }
+        return n;
+    };
+    SECTION("string overload seeds once across two turns; clear empties") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        engine.set_system_prompt("system identity");
+        engine.run_turn(std::string("hi"));
+        auto n1 = engine.message_count();
+        engine.run_turn(std::string("again"));
+        REQUIRE(count_sys(engine.get_messages()) == 1);
+        REQUIRE(engine.message_count() > n1);
+        engine.clear_conversation();
+        REQUIRE(engine.message_count() == 0);
+    }
+    SECTION("vector overload skips auto-seed if caller supplies system") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        engine.set_system_prompt("default sys");
+        std::vector<Message> turn{{"system", "custom sys"},
+                                  {"user", "hello"}};
+        engine.run_turn(std::move(turn));
+        REQUIRE(count_sys(engine.get_messages()) == 1);
+        REQUIRE(engine.get_messages().front().content == "custom sys");
+    }
+}
+
+SCENARIO("run_streaming overloads route through agent loop",
+         "[v2.3.10][core][engine_coverage][streaming]") {
+    auto cb = [](const char* t, size_t l, void* ud) {
+        static_cast<std::string*>(ud)->append(t, l);
+    };
+    SECTION("string overload streams tokens") {
+        MockInference mock; mock.stream_token_by_token = true;
+        mock.response = "abcd";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.stream_output = true; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        std::string chunks;
+        REQUIRE(engine.run_streaming(std::string("hi"), cb,
+                                     &chunks, nullptr) == 0);
+        REQUIRE(chunks.find("abcd") != std::string::npos);
+    }
+    SECTION("string overload returns 1 when cancel flag pre-set") {
+        MockInference mock; mock.stream_token_by_token = true;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.stream_output = true; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        int cancel = 1;
+        REQUIRE(engine.run_streaming(std::string("x"),
+                                     [](const char*, size_t, void*) {},
+                                     nullptr, &cancel) == 1);
+    }
+    SECTION("vector overload preserves content_parts path") {
+        MockInference mock; mock.stream_token_by_token = true;
+        mock.response = "ok"; auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.stream_output = true; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        std::string chunks;
+        std::vector<Message> turn{{"user", "hi"}};
+        REQUIRE(engine.run_streaming(std::move(turn), cb,
+                                     &chunks, nullptr) == 0);
+        REQUIRE_FALSE(chunks.empty());
+    }
+}
+
+SCENARIO("misc accessors: pause / context_usage / idle / project_dir",
+         "[v2.3.10][core][engine_coverage][misc]") {
+    MockInference mock; auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.context_length = 4096; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    engine.pause(); engine.cancel_pause();
+    auto [used, max_tok] = engine.context_usage(make_messages());
+    REQUIRE(used >= 0);
+    REQUIRE(max_tok == 4096);
+    REQUIRE(engine.seconds_since_last_activity() == 0);
+    engine.run(make_messages());
+    REQUIRE(engine.seconds_since_last_activity() >= 0);
+    engine.set_project_dir(std::filesystem::path{"/tmp"});
+    engine.set_project_dir(std::filesystem::path{});
+    engine.set_session_logger(nullptr);
+    REQUIRE_NOTHROW(engine.run(make_messages()));
+
+    // build_directive_hooks trampoline coverage
+    auto hooks = engine.build_directive_hooks();
+    REQUIRE(hooks.process_directives != nullptr);
+    REQUIRE(hooks.user_data == &engine);
+    LoopContext bd_ctx; StopProcessingDirective sp;
+    std::vector<const Directive*> bd_list{&sp};
+    REQUIRE(hooks.process_directives(bd_ctx, bd_list, hooks.user_data)
+            .stop_processing);
+}
+
+SCENARIO("set_handoff_rules wires internal tier resolver trampolines",
+         "[v2.3.10][core][engine_coverage][tier_resolution]") {
+    MockInference mock; auto iface = make_mock_interface(mock);
+    LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+    ChildContextInfo info;
+    info.valid = true; info.system_prompt = "you are eng";
+    info.explicit_completion = true;
+    info.max_iterations_override = 7;
+    info.max_tool_calls_per_turn_override = 3;
+    engine.set_tier_info("eng", info);
+    engine.set_handoff_rules(
+        {{"lead", {"eng", "researcher"}}, {"eng", {"lead"}}});
+    const auto& tri = engine.tier_resolution();
+    auto* ud = tri.user_data;
+    REQUIRE(tri.resolve_tier("eng", ud).valid);
+    REQUIRE_FALSE(tri.resolve_tier("nope", ud).valid);
+    REQUIRE(tri.tier_exists("eng", ud));
+    REQUIRE_FALSE(tri.tier_exists("ghost", ud));
+    REQUIRE(tri.get_handoff_targets("lead", ud).size() == 2);
+    REQUIRE(tri.get_handoff_targets("missing", ud).empty());
+    REQUIRE(tri.get_tier_param("eng", "explicit_completion", ud) == "true");
+    REQUIRE(tri.get_tier_param("eng", "max_iterations", ud) == "7");
+    REQUIRE(tri.get_tier_param("eng", "max_tool_calls_per_turn", ud) == "3");
+    REQUIRE(tri.get_tier_param("eng", "unknown_param", ud).empty());
+    REQUIRE(tri.get_tier_param("ghost", "anything", ud).empty());
+    ChildContextInfo defaults; defaults.valid = true;
+    engine.set_tier_info("plain", defaults);
+    REQUIRE(tri.get_tier_param("plain", "max_iterations", ud).empty());
+    REQUIRE(tri.get_tier_param("plain", "max_tool_calls_per_turn", ud).empty());
+    REQUIRE(tri.get_tier_param("plain", "explicit_completion", ud) == "false");
+}
+
+SCENARIO("delegation snapshot + per-tier metrics accumulation",
+         "[v2.3.10][core][engine_coverage][delegation][metrics]") {
+    MockInference mock; auto iface = make_mock_interface(mock);
+    LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+    SECTION("delegation_callbacks_snapshot atomically copies all slots") {
+        int sentinel = 42;
+        engine.set_delegation_callbacks(
+            [](const ent_delegation_request_t*, void*) {
+                return ENT_DECISION_ACCEPT;
+            },
+            [](const ent_delegation_result_t*, void*) {
+                return ENT_DECISION_ACCEPT;
+            }, &sentinel);
+        auto snap = engine.delegation_callbacks_snapshot();
+        REQUIRE(snap.start != nullptr);
+        REQUIRE(snap.complete != nullptr);
+        REQUIRE(snap.user_data == &sentinel);
+        engine.set_delegation_callbacks(nullptr, nullptr, nullptr);
+        auto cleared = engine.delegation_callbacks_snapshot();
+        REQUIRE(cleared.start == nullptr);
+        REQUIRE(cleared.user_data == nullptr);
+    }
+    SECTION("per_tier_metrics accumulates across run_loop calls") {
+        for (int i = 0; i < 2; ++i) {
+            LoopContext ctx; ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            engine.run_loop(ctx);
+        }
+        auto it = engine.per_tier_metrics().find("lead");
+        REQUIRE(it != engine.per_tier_metrics().end());
+        REQUIRE(it->second.iterations >= 2);
+    }
+}
+
+SCENARIO("set_storage wiring covers init_session_conversation paths",
+         "[v2.3.10][core][engine_coverage][storage]") {
+    MockInference mock; auto iface = make_mock_interface(mock);
+    LoopConfig lc; CompactionConfig cc;
+    SECTION("create_conversation success") {
+        AgentEngine engine(iface, lc, cc);
+        StorageInterface si{};
+        si.create_conversation = [](const char*, std::string& id, void*) {
+            id = "00000000-0000-0000-0000-000000000000"; return true;
+        };
+        engine.set_storage(si);
+        REQUIRE_NOTHROW(engine.run(make_messages()));
+    }
+    SECTION("create_conversation failure is non-fatal") {
+        AgentEngine engine(iface, lc, cc);
+        StorageInterface si{};
+        si.create_conversation = [](const char*, std::string&, void*) {
+            return false;
+        };
+        engine.set_storage(si);
+        auto result = engine.run(make_messages());
+        REQUIRE(result.back().role == "assistant");
+    }
+}

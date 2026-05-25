@@ -45,6 +45,54 @@ public:
 };
 
 /**
+ * @brief v2.3.10 — Tool that returns directives in its ServerResponse.
+ *
+ * Used to exercise extract_and_process_directives + build_directive
+ * + build_complete_directive + extract_pipeline_stages from the
+ * public process_tool_calls path. The serialized envelope is shaped
+ * by MCPServerBase::serialize_response (result + directives array),
+ * which is exactly what extract_and_process_directives parses.
+ *
+ * @internal
+ * @version 2.3.10
+ */
+class DirectiveEmittingTool : public ToolBase {
+public:
+    DirectiveEmittingTool() : ToolBase(ToolDefinition{
+        "emit_directives",
+        "Emits a complete + pipeline directive",
+        R"({"type":"object","properties":{}})"
+    }) {}
+
+    ServerResponse execute(const std::string& /*args_json*/) override {
+        // The "result" field is the JSON the directive builders read
+        // for the typed fields (summary / coverage_gap / target / etc).
+        std::vector<entropic::Directive> dirs;
+        dirs.push_back(entropic::Directive{
+            ENTROPIC_DIRECTIVE_COMPLETE});
+        dirs.push_back(entropic::Directive{
+            ENTROPIC_DIRECTIVE_PIPELINE});
+        dirs.push_back(entropic::Directive{
+            ENTROPIC_DIRECTIVE_STOP_PROCESSING});
+        return ServerResponse{
+            R"({"summary":"all done","coverage_gap":false,)"
+            R"("suggested_files":["a.cpp","b.cpp"],)"
+            R"("stages":["eng","qa"],"task":"ship"})",
+            std::move(dirs)
+        };
+    }
+};
+
+class DirectiveEmittingServer : public MCPServerBase {
+public:
+    DirectiveEmittingServer() : MCPServerBase("dir") {
+        register_tool(&tool_);
+    }
+private:
+    DirectiveEmittingTool tool_;
+};
+
+/**
  * @brief Tool with enum constraint for schema validation testing.
  * @version 2.0.6
  */
@@ -1015,6 +1063,76 @@ SCENARIO("Anti-spiral hard block stops dispatch and emits "
                     events[0].context_json);
                 CHECK(post1.at("result_kind").get<std::string>()
                       == "ok");
+            }
+        }
+    }
+}
+
+// ── v2.3.10: directive-extraction path coverage ──
+
+SCENARIO("Tool emits directives → ToolExecutor extracts + dispatches them",
+         "[tool_executor][v2.3.10][coverage][directives]") {
+    PermissionsConfig perms;
+    ServerManager mgr(perms, "/tmp/test");
+    mgr.register_server(std::make_unique<DirectiveEmittingServer>());
+    mgr.initialize();
+
+    LoopConfig lc;
+    lc.auto_approve_tools = true;
+
+    // Wire all the tool-execution callbacks so process_single_call
+    // hits fire_tool_complete_callback (lines 1101-1105) +
+    // serialize_tool_call (1075-1084) + fire_post_tool_hook paths.
+    static int complete_fired;
+    complete_fired = 0;
+    EngineCallbacks cb;
+    cb.on_tool_complete = [](const char* /*json*/, const char* /*result*/,
+                             double /*ms*/, void* /*ud*/) {
+        complete_fired += 1;
+    };
+    cb.on_tool_start = [](const char* /*json*/, void* /*ud*/) {};
+    cb.on_tool_call = [](const char* /*json*/, void* /*ud*/) {};
+
+    int dispatched = 0;
+    std::vector<int> seen_types;
+    ToolExecutorHooks hooks{};
+    hooks.process_directives =
+        [](LoopContext& /*ctx*/,
+           const std::vector<const Directive*>& dirs,
+           void* ud) -> DirectiveResult {
+            auto* state = static_cast<std::pair<int, std::vector<int>>*>(ud);
+            state->first += static_cast<int>(dirs.size());
+            for (const auto* d : dirs) {
+                state->second.push_back(static_cast<int>(d->type));
+            }
+            return DirectiveResult{};
+        };
+    auto state = std::make_pair(0, std::vector<int>{});
+    hooks.user_data = &state;
+
+    ToolExecutor executor(mgr, lc, cb, hooks);
+
+    GIVEN("a single tool call whose response contains three directives") {
+        LoopContext ctx;
+        std::vector<ToolCall> calls{make_call("dir.emit_directives")};
+
+        WHEN("process_tool_calls dispatches the call") {
+            (void)executor.process_tool_calls(ctx, calls);
+
+            THEN("on_tool_complete callback fires + directives dispatched") {
+                REQUIRE(complete_fired >= 1);
+                REQUIRE(state.first == 3);
+                // All three directive types are present (complete,
+                // pipeline, stop_processing — order from the tool).
+                REQUIRE(std::find(state.second.begin(), state.second.end(),
+                        static_cast<int>(ENTROPIC_DIRECTIVE_COMPLETE))
+                        != state.second.end());
+                REQUIRE(std::find(state.second.begin(), state.second.end(),
+                        static_cast<int>(ENTROPIC_DIRECTIVE_PIPELINE))
+                        != state.second.end());
+                REQUIRE(std::find(state.second.begin(), state.second.end(),
+                        static_cast<int>(ENTROPIC_DIRECTIVE_STOP_PROCESSING))
+                        != state.second.end());
             }
         }
     }

@@ -135,3 +135,104 @@ SCENARIO("Existing config keys preserved",
         }
     }
 }
+
+// ── v2.3.10: cover insert_permission_item branches + helpers ──
+
+SCENARIO("Adding deny after existing allow list",
+         "[storage][permission][v2.3.10][coverage]") {
+    GIVEN("a config with permissions.allow already populated") {
+        TempConfigDir tmp;
+        auto config_path = tmp.dir / "config.local.yaml";
+        {
+            std::ofstream f(config_path);
+            f << "log_level: WARN\n"
+              << "permissions:\n"
+              << "  allow:\n"
+              << "    - git.status:*\n";
+        }
+
+        entropic::PermissionPersister pp(tmp.dir);
+
+        WHEN("a deny permission is added") {
+            // Hits the branch in insert_permission_item where
+            // perms_key exists but list_line ("  deny:") is missing —
+            // helper inserts the new sub-key at the section end.
+            bool ok = pp.save_permission("bash.execute:*", false);
+
+            THEN("the deny list is appended without losing allow") {
+                REQUIRE(ok);
+                auto content = read_file(config_path);
+                REQUIRE(content.find("allow:") != std::string::npos);
+                REQUIRE(content.find("git.status:*") != std::string::npos);
+                REQUIRE(content.find("deny:") != std::string::npos);
+                REQUIRE(content.find("bash.execute:*") != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Adding a second item to an existing allow list",
+         "[storage][permission][v2.3.10][coverage]") {
+    GIVEN("a config with permissions.allow having one entry") {
+        TempConfigDir tmp;
+        auto config_path = tmp.dir / "config.local.yaml";
+        {
+            std::ofstream f(config_path);
+            f << "permissions:\n"
+              << "  allow:\n"
+              << "    - filesystem.read_file:*\n";
+        }
+
+        entropic::PermissionPersister pp(tmp.dir);
+
+        WHEN("a second allow item is added") {
+            // Hits the find_list_end + insert branch (line 206) when
+            // both perms_key and list_line exist with at least one
+            // pre-existing item — new item goes at the end of the
+            // sequence.
+            bool ok = pp.save_permission("filesystem.list_dir:*", true);
+
+            THEN("both items survive in order") {
+                REQUIRE(ok);
+                auto content = read_file(config_path);
+                REQUIRE(content.find("filesystem.read_file:*")
+                        != std::string::npos);
+                REQUIRE(content.find("filesystem.list_dir:*")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("save_permission is idempotent when the pattern already exists",
+         "[storage][permission][v2.3.10][coverage]") {
+    GIVEN("a config with one allow entry") {
+        TempConfigDir tmp;
+        auto config_path = tmp.dir / "config.local.yaml";
+        {
+            std::ofstream f(config_path);
+            f << "permissions:\n"
+              << "  allow:\n"
+              << "    - git.status:*\n";
+        }
+
+        entropic::PermissionPersister pp(tmp.dir);
+
+        WHEN("the same pattern is saved again") {
+            bool ok = pp.save_permission("git.status:*", true);
+            THEN("save_permission returns true without writing duplicates") {
+                REQUIRE(ok);
+                auto content = read_file(config_path);
+                // Only one occurrence of the line should exist.
+                size_t count = 0;
+                size_t pos = 0;
+                while ((pos = content.find("git.status:*", pos))
+                       != std::string::npos) {
+                    ++count;
+                    pos += 1;
+                }
+                REQUIRE(count == 1);
+            }
+        }
+    }
+}

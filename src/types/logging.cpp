@@ -265,36 +265,6 @@ void set_console_enabled(bool enabled) {
 /**
  * @brief Set up session logging for a project directory.
  *
- * Adds a spdlog file sink for session.log (captures all engine
- * operational logging). Truncates session_model.log for a fresh
- * session (raw streaming user/assistant content).
- *
- * @param log_dir Directory for session log files.
- * @utility
- * @version 2.0.1
- */
-/**
- * @brief Remove the console (stderr) sink from all loggers.
- *
- * Called after adding a file sink to ensure logs go to exactly
- * one destination. Matches by pointer identity against s_sink.
- *
- * @utility
- * @version 2.0.7
- */
-static void remove_console_sink() {
-    if (!s_sink) { return; }
-    spdlog::apply_all([](std::shared_ptr<spdlog::logger> l) {
-        auto& sinks = l->sinks();
-        sinks.erase(
-            std::remove(sinks.begin(), sinks.end(), s_sink),
-            sinks.end());
-    });
-}
-
-/**
- * @brief Set up session logging for a project directory.
- *
  * Adds a file sink for session.log, removes the console sink so
  * logs go to exactly one destination. Truncates session_model.log.
  *

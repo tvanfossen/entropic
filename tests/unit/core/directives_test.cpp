@@ -212,3 +212,105 @@ TEST_CASE("All 11 directive types construct correctly",
     NotifyPresenterDirective d11("k", "d");
     REQUIRE(d11.type == ENTROPIC_DIRECTIVE_NOTIFY_PRESENTER);
 }
+
+// ── v2.3.10: backstop coverage for the hook-dispatch path ──────────
+
+namespace {
+struct HookCallLog {
+    int pre_calls = 0;
+    entropic_hook_point_t last_point = ENTROPIC_HOOK_PRE_GENERATE;
+    int next_return = 0;
+};
+static int stub_fire_pre(void* registry, entropic_hook_point_t point,
+                         const char*, char** out_json) {
+    auto* log = static_cast<HookCallLog*>(registry);
+    log->pre_calls++;
+    log->last_point = point;
+    *out_json = nullptr;
+    return log->next_return;
+}
+} // namespace
+
+TEST_CASE("DirectiveProcessor hook-dispatch paths "
+          "[v2.3.10][core][directives_coverage]", "[directives]") {
+    SECTION("ON_DIRECTIVE for known type, handler runs") {
+        DirectiveProcessor dp; HookCallLog log;
+        HookInterface hi{}; hi.fire_pre = stub_fire_pre; hi.registry = &log;
+        dp.set_hooks(hi);
+        int handler_calls = 0;
+        dp.register_handler(ENTROPIC_DIRECTIVE_TIER_CHANGE,
+            [&](LoopContext&, const Directive&, DirectiveResult&) {
+                handler_calls++;
+            });
+        auto ctx = make_ctx();
+        TierChangeDirective d("eng", "r");
+        std::vector<const Directive*> dirs = {&d};
+        dp.process(ctx, dirs);
+        REQUIRE(log.pre_calls == 1);
+        REQUIRE(log.last_point == ENTROPIC_HOOK_ON_DIRECTIVE);
+        REQUIRE(handler_calls == 1);
+    }
+    SECTION("ON_CUSTOM_DIRECTIVE when no handler is registered") {
+        DirectiveProcessor dp; HookCallLog log;
+        HookInterface hi{}; hi.fire_pre = stub_fire_pre; hi.registry = &log;
+        dp.set_hooks(hi);
+        auto ctx = make_ctx();
+        StopProcessingDirective d;
+        std::vector<const Directive*> dirs = {&d};
+        dp.process(ctx, dirs);
+        REQUIRE(log.pre_calls == 1);
+        REQUIRE(log.last_point == ENTROPIC_HOOK_ON_CUSTOM_DIRECTIVE);
+    }
+    SECTION("hook returns non-zero -> handler suppressed") {
+        DirectiveProcessor dp;
+        HookCallLog log; log.next_return = 1;
+        HookInterface hi{}; hi.fire_pre = stub_fire_pre; hi.registry = &log;
+        dp.set_hooks(hi);
+        int handler_calls = 0;
+        dp.register_handler(ENTROPIC_DIRECTIVE_PHASE_CHANGE,
+            [&](LoopContext&, const Directive&, DirectiveResult&) {
+                handler_calls++;
+            });
+        auto ctx = make_ctx();
+        PhaseChangeDirective d("analysis");
+        std::vector<const Directive*> dirs = {&d};
+        dp.process(ctx, dirs);
+        REQUIRE(log.pre_calls == 1);
+        REQUIRE(handler_calls == 0);
+    }
+    SECTION("null directive pointers in batch are skipped") {
+        DirectiveProcessor dp;
+        int handler_calls = 0;
+        dp.register_handler(ENTROPIC_DIRECTIVE_NOTIFY_PRESENTER,
+            [&](LoopContext&, const Directive&, DirectiveResult&) {
+                handler_calls++;
+            });
+        auto ctx = make_ctx();
+        NotifyPresenterDirective d("k", "{}");
+        std::vector<const Directive*> dirs = {nullptr, &d, nullptr};
+        dp.process(ctx, dirs);
+        REQUIRE(handler_calls == 1);
+    }
+    SECTION("empty list yields default-empty result") {
+        DirectiveProcessor dp;
+        auto ctx = make_ctx();
+        std::vector<const Directive*> dirs;
+        auto r = dp.process(ctx, dirs);
+        REQUIRE_FALSE(r.stop_processing);
+        REQUIRE_FALSE(r.tier_changed);
+        REQUIRE(r.injected_messages.empty());
+    }
+    SECTION("directive constructor defaults + overrides") {
+        TierChangeDirective t;       REQUIRE(t.tier.empty());
+        DelegateDirective dd;        REQUIRE(dd.max_turns == -1);
+        DelegateDirective dd2("e","t",7,"id");
+        REQUIRE(dd2.resume_from_delegation_id == "id");
+        PipelineDirective p;         REQUIRE(p.stages.empty());
+        CompleteDirective c;         REQUIRE_FALSE(c.coverage_gap);
+        InjectContextDirective ic;   REQUIRE(ic.role == "user");
+        PruneMessagesDirective pm;   REQUIRE(pm.keep_recent == 2);
+        ContextAnchorDirective ca;   REQUIRE(ca.key.empty());
+        PhaseChangeDirective pc;     REQUIRE(pc.phase.empty());
+        NotifyPresenterDirective np; REQUIRE(np.key.empty());
+    }
+}

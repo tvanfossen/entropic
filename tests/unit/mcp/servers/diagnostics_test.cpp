@@ -62,3 +62,22 @@ TEST_CASE("Diagnostics server registers 2 tools", "[diagnostics]") {
     auto tools = json::parse(tools_json);
     REQUIRE(tools.size() == 2);
 }
+
+// ── v2.3.10: cover required_access_level overrides ──
+
+TEST_CASE("Diagnostics tools advertise READ access",
+          "[diagnostics][v2.3.10][coverage]") {
+    auto server = make_diagnostics_server();
+
+    // The tools register names "diagnostics" and "check_errors" under
+    // the "diagnostics" server. required_access_level fires when the
+    // ServerManager queries access for a tool name.
+    auto* tool_diag = server.registry().get_tool("diagnostics");
+    auto* tool_check = server.registry().get_tool("check_errors");
+    REQUIRE(tool_diag != nullptr);
+    REQUIRE(tool_check != nullptr);
+    CHECK(tool_diag->required_access_level()
+          == entropic::MCPAccessLevel::READ);
+    CHECK(tool_check->required_access_level()
+          == entropic::MCPAccessLevel::READ);
+}

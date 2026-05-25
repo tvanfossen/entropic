@@ -113,6 +113,7 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
     if (j.contains("temperature"))    params.temperature = j["temperature"].get<float>();
     if (j.contains("top_p"))          params.top_p = j["top_p"].get<float>();
     if (j.contains("top_k"))          params.top_k = j["top_k"].get<int>();
+    if (j.contains("min_p"))          params.min_p = j["min_p"].get<float>();
     if (j.contains("repeat_penalty")) params.repeat_penalty = j["repeat_penalty"].get<float>();
     if (j.contains("max_tokens"))     params.max_tokens = j["max_tokens"].get<int>();
     if (j.contains("grammar"))        params.grammar = j["grammar"].get<std::string>();
@@ -161,6 +162,12 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_load(
     entropic_inference_backend_t backend,
     const char* config_json)
 {
+    // v2.3.10: null-handle guard. Pre-v2.3.10 to_backend(nullptr)
+    // returned nullptr and the next ->load() dereferenced it, taking
+    // the whole process down with SIGSEGV. The plugin ABI is the
+    // load-bearing boundary for misuse; rejecting null with a clean
+    // error code is safer than crashing.
+    if (!backend) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     logger->info("C API: inference_load");
     try {
         auto config = parse_config_json(config_json);
@@ -185,6 +192,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_load(
 ENTROPIC_EXPORT entropic_error_t entropic_inference_activate(
     entropic_inference_backend_t backend)
 {
+    if (!backend) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     try {
         return to_backend(backend)->activate() ? ENTROPIC_OK : ENTROPIC_ERROR_LOAD_FAILED;
     } catch (const std::exception& e) {
@@ -203,6 +211,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_activate(
 ENTROPIC_EXPORT entropic_error_t entropic_inference_deactivate(
     entropic_inference_backend_t backend)
 {
+    if (!backend) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     try {
         to_backend(backend)->deactivate();
         return ENTROPIC_OK;
@@ -222,6 +231,7 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_deactivate(
 ENTROPIC_EXPORT entropic_error_t entropic_inference_unload(
     entropic_inference_backend_t backend)
 {
+    if (!backend) { return ENTROPIC_ERROR_INVALID_ARGUMENT; }
     try {
         to_backend(backend)->unload();
         return ENTROPIC_OK;
@@ -241,6 +251,10 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_unload(
 ENTROPIC_EXPORT int entropic_inference_state(
     entropic_inference_backend_t backend)
 {
+    // v2.3.10: null-handle returns COLD (0) — the safest "I don't
+    // own anything" answer. Callers gating activation on state should
+    // treat null + COLD identically anyway.
+    if (!backend) { return static_cast<int>(ENTROPIC_MODEL_STATE_COLD); }
     return static_cast<int>(to_backend(backend)->state());
 }
 
@@ -260,6 +274,9 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_generate(
     const char* params_json,
     char** result_json)
 {
+    if (!backend || !result_json) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
     logger->info("C API: inference_generate");
     try {
         auto msgs = entropic::parse_messages_json(messages_json);
@@ -295,6 +312,9 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_generate_streaming(
     void* user_data,
     int* cancel_flag)
 {
+    if (!backend || !on_token) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
     try {
         auto msgs = entropic::parse_messages_json(messages_json);
         auto params = parse_params_json(params_json);
@@ -333,6 +353,9 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_complete(
     const char* params_json,
     char** result_json)
 {
+    if (!backend || !prompt || !result_json) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
     try {
         auto params = parse_params_json(params_json);
         auto result = to_backend(backend)->complete(prompt, params);
@@ -358,6 +381,10 @@ ENTROPIC_EXPORT int entropic_inference_count_tokens(
     const char* text,
     size_t text_len)
 {
+    // v2.3.10: null guards. text=nullptr is a real misuse (caller
+    // owes us bytes). Returning 0 keeps the contract simple (no
+    // tokens to count when there's no string).
+    if (!backend || !text) { return 0; }
     try {
         return to_backend(backend)->count_tokens(std::string(text, text_len));
     } catch (...) {

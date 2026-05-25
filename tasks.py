@@ -774,6 +774,12 @@ def _check_library_coverage(name, source_filter, pct_min):
             "--filter",
             source_filter,
             "--print-summary",
+            # gcc bug 68080 emits a negative-hits branch entry on rare
+            # instrumented lines (currently hook_registry.cpp:28). Without
+            # this, gcovr raises NegativeHits and the whole library is
+            # reported as "no coverage data" (SKIP). Match the same flag
+            # the developer uses when running gcovr by hand.
+            "--gcov-ignore-parse-errors=negative_hits.warn_once_per_file",
         ],
         capture_output=True,
         text=True,

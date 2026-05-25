@@ -1,3 +1,83 @@
+# entropic v2.3.12
+
+Patch release. **Gemma4 adapter: parse the E4B Q8 `<|tool_call>call:NAME{args}<tool_call|>` malformed wrapper (gh#73).**
+Gemma 4 E4B (Q8 quant) intermittently emits a tool-call wrapper with
+three deviations from the gh#69 canonical form, and the pre-2.3.12
+adapter silently rejected it — driving a parser-reject → "no tool call"
+retry → doom-loop → "delegation failed" path the consumer surfaces to
+the parent.
+
+No source ABI change — adapter logic only. Drop-in for any 2.3.x
+consumer.
+
+## The bug
+
+From `session_model.log` (Gemma 4 E4B Q8, entropic 2.3.9, registrar tier):
+
+```
+<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>
+<|tool_call>call:entropic.complete{summary:<|"|>Successfully removed ...<|"|>}<tool_call|>
+```
+
+Three deviations from `<tool_call>...</tool_call>` / `<|tool_call>...</tool_call>` / `<|im_start|>tool_call ... </tool_call>`:
+
+1. **`call:` prefix** before the tool name.
+2. **Non-JSON args** — `{student_id:2}` instead of `{"student_id":2}`
+   (unquoted key, sometimes unquoted value).
+3. **Asymmetric close `<tool_call|>`** — pipe-before-`>` form not
+   matched by the `</tool_call>` close the gh#69 variant uses.
+
+A nested `<|"|>` appears INSIDE string values as the model's confused
+escape sequence for `"`.
+
+## The fix
+
+New static `parse_call_prefix_tool_calls` helper in
+`src/inference/adapters/gemma4_adapter.cpp` runs as a THIRD fallback
+in `parse_tool_calls`, only when the tagged + bare-JSON paths come up
+empty (so canonical emits are never double-extracted). It:
+
+1. Matches `<|tool_call(\|)?>call:NAME{args}<tool_call|>` permissively.
+2. Normalizes args via `normalize_call_args_json`: replaces `<|"|>`
+   with `"`, quotes bare keys after `{` or `,`, and drops trailing
+   commas before `}` / `]`.
+3. Parses the normalized JSON with nlohmann::json. Skips silently on
+   parse failure — the base parser's tagged + bare-JSON paths run
+   first, so this is purely a permissive third chance.
+4. Populates both `ToolCall::arguments` (map) and `arguments_json`
+   (canonical dump) so dispatch passthrough consumers see a normalized
+   shape.
+
+The cleaned_content scrub also learns the asymmetric close so the
+malformed wrapper doesn't leak into the user-visible rendering.
+
+## Tests
+
+`tests/unit/inference/adapter_acceptance_test.cpp` adds four `[gh73]`
+scenarios:
+
+- Verbatim E4B Q8 `<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>`
+  — asserts the call extracts with `student_id == "2"` and the wrapper
+  doesn't leak into cleaned_content.
+- `<|"|>` quote-escape variant inside a `summary` string —
+  asserts the summary text extracts cleanly and the `<|"|>` escape
+  doesn't survive into the value.
+- Two `call:` calls back-to-back — asserts both extract in order.
+- Canonical gh#69 channel emit (positive anchor) — asserts the
+  fallback does NOT fire when the canonical path already succeeded
+  (no double-extraction).
+
+## Severity
+
+- **Frequency:** intermittent on Gemma 4 E4B Q8 (~1-in-3 mutation
+  turns in observed sessions).
+- **Impact:** tool call rejected → "delegation failed" surfaced to
+  parent → no consumer-side workaround.
+- **Severity:** ship-blocker for any consumer running Gemma 4 E4B Q8
+  as a child tier that mutates state.
+
+---
+
 # entropic v2.3.11
 
 Patch release. **Gemma4 adapter: prevent fabricated-multi-turn tool

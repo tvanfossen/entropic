@@ -285,6 +285,125 @@ SCENARIO("Gemma4 cuts at <end_of_turn> + <start_of_turn>user (gh#72 native templ
     }
 }
 
+// ── gh#73: Gemma 4 E4B Q8 call: prefix malformed wrapper ────
+
+SCENARIO("Gemma4 parses the gh#73 <|tool_call>call:NAME{args}<tool_call|> form",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E4B Q8 emit from the gh#73 report") {
+        // Three deviations from gh#69's accepted set:
+        //   - `call:` prefix before the name
+        //   - non-JSON args (`{student_id:2}`, unquoted key)
+        //   - asymmetric close `<tool_call|>`
+        std::string content =
+            "<|channel>thought\n"
+            "Reasoning about deletion of student id 2.\n"
+            "<channel|>"
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the call is extracted by exact name") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+            }
+            THEN("the unquoted-key argument round-trips") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("student_id");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second == "2");
+            }
+            THEN("the malformed wrapper does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|tool_call>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<tool_call|>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("call:")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 parses gh#73 with <|\"|> quote-escape inside string args",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the second E4B Q8 emit from the gh#73 report — entropic.complete "
+          "with summary text wrapped in the model's confused <|\"|> escape") {
+        std::string content =
+            "<|tool_call>call:entropic.complete{summary:<|\"|>Successfully "
+            "removed student Adam (ID 2) from the active roster as requested "
+            "by the parent.<|\"|>}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the call extracts as entropic.complete with the summary") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.complete");
+                auto it = result.tool_calls[0].arguments.find("summary");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("Successfully removed student Adam")
+                        != std::string::npos);
+            }
+            THEN("the <|\"|> escape sequence does not leak into the value") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("summary");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("<|\"|>") == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 parses multiple gh#73 call: calls back-to-back",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("two call: prefix calls in one emit") {
+        std::string content =
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>"
+            "<|channel>thought\nNext step.<channel|>"
+            "<|tool_call>call:entropic.complete{summary:<|\"|>Done.<|\"|>}"
+            "<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("both calls are extracted in order") {
+                REQUIRE(result.tool_calls.size() == 2);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+                REQUIRE(result.tool_calls[1].name == "entropic.complete");
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 gh#73 fallback does not double-extract canonical gh#69 calls",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a canonical gh#69 channel emit — the gh#73 fallback must NOT fire") {
+        std::string content =
+            "<|im_start|>tool_call\n"
+            R"({"name": "entropic.delegate", "arguments": )"
+            R"({"target": "researcher", "task": "x"}})"
+            "</tool_call><|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("exactly one tool call is extracted (the canonical path won)") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+        }
+    }
+}
+
 // ── Prior gemma4 regressions (gh#65 + gh#68) ──────────────
 
 SCENARIO("Gemma4 parses the gh#65 asymmetric <|tool_call> form",

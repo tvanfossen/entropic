@@ -291,6 +291,9 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
         : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     c.type_k = parse_kv_cache_type(cfg.cache_type_k);
     c.type_v = parse_kv_cache_type(cfg.cache_type_v);
+    // gh#23 MVP item 8 (v2.3.20): offload_kqv. true (default) matches
+    // llama.cpp's default — bit-identical for callers not opting out.
+    c.offload_kqv = cfg.offload_kqv;
     return c;
 }
 } // anonymous namespace

@@ -53,6 +53,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.main_gpu == 0);
         }
 
+        THEN("offload_kqv defaults to true (gh#23 v2.3.20)") {
+            REQUIRE(config.offload_kqv == true);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

@@ -210,6 +210,16 @@ struct ModelConfig {
     /// context-extension setups.
     /// @version 2.3.21
     float rope_freq_base = 0.0f;
+
+    /// @brief RoPE frequency scaling factor (gh#23 MVP item 10).
+    /// llama.cpp's `cparams.rope_freq_scale`. `0.0` (default) takes
+    /// the model's trained value — preserves pre-v2.3.22 behavior
+    /// bit-for-bit. Values in `(0, 1)` shrink the effective context
+    /// (denser RoPE positions); values `> 1` stretch it. Typical
+    /// YaRN-style extension uses values like `0.5` (2× context).
+    /// Pairs with `rope_freq_base`.
+    /// @version 2.3.22
+    float rope_freq_scale = 0.0f;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

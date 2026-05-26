@@ -1,3 +1,33 @@
+# entropic v2.3.22
+
+Patch release. **Additive context-init knob: `rope_freq_scale`.**
+Tenth MVP-10 item from gh#23. RoPE frequency-scaling factor for
+YaRN-style context extension. `0.0` (default) uses the model's
+trained value — bit-identical pre-v2.3.22 behavior. Pairs with the
+v2.3.21 `rope_freq_base`.
+
+## What landed
+
+- `ModelConfig::rope_freq_scale` (`float`, default `0.0`).
+- `build_cparams` sets `cparams.rope_freq_scale = cfg.rope_freq_scale`.
+- YAML loader reads `rope_freq_scale` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`rope_freq_scale: 0.5`).
+
+## Scope boundary
+
+MVP-10 item 10 of ~10. With the v2.3.21 / v2.3.22 pair the RoPE
+overrides are complete. Remaining items: state save/load (new C API
+surface), `n_parallel` (context init), `llama_log_set` (backend init).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.21
 
 Patch release. **Additive context-init knob: `rope_freq_base`.**

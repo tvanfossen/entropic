@@ -48,6 +48,7 @@ models:
     main_gpu: 1
     offload_kqv: false
     rope_freq_base: 100000.0
+    rope_freq_scale: 0.5
     flash_attn: true
     allowed_tools:
       - filesystem.read_file

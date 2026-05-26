@@ -61,6 +61,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.rope_freq_base == 0.0f);
         }
 
+        THEN("rope_freq_scale defaults to 0.0 (== use model's trained value, gh#23 v2.3.22)") {
+            REQUIRE(config.rope_freq_scale == 0.0f);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

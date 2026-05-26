@@ -229,6 +229,7 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(lead.main_gpu == 1);        // gh#23 v2.3.19
                 CHECK(lead.offload_kqv == false); // gh#23 v2.3.20
                 CHECK(lead.rope_freq_base == 100000.0f); // gh#23 v2.3.21
+                CHECK(lead.rope_freq_scale == 0.5f); // gh#23 v2.3.22
                 CHECK(lead.flash_attn == true);
                 REQUIRE(lead.allowed_tools.has_value());
                 CHECK(lead.allowed_tools->size() == 2);

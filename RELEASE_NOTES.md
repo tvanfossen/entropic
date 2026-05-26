@@ -104,6 +104,23 @@ scenarios pin the contract.
   entropic.pipeline → state=COMPLETE, no pipeline execution, no
   rejection message).
 
+## Test infra: v219 family auto-fits oversized GGUFs
+
+- **v2.3.29** — `init_orchestrator_for_v219_family` now inspects the
+  resolved GGUF file size and clamps `tier.gpu_layers` to 20 when the
+  file exceeds 10 GB. The 26B-A4B (13.6 GB) and 35B-A3B (13.2 GB)
+  family GGUFs no longer fail `llama_model_load_from_file` with the
+  generic "GGUF not present" SKIP message on dev boxes with smaller
+  VRAM budgets (e.g. 1080 Ti, 11 GB) — they partially CPU-offload
+  and run at 9–10 tok/s. Smaller family GGUFs (e2b/e4b/e4b_q4/
+  nemotron3, all < 5 GB) stay at the prior `-1` (full offload) — no
+  behavior change for the suite's previously-passing tests.
+  Production configs are unaffected: the override only fires inside
+  the v219 family test helper; production deployments set
+  `gpu_layers` explicitly for hardware they actually have. This is
+  the test-infra prerequisite to the full-audit run that produced
+  `model-results-v2.4.0.json` (40/40 PASS).
+
 ## Internal: tasks.py gcov fix
 
 `_check_library_coverage` in `tasks.py` now passes
@@ -126,13 +143,11 @@ running `gcovr` by hand; the task now matches that invocation.
   sequence (see the `[v2.4.0][ceremony]` tag). The existing
   `[adapter-acceptance]`, `[gh23][min_p]`, `[gh65]`, `[gh68]`,
   `[gh69]`, `[gh70]`, `[gh71]` model tests act as regression anchors.
-- Full model-suite run on the maintainer's 1080 Ti (11 GB): **38/40
-  pass, 0 flaky, 2 skip-as-fail**. The two skips are
-  `test-v219-gemma4-a4b` (wants 26B-A4B MoE) and `test-v219-qwen36`
-  (wants Qwen3.6-35B-A3B); both require ≥16 GB VRAM and the GGUFs
-  are not maintained on the maintainer's dev box. Tests SKIP cleanly
-  with the `entropic download <key>` message; the suite harness
-  treats an all-skipped binary as a fail by convention.
+- Full model-suite run on the maintainer's 1080 Ti (11 GB) with the
+  v2.3.29 partial-offload accommodation: **40/40 pass, 1 flaky
+  (test-v219-nemotron3 retry 1, pre-existing), 0 failed**. Large
+  MoE GGUFs (gemma4_a4b, qwen3_6_a3b) decode with most layers
+  CPU-resident at ~9.5 tok/s.
 - See `model-results-v2.4.0.json` attached to this release for the
   full GPU-validated pass/fail matrix.
 

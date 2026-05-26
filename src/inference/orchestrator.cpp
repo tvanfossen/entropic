@@ -194,11 +194,22 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
                      vram_budget_bytes_);
     }
 
-    // Route ggml/llama logs before any model loading
-    if (config.ggml_logging && !config.log_dir.empty()) {
-        auto path = (config.log_dir / "llama_ggml.log").string();
-        entropic_inference_log_to_file(path.c_str());
-        logger->info("ggml logging: {}", path);
+    // Route ggml/llama logs before any model loading.
+    // gh#23 v2.3.24: `llama_log_path` overrides the hardcoded
+    // `<log_dir>/llama_ggml.log` when non-empty. The non-empty-and-no-log-dir
+    // case is also supported so consumers that want llama logs but
+    // no session.log can opt in.
+    if (config.ggml_logging) {
+        std::string path;
+        if (!config.llama_log_path.empty()) {
+            path = config.llama_log_path.string();
+        } else if (!config.log_dir.empty()) {
+            path = (config.log_dir / "llama_ggml.log").string();
+        }
+        if (!path.empty()) {
+            entropic_inference_log_to_file(path.c_str());
+            logger->info("ggml logging: {}", path);
+        }
     }
 
     logger->info("Initializing model orchestrator");

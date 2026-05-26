@@ -859,6 +859,16 @@ struct ParsedConfig {
     /// Default false — when off, ggml/llama output is silenced entirely.
     bool ggml_logging = false;
 
+    /// Override path for ggml/llama log when `ggml_logging == true`
+    /// (gh#23 MVP item 12, v2.3.24). When non-empty, the orchestrator
+    /// installs llama_log_set against this exact path. When empty
+    /// (default), keeps the pre-v2.3.24 hardcoded
+    /// `<log_dir>/llama_ggml.log` — bit-identical for callers not
+    /// opting in. Accepts absolute or relative paths; relative paths
+    /// resolve from the process CWD (not log_dir).
+    /// @version 2.3.24
+    std::filesystem::path llama_log_path;
+
     /// Emit engine spdlog output to the stderr console sink.
     /// Default true (operators reading stderr see everything). TUI
     /// consumers that paint to fd 2 must set this false so engine log

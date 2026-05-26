@@ -19,6 +19,7 @@ log_level: WARN
 inject_model_context: true
 vram_reserve_mb: 512
 ggml_logging: true
+llama_log_path: "/tmp/llama-custom.log"
 console_logging: false
 constitution: /tmp/entropic-test-constitution.md
 app_context: /tmp/entropic-test-app-context.md

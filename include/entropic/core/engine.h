@@ -851,6 +851,22 @@ private:
     bool should_stop(const LoopContext& ctx) const;
 
     /**
+     * @brief True when ctx.state is COMPLETE / ERROR / INTERRUPTED.
+     *
+     * The terminal-state predicate alone (no iteration / duplicate
+     * limit). Distinct from should_stop, which folds in budget gates.
+     * Callers that want to honor a terminal state set by a sibling
+     * tool call (e.g. entropic.complete emitted alongside an action
+     * tool) without also short-circuiting on budget use this.
+     *
+     * @param ctx Loop context.
+     * @return true if state is one of the three terminals.
+     * @utility
+     * @version 2.3.28
+     */
+    static bool is_terminal_state(const LoopContext& ctx);
+
+    /**
      * @brief Set agent state and fire callback.
      * @param ctx Loop context.
      * @param state New state.

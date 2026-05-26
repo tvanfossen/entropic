@@ -131,3 +131,11 @@ add_model_test(test-e9-dynamic-identity   test_e9_dynamic_identity.cpp)
 # threshold without depending on small-model intelligence.
 add_model_test(test-v2310-backend-coverage-smoke
                test_v2310_backend_coverage_smoke.cpp)
+
+# v2.4.0: minor-release ceremony — closes the model-test scope gaps
+# from the v2.3.11–v2.3.27 patch stack. Sampler knobs (presence /
+# frequency / logit_bias) end-to-end through real complete() calls;
+# ModelConfig knob smoke; state save/load round-trip (the v2.3.25
+# release notes flagged this as deferred to model-test scope).
+add_model_test(test-v240-minor-ceremony
+               test_v240_minor_ceremony.cpp)

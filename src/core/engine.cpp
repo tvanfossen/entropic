@@ -443,7 +443,7 @@ void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
  * @brief Main loop.
  * @param ctx Loop context.
  * @internal
- * @version 2.3.7
+ * @version 2.3.28
  */
 void AgentEngine::loop(LoopContext& ctx) {
     fire_loop_start_hook(hooks_, ctx);  // ON_LOOP_START (v1.9.1)
@@ -464,9 +464,7 @@ void AgentEngine::loop(LoopContext& ctx) {
     }
 
     if (ctx.metrics.iterations >= resolve_max_iterations(ctx)
-        && ctx.state != AgentState::COMPLETE
-        && ctx.state != AgentState::ERROR
-        && ctx.state != AgentState::INTERRUPTED) {
+        && !is_terminal_state(ctx)) {
         // P3-18 follow-up (2.0.6-rc16.2): force synthetic completion
         // so the facade returns a proper result when the cap is hit.
         // E7 (2.0.6-rc18): mark ctx.metadata with the terminal reason
@@ -527,7 +525,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.3.7
+ * @version 2.3.28
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -542,6 +540,23 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         process_tool_results(ctx, tool_calls);
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
+    }
+
+    // gh#77 (v2.3.28): when a sibling tool call set a terminal state
+    // (e.g. entropic.complete emitted in the same response as
+    // entropic.pipeline / entropic.delegate), respect it before
+    // dispatching the queued action. The historical assumption was
+    // models would never combine a terminal tool with an action tool;
+    // bissell-coder evidence 2026-05-26 shows they do.
+    if (is_terminal_state(ctx)) {
+        if (ctx.pending_delegation.has_value()
+         || ctx.pending_pipeline.has_value()) {
+            logger->info("[ITER] terminal state reached during batch "
+                         "tool processing — dropping pending {}",
+                         ctx.pending_delegation.has_value()
+                             ? "delegation" : "pipeline");
+        }
+        return;
     }
 
     // Execute pending delegation/pipeline (v1.8.6)
@@ -740,15 +755,32 @@ int64_t AgentEngine::seconds_since_last_activity() const {
  * @param ctx Loop context.
  * @return true if termination condition met.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.3.28
  */
 bool AgentEngine::should_stop(const LoopContext& ctx) const {
-    bool terminal = ctx.state == AgentState::COMPLETE
-                 || ctx.state == AgentState::ERROR
-                 || ctx.state == AgentState::INTERRUPTED;
     bool at_limit = ctx.metrics.iterations >= resolve_max_iterations(ctx)
                  || ctx.consecutive_duplicate_attempts >= 3;
-    return terminal || at_limit;
+    return is_terminal_state(ctx) || at_limit;
+}
+
+/**
+ * @brief Terminal-state predicate (COMPLETE / ERROR / INTERRUPTED).
+ *
+ * Distinct from should_stop, which folds in iteration and duplicate
+ * limits. Use this when a caller wants to honor a terminal state set
+ * by a sibling tool call without also short-circuiting on budget.
+ * gh#77 was filed against the prior absence of this guard in the
+ * process_generation_result post-tool-results branch.
+ *
+ * @param ctx Loop context.
+ * @return true if state is one of the three terminals.
+ * @utility
+ * @version 2.3.28
+ */
+bool AgentEngine::is_terminal_state(const LoopContext& ctx) {
+    return ctx.state == AgentState::COMPLETE
+        || ctx.state == AgentState::ERROR
+        || ctx.state == AgentState::INTERRUPTED;
 }
 
 /**
@@ -1218,7 +1250,7 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
  * @param ctx Loop context.
  * @param tool_calls Parsed tool calls.
  * @internal
- * @version 2.0.2
+ * @version 2.3.28
  */
 void AgentEngine::process_tool_results(
     LoopContext& ctx,
@@ -1239,9 +1271,7 @@ void AgentEngine::process_tool_results(
 
     ctx.has_pending_tool_results = true;
     // Don't overwrite terminal states set by directive handlers
-    if (ctx.state != AgentState::COMPLETE
-        && ctx.state != AgentState::ERROR
-        && ctx.state != AgentState::INTERRUPTED) {
+    if (!is_terminal_state(ctx)) {
         set_state(ctx, AgentState::EXECUTING);
     }
 }

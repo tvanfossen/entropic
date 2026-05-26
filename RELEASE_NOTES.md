@@ -1,3 +1,152 @@
+# entropic v2.4.0
+
+Minor release. **Bundles the v2.3.11 → v2.3.27 patch series into a
+single minor cut.** Closes the **gh#23 MVP-10 sequence** ("expose all
+llama.cpp knobs as engine config options") in full — 13 of 13 items
+shipped — alongside three Gemma 4 adapter bug fixes and a C-ABI
+exception barrier.
+
+No ABI break — every patch was strictly additive. Drop-in for any
+2.3.x-compiled consumer. Wrapper Python (`entropic-engine`) auto-
+regenerated against the new header surface and pushed alongside.
+
+## gh#23 MVP-10 closeout — every llama.cpp knob now config-driven
+
+| # | Knob | Patch | Where |
+|---|---|---|---|
+| 1 | `min_p` | v2.3.10 (pre-minor) | GenerationParams (sampler) |
+| 2 | `presence_penalty` | v2.3.14 | GenerationParams (sampler) |
+| 3 | `frequency_penalty` | v2.3.15 | GenerationParams (sampler) |
+| 4 | `logit_bias` | v2.3.16 | GenerationParams (new sampler stage) |
+| 5 | `n_ubatch` | v2.3.17 | ModelConfig (context init) |
+| 6 | `split_mode` | v2.3.18 | ModelConfig (model load) |
+| 7 | `main_gpu` | v2.3.19 | ModelConfig (model load) |
+| 8 | `offload_kqv` | v2.3.20 | ModelConfig (context init) |
+| 9 | `rope_freq_base` | v2.3.21 | ModelConfig (context init) |
+| 10 | `rope_freq_scale` | v2.3.22 | ModelConfig (context init) |
+| 11 | `n_parallel` | v2.3.23 | ModelConfig (`cparams.n_seq_max`) |
+| 12 | `llama_log_set` | v2.3.24 | `ParsedConfig::llama_log_path` |
+| 13 | state save/load | v2.3.25 | New public C API |
+
+Each knob ships with:
+
+- A `GenerationParams` / `ModelConfig` / `ParsedConfig` field with a
+  bit-identical default (the field's "off" sentinel exactly matches
+  llama.cpp's hard-coded default, so pre-v2.4.0 callers see
+  bit-for-bit identical sampling / loading behavior).
+- YAML loader round-trip + default-pin unit tests.
+- A real-model end-to-end smoke (added in this minor's ceremony —
+  see `tests/model/test_v240_minor_ceremony.cpp`) confirming the
+  override actually reaches `cparams` / `mparams` / the sampler
+  chain at the llama.cpp boundary.
+
+Two internal helpers were factored to keep the JSON parsers and the
+mparams/cparams builders under the knots ABC ≤ 20 gate as MVP-10
+landed:
+
+- `assign_if_present<T>(j, key, dst)` in both `interface_factory.cpp`
+  and `inference_c_api.cpp`.
+- `build_load_mparams(cfg)` + `parse_model_runtime_knobs(node, cfg)`
+  in `llama_cpp_backend.cpp` / `config/loader.cpp`.
+
+## Gemma 4 adapter bug-fix bundle
+
+- **gh#72 (v2.3.11)** — fabricated multi-turn dispatch. E4B Q8 / Q4_K_M
+  emit a complete synthetic `<|im_end|><|im_start|>user ...` turn
+  inside one assistant output; the pre-v2.3.11 adapter scanned the
+  whole emit for tool calls and dispatched the fabricated one. Now
+  cuts at the first `<|im_end|>` / `<end_of_turn>` followed by a
+  NON-tool_call channel opener.
+- **gh#73 (v2.3.12)** — `<|tool_call>call:NAME{args}<tool_call|>`
+  malformed wrapper. Adds a third fallback parser
+  (`parse_call_prefix_tool_calls`) with a JSON5→JSON normalizer
+  (`normalize_call_args_json`) and a `<|"|>` quote-escape strip.
+- **gh#75 (v2.3.26)** — GPT-OSS-style `<|channel>thought ... <channel|>`
+  thought-channel markup leaks into user-visible output. Adds two
+  cleanup sweeps (paired + unpaired-opener).
+
+`tests/unit/inference/adapter_acceptance_test.cpp` is the verbatim-
+emit gate for all three — 11 new `[gh72]` / `[gh73]` / `[gh75]`
+scenarios pin the contract.
+
+## C-ABI exception barrier
+
+- **gh#74 (v2.3.13)** — `entropic_configure_dir` and friends let
+  `std::filesystem` / `nlohmann::json` exceptions escape across the
+  `extern "C"` boundary. New `c_api_try<Fn>(handle, fn)` template
+  wraps the three configure entry points + the new state save/load
+  pair; maps the three exception families to documented error codes
+  (`ENTROPIC_ERROR_IO` / `_INVALID_CONFIG` / `_INTERNAL`).
+- **gh#76 (v2.3.27)** — `compactor_registry` was declared on the
+  engine handle but never constructed; all four compactor C API
+  entry points returned `INVALID_STATE` regardless of state. Now
+  wired in `init_engine_and_interfaces` against the engine's
+  built-in `CompactionManager` (new public accessor
+  `AgentEngine::compaction_manager()`).
+
+## Engine: terminal state respects sibling action tools
+
+- **gh#77 (v2.3.28)** — `AgentEngine::process_generation_result`
+  executed a queued `pending_delegation` / `pending_pipeline` AFTER
+  `process_tool_results` ran, even when a sibling tool call had set
+  `ctx.state = COMPLETE` during the same response. Models that emit
+  `entropic.complete` alongside `entropic.pipeline` or
+  `entropic.delegate` in one assistant turn (observed live in
+  bissell-coder 2026-05-26 10:42-10:53) had the pipeline run
+  anyway — a `[PIPELINE CONTEXT]` marker would land and the engine
+  would keep iterating for minutes past the user's intended stop.
+  Now: after `process_tool_results` / `evaluate_no_tool_decision`,
+  the function returns early if `is_terminal_state(ctx)` — the new
+  predicate also DRYs the two pre-existing inline checks at the
+  `process_tool_results` tail and the budget-exhausted force-complete
+  branch. Regression scenario: `[v2.3.28][gh77][terminal]` in
+  `tests/unit/core/engine_test.cpp` (entropic.complete + sibling
+  entropic.pipeline → state=COMPLETE, no pipeline execution, no
+  rejection message).
+
+## Internal: tasks.py gcov fix
+
+`_check_library_coverage` in `tasks.py` now passes
+`--gcov-ignore-parse-errors=negative_hits.warn_once_per_file` to
+`gcovr`. Without it, gcov bug 68080 (negative-hits branch entry on
+`hook_registry.cpp:28`) caused the whole `librentropic-core` gate to
+report "no coverage data" (SKIP) — silently passing while the
+threshold was nominally enforced. The flag was always needed when
+running `gcovr` by hand; the task now matches that invocation.
+
+## Test ceremony
+
+- 1500+ unit tests across the `entropic-tests` / `entropic-config-tests`
+  / `entropic-inference-tests` / `entropic-core-tests` / `entropic-mcp-tests`
+  / `entropic-storage-tests` / `entropic-api-tests` binaries — all green.
+- All 7 coverage gates pass: types 98.1%, config 92.4%, core 88.5%,
+  mcp 85.4%, storage 85.7%, inference 70.4%, facade 71.9%.
+- Model-test ceremony: `test_v240_minor_ceremony.cpp` covers the
+  knob-wiring gaps surfaced during the v2.3.11 → v2.3.27 patch
+  sequence (see the `[v2.4.0][ceremony]` tag). The existing
+  `[adapter-acceptance]`, `[gh23][min_p]`, `[gh65]`, `[gh68]`,
+  `[gh69]`, `[gh70]`, `[gh71]` model tests act as regression anchors.
+- Full model-suite run on the maintainer's 1080 Ti (11 GB): **38/40
+  pass, 0 flaky, 2 skip-as-fail**. The two skips are
+  `test-v219-gemma4-a4b` (wants 26B-A4B MoE) and `test-v219-qwen36`
+  (wants Qwen3.6-35B-A3B); both require ≥16 GB VRAM and the GGUFs
+  are not maintained on the maintainer's dev box. Tests SKIP cleanly
+  with the `entropic download <key>` message; the suite harness
+  treats an all-skipped binary as a fail by convention.
+- See `model-results-v2.4.0.json` attached to this release for the
+  full GPU-validated pass/fail matrix.
+
+## Pre-commit / CI
+
+- Pre-commit hook is now installed locally via `.git/hooks/pre-commit`
+  routing to the venv's `pre-commit` — every `git commit` runs the
+  full gate chain (trim/ruff/flake8/knots/doxygen-guard/gen-bindings/
+  build/tests/coverage). No bypass, no skip throughout the v2.3.11
+  → v2.3.27 → v2.4.0 sequence.
+- CI on develop/main green for the entire stack.
+
+---
+
 # entropic v2.3.27
 
 Patch release. **Wire `compactor_registry` on configure (gh#76).**

@@ -2604,4 +2604,56 @@ bool LlamaCppBackend::do_clear_state(int seq_id) {
     return true;
 }
 
+/**
+ * @brief Capture one sequence's KV cache via llama_state_seq_get_data.
+ *
+ * gh#23 MVP item 13 (v2.3.25 + v2.4.0). v2.3.25 shipped the C API
+ * surface (`entropic_state_save` / `entropic_state_load`) but the
+ * backend layer was never overridden — the base-class stub returned
+ * false, so the C API always reported `ENTROPIC_ERROR_INTERNAL`
+ * against a real model. The v2.4.0 minor-release ceremony surfaced
+ * this; the fix wires llama.cpp's sequence-scoped state API here.
+ *
+ * @param seq_id llama sequence id (the C API path passes 0).
+ * @param buffer Output; resized to the exact state size.
+ * @return true when llama.cpp emitted the full sized blob.
+ * @internal
+ * @version 2.4.0
+ */
+bool LlamaCppBackend::do_save_state(
+    int seq_id, std::vector<uint8_t>& buffer) const {
+    if (ctx_ == nullptr) { return false; }
+    size_t sz = llama_state_seq_get_size(
+        ctx_, static_cast<llama_seq_id>(seq_id));
+    if (sz == 0) { return false; }
+    buffer.resize(sz);
+    size_t written = llama_state_seq_get_data(
+        ctx_, buffer.data(), sz,
+        static_cast<llama_seq_id>(seq_id));
+    return written == sz;
+}
+
+/**
+ * @brief Restore one sequence's KV cache via llama_state_seq_set_data.
+ *
+ * gh#23 MVP item 13 (v2.4.0 follow-up to v2.3.25).
+ *
+ * @param seq_id llama sequence id.
+ * @param buffer Bytes captured by a prior `do_save_state` against the
+ *               SAME model + same llama.cpp commit pin.
+ * @return true when llama_state_seq_set_data reports a non-zero
+ *         accepted size (per the llama.cpp contract: positive=ok,
+ *         zero=failed to load).
+ * @internal
+ * @version 2.4.0
+ */
+bool LlamaCppBackend::do_restore_state(
+    int seq_id, const std::vector<uint8_t>& buffer) {
+    if (ctx_ == nullptr || buffer.empty()) { return false; }
+    size_t result = llama_state_seq_set_data(
+        ctx_, buffer.data(), buffer.size(),
+        static_cast<llama_seq_id>(seq_id));
+    return result > 0;
+}
+
 } // namespace entropic

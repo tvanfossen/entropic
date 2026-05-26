@@ -1331,6 +1331,72 @@ SCENARIO("delegation guards reject depth/cycle/repeat/pipeline-depth",
     }
 }
 
+// ── gh#77 (v2.3.28): entropic.complete + sibling action tool ─────
+// Pre-fix: process_generation_result executed a queued
+// pending_delegation/pipeline after process_tool_results, ignoring a
+// COMPLETE state set by a sibling entropic.complete in the same
+// response. Live reproduction: bissell-coder 2026-05-26 10:42-10:53.
+
+namespace gh77 {
+/// @brief Executor that simulates the model emitting an
+/// entropic.complete + entropic.pipeline pair in one response. Sets
+/// state=COMPLETE (the entropic.complete side effect via the
+/// directive processor in production) AND queues pending_pipeline
+/// (the entropic.pipeline side effect).
+/// @utility
+/// @version 2.3.28
+inline ToolExecutionInterface terminal_plus_pipeline_executor(bool* fired_flag) {
+    ToolExecutionInterface t{};
+    t.user_data = fired_flag;
+    t.process_tool_calls = [](LoopContext& ctx,
+                              const std::vector<ToolCall>&,
+                              void* ud) -> std::vector<Message> {
+        auto* fired = static_cast<bool*>(ud);
+        if (*fired) { return {}; }
+        *fired = true;
+        ctx.pending_pipeline =
+            PendingPipeline{{"reader", "editor", "verifier"}, "task"};
+        ctx.state = AgentState::COMPLETE;
+        return {};
+    };
+    return t;
+}
+}  // namespace gh77
+
+SCENARIO("gh#77: entropic.complete is terminal when emitted with sibling pipeline",
+         "[v2.3.28][core][engine][gh77][terminal]") {
+    MockInference mock;
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"entropic.complete","arguments":{"summary":"done"}},
+            {"name":"entropic.pipeline","arguments":{"stages":["reader"]}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    bool fired = false;
+    engine.set_tool_executor(gh77::terminal_plus_pipeline_executor(&fired));
+
+    LoopContext ctx; ctx.messages = make_messages();
+
+    GIVEN("a single response carrying entropic.complete + entropic.pipeline") {
+        WHEN("the engine processes the response") {
+            engine.run_loop(ctx);
+            THEN("state is COMPLETE and the queued pipeline did NOT execute") {
+                CHECK(ctx.state == AgentState::COMPLETE);
+                // Pre-fix: this scenario would have started the pipeline,
+                // which would push a [PIPELINE CONTEXT] marker into the
+                // message stream. Post-fix: nothing of the kind.
+                CHECK_FALSE(v2310::msg_contains(ctx, "[PIPELINE CONTEXT]"));
+                CHECK_FALSE(v2310::msg_contains(ctx, "[PIPELINE REJECTED]"));
+                // The pending_pipeline option remains set on the
+                // context (engine doesn't clear it — it just declines
+                // to execute it once terminal); this is intentional so
+                // downstream diagnostics can observe what was dropped.
+                CHECK(ctx.pending_pipeline.has_value());
+            }
+        }
+    }
+}
+
 SCENARIO("resume_delegation failure paths surface typed errors",
          "[v2.3.10][core][engine_coverage][delegation][resume]") {
     auto run_resume = [](StorageInterface* si, const std::string& expect) {

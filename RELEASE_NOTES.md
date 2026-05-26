@@ -1,3 +1,63 @@
+# entropic v2.3.16
+
+Patch release. **Additive sampler-config knob: `logit_bias`.** Fourth
+MVP-10 item from gh#23. First MVP-10 entry that lands a NEW sampler
+stage rather than threading args into an existing one — wires the
+`llama_sampler_init_logit_bias` stage in at the START of the chain
+(before penalties) so every downstream filter sees the biased
+distribution. Empty map (default) skips the stage — pre-v2.3.16
+chain stays bit-for-bit identical.
+
+## What landed
+
+- `GenerationParams::logit_bias` (`std::unordered_map<int32_t, float>`)
+  in `include/entropic/types/config.h`. Token id → additive bias in
+  logit-space. Common uses:
+  - Suppress: `bias = -INFINITY` (or large negative like `-100`).
+  - Force:    `bias = +INFINITY` (or large positive).
+  - Nudge:    `bias = ±1.0..±5.0`.
+- `LlamaCppSamplerFactory::create` (plain decode path) constructs a
+  `std::vector<llama_logit_bias>` from the map and calls
+  `llama_sampler_init_logit_bias(n_vocab, count, biases)` as the
+  first stage AFTER grammar, BEFORE penalties. Gate fires only when
+  the map is non-empty.
+- Speculative path (`to_common_sampling`) populates
+  `cps.logit_bias` (a `vector<llama_logit_bias>`). Empty stays empty —
+  speculative output bit-identical for callers not using the knob.
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept the `logit_bias` object form:
+
+  ```json
+  {"logit_bias": {"42": -100.0, "7": 2.5}}
+  ```
+
+  Keys are token ids (strings per JSON spec, parsed to `int32_t`);
+  values are `float` biases. Un-parseable keys are silently skipped.
+  Extracted into `parse_logit_bias_into` helper in each parser to
+  keep `parse_params` / `parse_params_json` under the knots ABC gate.
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][logit_bias]` scenarios + a default-base-case assertion:
+
+- Default sentinel (empty map).
+- Round-trip with two distinct tokens.
+- Same-token-twice → later assignment wins (map semantics).
+- Independence from temperature / top_p / top_k / penalties / min_p.
+- Backward-compat pin: empty map = stage disabled.
+
+## Scope boundary (gh#23 sequencing)
+
+MVP-10 item 4 of ~10. Remaining items (`n_ubatch`, `split_mode`,
+`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`,
+state save/load, `n_parallel`, `llama_log_set`) follow as separate
+patches. The next batch shifts from sampler knobs (which all
+operate per-generation) to backend / context init knobs (which
+operate per-load) — a different config touch surface.
+
+---
+
 # entropic v2.3.15
 
 Patch release. **Additive sampler-config knob: `frequency_penalty`.**

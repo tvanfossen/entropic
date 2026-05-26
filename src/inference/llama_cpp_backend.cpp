@@ -1640,6 +1640,12 @@ common_params_sampling to_common_sampling(
     // speculative output.
     cps.penalty_freq    = params.frequency_penalty;
     cps.penalty_present = params.presence_penalty;
+    // gh#23 MVP item 4 (v2.3.16): forward logit_bias to common-sampling.
+    // Empty (default) leaves the speculative chain bit-for-bit
+    // identical to pre-v2.3.16.
+    for (auto& [tok, val] : params.logit_bias) {
+        cps.logit_bias.push_back({tok, val});
+    }
     if (params.seed >= 0) {
         cps.seed = static_cast<uint32_t>(params.seed);
     }

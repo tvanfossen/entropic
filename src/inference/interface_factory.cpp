@@ -75,6 +75,30 @@ static void assign_if_present(const nlohmann::json& j,
 }
 
 /**
+ * @brief Populate `logit_bias` map from a JSON object of token→bias.
+ *
+ * Accepts `{"123": -100.0}` shape — string keys parsed to `int32_t`.
+ * Skips un-parseable keys silently.
+ * @utility
+ * @version 2.3.16
+ */
+static void parse_logit_bias_into(
+    const nlohmann::json& j,
+    std::unordered_map<int32_t, float>& dst)
+{
+    if (!j.contains("logit_bias") || !j["logit_bias"].is_object()) {
+        return;
+    }
+    for (auto it = j["logit_bias"].begin(); it != j["logit_bias"].end(); ++it) {
+        try {
+            dst[std::stoi(it.key())] = it.value().get<float>();
+        } catch (const std::exception&) {
+            // skip un-parseable keys
+        }
+    }
+}
+
+/**
  * @brief Parse generation params from JSON string.
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
@@ -97,6 +121,7 @@ static GenerationParams parse_params(const char* json_str) {
     assign_if_present(j, "frequency_penalty",p.frequency_penalty);
     assign_if_present(j, "repeat_penalty",   p.repeat_penalty);
     assign_if_present(j, "seed",             p.seed);
+    parse_logit_bias_into(j, p.logit_bias);
     return p;
 }
 

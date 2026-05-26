@@ -7,6 +7,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/types/config.h>
+#include <cmath>
 
 SCENARIO("GenerationParams defaults", "[params][defaults]") {
     GIVEN("a default-constructed GenerationParams") {
@@ -21,6 +22,7 @@ SCENARIO("GenerationParams defaults", "[params][defaults]") {
             REQUIRE(params.min_p == 0.0f);  // gh#23: 0.0 = disabled sentinel
             REQUIRE(params.presence_penalty == 0.0f);  // gh#23 v2.3.14: 0.0 = disabled
             REQUIRE(params.frequency_penalty == 0.0f); // gh#23 v2.3.15: 0.0 = disabled
+            REQUIRE(params.logit_bias.empty());        // gh#23 v2.3.16: empty = disabled
             REQUIRE(params.reasoning_budget == -1);
             REQUIRE(params.enable_thinking == true);
             REQUIRE(params.grammar.empty());
@@ -309,6 +311,72 @@ SCENARIO("presence + frequency penalties coexist independently",
             REQUIRE(p.presence_penalty == 0.6f);
             REQUIRE(p.frequency_penalty == 0.4f);
             REQUIRE(p.presence_penalty != p.frequency_penalty);
+        }
+    }
+}
+
+// ── gh#23 v2.3.16: logit_bias sampler stage ───────────────
+
+SCENARIO("logit_bias field round-trips through GenerationParams",
+         "[params][logit_bias][gh23]")
+{
+    GIVEN("a default GenerationParams") {
+        entropic::GenerationParams p;
+        THEN("logit_bias is empty (disabled sentinel)") {
+            REQUIRE(p.logit_bias.empty());
+        }
+    }
+
+    GIVEN("logit_bias populated with two distinct token entries") {
+        entropic::GenerationParams p;
+        p.logit_bias[42] = -100.0f;   // suppress
+        p.logit_bias[7]  = 2.5f;      // nudge up
+        THEN("both entries read back unchanged") {
+            REQUIRE(p.logit_bias.size() == 2);
+            REQUIRE(p.logit_bias[42] == -100.0f);
+            REQUIRE(p.logit_bias[7]  == 2.5f);
+        }
+    }
+
+    GIVEN("logit_bias with the same token assigned twice") {
+        entropic::GenerationParams p;
+        p.logit_bias[42] = -100.0f;
+        p.logit_bias[42] = 5.0f;
+        THEN("later assignment wins — map semantics") {
+            REQUIRE(p.logit_bias.size() == 1);
+            REQUIRE(p.logit_bias[42] == 5.0f);
+        }
+    }
+}
+
+SCENARIO("logit_bias is independent of other sampler knobs",
+         "[params][logit_bias][gh23]")
+{
+    GIVEN("logit_bias populated, all other knobs at default") {
+        entropic::GenerationParams p;
+        p.logit_bias[99] = -INFINITY;
+        THEN("temperature / top_p / top_k / penalties stay at default") {
+            REQUIRE(p.temperature == 0.7f);
+            REQUIRE(p.top_p == 0.9f);
+            REQUIRE(p.top_k == 40);
+            REQUIRE(p.repeat_penalty == 1.1f);
+            REQUIRE(p.presence_penalty == 0.0f);
+            REQUIRE(p.frequency_penalty == 0.0f);
+            REQUIRE(p.min_p == 0.0f);
+        }
+    }
+}
+
+SCENARIO("logit_bias empty leaves the sampler stage disabled (backward-compat)",
+         "[params][logit_bias][gh23][backward-compat]")
+{
+    // The new sampler stage in `create_sampler` is gated on
+    // `!params.logit_bias.empty()`. Empty (default) MUST skip it so
+    // the chain stays bit-identical to pre-v2.3.16.
+    GIVEN("a default GenerationParams") {
+        entropic::GenerationParams p;
+        THEN("logit_bias.empty() is true and remains the disabled sentinel") {
+            REQUIRE(p.logit_bias.empty());
         }
     }
 }

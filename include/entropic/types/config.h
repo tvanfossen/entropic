@@ -200,6 +200,16 @@ struct ModelConfig {
     /// throughput cost. Useful for tight-VRAM single-GPU setups.
     /// @version 2.3.20
     bool offload_kqv = true;
+
+    /// @brief RoPE base frequency override (gh#23 MVP item 9).
+    /// llama.cpp's `cparams.rope_freq_base`. `0.0` (default) takes
+    /// the model's trained value — preserves pre-v2.3.21 behavior
+    /// bit-for-bit. Positive overrides typically range 10000–10000000;
+    /// raising it stretches the RoPE period (extends effective context
+    /// at a quality cost). Pair with `rope_freq_scale` for YaRN-style
+    /// context-extension setups.
+    /// @version 2.3.21
+    float rope_freq_base = 0.0f;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

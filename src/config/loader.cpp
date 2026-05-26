@@ -43,6 +43,7 @@ static void parse_model_runtime_knobs(
     extract(node, "split_mode", config.split_mode);  // gh#23 v2.3.18
     extract(node, "main_gpu", config.main_gpu);      // gh#23 v2.3.19
     extract(node, "offload_kqv", config.offload_kqv); // gh#23 v2.3.20
+    extract(node, "rope_freq_base", config.rope_freq_base); // gh#23 v2.3.21
     extract(node, "flash_attn", config.flash_attn);
 }
 

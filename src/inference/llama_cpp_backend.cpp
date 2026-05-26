@@ -294,6 +294,9 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     // gh#23 MVP item 8 (v2.3.20): offload_kqv. true (default) matches
     // llama.cpp's default — bit-identical for callers not opting out.
     c.offload_kqv = cfg.offload_kqv;
+    // gh#23 MVP item 9 (v2.3.21): rope_freq_base. 0.0 = use model's
+    // trained value — bit-identical pre-v2.3.21.
+    c.rope_freq_base = cfg.rope_freq_base;
     return c;
 }
 } // anonymous namespace

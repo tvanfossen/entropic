@@ -1,3 +1,34 @@
+# entropic v2.3.21
+
+Patch release. **Additive context-init knob: `rope_freq_base`.**
+Ninth MVP-10 item from gh#23. RoPE base-frequency override for
+extended-context setups. `0.0` (default) uses the model's trained
+value — bit-identical pre-v2.3.21 behavior.
+
+## What landed
+
+- `ModelConfig::rope_freq_base` (`float`, default `0.0`) in
+  `include/entropic/types/config.h`.
+- `build_cparams` sets `cparams.rope_freq_base = cfg.rope_freq_base`.
+  llama.cpp treats `0.0` as "use the model's trained value", so the
+  default preserves load+context bit-for-bit.
+- YAML loader reads `rope_freq_base` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`rope_freq_base: 100000.0`).
+
+## Scope boundary
+
+MVP-10 item 9 of ~10. Pairs with `rope_freq_scale` (v2.3.22, next).
+After that: state save/load, n_parallel, llama_log_set.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.20
 
 Patch release. **Additive context-init knob: `offload_kqv`.**

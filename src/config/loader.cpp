@@ -23,6 +23,29 @@ static auto s_log = entropic::log::get("config");
 namespace entropic::config {
 
 /**
+ * @brief Read the model-runtime knobs (KV cache, batching, threads).
+ *
+ * Extracted (gh#23 v2.3.19) to keep `parse_model_config` under the
+ * knots ABC gate as new MVP-10 model-load knobs land.
+ * @utility
+ * @internal
+ * @version 2.3.19
+ */
+static void parse_model_runtime_knobs(
+    ryml::ConstNodeRef node, ModelConfig& config)
+{
+    extract(node, "cache_type_k", config.cache_type_k);
+    extract(node, "cache_type_v", config.cache_type_v);
+    extract(node, "n_batch", config.n_batch);
+    extract(node, "n_ubatch", config.n_ubatch);  // gh#23 v2.3.17
+    extract(node, "n_threads", config.n_threads);
+    extract(node, "tensor_split", config.tensor_split);
+    extract(node, "split_mode", config.split_mode);  // gh#23 v2.3.18
+    extract(node, "main_gpu", config.main_gpu);      // gh#23 v2.3.19
+    extract(node, "flash_attn", config.flash_attn);
+}
+
+/**
  * @brief Parse a ModelConfig from a YAML node.
  * @param node YAML node containing model fields.
  * @param registry Bundled models for path resolution.
@@ -47,14 +70,7 @@ static std::string parse_model_config(
     extract(node, "keep_warm", config.keep_warm);
     extract(node, "use_mlock", config.use_mlock);
     extract(node, "reasoning_budget", config.reasoning_budget);
-    extract(node, "cache_type_k", config.cache_type_k);
-    extract(node, "cache_type_v", config.cache_type_v);
-    extract(node, "n_batch", config.n_batch);
-    extract(node, "n_ubatch", config.n_ubatch);  // gh#23 MVP item 5 (v2.3.17)
-    extract(node, "n_threads", config.n_threads);
-    extract(node, "tensor_split", config.tensor_split);
-    extract(node, "split_mode", config.split_mode);  // gh#23 v2.3.18
-    extract(node, "flash_attn", config.flash_attn);
+    parse_model_runtime_knobs(node, config);
     extract_string_list_opt(node, "allowed_tools", config.allowed_tools);
 
     /* v1.9.11 mmproj wiring at the loader (gh#42, gh#41): read mmproj

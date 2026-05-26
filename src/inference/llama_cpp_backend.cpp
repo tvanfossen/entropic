@@ -206,6 +206,10 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
     m.use_mmap = true;
     m.use_mlock = cfg.use_mlock;
     m.split_mode = parse_split_mode(cfg.split_mode);
+    // gh#23 MVP item 7 (v2.3.19): main_gpu. Effective when split_mode
+    // is "none" (pin) or "row" (small-tensor placement). 0 keeps
+    // pre-v2.3.19 load bit-for-bit.
+    m.main_gpu = cfg.main_gpu;
     return m;
 }
 

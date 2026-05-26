@@ -184,6 +184,14 @@ struct ModelConfig {
     /// Empty (default) preserves pre-v2.3.18 model load bit-for-bit.
     /// @version 2.3.18
     std::string split_mode;
+
+    /// @brief Primary GPU index for model load (gh#23 MVP item 7).
+    /// llama.cpp's `mparams.main_gpu`. Effective when `split_mode ==
+    /// "none"` (single-GPU pinning) or `"row"` (small tensors go to
+    /// this GPU). Ignored when `split_mode == "layer"`. `0` (default)
+    /// preserves pre-v2.3.19 behavior bit-for-bit.
+    /// @version 2.3.19
+    int main_gpu = 0;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

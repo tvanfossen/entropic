@@ -232,6 +232,11 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     llama_context_params c = llama_context_default_params();
     c.n_ctx = static_cast<uint32_t>(cfg.context_length);
     c.n_batch = static_cast<uint32_t>(cfg.n_batch);
+    // gh#23 MVP item 5 (v2.3.17): n_ubatch. 0 keeps llama.cpp's default
+    // (== n_batch in practice), preserving pre-v2.3.17 chunking.
+    if (cfg.n_ubatch > 0) {
+        c.n_ubatch = static_cast<uint32_t>(cfg.n_ubatch);
+    }
     c.n_threads = cfg.n_threads > 0
         ? static_cast<uint32_t>(cfg.n_threads)
         : std::thread::hardware_concurrency();

@@ -41,6 +41,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.n_batch == 512);
         }
 
+        THEN("n_ubatch defaults to 0 (== match n_batch, gh#23 v2.3.17)") {
+            REQUIRE(config.n_ubatch == 0);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

@@ -222,6 +222,7 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(lead.cache_type_k == "q8_0");
                 CHECK(lead.cache_type_v == "q8_0");
                 CHECK(lead.n_batch == 1024);
+                CHECK(lead.n_ubatch == 256);  // gh#23 v2.3.17
                 CHECK(lead.n_threads == 8);
                 CHECK(lead.tensor_split == "0.5,0.5");
                 CHECK(lead.flash_attn == true);

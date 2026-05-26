@@ -49,6 +49,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.split_mode.empty());
         }
 
+        THEN("main_gpu defaults to 0 (gh#23 v2.3.19)") {
+            REQUIRE(config.main_gpu == 0);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

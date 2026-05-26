@@ -1,3 +1,36 @@
+# entropic v2.3.19
+
+Patch release. **Additive model-load knob: `main_gpu`.** Seventh
+MVP-10 item from gh#23. Pairs with the v2.3.18 `split_mode` knob —
+selects the primary GPU index for single-GPU pinning
+(`split_mode: none`) or small-tensor placement (`split_mode: row`).
+Ignored under `split_mode: layer`. `0` (default) preserves
+pre-v2.3.19 load bit-for-bit.
+
+## What landed
+
+- `ModelConfig::main_gpu` (`int`, default `0`) in
+  `include/entropic/types/config.h`. Appended after `split_mode`.
+- `build_load_mparams` (the v2.3.18 helper) now sets
+  `mparams.main_gpu = cfg.main_gpu`. Zero default keeps llama.cpp's
+  pre-v2.3.19 GPU choice (typically GPU 0).
+- YAML loader reads `main_gpu` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`main_gpu: 1` on the lead tier).
+
+## Scope boundary
+
+MVP-10 item 7 of ~10. Next: `offload_kqv` (v2.3.20). With v2.3.18 +
+v2.3.19 the multi-GPU placement knobs are complete.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.18
 
 Patch release. **Additive model-load knob: `split_mode`.** Sixth

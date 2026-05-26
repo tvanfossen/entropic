@@ -1,3 +1,82 @@
+# entropic v2.3.25
+
+Patch release. **New C API: `entropic_state_save` / `entropic_state_load`.**
+Thirteenth and final MVP-10 item from gh#23 — closes the loop on
+"expose all llama.cpp knobs as engine config options." This one
+needed a new public C API surface rather than a config field, because
+state save/load is a per-call operation against an active backend.
+
+## What landed
+
+Two new C API functions in `include/entropic/entropic.h`:
+
+```c
+entropic_error_t entropic_state_save(
+    entropic_handle_t handle, const char* tier_name, const char* path);
+entropic_error_t entropic_state_load(
+    entropic_handle_t handle, const char* tier_name, const char* path);
+```
+
+Implementation in `src/facade/entropic.cpp`:
+
+- `do_state_save` resolves the named tier's backend via the existing
+  `require_active_backend` helper, calls `backend->save_state(0, buf)`
+  (the backend's pre-existing KV-cache serialization, in place since
+  v1.9.x), and writes the byte blob to the requested path.
+- `do_state_load` reads the blob back, calls
+  `backend->restore_state(0, buf)`.
+- Both functions are wrapped by the v2.3.13 `c_api_try` barrier, so
+  `std::filesystem` / `std::ios` errors map to documented error
+  codes instead of escaping.
+
+## Format
+
+Opaque binary blob — bit-for-bit the `llama_state_get_data` output.
+**Not portable** across llama.cpp commits or model files. The caller
+must reload the same model before `entropic_state_load`. Future
+revisions may wrap the blob in a versioned container; this minimal
+v2.3.25 keeps the surface simple.
+
+## Tests
+
+`tests/unit/api/entropic_capi_test.cpp` adds 8 `[v2.3.25][state_save]`
+/ `[state_load][gh23]` scenarios:
+
+- NULL handle / tier_name / path rejection (each error code pinned).
+- Unconfigured handle returns `INVALID_STATE` (the orchestrator-not-
+  initialized path).
+
+End-to-end save/load round-trip (load-after-save reproduces decoded
+state) needs a real model and lives in the model-test scope —
+deferred until the next minor release model-test pass.
+
+## MVP-10 closeout
+
+| # | Knob | Status |
+|---|---|---|
+| 1 | min_p | ✅ v2.3.10 |
+| 2 | presence_penalty | ✅ v2.3.14 |
+| 3 | frequency_penalty | ✅ v2.3.15 |
+| 4 | logit_bias | ✅ v2.3.16 |
+| 5 | n_ubatch | ✅ v2.3.17 |
+| 6 | split_mode | ✅ v2.3.18 |
+| 7 | main_gpu | ✅ v2.3.19 |
+| 8 | offload_kqv | ✅ v2.3.20 |
+| 9 | rope_freq_base | ✅ v2.3.21 |
+| 10 | rope_freq_scale | ✅ v2.3.22 |
+| 11 | n_parallel | ✅ v2.3.23 |
+| 12 | llama_log_set | ✅ v2.3.24 (llama_log_path override) |
+| 13 | state save/load | ✅ v2.3.25 |
+
+gh#23 can close.
+
+## ABI
+
+Additive only (two new `ENTROPIC_EXPORT` functions). Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.24
 
 Patch release. **Additive top-level knob: `llama_log_path`.**

@@ -837,6 +837,63 @@ ENTROPIC_EXPORT entropic_error_t entropic_context_usage(
     size_t* capacity);
 
 /**
+ * @brief Save a tier's KV-cache state to a file (gh#23 MVP item 13).
+ *
+ * Persists the active backend's KV cache (sequence 0) for the named
+ * tier to disk. Useful for warm-restart scenarios: save after the
+ * system prompt + identity is prefilled, then on a fresh process
+ * `entropic_state_load` skips re-tokenizing + decoding that prefix.
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier whose backend KV cache to capture.
+ * @param path Destination file path (will be truncated/created).
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — tier_name or path is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — tier not active.
+ *         - ENTROPIC_ERROR_IO — file write failure.
+ *         - ENTROPIC_ERROR_INTERNAL — backend save_state returned false.
+ *
+ * @par Format
+ * Opaque binary blob — bit-for-bit the llama.cpp `llama_state_get_data`
+ * output. Not portable across llama.cpp commits OR model files. The
+ * caller is responsible for re-loading the same model before
+ * `entropic_state_load`.
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @version 2.3.25
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_state_save(
+    entropic_handle_t handle,
+    const char* tier_name,
+    const char* path);
+
+/**
+ * @brief Restore a tier's KV-cache state from a file (gh#23 MVP item 13).
+ *
+ * Counterpart to `entropic_state_save`. The model+tier must match the
+ * one used at save time (llama.cpp state blobs are not portable).
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier whose backend KV cache to restore.
+ * @param path Source file path.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — tier_name or path is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — tier not active.
+ *         - ENTROPIC_ERROR_IO — file read failure or empty file.
+ *         - ENTROPIC_ERROR_INTERNAL — backend restore_state returned false
+ *           (typically a model/format mismatch with the save site).
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @version 2.3.25
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_state_load(
+    entropic_handle_t handle,
+    const char* tier_name,
+    const char* path);
+
+/**
  * @brief Get loop metrics from the most recent run as JSON.
  *
  * Populates *out with a malloc'd JSON string containing flat fields

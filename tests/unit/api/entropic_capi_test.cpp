@@ -506,6 +506,62 @@ TEST_CASE("entropic_context_usage on unconfigured handle returns INVALID_HANDLE"
             == ENTROPIC_ERROR_INVALID_HANDLE);
 }
 
+// ── gh#23 v2.3.25: state save/load C API ─────────────────────
+
+TEST_CASE("entropic_state_save rejects NULL handle",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    REQUIRE(entropic_state_save(nullptr, "lead", "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("entropic_state_save rejects NULL tier_name",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_save(h, nullptr, "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_save rejects NULL path",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_save(h, "lead", nullptr)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_save on unconfigured handle returns INVALID_STATE",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    auto rc = entropic_state_save(h, "lead", "/tmp/x");
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+}
+
+TEST_CASE("entropic_state_load rejects NULL handle",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    REQUIRE(entropic_state_load(nullptr, "lead", "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("entropic_state_load rejects NULL tier_name",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_load(h, nullptr, "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_load rejects NULL path",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_load(h, "lead", nullptr)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_load on unconfigured handle returns INVALID_STATE",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    auto rc = entropic_state_load(h, "lead", "/tmp/nonexistent");
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+}
+
 TEST_CASE("entropic_metrics_json rejects NULL handle",
           "[v2.3.10][entropic_capi][context]") {
     char* out = nullptr;

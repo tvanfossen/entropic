@@ -28,6 +28,8 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <fstream>
+#include <vector>
 #include <cstring>
 #include <filesystem>
 #include <new>
@@ -2417,6 +2419,99 @@ entropic_error_t entropic_context_usage(
     *tokens_used = static_cast<size_t>(used);
     *capacity = static_cast<size_t>(max);
     return max > 0 ? ENTROPIC_OK : ENTROPIC_ERROR_INVALID_STATE;
+}
+
+/**
+ * @brief Save tier's KV cache to file body (gh#23 v2.3.25).
+ * @internal
+ * @version 2.3.25
+ */
+static entropic_error_t do_state_save(
+    entropic_handle_t handle, const char* tier_name, const char* path) {
+    if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
+    auto* backend = require_active_backend(handle, tier_name);
+    std::vector<uint8_t> buf;
+    if (!backend->save_state(0, buf)) { return ENTROPIC_ERROR_INTERNAL; }
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    bool ok = out.is_open()
+        && out.write(reinterpret_cast<const char*>(buf.data()),
+                     static_cast<std::streamsize>(buf.size())).good();
+    return ok ? ENTROPIC_OK : ENTROPIC_ERROR_IO;
+}
+
+/**
+ * @brief Save a tier's KV cache to a file (gh#23 v2.3.25, MVP item 13).
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.3.25
+ */
+entropic_error_t entropic_state_save(
+    entropic_handle_t handle,
+    const char* tier_name,
+    const char* path) {
+    if (!handle || !tier_name || !path) {
+        return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
+                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    entropic::HandleApiLock lock(handle);
+    return c_api_try(handle,
+        [&]() { return do_state_save(handle, tier_name, path); });
+}
+
+/**
+ * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
+ * @internal
+ * @version 2.3.25
+ */
+/**
+ * @brief Read the entire contents of `path` into `out_buf`.
+ * @return true on success (file exists, non-empty, read fully).
+ * @utility
+ * @version 2.3.25
+ */
+static bool read_state_file(const char* path, std::vector<uint8_t>& out_buf) {
+    std::ifstream in(path, std::ios::binary | std::ios::ate);
+    if (!in.is_open()) { return false; }
+    auto sz = static_cast<std::streamsize>(in.tellg());
+    if (sz <= 0) { return false; }
+    in.seekg(0, std::ios::beg);
+    out_buf.resize(static_cast<size_t>(sz));
+    return static_cast<bool>(
+        in.read(reinterpret_cast<char*>(out_buf.data()), sz));
+}
+
+/**
+ * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
+ * @internal
+ * @version 2.3.25
+ */
+static entropic_error_t do_state_load(
+    entropic_handle_t handle, const char* tier_name, const char* path) {
+    if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
+    auto* backend = require_active_backend(handle, tier_name);
+    std::vector<uint8_t> buf;
+    if (!read_state_file(path, buf)) { return ENTROPIC_ERROR_IO; }
+    return backend->restore_state(0, buf)
+        ? ENTROPIC_OK : ENTROPIC_ERROR_INTERNAL;
+}
+
+/**
+ * @brief Restore a tier's KV cache from a file (gh#23 v2.3.25).
+ * @return ENTROPIC_OK on success.
+ * @internal
+ * @version 2.3.25
+ */
+entropic_error_t entropic_state_load(
+    entropic_handle_t handle,
+    const char* tier_name,
+    const char* path) {
+    if (!handle || !tier_name || !path) {
+        return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
+                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    entropic::HandleApiLock lock(handle);
+    return c_api_try(handle,
+        [&]() { return do_state_load(handle, tier_name, path); });
 }
 
 /**

@@ -221,6 +221,21 @@ ParseResult Gemma4Adapter::parse_tool_calls(const std::string& content) const {
         "");
     cleaned = strip_think_blocks(cleaned);
 
+    // gh#75 (v2.3.26): drop GPT-OSS-style thought channel markup that
+    // E4B Q8 emits around its reasoning blocks. Two flavors:
+    //   1. Paired:   `<|channel>thought ... <channel|>` — drop whole block.
+    //   2. Unpaired: `<|channel>thought` opener with no close (truncated
+    //                emit) — drop the stray opener so it doesn't leak
+    //                into the next turn's prompt.
+    // Order matters: the paired regex runs first; the unpaired-opener
+    // sweep catches any remaining stray opener.
+    static const std::regex kThoughtChannelPaired(
+        R"(<\|channel>thought[\s\S]*?<channel\|>)");
+    cleaned = std::regex_replace(cleaned, kThoughtChannelPaired, "");
+    static const std::regex kThoughtChannelStrayOpener(
+        R"(<\|channel>thought)");
+    cleaned = std::regex_replace(cleaned, kThoughtChannelStrayOpener, "");
+
     // gh#68 (v2.3.5): scrub Gemma 4 chat-template turn-boundary
     // markers from surface content. The v2.3.4 detokenize special=false
     // change does NOT catch these — Gemma 4 emits them as multi-token

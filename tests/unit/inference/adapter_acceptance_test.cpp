@@ -404,6 +404,86 @@ SCENARIO("Gemma4 gh#73 fallback does not double-extract canonical gh#69 calls",
     }
 }
 
+// ── gh#75: Gemma 4 GPT-OSS-style thought channel scrub ──────
+
+SCENARIO("Gemma4 scrubs paired <|channel>thought ... <channel|> blocks (gh#75)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E4B Q8 emit from gh#75 — thought channel "
+          "wrapping reasoning + a real tool call after") {
+        std::string content =
+            "<|channel>thought\n"
+            "Reasoning about deletion of student id 2.\n"
+            "<channel|>"
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the real tool call is extracted") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+            }
+            THEN("the thought channel markup does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|channel>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<channel|>")
+                        == std::string::npos);
+            }
+            THEN("the thought text itself is also stripped") {
+                REQUIRE(result.cleaned_content.find("Reasoning about deletion")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs unpaired <|channel>thought opener (gh#75)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a truncated emit with the opener but no close") {
+        // Model started a thought channel and got cut off before
+        // emitting `<channel|>`. The stray opener still leaks if not
+        // scrubbed, and is echoed into the next turn's prompt.
+        std::string content =
+            "Reply prose.\n"
+            "<|channel>thought partial reasoning text";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the stray opener does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|channel>")
+                        == std::string::npos);
+            }
+            THEN("the original prose still survives") {
+                REQUIRE(result.cleaned_content.find("Reply prose.")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 leaves text without thought-channel markup unchanged (gh#75 anchor)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a plain text emit with no thought-channel markers") {
+        std::string content = "Hello there. This is plain prose without channels.";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("cleaned_content matches the original prose") {
+                REQUIRE(result.cleaned_content
+                        == "Hello there. This is plain prose without channels.");
+            }
+        }
+    }
+}
+
 // ── Prior gemma4 regressions (gh#65 + gh#68) ──────────────
 
 SCENARIO("Gemma4 parses the gh#65 asymmetric <|tool_call> form",

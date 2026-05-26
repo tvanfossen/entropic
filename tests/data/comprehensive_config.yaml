@@ -47,6 +47,7 @@ models:
     split_mode: "row"
     main_gpu: 1
     offload_kqv: false
+    rope_freq_base: 100000.0
     flash_attn: true
     allowed_tools:
       - filesystem.read_file

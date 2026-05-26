@@ -225,6 +225,7 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(lead.n_ubatch == 256);  // gh#23 v2.3.17
                 CHECK(lead.n_threads == 8);
                 CHECK(lead.tensor_split == "0.5,0.5");
+                CHECK(lead.split_mode == "row");  // gh#23 v2.3.18
                 CHECK(lead.flash_attn == true);
                 REQUIRE(lead.allowed_tools.has_value());
                 CHECK(lead.allowed_tools->size() == 2);

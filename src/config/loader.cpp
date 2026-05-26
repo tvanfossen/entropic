@@ -53,6 +53,7 @@ static std::string parse_model_config(
     extract(node, "n_ubatch", config.n_ubatch);  // gh#23 MVP item 5 (v2.3.17)
     extract(node, "n_threads", config.n_threads);
     extract(node, "tensor_split", config.tensor_split);
+    extract(node, "split_mode", config.split_mode);  // gh#23 v2.3.18
     extract(node, "flash_attn", config.flash_attn);
     extract_string_list_opt(node, "allowed_tools", config.allowed_tools);
 

@@ -45,6 +45,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.n_ubatch == 0);
         }
 
+        THEN("split_mode defaults to empty (== layer, gh#23 v2.3.18)") {
+            REQUIRE(config.split_mode.empty());
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

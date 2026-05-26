@@ -158,6 +158,19 @@ struct ModelConfig {
     std::string cache_type_k = "f16";        ///< KV cache key quantization type
     std::string cache_type_v = "f16";        ///< KV cache value quantization type
     int n_batch = 512;                       ///< Batch size for prompt processing
+
+    /// @brief Physical micro-batch size for prompt processing (gh#23 MVP item 5).
+    /// llama.cpp's `cparams.n_ubatch`. Decoupled from `n_batch` since
+    /// llama.cpp v0.4 — `n_batch` is the LOGICAL batch (max tokens
+    /// queued per `llama_decode` call) and `n_ubatch` is the PHYSICAL
+    /// chunk the kernels actually process. Smaller `n_ubatch` reduces
+    /// peak GPU memory for the same `n_batch`. `0` (default) means
+    /// "match `n_batch`" — preserves pre-v2.3.17 behavior bit-for-bit
+    /// since llama.cpp's default in that case is `min(n_batch, default)`.
+    /// Typical productive values: 128, 256, 512 (== n_batch).
+    /// @version 2.3.17
+    int n_ubatch = 0;
+
     int n_threads = 0;                       ///< CPU threads (0 = auto-detect)
     std::string tensor_split;                ///< Multi-GPU tensor split ratios (empty = single GPU)
     bool flash_attn = true;                  ///< Enable flash attention

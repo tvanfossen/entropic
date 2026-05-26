@@ -1,3 +1,48 @@
+# entropic v2.3.17
+
+Patch release. **Additive context-init knob: `n_ubatch`.** Fifth
+MVP-10 item from gh#23. First MVP-10 entry to land on `ModelConfig`
+(per-tier model/context init) rather than `GenerationParams`
+(per-call sampler) — `n_ubatch` is the PHYSICAL micro-batch size
+llama.cpp's kernels process inside each `llama_decode` call, vs
+`n_batch` (the LOGICAL queue size). Decoupled in llama.cpp v0.4.
+
+Default `0` keeps llama.cpp's default behavior (effectively
+`n_ubatch == n_batch`), preserving pre-v2.3.17 chunking bit-for-bit.
+
+## What landed
+
+- `ModelConfig::n_ubatch` (`int`, default `0`) in
+  `include/entropic/types/config.h`. Appended after `n_batch`, before
+  `n_threads`. Smaller values reduce peak GPU memory at the same
+  `n_batch`.
+- `build_cparams` in `src/inference/llama_cpp_backend.cpp` sets
+  `cparams.n_ubatch = cfg.n_ubatch` when `cfg.n_ubatch > 0`. Default
+  `0` leaves the field at llama.cpp's default.
+- YAML loader (`src/config/loader.cpp`) reads `n_ubatch` per tier.
+
+## Tests
+
+- `tests/unit/types/config_structs_test.cpp` — default-value pin
+  (`n_ubatch == 0`).
+- `tests/unit/config/loader_test.cpp` + `tests/data/comprehensive_config.yaml`
+  — round-trip from YAML (`n_ubatch: 256` on the lead tier).
+
+## Scope boundary
+
+MVP-10 item 5 of ~10. Remaining items (`split_mode`, `main_gpu`,
+`offload_kqv`, `rope_freq_base`, `rope_freq_scale`, state save/load,
+`n_parallel`, `llama_log_set`) follow as separate patches. The
+ModelConfig group is now in motion; the next several knobs land on
+the same struct.
+
+## ABI
+
+Field appended after `n_batch`. Additive only. Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.16
 
 Patch release. **Additive sampler-config knob: `logit_bias`.** Fourth

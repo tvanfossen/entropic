@@ -50,6 +50,7 @@ static std::string parse_model_config(
     extract(node, "cache_type_k", config.cache_type_k);
     extract(node, "cache_type_v", config.cache_type_v);
     extract(node, "n_batch", config.n_batch);
+    extract(node, "n_ubatch", config.n_ubatch);  // gh#23 MVP item 5 (v2.3.17)
     extract(node, "n_threads", config.n_threads);
     extract(node, "tensor_split", config.tensor_split);
     extract(node, "flash_attn", config.flash_attn);

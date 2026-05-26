@@ -1,3 +1,47 @@
+# entropic v2.3.26
+
+Patch release. **Gemma4 adapter: scrub GPT-OSS-style thought channel
+markup (gh#75).** Companion to v2.3.12 (gh#73). The same E4B Q8
+consumer reports surface a separate user-visible leak: the
+`<|channel>thought ... <channel|>` wrapper around the model's
+reasoning blocks survived `cleaned_content` and rendered as visible
+assistant prose. v2.3.12 fixed the malformed tool-call **dispatch**
+issue; this patch fixes the **rendering** issue.
+
+No source ABI change — adapter logic only. Drop-in for any 2.3.x
+consumer.
+
+## What landed
+
+Two new regex sweeps at the end of the `cleaned_content` pipeline in
+`Gemma4Adapter::parse_tool_calls`:
+
+1. **Paired** `<|channel>thought ... <channel|>` → drop whole block.
+2. **Unpaired** `<|channel>thought` opener with no close (truncated
+   emit) → drop the stray opener.
+
+Order matters — paired sweep runs first; unpaired-opener sweep
+catches any remaining stray opener.
+
+## Tests
+
+Three new `[gh75]` acceptance scenarios in
+`tests/unit/inference/adapter_acceptance_test.cpp`:
+
+- Verbatim E4B Q8 paired thought channel + real tool call →
+  assert the call extracts AND the channel markup + thought text
+  scrubbed from `cleaned_content`.
+- Unpaired opener edge case → assert stray `<|channel>` removed
+  while surrounding prose survives.
+- Plain-text anchor → assert no thought-channel pattern → no
+  unintended modification.
+
+## ABI
+
+None. Adapter logic only.
+
+---
+
 # entropic v2.3.25
 
 Patch release. **New C API: `entropic_state_save` / `entropic_state_load`.**

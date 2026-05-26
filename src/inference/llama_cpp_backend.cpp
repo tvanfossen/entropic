@@ -167,6 +167,52 @@ ggml_type parse_kv_cache_type(const std::string& s) {
     return GGML_TYPE_F16;
 }
 
+/**
+ * @brief Map a ModelConfig::split_mode string to llama_split_mode (gh#23 item 6).
+ *
+ * Empty string → llama.cpp's default (`LAYER`). Unknown values fall
+ * back to default with a logged warning.
+ *
+ * @utility
+ * @version 2.3.18
+ */
+llama_split_mode parse_split_mode(const std::string& s) {
+    if (s.empty()) { return LLAMA_SPLIT_MODE_LAYER; }
+    static const std::pair<const char*, llama_split_mode> kTable[] = {
+        {"none",  LLAMA_SPLIT_MODE_NONE},
+        {"layer", LLAMA_SPLIT_MODE_LAYER},
+        {"row",   LLAMA_SPLIT_MODE_ROW},
+    };
+    for (const auto& [name, mode] : kTable) {
+        if (s == name) { return mode; }
+    }
+    logger->warn("Unknown split_mode '{}' — defaulting to layer", s);
+    return LLAMA_SPLIT_MODE_LAYER;
+}
+
+/**
+ * @brief Build llama_model_params for GPU model load.
+ *
+ * Extracted (gh#23 v2.3.18) to keep `load_gpu_model` under the knots
+ * ABC gate as new MVP-10 model-load knobs land (`split_mode`,
+ * `main_gpu`, `offload_kqv`, `rope_freq_*`).
+ *
+ * @utility
+ * @version 2.3.18
+ */
+llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
+    llama_model_params m = llama_model_default_params();
+    m.n_gpu_layers = cfg.gpu_layers;
+    m.use_mmap = true;
+    m.use_mlock = cfg.use_mlock;
+    m.split_mode = parse_split_mode(cfg.split_mode);
+    // gh#23 MVP item 7 (v2.3.19): main_gpu. Effective when split_mode
+    // is "none" (pin) or "row" (small-tensor placement). 0 keeps
+    // pre-v2.3.19 load bit-for-bit.
+    m.main_gpu = cfg.main_gpu;
+    return m;
+}
+
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -232,6 +278,11 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     llama_context_params c = llama_context_default_params();
     c.n_ctx = static_cast<uint32_t>(cfg.context_length);
     c.n_batch = static_cast<uint32_t>(cfg.n_batch);
+    // gh#23 MVP item 5 (v2.3.17): n_ubatch. 0 keeps llama.cpp's default
+    // (== n_batch in practice), preserving pre-v2.3.17 chunking.
+    if (cfg.n_ubatch > 0) {
+        c.n_ubatch = static_cast<uint32_t>(cfg.n_ubatch);
+    }
     c.n_threads = cfg.n_threads > 0
         ? static_cast<uint32_t>(cfg.n_threads)
         : std::thread::hardware_concurrency();
@@ -240,6 +291,16 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
         : LLAMA_FLASH_ATTN_TYPE_DISABLED;
     c.type_k = parse_kv_cache_type(cfg.cache_type_k);
     c.type_v = parse_kv_cache_type(cfg.cache_type_v);
+    // gh#23 MVP item 8 (v2.3.20): offload_kqv. true (default) matches
+    // llama.cpp's default — bit-identical for callers not opting out.
+    c.offload_kqv = cfg.offload_kqv;
+    // gh#23 MVP items 9 + 10 (v2.3.21 + v2.3.22): RoPE frequency
+    // overrides. Both 0.0 = use model's trained value — bit-identical.
+    c.rope_freq_base = cfg.rope_freq_base;
+    c.rope_freq_scale = cfg.rope_freq_scale;
+    // gh#23 MVP item 11 (v2.3.23): n_parallel maps to cparams.n_seq_max.
+    // 1 (default) matches llama.cpp's default — bit-identical.
+    c.n_seq_max = static_cast<uint32_t>(cfg.n_parallel);
     return c;
 }
 } // anonymous namespace
@@ -276,10 +337,7 @@ bool LlamaCppBackend::do_activate() {
  * @version 2.3.7
  */
 bool LlamaCppBackend::load_gpu_model() {
-    llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = config().gpu_layers;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config().use_mlock;
+    llama_model_params mparams = build_load_mparams(config());
 
     if (!config().tensor_split.empty()) {
         // TODO: parse tensor_split string into float array for multi-GPU
@@ -1633,6 +1691,19 @@ common_params_sampling to_common_sampling(
     cps.top_k = params.top_k;
     cps.top_p = params.top_p;
     cps.penalty_repeat = params.repeat_penalty;
+    // gh#23 MVP items 2 + 3 (v2.3.14 + v2.3.15): wire presence +
+    // frequency penalty into common-sampling. Counterparts of the
+    // 3rd + 4th args to `llama_sampler_init_penalties` in the plain
+    // decode path. Default 0.0f on both preserves bit-for-bit
+    // speculative output.
+    cps.penalty_freq    = params.frequency_penalty;
+    cps.penalty_present = params.presence_penalty;
+    // gh#23 MVP item 4 (v2.3.16): forward logit_bias to common-sampling.
+    // Empty (default) leaves the speculative chain bit-for-bit
+    // identical to pre-v2.3.16.
+    for (auto& [tok, val] : params.logit_bias) {
+        cps.logit_bias.push_back({tok, val});
+    }
     if (params.seed >= 0) {
         cps.seed = static_cast<uint32_t>(params.seed);
     }

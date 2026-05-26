@@ -310,9 +310,12 @@ SCENARIO("Gemma4 scrubs <|im_start|> turn markers (gh#68)",
     entropic::Gemma4Adapter adapter("lead", "test");
 
     GIVEN("content with <|im_start|> turn-open markers (bare + role-suffixed)") {
+        // v2.3.11 (gh#72): omit the middle <|im_end|><|im_start|>user
+        // pattern, which is now treated as a fabricated-turn boundary
+        // (cut) rather than as marker-scrub fodder. The remaining
+        // shapes still cover the role-suffixed + bare scrub forms.
         std::string content =
             "<|im_start|>assistantHere is my reply.<|im_end|>"
-            "<|im_start|>userExtra<|im_end|>"
             "<|im_start|>Tail";  // bare form, no role suffix
 
         WHEN("parse_tool_calls runs") {
@@ -340,9 +343,13 @@ SCENARIO("Gemma4 scrubs <end_of_turn> and <start_of_turn> markers (gh#68)",
         // Gemma 4's chat template canonically uses `<end_of_turn>` /
         // `<start_of_turn>`. The pipe-bracket variants are the
         // tokenizer-decomposed surface forms; both can leak.
+        // v2.3.11 (gh#72): bare `<start_of_turn>` (no role suffix) for
+        // the trailing marker — the role-suffixed variant after an
+        // `<end_of_turn>` now triggers the fabricated-turn cut, which
+        // is a separate concern from marker scrubbing.
         std::string content =
             "<start_of_turn>modelMy reply.<end_of_turn>"
-            "<start_of_turn>userFollow-up<end_of_turn>";
+            "<start_of_turn>Follow-up";
 
         WHEN("parse_tool_calls runs") {
             auto result = adapter.parse_tool_calls(content);

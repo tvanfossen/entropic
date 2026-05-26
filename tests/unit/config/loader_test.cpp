@@ -201,6 +201,7 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.inject_model_context == true);
                 CHECK(config.vram_reserve_mb == 512);
                 CHECK(config.ggml_logging == true);
+                CHECK(config.llama_log_path == "/tmp/llama-custom.log");  // gh#23 v2.3.24
                 CHECK(config.console_logging == false);
                 REQUIRE(config.constitution.has_value());
                 REQUIRE(config.app_context.has_value());
@@ -222,8 +223,15 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(lead.cache_type_k == "q8_0");
                 CHECK(lead.cache_type_v == "q8_0");
                 CHECK(lead.n_batch == 1024);
+                CHECK(lead.n_ubatch == 256);  // gh#23 v2.3.17
                 CHECK(lead.n_threads == 8);
                 CHECK(lead.tensor_split == "0.5,0.5");
+                CHECK(lead.split_mode == "row");  // gh#23 v2.3.18
+                CHECK(lead.main_gpu == 1);        // gh#23 v2.3.19
+                CHECK(lead.offload_kqv == false); // gh#23 v2.3.20
+                CHECK(lead.rope_freq_base == 100000.0f); // gh#23 v2.3.21
+                CHECK(lead.rope_freq_scale == 0.5f); // gh#23 v2.3.22
+                CHECK(lead.n_parallel == 4); // gh#23 v2.3.23
                 CHECK(lead.flash_attn == true);
                 REQUIRE(lead.allowed_tools.has_value());
                 CHECK(lead.allowed_tools->size() == 2);

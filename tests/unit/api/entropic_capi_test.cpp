@@ -506,6 +506,62 @@ TEST_CASE("entropic_context_usage on unconfigured handle returns INVALID_HANDLE"
             == ENTROPIC_ERROR_INVALID_HANDLE);
 }
 
+// ── gh#23 v2.3.25: state save/load C API ─────────────────────
+
+TEST_CASE("entropic_state_save rejects NULL handle",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    REQUIRE(entropic_state_save(nullptr, "lead", "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("entropic_state_save rejects NULL tier_name",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_save(h, nullptr, "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_save rejects NULL path",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_save(h, "lead", nullptr)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_save on unconfigured handle returns INVALID_STATE",
+          "[v2.3.25][entropic_capi][state_save][gh23]") {
+    CreatedOnlyHandle h;
+    auto rc = entropic_state_save(h, "lead", "/tmp/x");
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+}
+
+TEST_CASE("entropic_state_load rejects NULL handle",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    REQUIRE(entropic_state_load(nullptr, "lead", "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("entropic_state_load rejects NULL tier_name",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_load(h, nullptr, "/tmp/x")
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_load rejects NULL path",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_state_load(h, "lead", nullptr)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_state_load on unconfigured handle returns INVALID_STATE",
+          "[v2.3.25][entropic_capi][state_load][gh23]") {
+    CreatedOnlyHandle h;
+    auto rc = entropic_state_load(h, "lead", "/tmp/nonexistent");
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+}
+
 TEST_CASE("entropic_metrics_json rejects NULL handle",
           "[v2.3.10][entropic_capi][context]") {
     char* out = nullptr;
@@ -1807,11 +1863,10 @@ TEST_CASE("entropic_seconds_since_last_activity on configured handle returns >=0
 
 // ── configure_dir happy-path on a writable tmp dir ──────────────────
 
-// Note: entropic_configure_dir currently lets std::filesystem exceptions
-// escape across the C ABI when setup_session / load_layered hit unwritable
-// dirs or empty paths — violates entropic's "exceptions don't cross .so"
-// rule. Tracked as a follow-up issue; tests catch + ignore for now so
-// they drive the configure_dir entry-point coverage.
+// v2.3.13 (gh#74): the C ABI now wraps every configure entry point in
+// `c_api_try`, so filesystem / JSON exceptions never escape into the
+// caller — they map to documented error codes. Tests assert no
+// exception (via REQUIRE_NOTHROW) instead of swallowing after the fact.
 
 TEST_CASE("entropic_configure_dir on a tmp dir runs the loader path",
           "[v2.3.10][entropic_capi][configure][configured]") {
@@ -1819,27 +1874,29 @@ TEST_CASE("entropic_configure_dir on a tmp dir runs the loader path",
     auto tmp = std::filesystem::temp_directory_path() /
                ("entropic_capi_cfg_dir_" + std::to_string(getpid()));
     std::filesystem::create_directories(tmp);
-    try {
-        auto rc = entropic_configure_dir(h, tmp.c_str());
-        (void)rc;
-    } catch (const std::exception&) {
-        // Known defect: exception escapes the C API.
-    }
+    REQUIRE_NOTHROW(entropic_configure_dir(h, tmp.c_str()));
     std::error_code ec;
     std::filesystem::remove_all(tmp, ec);
-    SUCCEED();
 }
 
-TEST_CASE("entropic_configure_dir with empty string path runs the loader path",
-          "[v2.3.10][entropic_capi][configure][configured]") {
+TEST_CASE("entropic_configure_dir with empty string path returns an error code, not an exception",
+          "[v2.3.10][entropic_capi][configure][configured][gh74]") {
     CreatedOnlyHandle h;
-    try {
-        auto rc = entropic_configure_dir(h, "");
-        (void)rc;
-    } catch (const std::exception&) {
-        // Known defect: exception escapes the C API.
-    }
-    SUCCEED();
+    entropic_error_t rc = ENTROPIC_OK;
+    REQUIRE_NOTHROW(rc = entropic_configure_dir(h, ""));
+    (void)rc;  // Outcome depends on the loader's tolerance of "" project_dir;
+               // the contract is just that no exception escapes.
+}
+
+TEST_CASE("entropic_configure_dir on /dev/null subpath returns an error, not an exception",
+          "[v2.3.10][entropic_capi][configure][configured][gh74]") {
+    CreatedOnlyHandle h;
+    entropic_error_t rc = ENTROPIC_OK;
+    // /dev/null is a character device; any subdirectory create fails
+    // with ENOTDIR. Pre-v2.3.13 this threw std::filesystem_error out
+    // of the C ABI; v2.3.13's c_api_try maps it to ENTROPIC_ERROR_IO.
+    REQUIRE_NOTHROW(rc = entropic_configure_dir(h, "/dev/null/cannot_be_a_dir"));
+    REQUIRE(rc != ENTROPIC_OK);
 }
 
 // ── Validation accept_last / resume_retry on configured-no-validator ─
@@ -2417,37 +2474,36 @@ TEST_CASE("entropic_register_compactor on unconfigured handle returns INVALID_ST
     REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-// Note: handle->compactor_registry is declared in engine_handle.h but
-// never constructed by entropic_configure() — the wiring is incomplete.
-// Until a future version wires it up, every call returns INVALID_STATE.
-// These tests guard the current contract; revise them when the registry
-// becomes reachable.
+// v2.3.27 (gh#76): handle->compactor_registry is now constructed in
+// configure_common alongside the engine. The v2.3.10 dead-code
+// scenarios were rewritten to assert the documented success / error
+// codes for the configured-handle paths.
 
-TEST_CASE("entropic_register_compactor returns INVALID_STATE without registry wiring",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with NULL fn returns INVALID_CONFIG on configured handle",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(h, "id", nullptr, nullptr);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
 }
 
-TEST_CASE("entropic_register_compactor with valid fn still INVALID_STATE on configured handle",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with valid fn succeeds on configured handle",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(
         h, "capi_compact_id", capi_test_compactor_fn,
         reinterpret_cast<void*>(0x1234));
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
 }
 
-TEST_CASE("entropic_register_compactor with NULL identity still INVALID_STATE",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with NULL identity maps to global fallback (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(
         h, nullptr, capi_test_compactor_fn, nullptr);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
 }
 
 TEST_CASE("entropic_deregister_compactor rejects NULL handle",
@@ -2463,20 +2519,20 @@ TEST_CASE("entropic_deregister_compactor on unconfigured handle returns INVALID_
             == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-TEST_CASE("entropic_deregister_compactor on configured handle returns INVALID_STATE (no registry)",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_deregister_compactor on configured handle is OK (idempotent, gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
+    // Idempotent — deregistering an unregistered compactor returns OK.
     REQUIRE(entropic_deregister_compactor(h, "never_registered")
-            == ENTROPIC_ERROR_INVALID_STATE);
+            == ENTROPIC_OK);
 }
 
-TEST_CASE("entropic_deregister_compactor with NULL identity still INVALID_STATE",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_deregister_compactor with NULL identity maps to global (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
-    REQUIRE(entropic_deregister_compactor(h, nullptr)
-            == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(entropic_deregister_compactor(h, nullptr) == ENTROPIC_OK);
 }
 
 TEST_CASE("entropic_get_default_compactor rejects NULL handle",
@@ -2496,14 +2552,18 @@ TEST_CASE("entropic_get_default_compactor on unconfigured handle returns INVALID
             == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-TEST_CASE("entropic_get_default_compactor on configured handle returns INVALID_STATE (no registry)",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_get_default_compactor on configured handle returns OK + NULL fn (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     entropic_compactor_fn fn = capi_test_compactor_fn;
     void* ud = reinterpret_cast<void*>(0xBADC0DE);
     auto rc = entropic_get_default_compactor(h, &fn, &ud);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
+    // Documented: no built-in default exposed via the C ABI; both
+    // outputs are NULL'd.
+    REQUIRE(fn == nullptr);
+    REQUIRE(ud == nullptr);
 }
 
 // ── entropic_register_mcp_server (entropic_mcp.cpp configured paths) ─

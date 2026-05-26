@@ -1,3 +1,869 @@
+# entropic v2.3.27
+
+Patch release. **Wire `compactor_registry` on configure (gh#76).**
+Closes a defect surfaced during the v2.3.10 (gh#23) coverage push:
+`engine_handle.h` declared `compactor_registry` and four C API
+functions gated on it being non-null, but nothing in the codebase
+ever constructed it. Every call to
+`entropic_register_compactor` / `entropic_deregister_compactor` /
+`entropic_get_default_compactor` / `entropic_compact` returned
+`ENTROPIC_ERROR_INVALID_STATE` regardless of handle state.
+
+## What landed
+
+- `init_engine_and_interfaces` in `src/facade/entropic.cpp` now
+  constructs `handle->compactor_registry` against the engine's
+  built-in `CompactionManager` (just after `make_unique<AgentEngine>`).
+- New public accessor `AgentEngine::compaction_manager()` in
+  `include/entropic/core/engine.h` so the facade can borrow the
+  reference at registry construction. Lifetime: registry destroys
+  before engine in `entropic_destroy`, so the borrow stays valid for
+  the entire registry lifetime.
+
+## Tests
+
+The v2.3.10 compactor scenarios in
+`tests/unit/api/entropic_capi_test.cpp` were rewritten from
+"assert INVALID_STATE" placeholders to the documented contract:
+
+- `entropic_register_compactor` with NULL fn → `INVALID_CONFIG`.
+- `entropic_register_compactor` with valid fn → `OK`.
+- `entropic_register_compactor` with NULL identity → maps to global,
+  returns `OK`.
+- `entropic_deregister_compactor` is now idempotent + returns `OK`.
+- `entropic_get_default_compactor` returns `OK` + NULLs the out
+  params (the built-in default isn't exposed via the C ABI — by
+  design; consumers wrap by registering a custom compactor that
+  internally calls `entropic_compact`).
+
+## ABI
+
+None. Internal wiring + a new public C++ accessor on `AgentEngine`
+(not part of the C ABI). Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.26
+
+Patch release. **Gemma4 adapter: scrub GPT-OSS-style thought channel
+markup (gh#75).** Companion to v2.3.12 (gh#73). The same E4B Q8
+consumer reports surface a separate user-visible leak: the
+`<|channel>thought ... <channel|>` wrapper around the model's
+reasoning blocks survived `cleaned_content` and rendered as visible
+assistant prose. v2.3.12 fixed the malformed tool-call **dispatch**
+issue; this patch fixes the **rendering** issue.
+
+No source ABI change — adapter logic only. Drop-in for any 2.3.x
+consumer.
+
+## What landed
+
+Two new regex sweeps at the end of the `cleaned_content` pipeline in
+`Gemma4Adapter::parse_tool_calls`:
+
+1. **Paired** `<|channel>thought ... <channel|>` → drop whole block.
+2. **Unpaired** `<|channel>thought` opener with no close (truncated
+   emit) → drop the stray opener.
+
+Order matters — paired sweep runs first; unpaired-opener sweep
+catches any remaining stray opener.
+
+## Tests
+
+Three new `[gh75]` acceptance scenarios in
+`tests/unit/inference/adapter_acceptance_test.cpp`:
+
+- Verbatim E4B Q8 paired thought channel + real tool call →
+  assert the call extracts AND the channel markup + thought text
+  scrubbed from `cleaned_content`.
+- Unpaired opener edge case → assert stray `<|channel>` removed
+  while surrounding prose survives.
+- Plain-text anchor → assert no thought-channel pattern → no
+  unintended modification.
+
+## ABI
+
+None. Adapter logic only.
+
+---
+
+# entropic v2.3.25
+
+Patch release. **New C API: `entropic_state_save` / `entropic_state_load`.**
+Thirteenth and final MVP-10 item from gh#23 — closes the loop on
+"expose all llama.cpp knobs as engine config options." This one
+needed a new public C API surface rather than a config field, because
+state save/load is a per-call operation against an active backend.
+
+## What landed
+
+Two new C API functions in `include/entropic/entropic.h`:
+
+```c
+entropic_error_t entropic_state_save(
+    entropic_handle_t handle, const char* tier_name, const char* path);
+entropic_error_t entropic_state_load(
+    entropic_handle_t handle, const char* tier_name, const char* path);
+```
+
+Implementation in `src/facade/entropic.cpp`:
+
+- `do_state_save` resolves the named tier's backend via the existing
+  `require_active_backend` helper, calls `backend->save_state(0, buf)`
+  (the backend's pre-existing KV-cache serialization, in place since
+  v1.9.x), and writes the byte blob to the requested path.
+- `do_state_load` reads the blob back, calls
+  `backend->restore_state(0, buf)`.
+- Both functions are wrapped by the v2.3.13 `c_api_try` barrier, so
+  `std::filesystem` / `std::ios` errors map to documented error
+  codes instead of escaping.
+
+## Format
+
+Opaque binary blob — bit-for-bit the `llama_state_get_data` output.
+**Not portable** across llama.cpp commits or model files. The caller
+must reload the same model before `entropic_state_load`. Future
+revisions may wrap the blob in a versioned container; this minimal
+v2.3.25 keeps the surface simple.
+
+## Tests
+
+`tests/unit/api/entropic_capi_test.cpp` adds 8 `[v2.3.25][state_save]`
+/ `[state_load][gh23]` scenarios:
+
+- NULL handle / tier_name / path rejection (each error code pinned).
+- Unconfigured handle returns `INVALID_STATE` (the orchestrator-not-
+  initialized path).
+
+End-to-end save/load round-trip (load-after-save reproduces decoded
+state) needs a real model and lives in the model-test scope —
+deferred until the next minor release model-test pass.
+
+## MVP-10 closeout
+
+| # | Knob | Status |
+|---|---|---|
+| 1 | min_p | ✅ v2.3.10 |
+| 2 | presence_penalty | ✅ v2.3.14 |
+| 3 | frequency_penalty | ✅ v2.3.15 |
+| 4 | logit_bias | ✅ v2.3.16 |
+| 5 | n_ubatch | ✅ v2.3.17 |
+| 6 | split_mode | ✅ v2.3.18 |
+| 7 | main_gpu | ✅ v2.3.19 |
+| 8 | offload_kqv | ✅ v2.3.20 |
+| 9 | rope_freq_base | ✅ v2.3.21 |
+| 10 | rope_freq_scale | ✅ v2.3.22 |
+| 11 | n_parallel | ✅ v2.3.23 |
+| 12 | llama_log_set | ✅ v2.3.24 (llama_log_path override) |
+| 13 | state save/load | ✅ v2.3.25 |
+
+gh#23 can close.
+
+## ABI
+
+Additive only (two new `ENTROPIC_EXPORT` functions). Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.24
+
+Patch release. **Additive top-level knob: `llama_log_path`.**
+Twelfth MVP-10 item from gh#23 (`llama_log_set`). The existing
+`ggml_logging` toggle already wired the llama.cpp log callback via
+`entropic_inference_log_to_file` → `llama_log_set`, but the
+destination path was hardcoded to `<log_dir>/llama_ggml.log`. This
+patch adds an explicit override.
+
+## What landed
+
+- `ParsedConfig::llama_log_path` (`std::filesystem::path`, default
+  empty) in `include/entropic/types/config.h`.
+- `ModelOrchestrator::initialize` (`src/inference/orchestrator.cpp`)
+  routes the llama log via the explicit path when set, falling back
+  to the existing `<log_dir>/llama_ggml.log` when empty. Also drops
+  the `log_dir`-empty gate — a consumer can opt into llama logs via
+  `llama_log_path` alone without a session.log dir.
+- YAML loader reads `llama_log_path` (top-level, alongside `log_dir`
+  / `ggml_logging`).
+
+## Tests
+
+YAML round-trip in `loader_test.cpp` + `comprehensive_config.yaml`:
+`ggml_logging: true` + `llama_log_path: /tmp/llama-custom.log`.
+
+## Scope boundary
+
+MVP-10 item 12 of ~13. Remaining: state save/load — that's a new C
+API surface (not a ModelConfig knob), so it ships across its own
+multi-version sequence and reuses the v2.3.10 Sampler/Tokenizer seam
+pattern for the underlying engine integration.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.23
+
+Patch release. **Additive context-init knob: `n_parallel`.**
+Eleventh MVP-10 item from gh#23. Max parallel sequences per context.
+`1` (default) matches llama.cpp's default — bit-identical pre-v2.3.23
+behavior.
+
+## What landed
+
+- `ModelConfig::n_parallel` (`int`, default `1`).
+- `build_cparams` maps to `cparams.n_seq_max` (llama.cpp's internal
+  name).
+- YAML loader reads `n_parallel` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`n_parallel: 4`).
+
+## Scope boundary
+
+MVP-10 item 11 of ~13. Remaining: state save/load (a new C API
+surface, not a ModelConfig knob) + llama_log_set (backend init).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.22
+
+Patch release. **Additive context-init knob: `rope_freq_scale`.**
+Tenth MVP-10 item from gh#23. RoPE frequency-scaling factor for
+YaRN-style context extension. `0.0` (default) uses the model's
+trained value — bit-identical pre-v2.3.22 behavior. Pairs with the
+v2.3.21 `rope_freq_base`.
+
+## What landed
+
+- `ModelConfig::rope_freq_scale` (`float`, default `0.0`).
+- `build_cparams` sets `cparams.rope_freq_scale = cfg.rope_freq_scale`.
+- YAML loader reads `rope_freq_scale` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`rope_freq_scale: 0.5`).
+
+## Scope boundary
+
+MVP-10 item 10 of ~10. With the v2.3.21 / v2.3.22 pair the RoPE
+overrides are complete. Remaining items: state save/load (new C API
+surface), `n_parallel` (context init), `llama_log_set` (backend init).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.21
+
+Patch release. **Additive context-init knob: `rope_freq_base`.**
+Ninth MVP-10 item from gh#23. RoPE base-frequency override for
+extended-context setups. `0.0` (default) uses the model's trained
+value — bit-identical pre-v2.3.21 behavior.
+
+## What landed
+
+- `ModelConfig::rope_freq_base` (`float`, default `0.0`) in
+  `include/entropic/types/config.h`.
+- `build_cparams` sets `cparams.rope_freq_base = cfg.rope_freq_base`.
+  llama.cpp treats `0.0` as "use the model's trained value", so the
+  default preserves load+context bit-for-bit.
+- YAML loader reads `rope_freq_base` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`rope_freq_base: 100000.0`).
+
+## Scope boundary
+
+MVP-10 item 9 of ~10. Pairs with `rope_freq_scale` (v2.3.22, next).
+After that: state save/load, n_parallel, llama_log_set.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.20
+
+Patch release. **Additive context-init knob: `offload_kqv`.**
+Eighth MVP-10 item from gh#23. Controls whether llama.cpp's KQV ops
+(including the KV cache) run on GPU or CPU. `true` (default)
+matches llama.cpp's default — bit-identical for callers not opting
+out. `false` keeps KQV on CPU for tight-VRAM single-GPU setups
+(throughput trade-off).
+
+## What landed
+
+- `ModelConfig::offload_kqv` (`bool`, default `true`) in
+  `include/entropic/types/config.h`. Appended after `main_gpu`.
+- `build_cparams` sets `cparams.offload_kqv = cfg.offload_kqv`.
+- YAML loader reads `offload_kqv` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`offload_kqv: false` on the
+lead tier).
+
+## Scope boundary
+
+MVP-10 item 8 of ~10. Next batch: `rope_freq_base` / `rope_freq_scale`
+(both on the model load side — RoPE frequency scaling for extended
+contexts).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.19
+
+Patch release. **Additive model-load knob: `main_gpu`.** Seventh
+MVP-10 item from gh#23. Pairs with the v2.3.18 `split_mode` knob —
+selects the primary GPU index for single-GPU pinning
+(`split_mode: none`) or small-tensor placement (`split_mode: row`).
+Ignored under `split_mode: layer`. `0` (default) preserves
+pre-v2.3.19 load bit-for-bit.
+
+## What landed
+
+- `ModelConfig::main_gpu` (`int`, default `0`) in
+  `include/entropic/types/config.h`. Appended after `split_mode`.
+- `build_load_mparams` (the v2.3.18 helper) now sets
+  `mparams.main_gpu = cfg.main_gpu`. Zero default keeps llama.cpp's
+  pre-v2.3.19 GPU choice (typically GPU 0).
+- YAML loader reads `main_gpu` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`main_gpu: 1` on the lead tier).
+
+## Scope boundary
+
+MVP-10 item 7 of ~10. Next: `offload_kqv` (v2.3.20). With v2.3.18 +
+v2.3.19 the multi-GPU placement knobs are complete.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.18
+
+Patch release. **Additive model-load knob: `split_mode`.** Sixth
+MVP-10 item from gh#23. Selects llama.cpp's multi-GPU split strategy
+(`NONE`, `LAYER`, `ROW`). Empty string (default) keeps llama.cpp's
+default (`LAYER`) — preserves pre-v2.3.18 model load bit-for-bit.
+
+## What landed
+
+- `ModelConfig::split_mode` (`std::string`, default `""`) in
+  `include/entropic/types/config.h`.
+- New `parse_split_mode(s)` helper maps `""` / `"none"` / `"layer"`
+  / `"row"` to `llama_split_mode`. Unknown → `LAYER` + warn.
+- New `build_load_mparams(cfg)` helper consolidates the four mparams
+  fields (`n_gpu_layers`, `use_mmap`, `use_mlock`, `split_mode`)
+  into one call site. `LlamaCppBackend::load_gpu_model` shrinks from
+  inline setup to a single helper invocation — keeps knots ABC under
+  20 with headroom for the remaining model-load knobs.
+- YAML loader reads `split_mode` per tier.
+
+## Tests
+
+- `tests/unit/types/config_structs_test.cpp` — default-value pin
+  (empty string).
+- `tests/unit/config/loader_test.cpp` + comprehensive fixture YAML
+  — round-trip with `split_mode: row` on the lead tier.
+
+## Scope boundary
+
+MVP-10 item 6 of ~10. Next: `main_gpu` (v2.3.19), the natural pair
+with `split_mode: none` for single-GPU pinning. `build_load_mparams`
+is the integration point for the remaining model-load knobs
+(`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`).
+
+## ABI
+
+Field appended after `tensor_split`. Additive only. Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.17
+
+Patch release. **Additive context-init knob: `n_ubatch`.** Fifth
+MVP-10 item from gh#23. First MVP-10 entry to land on `ModelConfig`
+(per-tier model/context init) rather than `GenerationParams`
+(per-call sampler) — `n_ubatch` is the PHYSICAL micro-batch size
+llama.cpp's kernels process inside each `llama_decode` call, vs
+`n_batch` (the LOGICAL queue size). Decoupled in llama.cpp v0.4.
+
+Default `0` keeps llama.cpp's default behavior (effectively
+`n_ubatch == n_batch`), preserving pre-v2.3.17 chunking bit-for-bit.
+
+## What landed
+
+- `ModelConfig::n_ubatch` (`int`, default `0`) in
+  `include/entropic/types/config.h`. Appended after `n_batch`, before
+  `n_threads`. Smaller values reduce peak GPU memory at the same
+  `n_batch`.
+- `build_cparams` in `src/inference/llama_cpp_backend.cpp` sets
+  `cparams.n_ubatch = cfg.n_ubatch` when `cfg.n_ubatch > 0`. Default
+  `0` leaves the field at llama.cpp's default.
+- YAML loader (`src/config/loader.cpp`) reads `n_ubatch` per tier.
+
+## Tests
+
+- `tests/unit/types/config_structs_test.cpp` — default-value pin
+  (`n_ubatch == 0`).
+- `tests/unit/config/loader_test.cpp` + `tests/data/comprehensive_config.yaml`
+  — round-trip from YAML (`n_ubatch: 256` on the lead tier).
+
+## Scope boundary
+
+MVP-10 item 5 of ~10. Remaining items (`split_mode`, `main_gpu`,
+`offload_kqv`, `rope_freq_base`, `rope_freq_scale`, state save/load,
+`n_parallel`, `llama_log_set`) follow as separate patches. The
+ModelConfig group is now in motion; the next several knobs land on
+the same struct.
+
+## ABI
+
+Field appended after `n_batch`. Additive only. Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
+# entropic v2.3.16
+
+Patch release. **Additive sampler-config knob: `logit_bias`.** Fourth
+MVP-10 item from gh#23. First MVP-10 entry that lands a NEW sampler
+stage rather than threading args into an existing one — wires the
+`llama_sampler_init_logit_bias` stage in at the START of the chain
+(before penalties) so every downstream filter sees the biased
+distribution. Empty map (default) skips the stage — pre-v2.3.16
+chain stays bit-for-bit identical.
+
+## What landed
+
+- `GenerationParams::logit_bias` (`std::unordered_map<int32_t, float>`)
+  in `include/entropic/types/config.h`. Token id → additive bias in
+  logit-space. Common uses:
+  - Suppress: `bias = -INFINITY` (or large negative like `-100`).
+  - Force:    `bias = +INFINITY` (or large positive).
+  - Nudge:    `bias = ±1.0..±5.0`.
+- `LlamaCppSamplerFactory::create` (plain decode path) constructs a
+  `std::vector<llama_logit_bias>` from the map and calls
+  `llama_sampler_init_logit_bias(n_vocab, count, biases)` as the
+  first stage AFTER grammar, BEFORE penalties. Gate fires only when
+  the map is non-empty.
+- Speculative path (`to_common_sampling`) populates
+  `cps.logit_bias` (a `vector<llama_logit_bias>`). Empty stays empty —
+  speculative output bit-identical for callers not using the knob.
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept the `logit_bias` object form:
+
+  ```json
+  {"logit_bias": {"42": -100.0, "7": 2.5}}
+  ```
+
+  Keys are token ids (strings per JSON spec, parsed to `int32_t`);
+  values are `float` biases. Un-parseable keys are silently skipped.
+  Extracted into `parse_logit_bias_into` helper in each parser to
+  keep `parse_params` / `parse_params_json` under the knots ABC gate.
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][logit_bias]` scenarios + a default-base-case assertion:
+
+- Default sentinel (empty map).
+- Round-trip with two distinct tokens.
+- Same-token-twice → later assignment wins (map semantics).
+- Independence from temperature / top_p / top_k / penalties / min_p.
+- Backward-compat pin: empty map = stage disabled.
+
+## Scope boundary (gh#23 sequencing)
+
+MVP-10 item 4 of ~10. Remaining items (`n_ubatch`, `split_mode`,
+`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`,
+state save/load, `n_parallel`, `llama_log_set`) follow as separate
+patches. The next batch shifts from sampler knobs (which all
+operate per-generation) to backend / context init knobs (which
+operate per-load) — a different config touch surface.
+
+---
+
+# entropic v2.3.15
+
+Patch release. **Additive sampler-config knob: `frequency_penalty`.**
+Third MVP-10 item from gh#23 (expose llama.cpp sampler chain via
+config). Pure additive — default `0.0f` preserves pre-v2.3.15 chain
+shape bit-for-bit. Pairs with the v2.3.14 `presence_penalty` knob;
+together they wire both per-occurrence linear (frequency) and
+per-presence constant (presence) terms into the penalties sampler
+that already carried `repeat_penalty`.
+
+## What landed
+
+- `GenerationParams::frequency_penalty` (`float`, default `0.0f`) in
+  `include/entropic/types/config.h`. Appended after `presence_penalty`,
+  before `max_tokens` — additive ABI only.
+- `LlamaCppBackend::create_sampler` (plain decode path, via the
+  v2.3.10 Sampler seam) now passes `params.frequency_penalty` as the
+  3rd argument to `llama_sampler_init_penalties` (previously hardcoded
+  `0.0f`). Penalties-sampler gate expands to fire when ANY of
+  `repeat_penalty != 1.0` / `presence_penalty > 0.0` /
+  `frequency_penalty > 0.0`.
+- Speculative-decoding path (`to_common_sampling`) sets
+  `cps.penalty_freq = params.frequency_penalty`. Default `0.0f`
+  preserves bit-for-bit speculative output.
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept `"frequency_penalty"`. Missing key →
+  default `0.0f`.
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][frequency_penalty]` scenarios mirroring the v2.3.14
+presence_penalty shape:
+
+- Default sentinel + round-trip + boundary handling.
+- Independence from repeat / presence / min_p / top_p / top_k /
+  temperature (no struct-field aliasing).
+- Coexistence pin: presence + frequency set distinctly read back
+  with separate values (one doesn't shadow the other).
+
+The default base-case scenario gains a
+`REQUIRE(frequency_penalty == 0.0f)` assertion alongside the existing
+`min_p` / `presence_penalty` lines.
+
+## Scope boundary (gh#23 sequencing)
+
+MVP-10 item 3 of ~10. Remaining items (`logit_bias`, `n_ubatch`,
+`split_mode`, `main_gpu`, `offload_kqv`, `rope_freq_base`,
+`rope_freq_scale`, state save/load, `n_parallel`, `llama_log_set`)
+follow as separate `v2.3.x` patches per the cadence. With v2.3.14
++ v2.3.15 the penalties sampler is now fully configurable; the next
+knob lands a new sampler stage or backend init flag rather than
+another argument on an existing stage.
+
+---
+
+# entropic v2.3.14
+
+Patch release. **Additive sampler-config knob: `presence_penalty`.**
+Second MVP-10 item from gh#23 (expose llama.cpp sampler chain via
+config). Pure additive — default `0.0f` preserves pre-v2.3.14 chain
+shape bit-for-bit, so existing configs are unaffected.
+
+## What landed
+
+- `GenerationParams::presence_penalty` (`float`, default `0.0f`) in
+  `include/entropic/types/config.h`. Appended after `min_p`, before
+  `max_tokens` — additive ABI only, no insertion into the prior
+  published layout.
+- `LlamaCppBackend::create_sampler` (plain decode path, via the
+  v2.3.10 Sampler seam) now passes `params.presence_penalty` as the
+  4th argument to `llama_sampler_init_penalties` (previously hardcoded
+  to `0.0f`). The gate that controls whether the penalties sampler is
+  added to the chain expands to fire when EITHER `repeat_penalty !=
+  1.0` OR `presence_penalty > 0.0` — so callers opting in to presence
+  don't need to also non-default repeat.
+- Speculative-decoding path (`to_common_sampling`) sets
+  `cps.penalty_present = params.presence_penalty`. Default `0.0f`
+  preserves bit-for-bit speculative output (the v2.1.11 correctness
+  contract).
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept `"presence_penalty"`. Missing key →
+  default `0.0f` (no behavior change for existing payloads).
+
+The 3rd argument to `llama_sampler_init_penalties`
+(`frequency_penalty`) remains hardcoded `0.0f` — that lands as
+v2.3.15 (gh#23 MVP item 3).
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][presence_penalty]` scenarios covering:
+
+- Default sentinel (`0.0f` disabled).
+- Round-trip at a typical productive value (`0.6`).
+- Boundary handling at `0.0`, `1.0`, `2.0`, and a negative value
+  (`-0.5`) — struct must not silently rewrite caller intent; clamping
+  belongs to the schema layer.
+- Independence from `repeat_penalty` / `min_p` / `top_p` / `top_k` /
+  `temperature` (no struct-field aliasing).
+- Backward-compat pin: the new sampler gate
+  (`repeat_penalty != 1.0 || presence_penalty > 0.0`) stays ON on
+  defaults (repeat = 1.1) — a future default change would have to
+  break this test deliberately.
+
+The default base-case scenario also gains a
+`REQUIRE(presence_penalty == 0.0f)` assertion alongside the existing
+`min_p == 0.0f` line.
+
+## Scope boundary (gh#23 sequencing)
+
+This is MVP-10 item 2 of ~10. Remaining items
+(`frequency_penalty`, `logit_bias`, `n_ubatch`, `split_mode`,
+`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`, state
+save/load, `n_parallel`, `llama_log_set`) will follow as separate
+`v2.3.x` patches per the "one issue one patch ver" cadence. The
+seams added in v2.3.10 (Tokenizer + SamplerFactory) make each new
+knob a tight, isolated diff.
+
+---
+
+# entropic v2.3.13
+
+Patch release. **C-ABI exception barrier on configure entry points (gh#74).**
+The three configure functions (`entropic_configure`,
+`entropic_configure_from_file`, `entropic_configure_dir`) wrap their
+bodies in a new `c_api_try` template helper so `std::filesystem` and
+`nlohmann::json` exceptions from the loader path map to documented
+error codes instead of escaping into the caller — restoring the
+"exceptions do not cross .so boundaries" rule documented in
+`docs/architecture-cpp.md`.
+
+No ABI change — internal C++ wiring only. Drop-in for any 2.3.x
+consumer.
+
+## The bug
+
+Pre-2.3.13, calling `entropic_configure_dir(h, "")` or
+`entropic_configure_dir(h, "/dev/null/cannot_be_a_dir")` let a
+`std::filesystem::filesystem_error` thrown from `setup_session()` or
+`load_layered()` escape the `extern "C"` boundary. A C consumer
+(including the auto-generated Python wrapper) sees an unhandled
+exception terminate the process instead of an error code it can
+inspect.
+
+Surfaced during the v2.3.10 coverage push (gh#74); tests there caught
+the throw with try/catch as a workaround.
+
+## The fix
+
+New template helper in `src/facade/entropic.cpp`:
+
+```cpp
+template <typename Fn>
+static entropic_error_t c_api_try(entropic_handle_t handle, Fn&& fn);
+```
+
+Wraps the body in try/catch and maps:
+
+- `std::filesystem::filesystem_error` → `ENTROPIC_ERROR_IO`
+- `nlohmann::json::exception`         → `ENTROPIC_ERROR_INVALID_CONFIG`
+- any other `std::exception`          → `ENTROPIC_ERROR_INTERNAL`
+
+Populates `handle->last_error` with `what()` so consumers can retrieve
+it via `entropic_last_error()`. Logs at error level on every catch.
+
+Applied to:
+
+- `entropic_configure`           (`config_json` string body)
+- `entropic_configure_from_file` (YAML file body)
+- `entropic_configure_dir`       (layered loader body — gh#74's case)
+
+The NULL-handle / NULL-argument guards stay OUTSIDE the wrapper so
+those continue to return `INVALID_HANDLE` / `INVALID_ARGUMENT` without
+spinning up the lambda.
+
+## Tests
+
+`tests/unit/api/entropic_capi_test.cpp`:
+
+- The pre-2.3.13 try/catch workarounds in the `[configure]` cases are
+  replaced with `REQUIRE_NOTHROW(...)` assertions — the contract now
+  is "no exception, return an error code".
+- New `[gh74]` scenario: `entropic_configure_dir` with `/dev/null/cannot_be_a_dir`
+  asserts the function returns non-OK without throwing (pre-fix it
+  threw `filesystem_error`).
+
+## Scope boundary
+
+This wraps the three configure entry points only — the configure
+functions are the ones gh#74 actually reported as visibly leaking. The
+remaining ~57 `extern "C"` functions in `entropic.cpp` (e.g.
+`entropic_run`, `entropic_register_*`, query getters) don't currently
+call paths that throw, but a future patch can apply `c_api_try` to
+each as part of belt-and-suspenders hardening. The helper is in
+place; rollout is mechanical when needed.
+
+---
+
+# entropic v2.3.12
+
+Patch release. **Gemma4 adapter: parse the E4B Q8 `<|tool_call>call:NAME{args}<tool_call|>` malformed wrapper (gh#73).**
+Gemma 4 E4B (Q8 quant) intermittently emits a tool-call wrapper with
+three deviations from the gh#69 canonical form, and the pre-2.3.12
+adapter silently rejected it — driving a parser-reject → "no tool call"
+retry → doom-loop → "delegation failed" path the consumer surfaces to
+the parent.
+
+No source ABI change — adapter logic only. Drop-in for any 2.3.x
+consumer.
+
+## The bug
+
+From `session_model.log` (Gemma 4 E4B Q8, entropic 2.3.9, registrar tier):
+
+```
+<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>
+<|tool_call>call:entropic.complete{summary:<|"|>Successfully removed ...<|"|>}<tool_call|>
+```
+
+Three deviations from `<tool_call>...</tool_call>` / `<|tool_call>...</tool_call>` / `<|im_start|>tool_call ... </tool_call>`:
+
+1. **`call:` prefix** before the tool name.
+2. **Non-JSON args** — `{student_id:2}` instead of `{"student_id":2}`
+   (unquoted key, sometimes unquoted value).
+3. **Asymmetric close `<tool_call|>`** — pipe-before-`>` form not
+   matched by the `</tool_call>` close the gh#69 variant uses.
+
+A nested `<|"|>` appears INSIDE string values as the model's confused
+escape sequence for `"`.
+
+## The fix
+
+New static `parse_call_prefix_tool_calls` helper in
+`src/inference/adapters/gemma4_adapter.cpp` runs as a THIRD fallback
+in `parse_tool_calls`, only when the tagged + bare-JSON paths come up
+empty (so canonical emits are never double-extracted). It:
+
+1. Matches `<|tool_call(\|)?>call:NAME{args}<tool_call|>` permissively.
+2. Normalizes args via `normalize_call_args_json`: replaces `<|"|>`
+   with `"`, quotes bare keys after `{` or `,`, and drops trailing
+   commas before `}` / `]`.
+3. Parses the normalized JSON with nlohmann::json. Skips silently on
+   parse failure — the base parser's tagged + bare-JSON paths run
+   first, so this is purely a permissive third chance.
+4. Populates both `ToolCall::arguments` (map) and `arguments_json`
+   (canonical dump) so dispatch passthrough consumers see a normalized
+   shape.
+
+The cleaned_content scrub also learns the asymmetric close so the
+malformed wrapper doesn't leak into the user-visible rendering.
+
+## Tests
+
+`tests/unit/inference/adapter_acceptance_test.cpp` adds four `[gh73]`
+scenarios:
+
+- Verbatim E4B Q8 `<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>`
+  — asserts the call extracts with `student_id == "2"` and the wrapper
+  doesn't leak into cleaned_content.
+- `<|"|>` quote-escape variant inside a `summary` string —
+  asserts the summary text extracts cleanly and the `<|"|>` escape
+  doesn't survive into the value.
+- Two `call:` calls back-to-back — asserts both extract in order.
+- Canonical gh#69 channel emit (positive anchor) — asserts the
+  fallback does NOT fire when the canonical path already succeeded
+  (no double-extraction).
+
+## Severity
+
+- **Frequency:** intermittent on Gemma 4 E4B Q8 (~1-in-3 mutation
+  turns in observed sessions).
+- **Impact:** tool call rejected → "delegation failed" surfaced to
+  parent → no consumer-side workaround.
+- **Severity:** ship-blocker for any consumer running Gemma 4 E4B Q8
+  as a child tier that mutates state.
+
+---
+
+# entropic v2.3.11
+
+Patch release. **Gemma4 adapter: prevent fabricated-multi-turn tool
+dispatch (gh#72).** Gemma 4 E4B (Q8 and Q4_K_M, observed in production
+on the sassafras-class consumer) frequently emits a complete synthetic
+multi-turn exchange inside a single assistant turn — real reply →
+`<|im_end|>` → fabricated `<|im_start|>user` followup → fabricated
+`<|im_start|>assistant` reply with another `<tool_call>`. The pre-2.3.11
+adapter scanned the whole emit for tool calls and the engine dispatched
+the fabricated call against intent the real parent never sent.
+
+No source ABI change — adapter logic only. Drop-in for any 2.3.x
+consumer.
+
+## The bug
+
+From `session_model.log` (Gemma 4 E4B Q8, entropic 2.3.9):
+
+```
+<|im_start|>assistant
+Thank you for clarifying. ...
+<tool_call>{"name": "entropic.delegate", ...}</tool_call>
+<|im_end|>
+<|im_start|>user
+Just remove them from the system.<|im_end|>     ← fabricated parent
+<|im_start|>assistant
+<tool_call>{"name": "entropic.delegate", ...}</tool_call>
+<|im_end|>
+```
+
+Adapter extracted the second `<tool_call>` and the engine dispatched
+a `registrar.delegate` request on parent intent the parent never voiced.
+Confirmed on the Q4_K_M quant too (2026-05-24 log): same pattern with a
+bare-JSON `{"action":"delegate",...}` inside the fabricated user turn.
+
+## The fix
+
+New static helper `cut_at_fabricated_turn` in
+`src/inference/adapters/gemma4_adapter.cpp` runs at the top of
+`parse_tool_calls`. Rule: cut at the first `<|im_end|>` (or
+`<end_of_turn>`) followed by a NON-tool_call channel opener
+(`<|im_start|>user`, `<|im_start|>assistant`, `<|im_start|>system`, or
+the Gemma-native `<start_of_turn>(user|model)`). Both the bare-JSON
+fallback and the cleaned_content scrub run against the truncated input,
+so neither path can act on post-turn fabrication.
+
+Legitimate multi-tool_call emits separate channels by
+`<|im_start|>tool_call` — those still pass through unchanged. The
+v2.3.8 gh#69 multi-call acceptance scenario is preserved.
+
+## Tests
+
+`tests/unit/inference/adapter_acceptance_test.cpp` adds four
+`[gh72]` scenarios:
+
+- Verbatim E4B Q8 fabrication — real `<tool_call>` + fabricated
+  `<|im_start|>user` carrying a second `<tool_call>`. Asserts exactly
+  ONE call dispatched + the fabricated `task` text never reaches it.
+- Q4_K_M variant — apology continuation + fabricated user turn with a
+  bare-JSON `{"action":"delegate",...}`. Asserts zero calls dispatched.
+- Multi-tool_call positive anchor — back-to-back tool_call channels
+  separated by `<|im_end|>`. Asserts both calls survive (gh#69 wire
+  protocol still works).
+- Gemma-native template — `<end_of_turn>` + `<start_of_turn>user`
+  variant. Asserts the cut handles the non-ChatML markers too.
+
+## Severity
+
+- **Frequency:** observed across most multi-turn chats on Gemma 4 E4B
+  Q8 and Q4_K_M (consumer reports).
+- **Impact:** false-positive tool dispatch (data mutations on
+  fabricated parent intent), 3× turn latency from apology spirals,
+  parent confusion about assistant ignoring real messages.
+- **Severity:** ship-blocker for any consumer running Gemma 4 E4B as
+  the lead tier.
+
+---
+
 # entropic v2.3.10
 
 Patch release. **Additive sampler-config knob: `min_p`.** First MVP-10

@@ -41,6 +41,34 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.n_batch == 512);
         }
 
+        THEN("n_ubatch defaults to 0 (== match n_batch, gh#23 v2.3.17)") {
+            REQUIRE(config.n_ubatch == 0);
+        }
+
+        THEN("split_mode defaults to empty (== layer, gh#23 v2.3.18)") {
+            REQUIRE(config.split_mode.empty());
+        }
+
+        THEN("main_gpu defaults to 0 (gh#23 v2.3.19)") {
+            REQUIRE(config.main_gpu == 0);
+        }
+
+        THEN("offload_kqv defaults to true (gh#23 v2.3.20)") {
+            REQUIRE(config.offload_kqv == true);
+        }
+
+        THEN("rope_freq_base defaults to 0.0 (== use model's trained value, gh#23 v2.3.21)") {
+            REQUIRE(config.rope_freq_base == 0.0f);
+        }
+
+        THEN("rope_freq_scale defaults to 0.0 (== use model's trained value, gh#23 v2.3.22)") {
+            REQUIRE(config.rope_freq_scale == 0.0f);
+        }
+
+        THEN("n_parallel defaults to 1 (gh#23 v2.3.23)") {
+            REQUIRE(config.n_parallel == 1);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

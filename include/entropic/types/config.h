@@ -158,8 +158,78 @@ struct ModelConfig {
     std::string cache_type_k = "f16";        ///< KV cache key quantization type
     std::string cache_type_v = "f16";        ///< KV cache value quantization type
     int n_batch = 512;                       ///< Batch size for prompt processing
+
+    /// @brief Physical micro-batch size for prompt processing (gh#23 MVP item 5).
+    /// llama.cpp's `cparams.n_ubatch`. Decoupled from `n_batch` since
+    /// llama.cpp v0.4 — `n_batch` is the LOGICAL batch (max tokens
+    /// queued per `llama_decode` call) and `n_ubatch` is the PHYSICAL
+    /// chunk the kernels actually process. Smaller `n_ubatch` reduces
+    /// peak GPU memory for the same `n_batch`. `0` (default) means
+    /// "match `n_batch`" — preserves pre-v2.3.17 behavior bit-for-bit
+    /// since llama.cpp's default in that case is `min(n_batch, default)`.
+    /// Typical productive values: 128, 256, 512 (== n_batch).
+    /// @version 2.3.17
+    int n_ubatch = 0;
+
     int n_threads = 0;                       ///< CPU threads (0 = auto-detect)
     std::string tensor_split;                ///< Multi-GPU tensor split ratios (empty = single GPU)
+
+    /// @brief Multi-GPU split mode for model load (gh#23 MVP item 6).
+    /// Maps to llama.cpp's `enum llama_split_mode`. Accepted values:
+    ///   - `""` (default) — keep llama.cpp's default (`LAYER`).
+    ///   - `"none"`  — single GPU, no split. Use with `main_gpu`.
+    ///   - `"layer"` — split layers + KV across GPUs (llama.cpp default).
+    ///   - `"row"`   — split layers + KV with tensor parallelism.
+    /// Unrecognized values fall back to the default with a logged warning.
+    /// Empty (default) preserves pre-v2.3.18 model load bit-for-bit.
+    /// @version 2.3.18
+    std::string split_mode;
+
+    /// @brief Primary GPU index for model load (gh#23 MVP item 7).
+    /// llama.cpp's `mparams.main_gpu`. Effective when `split_mode ==
+    /// "none"` (single-GPU pinning) or `"row"` (small tensors go to
+    /// this GPU). Ignored when `split_mode == "layer"`. `0` (default)
+    /// preserves pre-v2.3.19 behavior bit-for-bit.
+    /// @version 2.3.19
+    int main_gpu = 0;
+
+    /// @brief Offload KQV ops (incl. KV cache) to the GPU (gh#23 MVP item 8).
+    /// llama.cpp's `cparams.offload_kqv`. `true` (default) matches
+    /// llama.cpp's default — KQV runs on GPU for max throughput.
+    /// Set `false` to keep KQV on the CPU side; saves VRAM at a
+    /// throughput cost. Useful for tight-VRAM single-GPU setups.
+    /// @version 2.3.20
+    bool offload_kqv = true;
+
+    /// @brief RoPE base frequency override (gh#23 MVP item 9).
+    /// llama.cpp's `cparams.rope_freq_base`. `0.0` (default) takes
+    /// the model's trained value — preserves pre-v2.3.21 behavior
+    /// bit-for-bit. Positive overrides typically range 10000–10000000;
+    /// raising it stretches the RoPE period (extends effective context
+    /// at a quality cost). Pair with `rope_freq_scale` for YaRN-style
+    /// context-extension setups.
+    /// @version 2.3.21
+    float rope_freq_base = 0.0f;
+
+    /// @brief RoPE frequency scaling factor (gh#23 MVP item 10).
+    /// llama.cpp's `cparams.rope_freq_scale`. `0.0` (default) takes
+    /// the model's trained value — preserves pre-v2.3.22 behavior
+    /// bit-for-bit. Values in `(0, 1)` shrink the effective context
+    /// (denser RoPE positions); values `> 1` stretch it. Typical
+    /// YaRN-style extension uses values like `0.5` (2× context).
+    /// Pairs with `rope_freq_base`.
+    /// @version 2.3.22
+    float rope_freq_scale = 0.0f;
+
+    /// @brief Max parallel sequences per context (gh#23 MVP item 11).
+    /// llama.cpp's `cparams.n_seq_max`. `1` (default) matches
+    /// llama.cpp's default — single-sequence context, bit-identical
+    /// pre-v2.3.23 behavior. Raising this enables KV-cache slot reuse
+    /// across multiple concurrent generations (e.g. speculative
+    /// rejection batches, batched-server scenarios). Effective max is
+    /// `LLAMA_MAX_SEQ`; consult llama.cpp for the current ceiling.
+    /// @version 2.3.23
+    int n_parallel = 1;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */
@@ -222,7 +292,7 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 2.3.10 — added min_p (gh#23 MVP item 1)
+ * @version 2.3.16 — added logit_bias (gh#23 MVP item 4)
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -238,6 +308,40 @@ struct GenerationParams {
     /// still selects the single survivor).
     /// @version 2.3.10
     float min_p = 0.0f;
+
+    /// @brief Presence-penalty term in llama.cpp's penalties sampler (gh#23 MVP item 2).
+    /// Subtracts a constant from any token that has appeared at least
+    /// once in the recent window. `0.0` (default) disables — preserves
+    /// pre-v2.3.14 chain bit-for-bit. Typical range: 0.0–2.0.
+    /// @version 2.3.14
+    float presence_penalty = 0.0f;
+
+    /// @brief Per-token logit bias map (gh#23 MVP item 4).
+    /// Maps token id → additive bias (in logit-space). Applied at the
+    /// start of the sampler chain (before penalties), so it shapes
+    /// the post-softmax distribution that every downstream filter
+    /// (top-k, top-p, min-p, etc.) sees. Common uses:
+    ///   - Suppress a token: `bias = -INFINITY` (or a large negative
+    ///     value like -100 if -INFINITY doesn't survive JSON).
+    ///   - Force a token: `bias = +INFINITY` (or large positive).
+    ///   - Subtle nudges: `bias = ±1.0..±5.0`.
+    /// Empty map (default) disables the stage entirely — preserves
+    /// pre-v2.3.16 chain shape bit-for-bit.
+    /// @version 2.3.16
+    std::unordered_map<int32_t, float> logit_bias;
+
+    /// @brief Frequency-penalty term in llama.cpp's penalties sampler (gh#23 MVP item 3).
+    /// Subtracts a per-occurrence linear amount from any token that
+    /// has appeared in the recent window — penalizes by COUNT rather
+    /// than presence. `0.0` (default) disables — preserves pre-v2.3.15
+    /// chain bit-for-bit. Typical range: 0.0–2.0. Pairs with
+    /// `repeat_penalty` (multiplicative) and `presence_penalty`
+    /// (per-presence constant); all three run in one
+    /// `llama_sampler_init_penalties` call. Any non-default value
+    /// here activates the penalties stage even when
+    /// `repeat_penalty == 1.0` and `presence_penalty == 0.0`.
+    /// @version 2.3.15
+    float frequency_penalty = 0.0f;
 
     int max_tokens = 4096;                   ///< Maximum tokens to generate
 
@@ -754,6 +858,16 @@ struct ParsedConfig {
     /// Enable ggml/llama.cpp logging to llama_ggml.log in log_dir.
     /// Default false — when off, ggml/llama output is silenced entirely.
     bool ggml_logging = false;
+
+    /// Override path for ggml/llama log when `ggml_logging == true`
+    /// (gh#23 MVP item 12, v2.3.24). When non-empty, the orchestrator
+    /// installs llama_log_set against this exact path. When empty
+    /// (default), keeps the pre-v2.3.24 hardcoded
+    /// `<log_dir>/llama_ggml.log` — bit-identical for callers not
+    /// opting in. Accepts absolute or relative paths; relative paths
+    /// resolve from the process CWD (not log_dir).
+    /// @version 2.3.24
+    std::filesystem::path llama_log_path;
 
     /// Emit engine spdlog output to the stderr console sink.
     /// Default true (operators reading stderr see everything). TUI

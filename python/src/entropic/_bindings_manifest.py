@@ -113,6 +113,8 @@ EXPORTS = frozenset(
         "entropic_set_state_observer",
         "entropic_set_stream_observer",
         "entropic_speculative_compat",
+        "entropic_state_load",
+        "entropic_state_save",
         "entropic_storage_close",
         "entropic_storage_open",
         "entropic_throughput_reset",

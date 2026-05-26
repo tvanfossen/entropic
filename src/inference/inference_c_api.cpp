@@ -100,6 +100,47 @@ entropic::ModelConfig parse_config_json(const char* json_str) {
 }
 
 /**
+ * @brief Conditionally assign a typed JSON field into a destination.
+ *
+ * Extracted (v2.3.14, gh#23 MVP item 2) to keep `parse_params_json`
+ * under the knots ABC gate as new MVP-10 knobs land. Each call site
+ * is now one statement instead of an if-with-two-subscripts.
+ * @utility
+ * @version 2.3.14
+ */
+template <typename T>
+static void assign_if_present(const nlohmann::json& j,
+                              const char* key, T& dst) {
+    if (j.contains(key)) { dst = j[key].get<T>(); }
+}
+
+/**
+ * @brief Populate `logit_bias` map from a JSON object of token→bias.
+ *
+ * Accepts `{"123": -100.0, "456": 1.5}` shape — string keys per JSON
+ * spec, parsed to `int32_t` here. Silently skips entries whose key
+ * fails to parse to an integer; the caller's downstream stages
+ * proceed as if those entries weren't present.
+ * @utility
+ * @version 2.3.16
+ */
+static void parse_logit_bias_into(
+    const nlohmann::json& j,
+    std::unordered_map<int32_t, float>& dst)
+{
+    if (!j.contains("logit_bias") || !j["logit_bias"].is_object()) {
+        return;
+    }
+    for (auto it = j["logit_bias"].begin(); it != j["logit_bias"].end(); ++it) {
+        try {
+            dst[std::stoi(it.key())] = it.value().get<float>();
+        } catch (const std::exception&) {
+            // skip un-parseable keys
+        }
+    }
+}
+
+/**
  * @brief Parse GenerationParams from JSON string.
  * @param json_str JSON params string.
  * @return Parsed GenerationParams.
@@ -110,13 +151,16 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
     entropic::GenerationParams params;
     auto j = nlohmann::json::parse(json_str);
 
-    if (j.contains("temperature"))    params.temperature = j["temperature"].get<float>();
-    if (j.contains("top_p"))          params.top_p = j["top_p"].get<float>();
-    if (j.contains("top_k"))          params.top_k = j["top_k"].get<int>();
-    if (j.contains("min_p"))          params.min_p = j["min_p"].get<float>();
-    if (j.contains("repeat_penalty")) params.repeat_penalty = j["repeat_penalty"].get<float>();
-    if (j.contains("max_tokens"))     params.max_tokens = j["max_tokens"].get<int>();
-    if (j.contains("grammar"))        params.grammar = j["grammar"].get<std::string>();
+    assign_if_present(j, "temperature",       params.temperature);
+    assign_if_present(j, "top_p",             params.top_p);
+    assign_if_present(j, "top_k",             params.top_k);
+    assign_if_present(j, "min_p",             params.min_p);
+    assign_if_present(j, "presence_penalty",  params.presence_penalty);
+    assign_if_present(j, "frequency_penalty", params.frequency_penalty);
+    assign_if_present(j, "repeat_penalty",    params.repeat_penalty);
+    assign_if_present(j, "max_tokens",        params.max_tokens);
+    assign_if_present(j, "grammar",           params.grammar);
+    parse_logit_bias_into(j, params.logit_bias);
 
     return params;
 }

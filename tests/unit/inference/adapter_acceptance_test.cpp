@@ -157,6 +157,333 @@ SCENARIO("Gemma4 channel call preserves trailing assistant prose (gh#69)",
     }
 }
 
+// ── gh#72: Gemma 4 fabricated multi-turn dispatch prevention ──
+
+SCENARIO("Gemma4 cuts fabricated <|im_start|>user continuations (gh#72)",
+         "[adapter-acceptance][gemma4][gh72]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E4B Q8 fabrication from gh#72 — real tool_call, "
+          "then a fabricated user turn carrying a second tool_call") {
+        std::string content =
+            "Thank you for clarifying. I will instruct the registrar.\n\n"
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "Remove the two existing students."}})"
+            "</tool_call>\n"
+            "<|im_end|>\n"
+            "<|im_start|>user\n"
+            "Just remove them from the system.<|im_end|>\n"
+            "<|im_start|>assistant\n"
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "Remove students again FABRICATED."}})"
+            "</tool_call><|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("exactly ONE tool call is extracted (the real one only)") {
+                REQUIRE(result.tool_calls.size() == 1);
+            }
+            THEN("the fabricated 'FABRICATED' task text never reaches dispatch") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("task");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("FABRICATED") == std::string::npos);
+            }
+            THEN("fabricated user content does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("Just remove them from the system")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 cuts fabricated <|im_start|>user — bare-JSON variant (gh#72)",
+         "[adapter-acceptance][gemma4][gh72]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the Q4_K_M variant from gh#72 — apology continuation + fabricated "
+          "user turn carrying a bare-JSON action") {
+        std::string content =
+            "I am going to use entropic.complete to summarize.\n"
+            "<|im_end|>"
+            "I sincerely apologize for the repeated failures in adhering "
+            "to the required output format.<|im_end|>\n"
+            "<|im_start|>user\n"
+            R"({"action":"delegate","max_turns":-1,"target":"registrar",)"
+            R"("task":"Please confirm if all student records have been )"
+            R"(successfully removed."})"
+            "<|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("no tool calls are extracted — the fabricated bare-JSON "
+                 "action sits past the cut") {
+                REQUIRE(result.tool_calls.empty());
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 leaves legit multi-tool_call channels intact (gh#72 boundary)",
+         "[adapter-acceptance][gemma4][gh72]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("two tool_call channels back-to-back — the gh#69 production shape "
+          "the gh#72 cut must NOT regress") {
+        std::string content =
+            "<|im_start|>tool_call\n"
+            R"({"name": "entropic.delegate", "arguments": )"
+            R"({"target": "researcher", "task": "x"}})"
+            "</tool_call><|im_end|>\n"
+            "<|im_start|>tool_call\n"
+            R"({"name": "entropic.followup", "arguments": )"
+            R"({"query": "findme"}})"
+            "</tool_call><|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("both tool_call channels are still extracted") {
+                REQUIRE(result.tool_calls.size() == 2);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+                REQUIRE(result.tool_calls[1].name == "entropic.followup");
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 cuts at <end_of_turn> + <start_of_turn>user (gh#72 native template)",
+         "[adapter-acceptance][gemma4][gh72]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("Gemma-native turn markers — <end_of_turn> followed by a "
+          "fabricated <start_of_turn>user that carries another tool_call") {
+        std::string content =
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "real task"}})"
+            "</tool_call>\n"
+            "<end_of_turn>\n"
+            "<start_of_turn>user\n"
+            "Fabricated parent followup.<end_of_turn>\n"
+            "<start_of_turn>model\n"
+            R"(<tool_call>{"name": "entropic.delegate", "arguments": )"
+            R"({"target": "registrar", "task": "FABRICATED"}})"
+            "</tool_call>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("only the real tool call survives") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("task");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("FABRICATED") == std::string::npos);
+            }
+        }
+    }
+}
+
+// ── gh#73: Gemma 4 E4B Q8 call: prefix malformed wrapper ────
+
+SCENARIO("Gemma4 parses the gh#73 <|tool_call>call:NAME{args}<tool_call|> form",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E4B Q8 emit from the gh#73 report") {
+        // Three deviations from gh#69's accepted set:
+        //   - `call:` prefix before the name
+        //   - non-JSON args (`{student_id:2}`, unquoted key)
+        //   - asymmetric close `<tool_call|>`
+        std::string content =
+            "<|channel>thought\n"
+            "Reasoning about deletion of student id 2.\n"
+            "<channel|>"
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the call is extracted by exact name") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+            }
+            THEN("the unquoted-key argument round-trips") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("student_id");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second == "2");
+            }
+            THEN("the malformed wrapper does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|tool_call>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<tool_call|>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("call:")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 parses gh#73 with <|\"|> quote-escape inside string args",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the second E4B Q8 emit from the gh#73 report — entropic.complete "
+          "with summary text wrapped in the model's confused <|\"|> escape") {
+        std::string content =
+            "<|tool_call>call:entropic.complete{summary:<|\"|>Successfully "
+            "removed student Adam (ID 2) from the active roster as requested "
+            "by the parent.<|\"|>}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the call extracts as entropic.complete with the summary") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.complete");
+                auto it = result.tool_calls[0].arguments.find("summary");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("Successfully removed student Adam")
+                        != std::string::npos);
+            }
+            THEN("the <|\"|> escape sequence does not leak into the value") {
+                REQUIRE(result.tool_calls.size() == 1);
+                auto it = result.tool_calls[0].arguments.find("summary");
+                REQUIRE(it != result.tool_calls[0].arguments.end());
+                REQUIRE(it->second.find("<|\"|>") == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 parses multiple gh#73 call: calls back-to-back",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("two call: prefix calls in one emit") {
+        std::string content =
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>"
+            "<|channel>thought\nNext step.<channel|>"
+            "<|tool_call>call:entropic.complete{summary:<|\"|>Done.<|\"|>}"
+            "<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("both calls are extracted in order") {
+                REQUIRE(result.tool_calls.size() == 2);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+                REQUIRE(result.tool_calls[1].name == "entropic.complete");
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 gh#73 fallback does not double-extract canonical gh#69 calls",
+         "[adapter-acceptance][gemma4][gh73]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a canonical gh#69 channel emit — the gh#73 fallback must NOT fire") {
+        std::string content =
+            "<|im_start|>tool_call\n"
+            R"({"name": "entropic.delegate", "arguments": )"
+            R"({"target": "researcher", "task": "x"}})"
+            "</tool_call><|im_end|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("exactly one tool call is extracted (the canonical path won)") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "entropic.delegate");
+            }
+        }
+    }
+}
+
+// ── gh#75: Gemma 4 GPT-OSS-style thought channel scrub ──────
+
+SCENARIO("Gemma4 scrubs paired <|channel>thought ... <channel|> blocks (gh#75)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("the verbatim E4B Q8 emit from gh#75 — thought channel "
+          "wrapping reasoning + a real tool call after") {
+        std::string content =
+            "<|channel>thought\n"
+            "Reasoning about deletion of student id 2.\n"
+            "<channel|>"
+            "<|tool_call>call:sassafras.delete_student{student_id:2}<tool_call|>";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the real tool call is extracted") {
+                REQUIRE(result.tool_calls.size() == 1);
+                REQUIRE(result.tool_calls[0].name == "sassafras.delete_student");
+            }
+            THEN("the thought channel markup does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|channel>")
+                        == std::string::npos);
+                REQUIRE(result.cleaned_content.find("<channel|>")
+                        == std::string::npos);
+            }
+            THEN("the thought text itself is also stripped") {
+                REQUIRE(result.cleaned_content.find("Reasoning about deletion")
+                        == std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 scrubs unpaired <|channel>thought opener (gh#75)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a truncated emit with the opener but no close") {
+        // Model started a thought channel and got cut off before
+        // emitting `<channel|>`. The stray opener still leaks if not
+        // scrubbed, and is echoed into the next turn's prompt.
+        std::string content =
+            "Reply prose.\n"
+            "<|channel>thought partial reasoning text";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("the stray opener does not leak into cleaned_content") {
+                REQUIRE(result.cleaned_content.find("<|channel>")
+                        == std::string::npos);
+            }
+            THEN("the original prose still survives") {
+                REQUIRE(result.cleaned_content.find("Reply prose.")
+                        != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("Gemma4 leaves text without thought-channel markup unchanged (gh#75 anchor)",
+         "[adapter-acceptance][gemma4][gh75]") {
+    entropic::Gemma4Adapter adapter("lead", "test identity");
+
+    GIVEN("a plain text emit with no thought-channel markers") {
+        std::string content = "Hello there. This is plain prose without channels.";
+
+        WHEN("parse_tool_calls runs") {
+            auto result = adapter.parse_tool_calls(content);
+
+            THEN("cleaned_content matches the original prose") {
+                REQUIRE(result.cleaned_content
+                        == "Hello there. This is plain prose without channels.");
+            }
+        }
+    }
+}
+
 // ── Prior gemma4 regressions (gh#65 + gh#68) ──────────────
 
 SCENARIO("Gemma4 parses the gh#65 asymmetric <|tool_call> form",

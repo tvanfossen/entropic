@@ -25,6 +25,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <unordered_map>
+#include <vector>
 
 static auto logger = entropic::log::get("inference.sampler");
 
@@ -51,6 +53,32 @@ void add_grammar_sampler(llama_sampler* chain,
     if (g) {
         llama_sampler_chain_add(chain, g);
     }
+}
+
+/**
+ * @brief Add the gh#23 v2.3.16 `logit_bias` stage when the map is non-empty.
+ *
+ * Builds a `std::vector<llama_logit_bias>` from the map and calls
+ * `llama_sampler_init_logit_bias`. No-op on empty map so the
+ * pre-v2.3.16 chain shape stays bit-for-bit identical.
+ * @utility
+ * @internal
+ * @version 2.3.16
+ */
+void add_logit_bias_sampler(llama_sampler* chain,
+                            const llama_vocab* vocab,
+                            const std::unordered_map<int32_t, float>& biases) {
+    if (biases.empty()) { return; }
+    std::vector<llama_logit_bias> entries;
+    entries.reserve(biases.size());
+    for (auto& [tok, val] : biases) {
+        entries.push_back({tok, val});
+    }
+    llama_sampler_chain_add(chain,
+        llama_sampler_init_logit_bias(
+            llama_vocab_n_tokens(vocab),
+            static_cast<int32_t>(entries.size()),
+            entries.data()));
 }
 
 /**
@@ -145,6 +173,7 @@ std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
     llama_sampler* chain = llama_sampler_chain_init(chain_params);
 
     add_grammar_sampler(chain, vocab_, params.grammar);
+    add_logit_bias_sampler(chain, vocab_, params.logit_bias);
 
     // gh#23 MVP items 2 + 3 (v2.3.14 + v2.3.15): the penalties sampler
     // now also carries presence_penalty (4th arg) and frequency_penalty

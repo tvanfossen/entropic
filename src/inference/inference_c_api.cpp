@@ -115,6 +115,32 @@ static void assign_if_present(const nlohmann::json& j,
 }
 
 /**
+ * @brief Populate `logit_bias` map from a JSON object of token→bias.
+ *
+ * Accepts `{"123": -100.0, "456": 1.5}` shape — string keys per JSON
+ * spec, parsed to `int32_t` here. Silently skips entries whose key
+ * fails to parse to an integer; the caller's downstream stages
+ * proceed as if those entries weren't present.
+ * @utility
+ * @version 2.3.16
+ */
+static void parse_logit_bias_into(
+    const nlohmann::json& j,
+    std::unordered_map<int32_t, float>& dst)
+{
+    if (!j.contains("logit_bias") || !j["logit_bias"].is_object()) {
+        return;
+    }
+    for (auto it = j["logit_bias"].begin(); it != j["logit_bias"].end(); ++it) {
+        try {
+            dst[std::stoi(it.key())] = it.value().get<float>();
+        } catch (const std::exception&) {
+            // skip un-parseable keys
+        }
+    }
+}
+
+/**
  * @brief Parse GenerationParams from JSON string.
  * @param json_str JSON params string.
  * @return Parsed GenerationParams.
@@ -134,6 +160,7 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
     assign_if_present(j, "repeat_penalty",    params.repeat_penalty);
     assign_if_present(j, "max_tokens",        params.max_tokens);
     assign_if_present(j, "grammar",           params.grammar);
+    parse_logit_bias_into(j, params.logit_bias);
 
     return params;
 }

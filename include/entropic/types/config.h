@@ -222,7 +222,7 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 2.3.15 — added frequency_penalty (gh#23 MVP item 3)
+ * @version 2.3.16 — added logit_bias (gh#23 MVP item 4)
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -245,6 +245,20 @@ struct GenerationParams {
     /// pre-v2.3.14 chain bit-for-bit. Typical range: 0.0–2.0.
     /// @version 2.3.14
     float presence_penalty = 0.0f;
+
+    /// @brief Per-token logit bias map (gh#23 MVP item 4).
+    /// Maps token id → additive bias (in logit-space). Applied at the
+    /// start of the sampler chain (before penalties), so it shapes
+    /// the post-softmax distribution that every downstream filter
+    /// (top-k, top-p, min-p, etc.) sees. Common uses:
+    ///   - Suppress a token: `bias = -INFINITY` (or a large negative
+    ///     value like -100 if -INFINITY doesn't survive JSON).
+    ///   - Force a token: `bias = +INFINITY` (or large positive).
+    ///   - Subtle nudges: `bias = ±1.0..±5.0`.
+    /// Empty map (default) disables the stage entirely — preserves
+    /// pre-v2.3.16 chain shape bit-for-bit.
+    /// @version 2.3.16
+    std::unordered_map<int32_t, float> logit_bias;
 
     /// @brief Frequency-penalty term in llama.cpp's penalties sampler (gh#23 MVP item 3).
     /// Subtracts a per-occurrence linear amount from any token that

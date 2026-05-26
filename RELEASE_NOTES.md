@@ -1,3 +1,48 @@
+# entropic v2.3.27
+
+Patch release. **Wire `compactor_registry` on configure (gh#76).**
+Closes a defect surfaced during the v2.3.10 (gh#23) coverage push:
+`engine_handle.h` declared `compactor_registry` and four C API
+functions gated on it being non-null, but nothing in the codebase
+ever constructed it. Every call to
+`entropic_register_compactor` / `entropic_deregister_compactor` /
+`entropic_get_default_compactor` / `entropic_compact` returned
+`ENTROPIC_ERROR_INVALID_STATE` regardless of handle state.
+
+## What landed
+
+- `init_engine_and_interfaces` in `src/facade/entropic.cpp` now
+  constructs `handle->compactor_registry` against the engine's
+  built-in `CompactionManager` (just after `make_unique<AgentEngine>`).
+- New public accessor `AgentEngine::compaction_manager()` in
+  `include/entropic/core/engine.h` so the facade can borrow the
+  reference at registry construction. Lifetime: registry destroys
+  before engine in `entropic_destroy`, so the borrow stays valid for
+  the entire registry lifetime.
+
+## Tests
+
+The v2.3.10 compactor scenarios in
+`tests/unit/api/entropic_capi_test.cpp` were rewritten from
+"assert INVALID_STATE" placeholders to the documented contract:
+
+- `entropic_register_compactor` with NULL fn → `INVALID_CONFIG`.
+- `entropic_register_compactor` with valid fn → `OK`.
+- `entropic_register_compactor` with NULL identity → maps to global,
+  returns `OK`.
+- `entropic_deregister_compactor` is now idempotent + returns `OK`.
+- `entropic_get_default_compactor` returns `OK` + NULLs the out
+  params (the built-in default isn't exposed via the C ABI — by
+  design; consumers wrap by registering a custom compactor that
+  internally calls `entropic_compact`).
+
+## ABI
+
+None. Internal wiring + a new public C++ accessor on `AgentEngine`
+(not part of the C ABI). Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.26
 
 Patch release. **Gemma4 adapter: scrub GPT-OSS-style thought channel

@@ -719,6 +719,21 @@ public:
     bool fold_complete_into_assistant(
         LoopContext& ctx, const Message& tool_result_msg) const;
 
+    /**
+     * @brief Borrowed reference to the engine's built-in CompactionManager.
+     *
+     * gh#76 (v2.3.27): the facade-level `CompactorRegistry` borrows
+     * this reference at construction so consumer-registered compactors
+     * can fall back to the built-in default. Lifetime: the
+     * CompactionManager outlives the registry because both are owned
+     * by the engine handle (registry is destroyed in `entropic_destroy`
+     * before the engine).
+     *
+     * @utility
+     * @version 2.3.27
+     */
+    CompactionManager& compaction_manager() { return compaction_manager_; }
+
 private:
     /**
      * @brief Create the root conversation row for a run (gh#48).

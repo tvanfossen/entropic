@@ -2474,37 +2474,36 @@ TEST_CASE("entropic_register_compactor on unconfigured handle returns INVALID_ST
     REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-// Note: handle->compactor_registry is declared in engine_handle.h but
-// never constructed by entropic_configure() — the wiring is incomplete.
-// Until a future version wires it up, every call returns INVALID_STATE.
-// These tests guard the current contract; revise them when the registry
-// becomes reachable.
+// v2.3.27 (gh#76): handle->compactor_registry is now constructed in
+// configure_common alongside the engine. The v2.3.10 dead-code
+// scenarios were rewritten to assert the documented success / error
+// codes for the configured-handle paths.
 
-TEST_CASE("entropic_register_compactor returns INVALID_STATE without registry wiring",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with NULL fn returns INVALID_CONFIG on configured handle",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(h, "id", nullptr, nullptr);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
 }
 
-TEST_CASE("entropic_register_compactor with valid fn still INVALID_STATE on configured handle",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with valid fn succeeds on configured handle",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(
         h, "capi_compact_id", capi_test_compactor_fn,
         reinterpret_cast<void*>(0x1234));
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
 }
 
-TEST_CASE("entropic_register_compactor with NULL identity still INVALID_STATE",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_register_compactor with NULL identity maps to global fallback (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     auto rc = entropic_register_compactor(
         h, nullptr, capi_test_compactor_fn, nullptr);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
 }
 
 TEST_CASE("entropic_deregister_compactor rejects NULL handle",
@@ -2520,20 +2519,20 @@ TEST_CASE("entropic_deregister_compactor on unconfigured handle returns INVALID_
             == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-TEST_CASE("entropic_deregister_compactor on configured handle returns INVALID_STATE (no registry)",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_deregister_compactor on configured handle is OK (idempotent, gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
+    // Idempotent — deregistering an unregistered compactor returns OK.
     REQUIRE(entropic_deregister_compactor(h, "never_registered")
-            == ENTROPIC_ERROR_INVALID_STATE);
+            == ENTROPIC_OK);
 }
 
-TEST_CASE("entropic_deregister_compactor with NULL identity still INVALID_STATE",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_deregister_compactor with NULL identity maps to global (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
-    REQUIRE(entropic_deregister_compactor(h, nullptr)
-            == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(entropic_deregister_compactor(h, nullptr) == ENTROPIC_OK);
 }
 
 TEST_CASE("entropic_get_default_compactor rejects NULL handle",
@@ -2553,14 +2552,18 @@ TEST_CASE("entropic_get_default_compactor on unconfigured handle returns INVALID
             == ENTROPIC_ERROR_INVALID_STATE);
 }
 
-TEST_CASE("entropic_get_default_compactor on configured handle returns INVALID_STATE (no registry)",
-          "[v2.3.10][entropic_capi][compact][configured]") {
+TEST_CASE("entropic_get_default_compactor on configured handle returns OK + NULL fn (gh#76)",
+          "[v2.3.10][entropic_capi][compact][configured][gh76]") {
     ConfiguredCapiHandle h;
     if (!h.configured()) { SUCCEED(); return; }
     entropic_compactor_fn fn = capi_test_compactor_fn;
     void* ud = reinterpret_cast<void*>(0xBADC0DE);
     auto rc = entropic_get_default_compactor(h, &fn, &ud);
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_STATE);
+    REQUIRE(rc == ENTROPIC_OK);
+    // Documented: no built-in default exposed via the C ABI; both
+    // outputs are NULL'd.
+    REQUIRE(fn == nullptr);
+    REQUIRE(ud == nullptr);
 }
 
 // ── entropic_register_mcp_server (entropic_mcp.cpp configured paths) ─

@@ -298,6 +298,9 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     // overrides. Both 0.0 = use model's trained value — bit-identical.
     c.rope_freq_base = cfg.rope_freq_base;
     c.rope_freq_scale = cfg.rope_freq_scale;
+    // gh#23 MVP item 11 (v2.3.23): n_parallel maps to cparams.n_seq_max.
+    // 1 (default) matches llama.cpp's default — bit-identical.
+    c.n_seq_max = static_cast<uint32_t>(cfg.n_parallel);
     return c;
 }
 } // anonymous namespace

@@ -220,6 +220,16 @@ struct ModelConfig {
     /// Pairs with `rope_freq_base`.
     /// @version 2.3.22
     float rope_freq_scale = 0.0f;
+
+    /// @brief Max parallel sequences per context (gh#23 MVP item 11).
+    /// llama.cpp's `cparams.n_seq_max`. `1` (default) matches
+    /// llama.cpp's default — single-sequence context, bit-identical
+    /// pre-v2.3.23 behavior. Raising this enables KV-cache slot reuse
+    /// across multiple concurrent generations (e.g. speculative
+    /// rejection batches, batched-server scenarios). Effective max is
+    /// `LLAMA_MAX_SEQ`; consult llama.cpp for the current ceiling.
+    /// @version 2.3.23
+    int n_parallel = 1;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

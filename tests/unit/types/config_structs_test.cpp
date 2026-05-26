@@ -65,6 +65,10 @@ SCENARIO("ModelConfig has correct defaults", "[config][types]") {
             REQUIRE(config.rope_freq_scale == 0.0f);
         }
 
+        THEN("n_parallel defaults to 1 (gh#23 v2.3.23)") {
+            REQUIRE(config.n_parallel == 1);
+        }
+
         THEN("n_threads defaults to 0 (auto)") {
             REQUIRE(config.n_threads == 0);
         }

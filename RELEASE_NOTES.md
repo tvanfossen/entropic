@@ -1,3 +1,32 @@
+# entropic v2.3.23
+
+Patch release. **Additive context-init knob: `n_parallel`.**
+Eleventh MVP-10 item from gh#23. Max parallel sequences per context.
+`1` (default) matches llama.cpp's default — bit-identical pre-v2.3.23
+behavior.
+
+## What landed
+
+- `ModelConfig::n_parallel` (`int`, default `1`).
+- `build_cparams` maps to `cparams.n_seq_max` (llama.cpp's internal
+  name).
+- YAML loader reads `n_parallel` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`n_parallel: 4`).
+
+## Scope boundary
+
+MVP-10 item 11 of ~13. Remaining: state save/load (a new C API
+surface, not a ModelConfig knob) + llama_log_set (backend init).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.22
 
 Patch release. **Additive context-init knob: `rope_freq_scale`.**

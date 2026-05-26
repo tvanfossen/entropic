@@ -167,6 +167,48 @@ ggml_type parse_kv_cache_type(const std::string& s) {
     return GGML_TYPE_F16;
 }
 
+/**
+ * @brief Map a ModelConfig::split_mode string to llama_split_mode (gh#23 item 6).
+ *
+ * Empty string → llama.cpp's default (`LAYER`). Unknown values fall
+ * back to default with a logged warning.
+ *
+ * @utility
+ * @version 2.3.18
+ */
+llama_split_mode parse_split_mode(const std::string& s) {
+    if (s.empty()) { return LLAMA_SPLIT_MODE_LAYER; }
+    static const std::pair<const char*, llama_split_mode> kTable[] = {
+        {"none",  LLAMA_SPLIT_MODE_NONE},
+        {"layer", LLAMA_SPLIT_MODE_LAYER},
+        {"row",   LLAMA_SPLIT_MODE_ROW},
+    };
+    for (const auto& [name, mode] : kTable) {
+        if (s == name) { return mode; }
+    }
+    logger->warn("Unknown split_mode '{}' — defaulting to layer", s);
+    return LLAMA_SPLIT_MODE_LAYER;
+}
+
+/**
+ * @brief Build llama_model_params for GPU model load.
+ *
+ * Extracted (gh#23 v2.3.18) to keep `load_gpu_model` under the knots
+ * ABC gate as new MVP-10 model-load knobs land (`split_mode`,
+ * `main_gpu`, `offload_kqv`, `rope_freq_*`).
+ *
+ * @utility
+ * @version 2.3.18
+ */
+llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
+    llama_model_params m = llama_model_default_params();
+    m.n_gpu_layers = cfg.gpu_layers;
+    m.use_mmap = true;
+    m.use_mlock = cfg.use_mlock;
+    m.split_mode = parse_split_mode(cfg.split_mode);
+    return m;
+}
+
 } // anonymous namespace
 
 // ── Lifecycle ──────────────────────────────────────────────
@@ -281,10 +323,7 @@ bool LlamaCppBackend::do_activate() {
  * @version 2.3.7
  */
 bool LlamaCppBackend::load_gpu_model() {
-    llama_model_params mparams = llama_model_default_params();
-    mparams.n_gpu_layers = config().gpu_layers;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config().use_mlock;
+    llama_model_params mparams = build_load_mparams(config());
 
     if (!config().tensor_split.empty()) {
         // TODO: parse tensor_split string into float array for multi-GPU

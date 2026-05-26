@@ -1,3 +1,44 @@
+# entropic v2.3.18
+
+Patch release. **Additive model-load knob: `split_mode`.** Sixth
+MVP-10 item from gh#23. Selects llama.cpp's multi-GPU split strategy
+(`NONE`, `LAYER`, `ROW`). Empty string (default) keeps llama.cpp's
+default (`LAYER`) — preserves pre-v2.3.18 model load bit-for-bit.
+
+## What landed
+
+- `ModelConfig::split_mode` (`std::string`, default `""`) in
+  `include/entropic/types/config.h`.
+- New `parse_split_mode(s)` helper maps `""` / `"none"` / `"layer"`
+  / `"row"` to `llama_split_mode`. Unknown → `LAYER` + warn.
+- New `build_load_mparams(cfg)` helper consolidates the four mparams
+  fields (`n_gpu_layers`, `use_mmap`, `use_mlock`, `split_mode`)
+  into one call site. `LlamaCppBackend::load_gpu_model` shrinks from
+  inline setup to a single helper invocation — keeps knots ABC under
+  20 with headroom for the remaining model-load knobs.
+- YAML loader reads `split_mode` per tier.
+
+## Tests
+
+- `tests/unit/types/config_structs_test.cpp` — default-value pin
+  (empty string).
+- `tests/unit/config/loader_test.cpp` + comprehensive fixture YAML
+  — round-trip with `split_mode: row` on the lead tier.
+
+## Scope boundary
+
+MVP-10 item 6 of ~10. Next: `main_gpu` (v2.3.19), the natural pair
+with `split_mode: none` for single-GPU pinning. `build_load_mparams`
+is the integration point for the remaining model-load knobs
+(`main_gpu`, `offload_kqv`, `rope_freq_base`, `rope_freq_scale`).
+
+## ABI
+
+Field appended after `tensor_split`. Additive only. Drop-in for any
+2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.17
 
 Patch release. **Additive context-init knob: `n_ubatch`.** Fifth

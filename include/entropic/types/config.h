@@ -173,6 +173,17 @@ struct ModelConfig {
 
     int n_threads = 0;                       ///< CPU threads (0 = auto-detect)
     std::string tensor_split;                ///< Multi-GPU tensor split ratios (empty = single GPU)
+
+    /// @brief Multi-GPU split mode for model load (gh#23 MVP item 6).
+    /// Maps to llama.cpp's `enum llama_split_mode`. Accepted values:
+    ///   - `""` (default) — keep llama.cpp's default (`LAYER`).
+    ///   - `"none"`  — single GPU, no split. Use with `main_gpu`.
+    ///   - `"layer"` — split layers + KV across GPUs (llama.cpp default).
+    ///   - `"row"`   — split layers + KV with tensor parallelism.
+    /// Unrecognized values fall back to the default with a logged warning.
+    /// Empty (default) preserves pre-v2.3.18 model load bit-for-bit.
+    /// @version 2.3.18
+    std::string split_mode;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

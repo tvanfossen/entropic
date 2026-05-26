@@ -192,6 +192,14 @@ struct ModelConfig {
     /// preserves pre-v2.3.19 behavior bit-for-bit.
     /// @version 2.3.19
     int main_gpu = 0;
+
+    /// @brief Offload KQV ops (incl. KV cache) to the GPU (gh#23 MVP item 8).
+    /// llama.cpp's `cparams.offload_kqv`. `true` (default) matches
+    /// llama.cpp's default — KQV runs on GPU for max throughput.
+    /// Set `false` to keep KQV on the CPU side; saves VRAM at a
+    /// throughput cost. Useful for tight-VRAM single-GPU setups.
+    /// @version 2.3.20
+    bool offload_kqv = true;
     bool flash_attn = true;                  ///< Enable flash attention
 
     /* ── Tool filtering ────────────────────────────────── */

@@ -1,3 +1,36 @@
+# entropic v2.3.20
+
+Patch release. **Additive context-init knob: `offload_kqv`.**
+Eighth MVP-10 item from gh#23. Controls whether llama.cpp's KQV ops
+(including the KV cache) run on GPU or CPU. `true` (default)
+matches llama.cpp's default — bit-identical for callers not opting
+out. `false` keeps KQV on CPU for tight-VRAM single-GPU setups
+(throughput trade-off).
+
+## What landed
+
+- `ModelConfig::offload_kqv` (`bool`, default `true`) in
+  `include/entropic/types/config.h`. Appended after `main_gpu`.
+- `build_cparams` sets `cparams.offload_kqv = cfg.offload_kqv`.
+- YAML loader reads `offload_kqv` per tier.
+
+## Tests
+
+Default-value pin + YAML round-trip (`offload_kqv: false` on the
+lead tier).
+
+## Scope boundary
+
+MVP-10 item 8 of ~10. Next batch: `rope_freq_base` / `rope_freq_scale`
+(both on the model load side — RoPE frequency scaling for extended
+contexts).
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.19
 
 Patch release. **Additive model-load knob: `main_gpu`.** Seventh

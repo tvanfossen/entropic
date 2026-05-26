@@ -84,6 +84,26 @@ scenarios pin the contract.
   built-in `CompactionManager` (new public accessor
   `AgentEngine::compaction_manager()`).
 
+## Engine: terminal state respects sibling action tools
+
+- **gh#77 (v2.3.28)** — `AgentEngine::process_generation_result`
+  executed a queued `pending_delegation` / `pending_pipeline` AFTER
+  `process_tool_results` ran, even when a sibling tool call had set
+  `ctx.state = COMPLETE` during the same response. Models that emit
+  `entropic.complete` alongside `entropic.pipeline` or
+  `entropic.delegate` in one assistant turn (observed live in
+  bissell-coder 2026-05-26 10:42-10:53) had the pipeline run
+  anyway — a `[PIPELINE CONTEXT]` marker would land and the engine
+  would keep iterating for minutes past the user's intended stop.
+  Now: after `process_tool_results` / `evaluate_no_tool_decision`,
+  the function returns early if `is_terminal_state(ctx)` — the new
+  predicate also DRYs the two pre-existing inline checks at the
+  `process_tool_results` tail and the budget-exhausted force-complete
+  branch. Regression scenario: `[v2.3.28][gh77][terminal]` in
+  `tests/unit/core/engine_test.cpp` (entropic.complete + sibling
+  entropic.pipeline → state=COMPLETE, no pipeline execution, no
+  rejection message).
+
 ## Internal: tasks.py gcov fix
 
 `_check_library_coverage` in `tasks.py` now passes

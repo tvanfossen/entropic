@@ -1,3 +1,42 @@
+# entropic v2.3.24
+
+Patch release. **Additive top-level knob: `llama_log_path`.**
+Twelfth MVP-10 item from gh#23 (`llama_log_set`). The existing
+`ggml_logging` toggle already wired the llama.cpp log callback via
+`entropic_inference_log_to_file` → `llama_log_set`, but the
+destination path was hardcoded to `<log_dir>/llama_ggml.log`. This
+patch adds an explicit override.
+
+## What landed
+
+- `ParsedConfig::llama_log_path` (`std::filesystem::path`, default
+  empty) in `include/entropic/types/config.h`.
+- `ModelOrchestrator::initialize` (`src/inference/orchestrator.cpp`)
+  routes the llama log via the explicit path when set, falling back
+  to the existing `<log_dir>/llama_ggml.log` when empty. Also drops
+  the `log_dir`-empty gate — a consumer can opt into llama logs via
+  `llama_log_path` alone without a session.log dir.
+- YAML loader reads `llama_log_path` (top-level, alongside `log_dir`
+  / `ggml_logging`).
+
+## Tests
+
+YAML round-trip in `loader_test.cpp` + `comprehensive_config.yaml`:
+`ggml_logging: true` + `llama_log_path: /tmp/llama-custom.log`.
+
+## Scope boundary
+
+MVP-10 item 12 of ~13. Remaining: state save/load — that's a new C
+API surface (not a ModelConfig knob), so it ships across its own
+multi-version sequence and reuses the v2.3.10 Sampler/Tokenizer seam
+pattern for the underlying engine integration.
+
+## ABI
+
+Additive only. Drop-in for any 2.3.x-compiled consumer.
+
+---
+
 # entropic v2.3.23
 
 Patch release. **Additive context-init knob: `n_parallel`.**

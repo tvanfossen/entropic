@@ -527,6 +527,7 @@ static void extract_scalar_fields(ryml::ConstNodeRef root,
     extract_path(root, "config_dir", config.config_dir);
     extract_path(root, "log_dir", config.log_dir);
     extract(root, "ggml_logging", config.ggml_logging);
+    extract_path(root, "llama_log_path", config.llama_log_path);  // gh#23 v2.3.24
     extract(root, "console_logging", config.console_logging);
 
     extract_tri_state_path(root, "constitution",

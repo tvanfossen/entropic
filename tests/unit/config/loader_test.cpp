@@ -201,6 +201,7 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.inject_model_context == true);
                 CHECK(config.vram_reserve_mb == 512);
                 CHECK(config.ggml_logging == true);
+                CHECK(config.llama_log_path == "/tmp/llama-custom.log");  // gh#23 v2.3.24
                 CHECK(config.console_logging == false);
                 REQUIRE(config.constitution.has_value());
                 REQUIRE(config.app_context.has_value());

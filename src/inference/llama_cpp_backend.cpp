@@ -1633,10 +1633,12 @@ common_params_sampling to_common_sampling(
     cps.top_k = params.top_k;
     cps.top_p = params.top_p;
     cps.penalty_repeat = params.repeat_penalty;
-    // gh#23 MVP item 2 (v2.3.14): presence_penalty. cps.penalty_present
-    // is the common-sampling counterpart of the 4th arg to
-    // `llama_sampler_init_penalties` in the plain decode path. Default
-    // 0.0f preserves bit-for-bit speculative output.
+    // gh#23 MVP items 2 + 3 (v2.3.14 + v2.3.15): wire presence +
+    // frequency penalty into common-sampling. Counterparts of the
+    // 3rd + 4th args to `llama_sampler_init_penalties` in the plain
+    // decode path. Default 0.0f on both preserves bit-for-bit
+    // speculative output.
+    cps.penalty_freq    = params.frequency_penalty;
     cps.penalty_present = params.presence_penalty;
     if (params.seed >= 0) {
         cps.seed = static_cast<uint32_t>(params.seed);

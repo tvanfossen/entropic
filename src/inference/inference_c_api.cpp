@@ -130,6 +130,7 @@ entropic::GenerationParams parse_params_json(const char* json_str) {
     assign_if_present(j, "top_k",             params.top_k);
     assign_if_present(j, "min_p",             params.min_p);
     assign_if_present(j, "presence_penalty",  params.presence_penalty);
+    assign_if_present(j, "frequency_penalty", params.frequency_penalty);
     assign_if_present(j, "repeat_penalty",    params.repeat_penalty);
     assign_if_present(j, "max_tokens",        params.max_tokens);
     assign_if_present(j, "grammar",           params.grammar);

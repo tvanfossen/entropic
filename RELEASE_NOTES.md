@@ -1,3 +1,59 @@
+# entropic v2.3.15
+
+Patch release. **Additive sampler-config knob: `frequency_penalty`.**
+Third MVP-10 item from gh#23 (expose llama.cpp sampler chain via
+config). Pure additive — default `0.0f` preserves pre-v2.3.15 chain
+shape bit-for-bit. Pairs with the v2.3.14 `presence_penalty` knob;
+together they wire both per-occurrence linear (frequency) and
+per-presence constant (presence) terms into the penalties sampler
+that already carried `repeat_penalty`.
+
+## What landed
+
+- `GenerationParams::frequency_penalty` (`float`, default `0.0f`) in
+  `include/entropic/types/config.h`. Appended after `presence_penalty`,
+  before `max_tokens` — additive ABI only.
+- `LlamaCppBackend::create_sampler` (plain decode path, via the
+  v2.3.10 Sampler seam) now passes `params.frequency_penalty` as the
+  3rd argument to `llama_sampler_init_penalties` (previously hardcoded
+  `0.0f`). Penalties-sampler gate expands to fire when ANY of
+  `repeat_penalty != 1.0` / `presence_penalty > 0.0` /
+  `frequency_penalty > 0.0`.
+- Speculative-decoding path (`to_common_sampling`) sets
+  `cps.penalty_freq = params.frequency_penalty`. Default `0.0f`
+  preserves bit-for-bit speculative output.
+- JSON params parsers in both `interface_factory.cpp` and
+  `inference_c_api.cpp` accept `"frequency_penalty"`. Missing key →
+  default `0.0f`.
+
+## Tests
+
+`tests/unit/inference/generation_params_test.cpp` adds three
+`[gh23][frequency_penalty]` scenarios mirroring the v2.3.14
+presence_penalty shape:
+
+- Default sentinel + round-trip + boundary handling.
+- Independence from repeat / presence / min_p / top_p / top_k /
+  temperature (no struct-field aliasing).
+- Coexistence pin: presence + frequency set distinctly read back
+  with separate values (one doesn't shadow the other).
+
+The default base-case scenario gains a
+`REQUIRE(frequency_penalty == 0.0f)` assertion alongside the existing
+`min_p` / `presence_penalty` lines.
+
+## Scope boundary (gh#23 sequencing)
+
+MVP-10 item 3 of ~10. Remaining items (`logit_bias`, `n_ubatch`,
+`split_mode`, `main_gpu`, `offload_kqv`, `rope_freq_base`,
+`rope_freq_scale`, state save/load, `n_parallel`, `llama_log_set`)
+follow as separate `v2.3.x` patches per the cadence. With v2.3.14
++ v2.3.15 the penalties sampler is now fully configurable; the next
+knob lands a new sampler stage or backend init flag rather than
+another argument on an existing stage.
+
+---
+
 # entropic v2.3.14
 
 Patch release. **Additive sampler-config knob: `presence_penalty`.**

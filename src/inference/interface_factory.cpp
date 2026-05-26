@@ -94,6 +94,7 @@ static GenerationParams parse_params(const char* json_str) {
     assign_if_present(j, "top_k",            p.top_k);
     assign_if_present(j, "min_p",            p.min_p);
     assign_if_present(j, "presence_penalty", p.presence_penalty);
+    assign_if_present(j, "frequency_penalty",p.frequency_penalty);
     assign_if_present(j, "repeat_penalty",   p.repeat_penalty);
     assign_if_present(j, "seed",             p.seed);
     return p;

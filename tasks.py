@@ -199,9 +199,35 @@ def _run_model_tests(build_dir):
     return results, failed
 
 
+## @brief Resolve the lead-tier model key from the active local config.
+## @return Registry key string (e.g. "qwen3_5_4b") or "unknown" on failure.
+## @utility
+## @version 2.4.0
+def _get_lead_model_key():
+    """Read the lead tier's path: key from .entropic/config.local.yaml.
+
+    The model-test ceremony loads the lead tier as the default; recording
+    its registry key is the honest value for results.json `model`. v219
+    family tests override per-test, but the default-tier load is the
+    bulk of the suite.
+    """
+    local = ".entropic/config.local.yaml"
+    if not os.path.isfile(local):
+        return "unknown"
+    try:
+        import yaml
+
+        with open(local) as f:
+            data = yaml.safe_load(f) or {}
+        lead = (data.get("models") or {}).get("lead") or {}
+        return str(lead.get("path") or "unknown")
+    except Exception:
+        return "unknown"
+
+
 ## @brief Write build/test-reports/model/results.json.
 ## @utility
-## @version 2
+## @version 3
 def _write_results_json(test_results, duration_ms):
     """Write build/test-reports/model/results.json."""
     os.makedirs(os.path.dirname(MODEL_RESULTS_FILE), exist_ok=True)
@@ -215,7 +241,7 @@ def _write_results_json(test_results, duration_ms):
         "version": _get_version(),
         "git_sha": _get_git_sha(),
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "model": "Qwen3.5-35B-A3B-UD-IQ3_XXS",
+        "model": _get_lead_model_key(),
         "gpu": _get_gpu_name(),
         "duration_ms": duration_ms,
         "tests": test_results,

@@ -294,6 +294,40 @@ protected:
     BackendInfo do_info() const override;
     bool do_clear_state(int seq_id) override;
 
+    /* ── State save/load override (gh#23 MVP item 13, v2.3.25) ── */
+
+    /**
+     * @brief Capture a sequence's KV cache into a byte buffer.
+     *
+     * Wraps llama.cpp's `llama_state_seq_get_size` +
+     * `llama_state_seq_get_data`. Required by the v2.3.25
+     * `entropic_state_save` C API; the base class default returns
+     * false (no state support).
+     *
+     * @param seq_id Sequence id (default 0 from the C API path).
+     * @param buffer Output buffer; resized to exact state size.
+     * @return true on success; false when not active or copy short-reads.
+     * @internal
+     * @version 2.4.0
+     */
+    bool do_save_state(int seq_id,
+                       std::vector<uint8_t>& buffer) const override;
+
+    /**
+     * @brief Restore a sequence's KV cache from a byte buffer.
+     *
+     * Wraps llama.cpp's `llama_state_seq_set_data`. Required by the
+     * v2.3.25 `entropic_state_load` C API.
+     *
+     * @param seq_id Sequence id.
+     * @param buffer Source buffer (output of a prior save_state).
+     * @return true when llama_state_seq_set_data accepts the buffer.
+     * @internal
+     * @version 2.4.0
+     */
+    bool do_restore_state(int seq_id,
+                          const std::vector<uint8_t>& buffer) override;
+
     /* ── llama.cpp handles ───────────────────────────────── */
 
     llama_model* model_ = nullptr;             ///< Loaded model (WARM+)

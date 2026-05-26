@@ -1511,6 +1511,14 @@ static void init_engine_and_interfaces(
     auto lc = build_loop_config(h);
     h->engine = std::make_unique<entropic::AgentEngine>(
         h->inference_iface, lc, h->config.compaction);
+    // gh#76 (v2.3.27): wire the compactor registry now that the engine
+    // owns the CompactionManager that backs the default-compactor
+    // fallback. Pre-v2.3.27 the field was declared but never
+    // constructed, so every `entropic_register_compactor` /
+    // `entropic_compact` call returned INVALID_STATE.
+    h->compactor_registry =
+        std::make_unique<entropic::CompactorRegistry>(
+            h->engine->compaction_manager());
     rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
     wire_tool_executor(h);

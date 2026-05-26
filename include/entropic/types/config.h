@@ -222,7 +222,7 @@ struct GPUResourceProfile {
 
 /**
  * @brief Generation parameters for a single inference call.
- * @version 2.3.14 — added presence_penalty (gh#23 MVP item 2)
+ * @version 2.3.15 — added frequency_penalty (gh#23 MVP item 3)
  */
 struct GenerationParams {
     float temperature = 0.7f;                ///< Sampling temperature
@@ -243,12 +243,21 @@ struct GenerationParams {
     /// Subtracts a constant from any token that has appeared at least
     /// once in the recent window. `0.0` (default) disables — preserves
     /// pre-v2.3.14 chain bit-for-bit. Typical range: 0.0–2.0.
-    /// Pairs with `repeat_penalty` (multiplicative) and the future
-    /// `frequency_penalty` (per-occurrence linear); the penalties
-    /// sampler runs all three together, so any non-default value here
-    /// activates the stage even when `repeat_penalty == 1.0`.
     /// @version 2.3.14
     float presence_penalty = 0.0f;
+
+    /// @brief Frequency-penalty term in llama.cpp's penalties sampler (gh#23 MVP item 3).
+    /// Subtracts a per-occurrence linear amount from any token that
+    /// has appeared in the recent window — penalizes by COUNT rather
+    /// than presence. `0.0` (default) disables — preserves pre-v2.3.15
+    /// chain bit-for-bit. Typical range: 0.0–2.0. Pairs with
+    /// `repeat_penalty` (multiplicative) and `presence_penalty`
+    /// (per-presence constant); all three run in one
+    /// `llama_sampler_init_penalties` call. Any non-default value
+    /// here activates the penalties stage even when
+    /// `repeat_penalty == 1.0` and `presence_penalty == 0.0`.
+    /// @version 2.3.15
+    float frequency_penalty = 0.0f;
 
     int max_tokens = 4096;                   ///< Maximum tokens to generate
 

@@ -65,12 +65,42 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // override only scopes the test harness.
     constexpr int V219_TEST_CTX = 4096;
     tier.context_length = V219_TEST_CTX;
+
+    // v2.4.0 (gh#23 MVP-10 follow-up): when the family GGUF is too
+    // large for the host GPU's VRAM, llama_model_load_from_file with
+    // n_gpu_layers=-1 fails outright (no graceful "fit as many as
+    // possible" mode). Detect oversized GGUFs by file size and clamp
+    // gpu_layers to a partial-offload value that keeps a 16-bit
+    // hot-layer set on the GPU while the rest stream from CPU. This
+    // preserves the v219 contract on dev boxes with smaller GPUs
+    // (1080 Ti, 11 GB) without affecting prod where VRAM is sized
+    // for the model — production configs override `gpu_layers`
+    // explicitly via YAML.
+    //
+    // Threshold rationale: ~10 GB matches gemma4_a4b (13.6 GB) and
+    // qwen3_6_a3b (13.2 GB) on the upper side; the e4b (4.5 GB),
+    // e4b_q4 (4.8 GB), e2b (2.5 GB), nemotron3 (3.1 GB) all stay
+    // well below and continue full GPU offload (the prior behavior).
+    constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
+    constexpr int PARTIAL_GPU_LAYERS = 20;
+    std::error_code size_ec;
+    auto file_size = fs::file_size(path, size_ec);
+    if (!size_ec && file_size > LARGE_GGUF_BYTES) {
+        tier.gpu_layers = PARTIAL_GPU_LAYERS;
+        spdlog::warn("v2.1.9 family: '{}' GGUF is {} bytes (>{} GB) — "
+                     "clamping gpu_layers to {} for partial CPU offload "
+                     "(dev-box small-VRAM accommodation)",
+                     key, file_size,
+                     LARGE_GGUF_BYTES / (1024ULL * 1024 * 1024),
+                     PARTIAL_GPU_LAYERS);
+    }
+
     ctx.model_path = path.string();
 
     spdlog::info("v2.1.9 family override: tier={} key={} adapter={} "
-                 "context_length={} path={}",
+                 "context_length={} gpu_layers={} path={}",
                  ctx.config.models.default_tier, key, entry->adapter,
-                 V219_TEST_CTX, path.string());
+                 V219_TEST_CTX, tier.gpu_layers, path.string());
     return init_orchestrator(ctx);
 }
 

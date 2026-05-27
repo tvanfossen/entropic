@@ -14,6 +14,8 @@
 
 #include "qwen36_adapter.h"
 
+#include "xml_parameter_parser.h"
+
 #include <entropic/types/logging.h>
 
 #include <nlohmann/json.hpp>
@@ -119,48 +121,19 @@ std::vector<ToolCall> Qwen36Adapter::parse_xml_function_calls(
 /**
  * @brief Extract `<parameter=...>...</parameter>` pairs from a function body.
  *
- * Truncates at a nested `<function=` tag (malformed multi-call output).
+ * gh#79 (v2.4.1): delegates to the shared parser which tolerates
+ * `</NAME>` close tags in addition to the literal `</parameter>`.
  *
  * @param func_body Function body text.
  * @return Map of parameter key -> value.
  * @internal
- * @version 2.1.9
+ * @version 2.4.1
  */
 std::unordered_map<std::string, std::string> Qwen36Adapter::extract_xml_parameters(
     const std::string& func_body) const
 {
-    std::string body = func_body;
-    auto nested = body.find("<function=");
-    if (nested != std::string::npos) {
-        logger->warn("Truncating function body at nested <function= tag");
-        body = body.substr(0, nested);
-    }
-
-    std::unordered_map<std::string, std::string> arguments;
-    std::regex param_pattern(R"(<parameter=([^>]+)>([\s\S]*?)</parameter>)");
-
-    auto begin = std::sregex_iterator(body.begin(), body.end(), param_pattern);
-    auto end = std::sregex_iterator();
-
-    for (auto it = begin; it != end; ++it) {
-        std::string key = (*it)[1].str();
-        std::string value = (*it)[2].str();
-
-        auto ks = key.find_first_not_of(" \t\n\r");
-        auto ke = key.find_last_not_of(" \t\n\r");
-        if (ks != std::string::npos) key = key.substr(ks, ke - ks + 1);
-
-        auto vs = value.find_first_not_of(" \t\n\r");
-        auto ve = value.find_last_not_of(" \t\n\r");
-        if (vs != std::string::npos) value = value.substr(vs, ve - vs + 1);
-
-        if (key.empty() || value.empty()) {
-            logger->warn("Skipping empty XML parameter: key='{}' value='{}'", key, value);
-            continue;
-        }
-        arguments[key] = value;
-    }
-    return arguments;
+    return entropic::inference::adapters::parse_xml_parameters(
+        func_body, logger);
 }
 
 // ── Tool result formatting ─────────────────────────────────

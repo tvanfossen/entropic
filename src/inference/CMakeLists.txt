@@ -28,6 +28,7 @@ set(INFERENCE_SOURCES
     adapters/gemma4_adapter.cpp
     adapters/nemotron3_adapter.cpp
     adapters/adapter_registry.cpp
+    adapters/xml_parameter_parser.cpp
 )
 
 # Determine library name based on compute backend

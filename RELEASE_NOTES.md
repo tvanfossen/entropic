@@ -1,3 +1,70 @@
+# entropic v2.4.1
+
+Patch release. **gh#79** — XML adapters (qwen35, qwen36, nemotron3)
+silently mis-parsed parameter values when the model closed the
+block with `</NAME>` (echoing the parameter name) instead of the
+literal `</parameter>`. The non-greedy regex bled the next
+parameter's content into the first parameter's value; engine then
+rejected the malformed-shape with `rejected_schema` and the model
+usually recovered on retry, burning an iteration per occurrence.
+
+Observed live with `qwen3_6_a3b` on `entropic.delegate` calls:
+
+```
+<parameter=target>
+researcher</target>          <-- model closed with </target>
+<parameter=task>
+Find ...
+</parameter>
+```
+
+Pre-fix `target` came back as the whole blob from `researcher` to
+the second `</parameter>` (~150+ chars of bled task content). The
+post-fix parser stops at the first `</parameter>` OR `</NAME>` that
+appears after the opening, where `NAME` matches the opening's name
+verbatim.
+
+## What landed
+
+The three byte-identical inline regex blocks (qwen35 ~25 lines,
+qwen36 ~25 lines, nemotron3 ~25 lines) collapsed into one shared
+helper, `src/inference/adapters/xml_parameter_parser.cpp`, with the
+gh#79 fix applied centrally:
+
+- `entropic::inference::adapters::parse_xml_parameters(body, logger)`
+  is the new entry point. Tolerates `</parameter>` OR `</NAME>` close
+  tags; preserves the historical nested-`<function=` truncation guard
+  and the trim/empty/skip semantics.
+- `Qwen35Adapter::extract_xml_parameters`,
+  `Qwen36Adapter::extract_xml_parameters`,
+  `Nemotron3Adapter::extract_xml_parameters` are now one-line
+  delegations into the shared parser.
+
+## Tests
+
+`tests/unit/inference/xml_parameter_parser_test.cpp` covers:
+
+- Baseline well-formed `</parameter>` close.
+- `[gh79]` — single `</NAME>` close.
+- `[gh79]` — exact pathological emit from the issue body (target
+  closes with `</target>`, task closes with `</parameter>`).
+- `[gh79]` — both params closing with `</NAME>`.
+- `[gh79]` — parameter names with underscores / digits exercising
+  the named-close-tag construction.
+- Whitespace trim; empty-value skip; unterminated parameter skip.
+- Nested-`<function=` truncation guard.
+- Empty body / no parameters.
+
+44 adapter-suite test cases / 144 assertions green; the existing
+`[adapter-acceptance]` verbatim-emit gates continue to pass against
+qwen35 / qwen36 / nemotron3 fixtures.
+
+## ABI
+
+None — internal refactor. Drop-in for any 2.4.x-compiled consumer.
+
+---
+
 # entropic v2.4.0
 
 Minor release. **Bundles the v2.3.11 → v2.3.27 patch series into a

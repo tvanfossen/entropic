@@ -814,7 +814,7 @@ static std::string build_shared_prompt_prefix(
  * @param name Tier name.
  * @param fm Parsed frontmatter.
  * @internal
- * @version 2.0.11
+ * @version 2.4.4
  */
 static void apply_identity_frontmatter(
     entropic_handle_t h,
@@ -828,6 +828,19 @@ static void apply_identity_frontmatter(
     }
     if (fm.relay_single_delegate) {
         h->engine->set_relay_single_delegate(name);
+    }
+    // gh#82 (v2.4.4): thread per-tier sampler config from frontmatter
+    // into the tier config so the orchestrator applies it at
+    // generation time. Pre-fix these were parsed but dropped here, so
+    // the sampler always ran at the GenerationParams default.
+    auto tier_it = h->config.models.tiers.find(name);
+    if (tier_it != h->config.models.tiers.end()) {
+        if (fm.temperature.has_value()) {
+            tier_it->second.temperature = *fm.temperature;
+        }
+        if (fm.max_output_tokens.has_value()) {
+            tier_it->second.max_output_tokens = *fm.max_output_tokens;
+        }
     }
 }
 

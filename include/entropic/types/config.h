@@ -429,6 +429,18 @@ struct TierConfig : ModelConfig {
     /// @version 2.1.8
     std::vector<std::string> capabilities;
 
+    /// @brief Per-tier sampler temperature from identity frontmatter (gh#82).
+    /// nullopt = not configured; the orchestrator leaves the incoming
+    /// GenerationParams temperature in place. When set, applied as the
+    /// tier baseline (an explicit per-call override still wins).
+    /// @version 2.4.4
+    std::optional<float> temperature;
+
+    /// @brief Per-tier max output tokens from identity frontmatter (gh#82).
+    /// nullopt = not configured; same precedence as `temperature`.
+    /// @version 2.4.4
+    std::optional<int> max_output_tokens;
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").

@@ -73,8 +73,8 @@ struct IdentityFrontmatter {
     std::optional<std::string> auto_chain;     ///< Auto-chain target tier
     std::optional<std::vector<std::string>> allowed_tools; ///< Tool filter
     std::optional<std::vector<std::string>> bash_commands;  ///< Allowed bash commands
-    int max_output_tokens = 1024;              ///< Default max output tokens
-    float temperature = 0.7f;                  ///< Default temperature
+    std::optional<int> max_output_tokens;      ///< Per-tier max output tokens (gh#82); nullopt = use param default
+    std::optional<float> temperature;          ///< Per-tier sampling temperature (gh#82); nullopt = use param default
     float repeat_penalty = 1.1f;               ///< Default repetition penalty
     bool enable_thinking = false;              ///< Default thinking mode
     bool interstitial = false;                 ///< Interstitial role

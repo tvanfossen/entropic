@@ -97,6 +97,28 @@ private:
     GenerateResult generate_batch(LoopContext& ctx);
 
     /**
+     * @brief Dispatch the batch backend call, honoring interrupts. (gh#81, v2.4.2)
+     *
+     * Prefers `inference_.generate_cancellable` when wired: spawns a
+     * short-lived observer thread mirroring the engine's
+     * `interrupt_flag_` into the C-ABI int cancel flag for the
+     * duration of the call. Falls back to plain `inference_.generate`
+     * for backends without the cancellable field.
+     *
+     * @param msgs_json Serialized messages.
+     * @param params_json Serialized params.
+     * @param[out] result_json Backend-allocated result (caller frees).
+     * @return Backend return code (0 ok, ENTROPIC_ERROR_CANCELLED on
+     *         interrupt, other error codes otherwise).
+     * @internal
+     * @version 2.4.2
+     */
+    int dispatch_batch_generate(
+        const std::string& msgs_json,
+        const std::string& params_json,
+        char** result_json);
+
+    /**
      * @brief Inject prompts + serialize messages/params for a turn.
      *
      * Shared prep extracted from generate_streaming/generate_batch to

@@ -124,6 +124,21 @@ public:
         const std::string& tier_name = "");
 
     /**
+     * @brief Batch generation with cancel support. (gh#81, v2.4.2)
+     *
+     * Mirrors `generate` plus a cancel-flag reference; the backend
+     * polls the flag per decode step. Closes the gh#81 60s-lag gap
+     * where the batch path had no path to honor mid-decode cancel.
+     *
+     * @version 2.4.2
+     */
+    GenerationResult generate(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel,
+        const std::string& tier_name = "");
+
+    /**
      * @brief Streaming generation.
      * @version 1.8.2
      */

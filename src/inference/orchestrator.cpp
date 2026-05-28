@@ -449,6 +449,55 @@ GenerationResult ModelOrchestrator::generate(
 }
 
 /**
+ * @brief Batch generate with cancel — see header for contract.
+ *
+ * Bypasses `run_generate_dispatch` (speculative routing) because
+ * speculative kernels live on the streaming path; batch only ever
+ * calls plain decode. Calls `model->generate(messages, params,
+ * cancel)` which polls cancel per token.
+ *
+ * @internal
+ * @version 2.4.2
+ */
+GenerationResult ModelOrchestrator::generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::atomic<bool>& cancel,
+    const std::string& tier_name)
+{
+    auto t_start = now();
+
+    std::string selected = tier_name;
+    double routing_ms = 0.0;
+    if (selected.empty()) {
+        auto t_route = now();
+        selected = route(messages);
+        routing_ms = elapsed_ms(t_route, now());
+    }
+
+    auto t_swap = now();
+    InferenceBackend* model = get_model(selected);
+    double swap_ms = elapsed_ms(t_swap, now());
+
+    if (!model) { return build_no_model_error(selected); }
+
+    GenerationParams resolved_params = params;
+    resolve_grammar_key(resolved_params, selected);
+
+    GenerationResult result = model->generate(
+        messages, resolved_params, cancel);
+
+    apply_adapter_parse(get_adapter(selected), result);
+
+    result.routing_ms = routing_ms;
+    result.swap_ms = swap_ms;
+    result.total_ms = elapsed_ms(t_start, now());
+    log_orchestration(result, selected, last_routing_result_.adapter_name,
+                      resolved_params, routing_ms, swap_ms);
+    return result;
+}
+
+/**
  * @brief Streaming generation with speculative dispatch.
  *
  * Speculative routing added in v2.1.11 (gh#36): when the kernel is

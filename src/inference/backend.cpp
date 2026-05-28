@@ -199,6 +199,31 @@ GenerationResult InferenceBackend::generate(
 }
 
 /**
+ * @brief Generate with cancel support. Requires ACTIVE state. (gh#81, v2.4.2)
+ * @internal
+ * @version 2.4.2
+ */
+GenerationResult InferenceBackend::generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::atomic<bool>& cancel)
+{
+    if (!is_active()) {
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_INVALID_STATE;
+        err.error_message = "generate() requires ACTIVE state";
+        err.finish_reason = "error";
+        logger->error("{}", err.error_message);
+        return err;
+    }
+
+    auto start = entropic::log::now();
+    auto result = do_generate(messages, params, cancel);
+    result.generation_time_ms = entropic::log::elapsed_ms(start, entropic::log::now());
+    return result;
+}
+
+/**
  * @brief Streaming generation. Requires ACTIVE state.
  * @param messages Conversation history.
  * @param params Generation parameters.

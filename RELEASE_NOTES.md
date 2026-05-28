@@ -1,3 +1,93 @@
+# entropic v2.4.2
+
+Patch release. **gh#81 (Case 1)** — `entropic_interrupt` was not
+honored mid-decode on the batch generation path: the backend ran to
+`max_tokens` or natural stop and the interrupt only fired at the next
+engine-loop-top check (~60s observed on qwen3_6_a3b at default
+max_tokens). While fixing it, a latent companion bug surfaced on the
+streaming path and is fixed in the same patch.
+
+## Root cause
+
+Two coupled defects in the cancel-propagation chain:
+
+1. **Batch path had no cancel plumbing.** `LlamaCppBackend::do_generate_text_only`
+   decoded with no cancel poll, and the batch C ABI / `ResponseGenerator::generate_batch`
+   passed no cancel flag at all. An interrupt set the engine's atomic
+   `interrupt_flag_` but nothing propagated it to the in-flight decode.
+
+2. **Streaming path's int→atomic bridge was init-once.** `iface_generate_stream`
+   initialized its local `std::atomic<bool> cancel_flag` from `*cancel`
+   exactly once at entry and never re-read the int. The engine's
+   per-token callback (`stream_token_callback`) raised the int
+   mid-stream, but the backend (which polls the atomic) never saw it.
+   The streaming path's cancel had silently regressed.
+
+## What landed
+
+**New cancel-aware batch surface (additive — no removals):**
+
+- `InferenceBackend::generate(messages, params, std::atomic<bool>& cancel)`
+  and a `do_generate(..., cancel&)` virtual with a default that
+  delegates to the no-cancel form (backends opt in by overriding).
+- `LlamaCppBackend` overrides it; new `do_generate_text_only(..., cancel&)`
+  mirrors the per-token poll already in `do_generate_streaming_text_only`.
+- `ModelOrchestrator::generate(messages, params, cancel&, tier)` overload.
+- C ABI `entropic_inference_generate_with_cancel(backend, msgs, params,
+  result_json, cancel_flag)` bridges `int* → std::atomic<bool>` via a
+  10ms poller thread (batch has no per-token hook to host the bridge).
+- `InferenceInterface::generate_cancellable` function-pointer field +
+  `entropic_generate_with_cancel_fn` typedef; `iface_generate_with_cancel`
+  wired by the factory.
+- `ResponseGenerator::generate_batch` prefers `generate_cancellable`
+  when wired, observing the engine's `interrupt_flag_` via a short-lived
+  thread that raises the C-ABI int.
+
+**Streaming-path fix:**
+
+- `iface_generate_stream`'s on_token lambda now bridges `int* cancel →
+  atomic` on every token, so an interrupt raised mid-stream reaches the
+  backend's per-token poll within one token.
+
+## Interface headers changed (flagged per project protocol)
+
+These are additive interface-contract changes, user-approved as Patch A
+for gh#81. No symbol removed; drop-in for any 2.4.x consumer:
+
+- `include/entropic/inference/backend.h` — `generate` / `do_generate`
+  cancel overloads.
+- `include/entropic/inference/orchestrator.h` — `generate` cancel overload.
+- `include/entropic/interfaces/i_inference_callbacks.h` —
+  `entropic_generate_with_cancel_fn` typedef + `generate_cancellable` field.
+- `include/entropic/interfaces/i_inference_backend.h` —
+  `entropic_inference_generate_with_cancel` declaration.
+
+## Tests
+
+`tests/unit/inference/inference_c_api_test.cpp` — `[gh81]`:
+- NULL handle / result rejection.
+- Completes normally when cancel flag never set.
+- Honors a NULL cancel pointer (no poller spawned).
+- Aborts mid-decode → `ENTROPIC_ERROR_CANCELLED` when the flag is
+  raised from another thread (mock backend spins polling the atomic).
+
+Full unit sweep green: inference 250 cases, core 230, api 481.
+
+## Scope note
+
+This patch addresses gh#81 Case 1 (mid-decode latency). Case 2 (the
+reject-retry "swallow" + delegation-child interrupt reset) is tracked
+for v2.4.3 — the loop-top interrupt check is correctly placed; the
+remaining work is reducing inter-iteration latency and fixing
+`run_child_loop_trampoline`'s `reset_interrupt()` so delegation
+children inherit the parent's interrupt.
+
+## ABI
+
+Additive only. Drop-in for any 2.4.x-compiled consumer.
+
+---
+
 # entropic v2.4.1
 
 Patch release. **gh#79** — XML adapters (qwen35, qwen36, nemotron3)

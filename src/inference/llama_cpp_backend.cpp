@@ -1558,6 +1558,98 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
 }
 
 /**
+ * @brief Batch generate dispatch with cancel support (gh#81, v2.4.2).
+ *
+ * Vision branch falls through to the streaming multimodal kernel with
+ * a null on_token (it already polls cancel). Text-only branch goes
+ * through `do_generate_text_only(messages, params, cancel)`.
+ *
+ * @internal
+ * @version 2.4.2
+ */
+GenerationResult LlamaCppBackend::do_generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::atomic<bool>& cancel)
+{
+    if (!any_image_in(messages)) {
+        return do_generate_text_only(messages, params, cancel);
+    }
+    if (has_vision_ && mtmd_ctx_ != nullptr) {
+        return generate_multimodal(messages, params, nullptr, &cancel);
+    }
+    logger->warn("Image content present but model has no vision "
+                 "capability — stripping image parts");
+    return do_generate_text_only(strip_image_parts(messages), params, cancel);
+}
+
+/**
+ * @brief Text-only batch generate with per-token cancel poll (gh#81, v2.4.2).
+ *
+ * Identical to the no-cancel overload above except for the cancel
+ * poll inside the decode loop. See its docs for the prefill / sampler
+ * contract.
+ *
+ * @internal
+ * @version 2.4.2
+ */
+GenerationResult LlamaCppBackend::do_generate_text_only(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::atomic<bool>& cancel)
+{
+    auto t0 = entropic::log::now();
+    std::string prompt = apply_chat_template(messages, params);
+    auto tokens = tokenize(prompt, true);
+    std::string sys = extract_system_prompt(messages);
+
+    logger->info("Generate (cancellable): {} input tokens, max_tokens={}",
+              tokens.size(), params.max_tokens);
+    log_sampler_config(params);
+
+    auto sampler = create_sampler(params);
+    if (!sampler) { return sampler_init_error(t0); }
+
+    if (!run_prefill_cached(tokens, sys, messages, params)) {
+        return prefill_error();
+    }
+
+    GenerationResult result;
+    std::string generated;
+    int n_generated = 0;
+    std::function<void(std::string_view)> no_cb = nullptr;
+
+    while (n_generated < params.max_tokens) {
+        if (cancel.load(std::memory_order_acquire)) {
+            result.finish_reason = "cancelled";
+            result.error_code = ENTROPIC_ERROR_CANCELLED;
+            break;
+        }
+        auto status = step_token(
+            *sampler, generated, no_cb, params.stop);
+        if (status == "continue") { ++n_generated; }
+        else {
+            result.finish_reason =
+                (status == "error") ? "error" : "stop";
+            if (status == "error") {
+                result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+            }
+            break;
+        }
+    }
+
+    if (n_generated >= params.max_tokens
+        && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+
+    result.content = generated;
+    result.token_count = n_generated;
+    finalize_result(result, t0);
+    return result;
+}
+
+/**
  * @brief Streaming generation with per-token callback.
  * @param messages Conversation history.
  * @param params Generation parameters.

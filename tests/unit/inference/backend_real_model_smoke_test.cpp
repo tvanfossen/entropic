@@ -197,14 +197,30 @@ TEST_CASE("LlamaCppBackend lifecycle on a small real model (one load)",
         (void)result;
     }
 
-    // complete() with enable_thinking=true — drives the thinking branch in apply_chat_template.
+    // gh#86 (v2.6.1): generate() (NOT complete()) drives apply_chat_template,
+    // which renders the GGUF jinja template with enable_thinking threaded.
+    // complete() is raw text completion and never touches the template, so
+    // the pre-v2.6.1 version of this block (complete() + a false
+    // "drives the thinking branch" comment + a discarded result) exercised
+    // nothing. Assert a real outcome on both thinking settings.
     {
+        std::vector<entropic::Message> msgs;
+        entropic::Message u;
+        u.role = "user";
+        u.content = "hi";
+        msgs.push_back(u);
+
         entropic::GenerationParams params;
         params.max_tokens = 2;
         params.temperature = 0.0f;
+
         params.enable_thinking = true;
-        auto result = backend.complete("hi", params);
-        (void)result;
+        auto think_on = backend.generate(msgs, params);
+        CHECK(think_on.error_message.empty());
+
+        params.enable_thinking = false;
+        auto think_off = backend.generate(msgs, params);
+        CHECK(think_off.error_message.empty());
     }
 
     // count_tokens on a longer string — drives the non-trivial tokenizer length path.

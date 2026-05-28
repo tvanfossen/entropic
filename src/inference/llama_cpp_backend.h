@@ -395,11 +395,20 @@ protected:
      * @param messages Conversation history.
      * @param params Generation parameters (for enable_thinking).
      * @return Formatted prompt string.
-     * @version 1.8.2
+     * @version 2.6.1
      */
     std::string apply_chat_template(
         const std::vector<Message>& messages,
         const GenerationParams& params) const;
+
+    /**
+     * @brief Low-level GGUF template path (gh#86 fallback, v2.6.1).
+     * @param messages Conversation history.
+     * @return Formatted prompt string, or a plain join on failure.
+     * @version 2.6.1
+     */
+    std::string apply_chat_template_lowlevel(
+        const std::vector<Message>& messages) const;
 
     /**
      * @brief Core decode loop — shared by generate and streaming.

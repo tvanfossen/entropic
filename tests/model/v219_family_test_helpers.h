@@ -66,6 +66,18 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     constexpr int V219_TEST_CTX = 4096;
     tier.context_length = V219_TEST_CTX;
 
+    // gh#86 (v2.6.1): these are tool-call PARSING + GGUF-load fixtures,
+    // not thinking-behavior tests. Disable thinking so the model emits
+    // its tool call directly instead of deliberating. Before v2.6.1 the
+    // low-level chat-template path silently rendered thinking-off, so
+    // the battery passed by accident; the v2.6.1 jinja render correctly
+    // honors the template's thinking variable, and a verbose 26B (a4b)
+    // would otherwise spend the whole max_tokens budget in a <channel>
+    // thought block and never reach the tool call. Setting it here both
+    // restores deterministic tool-call emission AND exercises the
+    // gh#86 wiring end-to-end.
+    tier.enable_thinking = false;
+
     // v2.4.0 (gh#23 MVP-10 follow-up): when the family GGUF is too
     // large for the host GPU's VRAM, llama_model_load_from_file with
     // n_gpu_layers=-1 fails outright (no graceful "fit as many as

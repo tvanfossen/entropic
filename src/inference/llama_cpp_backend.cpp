@@ -20,6 +20,7 @@
 #include <entropic/types/logging.h>
 
 #include <common.h>
+#include <chat.h>
 #include <sampling.h>
 #include <speculative.h>
 #include <mtmd.h>
@@ -754,19 +755,6 @@ float LlamaCppBackend::extract_token_logprob(
 // ── Chat template ──────────────────────────────────────────
 
 /**
- * @brief Apply GGUF-embedded chat template to messages.
- *
- * Uses llama_chat_apply_template() which reads the template from
- * GGUF metadata. Passes enable_thinking as a template variable
- * via the add_generation_prompt parameter.
- *
- * @param messages Conversation history.
- * @param params Generation parameters.
- * @return Formatted prompt string.
- * @internal
- * @version 2.3.7
- */
-/**
  * @brief Convert engine messages to llama_chat_message views.
  * @param messages Source messages (must outlive the returned views).
  * @return Vector of {role, content} c_str pointers into `messages`.
@@ -781,6 +769,32 @@ static std::vector<llama_chat_message> to_llama_chat(
         chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
     }
     return chat_msgs;
+}
+
+/**
+ * @brief Convert engine messages to common_chat_msg (gh#86, v2.6.1).
+ *
+ * Role + content only — entropic injects tool prompts into the system
+ * message itself (ResponseGenerator::inject_tool_prompt), so the jinja
+ * path's `tools` slot is intentionally left empty to avoid double
+ * injection.
+ *
+ * @param messages Source messages.
+ * @return Vector of common_chat_msg.
+ * @utility
+ * @version 2.6.1
+ */
+static std::vector<common_chat_msg> to_common_chat(
+    const std::vector<Message>& messages) {
+    std::vector<common_chat_msg> out;
+    out.reserve(messages.size());
+    for (const auto& msg : messages) {
+        common_chat_msg cm;
+        cm.role = msg.role;
+        cm.content = msg.content;
+        out.push_back(std::move(cm));
+    }
+    return out;
 }
 
 /**
@@ -800,17 +814,70 @@ static std::string concat_messages_fallback(
 }
 
 /**
- * @brief Render the chat template for messages (fallback on failure).
+ * @brief Render the GGUF chat template for messages (gh#86, v2.6.1).
+ *
+ * Uses the jinja-capable `common_chat_templates_apply()` so the
+ * template's `enable_thinking` variable receives `params.enable_thinking`
+ * — the low-level `llama_chat_apply_template()` used pre-v2.6.1 has no
+ * thinking slot (its bool arg is `add_generation_prompt`), so a tier's
+ * `enable_thinking: false` was silently dropped at this final mile.
+ *
+ * `tools` is left empty: entropic injects tool prompts into the system
+ * message upstream (ResponseGenerator::inject_tool_prompt), so letting
+ * the jinja template also inject them would double up.
+ *
+ * Falls back to the low-level template path, then to a plain join, if
+ * jinja template init/apply fails (e.g. a GGUF with no embedded
+ * template).
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters (enable_thinking honored).
+ * @return Formatted prompt string.
  * @internal
- * @version 2.3.7
+ * @version 2.6.1
  */
 std::string LlamaCppBackend::apply_chat_template(
     const std::vector<Message>& messages,
     const GenerationParams& params) const
 {
+    if (model_ != nullptr) {
+        auto tmpls = common_chat_templates_init(model_, "");
+        if (tmpls) {
+            common_chat_templates_inputs inputs;
+            inputs.messages = to_common_chat(messages);
+            inputs.add_generation_prompt = true;
+            inputs.use_jinja = true;
+            inputs.enable_thinking = params.enable_thinking;  // gh#86
+            try {
+                auto rendered = common_chat_templates_apply(
+                    tmpls.get(), inputs);
+                return rendered.prompt;
+            } catch (const std::exception& e) {
+                logger->warn("jinja chat template apply failed ({}); "
+                             "falling back to low-level template", e.what());
+            }
+        }
+    }
+    return apply_chat_template_lowlevel(messages);
+}
+
+/**
+ * @brief Pre-v2.6.1 low-level template path (fallback for gh#86).
+ *
+ * Reads the GGUF template via `llama_chat_apply_template()`. Retained
+ * as the fallback when the jinja path is unavailable. Does NOT honor
+ * `enable_thinking` (the low-level API has no slot for it).
+ *
+ * @param messages Conversation history.
+ * @return Formatted prompt string, or a plain join on failure.
+ * @internal
+ * @version 2.6.1
+ */
+std::string LlamaCppBackend::apply_chat_template_lowlevel(
+    const std::vector<Message>& messages) const
+{
     auto chat_msgs = to_llama_chat(messages);
 
-    // First call: measure required buffer size
     int n = llama_chat_apply_template(
         nullptr, chat_msgs.data(), chat_msgs.size(),
         true, nullptr, 0);
@@ -825,7 +892,7 @@ std::string LlamaCppBackend::apply_chat_template(
         true, buf.data(), static_cast<int32_t>(buf.size()));
     if (written < 0) {
         logger->error("llama_chat_apply_template failed (render)");
-        return "";
+        return concat_messages_fallback(messages);
     }
 
     return std::string(buf.data(), static_cast<size_t>(written));

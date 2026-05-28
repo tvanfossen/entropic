@@ -246,10 +246,19 @@ public:
      * Used by DelegationManager for child loops. Public so the
      * delegation manager (same .so) can invoke it.
      *
+     * gh#81 (v2.4.3): `inherit_interrupt` controls whether the
+     * pre-existing interrupt flag is cleared at entry. Top-level
+     * turns clear it (a fresh turn starts un-interrupted). Delegation
+     * child loops pass `inherit_interrupt=true` so a parent interrupt
+     * raised before/at dispatch is NOT cleared — "stop the engine"
+     * must stop children too, not reset on each nested loop.
+     *
      * @param ctx Loop context to execute.
-     * @version 1.8.6
+     * @param inherit_interrupt When true, do not reset the interrupt
+     *        flag at entry (child loops inherit the parent's state).
+     * @version 2.4.3
      */
-    void run_loop(LoopContext& ctx);
+    void run_loop(LoopContext& ctx, bool inherit_interrupt = false);
 
     /**
      * @brief Get the tier resolution interface.
@@ -1053,6 +1062,19 @@ private:
      */
     void process_generation_result(LoopContext& ctx,
                                    GenerateResult& result);
+
+    /**
+     * @brief Dispatch a queued delegation/pipeline, or halt the turn.
+     *
+     * Extracted from process_generation_result (gh#81/gh#77, v2.4.3).
+     * Honors a mid-tool-processing interrupt and a sibling-set
+     * terminal state before launching any queued action.
+     *
+     * @param ctx Loop context.
+     * @internal
+     * @version 2.4.3
+     */
+    void dispatch_pending_or_halt(LoopContext& ctx);
 
     /**
      * @brief Fire ON_COMPLETE pre-hook for summary validation.

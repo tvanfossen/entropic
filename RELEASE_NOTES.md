@@ -1,3 +1,57 @@
+# entropic v2.4.3
+
+Patch release. **gh#81 (Case 2)** — closes the second half of the
+interrupt-responsiveness issue: a tight tool-processing loop could
+let a queued delegation/pipeline run after an interrupt, and a
+delegation child loop cleared the parent's interrupt flag on entry.
+
+## What landed
+
+**B1 — interrupt honored during tool processing.** `AgentEngine::process_generation_result`
+now checks `interrupt_flag_` after `process_tool_results` /
+`evaluate_no_tool_decision` and before dispatching a queued
+`pending_delegation` / `pending_pipeline`. An interrupt raised while
+the engine is mid-tool-processing (e.g. during a fast reject-retry
+cycle) transitions to INTERRUPTED instead of launching a fresh
+delegation/pipeline generation — cutting latency by ~half an
+iteration versus waiting for the next loop-top check.
+
+**B2 — delegation children inherit the parent's interrupt.** `run_loop`
+gained an `inherit_interrupt` parameter (default false). The
+delegation child trampoline (`run_child_loop_trampoline`) now passes
+`inherit_interrupt=true`, so a parent interrupt raised at/just-before
+dispatch is no longer cleared by the child's `run_loop` entry. Before
+this, the sequence "parent interrupted -> child loop dispatched ->
+child reset_interrupt() -> parent resumes with the flag lost" let an
+interrupt vanish. Top-level turns still reset (a fresh turn starts
+un-interrupted).
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` — `[gh81]`:
+- Interrupt raised during tool processing -> state INTERRUPTED, queued
+  pipeline never runs (no `[PIPELINE CONTEXT]` marker).
+- `run_loop(inherit_interrupt=true)` with a pre-set flag -> honors the
+  inherited interrupt immediately, zero generations.
+- `run_loop(inherit_interrupt=false)` with a stale flag -> clears it,
+  generates normally.
+
+70 engine/interrupt/delegation scenarios green; full core suite 233
+cases.
+
+## Scope
+
+Completes gh#81 (Case 1 shipped in v2.4.2). The loop-top interrupt
+check was already correctly placed; this patch reduces inter-iteration
+latency and fixes the child-loop reset.
+
+## ABI
+
+`run_loop` gains a defaulted parameter — source-compatible; existing
+`run_loop(ctx)` callers unaffected. No C ABI change.
+
+---
+
 # entropic v2.4.2
 
 Patch release. **gh#81 (Case 1)** — `entropic_interrupt` was not

@@ -452,6 +452,14 @@ struct TierConfig : ModelConfig {
     std::optional<float> presence_penalty;  ///< gh#85
     std::optional<float> frequency_penalty; ///< gh#85
 
+    /// @brief Per-tier repeat_penalty + enable_thinking from identity
+    /// frontmatter (gh#86). nullopt = not configured; same precedence
+    /// as the other sampler knobs. enable_thinking flows to the GGUF
+    /// chat template via GenerationParams.enable_thinking.
+    /// @version 2.5.4
+    std::optional<float> repeat_penalty;
+    std::optional<bool>  enable_thinking;   ///< gh#86
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").

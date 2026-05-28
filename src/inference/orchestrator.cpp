@@ -1375,7 +1375,7 @@ inline void apply_if_default(T& field, const std::optional<T>& ov, T dflt) {
 /**
  * @brief Pure precedence helper — see header. (gh#82/gh#85)
  * @utility
- * @version 2.5.3
+ * @version 2.5.4
  */
 void apply_tier_sampler_overrides(
     GenerationParams& params, const TierSamplerOverrides& ov)
@@ -1388,6 +1388,8 @@ void apply_tier_sampler_overrides(
     apply_if_default(params.min_p,             ov.min_p,             0.0f);
     apply_if_default(params.presence_penalty,  ov.presence_penalty,  0.0f);
     apply_if_default(params.frequency_penalty, ov.frequency_penalty, 0.0f);
+    apply_if_default(params.repeat_penalty,    ov.repeat_penalty,    1.1f);  // gh#86
+    apply_if_default(params.enable_thinking,   ov.enable_thinking,   true);  // gh#86
 }
 
 /**
@@ -1397,7 +1399,7 @@ void apply_tier_sampler_overrides(
  * precedence decision to the free `apply_tier_sampler_overrides`.
  *
  * @internal
- * @version 2.5.3
+ * @version 2.5.4
  */
 void ModelOrchestrator::apply_tier_sampler_defaults(
     GenerationParams& params, const std::string& tier_name)
@@ -1413,6 +1415,8 @@ void ModelOrchestrator::apply_tier_sampler_defaults(
     ov.min_p             = tier.min_p;              // gh#85
     ov.presence_penalty  = tier.presence_penalty;   // gh#85
     ov.frequency_penalty = tier.frequency_penalty;  // gh#85
+    ov.repeat_penalty    = tier.repeat_penalty;     // gh#86
+    ov.enable_thinking   = tier.enable_thinking;    // gh#86
     float before_temp = params.temperature;
     int before_max = params.max_tokens;
     apply_tier_sampler_overrides(params, ov);

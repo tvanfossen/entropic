@@ -80,8 +80,8 @@ struct IdentityFrontmatter {
     std::optional<float> min_p;                ///< Per-tier min_p (gh#85); nullopt = use param default
     std::optional<float> presence_penalty;     ///< Per-tier presence_penalty (gh#85); nullopt = use param default
     std::optional<float> frequency_penalty;    ///< Per-tier frequency_penalty (gh#85); nullopt = use param default
-    float repeat_penalty = 1.1f;               ///< Default repetition penalty
-    bool enable_thinking = false;              ///< Default thinking mode
+    std::optional<float> repeat_penalty;       ///< Per-tier repeat_penalty (gh#86); nullopt = use param default
+    std::optional<bool> enable_thinking;       ///< Per-tier thinking mode (gh#86); nullopt = use param default
     bool interstitial = false;                 ///< Interstitial role
     bool routable = true;                      ///< Visible to router
     bool explicit_completion = false;          ///< Requires explicit completion

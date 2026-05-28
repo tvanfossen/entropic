@@ -79,6 +79,8 @@ struct TierSamplerOverrides {
     std::optional<float> min_p;              ///< gh#85
     std::optional<float> presence_penalty;   ///< gh#85
     std::optional<float> frequency_penalty;  ///< gh#85
+    std::optional<float> repeat_penalty;     ///< gh#86
+    std::optional<bool>  enable_thinking;    ///< gh#86
 };
 
 /**

@@ -135,7 +135,10 @@ SCENARIO("Load identity file", "[prompts][identity]") {
                 REQUIRE(identity.frontmatter.max_output_tokens.has_value());
                 REQUIRE(*identity.frontmatter.max_output_tokens == 8192);
                 REQUIRE(identity.frontmatter.routable == false);
-                REQUIRE(identity.frontmatter.enable_thinking == false);
+                // gh#86 (v2.5.4): enable_thinking is now optional —
+                // present + false in this fixture.
+                REQUIRE(identity.frontmatter.enable_thinking.has_value());
+                REQUIRE(*identity.frontmatter.enable_thinking == false);
             }
 
             // E6 regression: per-identity cap overrides flow through

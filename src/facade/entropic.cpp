@@ -819,7 +819,7 @@ static std::string build_shared_prompt_prefix(
  * @param tc Tier config (mutated).
  * @param fm Parsed identity frontmatter.
  * @utility
- * @version 2.5.3
+ * @version 2.5.4
  */
 static void thread_frontmatter_sampler(
     entropic::TierConfig& tc,
@@ -836,6 +836,11 @@ static void thread_frontmatter_sampler(
     }
     if (fm.frequency_penalty.has_value()) {
         tc.frequency_penalty = *fm.frequency_penalty;
+    }
+    // gh#86 (v2.5.4): repeat_penalty + enable_thinking.
+    if (fm.repeat_penalty.has_value()) { tc.repeat_penalty = *fm.repeat_penalty; }
+    if (fm.enable_thinking.has_value()) {
+        tc.enable_thinking = *fm.enable_thinking;
     }
 }
 

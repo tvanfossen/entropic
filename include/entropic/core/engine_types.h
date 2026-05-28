@@ -68,6 +68,23 @@ enum class ToolApproval {
 };
 
 /**
+ * @brief Thinking-budget gating mode. (gh#80, v2.5.0)
+ *
+ * Charges generation effort that does NOT produce a tool call against
+ * a budget; a tool call resets the counter. On exhaustion the engine
+ * nudges the model to complete, then hard-cuts with a failure note
+ * visible in history. Opt-in: `off` is the default and preserves
+ * pre-v2.5.0 behavior exactly.
+ *
+ * @version 2.5.0
+ */
+enum class BudgetMode {
+    off,         ///< Disabled (default) — no thinking-budget gating
+    tokens,      ///< Gate on generated tokens since the last tool call
+    wall_clock,  ///< Gate on wall-clock seconds since the last tool call
+};
+
+/**
  * @brief Configuration for the agentic loop.
  * @version 1.8.4
  */
@@ -119,6 +136,22 @@ struct LoopConfig {
     /// at this depth, additional enqueues return
     /// `ENTROPIC_ERROR_QUEUE_FULL`. (gh#40, v2.1.10)
     int message_queue_capacity = 8;
+
+    /// @brief Thinking-budget gating mode (gh#80, v2.5.0). Default
+    /// `off` — opt-in, no behavior change for existing consumers.
+    /// When `tokens` or `wall_clock`, generation that does not emit a
+    /// tool call is charged against `budget_limit`; a tool call resets
+    /// the counter. Applies to all tiers uniformly.
+    /// @version 2.5.0
+    BudgetMode budget_mode = BudgetMode::off;
+
+    /// @brief Budget ceiling for the active `budget_mode`: generated
+    /// tokens (mode `tokens`) or wall-clock seconds (mode `wall_clock`)
+    /// of tool-call-free generation before the engine first nudges the
+    /// model to complete, then hard-cuts. Ignored when `budget_mode`
+    /// is `off`. Must be > 0 to engage. (gh#80, v2.5.0)
+    /// @version 2.5.0
+    int budget_limit = 0;
 };
 
 /**
@@ -273,6 +306,25 @@ struct LoopContext {
     /// Compared against LoopConfig::max_consecutive_same_tool.
     /// (Demo ask #5, v2.1.0)
     int consecutive_same_tool_calls = 0;
+
+    /// @brief gh#80 (v2.5.0): tokens generated since the last tool call
+    /// (mode `tokens`). Reset to 0 whenever a tool call is dispatched.
+    /// @version 2.5.0
+    int budget_tokens_since_tool = 0;
+
+    /// @brief gh#80 (v2.5.0): wall-clock epoch-seconds marking the start
+    /// of the current tool-call-free window (mode `wall_clock`). 0.0
+    /// means "no open window" — set on the first tool-call-free
+    /// generation, reset to 0.0 on any tool call.
+    /// @version 2.5.0
+    double budget_window_start_s = 0.0;
+
+    /// @brief gh#80 (v2.5.0): true once the engine has emitted the
+    /// "emit completion now" nudge for the current budget window. The
+    /// next exhaustion without a tool call escalates to a hard cut.
+    /// Reset to false on any tool call.
+    /// @version 2.5.0
+    bool budget_completion_nudged = false;
 
     /// @brief gh#64: target tier of the most recent FAILED delegation
     /// (DelegationResult.success == false). Empty when last delegation

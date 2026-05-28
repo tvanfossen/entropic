@@ -532,7 +532,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.4.3
+ * @version 2.5.0
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -543,13 +543,108 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
     Message assistant_msg{"assistant", cleaned};
     ctx.messages.push_back(std::move(assistant_msg));
 
-    if (!tool_calls.empty() && tool_exec_.process_tool_calls != nullptr) {
+    bool made_tool_call =
+        !tool_calls.empty() && tool_exec_.process_tool_calls != nullptr;
+    if (made_tool_call) {
         process_tool_results(ctx, tool_calls);
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
 
+    // gh#80 (v2.5.0): charge the thinking budget before dispatch so a
+    // budget-triggered terminal is honored by dispatch_pending_or_halt.
+    charge_thinking_budget(ctx, result.content.size(), made_tool_call);
+
     dispatch_pending_or_halt(ctx);
+}
+
+/**
+ * @brief Charge the thinking budget — see header. (gh#80, v2.5.0)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::charge_thinking_budget(
+    LoopContext& ctx, size_t content_len, bool made_tool_call) {
+    if (loop_config_.budget_mode == BudgetMode::off) { return; }
+
+    // A tool call is productive action — reset the window and the
+    // nudge latch so the model earns a fresh thinking allowance.
+    if (made_tool_call) {
+        ctx.budget_tokens_since_tool = 0;
+        ctx.budget_window_start_s = 0.0;
+        ctx.budget_completion_nudged = false;
+        return;
+    }
+
+    int units = budget_units_consumed(ctx, content_len);
+    if (units < loop_config_.budget_limit) { return; }
+
+    if (!ctx.budget_completion_nudged) {
+        nudge_budget_completion(ctx);
+    } else {
+        hard_cut_budget(ctx);
+    }
+}
+
+/**
+ * @brief Accumulate + return budget units consumed this window. (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+int AgentEngine::budget_units_consumed(LoopContext& ctx, size_t content_len) {
+    if (loop_config_.budget_mode == BudgetMode::tokens) {
+        // Estimate generated tokens from content length — the
+        // function-pointer inference ABI doesn't thread an exact count
+        // back. ~4 chars/token; content includes <think> blocks, which
+        // is exactly the deliberation we want to charge.
+        constexpr size_t kCharsPerToken = 4;
+        ctx.budget_tokens_since_tool +=
+            static_cast<int>(content_len / kCharsPerToken);
+        return ctx.budget_tokens_since_tool;
+    }
+    // wall_clock
+    if (ctx.budget_window_start_s == 0.0) {
+        ctx.budget_window_start_s = now_seconds();
+    }
+    return static_cast<int>(now_seconds() - ctx.budget_window_start_s);
+}
+
+/**
+ * @brief First-exhaustion nudge: push "emit completion now". (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::nudge_budget_completion(LoopContext& ctx) {
+    ctx.budget_completion_nudged = true;
+    ctx.budget_tokens_since_tool = 0;
+    ctx.budget_window_start_s =
+        (loop_config_.budget_mode == BudgetMode::wall_clock)
+            ? now_seconds() : 0.0;
+    logger->warn("[BUDGET] thinking budget reached ({} {}); nudging completion",
+                 loop_config_.budget_limit,
+                 loop_config_.budget_mode == BudgetMode::tokens
+                     ? "tokens" : "seconds");
+    Message nudge{"user",
+        "[engine] thinking budget reached — emit entropic.complete now "
+        "with your best current answer. Further deliberation without a "
+        "tool call will be cut off."};
+    ctx.messages.push_back(std::move(nudge));
+}
+
+/**
+ * @brief Second-exhaustion hard cut, failure visible in history. (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::hard_cut_budget(LoopContext& ctx) {
+    logger->warn("[BUDGET] thinking budget exhausted after nudge — "
+                 "hard-cutting turn");
+    Message cut{"assistant",
+        "[thinking budget exhausted — the turn was hard-cut after the "
+        "completion nudge went unheeded; no tool call was emitted]"};
+    ctx.messages.push_back(std::move(cut));
+    ctx.metadata["terminal_reason"] = "budget_exhausted_thinking";
+    set_state(ctx, AgentState::COMPLETE);
 }
 
 /**

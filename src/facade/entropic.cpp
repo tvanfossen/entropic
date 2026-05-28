@@ -1389,7 +1389,7 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return Populated LoopConfig.
  * @utility
- * @version 2.0.6
+ * @version 2.5.0
  */
 static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     entropic::LoopConfig lc;
@@ -1398,6 +1398,26 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     auto it = h->config.models.tiers.find(h->config.models.default_tier);
     if (it != h->config.models.tiers.end()) {
         lc.context_length = it->second.context_length;
+    }
+    // gh#80 (v2.5.0): map the generation.budget_mode string to the
+    // BudgetMode enum. Unknown values resolve to off with a warning.
+    const std::string& bm = h->config.generation.budget_mode;
+    if (bm == "tokens") {
+        lc.budget_mode = entropic::BudgetMode::tokens;
+    } else if (bm == "wall_clock") {
+        lc.budget_mode = entropic::BudgetMode::wall_clock;
+    } else {
+        if (bm != "off") {
+            s_log->warn("Unknown generation.budget_mode '{}' — "
+                        "treating as 'off'", bm);
+        }
+        lc.budget_mode = entropic::BudgetMode::off;
+    }
+    lc.budget_limit = h->config.generation.budget_limit;
+    // A non-positive limit can't gate anything — disable to avoid a
+    // pathological "exhausted at zero" loop.
+    if (lc.budget_limit <= 0) {
+        lc.budget_mode = entropic::BudgetMode::off;
     }
     return lc;
 }

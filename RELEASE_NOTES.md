@@ -1,3 +1,84 @@
+# entropic v2.5.0
+
+Minor release. **gh#80 — thinking-budget gating.** A tier with
+`enable_thinking` could spend minutes generating `<think>` content
+without ever emitting a tool call; the existing anti-spiral guards
+only fire on repeated *tool calls*, so pure thinking degeneration
+tripped nothing and the per-tier `max_iterations` budget (consumed
+one unit per tool call) could not stop a model that never called a
+tool. This release charges tool-call-free generation against a
+configurable budget.
+
+Bundles the v2.4.1 → v2.4.4 patch series (gh#79, gh#81 ×2, gh#82).
+
+## How it works
+
+- **Opt-in, off by default.** `generation.budget_mode` defaults to
+  `off` — zero behavior change for existing consumers until they
+  configure it.
+- **Operator picks one mode:** `tokens` (gate on generated tokens
+  since the last tool call) or `wall_clock` (gate on wall-clock
+  seconds since the last tool call). `budget_limit` sets the ceiling.
+- **A tool call resets the counter.** Productive action is free; the
+  model earns a fresh thinking allowance for choosing its next move.
+  "Act, don't over-deliberate" becomes structural — adapter- and
+  model-agnostic, no prompt cooperation required.
+- **Two-stage exhaustion:** the first time the budget is hit without
+  a tool call, the engine pushes an "emit `entropic.complete` now"
+  nudge into history and grants one more window. If the model still
+  produces no tool call, the engine **hard-cuts** the turn with a
+  failure note (also visible in history), sets `terminal_reason =
+  "budget_exhausted_thinking"`, and transitions to COMPLETE.
+
+## Config
+
+```yaml
+generation:
+  budget_mode: tokens     # off (default) | tokens | wall_clock
+  budget_limit: 4000      # tokens, or seconds when mode is wall_clock
+```
+
+Applies to all tiers uniformly. A non-positive `budget_limit`
+disables the gate (treated as `off`) to avoid a degenerate
+"exhausted at zero" loop.
+
+## Implementation notes
+
+- `BudgetMode` enum + `budget_mode` / `budget_limit` on `LoopConfig`;
+  per-turn accumulator fields on `LoopContext`
+  (`budget_tokens_since_tool`, `budget_window_start_s`,
+  `budget_completion_nudged`).
+- `AgentEngine::charge_thinking_budget` runs in
+  `process_generation_result` before pending dispatch, so a
+  budget-triggered terminal is honored by `dispatch_pending_or_halt`.
+  Split into `budget_units_consumed` / `nudge_budget_completion` /
+  `hard_cut_budget` to stay under the knots gate.
+- **Tokens-mode caveat:** the function-pointer inference ABI doesn't
+  thread an exact generated-token count back to the engine, so
+  tokens mode estimates from generated content length (~4 chars/token).
+  Content includes `<think>` blocks — exactly the deliberation being
+  charged. `wall_clock` mode is exact. A future minor may thread an
+  exact token count if precision becomes necessary.
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` `[gh80]`:
+- budget `off` (default) does not gate a tool-call-free spiral —
+  only the iteration cap stops it (no behavior change).
+- `tokens` budget nudges on the first exhaustion, hard-cuts on the
+  second, before the iteration cap; both messages visible in history.
+- a tool call resets the window (no early nudge on the tool-call iter).
+
+Full unit sweep green: core 236, config 48.
+
+## ABI
+
+Additive (`LoopConfig` / `LoopContext` fields, `BudgetMode` enum,
+`GenerationConfig` budget fields). Drop-in for any 2.x-compiled
+consumer; the gate is inert unless configured.
+
+---
+
 # entropic v2.4.4
 
 Patch release. **gh#82** — per-tier `temperature` and `max_output_tokens`

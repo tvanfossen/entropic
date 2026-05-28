@@ -75,6 +75,11 @@ struct IdentityFrontmatter {
     std::optional<std::vector<std::string>> bash_commands;  ///< Allowed bash commands
     std::optional<int> max_output_tokens;      ///< Per-tier max output tokens (gh#82); nullopt = use param default
     std::optional<float> temperature;          ///< Per-tier sampling temperature (gh#82); nullopt = use param default
+    std::optional<float> top_p;                ///< Per-tier top_p (gh#85); nullopt = use param default
+    std::optional<int> top_k;                  ///< Per-tier top_k (gh#85); nullopt = use param default
+    std::optional<float> min_p;                ///< Per-tier min_p (gh#85); nullopt = use param default
+    std::optional<float> presence_penalty;     ///< Per-tier presence_penalty (gh#85); nullopt = use param default
+    std::optional<float> frequency_penalty;    ///< Per-tier frequency_penalty (gh#85); nullopt = use param default
     float repeat_penalty = 1.1f;               ///< Default repetition penalty
     bool enable_thinking = false;              ///< Default thinking mode
     bool interstitial = false;                 ///< Interstitial role

@@ -247,7 +247,7 @@ static void extract_benchmark(
  * @param root YAML root node.
  * @param[out] fm Identity frontmatter to populate.
  * @utility
- * @version 2.4.4
+ * @version 2.5.3
  */
 static void extract_identity_flags(ryml::ConstNodeRef root,
                                    IdentityFrontmatter& fm) {
@@ -258,6 +258,16 @@ static void extract_identity_flags(ryml::ConstNodeRef root,
     if (extract(root, "max_output_tokens", mot)) { fm.max_output_tokens = mot; }
     float temp = 0.0f;
     if (extract(root, "temperature", temp)) { fm.temperature = temp; }
+    // gh#85 (v2.5.3): remaining sampler knobs — optional, set only when
+    // the key is present so the orchestrator can distinguish a
+    // configured value from "not set".
+    float fval = 0.0f;
+    if (extract(root, "top_p", fval)) { fm.top_p = fval; }
+    int top_k = 0;
+    if (extract(root, "top_k", top_k)) { fm.top_k = top_k; }
+    if (extract(root, "min_p", fval)) { fm.min_p = fval; }
+    if (extract(root, "presence_penalty", fval)) { fm.presence_penalty = fval; }
+    if (extract(root, "frequency_penalty", fval)) { fm.frequency_penalty = fval; }
     extract(root, "repeat_penalty", fm.repeat_penalty);
     extract(root, "enable_thinking", fm.enable_thinking);
     extract(root, "interstitial", fm.interstitial);

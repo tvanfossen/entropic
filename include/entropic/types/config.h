@@ -441,6 +441,17 @@ struct TierConfig : ModelConfig {
     /// @version 2.4.4
     std::optional<int> max_output_tokens;
 
+    /// @brief Per-tier sampler knobs from identity frontmatter (gh#85).
+    /// nullopt = not configured; applied as the tier baseline (an
+    /// explicit per-call param override wins). Same precedence policy
+    /// as `temperature`.
+    /// @version 2.5.3
+    std::optional<float> top_p;
+    std::optional<int>   top_k;             ///< gh#85
+    std::optional<float> min_p;             ///< gh#85
+    std::optional<float> presence_penalty;  ///< gh#85
+    std::optional<float> frequency_penalty; ///< gh#85
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").

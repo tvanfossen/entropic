@@ -139,3 +139,10 @@ add_model_test(test-v2310-backend-coverage-smoke
 # release notes flagged this as deferred to model-test scope).
 add_model_test(test-v240-minor-ceremony
                test_v240_minor_ceremony.cpp)
+
+# gh#87 increment-1 gate (v2.7.0): real-flow common_chat render→generate
+# →parse on gemma4. Needs the llama.cpp common/ include dir (private to
+# entropic-inference).
+add_model_test(test-gh87-common-chat-e2e test_gh87_common_chat_e2e.cpp)
+target_include_directories(test-gh87-common-chat-e2e PRIVATE
+    ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common)

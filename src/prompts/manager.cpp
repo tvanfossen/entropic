@@ -247,12 +247,17 @@ static void extract_benchmark(
  * @param root YAML root node.
  * @param[out] fm Identity frontmatter to populate.
  * @utility
- * @version 2.3.7
+ * @version 2.4.4
  */
 static void extract_identity_flags(ryml::ConstNodeRef root,
                                    IdentityFrontmatter& fm) {
-    extract(root, "max_output_tokens", fm.max_output_tokens);
-    extract(root, "temperature", fm.temperature);
+    // gh#82 (v2.4.4): optional — set only when the key is present, so
+    // the orchestrator can tell a configured per-tier value apart from
+    // "not set" (and leave the GenerationParams default in place).
+    int mot = 0;
+    if (extract(root, "max_output_tokens", mot)) { fm.max_output_tokens = mot; }
+    float temp = 0.0f;
+    if (extract(root, "temperature", temp)) { fm.temperature = temp; }
     extract(root, "repeat_penalty", fm.repeat_penalty);
     extract(root, "enable_thinking", fm.enable_thinking);
     extract(root, "interstitial", fm.interstitial);

@@ -127,9 +127,13 @@ SCENARIO("Load identity file", "[prompts][identity]") {
             }
 
             THEN("inference params are correct") {
-                REQUIRE(identity.frontmatter.temperature
+                // gh#82 (v2.4.4): these are now std::optional — present
+                // because the fixture frontmatter sets them explicitly.
+                REQUIRE(identity.frontmatter.temperature.has_value());
+                REQUIRE(*identity.frontmatter.temperature
                         == Catch::Approx(0.15f));
-                REQUIRE(identity.frontmatter.max_output_tokens == 8192);
+                REQUIRE(identity.frontmatter.max_output_tokens.has_value());
+                REQUIRE(*identity.frontmatter.max_output_tokens == 8192);
                 REQUIRE(identity.frontmatter.routable == false);
                 REQUIRE(identity.frontmatter.enable_thinking == false);
             }

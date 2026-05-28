@@ -1,3 +1,67 @@
+# entropic v2.4.4
+
+Patch release. **gh#82** — per-tier `temperature` and `max_output_tokens`
+declared in identity frontmatter were parsed but never applied; the
+sampler always ran at the `GenerationParams` default `0.7f` / `4096`
+regardless of what the operator configured.
+
+Observed live (entropic 2.4.0, qwen3_6_a3b, lead tier with
+`temperature: 0.2` in frontmatter): the sampler logged `temp=0.70`.
+`enable_thinking` worked because it flows through a different
+(chat-template) path that bypasses the gap.
+
+## Root cause
+
+The parser populated `IdentityFrontmatter.temperature` /
+`max_output_tokens`, but `apply_identity_frontmatter` (facade) wired
+only `allowed_tools` / `validation_rules` / `relay_single_delegate`
+into the engine — the sampler knobs were dropped. `ModelConfig` had
+no temperature field, and `build_params_json` emitted only the tier
+name, so the per-tier value never reached `GenerationParams`.
+
+## What landed (Option A — TierConfig + orchestrator)
+
+- `IdentityFrontmatter.temperature` / `max_output_tokens` are now
+  `std::optional` — the parser sets them only when the key is present,
+  so "configured" is distinguishable from "default".
+- `TierConfig` gains `std::optional<float> temperature` and
+  `std::optional<int> max_output_tokens`.
+- `apply_identity_frontmatter` threads the frontmatter values into the
+  tier config.
+- The orchestrator applies them in all three generate paths
+  (`generate`, cancellable `generate`, `generate_streaming`) via a new
+  `apply_tier_sampler_defaults`, delegating the precedence decision to
+  a pure, unit-tested free function `apply_tier_sampler_overrides`.
+
+**Precedence:** the tier baseline applies only when the incoming
+`GenerationParams` value is still at the struct default (`0.7f` /
+`4096`); an explicit per-call override is preserved. (The engine's
+`build_params_json` sends only the tier name today, so the tier
+baseline applies in practice; the override path is honored for direct
+orchestrator-API callers.) Edge case: a caller wanting exactly the
+default value on a tier with a configured override gets the tier
+value — acceptable for this patch, documented in the helper.
+
+## Tests
+
+- `tests/unit/inference/orchestrator_test.cpp` `[gh82]` — the
+  precedence helper: tier baseline applied at defaults; per-call
+  override preserved; nullopt tiers unchanged; temperature-only tier.
+- `tests/unit/prompts/prompt_parse_test.cpp` updated for the optional
+  frontmatter fields.
+
+Full unit sweep green: inference 251, config 48, api 481.
+
+## ABI
+
+Additive (`TierConfig` optionals + a new free function). Drop-in for
+any 2.4.x consumer. Note: `IdentityFrontmatter.temperature` /
+`max_output_tokens` changed type to `std::optional` — a source-level
+change for any out-of-tree code reading those fields directly
+(none in-tree besides tests).
+
+---
+
 # entropic v2.4.3
 
 Patch release. **gh#81 (Case 2)** — closes the second half of the

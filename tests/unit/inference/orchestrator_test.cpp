@@ -9,6 +9,7 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
 #include <entropic/inference/orchestrator.h>
 
 #include <nlohmann/json.hpp>
@@ -678,4 +679,63 @@ TEST_CASE("Orchestrator empty-tiers + handoff + observer + accessor coverage",
 
     std::error_code ec;
     std::filesystem::remove(fake, ec);
+}
+
+// ── gh#82 (v2.4.4): per-tier sampler override precedence ────
+
+SCENARIO("gh#82: apply_tier_sampler_overrides honors tier baseline + per-call override",
+         "[v2.4.4][inference][gh82]") {
+    using entropic::apply_tier_sampler_overrides;
+    using entropic::GenerationParams;
+
+    GIVEN("a tier configures temperature=0.2 and max_output_tokens=2048") {
+        std::optional<float> tier_temp = 0.2f;
+        std::optional<int> tier_max = 2048;
+
+        WHEN("incoming params are at the struct defaults (0.7 / 4096)") {
+            GenerationParams p;  // temperature=0.7f, max_tokens=4096
+            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            THEN("the tier baseline is applied") {
+                CHECK(p.temperature == Catch::Approx(0.2f));
+                CHECK(p.max_tokens == 2048);
+            }
+        }
+
+        WHEN("the caller explicitly overrides temperature to 0.95") {
+            GenerationParams p;
+            p.temperature = 0.95f;          // explicit per-call override
+            p.max_tokens = 1234;            // explicit per-call override
+            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            THEN("the per-call override is preserved over the tier baseline") {
+                CHECK(p.temperature == Catch::Approx(0.95f));
+                CHECK(p.max_tokens == 1234);
+            }
+        }
+    }
+
+    GIVEN("a tier that configures nothing (both nullopt)") {
+        std::optional<float> tier_temp;
+        std::optional<int> tier_max;
+        WHEN("params are at defaults") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            THEN("params remain at the struct defaults (no behavior change)") {
+                CHECK(p.temperature == Catch::Approx(0.7f));
+                CHECK(p.max_tokens == 4096);
+            }
+        }
+    }
+
+    GIVEN("a tier configuring only temperature (max_output_tokens nullopt)") {
+        std::optional<float> tier_temp = 0.1f;
+        std::optional<int> tier_max;
+        WHEN("params are at defaults") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            THEN("only temperature is set; max_tokens stays at default") {
+                CHECK(p.temperature == Catch::Approx(0.1f));
+                CHECK(p.max_tokens == 4096);
+            }
+        }
+    }
 }

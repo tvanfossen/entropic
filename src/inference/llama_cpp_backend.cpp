@@ -952,6 +952,29 @@ std::string LlamaCppBackend::apply_chat_template(
 }
 
 /**
+ * @brief Generation render seam (gh#87): tools → common_chat, else legacy.
+ *
+ * Clears any stale captured params on the tool-less branch so
+ * has_common_chat_params() reflects only THIS render. See header.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return Formatted prompt string.
+ * @internal
+ * @version 2.7.0
+ */
+std::string LlamaCppBackend::render_prompt(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    if (!active_tools_json_.empty()) {
+        return render_with_tools(messages, params);
+    }
+    have_chat_params_ = false;
+    return apply_chat_template(messages, params);
+}
+
+/**
  * @brief Stage tool defs for the next common_chat render (gh#87).
  * @param tools_json MCP tool-list JSON array.
  * @utility
@@ -1677,7 +1700,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
 /**
  * @brief Multimodal generation core (v2.1.8, gh#37 / v1.9.11 Phase 6).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::generate_multimodal(
     const std::vector<Message>& messages,
@@ -1697,7 +1720,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
             "mtmd_helper_bitmap_init_from_file failed";
         return err;
     }
-    auto prompt = apply_chat_template(marked, params);
+    auto prompt = render_prompt(marked, params);
     logger->info("Multimodal generate: {} images, prompt={} chars, max_tokens={}",
                  bitmaps.size(), prompt.size(), params.max_tokens);
     std::string prefill_err;
@@ -1747,14 +1770,14 @@ GenerationResult LlamaCppBackend::do_generate(
 /**
  * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
     const GenerationParams& params)
 {
     auto t0 = entropic::log::now();
-    std::string prompt = apply_chat_template(messages, params);
+    std::string prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     std::string sys = extract_system_prompt(messages);
 
@@ -1834,7 +1857,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * contract.
  *
  * @internal
- * @version 2.4.2
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -1842,7 +1865,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
     std::atomic<bool>& cancel)
 {
     auto t0 = entropic::log::now();
-    std::string prompt = apply_chat_template(messages, params);
+    std::string prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     std::string sys = extract_system_prompt(messages);
 
@@ -1924,7 +1947,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
 /**
  * @brief Text-only streaming body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     const std::vector<Message>& messages,
@@ -1933,7 +1956,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     std::atomic<bool>& cancel)
 {
     auto t0 = entropic::log::now();
-    auto prompt = apply_chat_template(messages, params);
+    auto prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     auto sys = extract_system_prompt(messages);
     logger->info("Stream: {} input tokens, max_tokens={}",
@@ -2761,7 +2784,7 @@ static GenerationResult spec_run_from_tokens(
 /**
  * @brief Speculative generation against a draft model (gh#36).
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -2783,7 +2806,7 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
                 : ENTROPIC_ERROR_NOT_SUPPORTED;
         result = spec_error(code, std::move(pre_err));
     } else {
-        auto prompt = apply_chat_template(messages, params);
+        auto prompt = render_prompt(messages, params);
         auto tokens = tokenize(prompt, true);
         if (tokens.size() < 2) {
             result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,

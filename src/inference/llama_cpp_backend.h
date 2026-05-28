@@ -263,6 +263,20 @@ public:
      */
     CommonChatResult parse_response(const std::string& raw) const;
 
+    /**
+     * @brief True iff the last render captured common_chat parse params (gh#87).
+     *
+     * Set when `render_with_tools` (via the internal render seam) renders with
+     * active tools; cleared on a tool-less render. The orchestrator queries
+     * this to route post-generation parsing through `parse_response` vs the
+     * legacy adapter `parse_tool_calls`.
+     *
+     * @return true if a tool render captured params for `parse_response`.
+     * @utility
+     * @version 2.7.0
+     */
+    bool has_common_chat_params() const { return have_chat_params_; }
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 
@@ -479,6 +493,25 @@ protected:
     std::string apply_chat_template(
         const std::vector<Message>& messages,
         const GenerationParams& params) const;
+
+    /**
+     * @brief Generation render seam: common_chat-with-tools or legacy (gh#87).
+     *
+     * Routes to `render_with_tools` (capturing parse params) when tools have
+     * been staged via `set_active_tools`, else to `apply_chat_template`
+     * (clearing any stale captured params). Used by every message-generate
+     * entry point so the common_chat path is reachable from generate(), not
+     * just raw complete(). Raw completion + the router path bypass this.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @return Formatted prompt string.
+     * @internal
+     * @version 2.7.0
+     */
+    std::string render_prompt(
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
 
     /**
      * @brief Low-level GGUF template path (gh#86 fallback, v2.6.1).

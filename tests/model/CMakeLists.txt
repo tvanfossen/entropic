@@ -152,3 +152,10 @@ target_include_directories(test-gh87-common-chat-e2e PRIVATE
 # parse_response). Uses entropic types + the backend header only — no
 # direct llama.cpp common/ include needed.
 add_model_test(test-gh87-backend-common-chat test_gh87_backend_common_chat.cpp)
+
+# gh#87 increment-3a gate (v2.7.0): the standard generate() entry point
+# routes through the common_chat path (render_prompt seam) when tools are
+# staged. Combined call site: set_active_tools → generate →
+# has_common_chat_params → parse_response.
+add_model_test(test-gh87-backend-generate-tools
+               test_gh87_backend_generate_tools.cpp)

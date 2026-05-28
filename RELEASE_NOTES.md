@@ -1,3 +1,57 @@
+# entropic v2.5.2
+
+Patch release. **gh#83** — tier `allowed_tools` was enforced only at
+prompt-injection time (the model got a filtered tool list), not at
+dispatch. `ToolExecutor::check_tier_allowed` was a stub returning
+`nullopt`, so a model that emitted a call for a tool outside its
+tier's allowlist — hallucinated, learned from another tier's prompt,
+or cross-tier — had it dispatched normally. Tier isolation was
+advisory, not enforced.
+
+Live (bissell-explorer, 2026-05-28): researcher tier
+(`allowed_tools=[docs.*, entropic.complete]`, no `entropic.delegate`)
+emitted three `entropic.delegate` calls; the cross-tier one
+(target=reader) executed and reader ran `filesystem.grep`. Zero
+rejection markers written.
+
+## Fix
+
+`check_tier_allowed` now enforces the locked tier's allowlist at
+dispatch:
+
+- `ToolExecutor` holds a pointer to the facade-owned
+  tier→allowed_tools map (`set_tier_allowed_tools`), wired in
+  `cache_tier_allowed_tools` after the map is populated (a pointer
+  keeps it order-independent vs `wire_tool_executor`).
+- An off-allowlist call returns a new `rejected_unauthorized`
+  `ToolResultKind` (added to the stable enum + `result_kind_to_string`)
+  via the existing precondition chain.
+- **Pass-through preserved** when: no tier locked, no map wired, the
+  tier has no allowlist entry, or its allowlist is empty
+  (unrestricted) — no behavior change for configs that don't isolate.
+
+## Tests
+
+`tests/unit/mcp/tool_executor_test.cpp` `[gh83]`:
+- off-allowlist tool → `rejected_unauthorized` + "not authorized".
+- allowlisted tool dispatches (`ok`).
+- no map wired → pass-through.
+- tier absent from map / empty allowlist → unrestricted.
+- empty locked_tier → bypass.
+
+MCP 309 + API 481 green.
+
+## ABI
+
+Additive: new `rejected_unauthorized` enum value (appended, not
+reordered — wire-stable), `ToolExecutor::set_tier_allowed_tools`
+setter. Drop-in for any 2.5.x consumer; enforcement engages only when
+the facade wires the map (it does, at configure).
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor.
+
+---
+
 # entropic v2.5.1
 
 Patch release. **gh#84** — the thinking-budget gate (gh#80, v2.5.0)

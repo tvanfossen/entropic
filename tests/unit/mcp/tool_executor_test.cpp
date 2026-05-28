@@ -1174,3 +1174,103 @@ SCENARIO("Anti-spiral hard block uses derived default when sentinel set",
         }
     }
 }
+
+// ── gh#83 (v2.5.2): tier allowed_tools enforced at dispatch ──
+
+TEST_CASE("gh#83: off-allowlist tool is rejected_unauthorized at dispatch",
+          "[tool_executor][gh83]") {
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    std::unordered_map<std::string, std::vector<std::string>> allow;
+    allow["researcher"] = {"docs.search", "entropic.complete"};  // no ok.do_thing
+    executor.set_tier_allowed_tools(&allow);
+
+    LoopContext ctx;
+    ctx.locked_tier = "researcher";
+    auto results = executor.process_tool_calls(
+        ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].metadata.at("result_kind") == "rejected_unauthorized");
+    CHECK(results[0].content.find("not authorized") != std::string::npos);
+}
+
+TEST_CASE("gh#83: allowlisted tool dispatches normally",
+          "[tool_executor][gh83]") {
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    std::unordered_map<std::string, std::vector<std::string>> allow;
+    allow["researcher"] = {"ok.do_thing"};
+    executor.set_tier_allowed_tools(&allow);
+
+    LoopContext ctx;
+    ctx.locked_tier = "researcher";
+    auto results = executor.process_tool_calls(
+        ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].content.find("ok") != std::string::npos);
+    CHECK(results[0].metadata.at("result_kind") == "ok");
+}
+
+TEST_CASE("gh#83: no map wired = pass-through (pre-v2.5.2 behavior)",
+          "[tool_executor][gh83]") {
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+    // no set_tier_allowed_tools call
+
+    LoopContext ctx;
+    ctx.locked_tier = "researcher";
+    auto results = executor.process_tool_calls(
+        ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].content.find("ok") != std::string::npos);
+}
+
+TEST_CASE("gh#83: tier with no allowlist entry is unrestricted",
+          "[tool_executor][gh83]") {
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    std::unordered_map<std::string, std::vector<std::string>> allow;
+    allow["reader"] = {"docs.search"};  // researcher has no entry
+    executor.set_tier_allowed_tools(&allow);
+
+    LoopContext ctx;
+    ctx.locked_tier = "researcher";  // not in the map
+    auto results = executor.process_tool_calls(
+        ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].content.find("ok") != std::string::npos);
+}
+
+TEST_CASE("gh#83: empty locked_tier bypasses enforcement",
+          "[tool_executor][gh83]") {
+    auto mgr = make_manager();
+    LoopConfig lc; lc.auto_approve_tools = true;
+    EngineCallbacks cb;
+    ToolExecutor executor(mgr, lc, cb);
+
+    std::unordered_map<std::string, std::vector<std::string>> allow;
+    allow["researcher"] = {"docs.search"};
+    executor.set_tier_allowed_tools(&allow);
+
+    LoopContext ctx;  // locked_tier empty
+    auto results = executor.process_tool_calls(
+        ctx, {make_call("ok.do_thing")});
+
+    REQUIRE(results.size() == 1);
+    CHECK(results[0].content.find("ok") != std::string::npos);
+}

@@ -24,11 +24,13 @@
 #include <llama.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 // Plugin C API entry points — declared only as docs in
@@ -77,6 +79,9 @@ public:
     bool throw_on_count_tokens = false;
     std::string generate_content = "mock-generated-text";
     int count_tokens_result = 7;
+    // gh#81 (v2.4.2): when true, the cancel-aware do_generate spins
+    // polling the cancel flag instead of returning immediately.
+    bool wait_for_cancel = false;
 
     int load_calls = 0;
     int activate_calls = 0;
@@ -84,6 +89,7 @@ public:
     int unload_calls = 0;
     int generate_calls = 0;
     int generate_streaming_calls = 0;
+    int generate_cancellable_calls = 0;
     int complete_calls = 0;
     int count_tokens_calls = 0;
 
@@ -159,6 +165,32 @@ protected:
         // Emit a single token via the callback so the C API's
         // token-bridge lambda executes.
         on_token(std::string_view{"tok"});
+        return do_generate(msgs, params);
+    }
+
+    // gh#81 (v2.4.2): cancel-aware batch generate. Spins until either
+    // the cancel flag is observed (returns CANCELLED) or a bounded
+    // number of poll iterations elapse (returns the normal result).
+    // The bounded spin lets the C-ABI poller-thread bridge raise the
+    // atomic from the int* without the test hanging if cancel never
+    // arrives.
+    entropic::GenerationResult do_generate(
+        const std::vector<entropic::Message>& msgs,
+        const entropic::GenerationParams& params,
+        std::atomic<bool>& cancel) override {
+        ++generate_cancellable_calls;
+        if (wait_for_cancel) {
+            for (int i = 0; i < 500; ++i) {  // up to ~5s @ 10ms
+                if (cancel.load(std::memory_order_acquire)) {
+                    entropic::GenerationResult r;
+                    r.finish_reason = "cancelled";
+                    r.error_code = ENTROPIC_ERROR_CANCELLED;
+                    return r;
+                }
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(10));
+            }
+        }
         return do_generate(msgs, params);
     }
 
@@ -536,6 +568,92 @@ TEST_CASE("entropic_inference_generate catches backend exceptions",
         "{}",
         &result);
     REQUIRE(err == ENTROPIC_ERROR_GENERATE_FAILED);
+}
+
+// ── gh#81 (v2.4.2): batch generate cancellation ─────────────
+
+TEST_CASE("entropic_inference_generate_with_cancel rejects NULL handle / result",
+          "[inference_c_api][v2.4.2][gh81][failure-mode]")
+{
+    char* result = nullptr;
+    int cancel = 0;
+    REQUIRE(entropic_inference_generate_with_cancel(
+                nullptr, "[]", "{}", &result, &cancel)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+
+    ApiMockBackend mock;
+    auto h = as_handle(mock);
+    REQUIRE(entropic_inference_generate_with_cancel(
+                h, "[]", "{}", nullptr, &cancel)
+            == ENTROPIC_ERROR_INVALID_ARGUMENT);
+}
+
+TEST_CASE("entropic_inference_generate_with_cancel completes when not cancelled",
+          "[inference_c_api][v2.4.2][gh81]")
+{
+    ApiMockBackend mock;
+    mock.generate_content = "uninterrupted result";
+    auto h = as_handle(mock);
+    REQUIRE(entropic_inference_load(h, "{}") == ENTROPIC_OK);
+    REQUIRE(entropic_inference_activate(h) == ENTROPIC_OK);
+
+    char* result = nullptr;
+    int cancel = 0;  // never set
+    auto err = entropic_inference_generate_with_cancel(
+        h, R"([{"role":"user","content":"hi"}])", "{}", &result, &cancel);
+
+    REQUIRE(err == ENTROPIC_OK);
+    REQUIRE(result != nullptr);
+    REQUIRE(std::string(result).find("uninterrupted result")
+            != std::string::npos);
+    REQUIRE(mock.generate_cancellable_calls == 1);
+    entropic_inference_free(result);
+}
+
+TEST_CASE("entropic_inference_generate_with_cancel honors a NULL cancel pointer",
+          "[inference_c_api][v2.4.2][gh81]")
+{
+    ApiMockBackend mock;
+    auto h = as_handle(mock);
+    REQUIRE(entropic_inference_load(h, "{}") == ENTROPIC_OK);
+    REQUIRE(entropic_inference_activate(h) == ENTROPIC_OK);
+
+    char* result = nullptr;
+    auto err = entropic_inference_generate_with_cancel(
+        h, R"([{"role":"user","content":"hi"}])", "{}", &result, nullptr);
+
+    REQUIRE(err == ENTROPIC_OK);  // no poller thread spawned, runs to completion
+    REQUIRE(mock.generate_cancellable_calls == 1);
+    if (result) { entropic_inference_free(result); }
+}
+
+TEST_CASE("entropic_inference_generate_with_cancel aborts mid-decode when flag set",
+          "[inference_c_api][v2.4.2][gh81]")
+{
+    ApiMockBackend mock;
+    mock.wait_for_cancel = true;  // backend spins polling the cancel flag
+    auto h = as_handle(mock);
+    REQUIRE(entropic_inference_load(h, "{}") == ENTROPIC_OK);
+    REQUIRE(entropic_inference_activate(h) == ENTROPIC_OK);
+
+    char* result = nullptr;
+    int cancel = 0;
+    // Raise the cancel flag from another thread shortly after the call
+    // begins. The C-ABI poller bridges int -> atomic<bool>; the mock
+    // backend's cancel-aware do_generate observes the atomic and returns
+    // ENTROPIC_ERROR_CANCELLED.
+    std::thread raiser([&cancel]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        cancel = 1;
+    });
+
+    auto err = entropic_inference_generate_with_cancel(
+        h, R"([{"role":"user","content":"hi"}])", "{}", &result, &cancel);
+    raiser.join();
+
+    REQUIRE(err == ENTROPIC_ERROR_CANCELLED);
+    REQUIRE(mock.generate_cancellable_calls == 1);
+    if (result) { entropic_inference_free(result); }
 }
 
 TEST_CASE("entropic_inference_generate_streaming fires the token callback",

@@ -41,6 +41,32 @@ typedef int (*entropic_generate_fn)(
     void* user_data);
 
 /**
+ * @brief Generate a response with cancellation support. (gh#81, v2.4.2)
+ *
+ * Batch-shaped (single result, no per-token callback) but accepts a
+ * cancel_flag like the streaming variant — closes the gh#81 60s-lag
+ * gap where the non-streaming engine path had no way to honor an
+ * interrupt mid-decode.
+ *
+ * @param messages_json JSON array of messages.
+ * @param params_json Generation parameters JSON.
+ * @param[out] result_json Output: JSON result string. Caller must free.
+ * @param cancel Optional pointer; setting `*cancel` to non-zero stops
+ *        the decode within ~10ms + one token.
+ * @param user_data Opaque pointer to backend instance.
+ * @return 0 on success, ENTROPIC_ERROR_CANCELLED on cancellation,
+ *         error code otherwise.
+ * @callback
+ * @version 2.4.2
+ */
+typedef int (*entropic_generate_with_cancel_fn)(
+    const char* messages_json,
+    const char* params_json,
+    char** result_json,
+    int* cancel,
+    void* user_data);
+
+/**
  * @brief Generate a response with streaming.
  * @param messages_json JSON array of messages.
  * @param params_json Generation parameters JSON.
@@ -166,6 +192,7 @@ namespace entropic {
  */
 struct InferenceInterface {
     entropic_generate_fn generate = nullptr;                 ///< Batch generation
+    entropic_generate_with_cancel_fn generate_cancellable = nullptr; ///< Batch generation with cancel (gh#81, v2.4.2)
     entropic_generate_streaming_fn generate_stream = nullptr; ///< Streaming generation
     entropic_complete_fn complete = nullptr;                  ///< Raw text completion
     entropic_route_fn route = nullptr;                       ///< Tier routing

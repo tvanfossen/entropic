@@ -20,12 +20,14 @@
 
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -332,6 +334,129 @@ ENTROPIC_EXPORT entropic_error_t entropic_inference_generate(
         return result.ok() ? ENTROPIC_OK : result.error_code;
     } catch (const std::exception& e) {
         logger->error("inference_generate exception: {}", e.what());
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+/**
+ * @brief Plugin C API: blocking generation with mid-decode cancellation. (gh#81, v2.4.2)
+ *
+ * Identical contract to `entropic_inference_generate` plus a
+ * cancel-flag pointer. When `*cancel_flag` becomes non-zero, the
+ * backend stops within one token and returns a result whose
+ * `error_code` is `ENTROPIC_ERROR_CANCELLED`.
+ *
+ * The pre-v2.4.2 batch path had no cancel propagation — interrupts
+ * waited for the next engine-loop-top check (up to ~60s observed
+ * on 13B models at default max_tokens). This entry closes that gap.
+ *
+ * @param backend Opaque backend handle.
+ * @param messages_json JSON-serialized message list.
+ * @param params_json JSON-serialized GenerationParams.
+ * @param result_json Out-param: newly allocated result JSON.
+ * @param cancel_flag Optional pointer; setting `*cancel_flag` non-zero stops generation.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_CANCELLED on
+ *         cancellation, other error codes otherwise.
+ * @req REQ-INFER-003
+ * @version 2.4.2
+ */
+namespace {
+
+/**
+ * @brief RAII bridge: poll an int* cancel flag into a std::atomic<bool>.
+ *
+ * The batch generate entry has no per-token hook to host the
+ * int*->atomic bridge the streaming entry uses, so a short-lived
+ * thread watches the int* (10ms cadence) and raises the atomic on
+ * observation. The thread is joined on destruction.
+ *
+ * @utility
+ * @version 2.4.2
+ */
+class CancelFlagBridge {
+public:
+    /**
+     * @brief Start the poller thread (no-op if cancel_flag is null).
+     * @utility
+     * @version 2.4.2
+     */
+    explicit CancelFlagBridge(int* cancel_flag) {
+        if (cancel_flag == nullptr) { return; }
+        poller_ = std::thread([this, cancel_flag]() {
+            while (!done_.load(std::memory_order_acquire)) {
+                if (*cancel_flag != 0) {
+                    cancel_.store(true, std::memory_order_release);
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    /**
+     * @brief Signal the poller to stop and join it.
+     * @utility
+     * @version 2.4.2
+     */
+    ~CancelFlagBridge() {
+        done_.store(true, std::memory_order_release);
+        if (poller_.joinable()) { poller_.join(); }
+    }
+
+    CancelFlagBridge(const CancelFlagBridge&) = delete;
+    CancelFlagBridge& operator=(const CancelFlagBridge&) = delete;
+
+    /**
+     * @brief The atomic the backend polls per decode step.
+     * @utility
+     * @version 2.4.2
+     */
+    std::atomic<bool>& flag() { return cancel_; }
+
+private:
+    std::atomic<bool> cancel_{false};
+    std::atomic<bool> done_{false};
+    std::thread poller_;
+};
+
+}  // namespace
+
+/**
+ * @brief Plugin C API: batch generation with mid-decode cancel. (gh#81, v2.4.2)
+ *
+ * See header for the full contract. Bridges the int* cancel flag to
+ * the backend's std::atomic<bool> via a CancelFlagBridge poller.
+ *
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_CANCELLED if the
+ *         cancel flag was raised mid-decode, ENTROPIC_ERROR_INVALID_ARGUMENT
+ *         for a null backend/result, or the backend's error_code /
+ *         ENTROPIC_ERROR_GENERATE_FAILED otherwise.
+ * @req REQ-INFER-001
+ * @version 2.4.2
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_inference_generate_with_cancel(
+    entropic_inference_backend_t backend,
+    const char* messages_json,
+    const char* params_json,
+    char** result_json,
+    int* cancel_flag)
+{
+    if (!backend || !result_json) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    logger->info("C API: inference_generate_with_cancel");
+    try {
+        auto msgs = entropic::parse_messages_json(messages_json);
+        auto params = parse_params_json(params_json);
+        CancelFlagBridge bridge(cancel_flag);
+        auto result = to_backend(backend)->generate(
+            msgs, params, bridge.flag());
+        *result_json = alloc_string(serialize_result_json(result));
+        logger->info("C API: inference_generate_with_cancel -> {}",
+                     result.ok() ? "ok" : "error");
+        return result.ok() ? ENTROPIC_OK : result.error_code;
+    } catch (const std::exception& e) {
+        logger->error("inference_generate_with_cancel exception: {}", e.what());
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
 }

@@ -146,3 +146,9 @@ add_model_test(test-v240-minor-ceremony
 add_model_test(test-gh87-common-chat-e2e test_gh87_common_chat_e2e.cpp)
 target_include_directories(test-gh87-common-chat-e2e PRIVATE
     ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common)
+
+# gh#87 increment-2 gate (v2.7.0): drives the SAME triple through the
+# backend's additive public API (set_active_tools / render_with_tools /
+# parse_response). Uses entropic types + the backend header only — no
+# direct llama.cpp common/ include needed.
+add_model_test(test-gh87-backend-common-chat test_gh87_backend_common_chat.cpp)

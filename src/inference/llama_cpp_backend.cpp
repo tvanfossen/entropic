@@ -26,8 +26,11 @@
 #include <mtmd.h>
 #include <mtmd-helper.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 
 namespace entropic {
@@ -774,10 +777,10 @@ static std::vector<llama_chat_message> to_llama_chat(
 /**
  * @brief Convert engine messages to common_chat_msg (gh#86, v2.6.1).
  *
- * Role + content only — entropic injects tool prompts into the system
- * message itself (ResponseGenerator::inject_tool_prompt), so the jinja
- * path's `tools` slot is intentionally left empty to avoid double
- * injection.
+ * Role + content only. The legacy `apply_chat_template` path renders
+ * without tools (entropic injects tool prompts into the system message via
+ * ResponseGenerator::inject_tool_prompt); the gh#87 `render_with_tools`
+ * path supplies tools through `inputs.tools` instead.
  *
  * @param messages Source messages.
  * @return Vector of common_chat_msg.
@@ -793,6 +796,112 @@ static std::vector<common_chat_msg> to_common_chat(
         cm.role = msg.role;
         cm.content = msg.content;
         out.push_back(std::move(cm));
+    }
+    return out;
+}
+
+/**
+ * @brief Convert entropic MCP tool JSON to common_chat_tool defs (gh#87).
+ *
+ * Reads `ServerManager::list_tools()` shape — an array of
+ * `{name, description, inputSchema}` — into `common_chat_tool`
+ * (name + description + parameters-schema-string). Tools without a name
+ * are skipped. Malformed JSON yields an empty list (the render then
+ * proceeds tool-less rather than throwing).
+ *
+ * @param tools_json MCP tool-list JSON array string.
+ * @return Parsed common_chat tool definitions.
+ * @utility
+ * @version 2.7.0
+ */
+static std::vector<common_chat_tool> mcp_tools_to_common_chat(
+    const std::string& tools_json) {
+    std::vector<common_chat_tool> out;
+    if (tools_json.empty()) { return out; }
+    auto arr = nlohmann::json::parse(tools_json, nullptr, false);
+    if (!arr.is_array()) { return out; }
+    for (const auto& t : arr) {
+        common_chat_tool ct;
+        ct.name = t.value("name", "");
+        ct.description = t.value("description", "");
+        if (t.contains("inputSchema")) {
+            ct.parameters = t["inputSchema"].dump();
+        }
+        if (!ct.name.empty()) { out.push_back(std::move(ct)); }
+    }
+    return out;
+}
+
+/**
+ * @brief Map a common_chat_tool_call to entropic's ToolCall (gh#87).
+ *
+ * Name + id pass through; the JSON arguments string is kept verbatim in
+ * `arguments_json` (for passthrough dispatch) and also flattened into the
+ * string key-value `arguments` map (object values dumped back to JSON).
+ *
+ * @param cc Native common_chat tool call.
+ * @return entropic ToolCall.
+ * @utility
+ * @version 2.7.0
+ */
+static ToolCall to_entropic_tool_call(const common_chat_tool_call& cc) {
+    ToolCall tc;
+    tc.id = cc.id;
+    tc.name = cc.name;
+    tc.arguments_json = cc.arguments;
+    auto j = nlohmann::json::parse(cc.arguments, nullptr, false);
+    if (j.is_object()) {
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            tc.arguments[it.key()] =
+                it->is_string() ? it->get<std::string>() : it->dump();
+        }
+    }
+    return tc;
+}
+
+/**
+ * @brief Shared common_chat render core for both template paths (gh#87).
+ *
+ * Builds `common_chat_templates_inputs` (jinja, generation prompt,
+ * enable_thinking, optional tools) and applies the model's template.
+ * Returns the full `common_chat_params` so callers can use `.prompt`
+ * and — for the tools path — capture `.format`/`.generation_prompt`/
+ * `.parser` for a later parse. Returns nullopt when the model isn't
+ * loaded, the template can't init, or apply throws (caller falls back
+ * to the low-level path).
+ *
+ * @param model Loaded model (may be null → nullopt).
+ * @param messages Conversation history.
+ * @param params Generation parameters (enable_thinking honored).
+ * @param tools Tool defs for `inputs.tools` (empty for the legacy path).
+ * @return Rendered params, or nullopt on any failure.
+ * @utility
+ * @version 2.7.0
+ */
+static std::optional<common_chat_params> render_common_chat(
+    llama_model* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    const std::vector<common_chat_tool>& tools) {
+    if (model == nullptr) { return std::nullopt; }
+    auto tmpls = common_chat_templates_init(model, "");
+    std::optional<common_chat_params> out;
+    if (tmpls) {
+        common_chat_templates_inputs inputs;
+        inputs.messages = to_common_chat(messages);
+        inputs.add_generation_prompt = true;
+        inputs.use_jinja = true;
+        inputs.enable_thinking = params.enable_thinking;  // gh#86
+        inputs.tools = tools;
+        if (!tools.empty()) {
+            inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+        }
+        try {
+            out = common_chat_templates_apply(tmpls.get(), inputs);
+        } catch (const std::exception& e) {
+            logger->warn("jinja chat template apply failed ({}); "
+                         "falling back to low-level template", e.what());
+        }
     }
     return out;
 }
@@ -814,51 +923,118 @@ static std::string concat_messages_fallback(
 }
 
 /**
- * @brief Render the GGUF chat template for messages (gh#86, v2.6.1).
+ * @brief Render the GGUF chat template for messages (gh#86/gh#87).
  *
- * Uses the jinja-capable `common_chat_templates_apply()` so the
- * template's `enable_thinking` variable receives `params.enable_thinking`
- * — the low-level `llama_chat_apply_template()` used pre-v2.6.1 has no
- * thinking slot (its bool arg is `add_generation_prompt`), so a tier's
- * `enable_thinking: false` was silently dropped at this final mile.
+ * The legacy (tool-less) render path: delegates to the shared
+ * `render_common_chat` core with no tools, so the template's
+ * `enable_thinking` variable receives `params.enable_thinking` (the
+ * low-level `llama_chat_apply_template()` had no thinking slot — its bool
+ * arg is `add_generation_prompt` — so a tier's `enable_thinking: false`
+ * was silently dropped pre-v2.6.1). Tools are intentionally absent here;
+ * the gh#87 `render_with_tools` path supplies them via `inputs.tools`.
  *
- * `tools` is left empty: entropic injects tool prompts into the system
- * message upstream (ResponseGenerator::inject_tool_prompt), so letting
- * the jinja template also inject them would double up.
- *
- * Falls back to the low-level template path, then to a plain join, if
- * jinja template init/apply fails (e.g. a GGUF with no embedded
- * template).
+ * Falls back to the low-level template (then a plain join) if the jinja
+ * path is unavailable (e.g. a GGUF with no embedded template).
  *
  * @param messages Conversation history.
  * @param params Generation parameters (enable_thinking honored).
  * @return Formatted prompt string.
  * @internal
- * @version 2.6.1
+ * @version 2.7.0
  */
 std::string LlamaCppBackend::apply_chat_template(
     const std::vector<Message>& messages,
     const GenerationParams& params) const
 {
-    if (model_ != nullptr) {
-        auto tmpls = common_chat_templates_init(model_, "");
-        if (tmpls) {
-            common_chat_templates_inputs inputs;
-            inputs.messages = to_common_chat(messages);
-            inputs.add_generation_prompt = true;
-            inputs.use_jinja = true;
-            inputs.enable_thinking = params.enable_thinking;  // gh#86
-            try {
-                auto rendered = common_chat_templates_apply(
-                    tmpls.get(), inputs);
-                return rendered.prompt;
-            } catch (const std::exception& e) {
-                logger->warn("jinja chat template apply failed ({}); "
-                             "falling back to low-level template", e.what());
-            }
-        }
+    auto rendered = render_common_chat(model_, messages, params, {});
+    return rendered ? rendered->prompt
+                    : apply_chat_template_lowlevel(messages);
+}
+
+/**
+ * @brief Stage tool defs for the next common_chat render (gh#87).
+ * @param tools_json MCP tool-list JSON array.
+ * @utility
+ * @version 2.7.0
+ */
+void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
+    active_tools_json_ = tools_json;
+    logger->info("Active tools staged for common_chat render: {} bytes",
+                 tools_json.size());
+}
+
+/**
+ * @brief Render messages through common_chat WITH active tools (gh#87).
+ *
+ * Captures the rendered params (format/generation_prompt/parser) so
+ * parse_response can decode the emission. See header for contract.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return Formatted prompt string.
+ * @internal
+ * @version 2.7.0
+ */
+std::string LlamaCppBackend::render_with_tools(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    have_chat_params_ = false;
+    auto tools = mcp_tools_to_common_chat(active_tools_json_);
+    auto rendered = render_common_chat(model_, messages, params, tools);
+    std::string prompt;
+    if (rendered) {
+        last_chat_format_ = static_cast<int>(rendered->format);
+        last_generation_prompt_ = rendered->generation_prompt;
+        last_parser_ = rendered->parser;
+        have_chat_params_ = true;
+        prompt = rendered->prompt;
+        logger->info("render_with_tools: format={}, {} tool(s), captured "
+                     "parser ({} bytes)", last_chat_format_, tools.size(),
+                     last_parser_.size());
+    } else {
+        prompt = apply_chat_template_lowlevel(messages);
     }
-    return apply_chat_template_lowlevel(messages);
+    return prompt;
+}
+
+/**
+ * @brief Parse a raw emission via the last captured render params (gh#87).
+ *
+ * MUST load() the serialized PEG arena — the parser_params ctor copies
+ * only format + generation_prompt, so without the load the parser silently
+ * degrades to pure content (Increment-1 finding). See header for contract.
+ *
+ * @param raw Raw model output (assistant turn only).
+ * @return Parsed tool calls + cleaned content + reasoning.
+ * @internal
+ * @version 2.7.0
+ */
+LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
+    const std::string& raw) const
+{
+    CommonChatResult result;
+    if (!have_chat_params_) {
+        result.content = raw;
+        return result;
+    }
+    common_chat_parser_params pp;
+    pp.format = static_cast<common_chat_format>(last_chat_format_);
+    pp.generation_prompt = last_generation_prompt_;
+    pp.parser.load(last_parser_);  // mandatory — see header
+    try {
+        auto msg = common_chat_parse(raw, /*is_partial=*/false, pp);
+        result.content = msg.content;
+        result.reasoning_content = msg.reasoning_content;
+        for (const auto& tc : msg.tool_calls) {
+            result.tool_calls.push_back(to_entropic_tool_call(tc));
+        }
+    } catch (const std::exception& e) {
+        logger->warn("common_chat_parse failed ({}); raw kept as content",
+                     e.what());
+        result.content = raw;
+    }
+    return result;
 }
 
 /**

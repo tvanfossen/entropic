@@ -1,3 +1,65 @@
+# entropic v2.6.0
+
+Minor release. **Bundles the v2.5.1 → v2.5.4 patch series into a
+single minor cut** — the consumer-driven hardening that came out of
+the bissell-explorer Qwen3.6-A3B looping incident (2026-05-28).
+
+No ABI break — every patch was strictly additive. Drop-in for any
+2.5.x-compiled consumer.
+
+## What's in this minor
+
+| # | Issue | Fix |
+|---|---|---|
+| v2.5.1 | gh#84 | Thinking-budget gate resets on **genuine progress** (a tool with `result_kind` ok/ok_empty), not on any parsed call — duplicate/rejected-spam can no longer keep the budget perpetually fresh. |
+| v2.5.2 | gh#83 | Tier `allowed_tools` enforced at **dispatch**, not just prompt-injection — off-allowlist calls return `rejected_unauthorized`. Tier isolation is now real. |
+| v2.5.3 | gh#85 | Per-tier `top_p` / `top_k` / `min_p` / `presence_penalty` / `frequency_penalty` wired from identity frontmatter to the sampler. |
+| v2.5.4 | gh#86 | Per-tier `enable_thinking` + `repeat_penalty` wired; closes the frontmatter-wiring migration-audit meta-issue. |
+
+## The throughline
+
+All four trace to a single live incident: `qwen3_6_a3b` looped 270s /
+30+ tool calls / 8× identical `search_symbols` on a trivial lookup.
+The v2.5.0 budget gate should have caught it but was bypassed (gh#84);
+the vendor-recommended `presence_penalty=1.5` mitigation was
+unreachable from config (gh#85); `enable_thinking: false` for worker
+tiers was unreachable (gh#86); and the cross-tier delegation that
+fanned it out wasn't blocked (gh#83). After this minor, **every
+Qwen3.6-A3B loop-mitigation lever is config-reachable and the budget
+gate actually fires.**
+
+## Frontmatter sampler chain — now complete
+
+The `apply_identity_frontmatter → TierConfig →
+apply_tier_sampler_overrides → GenerationParams` chain (introduced for
+`temperature`/`max_output_tokens` in v2.4.4, gh#82) now covers **every**
+sampler/template knob on `IdentityFrontmatter`: temperature,
+max_output_tokens, top_p, top_k, min_p, presence_penalty,
+frequency_penalty, repeat_penalty, enable_thinking. The class of
+v1.9.15→v2.0.0 migration-dropped wirings is closed (gh#86 audit).
+
+A `TierSamplerOverrides` struct + templated `apply_if_default` helper
+keep the precedence policy uniform: a tier baseline applies only when
+the incoming param is still at its `GenerationParams` struct default;
+an explicit per-call override always wins.
+
+## Known follow-up
+
+- Top-level `generation.default_top_p` (and siblings) remain a latent
+  no-op — that's the *global*-defaults mechanism, distinct from the
+  per-tier frontmatter path this minor wired. Deferred.
+- Thinking-budget `tokens` mode estimates from content length
+  (~4 chars/token); `wall_clock` is exact (gh#80 caveat, unchanged).
+
+## Test ceremony
+
+- Full unit sweep green across all binaries each patch.
+- Model-test ceremony: see `model-results-v2.6.0.json` attached for
+  the full GPU-validated pass/fail matrix. New `[gh83]` / `[gh84]` /
+  `[gh85]` / `[gh86]` unit scenarios gate the four fixes.
+
+---
+
 # entropic v2.5.4
 
 Patch release. **gh#86** — completes the frontmatter-wiring audit the

@@ -849,7 +849,7 @@ static void apply_identity_frontmatter(
  * @param h Engine handle with config + engine constructed.
  * @param data_dir Bundled data directory.
  * @internal
- * @version 2.0.11
+ * @version 2.5.2
  */
 static void cache_tier_allowed_tools(
     entropic_handle_t h,
@@ -868,6 +868,12 @@ static void cache_tier_allowed_tools(
         if (entropic::prompts::load_identity(id_path, id).empty()) {
             apply_identity_frontmatter(h, name, id.frontmatter);
         }
+    }
+    // gh#83 (v2.5.2): hand the populated allowlist map to the executor
+    // for dispatch-time enforcement. A pointer to the handle-owned map
+    // keeps this order-independent vs wire_tool_executor.
+    if (h->tool_executor) {
+        h->tool_executor->set_tier_allowed_tools(&h->tier_allowed_tools);
     }
 }
 

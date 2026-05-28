@@ -188,22 +188,40 @@ bool ToolExecutor::check_approval(const ToolCall& call) {
 }
 
 /**
- * @brief Check tier allowed_tools restrictions.
+ * @brief Check tier allowed_tools restrictions. (gh#83, v2.5.2)
  * @param ctx Loop context.
  * @param call Tool call.
  * @return Rejection message or nullopt.
  * @internal
- * @version 1.8.5
+ * @version 2.5.2
  */
 std::optional<Message> ToolExecutor::check_tier_allowed(
     const LoopContext& ctx, const ToolCall& call) const {
-    // Tier allowlist enforcement is wired when the facade provides
-    // tier config. For now, pass through (no tier locked = no filter).
-    if (ctx.locked_tier.empty()) {
+    // gh#83 (v2.5.2): enforce the locked tier's allowed_tools at
+    // dispatch — not just at prompt-injection time. Without this a
+    // model that emits an off-allowlist call (hallucinated, learned,
+    // or cross-tier) has it dispatched normally; tier isolation was
+    // advisory only. Pass through when: no tier locked, no map wired,
+    // or the tier declares no allowlist (unrestricted).
+    if (ctx.locked_tier.empty() || tier_allowed_tools_ == nullptr) {
         return std::nullopt;
     }
-    // Actual tier allowlist lookup deferred to facade integration
-    return std::nullopt;
+    auto it = tier_allowed_tools_->find(ctx.locked_tier);
+    // Authorized when: tier has no allowlist entry, an empty allowlist
+    // (unrestricted), or the call is in the list. Short-circuit eval
+    // guards the `it->second` access against the end() case.
+    bool authorized = it == tier_allowed_tools_->end()
+                   || it->second.empty()
+                   || std::find(it->second.begin(), it->second.end(),
+                                call.name) != it->second.end();
+    if (authorized) {
+        return std::nullopt;
+    }
+    logger->warn("Tool '{}' not in tier '{}' allowed_tools — rejecting",
+                 call.name, ctx.locked_tier);
+    return create_denied_message(
+        call, "tier '" + ctx.locked_tier + "' is not authorized to call '"
+                  + call.name + "'");
 }
 
 /**
@@ -644,7 +662,7 @@ std::optional<Message> ToolExecutor::check_schema(
  * @param call Tool call.
  * @return PreconditionCheck with rejection + typed kind on failure.
  * @internal
- * @version 2.1.4
+ * @version 2.5.2
  */
 PreconditionCheck ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
@@ -665,7 +683,7 @@ PreconditionCheck ToolExecutor::check_call_preconditions(
         pc.kind = ToolResultKind::rejected_precondition;
     } else if (auto t = check_tier_allowed(ctx, call); t.has_value()) {
         pc.rejection = std::move(t);
-        pc.kind = ToolResultKind::rejected_precondition;
+        pc.kind = ToolResultKind::rejected_unauthorized;  // gh#83
     } else if (auto dup = check_duplicate(ctx, call); !dup.empty()) {
         pc.rejection = handle_duplicate(ctx, call, dup);
         pc.kind = ToolResultKind::rejected_duplicate;

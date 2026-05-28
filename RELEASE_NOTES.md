@@ -1,3 +1,58 @@
+# entropic v2.5.3
+
+Patch release. **gh#85** — the sampler knobs consumers most need to
+tune (`top_p`, `top_k`, `min_p`, `presence_penalty`,
+`frequency_penalty`) had no frontmatter binding. They were parseable
+from per-call C-API JSON, but no engine path constructed that JSON
+from config, so the sampler ran at `GenerationParams` struct defaults
+regardless. Vendor recipes (e.g. Qwen3.6 thinking-mode's
+`presence_penalty=1.5`) were unreachable.
+
+## Fix (mirrors the gh#82 pattern)
+
+Per-tier sampler knobs now flow identity-frontmatter → `TierConfig` →
+sampler, exactly like `temperature`/`max_output_tokens` (gh#82):
+
+- `IdentityFrontmatter` + `TierConfig` gain `std::optional` fields for
+  the five knobs; the parser sets them only when the key is present.
+- `apply_identity_frontmatter` threads them into `TierConfig`.
+- The orchestrator's per-tier resolution applies them. The free
+  `apply_tier_sampler_overrides` now takes a `TierSamplerOverrides`
+  struct (7 knobs) instead of two loose optionals, with a templated
+  `apply_if_default` helper — applies the tier value only when the
+  incoming param is still at its struct default (explicit per-call
+  override wins). The struct keeps the call a single testable unit as
+  the knob set grows (gh#86 adds two more).
+
+## Scope
+
+This wires the **per-tier frontmatter** path (the vendor-recipe use
+case). The top-level `generation.default_top_p` YAML field remains a
+separate latent no-op (global defaults → all tiers is a different
+mechanism); deferred as a follow-up — per-tier frontmatter is the
+documented control surface consumers reach for.
+
+## Tests
+
+`tests/unit/inference/orchestrator_test.cpp` `[gh85]`:
+- Qwen3.6 recipe (top_p/top_k/min_p/presence/frequency) reaches params.
+- explicit per-call top_p + presence_penalty override the tier baseline.
+- unset knobs keep struct defaults.
+gh#82 `[gh82]` scenarios updated to the struct signature, still green.
+
+Inference 252 + config 48 + API 481 green.
+
+## ABI
+
+Additive: `TierConfig` / `IdentityFrontmatter` optionals,
+`TierSamplerOverrides` struct. `apply_tier_sampler_overrides` signature
+changed (free function; was added in v2.4.4, no external consumers).
+Drop-in for any 2.5.x consumer.
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor.
+
+---
+
 # entropic v2.5.2
 
 Patch release. **gh#83** — tier `allowed_tools` was enforced only at

@@ -1359,28 +1359,35 @@ void ModelOrchestrator::resolve_grammar_key(
     params.grammar = std::move(content);
 }
 
+namespace {
 /**
- * @brief Pure precedence helper — see header. (gh#82, v2.4.4)
+ * @brief Apply a tier override iff set AND the field is still at its
+ *        GenerationParams default (preserving a per-call override).
  * @utility
- * @version 2.4.4
+ * @version 2.5.3
+ */
+template <typename T>
+inline void apply_if_default(T& field, const std::optional<T>& ov, T dflt) {
+    if (ov.has_value() && field == dflt) { field = *ov; }
+}
+}  // namespace
+
+/**
+ * @brief Pure precedence helper — see header. (gh#82/gh#85)
+ * @utility
+ * @version 2.5.3
  */
 void apply_tier_sampler_overrides(
-    GenerationParams& params,
-    const std::optional<float>& tier_temperature,
-    const std::optional<int>& tier_max_output_tokens)
+    GenerationParams& params, const TierSamplerOverrides& ov)
 {
     // GenerationParams struct defaults (see types/config.h).
-    constexpr float kDefaultTemperature = 0.7f;
-    constexpr int kDefaultMaxTokens = 4096;
-
-    if (tier_temperature.has_value()
-        && params.temperature == kDefaultTemperature) {
-        params.temperature = *tier_temperature;
-    }
-    if (tier_max_output_tokens.has_value()
-        && params.max_tokens == kDefaultMaxTokens) {
-        params.max_tokens = *tier_max_output_tokens;
-    }
+    apply_if_default(params.temperature,       ov.temperature,       0.7f);
+    apply_if_default(params.max_tokens,        ov.max_output_tokens, 4096);
+    apply_if_default(params.top_p,             ov.top_p,             0.9f);
+    apply_if_default(params.top_k,             ov.top_k,             40);
+    apply_if_default(params.min_p,             ov.min_p,             0.0f);
+    apply_if_default(params.presence_penalty,  ov.presence_penalty,  0.0f);
+    apply_if_default(params.frequency_penalty, ov.frequency_penalty, 0.0f);
 }
 
 /**
@@ -1390,7 +1397,7 @@ void apply_tier_sampler_overrides(
  * precedence decision to the free `apply_tier_sampler_overrides`.
  *
  * @internal
- * @version 2.4.4
+ * @version 2.5.3
  */
 void ModelOrchestrator::apply_tier_sampler_defaults(
     GenerationParams& params, const std::string& tier_name)
@@ -1398,10 +1405,17 @@ void ModelOrchestrator::apply_tier_sampler_defaults(
     auto it = config_.models.tiers.find(tier_name);
     if (it == config_.models.tiers.end()) { return; }
     const auto& tier = it->second;
+    TierSamplerOverrides ov;
+    ov.temperature       = tier.temperature;
+    ov.max_output_tokens = tier.max_output_tokens;
+    ov.top_p             = tier.top_p;              // gh#85
+    ov.top_k             = tier.top_k;              // gh#85
+    ov.min_p             = tier.min_p;              // gh#85
+    ov.presence_penalty  = tier.presence_penalty;   // gh#85
+    ov.frequency_penalty = tier.frequency_penalty;  // gh#85
     float before_temp = params.temperature;
     int before_max = params.max_tokens;
-    apply_tier_sampler_overrides(params, tier.temperature,
-                                 tier.max_output_tokens);
+    apply_tier_sampler_overrides(params, ov);
     if (params.temperature != before_temp) {
         logger->info("Tier '{}' temperature applied: {}",
                      tier_name, params.temperature);

@@ -61,24 +61,42 @@ struct RoutingResult {
 };
 
 /**
- * @brief Apply per-tier sampler overrides to params. (gh#82, v2.4.4)
+ * @brief Per-tier sampler overrides parsed from identity frontmatter.
  *
- * Pure precedence helper, free function for unit-testability. Sets
- * `params.temperature` / `params.max_tokens` from the tier-configured
- * optionals ONLY when the optional is engaged AND the incoming param
- * is still at the GenerationParams struct default — preserving an
- * explicit per-call override.
+ * gh#82 (v2.4.4) introduced temperature + max_output_tokens; gh#85
+ * (v2.5.3) adds the remaining sampler knobs. Each is `std::optional`
+ * — engaged only when the tier's frontmatter set it. Grouped in a
+ * struct so `apply_tier_sampler_overrides` stays a single testable
+ * call as the knob set grows.
+ *
+ * @version 2.5.3
+ */
+struct TierSamplerOverrides {
+    std::optional<float> temperature;        ///< gh#82
+    std::optional<int>   max_output_tokens;  ///< gh#82
+    std::optional<float> top_p;              ///< gh#85
+    std::optional<int>   top_k;              ///< gh#85
+    std::optional<float> min_p;              ///< gh#85
+    std::optional<float> presence_penalty;   ///< gh#85
+    std::optional<float> frequency_penalty;  ///< gh#85
+};
+
+/**
+ * @brief Apply per-tier sampler overrides to params. (gh#82/gh#85)
+ *
+ * Pure precedence helper, free function for unit-testability. For each
+ * knob, applies the tier-configured value ONLY when the optional is
+ * engaged AND the incoming param is still at the GenerationParams
+ * struct default — preserving an explicit per-call override.
  *
  * @param params Generation params (mutated).
- * @param tier_temperature Tier's configured temperature (nullopt = none).
- * @param tier_max_output_tokens Tier's configured max tokens (nullopt = none).
+ * @param ov Tier sampler overrides (nullopt fields are skipped).
  * @utility
- * @version 2.4.4
+ * @version 2.5.3
  */
 ENTROPIC_EXPORT void apply_tier_sampler_overrides(
     GenerationParams& params,
-    const std::optional<float>& tier_temperature,
-    const std::optional<int>& tier_max_output_tokens);
+    const TierSamplerOverrides& ov);
 
 /**
  * @brief Multi-model lifecycle and routing orchestrator.

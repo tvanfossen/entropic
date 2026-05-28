@@ -159,3 +159,13 @@ add_model_test(test-gh87-backend-common-chat test_gh87_backend_common_chat.cpp)
 # has_common_chat_params → parse_response.
 add_model_test(test-gh87-backend-generate-tools
                test_gh87_backend_generate_tools.cpp)
+
+# gh#87 Phase A (v2.7.0): per-family verification that common_chat parses
+# each family's native tool-call format — the precondition for retiring the
+# hand-rolled adapters. Shared logic in gh87_verify_helpers.h; one thin
+# executable per family (one model load each, per the reload-SEGV constraint).
+add_model_test(test-gh87-verify-qwen35    test_gh87_verify_qwen35.cpp)
+add_model_test(test-gh87-verify-qwen36    test_gh87_verify_qwen36.cpp)
+add_model_test(test-gh87-verify-nemotron3 test_gh87_verify_nemotron3.cpp)
+# qwen36 is a 13GB A3B MoE under partial offload — give it headroom.
+set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)

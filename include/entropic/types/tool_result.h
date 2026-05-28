@@ -37,6 +37,7 @@ enum class ToolResultKind {
     ok_empty,               ///< Tool dispatched cleanly but returned no content (v2.1.0, #44)
     delegation_failed,      ///< entropic.delegate child failed (terminal_reason or budget). (#7, v2.1.4)
     rejected_anti_spiral,   ///< Anti-spiral hard threshold crossed; tool blocked. (#14, v2.1.4)
+    rejected_unauthorized,  ///< Tool not in the locked tier's allowed_tools. (gh#83, v2.5.2)
 };
 
 /**
@@ -44,7 +45,7 @@ enum class ToolResultKind {
  * @param kind Enum value.
  * @return Static null-terminated string. Never NULL.
  * @utility
- * @version 2.1.4
+ * @version 2.5.2
  */
 inline const char* result_kind_to_string(ToolResultKind kind) {
     const char* s = "ok";
@@ -57,6 +58,7 @@ inline const char* result_kind_to_string(ToolResultKind kind) {
     case ToolResultKind::rejected_precondition: s = "rejected_precondition"; break;
     case ToolResultKind::delegation_failed:     s = "delegation_failed"; break;
     case ToolResultKind::rejected_anti_spiral:  s = "rejected_anti_spiral"; break;
+    case ToolResultKind::rejected_unauthorized: s = "rejected_unauthorized"; break;
     }
     return s;
 }

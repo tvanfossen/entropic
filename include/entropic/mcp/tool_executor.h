@@ -21,6 +21,7 @@
 
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace entropic {
@@ -72,6 +73,27 @@ public:
      * @version 1.8.8
      */
     void set_permission_persist(const PermissionPersistInterface& persist);
+
+    /**
+     * @brief Wire the per-tier allowed_tools map for dispatch-time
+     *        enforcement. (gh#83, v2.5.2)
+     *
+     * Stores a pointer to the facade-owned map (keyed by tier name →
+     * allowed tool names). The facade caches it after the executor is
+     * constructed, so a pointer to the live map keeps the wiring
+     * order-independent. nullptr (default) = no enforcement (the
+     * pre-v2.5.2 pass-through behavior).
+     *
+     * @param map Pointer to the tier→allowed_tools map (facade-owned;
+     *        must outlive the executor). nullptr disables enforcement.
+     * @internal
+     * @version 2.5.2
+     */
+    void set_tier_allowed_tools(
+        const std::unordered_map<std::string,
+                                 std::vector<std::string>>* map) {
+        tier_allowed_tools_ = map;
+    }
 
     /**
      * @brief Process a batch of tool calls.
@@ -543,6 +565,11 @@ private:
     EngineCallbacks& callbacks_;          ///< Shared callbacks
     ToolExecutorHooks hooks_;             ///< Engine hooks
     PermissionPersistInterface permission_persist_; ///< Permission persistence (v1.8.8)
+    /// @brief Per-tier allowed_tools for dispatch-time enforcement
+    /// (gh#83, v2.5.2). Pointer to the facade-owned map; nullptr =
+    /// enforcement disabled (pre-v2.5.2 pass-through).
+    const std::unordered_map<std::string, std::vector<std::string>>*
+        tier_allowed_tools_ = nullptr;
     HookInterface hook_iface_;            ///< Hook dispatch (v1.9.1)
     ToolCallHistory history_{100};        ///< Recent tool calls (P1-11, 2.0.6-rc16)
     std::atomic<size_t> history_seq_{0};  ///< Monotonic sequence for records

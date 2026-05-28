@@ -687,14 +687,16 @@ SCENARIO("gh#82: apply_tier_sampler_overrides honors tier baseline + per-call ov
          "[v2.4.4][inference][gh82]") {
     using entropic::apply_tier_sampler_overrides;
     using entropic::GenerationParams;
+    using entropic::TierSamplerOverrides;
 
     GIVEN("a tier configures temperature=0.2 and max_output_tokens=2048") {
-        std::optional<float> tier_temp = 0.2f;
-        std::optional<int> tier_max = 2048;
+        TierSamplerOverrides ov;
+        ov.temperature = 0.2f;
+        ov.max_output_tokens = 2048;
 
         WHEN("incoming params are at the struct defaults (0.7 / 4096)") {
             GenerationParams p;  // temperature=0.7f, max_tokens=4096
-            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            apply_tier_sampler_overrides(p, ov);
             THEN("the tier baseline is applied") {
                 CHECK(p.temperature == Catch::Approx(0.2f));
                 CHECK(p.max_tokens == 2048);
@@ -705,7 +707,7 @@ SCENARIO("gh#82: apply_tier_sampler_overrides honors tier baseline + per-call ov
             GenerationParams p;
             p.temperature = 0.95f;          // explicit per-call override
             p.max_tokens = 1234;            // explicit per-call override
-            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            apply_tier_sampler_overrides(p, ov);
             THEN("the per-call override is preserved over the tier baseline") {
                 CHECK(p.temperature == Catch::Approx(0.95f));
                 CHECK(p.max_tokens == 1234);
@@ -713,12 +715,11 @@ SCENARIO("gh#82: apply_tier_sampler_overrides honors tier baseline + per-call ov
         }
     }
 
-    GIVEN("a tier that configures nothing (both nullopt)") {
-        std::optional<float> tier_temp;
-        std::optional<int> tier_max;
+    GIVEN("a tier that configures nothing (all nullopt)") {
+        TierSamplerOverrides ov;
         WHEN("params are at defaults") {
             GenerationParams p;
-            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            apply_tier_sampler_overrides(p, ov);
             THEN("params remain at the struct defaults (no behavior change)") {
                 CHECK(p.temperature == Catch::Approx(0.7f));
                 CHECK(p.max_tokens == 4096);
@@ -727,14 +728,114 @@ SCENARIO("gh#82: apply_tier_sampler_overrides honors tier baseline + per-call ov
     }
 
     GIVEN("a tier configuring only temperature (max_output_tokens nullopt)") {
-        std::optional<float> tier_temp = 0.1f;
-        std::optional<int> tier_max;
+        TierSamplerOverrides ov;
+        ov.temperature = 0.1f;
         WHEN("params are at defaults") {
             GenerationParams p;
-            apply_tier_sampler_overrides(p, tier_temp, tier_max);
+            apply_tier_sampler_overrides(p, ov);
             THEN("only temperature is set; max_tokens stays at default") {
                 CHECK(p.temperature == Catch::Approx(0.1f));
                 CHECK(p.max_tokens == 4096);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#85: the remaining sampler knobs apply with the same precedence",
+         "[v2.5.3][inference][gh85]") {
+    using entropic::apply_tier_sampler_overrides;
+    using entropic::GenerationParams;
+    using entropic::TierSamplerOverrides;
+
+    GIVEN("a tier configuring the Qwen3.6 thinking-mode recipe") {
+        TierSamplerOverrides ov;
+        ov.top_p = 0.95f;
+        ov.top_k = 20;
+        ov.min_p = 0.01f;
+        ov.presence_penalty = 1.5f;
+        ov.frequency_penalty = 0.3f;
+
+        WHEN("incoming params are at the struct defaults") {
+            GenerationParams p;  // top_p=0.9, top_k=40, min_p=0, pp=0, fp=0
+            apply_tier_sampler_overrides(p, ov);
+            THEN("every configured knob reaches the params") {
+                CHECK(p.top_p == Catch::Approx(0.95f));
+                CHECK(p.top_k == 20);
+                CHECK(p.min_p == Catch::Approx(0.01f));
+                CHECK(p.presence_penalty == Catch::Approx(1.5f));
+                CHECK(p.frequency_penalty == Catch::Approx(0.3f));
+            }
+        }
+
+        WHEN("the caller explicitly overrides top_p and presence_penalty") {
+            GenerationParams p;
+            p.top_p = 0.5f;             // non-default per-call override
+            p.presence_penalty = 0.8f;  // non-default per-call override
+            apply_tier_sampler_overrides(p, ov);
+            THEN("explicit per-call values win; the rest take the tier baseline") {
+                CHECK(p.top_p == Catch::Approx(0.5f));
+                CHECK(p.presence_penalty == Catch::Approx(0.8f));
+                CHECK(p.top_k == 20);
+                CHECK(p.min_p == Catch::Approx(0.01f));
+                CHECK(p.frequency_penalty == Catch::Approx(0.3f));
+            }
+        }
+    }
+
+    GIVEN("a tier configuring none of the new knobs") {
+        TierSamplerOverrides ov;
+        WHEN("params are at defaults") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, ov);
+            THEN("the sampler knobs keep their struct defaults") {
+                CHECK(p.top_p == Catch::Approx(0.9f));
+                CHECK(p.top_k == 40);
+                CHECK(p.min_p == Catch::Approx(0.0f));
+                CHECK(p.presence_penalty == Catch::Approx(0.0f));
+                CHECK(p.frequency_penalty == Catch::Approx(0.0f));
+            }
+        }
+    }
+}
+
+SCENARIO("gh#86: enable_thinking + repeat_penalty thread through to params",
+         "[v2.5.4][inference][gh86]") {
+    using entropic::apply_tier_sampler_overrides;
+    using entropic::GenerationParams;
+    using entropic::TierSamplerOverrides;
+
+    GIVEN("a worker tier disabling thinking and tightening repeat_penalty") {
+        TierSamplerOverrides ov;
+        ov.enable_thinking = false;   // GenerationParams default is TRUE
+        ov.repeat_penalty = 1.3f;
+
+        WHEN("incoming params are at the struct defaults (think=true, rp=1.1)") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, ov);
+            THEN("both reach the params") {
+                CHECK(p.enable_thinking == false);
+                CHECK(p.repeat_penalty == Catch::Approx(1.3f));
+            }
+        }
+
+        WHEN("the caller explicitly leaves thinking at true and rp at default") {
+            GenerationParams p;  // enable_thinking=true (default), rp=1.1
+            apply_tier_sampler_overrides(p, ov);
+            THEN("the tier baseline applies (param was at default)") {
+                CHECK(p.enable_thinking == false);
+                CHECK(p.repeat_penalty == Catch::Approx(1.3f));
+            }
+        }
+    }
+
+    GIVEN("a tier configuring neither") {
+        TierSamplerOverrides ov;
+        WHEN("params are at defaults") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, ov);
+            THEN("thinking stays true and repeat_penalty stays 1.1") {
+                CHECK(p.enable_thinking == true);
+                CHECK(p.repeat_penalty == Catch::Approx(1.1f));
             }
         }
     }

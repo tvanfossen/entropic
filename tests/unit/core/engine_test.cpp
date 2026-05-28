@@ -1902,3 +1902,77 @@ SCENARIO("gh#80: a tool call resets the budget window",
         }
     }
 }
+
+// ── gh#84 (v2.5.1): budget resets on PROGRESS, not parsed calls ──
+
+namespace gh84 {
+/// @brief Tool executor returning a single result message tagged with
+/// a fixed result_kind — lets a test simulate rejected_duplicate spam
+/// (no progress) vs a genuine ok execution.
+/// @utility @version 2.5.1
+inline ToolExecutionInterface kind_tagged_executor(const char* result_kind) {
+    static std::string kind;
+    kind = result_kind;
+    ToolExecutionInterface t{};
+    t.process_tool_calls = [](LoopContext&, const std::vector<ToolCall>&,
+                              void*) -> std::vector<Message> {
+        Message m;
+        m.role = "user";
+        m.content = "tool result";
+        m.metadata["result_kind"] = kind;
+        return {m};
+    };
+    return t;
+}
+}  // namespace gh84
+
+SCENARIO("gh#84: rejected-duplicate tool calls do NOT reset the budget",
+         "[v2.5.1][core][engine][gh84][budget]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.response = std::string(600, 'x');                 // ~150 tokens/turn
+    mock.tool_calls_json = R"([{"name":"docs.search","arguments":{}}])";  // a call every turn
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 10;
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;                                 // exceeded in one turn
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    // Every call is rejected (duplicate) — no progress.
+    engine.set_tool_executor(gh84::kind_tagged_executor("rejected_duplicate"));
+
+    GIVEN("a model emitting a duplicate-rejected tool call every turn") {
+        auto out = engine.run(make_messages());
+        THEN("the budget still fires (the spam does not refresh it)") {
+            // nudge on turn 1, hard-cut on turn 2 — before the iter cap.
+            CHECK(mock.generate_call_count == 2);
+            CHECK(gh80::any_msg_contains(out, "thinking budget exhausted"));
+        }
+    }
+}
+
+SCENARIO("gh#84: a successful tool call DOES reset the budget",
+         "[v2.5.1][core][engine][gh84][budget]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.response = std::string(600, 'x');
+    mock.tool_calls_json = R"([{"name":"docs.search","arguments":{}}])";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 4;
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    // Every call genuinely executes (ok) — resets the window each turn.
+    engine.set_tool_executor(gh84::kind_tagged_executor("ok"));
+
+    GIVEN("a model whose tool call succeeds every turn") {
+        auto out = engine.run(make_messages());
+        THEN("the budget never hard-cuts — only the iteration cap stops it") {
+            CHECK(mock.generate_call_count == 4);
+            CHECK_FALSE(gh80::any_msg_contains(out, "thinking budget exhausted"));
+        }
+    }
+}

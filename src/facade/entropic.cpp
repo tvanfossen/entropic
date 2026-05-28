@@ -809,12 +809,48 @@ static std::string build_shared_prompt_prefix(
  * @version 2.0.11
  */
 /**
+ * @brief Thread frontmatter sampler optionals into a tier config.
+ *
+ * gh#82/gh#85: each knob copies only when the frontmatter set it, so
+ * the orchestrator's per-tier resolution can apply it as the tier
+ * baseline. Extracted from apply_identity_frontmatter to keep that
+ * function under the cognitive-complexity gate.
+ *
+ * @param tc Tier config (mutated).
+ * @param fm Parsed identity frontmatter.
+ * @utility
+ * @version 2.5.4
+ */
+static void thread_frontmatter_sampler(
+    entropic::TierConfig& tc,
+    const entropic::prompts::IdentityFrontmatter& fm) {
+    if (fm.temperature.has_value()) { tc.temperature = *fm.temperature; }
+    if (fm.max_output_tokens.has_value()) {
+        tc.max_output_tokens = *fm.max_output_tokens;
+    }
+    if (fm.top_p.has_value()) { tc.top_p = *fm.top_p; }
+    if (fm.top_k.has_value()) { tc.top_k = *fm.top_k; }
+    if (fm.min_p.has_value()) { tc.min_p = *fm.min_p; }
+    if (fm.presence_penalty.has_value()) {
+        tc.presence_penalty = *fm.presence_penalty;
+    }
+    if (fm.frequency_penalty.has_value()) {
+        tc.frequency_penalty = *fm.frequency_penalty;
+    }
+    // gh#86 (v2.5.4): repeat_penalty + enable_thinking.
+    if (fm.repeat_penalty.has_value()) { tc.repeat_penalty = *fm.repeat_penalty; }
+    if (fm.enable_thinking.has_value()) {
+        tc.enable_thinking = *fm.enable_thinking;
+    }
+}
+
+/**
  * @brief Apply a parsed identity's frontmatter to the engine handle.
  * @param h Engine handle.
  * @param name Tier name.
  * @param fm Parsed frontmatter.
  * @internal
- * @version 2.4.4
+ * @version 2.5.3
  */
 static void apply_identity_frontmatter(
     entropic_handle_t h,
@@ -829,18 +865,12 @@ static void apply_identity_frontmatter(
     if (fm.relay_single_delegate) {
         h->engine->set_relay_single_delegate(name);
     }
-    // gh#82 (v2.4.4): thread per-tier sampler config from frontmatter
-    // into the tier config so the orchestrator applies it at
-    // generation time. Pre-fix these were parsed but dropped here, so
-    // the sampler always ran at the GenerationParams default.
+    // gh#82/gh#85: thread per-tier sampler config from frontmatter into
+    // the tier config so the orchestrator applies it at generation
+    // time. Pre-gh#82 these were parsed but dropped here.
     auto tier_it = h->config.models.tiers.find(name);
     if (tier_it != h->config.models.tiers.end()) {
-        if (fm.temperature.has_value()) {
-            tier_it->second.temperature = *fm.temperature;
-        }
-        if (fm.max_output_tokens.has_value()) {
-            tier_it->second.max_output_tokens = *fm.max_output_tokens;
-        }
+        thread_frontmatter_sampler(tier_it->second, fm);
     }
 }
 
@@ -849,7 +879,7 @@ static void apply_identity_frontmatter(
  * @param h Engine handle with config + engine constructed.
  * @param data_dir Bundled data directory.
  * @internal
- * @version 2.0.11
+ * @version 2.5.2
  */
 static void cache_tier_allowed_tools(
     entropic_handle_t h,
@@ -868,6 +898,12 @@ static void cache_tier_allowed_tools(
         if (entropic::prompts::load_identity(id_path, id).empty()) {
             apply_identity_frontmatter(h, name, id.frontmatter);
         }
+    }
+    // gh#83 (v2.5.2): hand the populated allowlist map to the executor
+    // for dispatch-time enforcement. A pointer to the handle-owned map
+    // keeps this order-independent vs wire_tool_executor.
+    if (h->tool_executor) {
+        h->tool_executor->set_tier_allowed_tools(&h->tier_allowed_tools);
     }
 }
 

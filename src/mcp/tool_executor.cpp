@@ -188,22 +188,40 @@ bool ToolExecutor::check_approval(const ToolCall& call) {
 }
 
 /**
- * @brief Check tier allowed_tools restrictions.
+ * @brief Check tier allowed_tools restrictions. (gh#83, v2.5.2)
  * @param ctx Loop context.
  * @param call Tool call.
  * @return Rejection message or nullopt.
  * @internal
- * @version 1.8.5
+ * @version 2.5.2
  */
 std::optional<Message> ToolExecutor::check_tier_allowed(
     const LoopContext& ctx, const ToolCall& call) const {
-    // Tier allowlist enforcement is wired when the facade provides
-    // tier config. For now, pass through (no tier locked = no filter).
-    if (ctx.locked_tier.empty()) {
+    // gh#83 (v2.5.2): enforce the locked tier's allowed_tools at
+    // dispatch — not just at prompt-injection time. Without this a
+    // model that emits an off-allowlist call (hallucinated, learned,
+    // or cross-tier) has it dispatched normally; tier isolation was
+    // advisory only. Pass through when: no tier locked, no map wired,
+    // or the tier declares no allowlist (unrestricted).
+    if (ctx.locked_tier.empty() || tier_allowed_tools_ == nullptr) {
         return std::nullopt;
     }
-    // Actual tier allowlist lookup deferred to facade integration
-    return std::nullopt;
+    auto it = tier_allowed_tools_->find(ctx.locked_tier);
+    // Authorized when: tier has no allowlist entry, an empty allowlist
+    // (unrestricted), or the call is in the list. Short-circuit eval
+    // guards the `it->second` access against the end() case.
+    bool authorized = it == tier_allowed_tools_->end()
+                   || it->second.empty()
+                   || std::find(it->second.begin(), it->second.end(),
+                                call.name) != it->second.end();
+    if (authorized) {
+        return std::nullopt;
+    }
+    logger->warn("Tool '{}' not in tier '{}' allowed_tools — rejecting",
+                 call.name, ctx.locked_tier);
+    return create_denied_message(
+        call, "tier '" + ctx.locked_tier + "' is not authorized to call '"
+                  + call.name + "'");
 }
 
 /**
@@ -644,7 +662,7 @@ std::optional<Message> ToolExecutor::check_schema(
  * @param call Tool call.
  * @return PreconditionCheck with rejection + typed kind on failure.
  * @internal
- * @version 2.1.4
+ * @version 2.5.2
  */
 PreconditionCheck ToolExecutor::check_call_preconditions(
     LoopContext& ctx, const ToolCall& call) {
@@ -665,7 +683,7 @@ PreconditionCheck ToolExecutor::check_call_preconditions(
         pc.kind = ToolResultKind::rejected_precondition;
     } else if (auto t = check_tier_allowed(ctx, call); t.has_value()) {
         pc.rejection = std::move(t);
-        pc.kind = ToolResultKind::rejected_precondition;
+        pc.kind = ToolResultKind::rejected_unauthorized;  // gh#83
     } else if (auto dup = check_duplicate(ctx, call); !dup.empty()) {
         pc.rejection = handle_duplicate(ctx, call, dup);
         pc.kind = ToolResultKind::rejected_duplicate;
@@ -706,7 +724,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.3.7
+ * @version 2.5.1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -714,6 +732,10 @@ std::vector<Message> ToolExecutor::process_single_call(
     // those that a precondition will reject. (E9, 2.0.6-rc19)
     if (fire_pre_tool_hook(ctx, call)) {
         auto msg = create_denied_message(call, "Cancelled by hook");
+        // gh#84 (v2.5.1): stamp kind so the engine treats this as a
+        // non-progress outcome for the thinking-budget reset.
+        msg.metadata["result_kind"] =
+            result_kind_to_string(ToolResultKind::rejected_precondition);
         fire_post_tool_hook(ctx, call, "", 0.0,
             ToolResultKind::rejected_precondition, msg);
         return {std::move(msg)};
@@ -723,6 +745,9 @@ std::vector<Message> ToolExecutor::process_single_call(
     if (pc.rejection.has_value()) {
         logger->info("Tool '{}' rejected by precondition (kind={})",
                      call.name, result_kind_to_string(pc.kind));
+        // gh#84 (v2.5.1): stamp kind for the engine's budget decision.
+        pc.rejection->metadata["result_kind"] =
+            result_kind_to_string(pc.kind);
         fire_post_tool_hook(ctx, call, "", 0.0, pc.kind, *pc.rejection);
         return {std::move(*pc.rejection)};
     }
@@ -786,7 +811,7 @@ void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
  * @param raw_result Raw server result string.
  * @param exec_ms Execution time (ms).
  * @internal
- * @version 2.3.7
+ * @version 2.5.1
  */
 void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
                                       Message& msg,
@@ -804,6 +829,10 @@ void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
 
     // #44 (v2.1.0): honest byte-level signal — error trumps empty.
     ToolResultKind kind = classify_tool_result(msg.content);
+    // gh#84 (v2.5.1): stamp the result kind on the message so the
+    // engine can tell genuine progress (ok / ok_empty) from rejections
+    // and errors when deciding whether to reset the thinking budget.
+    msg.metadata["result_kind"] = result_kind_to_string(kind);
     fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind, msg);
 
     // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive

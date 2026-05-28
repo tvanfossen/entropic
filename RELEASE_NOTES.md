@@ -1,3 +1,281 @@
+# entropic v2.6.0
+
+Minor release. **Bundles the v2.5.1 → v2.5.4 patch series into a
+single minor cut** — the consumer-driven hardening that came out of
+the bissell-explorer Qwen3.6-A3B looping incident (2026-05-28).
+
+No ABI break — every patch was strictly additive. Drop-in for any
+2.5.x-compiled consumer.
+
+## What's in this minor
+
+| # | Issue | Fix |
+|---|---|---|
+| v2.5.1 | gh#84 | Thinking-budget gate resets on **genuine progress** (a tool with `result_kind` ok/ok_empty), not on any parsed call — duplicate/rejected-spam can no longer keep the budget perpetually fresh. |
+| v2.5.2 | gh#83 | Tier `allowed_tools` enforced at **dispatch**, not just prompt-injection — off-allowlist calls return `rejected_unauthorized`. Tier isolation is now real. |
+| v2.5.3 | gh#85 | Per-tier `top_p` / `top_k` / `min_p` / `presence_penalty` / `frequency_penalty` wired from identity frontmatter to the sampler. |
+| v2.5.4 | gh#86 | Per-tier `enable_thinking` + `repeat_penalty` wired; closes the frontmatter-wiring migration-audit meta-issue. |
+
+## The throughline
+
+All four trace to a single live incident: `qwen3_6_a3b` looped 270s /
+30+ tool calls / 8× identical `search_symbols` on a trivial lookup.
+The v2.5.0 budget gate should have caught it but was bypassed (gh#84);
+the vendor-recommended `presence_penalty=1.5` mitigation was
+unreachable from config (gh#85); `enable_thinking: false` for worker
+tiers was unreachable (gh#86); and the cross-tier delegation that
+fanned it out wasn't blocked (gh#83). After this minor, **every
+Qwen3.6-A3B loop-mitigation lever is config-reachable and the budget
+gate actually fires.**
+
+## Frontmatter sampler chain — now complete
+
+The `apply_identity_frontmatter → TierConfig →
+apply_tier_sampler_overrides → GenerationParams` chain (introduced for
+`temperature`/`max_output_tokens` in v2.4.4, gh#82) now covers **every**
+sampler/template knob on `IdentityFrontmatter`: temperature,
+max_output_tokens, top_p, top_k, min_p, presence_penalty,
+frequency_penalty, repeat_penalty, enable_thinking. The class of
+v1.9.15→v2.0.0 migration-dropped wirings is closed (gh#86 audit).
+
+A `TierSamplerOverrides` struct + templated `apply_if_default` helper
+keep the precedence policy uniform: a tier baseline applies only when
+the incoming param is still at its `GenerationParams` struct default;
+an explicit per-call override always wins.
+
+## Known follow-up
+
+- Top-level `generation.default_top_p` (and siblings) remain a latent
+  no-op — that's the *global*-defaults mechanism, distinct from the
+  per-tier frontmatter path this minor wired. Deferred.
+- Thinking-budget `tokens` mode estimates from content length
+  (~4 chars/token); `wall_clock` is exact (gh#80 caveat, unchanged).
+
+## Test ceremony
+
+- Full unit sweep green across all binaries each patch.
+- Model-test ceremony: see `model-results-v2.6.0.json` attached for
+  the full GPU-validated pass/fail matrix. New `[gh83]` / `[gh84]` /
+  `[gh85]` / `[gh86]` unit scenarios gate the four fixes.
+
+---
+
+# entropic v2.5.4
+
+Patch release. **gh#86** — completes the frontmatter-wiring audit the
+meta-issue called for: the v1.9.15→v2.0.0 Python→C++ migration dropped
+a *class* of frontmatter → generation-params wirings, surfaced one
+knob at a time (gh#82 temperature/max_output_tokens, gh#85 the five
+sampler knobs). This patch closes the last two — `enable_thinking` and
+`repeat_penalty` — and confirms the audit complete.
+
+## Fix
+
+Both flow identity-frontmatter → `TierConfig` →
+`apply_tier_sampler_overrides`, the same chain as gh#82/gh#85:
+
+- `IdentityFrontmatter.enable_thinking` / `repeat_penalty` are now
+  `std::optional` (set only when the key is present). This matters for
+  `enable_thinking`: its `GenerationParams` default is `true`, so "not
+  set" must stay distinct from an explicit `false` — a worker tier can
+  now disable thinking where reflexive tool-use beats deliberation.
+- `TierConfig` + `TierSamplerOverrides` gain both fields;
+  `apply_tier_sampler_overrides` applies them via `apply_if_default`
+  (defaults `enable_thinking=true`, `repeat_penalty=1.1`).
+- `enable_thinking` reaches the GGUF chat template through the backend
+  path that already consumes `params.enable_thinking`
+  (`apply_chat_template`) — no separate `chat_template_kwargs`
+  subsystem was needed (the meta-issue's open question; verified the
+  C++ backend already threads it).
+
+## Audit result
+
+The `apply_identity_frontmatter → TierConfig → apply_tier_sampler_overrides
+→ GenerationParams` chain is now complete for every sampler/template
+knob on `IdentityFrontmatter`: temperature, max_output_tokens (gh#82),
+top_p, top_k, min_p, presence_penalty, frequency_penalty (gh#85),
+repeat_penalty, enable_thinking (gh#86). The class of migration-dropped
+wirings is closed.
+
+With this, every Qwen3.6-A3B loop mitigation lever is reachable from
+config: the budget gate (gh#84, now fires on rejected-spam),
+`presence_penalty=1.5` (gh#85), and `enable_thinking: false` for worker
+tiers (gh#86).
+
+## Tests
+
+`tests/unit/inference/orchestrator_test.cpp` `[gh86]`: worker tier
+disabling thinking + tightening repeat_penalty reaches params; tier
+baseline applies when params are at default; unset keeps defaults
+(thinking true / rp 1.1). `prompt_parse_test.cpp` updated for the
+optional `enable_thinking`. Inference 253 + config 48 green.
+
+## ABI
+
+Additive (`TierConfig` / `IdentityFrontmatter` / `TierSamplerOverrides`
+optionals). Drop-in for any 2.5.x consumer.
+
+Completes the v2.5.x patch series (gh#84/gh#83/gh#85/gh#86) feeding the
+v2.6.0 minor.
+
+---
+
+# entropic v2.5.3
+
+Patch release. **gh#85** — the sampler knobs consumers most need to
+tune (`top_p`, `top_k`, `min_p`, `presence_penalty`,
+`frequency_penalty`) had no frontmatter binding. They were parseable
+from per-call C-API JSON, but no engine path constructed that JSON
+from config, so the sampler ran at `GenerationParams` struct defaults
+regardless. Vendor recipes (e.g. Qwen3.6 thinking-mode's
+`presence_penalty=1.5`) were unreachable.
+
+## Fix (mirrors the gh#82 pattern)
+
+Per-tier sampler knobs now flow identity-frontmatter → `TierConfig` →
+sampler, exactly like `temperature`/`max_output_tokens` (gh#82):
+
+- `IdentityFrontmatter` + `TierConfig` gain `std::optional` fields for
+  the five knobs; the parser sets them only when the key is present.
+- `apply_identity_frontmatter` threads them into `TierConfig`.
+- The orchestrator's per-tier resolution applies them. The free
+  `apply_tier_sampler_overrides` now takes a `TierSamplerOverrides`
+  struct (7 knobs) instead of two loose optionals, with a templated
+  `apply_if_default` helper — applies the tier value only when the
+  incoming param is still at its struct default (explicit per-call
+  override wins). The struct keeps the call a single testable unit as
+  the knob set grows (gh#86 adds two more).
+
+## Scope
+
+This wires the **per-tier frontmatter** path (the vendor-recipe use
+case). The top-level `generation.default_top_p` YAML field remains a
+separate latent no-op (global defaults → all tiers is a different
+mechanism); deferred as a follow-up — per-tier frontmatter is the
+documented control surface consumers reach for.
+
+## Tests
+
+`tests/unit/inference/orchestrator_test.cpp` `[gh85]`:
+- Qwen3.6 recipe (top_p/top_k/min_p/presence/frequency) reaches params.
+- explicit per-call top_p + presence_penalty override the tier baseline.
+- unset knobs keep struct defaults.
+gh#82 `[gh82]` scenarios updated to the struct signature, still green.
+
+Inference 252 + config 48 + API 481 green.
+
+## ABI
+
+Additive: `TierConfig` / `IdentityFrontmatter` optionals,
+`TierSamplerOverrides` struct. `apply_tier_sampler_overrides` signature
+changed (free function; was added in v2.4.4, no external consumers).
+Drop-in for any 2.5.x consumer.
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor.
+
+---
+
+# entropic v2.5.2
+
+Patch release. **gh#83** — tier `allowed_tools` was enforced only at
+prompt-injection time (the model got a filtered tool list), not at
+dispatch. `ToolExecutor::check_tier_allowed` was a stub returning
+`nullopt`, so a model that emitted a call for a tool outside its
+tier's allowlist — hallucinated, learned from another tier's prompt,
+or cross-tier — had it dispatched normally. Tier isolation was
+advisory, not enforced.
+
+Live (bissell-explorer, 2026-05-28): researcher tier
+(`allowed_tools=[docs.*, entropic.complete]`, no `entropic.delegate`)
+emitted three `entropic.delegate` calls; the cross-tier one
+(target=reader) executed and reader ran `filesystem.grep`. Zero
+rejection markers written.
+
+## Fix
+
+`check_tier_allowed` now enforces the locked tier's allowlist at
+dispatch:
+
+- `ToolExecutor` holds a pointer to the facade-owned
+  tier→allowed_tools map (`set_tier_allowed_tools`), wired in
+  `cache_tier_allowed_tools` after the map is populated (a pointer
+  keeps it order-independent vs `wire_tool_executor`).
+- An off-allowlist call returns a new `rejected_unauthorized`
+  `ToolResultKind` (added to the stable enum + `result_kind_to_string`)
+  via the existing precondition chain.
+- **Pass-through preserved** when: no tier locked, no map wired, the
+  tier has no allowlist entry, or its allowlist is empty
+  (unrestricted) — no behavior change for configs that don't isolate.
+
+## Tests
+
+`tests/unit/mcp/tool_executor_test.cpp` `[gh83]`:
+- off-allowlist tool → `rejected_unauthorized` + "not authorized".
+- allowlisted tool dispatches (`ok`).
+- no map wired → pass-through.
+- tier absent from map / empty allowlist → unrestricted.
+- empty locked_tier → bypass.
+
+MCP 309 + API 481 green.
+
+## ABI
+
+Additive: new `rejected_unauthorized` enum value (appended, not
+reordered — wire-stable), `ToolExecutor::set_tier_allowed_tools`
+setter. Drop-in for any 2.5.x consumer; enforcement engages only when
+the facade wires the map (it does, at configure).
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor.
+
+---
+
+# entropic v2.5.1
+
+Patch release. **gh#84** — the thinking-budget gate (gh#80, v2.5.0)
+reset its counter on *any parsed tool call*, including ones the
+executor immediately rejected (`rejected_duplicate`, `rejected_schema`,
+anti-spiral). A model emitting a duplicate/rejected call every turn
+kept its budget perpetually fresh, so the gate was inert against the
+dominant Qwen3.6-A3B loop shape it was built to catch (observed live:
+bissell-explorer, 270s / 30+ calls / 8× identical `search_symbols`,
+gate never fired).
+
+## Fix
+
+The budget now resets only on **genuine progress** — at least one tool
+that actually executed (`result_kind` `ok` / `ok_empty`), not merely
+parsed-and-dispatched-then-rejected.
+
+- `ToolExecutor` stamps `result_kind` onto each result message's
+  metadata (rejection paths + the execution path) — the kind was
+  already computed for the POST_TOOL_CALL hook; this exposes it to
+  the engine.
+- `AgentEngine::process_tool_results` now returns `bool made_progress`
+  (any result `ok` / `ok_empty`).
+- `process_generation_result` passes `made_progress` (not the old
+  `made_tool_call`) to `charge_thinking_budget`. A turn of pure
+  rejections no longer refreshes the window, so the nudge-then-hard-cut
+  escalation fires as designed.
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` `[gh84]`:
+- duplicate-rejected tool call every turn → budget still nudges +
+  hard-cuts before the iteration cap (the bug scenario).
+- successful (`ok`) tool call every turn → budget resets, no hard-cut.
+
+Core 238 + MCP 304 green; gh#80 `[gh80]` scenarios still pass.
+
+## ABI
+
+None — internal. `process_tool_results` return type changed (private
+method). Drop-in for any 2.5.x consumer.
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor (with gh#83,
+gh#85, gh#86).
+
+---
+
 # entropic v2.5.0
 
 Minor release. **gh#80 — thinking-budget gating.** A tier with

@@ -706,7 +706,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  * @param call Tool call.
  * @return Result messages (0 or 1).
  * @internal
- * @version 2.3.7
+ * @version 2.5.1
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {
@@ -714,6 +714,10 @@ std::vector<Message> ToolExecutor::process_single_call(
     // those that a precondition will reject. (E9, 2.0.6-rc19)
     if (fire_pre_tool_hook(ctx, call)) {
         auto msg = create_denied_message(call, "Cancelled by hook");
+        // gh#84 (v2.5.1): stamp kind so the engine treats this as a
+        // non-progress outcome for the thinking-budget reset.
+        msg.metadata["result_kind"] =
+            result_kind_to_string(ToolResultKind::rejected_precondition);
         fire_post_tool_hook(ctx, call, "", 0.0,
             ToolResultKind::rejected_precondition, msg);
         return {std::move(msg)};
@@ -723,6 +727,9 @@ std::vector<Message> ToolExecutor::process_single_call(
     if (pc.rejection.has_value()) {
         logger->info("Tool '{}' rejected by precondition (kind={})",
                      call.name, result_kind_to_string(pc.kind));
+        // gh#84 (v2.5.1): stamp kind for the engine's budget decision.
+        pc.rejection->metadata["result_kind"] =
+            result_kind_to_string(pc.kind);
         fire_post_tool_hook(ctx, call, "", 0.0, pc.kind, *pc.rejection);
         return {std::move(*pc.rejection)};
     }
@@ -786,7 +793,7 @@ void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
  * @param raw_result Raw server result string.
  * @param exec_ms Execution time (ms).
  * @internal
- * @version 2.3.7
+ * @version 2.5.1
  */
 void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
                                       Message& msg,
@@ -804,6 +811,10 @@ void ToolExecutor::finalize_tool_call(LoopContext& ctx, const ToolCall& call,
 
     // #44 (v2.1.0): honest byte-level signal — error trumps empty.
     ToolResultKind kind = classify_tool_result(msg.content);
+    // gh#84 (v2.5.1): stamp the result kind on the message so the
+    // engine can tell genuine progress (ok / ok_empty) from rejections
+    // and errors when deciding whether to reset the thinking budget.
+    msg.metadata["result_kind"] = result_kind_to_string(kind);
     fire_post_tool_hook(ctx, call, raw_result, exec_ms, kind, msg);
 
     // Demo ask #5 (v2.1.0): anti-spiral primitive. Track consecutive

@@ -1,3 +1,50 @@
+# entropic v2.5.1
+
+Patch release. **gh#84** — the thinking-budget gate (gh#80, v2.5.0)
+reset its counter on *any parsed tool call*, including ones the
+executor immediately rejected (`rejected_duplicate`, `rejected_schema`,
+anti-spiral). A model emitting a duplicate/rejected call every turn
+kept its budget perpetually fresh, so the gate was inert against the
+dominant Qwen3.6-A3B loop shape it was built to catch (observed live:
+bissell-explorer, 270s / 30+ calls / 8× identical `search_symbols`,
+gate never fired).
+
+## Fix
+
+The budget now resets only on **genuine progress** — at least one tool
+that actually executed (`result_kind` `ok` / `ok_empty`), not merely
+parsed-and-dispatched-then-rejected.
+
+- `ToolExecutor` stamps `result_kind` onto each result message's
+  metadata (rejection paths + the execution path) — the kind was
+  already computed for the POST_TOOL_CALL hook; this exposes it to
+  the engine.
+- `AgentEngine::process_tool_results` now returns `bool made_progress`
+  (any result `ok` / `ok_empty`).
+- `process_generation_result` passes `made_progress` (not the old
+  `made_tool_call`) to `charge_thinking_budget`. A turn of pure
+  rejections no longer refreshes the window, so the nudge-then-hard-cut
+  escalation fires as designed.
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` `[gh84]`:
+- duplicate-rejected tool call every turn → budget still nudges +
+  hard-cuts before the iteration cap (the bug scenario).
+- successful (`ok`) tool call every turn → budget resets, no hard-cut.
+
+Core 238 + MCP 304 green; gh#80 `[gh80]` scenarios still pass.
+
+## ABI
+
+None — internal. `process_tool_results` return type changed (private
+method). Drop-in for any 2.5.x consumer.
+
+Part of the v2.5.x patch series feeding the v2.6.0 minor (with gh#83,
+gh#85, gh#86).
+
+---
+
 # entropic v2.5.0
 
 Minor release. **gh#80 — thinking-budget gating.** A tier with

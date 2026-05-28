@@ -532,7 +532,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.5.0
+ * @version 2.5.1
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -545,15 +545,19 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
 
     bool made_tool_call =
         !tool_calls.empty() && tool_exec_.process_tool_calls != nullptr;
+    // gh#84 (v2.5.1): the budget resets on genuine progress, not on a
+    // merely-parsed call — process_tool_results reports whether any
+    // tool actually executed (ok / ok_empty).
+    bool made_progress = false;
     if (made_tool_call) {
-        process_tool_results(ctx, tool_calls);
+        made_progress = process_tool_results(ctx, tool_calls);
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
 
     // gh#80 (v2.5.0): charge the thinking budget before dispatch so a
     // budget-triggered terminal is honored by dispatch_pending_or_halt.
-    charge_thinking_budget(ctx, result.content.size(), made_tool_call);
+    charge_thinking_budget(ctx, result.content.size(), made_progress);
 
     dispatch_pending_or_halt(ctx);
 }
@@ -1372,10 +1376,11 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
  * @brief Process tool call results and directives.
  * @param ctx Loop context.
  * @param tool_calls Parsed tool calls.
+ * @return True if any tool genuinely executed (gh#84, v2.5.1).
  * @internal
- * @version 2.3.28
+ * @version 2.5.1
  */
-void AgentEngine::process_tool_results(
+bool AgentEngine::process_tool_results(
     LoopContext& ctx,
     const std::vector<ToolCall>& tool_calls) {
     set_state(ctx, AgentState::WAITING_TOOL);
@@ -1385,7 +1390,19 @@ void AgentEngine::process_tool_results(
 
     logger->info("[TOOLS] {} call(s) -> {} result message(s)",
                  tool_calls.size(), results.size());
+
+    // gh#84 (v2.5.1): "progress" = at least one tool genuinely
+    // executed (result_kind ok / ok_empty), not merely parsed. The
+    // thinking budget resets only on progress so a duplicate/rejected
+    // -spam spiral (rejected_duplicate, rejected_schema, anti-spiral)
+    // can no longer keep its budget perpetually fresh.
+    bool made_progress = false;
     for (auto& msg : results) {
+        auto it = msg.metadata.find("result_kind");
+        if (it != msg.metadata.end()
+            && (it->second == "ok" || it->second == "ok_empty")) {
+            made_progress = true;
+        }
         if (fold_complete_into_assistant(ctx, msg)) {
             continue;  // gh#68: folded; skip pushing JSON user message
         }
@@ -1397,6 +1414,7 @@ void AgentEngine::process_tool_results(
     if (!is_terminal_state(ctx)) {
         set_state(ctx, AgentState::EXECUTING);
     }
+    return made_progress;
 }
 
 // ── Anchor helper ────────────────────────────────────────

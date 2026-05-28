@@ -922,9 +922,13 @@ private:
      * @brief Process tool calls and handle directives.
      * @param ctx Loop context.
      * @param tool_calls Parsed tool calls.
-     * @version 1.8.5
+     * @return gh#84 (v2.5.1): true if at least one tool genuinely
+     *         executed (result_kind ok / ok_empty), false if every
+     *         call was rejected/errored — drives the thinking-budget
+     *         reset so duplicate/rejected-spam can't refresh it.
+     * @version 2.5.1
      */
-    void process_tool_results(LoopContext& ctx,
+    bool process_tool_results(LoopContext& ctx,
                               const std::vector<ToolCall>& tool_calls);
 
     // ── Delegation (v1.8.6) ──────────────────────────────

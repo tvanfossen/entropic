@@ -797,3 +797,46 @@ SCENARIO("gh#85: the remaining sampler knobs apply with the same precedence",
         }
     }
 }
+
+SCENARIO("gh#86: enable_thinking + repeat_penalty thread through to params",
+         "[v2.5.4][inference][gh86]") {
+    using entropic::apply_tier_sampler_overrides;
+    using entropic::GenerationParams;
+    using entropic::TierSamplerOverrides;
+
+    GIVEN("a worker tier disabling thinking and tightening repeat_penalty") {
+        TierSamplerOverrides ov;
+        ov.enable_thinking = false;   // GenerationParams default is TRUE
+        ov.repeat_penalty = 1.3f;
+
+        WHEN("incoming params are at the struct defaults (think=true, rp=1.1)") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, ov);
+            THEN("both reach the params") {
+                CHECK(p.enable_thinking == false);
+                CHECK(p.repeat_penalty == Catch::Approx(1.3f));
+            }
+        }
+
+        WHEN("the caller explicitly leaves thinking at true and rp at default") {
+            GenerationParams p;  // enable_thinking=true (default), rp=1.1
+            apply_tier_sampler_overrides(p, ov);
+            THEN("the tier baseline applies (param was at default)") {
+                CHECK(p.enable_thinking == false);
+                CHECK(p.repeat_penalty == Catch::Approx(1.3f));
+            }
+        }
+    }
+
+    GIVEN("a tier configuring neither") {
+        TierSamplerOverrides ov;
+        WHEN("params are at defaults") {
+            GenerationParams p;
+            apply_tier_sampler_overrides(p, ov);
+            THEN("thinking stays true and repeat_penalty stays 1.1") {
+                CHECK(p.enable_thinking == true);
+                CHECK(p.repeat_penalty == Catch::Approx(1.1f));
+            }
+        }
+    }
+}

@@ -243,33 +243,46 @@ static void extract_benchmark(
  * @internal
  */
 /**
- * @brief Extract the scalar sampler/loop/flag fields of an identity.
+ * @brief Extract the per-tier sampler knobs (gh#82/gh#85/gh#86).
+ *
+ * Each is optional — set only when the key is present so the
+ * orchestrator can distinguish a configured per-tier value from "not
+ * set" (and leave the GenerationParams default in place). Split from
+ * extract_identity_flags to keep both under the knots ABC gate.
+ *
  * @param root YAML root node.
  * @param[out] fm Identity frontmatter to populate.
  * @utility
- * @version 2.5.3
+ * @version 2.5.4
  */
-static void extract_identity_flags(ryml::ConstNodeRef root,
-                                   IdentityFrontmatter& fm) {
-    // gh#82 (v2.4.4): optional — set only when the key is present, so
-    // the orchestrator can tell a configured per-tier value apart from
-    // "not set" (and leave the GenerationParams default in place).
-    int mot = 0;
-    if (extract(root, "max_output_tokens", mot)) { fm.max_output_tokens = mot; }
-    float temp = 0.0f;
-    if (extract(root, "temperature", temp)) { fm.temperature = temp; }
-    // gh#85 (v2.5.3): remaining sampler knobs — optional, set only when
-    // the key is present so the orchestrator can distinguish a
-    // configured value from "not set".
+static void extract_sampler_knobs(ryml::ConstNodeRef root,
+                                  IdentityFrontmatter& fm) {
+    int ival = 0;
+    if (extract(root, "max_output_tokens", ival)) { fm.max_output_tokens = ival; }
+    if (extract(root, "top_k", ival)) { fm.top_k = ival; }
     float fval = 0.0f;
+    if (extract(root, "temperature", fval)) { fm.temperature = fval; }
     if (extract(root, "top_p", fval)) { fm.top_p = fval; }
-    int top_k = 0;
-    if (extract(root, "top_k", top_k)) { fm.top_k = top_k; }
     if (extract(root, "min_p", fval)) { fm.min_p = fval; }
     if (extract(root, "presence_penalty", fval)) { fm.presence_penalty = fval; }
     if (extract(root, "frequency_penalty", fval)) { fm.frequency_penalty = fval; }
-    extract(root, "repeat_penalty", fm.repeat_penalty);
-    extract(root, "enable_thinking", fm.enable_thinking);
+    if (extract(root, "repeat_penalty", fval)) { fm.repeat_penalty = fval; }
+    // enable_thinking's GenerationParams default is true, so "not set"
+    // must stay distinct from an explicit false (gh#86).
+    bool think = false;
+    if (extract(root, "enable_thinking", think)) { fm.enable_thinking = think; }
+}
+
+/**
+ * @brief Extract the scalar loop/flag fields of an identity.
+ * @param root YAML root node.
+ * @param[out] fm Identity frontmatter to populate.
+ * @utility
+ * @version 2.5.4
+ */
+static void extract_identity_flags(ryml::ConstNodeRef root,
+                                   IdentityFrontmatter& fm) {
+    extract_sampler_knobs(root, fm);  // gh#82/gh#85/gh#86
     extract(root, "interstitial", fm.interstitial);
     extract(root, "routable", fm.routable);
     extract(root, "explicit_completion", fm.explicit_completion);

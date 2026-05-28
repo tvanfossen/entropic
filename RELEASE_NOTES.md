@@ -1,3 +1,63 @@
+# entropic v2.5.4
+
+Patch release. **gh#86** — completes the frontmatter-wiring audit the
+meta-issue called for: the v1.9.15→v2.0.0 Python→C++ migration dropped
+a *class* of frontmatter → generation-params wirings, surfaced one
+knob at a time (gh#82 temperature/max_output_tokens, gh#85 the five
+sampler knobs). This patch closes the last two — `enable_thinking` and
+`repeat_penalty` — and confirms the audit complete.
+
+## Fix
+
+Both flow identity-frontmatter → `TierConfig` →
+`apply_tier_sampler_overrides`, the same chain as gh#82/gh#85:
+
+- `IdentityFrontmatter.enable_thinking` / `repeat_penalty` are now
+  `std::optional` (set only when the key is present). This matters for
+  `enable_thinking`: its `GenerationParams` default is `true`, so "not
+  set" must stay distinct from an explicit `false` — a worker tier can
+  now disable thinking where reflexive tool-use beats deliberation.
+- `TierConfig` + `TierSamplerOverrides` gain both fields;
+  `apply_tier_sampler_overrides` applies them via `apply_if_default`
+  (defaults `enable_thinking=true`, `repeat_penalty=1.1`).
+- `enable_thinking` reaches the GGUF chat template through the backend
+  path that already consumes `params.enable_thinking`
+  (`apply_chat_template`) — no separate `chat_template_kwargs`
+  subsystem was needed (the meta-issue's open question; verified the
+  C++ backend already threads it).
+
+## Audit result
+
+The `apply_identity_frontmatter → TierConfig → apply_tier_sampler_overrides
+→ GenerationParams` chain is now complete for every sampler/template
+knob on `IdentityFrontmatter`: temperature, max_output_tokens (gh#82),
+top_p, top_k, min_p, presence_penalty, frequency_penalty (gh#85),
+repeat_penalty, enable_thinking (gh#86). The class of migration-dropped
+wirings is closed.
+
+With this, every Qwen3.6-A3B loop mitigation lever is reachable from
+config: the budget gate (gh#84, now fires on rejected-spam),
+`presence_penalty=1.5` (gh#85), and `enable_thinking: false` for worker
+tiers (gh#86).
+
+## Tests
+
+`tests/unit/inference/orchestrator_test.cpp` `[gh86]`: worker tier
+disabling thinking + tightening repeat_penalty reaches params; tier
+baseline applies when params are at default; unset keeps defaults
+(thinking true / rp 1.1). `prompt_parse_test.cpp` updated for the
+optional `enable_thinking`. Inference 253 + config 48 green.
+
+## ABI
+
+Additive (`TierConfig` / `IdentityFrontmatter` / `TierSamplerOverrides`
+optionals). Drop-in for any 2.5.x consumer.
+
+Completes the v2.5.x patch series (gh#84/gh#83/gh#85/gh#86) feeding the
+v2.6.0 minor.
+
+---
+
 # entropic v2.5.3
 
 Patch release. **gh#85** — the sampler knobs consumers most need to

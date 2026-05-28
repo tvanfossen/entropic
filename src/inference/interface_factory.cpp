@@ -10,6 +10,8 @@
 #include <entropic/types/config.h>
 #include <entropic/types/message.h>
 
+#include "llama_cpp_backend.h"  // gh#87 3b: common_chat parse routing
+
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -105,7 +107,7 @@ static void parse_logit_bias_into(
  * @param json_str JSON params (may be null).
  * @return GenerationParams with parsed overrides.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.7.0
  */
 static GenerationParams parse_params(const char* json_str) {
     GenerationParams p;
@@ -123,6 +125,7 @@ static GenerationParams parse_params(const char* json_str) {
     assign_if_present(j, "frequency_penalty",p.frequency_penalty);
     assign_if_present(j, "repeat_penalty",   p.repeat_penalty);
     assign_if_present(j, "seed",             p.seed);
+    assign_if_present(j, "tools",            p.tools);   // gh#87 3b
     parse_logit_bias_into(j, p.logit_bias);
     return p;
 }
@@ -298,25 +301,16 @@ static int iface_complete(const char* prompt,
 }
 
 /**
- * @brief Parse tool calls from raw model output via adapter.
- * @callback
- * @version 2.0.4
+ * @brief Serialize extracted tool calls to the C-ABI JSON array form.
+ * @param calls Tool calls (from common_chat or the legacy adapter).
+ * @return JSON array: [{name, arguments}, ...].
+ * @utility
+ * @version 2.7.0
  */
-static int iface_parse_tool_calls(const char* raw,
-                                  char** cleaned,
-                                  char** tool_calls_json,
-                                  void* user_data) {
-    auto* ctx = static_cast<InterfaceContext*>(user_data);
-    auto* adapter = ctx->orchestrator->get_adapter(ctx->default_tier);
-    if (!adapter) {
-        *cleaned = dup(raw ? raw : "");
-        *tool_calls_json = dup("[]");
-        return 0;
-    }
-    auto parsed = adapter->parse_tool_calls(raw ? raw : "");
-    *cleaned = dup(parsed.cleaned_content);
+static std::string serialize_tool_calls(
+    const std::vector<ToolCall>& calls) {
     nlohmann::json arr = nlohmann::json::array();
-    for (const auto& tc : parsed.tool_calls) {
+    for (const auto& tc : calls) {
         nlohmann::json args;
         for (const auto& [k, v] : tc.arguments) {
             auto parsed_val = nlohmann::json::parse(v, nullptr, false);
@@ -325,7 +319,49 @@ static int iface_parse_tool_calls(const char* raw,
         }
         arr.push_back({{"name", tc.name}, {"arguments", args}});
     }
-    *tool_calls_json = dup(arr.dump());
+    return arr.dump();
+}
+
+/**
+ * @brief Parse tool calls from raw model output (gh#87 3b).
+ *
+ * When the last generate rendered through common_chat (tools staged), the
+ * model emitted its NATIVE wire format — parse via the backend's captured
+ * params (`LlamaCppBackend::parse_response`), which speaks that format.
+ * Otherwise fall back to the legacy per-family adapter. Routed on the
+ * last-used tier's backend so a routed (non-default) tier parses correctly.
+ *
+ * @callback
+ * @version 2.7.0
+ */
+static int iface_parse_tool_calls(const char* raw,
+                                  char** cleaned,
+                                  char** tool_calls_json,
+                                  void* user_data) {
+    auto* ctx = static_cast<InterfaceContext*>(user_data);
+    std::string raw_str = raw ? raw : "";
+
+    auto tier = ctx->orchestrator->last_used_tier();
+    if (tier.empty()) { tier = ctx->default_tier; }
+    auto* llama = dynamic_cast<LlamaCppBackend*>(
+        ctx->orchestrator->get_backend(tier));
+
+    if (llama != nullptr && llama->has_common_chat_params()) {
+        auto parsed = llama->parse_response(raw_str);
+        *cleaned = dup(parsed.content);
+        *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));
+        return 0;
+    }
+
+    auto* adapter = ctx->orchestrator->get_adapter(ctx->default_tier);
+    if (adapter == nullptr) {
+        *cleaned = dup(raw_str);
+        *tool_calls_json = dup("[]");
+        return 0;
+    }
+    auto parsed = adapter->parse_tool_calls(raw_str);
+    *cleaned = dup(parsed.cleaned_content);
+    *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));
     return 0;
 }
 

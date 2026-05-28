@@ -347,19 +347,74 @@ bool ModelOrchestrator::try_speculative_route(
 // ── Generation ─────────────────────────────────────────────
 
 /**
- * @brief Run the tier's adapter over a result to split tool calls.
- * @param adapter Adapter for the selected tier (may be null).
+ * @brief Stage the turn's tool defs on the backend for common_chat (gh#87).
+ *
+ * Forwards `params.tools` (per-tier MCP JSON, empty for a tool-less turn) to
+ * the backend so its render path emits the model's native tool-call format.
+ * No-op for non-LlamaCpp backends. Called before every generate dispatch.
+ *
+ * @param model Active backend (may be null / non-LlamaCpp).
+ * @param params Resolved generation params (carries `tools`).
+ * @utility
+ * @version 2.7.0
+ */
+static void stage_active_tools(InferenceBackend* model,
+                               const GenerationParams& params) {
+    if (auto* llama = dynamic_cast<LlamaCppBackend*>(model)) {
+        llama->set_active_tools(params.tools);
+    }
+}
+
+/**
+ * @brief Split tool calls out of a result (gh#87: common_chat or adapter).
+ *
+ * When the backend rendered through common_chat (tools staged), parse via
+ * its captured params (`parse_response`) — the model emitted its native
+ * wire format. Otherwise fall back to the legacy per-family adapter. Never
+ * both (the double-parse guard). raw_content always preserves the
+ * pre-split output.
+ *
+ * @param model Backend that produced the result (for common_chat routing).
+ * @param adapter Tier adapter for the legacy path (may be null).
  * @param[in,out] result Generation result (content split, tools set).
  * @utility
- * @version 2.3.7
+ * @version 2.7.0
  */
-static void apply_adapter_parse(ChatAdapter* adapter,
+static void apply_adapter_parse(InferenceBackend* model,
+                                ChatAdapter* adapter,
                                 GenerationResult& result) {
-    if (!adapter || result.content.empty()) { return; }
+    if (result.content.empty()) { return; }
+    auto* llama = dynamic_cast<LlamaCppBackend*>(model);
     result.raw_content = result.content;
-    auto parsed = adapter->parse_tool_calls(result.content);
-    result.content = parsed.cleaned_content;
-    result.tool_calls = std::move(parsed.tool_calls);
+    if (llama != nullptr && llama->has_common_chat_params()) {
+        auto parsed = llama->parse_response(result.content);
+        result.content = parsed.content;
+        result.tool_calls = std::move(parsed.tool_calls);
+    } else if (adapter != nullptr) {
+        auto parsed = adapter->parse_tool_calls(result.content);
+        result.content = parsed.cleaned_content;
+        result.tool_calls = std::move(parsed.tool_calls);
+    }
+}
+
+/**
+ * @brief Resolve params + stage tools for a generate dispatch (gh#87).
+ * @param model Active backend (tools staged here).
+ * @param params Incoming generation params.
+ * @param tier_name Selected tier.
+ * @return Resolved params.
+ * @internal
+ * @version 2.7.0
+ */
+GenerationParams ModelOrchestrator::resolve_and_stage(
+    InferenceBackend* model,
+    const GenerationParams& params,
+    const std::string& tier_name) {
+    GenerationParams resolved = params;
+    resolve_grammar_key(resolved, tier_name);          // v1.9.3
+    apply_tier_sampler_defaults(resolved, tier_name);  // gh#82
+    stage_active_tools(model, resolved);               // gh#87 3b
+    return resolved;
 }
 
 /**
@@ -405,7 +460,7 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.4.4
+ * @version 2.7.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -430,16 +485,14 @@ GenerationResult ModelOrchestrator::generate(
 
     if (!model) { return build_no_model_error(selected); }
 
-    // Resolve grammar_key → grammar content (v1.9.3)
-    GenerationParams resolved_params = params;
-    resolve_grammar_key(resolved_params, selected);
-    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
+    GenerationParams resolved_params =
+        resolve_and_stage(model, params, selected);  // gh#87 3b
 
     // Generate — speculative routing applies here too (v2.1.11, gh#36)
     GenerationResult result = run_generate_dispatch(
         model, messages, resolved_params);
 
-    apply_adapter_parse(get_adapter(selected), result);
+    apply_adapter_parse(model, get_adapter(selected), result);
 
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
@@ -458,7 +511,7 @@ GenerationResult ModelOrchestrator::generate(
  * cancel)` which polls cancel per token.
  *
  * @internal
- * @version 2.4.4
+ * @version 2.7.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -482,14 +535,13 @@ GenerationResult ModelOrchestrator::generate(
 
     if (!model) { return build_no_model_error(selected); }
 
-    GenerationParams resolved_params = params;
-    resolve_grammar_key(resolved_params, selected);
-    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
+    GenerationParams resolved_params =
+        resolve_and_stage(model, params, selected);  // gh#87 3b
 
     GenerationResult result = model->generate(
         messages, resolved_params, cancel);
 
-    apply_adapter_parse(get_adapter(selected), result);
+    apply_adapter_parse(model, get_adapter(selected), result);
 
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
@@ -510,7 +562,7 @@ GenerationResult ModelOrchestrator::generate(
  * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
  * @internal
- * @version 2.4.4
+ * @version 2.7.0
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -530,10 +582,8 @@ GenerationResult ModelOrchestrator::generate_streaming(
         return err;
     }
 
-    // Resolve grammar_key → grammar content (v1.9.3)
-    GenerationParams resolved_params = params;
-    resolve_grammar_key(resolved_params, selected);
-    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
+    GenerationParams resolved_params =
+        resolve_and_stage(model, params, selected);  // gh#87 3b
 
     // Speculative routing (v2.1.11, gh#36): when speculative is
     // enabled in config AND target/draft pair is compatible, attempt

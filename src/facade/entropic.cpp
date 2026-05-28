@@ -347,31 +347,42 @@ static std::vector<std::string> filter_tools(
 /**
  * @brief Build formatted tool prompt for a tier.
  *
+ * gh#87 (v2.7.0): returns the per-tier-filtered tool defs as a structured
+ * MCP JSON array (`[{name, description, inputSchema}, ...]`), NOT an
+ * adapter-formatted prompt string. The defs flow into `params.tools` and
+ * common_chat renders them in the model's native format — so no adapter
+ * `format_tools` and no system-message string injection. The field's
+ * contract ("tool definitions for tier") is unchanged; only the payload
+ * shape evolved from formatted-prompt to structured-JSON.
+ *
  * @param tier Tier name.
- * @param result Output: heap-allocated prompt string. Caller frees.
+ * @param result Output: heap-allocated JSON-array string. Caller frees.
  * @param user_data Engine handle.
  * @return 0 on success, non-zero if no tools available.
  * @callback
- * @version 2.0.4
+ * @version 2.7.0
  */
 static int facade_get_tool_prompt(const char* tier, char** result,
                                   void* user_data) {
     auto* h = static_cast<entropic_engine*>(user_data);
     *result = nullptr;
-    if (!h || !h->server_manager || !h->orchestrator) { return 1; }
+    if (!h || !h->server_manager) { return 1; }
 
     std::string tier_name = tier ? tier : "";
     auto all_json = h->server_manager->list_tools();
     auto all_tools = nlohmann::json::parse(all_json, nullptr, false);
     auto allowed = resolve_allowed_tools(h, tier_name);
     auto tool_jsons = filter_tools(all_tools, allowed);
-    auto* adapter = h->orchestrator->get_adapter(tier_name);
+    if (!all_tools.is_array() || all_tools.empty() || tool_jsons.empty()) {
+        return 1;
+    }
 
-    bool ok = all_tools.is_array() && !all_tools.empty()
-           && !tool_jsons.empty() && adapter != nullptr;
-    if (!ok) { return 1; }
-
-    *result = strdup(adapter->format_tools(tool_jsons).c_str());
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& tj : tool_jsons) {
+        auto obj = nlohmann::json::parse(tj, nullptr, false);
+        if (!obj.is_discarded()) { arr.push_back(std::move(obj)); }
+    }
+    *result = strdup(arr.dump().c_str());
     return 0;
 }
 
@@ -1108,7 +1119,7 @@ static char* sp_get_config(void* ud) {
  * ResponseGenerator::inject_engine_state_reminder.
  *
  * @utility
- * @version 2.1.0
+ * @version 2.7.0
  */
 static std::string build_assembled_prompt_for_tier(
     entropic_engine* h, const std::string& tier_name) {
@@ -1131,20 +1142,10 @@ static std::string build_assembled_prompt_for_tier(
     if (!app_ctx.empty()) { out += app_ctx + "\n\n"; }
     if (!identity_body.empty()) { out += identity_body; }
 
-    // Tool defs from the inference adapter (matches inject_tool_prompt).
-    if (h->inference_iface.get_tool_prompt != nullptr) {
-        char* tp = nullptr;
-        int rc = h->inference_iface.get_tool_prompt(
-            tier_name.c_str(), &tp,
-            h->inference_iface.tool_prompt_data);
-        if (rc == 0 && tp != nullptr) {
-            out += "\n\n";
-            out += tp;
-            if (h->inference_iface.free_fn) {
-                h->inference_iface.free_fn(tp);
-            }
-        }
-    }
+    // gh#87 (v2.7.0): tool defs are no longer string-injected into the
+    // system prompt — they flow via params.tools and common_chat renders
+    // them in the model's native format. So the assembled system-prompt
+    // preview no longer includes a tool section.
     return out;
 }
 

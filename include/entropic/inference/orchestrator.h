@@ -813,6 +813,25 @@ private:
                                      const std::string& tier_name);
 
     /**
+     * @brief Resolve params + stage tools for a generate dispatch (gh#87).
+     *
+     * Copies params, applies grammar_key resolution + per-tier sampler
+     * defaults, and stages the turn's tool defs on the backend for
+     * common_chat rendering. Single call so the generate entry points stay
+     * under the knots ABC/SLOC gates.
+     *
+     * @param model Active backend (tools staged here).
+     * @param params Incoming generation params.
+     * @param tier_name Selected tier.
+     * @return Resolved params (tools staged as a side effect on `model`).
+     * @internal
+     * @version 2.7.0
+     */
+    GenerationParams resolve_and_stage(InferenceBackend* model,
+                                       const GenerationParams& params,
+                                       const std::string& tier_name);
+
+    /**
      * @brief Resolve speculative target/draft llama_model pointers
      *        from current orchestrator state.
      *

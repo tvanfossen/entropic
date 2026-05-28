@@ -336,12 +336,19 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
 /**
  * @brief Run the engine loop on a pre-built context.
  * @param ctx Loop context to execute.
+ * @param inherit_interrupt When true, do not reset the interrupt flag.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.4.3
  */
-void AgentEngine::run_loop(LoopContext& ctx) {
-    reset_interrupt();
-    pause_flag_.store(false);
+void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
+    // gh#81 (v2.4.3): child delegation loops inherit the parent's
+    // interrupt state — clearing it here would swallow a parent
+    // interrupt raised just before the child was dispatched. Only a
+    // fresh top-level turn resets.
+    if (!inherit_interrupt) {
+        reset_interrupt();
+        pause_flag_.store(false);
+    }
     apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
     if (ctx.metrics.start_time == 0.0) {
@@ -525,7 +532,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.3.28
+ * @version 2.4.3
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -542,12 +549,34 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
 
-    // gh#77 (v2.3.28): when a sibling tool call set a terminal state
-    // (e.g. entropic.complete emitted in the same response as
-    // entropic.pipeline / entropic.delegate), respect it before
-    // dispatching the queued action. The historical assumption was
-    // models would never combine a terminal tool with an action tool;
-    // bissell-coder evidence 2026-05-26 shows they do.
+    dispatch_pending_or_halt(ctx);
+}
+
+/**
+ * @brief Dispatch a queued delegation/pipeline, or halt if the turn
+ *        became terminal / interrupted during tool processing.
+ *
+ * Extracted from process_generation_result (v2.4.3) to keep it under
+ * the knots ABC gate. Two guards run before the dispatch:
+ *  - gh#81 (Case 2): an interrupt observed during tool processing
+ *    transitions to INTERRUPTED rather than launching a fresh
+ *    delegation/pipeline generation.
+ *  - gh#77: a terminal state set by a sibling tool call (e.g.
+ *    entropic.complete alongside entropic.pipeline) drops the queued
+ *    action instead of running it.
+ *
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.4.3
+ */
+void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
+    if (interrupt_flag_.load() && !is_terminal_state(ctx)) {
+        logger->info("[ITER] interrupt observed during tool processing — "
+                     "halting before pending dispatch");
+        set_state(ctx, AgentState::INTERRUPTED);
+        return;
+    }
+
     if (is_terminal_state(ctx)) {
         if (ctx.pending_delegation.has_value()
          || ctx.pending_pipeline.has_value()) {
@@ -559,7 +588,6 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         return;
     }
 
-    // Execute pending delegation/pipeline (v1.8.6)
     if (ctx.pending_delegation.has_value()) {
         ctx.metrics.iterations--;
         execute_pending_delegation(ctx);
@@ -1797,11 +1825,13 @@ void AgentEngine::fire_delegate_complete_hook(
  * @param ctx Child loop context.
  * @param user_data AgentEngine pointer.
  * @internal
- * @version 1.8.6
+ * @version 2.4.3
  */
 static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
     auto* engine = static_cast<AgentEngine*>(user_data);
-    engine->run_loop(ctx);
+    // gh#81 (v2.4.3): inherit the parent's interrupt — a child loop
+    // must not clear a parent interrupt raised at/just-before dispatch.
+    engine->run_loop(ctx, /*inherit_interrupt=*/true);
 }
 
 /**

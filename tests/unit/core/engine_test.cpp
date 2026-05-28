@@ -1397,6 +1397,104 @@ SCENARIO("gh#77: entropic.complete is terminal when emitted with sibling pipelin
     }
 }
 
+// ── gh#81 (v2.4.3, Case 2): interrupt latency + child inheritance ──
+
+namespace gh81 {
+/// @brief Executor that queues a pending_pipeline AND raises the
+/// engine interrupt during tool processing — simulates the user
+/// pressing interrupt while the engine is mid-tool-processing in a
+/// tight reject-retry loop. Post-fix, process_generation_result must
+/// observe interrupt_flag_ and halt before dispatching the pipeline.
+/// @utility
+/// @version 2.4.3
+struct InterruptInjector {
+    AgentEngine* engine = nullptr;
+    bool fired = false;
+};
+inline ToolExecutionInterface interrupt_during_tools_executor(
+    InterruptInjector* state) {
+    ToolExecutionInterface t{};
+    t.user_data = state;
+    t.process_tool_calls = [](LoopContext& ctx,
+                              const std::vector<ToolCall>&,
+                              void* ud) -> std::vector<Message> {
+        auto* s = static_cast<InterruptInjector*>(ud);
+        if (s->fired) { return {}; }
+        s->fired = true;
+        ctx.pending_pipeline =
+            PendingPipeline{{"reader", "editor"}, "task"};
+        if (s->engine != nullptr) { s->engine->interrupt(); }
+        return {};
+    };
+    return t;
+}
+}  // namespace gh81
+
+SCENARIO("gh#81: interrupt during tool processing halts before pending dispatch",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"entropic.pipeline","arguments":{"stages":["reader"]}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    gh81::InterruptInjector inj{&engine, false};
+    engine.set_tool_executor(gh81::interrupt_during_tools_executor(&inj));
+
+    LoopContext ctx; ctx.messages = make_messages();
+
+    GIVEN("an interrupt raised while a pipeline directive is queued") {
+        WHEN("the engine processes the response") {
+            engine.run_loop(ctx);
+            THEN("state is INTERRUPTED and the pipeline never ran") {
+                CHECK(ctx.state == AgentState::INTERRUPTED);
+                CHECK_FALSE(v2310::msg_contains(ctx, "[PIPELINE CONTEXT]"));
+            }
+        }
+    }
+}
+
+SCENARIO("gh#81: run_loop(inherit_interrupt=true) preserves a pre-set interrupt",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    mock.is_complete = false;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 100; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("the interrupt flag is already set before the (child) loop runs") {
+        engine.interrupt();
+        LoopContext ctx; ctx.messages = make_messages();
+        WHEN("run_loop is entered with inherit_interrupt=true") {
+            engine.run_loop(ctx, /*inherit_interrupt=*/true);
+            THEN("the loop honors the inherited interrupt immediately") {
+                CHECK(ctx.state == AgentState::INTERRUPTED);
+                CHECK(mock.generate_call_count == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#81: run_loop(inherit_interrupt=false) clears a stale interrupt",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("a stale interrupt flag set before a fresh top-level turn") {
+        engine.interrupt();
+        LoopContext ctx; ctx.messages = make_messages();
+        WHEN("run_loop is entered with the default (reset) behavior") {
+            engine.run_loop(ctx);  // inherit_interrupt defaults to false
+            THEN("the flag is cleared and the turn generates normally") {
+                CHECK(mock.generate_call_count >= 1);
+                CHECK(ctx.state != AgentState::INTERRUPTED);
+            }
+        }
+    }
+}
+
 SCENARIO("resume_delegation failure paths surface typed errors",
          "[v2.3.10][core][engine_coverage][delegation][resume]") {
     auto run_resume = [](StorageInterface* si, const std::string& expect) {

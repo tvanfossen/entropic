@@ -340,7 +340,7 @@ static std::string parse_mcp_config(
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.5.0
  */
 static std::string parse_generation_config(
     ryml::ConstNodeRef node,
@@ -349,6 +349,9 @@ static std::string parse_generation_config(
     extract(node, "max_tokens", config.max_tokens);
     extract(node, "default_temperature", config.default_temperature);
     extract(node, "default_top_p", config.default_top_p);
+    // gh#80 (v2.5.0): thinking-budget knobs (validated in build_loop_config).
+    extract(node, "budget_mode", config.budget_mode);
+    extract(node, "budget_limit", config.budget_limit);
     return "";
 }
 

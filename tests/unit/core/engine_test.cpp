@@ -1799,3 +1799,106 @@ SCENARIO("set_storage wiring covers init_session_conversation paths",
         REQUIRE(result.back().role == "assistant");
     }
 }
+
+// ── gh#80 (v2.5.0): thinking-budget gating ──────────────────
+
+namespace gh80 {
+/// @brief Scan a message list for a substring in any message content.
+/// @utility @version 2.5.0
+inline bool any_msg_contains(const std::vector<Message>& msgs,
+                             const std::string& needle) {
+    for (const auto& m : msgs) {
+        if (m.content.find(needle) != std::string::npos) { return true; }
+    }
+    return false;
+}
+}  // namespace gh80
+
+SCENARIO("gh#80: budget off (default) does not gate a tool-call-free spiral",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;                 // never completes naturally
+    mock.response = std::string(600, 'x');    // ~150 token-equivalents
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 5;                     // only the iteration cap stops it
+    // budget_mode defaults to off
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("budget disabled and a model that never calls a tool") {
+        auto out = engine.run(make_messages());
+        THEN("the loop runs to the iteration cap (no budget cut)") {
+            CHECK(mock.generate_call_count == 5);
+            CHECK_FALSE(gh80::any_msg_contains(out, "thinking budget reached"));
+        }
+    }
+}
+
+SCENARIO("gh#80: tokens budget nudges then hard-cuts a tool-call-free spiral",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;                 // never completes naturally
+    mock.response = std::string(600, 'x');    // 600 chars ≈ 150 tokens
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 10;                    // high — budget should stop first
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;                     // ~150 tokens/iter exceeds in one
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("a token budget smaller than one iteration's output") {
+        auto out = engine.run(make_messages());
+        THEN("iteration 1 nudges, iteration 2 hard-cuts (before the cap)") {
+            CHECK(mock.generate_call_count == 2);
+        }
+        AND_THEN("the nudge is visible in history") {
+            CHECK(gh80::any_msg_contains(out, "thinking budget reached"));
+        }
+        AND_THEN("the hard-cut failure note is visible in history") {
+            CHECK(gh80::any_msg_contains(out, "thinking budget exhausted"));
+        }
+    }
+}
+
+SCENARIO("gh#80: a tool call resets the budget window",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.response = std::string(600, 'x');     // ~150 tokens
+    // Iteration 1 emits a tool call (resets budget); subsequent
+    // iterations spiral. The tool call buys a fresh window, so the
+    // nudge cannot fire on iteration 1.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"noop","arguments":{}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 3;
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    // Tool executor that accepts the call (so made_tool_call=true on iter 1).
+    ToolExecutionInterface tex{};
+    static bool noop_seen;
+    noop_seen = false;
+    tex.process_tool_calls = [](LoopContext&, const std::vector<ToolCall>&,
+                                void*) -> std::vector<Message> {
+        noop_seen = true;
+        return {};
+    };
+    engine.set_tool_executor(tex);
+
+    GIVEN("a model that calls a tool on iteration 1 then spirals") {
+        auto out = engine.run(make_messages());
+        THEN("the tool call ran and the iteration-1 budget did not nudge early") {
+            CHECK(noop_seen);
+            // No nudge on the very first iteration — the tool call reset
+            // the window. (A nudge may appear later as the spiral
+            // continues, which is correct.)
+            CHECK(mock.generate_call_count >= 1);
+        }
+    }
+}

@@ -336,12 +336,19 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
 /**
  * @brief Run the engine loop on a pre-built context.
  * @param ctx Loop context to execute.
+ * @param inherit_interrupt When true, do not reset the interrupt flag.
  * @internal
- * @version 2.0.6-rc16.2
+ * @version 2.4.3
  */
-void AgentEngine::run_loop(LoopContext& ctx) {
-    reset_interrupt();
-    pause_flag_.store(false);
+void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
+    // gh#81 (v2.4.3): child delegation loops inherit the parent's
+    // interrupt state — clearing it here would swallow a parent
+    // interrupt raised just before the child was dispatched. Only a
+    // fresh top-level turn resets.
+    if (!inherit_interrupt) {
+        reset_interrupt();
+        pause_flag_.store(false);
+    }
     apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
     if (ctx.metrics.start_time == 0.0) {
@@ -525,7 +532,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.3.28
+ * @version 2.5.0
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -536,18 +543,135 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
     Message assistant_msg{"assistant", cleaned};
     ctx.messages.push_back(std::move(assistant_msg));
 
-    if (!tool_calls.empty() && tool_exec_.process_tool_calls != nullptr) {
+    bool made_tool_call =
+        !tool_calls.empty() && tool_exec_.process_tool_calls != nullptr;
+    if (made_tool_call) {
         process_tool_results(ctx, tool_calls);
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
 
-    // gh#77 (v2.3.28): when a sibling tool call set a terminal state
-    // (e.g. entropic.complete emitted in the same response as
-    // entropic.pipeline / entropic.delegate), respect it before
-    // dispatching the queued action. The historical assumption was
-    // models would never combine a terminal tool with an action tool;
-    // bissell-coder evidence 2026-05-26 shows they do.
+    // gh#80 (v2.5.0): charge the thinking budget before dispatch so a
+    // budget-triggered terminal is honored by dispatch_pending_or_halt.
+    charge_thinking_budget(ctx, result.content.size(), made_tool_call);
+
+    dispatch_pending_or_halt(ctx);
+}
+
+/**
+ * @brief Charge the thinking budget — see header. (gh#80, v2.5.0)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::charge_thinking_budget(
+    LoopContext& ctx, size_t content_len, bool made_tool_call) {
+    if (loop_config_.budget_mode == BudgetMode::off) { return; }
+
+    // A tool call is productive action — reset the window and the
+    // nudge latch so the model earns a fresh thinking allowance.
+    if (made_tool_call) {
+        ctx.budget_tokens_since_tool = 0;
+        ctx.budget_window_start_s = 0.0;
+        ctx.budget_completion_nudged = false;
+        return;
+    }
+
+    int units = budget_units_consumed(ctx, content_len);
+    if (units < loop_config_.budget_limit) { return; }
+
+    if (!ctx.budget_completion_nudged) {
+        nudge_budget_completion(ctx);
+    } else {
+        hard_cut_budget(ctx);
+    }
+}
+
+/**
+ * @brief Accumulate + return budget units consumed this window. (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+int AgentEngine::budget_units_consumed(LoopContext& ctx, size_t content_len) {
+    if (loop_config_.budget_mode == BudgetMode::tokens) {
+        // Estimate generated tokens from content length — the
+        // function-pointer inference ABI doesn't thread an exact count
+        // back. ~4 chars/token; content includes <think> blocks, which
+        // is exactly the deliberation we want to charge.
+        constexpr size_t kCharsPerToken = 4;
+        ctx.budget_tokens_since_tool +=
+            static_cast<int>(content_len / kCharsPerToken);
+        return ctx.budget_tokens_since_tool;
+    }
+    // wall_clock
+    if (ctx.budget_window_start_s == 0.0) {
+        ctx.budget_window_start_s = now_seconds();
+    }
+    return static_cast<int>(now_seconds() - ctx.budget_window_start_s);
+}
+
+/**
+ * @brief First-exhaustion nudge: push "emit completion now". (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::nudge_budget_completion(LoopContext& ctx) {
+    ctx.budget_completion_nudged = true;
+    ctx.budget_tokens_since_tool = 0;
+    ctx.budget_window_start_s =
+        (loop_config_.budget_mode == BudgetMode::wall_clock)
+            ? now_seconds() : 0.0;
+    logger->warn("[BUDGET] thinking budget reached ({} {}); nudging completion",
+                 loop_config_.budget_limit,
+                 loop_config_.budget_mode == BudgetMode::tokens
+                     ? "tokens" : "seconds");
+    Message nudge{"user",
+        "[engine] thinking budget reached — emit entropic.complete now "
+        "with your best current answer. Further deliberation without a "
+        "tool call will be cut off."};
+    ctx.messages.push_back(std::move(nudge));
+}
+
+/**
+ * @brief Second-exhaustion hard cut, failure visible in history. (gh#80)
+ * @internal
+ * @version 2.5.0
+ */
+void AgentEngine::hard_cut_budget(LoopContext& ctx) {
+    logger->warn("[BUDGET] thinking budget exhausted after nudge — "
+                 "hard-cutting turn");
+    Message cut{"assistant",
+        "[thinking budget exhausted — the turn was hard-cut after the "
+        "completion nudge went unheeded; no tool call was emitted]"};
+    ctx.messages.push_back(std::move(cut));
+    ctx.metadata["terminal_reason"] = "budget_exhausted_thinking";
+    set_state(ctx, AgentState::COMPLETE);
+}
+
+/**
+ * @brief Dispatch a queued delegation/pipeline, or halt if the turn
+ *        became terminal / interrupted during tool processing.
+ *
+ * Extracted from process_generation_result (v2.4.3) to keep it under
+ * the knots ABC gate. Two guards run before the dispatch:
+ *  - gh#81 (Case 2): an interrupt observed during tool processing
+ *    transitions to INTERRUPTED rather than launching a fresh
+ *    delegation/pipeline generation.
+ *  - gh#77: a terminal state set by a sibling tool call (e.g.
+ *    entropic.complete alongside entropic.pipeline) drops the queued
+ *    action instead of running it.
+ *
+ * @param ctx Loop context.
+ * @internal
+ * @version 2.4.3
+ */
+void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
+    if (interrupt_flag_.load() && !is_terminal_state(ctx)) {
+        logger->info("[ITER] interrupt observed during tool processing — "
+                     "halting before pending dispatch");
+        set_state(ctx, AgentState::INTERRUPTED);
+        return;
+    }
+
     if (is_terminal_state(ctx)) {
         if (ctx.pending_delegation.has_value()
          || ctx.pending_pipeline.has_value()) {
@@ -559,7 +683,6 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
         return;
     }
 
-    // Execute pending delegation/pipeline (v1.8.6)
     if (ctx.pending_delegation.has_value()) {
         ctx.metrics.iterations--;
         execute_pending_delegation(ctx);
@@ -1797,11 +1920,13 @@ void AgentEngine::fire_delegate_complete_hook(
  * @param ctx Child loop context.
  * @param user_data AgentEngine pointer.
  * @internal
- * @version 1.8.6
+ * @version 2.4.3
  */
 static void run_child_loop_trampoline(LoopContext& ctx, void* user_data) {
     auto* engine = static_cast<AgentEngine*>(user_data);
-    engine->run_loop(ctx);
+    // gh#81 (v2.4.3): inherit the parent's interrupt — a child loop
+    // must not clear a parent interrupt raised at/just-before dispatch.
+    engine->run_loop(ctx, /*inherit_interrupt=*/true);
 }
 
 /**

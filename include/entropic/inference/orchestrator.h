@@ -61,6 +61,26 @@ struct RoutingResult {
 };
 
 /**
+ * @brief Apply per-tier sampler overrides to params. (gh#82, v2.4.4)
+ *
+ * Pure precedence helper, free function for unit-testability. Sets
+ * `params.temperature` / `params.max_tokens` from the tier-configured
+ * optionals ONLY when the optional is engaged AND the incoming param
+ * is still at the GenerationParams struct default — preserving an
+ * explicit per-call override.
+ *
+ * @param params Generation params (mutated).
+ * @param tier_temperature Tier's configured temperature (nullopt = none).
+ * @param tier_max_output_tokens Tier's configured max tokens (nullopt = none).
+ * @utility
+ * @version 2.4.4
+ */
+ENTROPIC_EXPORT void apply_tier_sampler_overrides(
+    GenerationParams& params,
+    const std::optional<float>& tier_temperature,
+    const std::optional<int>& tier_max_output_tokens);
+
+/**
  * @brief Multi-model lifecycle and routing orchestrator.
  *
  * Manages model pool deduplication, per-tier adapters, VRAM lifecycle,
@@ -121,6 +141,21 @@ public:
     GenerationResult generate(
         const std::vector<Message>& messages,
         const GenerationParams& params,
+        const std::string& tier_name = "");
+
+    /**
+     * @brief Batch generation with cancel support. (gh#81, v2.4.2)
+     *
+     * Mirrors `generate` plus a cancel-flag reference; the backend
+     * polls the flag per decode step. Closes the gh#81 60s-lag gap
+     * where the batch path had no path to honor mid-decode cancel.
+     *
+     * @version 2.4.2
+     */
+    GenerationResult generate(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel,
         const std::string& tier_name = "");
 
     /**
@@ -741,6 +776,21 @@ private:
      */
     void resolve_grammar_key(GenerationParams& params,
                              const std::string& tier_name);
+
+    /**
+     * @brief Apply per-tier sampler config to params. (gh#82, v2.4.4)
+     *
+     * Sets `params.temperature` / `params.max_tokens` from the tier's
+     * frontmatter-configured values when (a) the tier has them set and
+     * (b) the incoming params are still at the GenerationParams struct
+     * default — i.e. an explicit per-call override is preserved.
+     *
+     * @param params Generation params (mutated).
+     * @param tier_name Active tier.
+     * @version 2.4.4
+     */
+    void apply_tier_sampler_defaults(GenerationParams& params,
+                                     const std::string& tier_name);
 
     /**
      * @brief Resolve speculative target/draft llama_model pointers

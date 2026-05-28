@@ -429,6 +429,18 @@ struct TierConfig : ModelConfig {
     /// @version 2.1.8
     std::vector<std::string> capabilities;
 
+    /// @brief Per-tier sampler temperature from identity frontmatter (gh#82).
+    /// nullopt = not configured; the orchestrator leaves the incoming
+    /// GenerationParams temperature in place. When set, applied as the
+    /// tier baseline (an explicit per-call override still wins).
+    /// @version 2.4.4
+    std::optional<float> temperature;
+
+    /// @brief Per-tier max output tokens from identity frontmatter (gh#82).
+    /// nullopt = not configured; same precedence as `temperature`.
+    /// @version 2.4.4
+    std::optional<int> max_output_tokens;
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").
@@ -638,6 +650,21 @@ struct GenerationConfig {
     int max_tokens = 4096;            ///< Default max tokens (64–32768)
     float default_temperature = 0.7f; ///< Default temperature (0.0–2.0)
     float default_top_p = 0.9f;       ///< Default top_p (0.0–1.0)
+
+    /// @brief gh#80 (v2.5.0) thinking-budget mode: "off" (default),
+    /// "tokens", or "wall_clock". Stored as a string here to keep
+    /// types/config.h free of the core engine_types BudgetMode enum;
+    /// the facade's build_loop_config maps it. Unknown values resolve
+    /// to "off" with a warning.
+    /// @version 2.5.0
+    std::string budget_mode = "off";
+
+    /// @brief gh#80 (v2.5.0) budget ceiling: generated tokens
+    /// (budget_mode "tokens") or wall-clock seconds (budget_mode
+    /// "wall_clock") of tool-call-free generation before the engine
+    /// nudges-then-hard-cuts. Must be > 0 to engage.
+    /// @version 2.5.0
+    int budget_limit = 0;
 };
 
 /**

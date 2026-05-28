@@ -405,7 +405,7 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.3.7
+ * @version 2.4.4
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -433,10 +433,61 @@ GenerationResult ModelOrchestrator::generate(
     // Resolve grammar_key → grammar content (v1.9.3)
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
+    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
 
     // Generate — speculative routing applies here too (v2.1.11, gh#36)
     GenerationResult result = run_generate_dispatch(
         model, messages, resolved_params);
+
+    apply_adapter_parse(get_adapter(selected), result);
+
+    result.routing_ms = routing_ms;
+    result.swap_ms = swap_ms;
+    result.total_ms = elapsed_ms(t_start, now());
+    log_orchestration(result, selected, last_routing_result_.adapter_name,
+                      resolved_params, routing_ms, swap_ms);
+    return result;
+}
+
+/**
+ * @brief Batch generate with cancel — see header for contract.
+ *
+ * Bypasses `run_generate_dispatch` (speculative routing) because
+ * speculative kernels live on the streaming path; batch only ever
+ * calls plain decode. Calls `model->generate(messages, params,
+ * cancel)` which polls cancel per token.
+ *
+ * @internal
+ * @version 2.4.4
+ */
+GenerationResult ModelOrchestrator::generate(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::atomic<bool>& cancel,
+    const std::string& tier_name)
+{
+    auto t_start = now();
+
+    std::string selected = tier_name;
+    double routing_ms = 0.0;
+    if (selected.empty()) {
+        auto t_route = now();
+        selected = route(messages);
+        routing_ms = elapsed_ms(t_route, now());
+    }
+
+    auto t_swap = now();
+    InferenceBackend* model = get_model(selected);
+    double swap_ms = elapsed_ms(t_swap, now());
+
+    if (!model) { return build_no_model_error(selected); }
+
+    GenerationParams resolved_params = params;
+    resolve_grammar_key(resolved_params, selected);
+    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
+
+    GenerationResult result = model->generate(
+        messages, resolved_params, cancel);
 
     apply_adapter_parse(get_adapter(selected), result);
 
@@ -459,7 +510,7 @@ GenerationResult ModelOrchestrator::generate(
  * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
  * @internal
- * @version 2.1.11
+ * @version 2.4.4
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -482,6 +533,7 @@ GenerationResult ModelOrchestrator::generate_streaming(
     // Resolve grammar_key → grammar content (v1.9.3)
     GenerationParams resolved_params = params;
     resolve_grammar_key(resolved_params, selected);
+    apply_tier_sampler_defaults(resolved_params, selected);  // gh#82
 
     // Speculative routing (v2.1.11, gh#36): when speculative is
     // enabled in config AND target/draft pair is compatible, attempt
@@ -1305,6 +1357,59 @@ void ModelOrchestrator::resolve_grammar_key(
     logger->info("Grammar resolved: key='{}', {} bytes",
                  key, content.size());
     params.grammar = std::move(content);
+}
+
+/**
+ * @brief Pure precedence helper — see header. (gh#82, v2.4.4)
+ * @utility
+ * @version 2.4.4
+ */
+void apply_tier_sampler_overrides(
+    GenerationParams& params,
+    const std::optional<float>& tier_temperature,
+    const std::optional<int>& tier_max_output_tokens)
+{
+    // GenerationParams struct defaults (see types/config.h).
+    constexpr float kDefaultTemperature = 0.7f;
+    constexpr int kDefaultMaxTokens = 4096;
+
+    if (tier_temperature.has_value()
+        && params.temperature == kDefaultTemperature) {
+        params.temperature = *tier_temperature;
+    }
+    if (tier_max_output_tokens.has_value()
+        && params.max_tokens == kDefaultMaxTokens) {
+        params.max_tokens = *tier_max_output_tokens;
+    }
+}
+
+/**
+ * @brief Apply per-tier sampler config to params. (gh#82, v2.4.4)
+ *
+ * Member wrapper: looks the tier up in config and delegates the
+ * precedence decision to the free `apply_tier_sampler_overrides`.
+ *
+ * @internal
+ * @version 2.4.4
+ */
+void ModelOrchestrator::apply_tier_sampler_defaults(
+    GenerationParams& params, const std::string& tier_name)
+{
+    auto it = config_.models.tiers.find(tier_name);
+    if (it == config_.models.tiers.end()) { return; }
+    const auto& tier = it->second;
+    float before_temp = params.temperature;
+    int before_max = params.max_tokens;
+    apply_tier_sampler_overrides(params, tier.temperature,
+                                 tier.max_output_tokens);
+    if (params.temperature != before_temp) {
+        logger->info("Tier '{}' temperature applied: {}",
+                     tier_name, params.temperature);
+    }
+    if (params.max_tokens != before_max) {
+        logger->info("Tier '{}' max_output_tokens applied: {}",
+                     tier_name, params.max_tokens);
+    }
 }
 
 // ── VRAM-aware tier residency (v2.2.4, gh#57) ──────────────

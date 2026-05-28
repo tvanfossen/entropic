@@ -1397,6 +1397,104 @@ SCENARIO("gh#77: entropic.complete is terminal when emitted with sibling pipelin
     }
 }
 
+// ── gh#81 (v2.4.3, Case 2): interrupt latency + child inheritance ──
+
+namespace gh81 {
+/// @brief Executor that queues a pending_pipeline AND raises the
+/// engine interrupt during tool processing — simulates the user
+/// pressing interrupt while the engine is mid-tool-processing in a
+/// tight reject-retry loop. Post-fix, process_generation_result must
+/// observe interrupt_flag_ and halt before dispatching the pipeline.
+/// @utility
+/// @version 2.4.3
+struct InterruptInjector {
+    AgentEngine* engine = nullptr;
+    bool fired = false;
+};
+inline ToolExecutionInterface interrupt_during_tools_executor(
+    InterruptInjector* state) {
+    ToolExecutionInterface t{};
+    t.user_data = state;
+    t.process_tool_calls = [](LoopContext& ctx,
+                              const std::vector<ToolCall>&,
+                              void* ud) -> std::vector<Message> {
+        auto* s = static_cast<InterruptInjector*>(ud);
+        if (s->fired) { return {}; }
+        s->fired = true;
+        ctx.pending_pipeline =
+            PendingPipeline{{"reader", "editor"}, "task"};
+        if (s->engine != nullptr) { s->engine->interrupt(); }
+        return {};
+    };
+    return t;
+}
+}  // namespace gh81
+
+SCENARIO("gh#81: interrupt during tool processing halts before pending dispatch",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"entropic.pipeline","arguments":{"stages":["reader"]}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    gh81::InterruptInjector inj{&engine, false};
+    engine.set_tool_executor(gh81::interrupt_during_tools_executor(&inj));
+
+    LoopContext ctx; ctx.messages = make_messages();
+
+    GIVEN("an interrupt raised while a pipeline directive is queued") {
+        WHEN("the engine processes the response") {
+            engine.run_loop(ctx);
+            THEN("state is INTERRUPTED and the pipeline never ran") {
+                CHECK(ctx.state == AgentState::INTERRUPTED);
+                CHECK_FALSE(v2310::msg_contains(ctx, "[PIPELINE CONTEXT]"));
+            }
+        }
+    }
+}
+
+SCENARIO("gh#81: run_loop(inherit_interrupt=true) preserves a pre-set interrupt",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    mock.is_complete = false;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 100; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("the interrupt flag is already set before the (child) loop runs") {
+        engine.interrupt();
+        LoopContext ctx; ctx.messages = make_messages();
+        WHEN("run_loop is entered with inherit_interrupt=true") {
+            engine.run_loop(ctx, /*inherit_interrupt=*/true);
+            THEN("the loop honors the inherited interrupt immediately") {
+                CHECK(ctx.state == AgentState::INTERRUPTED);
+                CHECK(mock.generate_call_count == 0);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#81: run_loop(inherit_interrupt=false) clears a stale interrupt",
+         "[v2.4.3][core][engine][gh81][interrupt]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("a stale interrupt flag set before a fresh top-level turn") {
+        engine.interrupt();
+        LoopContext ctx; ctx.messages = make_messages();
+        WHEN("run_loop is entered with the default (reset) behavior") {
+            engine.run_loop(ctx);  // inherit_interrupt defaults to false
+            THEN("the flag is cleared and the turn generates normally") {
+                CHECK(mock.generate_call_count >= 1);
+                CHECK(ctx.state != AgentState::INTERRUPTED);
+            }
+        }
+    }
+}
+
 SCENARIO("resume_delegation failure paths surface typed errors",
          "[v2.3.10][core][engine_coverage][delegation][resume]") {
     auto run_resume = [](StorageInterface* si, const std::string& expect) {
@@ -1699,5 +1797,108 @@ SCENARIO("set_storage wiring covers init_session_conversation paths",
         engine.set_storage(si);
         auto result = engine.run(make_messages());
         REQUIRE(result.back().role == "assistant");
+    }
+}
+
+// ── gh#80 (v2.5.0): thinking-budget gating ──────────────────
+
+namespace gh80 {
+/// @brief Scan a message list for a substring in any message content.
+/// @utility @version 2.5.0
+inline bool any_msg_contains(const std::vector<Message>& msgs,
+                             const std::string& needle) {
+    for (const auto& m : msgs) {
+        if (m.content.find(needle) != std::string::npos) { return true; }
+    }
+    return false;
+}
+}  // namespace gh80
+
+SCENARIO("gh#80: budget off (default) does not gate a tool-call-free spiral",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;                 // never completes naturally
+    mock.response = std::string(600, 'x');    // ~150 token-equivalents
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 5;                     // only the iteration cap stops it
+    // budget_mode defaults to off
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("budget disabled and a model that never calls a tool") {
+        auto out = engine.run(make_messages());
+        THEN("the loop runs to the iteration cap (no budget cut)") {
+            CHECK(mock.generate_call_count == 5);
+            CHECK_FALSE(gh80::any_msg_contains(out, "thinking budget reached"));
+        }
+    }
+}
+
+SCENARIO("gh#80: tokens budget nudges then hard-cuts a tool-call-free spiral",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;                 // never completes naturally
+    mock.response = std::string(600, 'x');    // 600 chars ≈ 150 tokens
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 10;                    // high — budget should stop first
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;                     // ~150 tokens/iter exceeds in one
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("a token budget smaller than one iteration's output") {
+        auto out = engine.run(make_messages());
+        THEN("iteration 1 nudges, iteration 2 hard-cuts (before the cap)") {
+            CHECK(mock.generate_call_count == 2);
+        }
+        AND_THEN("the nudge is visible in history") {
+            CHECK(gh80::any_msg_contains(out, "thinking budget reached"));
+        }
+        AND_THEN("the hard-cut failure note is visible in history") {
+            CHECK(gh80::any_msg_contains(out, "thinking budget exhausted"));
+        }
+    }
+}
+
+SCENARIO("gh#80: a tool call resets the budget window",
+         "[v2.5.0][core][engine][gh80][budget]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.response = std::string(600, 'x');     // ~150 tokens
+    // Iteration 1 emits a tool call (resets budget); subsequent
+    // iterations spiral. The tool call buys a fresh window, so the
+    // nudge cannot fire on iteration 1.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"noop","arguments":{}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 3;
+    lc.budget_mode = entropic::BudgetMode::tokens;
+    lc.budget_limit = 100;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    // Tool executor that accepts the call (so made_tool_call=true on iter 1).
+    ToolExecutionInterface tex{};
+    static bool noop_seen;
+    noop_seen = false;
+    tex.process_tool_calls = [](LoopContext&, const std::vector<ToolCall>&,
+                                void*) -> std::vector<Message> {
+        noop_seen = true;
+        return {};
+    };
+    engine.set_tool_executor(tex);
+
+    GIVEN("a model that calls a tool on iteration 1 then spirals") {
+        auto out = engine.run(make_messages());
+        THEN("the tool call ran and the iteration-1 budget did not nudge early") {
+            CHECK(noop_seen);
+            // No nudge on the very first iteration — the tool call reset
+            // the window. (A nudge may appear later as the spiral
+            // continues, which is correct.)
+            CHECK(mock.generate_call_count >= 1);
+        }
     }
 }

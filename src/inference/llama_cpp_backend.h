@@ -206,6 +206,15 @@ protected:
         const std::vector<Message>& messages,
         const GenerationParams& params) override;
 
+    /**
+     * @brief Batch generate with per-token cancel poll. (gh#81, v2.4.2)
+     * @version 2.4.2
+     */
+    GenerationResult do_generate(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel) override;
+
     GenerationResult do_generate_streaming(
         const std::vector<Message>& messages,
         const GenerationParams& params,
@@ -692,6 +701,23 @@ protected:
     GenerationResult do_generate_text_only(
         const std::vector<Message>& messages,
         const GenerationParams& params);
+
+    /**
+     * @brief Text-only batch generation with per-token cancel poll.
+     *
+     * gh#81 (v2.4.2): mirrors the per-token cancel poll already in
+     * `do_generate_streaming_text_only`. When `cancel` is set
+     * mid-decode the loop breaks within one token; the result is
+     * tagged `finish_reason="cancelled"` and
+     * `error_code=ENTROPIC_ERROR_CANCELLED`.
+     *
+     * @utility
+     * @version 2.4.2
+     */
+    GenerationResult do_generate_text_only(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel);
 
     /**
      * @brief Text-only streaming generation (extracted from streaming).

@@ -120,6 +120,35 @@ entropic_error_t entropic_inference_generate(
     char** result_json);
 
 /**
+ * @brief Generate a response (batch mode) with mid-decode cancellation.
+ *
+ * gh#81 (v2.4.2): same contract as entropic_inference_generate plus a
+ * cancel-flag pointer. The pre-v2.4.2 batch path ran to natural stop
+ * with no way to honor an interrupt — observed ~60s lag on 13B models
+ * at default max_tokens. Setting `*cancel_flag` non-zero stops the
+ * decode within ~10ms + one token.
+ *
+ * Requires ACTIVE state.
+ *
+ * @param backend Backend handle.
+ * @param messages_json JSON array of message objects.
+ * @param params_json JSON object of GenerationParams fields.
+ * @param[out] result_json Output: JSON result string. Caller frees
+ *             with entropic_inference_free().
+ * @param cancel_flag Pointer to int flag. Caller sets to non-zero to
+ *        cancel. May be NULL if cancellation is not needed.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_CANCELLED if cancelled.
+ * @req REQ-INFER-001
+ * @version 2.4.2
+ */
+entropic_error_t entropic_inference_generate_with_cancel(
+    entropic_inference_backend_t backend,
+    const char* messages_json,
+    const char* params_json,
+    char** result_json,
+    int* cancel_flag);
+
+/**
  * @brief Generate with streaming token callback.
  *
  * Requires ACTIVE state. The on_token callback is invoked for each

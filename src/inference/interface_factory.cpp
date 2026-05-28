@@ -13,9 +13,11 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace entropic {
@@ -179,8 +181,18 @@ static int iface_generate(const char* msgs_json,
 
 /**
  * @brief Streaming generate via orchestrator.
+ *
+ * gh#81 (v2.4.2): bridges `int* cancel` (engine-side ABI) to
+ * `std::atomic<bool> cancel_flag` (backend contract) per-token
+ * inside the on_token lambda. Pre-fix the local atomic was
+ * initialized once from `*cancel` at entry and never re-read,
+ * so an interrupt raised mid-stream by the engine's per-token
+ * callback (`stream_token_callback` raising `*cancel_flag = 1`)
+ * never reached the backend's decode loop. The backend polls
+ * the atomic but the atomic stayed false.
+ *
  * @callback
- * @version 2.0.1
+ * @version 2.4.2
  */
 static int iface_generate_stream(
     const char* msgs_json, const char* params_json,
@@ -189,13 +201,64 @@ static int iface_generate_stream(
     auto* ctx = static_cast<InterfaceContext*>(user_data);
     auto messages = parse_msgs(msgs_json);
     auto params = parse_params(params_json);
-    std::atomic<bool> cancel_flag(cancel && *cancel);
-    auto cb = [on_token, token_ud](std::string_view tok) {
+    std::atomic<bool> cancel_flag(false);
+    auto cb = [on_token, token_ud, cancel, &cancel_flag]
+              (std::string_view tok) {
         on_token(tok.data(), tok.size(), token_ud);
+        if (cancel != nullptr && *cancel != 0) {
+            cancel_flag.store(true, std::memory_order_release);
+        }
     };
     auto tier = extract_tier(params_json, ctx->default_tier);
     ctx->orchestrator->generate_streaming(
         messages, params, cb, cancel_flag, tier);
+    return 0;
+}
+
+/**
+ * @brief Batch generate with cancel via orchestrator (gh#81, v2.4.2).
+ *
+ * Batch shape with mid-decode cancellation. The pre-v2.4.2
+ * `iface_generate` accepted no cancel pointer and ran the backend
+ * to natural stop; this entry adds the cancel bridge using a
+ * small poller thread (no per-token hook in the batch contract).
+ *
+ * @callback
+ * @version 2.4.2
+ */
+static int iface_generate_with_cancel(
+    const char* msgs_json, const char* params_json,
+    char** result_json, int* cancel, void* user_data) {
+    auto* ctx = static_cast<InterfaceContext*>(user_data);
+    auto messages = parse_msgs(msgs_json);
+    auto params = parse_params(params_json);
+    auto tier = extract_tier(params_json, ctx->default_tier);
+
+    std::atomic<bool> cancel_flag(false);
+    std::atomic<bool> done(false);
+    std::thread poller;
+    if (cancel != nullptr) {
+        poller = std::thread([cancel, &cancel_flag, &done]() {
+            while (!done.load(std::memory_order_acquire)) {
+                if (*cancel != 0) {
+                    cancel_flag.store(true, std::memory_order_release);
+                    return;
+                }
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    auto result = ctx->orchestrator->generate(
+        messages, params, cancel_flag, tier);
+
+    done.store(true, std::memory_order_release);
+    if (poller.joinable()) { poller.join(); }
+
+    auto& out = result.raw_content.empty()
+        ? result.content : result.raw_content;
+    *result_json = dup(out);
     return 0;
 }
 
@@ -287,7 +350,7 @@ static int iface_is_complete(const char* /*content*/,
  * @param default_tier Default tier name.
  * @return Wired interface.
  * @internal
- * @version 2.0.1
+ * @version 2.4.2
  */
 InferenceInterface build_orchestrator_interface(
     ModelOrchestrator* orchestrator,
@@ -298,6 +361,7 @@ InferenceInterface build_orchestrator_interface(
 
     InferenceInterface iface;
     iface.generate = iface_generate;
+    iface.generate_cancellable = iface_generate_with_cancel;  // gh#81, v2.4.2
     iface.generate_stream = iface_generate_stream;
     iface.route = iface_route;
     iface.complete = iface_complete;

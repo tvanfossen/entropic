@@ -64,6 +64,9 @@ add_executable(entropic-inference-tests
     # emits, strict asserts, no SKIP. Catches gh#69 + gh#70 format
     # mismatches at the CPU layer on every commit.
     inference/adapter_acceptance_test.cpp
+    # v2.4.1 (gh#79): shared XML parameter parser unit tests — the
+    # parser source is compiled into the linked inference library.
+    inference/xml_parameter_parser_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp

@@ -1,3 +1,359 @@
+# entropic v2.5.0
+
+Minor release. **gh#80 — thinking-budget gating.** A tier with
+`enable_thinking` could spend minutes generating `<think>` content
+without ever emitting a tool call; the existing anti-spiral guards
+only fire on repeated *tool calls*, so pure thinking degeneration
+tripped nothing and the per-tier `max_iterations` budget (consumed
+one unit per tool call) could not stop a model that never called a
+tool. This release charges tool-call-free generation against a
+configurable budget.
+
+Bundles the v2.4.1 → v2.4.4 patch series (gh#79, gh#81 ×2, gh#82).
+
+## How it works
+
+- **Opt-in, off by default.** `generation.budget_mode` defaults to
+  `off` — zero behavior change for existing consumers until they
+  configure it.
+- **Operator picks one mode:** `tokens` (gate on generated tokens
+  since the last tool call) or `wall_clock` (gate on wall-clock
+  seconds since the last tool call). `budget_limit` sets the ceiling.
+- **A tool call resets the counter.** Productive action is free; the
+  model earns a fresh thinking allowance for choosing its next move.
+  "Act, don't over-deliberate" becomes structural — adapter- and
+  model-agnostic, no prompt cooperation required.
+- **Two-stage exhaustion:** the first time the budget is hit without
+  a tool call, the engine pushes an "emit `entropic.complete` now"
+  nudge into history and grants one more window. If the model still
+  produces no tool call, the engine **hard-cuts** the turn with a
+  failure note (also visible in history), sets `terminal_reason =
+  "budget_exhausted_thinking"`, and transitions to COMPLETE.
+
+## Config
+
+```yaml
+generation:
+  budget_mode: tokens     # off (default) | tokens | wall_clock
+  budget_limit: 4000      # tokens, or seconds when mode is wall_clock
+```
+
+Applies to all tiers uniformly. A non-positive `budget_limit`
+disables the gate (treated as `off`) to avoid a degenerate
+"exhausted at zero" loop.
+
+## Implementation notes
+
+- `BudgetMode` enum + `budget_mode` / `budget_limit` on `LoopConfig`;
+  per-turn accumulator fields on `LoopContext`
+  (`budget_tokens_since_tool`, `budget_window_start_s`,
+  `budget_completion_nudged`).
+- `AgentEngine::charge_thinking_budget` runs in
+  `process_generation_result` before pending dispatch, so a
+  budget-triggered terminal is honored by `dispatch_pending_or_halt`.
+  Split into `budget_units_consumed` / `nudge_budget_completion` /
+  `hard_cut_budget` to stay under the knots gate.
+- **Tokens-mode caveat:** the function-pointer inference ABI doesn't
+  thread an exact generated-token count back to the engine, so
+  tokens mode estimates from generated content length (~4 chars/token).
+  Content includes `<think>` blocks — exactly the deliberation being
+  charged. `wall_clock` mode is exact. A future minor may thread an
+  exact token count if precision becomes necessary.
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` `[gh80]`:
+- budget `off` (default) does not gate a tool-call-free spiral —
+  only the iteration cap stops it (no behavior change).
+- `tokens` budget nudges on the first exhaustion, hard-cuts on the
+  second, before the iteration cap; both messages visible in history.
+- a tool call resets the window (no early nudge on the tool-call iter).
+
+Full unit sweep green: core 236, config 48.
+
+## ABI
+
+Additive (`LoopConfig` / `LoopContext` fields, `BudgetMode` enum,
+`GenerationConfig` budget fields). Drop-in for any 2.x-compiled
+consumer; the gate is inert unless configured.
+
+---
+
+# entropic v2.4.4
+
+Patch release. **gh#82** — per-tier `temperature` and `max_output_tokens`
+declared in identity frontmatter were parsed but never applied; the
+sampler always ran at the `GenerationParams` default `0.7f` / `4096`
+regardless of what the operator configured.
+
+Observed live (entropic 2.4.0, qwen3_6_a3b, lead tier with
+`temperature: 0.2` in frontmatter): the sampler logged `temp=0.70`.
+`enable_thinking` worked because it flows through a different
+(chat-template) path that bypasses the gap.
+
+## Root cause
+
+The parser populated `IdentityFrontmatter.temperature` /
+`max_output_tokens`, but `apply_identity_frontmatter` (facade) wired
+only `allowed_tools` / `validation_rules` / `relay_single_delegate`
+into the engine — the sampler knobs were dropped. `ModelConfig` had
+no temperature field, and `build_params_json` emitted only the tier
+name, so the per-tier value never reached `GenerationParams`.
+
+## What landed (Option A — TierConfig + orchestrator)
+
+- `IdentityFrontmatter.temperature` / `max_output_tokens` are now
+  `std::optional` — the parser sets them only when the key is present,
+  so "configured" is distinguishable from "default".
+- `TierConfig` gains `std::optional<float> temperature` and
+  `std::optional<int> max_output_tokens`.
+- `apply_identity_frontmatter` threads the frontmatter values into the
+  tier config.
+- The orchestrator applies them in all three generate paths
+  (`generate`, cancellable `generate`, `generate_streaming`) via a new
+  `apply_tier_sampler_defaults`, delegating the precedence decision to
+  a pure, unit-tested free function `apply_tier_sampler_overrides`.
+
+**Precedence:** the tier baseline applies only when the incoming
+`GenerationParams` value is still at the struct default (`0.7f` /
+`4096`); an explicit per-call override is preserved. (The engine's
+`build_params_json` sends only the tier name today, so the tier
+baseline applies in practice; the override path is honored for direct
+orchestrator-API callers.) Edge case: a caller wanting exactly the
+default value on a tier with a configured override gets the tier
+value — acceptable for this patch, documented in the helper.
+
+## Tests
+
+- `tests/unit/inference/orchestrator_test.cpp` `[gh82]` — the
+  precedence helper: tier baseline applied at defaults; per-call
+  override preserved; nullopt tiers unchanged; temperature-only tier.
+- `tests/unit/prompts/prompt_parse_test.cpp` updated for the optional
+  frontmatter fields.
+
+Full unit sweep green: inference 251, config 48, api 481.
+
+## ABI
+
+Additive (`TierConfig` optionals + a new free function). Drop-in for
+any 2.4.x consumer. Note: `IdentityFrontmatter.temperature` /
+`max_output_tokens` changed type to `std::optional` — a source-level
+change for any out-of-tree code reading those fields directly
+(none in-tree besides tests).
+
+---
+
+# entropic v2.4.3
+
+Patch release. **gh#81 (Case 2)** — closes the second half of the
+interrupt-responsiveness issue: a tight tool-processing loop could
+let a queued delegation/pipeline run after an interrupt, and a
+delegation child loop cleared the parent's interrupt flag on entry.
+
+## What landed
+
+**B1 — interrupt honored during tool processing.** `AgentEngine::process_generation_result`
+now checks `interrupt_flag_` after `process_tool_results` /
+`evaluate_no_tool_decision` and before dispatching a queued
+`pending_delegation` / `pending_pipeline`. An interrupt raised while
+the engine is mid-tool-processing (e.g. during a fast reject-retry
+cycle) transitions to INTERRUPTED instead of launching a fresh
+delegation/pipeline generation — cutting latency by ~half an
+iteration versus waiting for the next loop-top check.
+
+**B2 — delegation children inherit the parent's interrupt.** `run_loop`
+gained an `inherit_interrupt` parameter (default false). The
+delegation child trampoline (`run_child_loop_trampoline`) now passes
+`inherit_interrupt=true`, so a parent interrupt raised at/just-before
+dispatch is no longer cleared by the child's `run_loop` entry. Before
+this, the sequence "parent interrupted -> child loop dispatched ->
+child reset_interrupt() -> parent resumes with the flag lost" let an
+interrupt vanish. Top-level turns still reset (a fresh turn starts
+un-interrupted).
+
+## Tests
+
+`tests/unit/core/engine_test.cpp` — `[gh81]`:
+- Interrupt raised during tool processing -> state INTERRUPTED, queued
+  pipeline never runs (no `[PIPELINE CONTEXT]` marker).
+- `run_loop(inherit_interrupt=true)` with a pre-set flag -> honors the
+  inherited interrupt immediately, zero generations.
+- `run_loop(inherit_interrupt=false)` with a stale flag -> clears it,
+  generates normally.
+
+70 engine/interrupt/delegation scenarios green; full core suite 233
+cases.
+
+## Scope
+
+Completes gh#81 (Case 1 shipped in v2.4.2). The loop-top interrupt
+check was already correctly placed; this patch reduces inter-iteration
+latency and fixes the child-loop reset.
+
+## ABI
+
+`run_loop` gains a defaulted parameter — source-compatible; existing
+`run_loop(ctx)` callers unaffected. No C ABI change.
+
+---
+
+# entropic v2.4.2
+
+Patch release. **gh#81 (Case 1)** — `entropic_interrupt` was not
+honored mid-decode on the batch generation path: the backend ran to
+`max_tokens` or natural stop and the interrupt only fired at the next
+engine-loop-top check (~60s observed on qwen3_6_a3b at default
+max_tokens). While fixing it, a latent companion bug surfaced on the
+streaming path and is fixed in the same patch.
+
+## Root cause
+
+Two coupled defects in the cancel-propagation chain:
+
+1. **Batch path had no cancel plumbing.** `LlamaCppBackend::do_generate_text_only`
+   decoded with no cancel poll, and the batch C ABI / `ResponseGenerator::generate_batch`
+   passed no cancel flag at all. An interrupt set the engine's atomic
+   `interrupt_flag_` but nothing propagated it to the in-flight decode.
+
+2. **Streaming path's int→atomic bridge was init-once.** `iface_generate_stream`
+   initialized its local `std::atomic<bool> cancel_flag` from `*cancel`
+   exactly once at entry and never re-read the int. The engine's
+   per-token callback (`stream_token_callback`) raised the int
+   mid-stream, but the backend (which polls the atomic) never saw it.
+   The streaming path's cancel had silently regressed.
+
+## What landed
+
+**New cancel-aware batch surface (additive — no removals):**
+
+- `InferenceBackend::generate(messages, params, std::atomic<bool>& cancel)`
+  and a `do_generate(..., cancel&)` virtual with a default that
+  delegates to the no-cancel form (backends opt in by overriding).
+- `LlamaCppBackend` overrides it; new `do_generate_text_only(..., cancel&)`
+  mirrors the per-token poll already in `do_generate_streaming_text_only`.
+- `ModelOrchestrator::generate(messages, params, cancel&, tier)` overload.
+- C ABI `entropic_inference_generate_with_cancel(backend, msgs, params,
+  result_json, cancel_flag)` bridges `int* → std::atomic<bool>` via a
+  10ms poller thread (batch has no per-token hook to host the bridge).
+- `InferenceInterface::generate_cancellable` function-pointer field +
+  `entropic_generate_with_cancel_fn` typedef; `iface_generate_with_cancel`
+  wired by the factory.
+- `ResponseGenerator::generate_batch` prefers `generate_cancellable`
+  when wired, observing the engine's `interrupt_flag_` via a short-lived
+  thread that raises the C-ABI int.
+
+**Streaming-path fix:**
+
+- `iface_generate_stream`'s on_token lambda now bridges `int* cancel →
+  atomic` on every token, so an interrupt raised mid-stream reaches the
+  backend's per-token poll within one token.
+
+## Interface headers changed (flagged per project protocol)
+
+These are additive interface-contract changes, user-approved as Patch A
+for gh#81. No symbol removed; drop-in for any 2.4.x consumer:
+
+- `include/entropic/inference/backend.h` — `generate` / `do_generate`
+  cancel overloads.
+- `include/entropic/inference/orchestrator.h` — `generate` cancel overload.
+- `include/entropic/interfaces/i_inference_callbacks.h` —
+  `entropic_generate_with_cancel_fn` typedef + `generate_cancellable` field.
+- `include/entropic/interfaces/i_inference_backend.h` —
+  `entropic_inference_generate_with_cancel` declaration.
+
+## Tests
+
+`tests/unit/inference/inference_c_api_test.cpp` — `[gh81]`:
+- NULL handle / result rejection.
+- Completes normally when cancel flag never set.
+- Honors a NULL cancel pointer (no poller spawned).
+- Aborts mid-decode → `ENTROPIC_ERROR_CANCELLED` when the flag is
+  raised from another thread (mock backend spins polling the atomic).
+
+Full unit sweep green: inference 250 cases, core 230, api 481.
+
+## Scope note
+
+This patch addresses gh#81 Case 1 (mid-decode latency). Case 2 (the
+reject-retry "swallow" + delegation-child interrupt reset) is tracked
+for v2.4.3 — the loop-top interrupt check is correctly placed; the
+remaining work is reducing inter-iteration latency and fixing
+`run_child_loop_trampoline`'s `reset_interrupt()` so delegation
+children inherit the parent's interrupt.
+
+## ABI
+
+Additive only. Drop-in for any 2.4.x-compiled consumer.
+
+---
+
+# entropic v2.4.1
+
+Patch release. **gh#79** — XML adapters (qwen35, qwen36, nemotron3)
+silently mis-parsed parameter values when the model closed the
+block with `</NAME>` (echoing the parameter name) instead of the
+literal `</parameter>`. The non-greedy regex bled the next
+parameter's content into the first parameter's value; engine then
+rejected the malformed-shape with `rejected_schema` and the model
+usually recovered on retry, burning an iteration per occurrence.
+
+Observed live with `qwen3_6_a3b` on `entropic.delegate` calls:
+
+```
+<parameter=target>
+researcher</target>          <-- model closed with </target>
+<parameter=task>
+Find ...
+</parameter>
+```
+
+Pre-fix `target` came back as the whole blob from `researcher` to
+the second `</parameter>` (~150+ chars of bled task content). The
+post-fix parser stops at the first `</parameter>` OR `</NAME>` that
+appears after the opening, where `NAME` matches the opening's name
+verbatim.
+
+## What landed
+
+The three byte-identical inline regex blocks (qwen35 ~25 lines,
+qwen36 ~25 lines, nemotron3 ~25 lines) collapsed into one shared
+helper, `src/inference/adapters/xml_parameter_parser.cpp`, with the
+gh#79 fix applied centrally:
+
+- `entropic::inference::adapters::parse_xml_parameters(body, logger)`
+  is the new entry point. Tolerates `</parameter>` OR `</NAME>` close
+  tags; preserves the historical nested-`<function=` truncation guard
+  and the trim/empty/skip semantics.
+- `Qwen35Adapter::extract_xml_parameters`,
+  `Qwen36Adapter::extract_xml_parameters`,
+  `Nemotron3Adapter::extract_xml_parameters` are now one-line
+  delegations into the shared parser.
+
+## Tests
+
+`tests/unit/inference/xml_parameter_parser_test.cpp` covers:
+
+- Baseline well-formed `</parameter>` close.
+- `[gh79]` — single `</NAME>` close.
+- `[gh79]` — exact pathological emit from the issue body (target
+  closes with `</target>`, task closes with `</parameter>`).
+- `[gh79]` — both params closing with `</NAME>`.
+- `[gh79]` — parameter names with underscores / digits exercising
+  the named-close-tag construction.
+- Whitespace trim; empty-value skip; unterminated parameter skip.
+- Nested-`<function=` truncation guard.
+- Empty body / no parameters.
+
+44 adapter-suite test cases / 144 assertions green; the existing
+`[adapter-acceptance]` verbatim-emit gates continue to pass against
+qwen35 / qwen36 / nemotron3 fixtures.
+
+## ABI
+
+None — internal refactor. Drop-in for any 2.4.x-compiled consumer.
+
+---
+
 # entropic v2.4.0
 
 Minor release. **Bundles the v2.3.11 → v2.3.27 patch series into a

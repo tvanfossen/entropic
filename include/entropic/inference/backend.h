@@ -122,6 +122,31 @@ public:
         const GenerationParams& params);
 
     /**
+     * @brief Generate a complete response with cancellation support.
+     *
+     * gh#81 (v2.4.2): the no-cancel `generate` overload above runs to
+     * `max_tokens` or natural stop with no path to honor a mid-decode
+     * interrupt. The engine's loop-top interrupt check can then take
+     * a full generation cycle to fire — observed ~60s on qwen3_6_a3b
+     * at max_tokens=400.
+     *
+     * This overload mirrors `generate_streaming`'s contract: the
+     * backend polls `cancel` per token (latency: one token) and
+     * returns a result with `finish_reason="cancelled"` and
+     * `error_code=ENTROPIC_ERROR_CANCELLED` when cancellation lands.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param cancel Atomic flag — when true, subclass must stop decoding.
+     * @return GenerationResult.
+     * @version 2.4.2
+     */
+    GenerationResult generate(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel);
+
+    /**
      * @brief Generate with per-token streaming callback.
      * @param messages Conversation history.
      * @param params Generation parameters.
@@ -428,6 +453,30 @@ protected:
     virtual GenerationResult do_generate(
         const std::vector<Message>& messages,
         const GenerationParams& params) = 0;
+
+    /**
+     * @brief Subclass batch generation with cancel-flag support.
+     *
+     * gh#81 (v2.4.2): default implementation ignores `cancel` and
+     * delegates to the no-cancel `do_generate` override, preserving
+     * pre-v2.4.2 behavior for backends that haven't opted in. Backends
+     * that want responsive interrupts override this method and poll
+     * `cancel` per decode iteration (mirroring `do_generate_streaming`).
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @param cancel Atomic cancel flag.
+     * @return Generation result.
+     * @internal
+     * @version 2.4.2
+     */
+    virtual GenerationResult do_generate(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::atomic<bool>& cancel) {
+        (void)cancel;
+        return do_generate(messages, params);
+    }
 
     /**
      * @brief Subclass streaming generation. Called only when ACTIVE.

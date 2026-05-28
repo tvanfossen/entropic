@@ -10,8 +10,11 @@
 #include <entropic/types/error.h>
 #include <entropic/types/logging.h>
 
+#include <atomic>
+#include <chrono>
 #include <cstring>
 #include <functional>
+#include <thread>
 #include <unordered_map>
 
 static auto logger = entropic::log::get("core.response_generator");
@@ -363,8 +366,65 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
  * @internal
  * @version 2.3.7
  */
+/**
+ * @brief Dispatch the batch backend call. See header. (gh#81, v2.4.2)
+ * @internal
+ * @version 2.4.2
+ */
+int ResponseGenerator::dispatch_batch_generate(
+    const std::string& msgs_json,
+    const std::string& params_json,
+    char** result_json) {
+    // Fall back to the no-cancel entry for backends that predate the
+    // generate_cancellable ABI field.
+    if (inference_.generate_cancellable == nullptr) {
+        return inference_.generate(
+            msgs_json.c_str(), params_json.c_str(),
+            result_json, inference_.backend_data);
+    }
+
+    // The C-ABI side bridges this int → atomic<bool> for the backend
+    // via its own poller; this side mirrors the engine's atomic
+    // interrupt_flag_ → the int. Two cheap 10ms-poll hops, but it
+    // keeps the C ABI int*-only (no atomic across the .so boundary).
+    int cancel_int =
+        (events_.interrupt != nullptr
+         && events_.interrupt->load(std::memory_order_acquire)) ? 1 : 0;
+
+    std::atomic<bool> observer_done(false);
+    std::thread observer;
+    if (events_.interrupt != nullptr) {
+        auto* flag = events_.interrupt;
+        observer = std::thread([&cancel_int, flag, &observer_done]() {
+            while (!observer_done.load(std::memory_order_acquire)) {
+                if (flag->load(std::memory_order_acquire)) {
+                    cancel_int = 1;
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+        });
+    }
+
+    int rc = inference_.generate_cancellable(
+        msgs_json.c_str(), params_json.c_str(),
+        result_json, &cancel_int, inference_.backend_data);
+
+    observer_done.store(true, std::memory_order_release);
+    if (observer.joinable()) { observer.join(); }
+    return rc;
+}
+
+/**
+ * @brief Generate via batch (non-streaming). (gh#81 cancel-aware, v2.4.2)
+ * @param ctx Loop context.
+ * @return Generation result.
+ * @internal
+ * @version 2.4.2
+ */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
-    if (inference_.generate == nullptr) {
+    if (inference_.generate == nullptr
+        && inference_.generate_cancellable == nullptr) {
         logger->error("No generate function available");
         return {"", "[]", "error"};
     }
@@ -372,20 +432,29 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     auto [msgs_json, params_json] = prepare_prompts(ctx, "batch");
     char* result_json = nullptr;
 
-    int rc = inference_.generate(
-        msgs_json.c_str(), params_json.c_str(),
-        &result_json, inference_.backend_data);
+    // gh#81 (v2.4.2): prefer the cancellable dispatch so an interrupt
+    // is honored mid-decode (was ~60s lag pre-fix).
+    int rc = dispatch_batch_generate(msgs_json, params_json, &result_json);
 
     GenerateResult result;
-    if (rc == 0 && result_json != nullptr) {
+    // gh#81 (v2.4.2): a cancelled batch is terminal, not an error —
+    // map it to "interrupted" so the engine transitions to INTERRUPTED
+    // and any partial content is preserved (mirrors the streaming
+    // resolve_stream_finish_reason policy).
+    if (rc == ENTROPIC_ERROR_CANCELLED) {
+        result.finish_reason = "interrupted";
+        if (result_json != nullptr) {
+            result.content = mcp::sanitize_utf8(result_json);
+        }
+        result.tool_calls_json = "[]";
+        logger->info("Generate cancelled (batch) after {} chars",
+                     result.content.size());
+    } else if (rc == 0 && result_json != nullptr) {
         // Issue #3 (v2.1.1): inbound boundary, batch path. See the
         // streaming branch above for rationale; same policy applies.
         result.content = mcp::sanitize_utf8(result_json);
         result.finish_reason = "stop";
         result.tool_calls_json = "[]";
-        if (inference_.free_fn != nullptr) {
-            inference_.free_fn(result_json);
-        }
         // Fire observer once with full content so the non-streaming
         // fallback still reaches registered observers. (2.0.6-rc16)
         if (stream_observer_ != nullptr && !result.content.empty()) {
@@ -396,6 +465,9 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     } else {
         result.finish_reason = "error";
         logger->error("Generate failed (rc={})", rc);
+    }
+    if (result_json != nullptr && inference_.free_fn != nullptr) {
+        inference_.free_fn(result_json);
     }
     logger->info("Generate complete (batch): finish={}, {} chars",
                  result.finish_reason, result.content.size());

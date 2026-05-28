@@ -246,10 +246,19 @@ public:
      * Used by DelegationManager for child loops. Public so the
      * delegation manager (same .so) can invoke it.
      *
+     * gh#81 (v2.4.3): `inherit_interrupt` controls whether the
+     * pre-existing interrupt flag is cleared at entry. Top-level
+     * turns clear it (a fresh turn starts un-interrupted). Delegation
+     * child loops pass `inherit_interrupt=true` so a parent interrupt
+     * raised before/at dispatch is NOT cleared — "stop the engine"
+     * must stop children too, not reset on each nested loop.
+     *
      * @param ctx Loop context to execute.
-     * @version 1.8.6
+     * @param inherit_interrupt When true, do not reset the interrupt
+     *        flag at entry (child loops inherit the parent's state).
+     * @version 2.4.3
      */
-    void run_loop(LoopContext& ctx);
+    void run_loop(LoopContext& ctx, bool inherit_interrupt = false);
 
     /**
      * @brief Get the tier resolution interface.
@@ -1053,6 +1062,66 @@ private:
      */
     void process_generation_result(LoopContext& ctx,
                                    GenerateResult& result);
+
+    /**
+     * @brief Dispatch a queued delegation/pipeline, or halt the turn.
+     *
+     * Extracted from process_generation_result (gh#81/gh#77, v2.4.3).
+     * Honors a mid-tool-processing interrupt and a sibling-set
+     * terminal state before launching any queued action.
+     *
+     * @param ctx Loop context.
+     * @internal
+     * @version 2.4.3
+     */
+    void dispatch_pending_or_halt(LoopContext& ctx);
+
+    /**
+     * @brief Charge the thinking budget for this iteration. (gh#80, v2.5.0)
+     *
+     * No-op when `loop_config_.budget_mode == off`. A tool call resets
+     * the per-turn accumulator (productive action is free). Otherwise
+     * the iteration's generation is charged (estimated tokens or
+     * wall-clock seconds). On the first exhaustion the engine pushes a
+     * "emit completion now" nudge into history; a second exhaustion
+     * without an intervening tool call hard-cuts the turn with a
+     * failure note (also visible in history) and sets COMPLETE.
+     *
+     * @param ctx Loop context (accumulator + state mutated).
+     * @param content_len Byte length of this iteration's generated
+     *        content (used to estimate tokens for the `tokens` mode).
+     * @param made_tool_call Whether this iteration dispatched a tool.
+     * @internal
+     * @version 2.5.0
+     */
+    void charge_thinking_budget(LoopContext& ctx, size_t content_len,
+                                bool made_tool_call);
+
+    /**
+     * @brief Accumulate + return budget units consumed this window.
+     * @param ctx Loop context (accumulator mutated).
+     * @param content_len Generated content byte length (tokens mode).
+     * @return Units consumed (estimated tokens, or wall-clock seconds).
+     * @internal
+     * @version 2.5.0
+     */
+    int budget_units_consumed(LoopContext& ctx, size_t content_len);
+
+    /**
+     * @brief First-exhaustion budget nudge (push "emit completion now").
+     * @param ctx Loop context.
+     * @internal
+     * @version 2.5.0
+     */
+    void nudge_budget_completion(LoopContext& ctx);
+
+    /**
+     * @brief Second-exhaustion hard cut (failure note + terminal).
+     * @param ctx Loop context.
+     * @internal
+     * @version 2.5.0
+     */
+    void hard_cut_budget(LoopContext& ctx);
 
     /**
      * @brief Fire ON_COMPLETE pre-hook for summary validation.

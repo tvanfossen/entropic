@@ -56,17 +56,11 @@ target_compile_definitions(entropic-config-tests PRIVATE
 add_executable(entropic-inference-tests
     inference/backend_lifecycle_test.cpp
     inference/adapter_base_test.cpp
-    inference/qwen35_adapter_test.cpp
-    inference/qwen36_adapter_test.cpp
-    inference/gemma4_adapter_test.cpp
-    inference/nemotron3_adapter_test.cpp
-    # v2.3.8 (gh#71): per-adapter acceptance gate — verbatim consumer
-    # emits, strict asserts, no SKIP. Catches gh#69 + gh#70 format
-    # mismatches at the CPU layer on every commit.
-    inference/adapter_acceptance_test.cpp
-    # v2.4.1 (gh#79): shared XML parameter parser unit tests — the
-    # parser source is compiled into the linked inference library.
-    inference/xml_parameter_parser_test.cpp
+    # gh#87 (v2.7.0): the per-family adapter unit tests (qwen35/qwen36/
+    # gemma4/nemotron3), the per-adapter acceptance gate, and the XML
+    # parameter parser tests were removed with the adapters they covered —
+    # common_chat owns tool-call render+parse now (verified by the gh#87
+    # model tests + Phase A per-family gates).
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp

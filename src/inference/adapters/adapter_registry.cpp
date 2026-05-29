@@ -2,68 +2,34 @@
 /**
  * @file adapter_registry.cpp
  * @brief Adapter factory implementation.
+ *
+ * gh#87 (v2.7.0): the per-family adapters (qwen35 / qwen36 / gemma4 /
+ * nemotron3) were retired — llama.cpp `common_chat` now owns tool-call
+ * render + parse for every bundled family (verified per-family in Phase A).
+ * All tiers use GenericAdapter, which still provides identity / system-prompt
+ * assembly plus a generic ChatML+JSON fallback parse for the rare path where
+ * common_chat rendering is unavailable. A model-specific custom adapter is a
+ * consumer concern, plumbed out-of-tree.
+ *
  * @version 1.8.2
  */
 
 #include "adapter_registry.h"
-#include "gemma4_adapter.h"
 #include "generic_adapter.h"
-#include "nemotron3_adapter.h"
-#include "qwen35_adapter.h"
-#include "qwen36_adapter.h"
 
 #include <entropic/types/logging.h>
 
 #include <algorithm>
-#include <array>
-#include <functional>
-#include <string_view>
+#include <string>
+#include <unordered_set>
 
 namespace entropic {
 
 namespace {
 auto logger = entropic::log::get("inference.adapter.registry");
 
-/// @brief Factory signature shared by all adapter constructors.
-using AdapterFactory = std::function<std::unique_ptr<ChatAdapter>(
-    const std::string&, const std::string&)>;
-
 /**
- * @brief Lookup-table entry: lowercase key → owning factory.
- * @internal
- * @version 2.1.9
- */
-struct AdapterEntry {
-    std::string_view key;
-    AdapterFactory factory;
-};
-
-/**
- * @brief Build the static adapter dispatch table.
- *
- * Populated once on first lookup. New adapter families register an
- * additional row here; create_adapter() stays at three returns.
- *
- * @return Registered factories, in lookup order.
- * @internal
- * @version 2.1.9
- */
-const std::array<AdapterEntry, 4>& adapter_table() {
-    static const std::array<AdapterEntry, 4> table{{
-        {"qwen35",    [](auto& t, auto& p) {
-            return std::make_unique<Qwen35Adapter>(t, p); }},
-        {"qwen36",    [](auto& t, auto& p) {
-            return std::make_unique<Qwen36Adapter>(t, p); }},
-        {"gemma4",    [](auto& t, auto& p) {
-            return std::make_unique<Gemma4Adapter>(t, p); }},
-        {"nemotron3", [](auto& t, auto& p) {
-            return std::make_unique<Nemotron3Adapter>(t, p); }},
-    }};
-    return table;
-}
-
-/**
- * @brief Lowercase a name for case-insensitive lookup.
+ * @brief Lowercase a name for case-insensitive recognition.
  * @param name Adapter name as provided by config.
  * @return Lowercased copy.
  * @internal
@@ -75,41 +41,37 @@ std::string to_lower(const std::string& name) {
                    [](unsigned char c) { return std::tolower(c); });
     return lower;
 }
-
 } // anonymous namespace
 
 /**
- * @brief Create adapter by name. Falls back to GenericAdapter.
+ * @brief Create the chat adapter for a tier (gh#87: always GenericAdapter).
  *
- * Looks up the lowercased adapter name in the static dispatch table.
- * Unknown names log a warning and fall back to GenericAdapter; the
- * "generic" name itself is silent.
+ * The historical per-family names (qwen35 / qwen36 / gemma4 / nemotron3) and
+ * "generic" are accepted silently — common_chat handles their native wire
+ * format, so no family-specific adapter is needed. Any other name logs a
+ * warning (likely a stale or misconfigured custom adapter) and still falls
+ * back to GenericAdapter for identity assembly.
  *
- * @param name Adapter name (e.g. "qwen35", "qwen36", "gemma4",
- *             "nemotron3", "generic").
+ * @param name Adapter name from config (historical family name or "generic").
  * @param tier_name Identity tier name.
  * @param identity_prompt Assembled identity prompt.
- * @return Owned adapter instance.
+ * @return Owned GenericAdapter instance.
  * @internal
- * @version 2.1.9
+ * @version 2.7.0
  */
 std::unique_ptr<ChatAdapter> create_adapter(
     const std::string& name,
     const std::string& tier_name,
     const std::string& identity_prompt)
 {
-    const std::string lower = to_lower(name);
-    for (const auto& entry : adapter_table()) {
-        if (lower == entry.key) {
-            logger->info("Adapter created: type={}, tier={}",
-                         entry.key, tier_name);
-            return entry.factory(tier_name, identity_prompt);
-        }
+    static const std::unordered_set<std::string> known = {
+        "generic", "qwen35", "qwen36", "gemma4", "nemotron3"};
+    if (known.find(to_lower(name)) == known.end()) {
+        logger->warn("Unknown adapter '{}' — using generic "
+                     "(common_chat is the default tool path)", name);
     }
-    if (lower != "generic") {
-        logger->warn("Unknown adapter '{}', falling back to generic", name);
-    }
-    logger->info("Adapter created: type=generic, tier={}", tier_name);
+    logger->info("Adapter created: generic (config='{}'), tier={}",
+                 name, tier_name);
     return std::make_unique<GenericAdapter>(tier_name, identity_prompt);
 }
 

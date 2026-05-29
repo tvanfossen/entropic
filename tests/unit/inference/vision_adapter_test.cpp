@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_vision_adapter.cpp
- * @brief Tests for ChatAdapter / Qwen35Adapter vision formatting.
- * @version 1.9.11
+ * @brief Tests for ChatAdapter base-class vision / content-part formatting.
+ * @version 2.7.0
  */
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/inference/adapters/adapter_base.h>
-
-#include "adapters/qwen35_adapter.h"
 
 #include <nlohmann/json.hpp>
 
@@ -79,30 +77,15 @@ TEST_CASE("Base adapter format_content_parts produces OpenAI JSON",
     REQUIRE(arr[1]["path"] == "/tmp/a.png");
 }
 
-// ── Qwen35Adapter vision overrides ──────────────────────────
+// ── Content-part formatting (base default) ──────────────────
+// gh#87 (v2.7.0): the per-family adapters were retired. Their vision
+// overrides were dead (no production caller of format_system_with_vision /
+// format_content_parts) and qwen35's were base delegates anyway, so the
+// base-default coverage above plus this content-part check are sufficient.
 
-TEST_CASE("Qwen35 adapter appends vision context when has_vision=true",
-          "[qwen35][vision]") {
-    entropic::Qwen35Adapter adapter("test", "test identity");
-    auto result = adapter.format_system_with_vision(
-        "You are helpful.", true);
-
-    REQUIRE(result.find("You are helpful.") != std::string::npos);
-    REQUIRE(result.find("image") != std::string::npos);
-    REQUIRE(result.size() > std::string("You are helpful.").size());
-}
-
-TEST_CASE("Qwen35 adapter unchanged when has_vision=false",
-          "[qwen35][vision]") {
-    entropic::Qwen35Adapter adapter("test", "test identity");
-    auto result = adapter.format_system_with_vision(
-        "You are helpful.", false);
-    REQUIRE(result == "You are helpful.");
-}
-
-TEST_CASE("Qwen35 format_content_parts matches base OpenAI format",
-          "[qwen35][vision]") {
-    entropic::Qwen35Adapter adapter("test", "test identity");
+TEST_CASE("format_content_parts yields the base OpenAI content array",
+          "[adapter][vision]") {
+    TestAdapter adapter;
 
     std::vector<entropic::ContentPart> parts;
 

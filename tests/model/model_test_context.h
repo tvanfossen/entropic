@@ -205,7 +205,10 @@ inline bool init_orchestrator(ModelTestContext& ctx) {
     // Production sizes VRAM + context for the deployment via YAML; both clamps
     // only scope the test harness on a resource-constrained dev box.
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
-    constexpr int PARTIAL_GPU_LAYERS = 20;
+    // v2.7.0: 20 → 15 — leave VRAM headroom for competing desktop GPU on
+    // the 11GB card (at 20 the 13GB GGUFs' ~8.8GB weights + compute buffer
+    // OOM'd when the desktop held ~1.8GB; run7). Correctness-only tests.
+    constexpr int PARTIAL_GPU_LAYERS = 15;
     constexpr int MAX_TEST_CONTEXT = 16384;
     for (auto& [name, tier] : ctx.config.models.tiers) {
         std::error_code size_ec;

@@ -348,3 +348,86 @@ TEST_CASE("parse_tagged_tool_calls warns on markup substring without match",
     REQUIRE(adapter.parse_tagged_tool_calls(
         "<tool_call>}}}garbage no name{{{ </tool_call>").empty());
 }
+
+// ── gh#88: action-envelope recovery (free functions) ────────
+
+TEST_CASE("recover_action_envelope_calls maps {action} envelope + name shape",
+          "[gh88][inference][adapter_base_topup]")
+{
+    // Parroted delegate result envelope → entropic.delegate call, with the
+    // remaining fields as arguments and "action" stripped.
+    auto d = entropic::recover_action_envelope_calls(
+        R"({"action":"delegate","target":"registrar","task":"do it","max_turns":-1})");
+    REQUIRE(d.size() == 1);
+    REQUIRE(d[0].name == "entropic.delegate");
+    REQUIRE(d[0].arguments.count("action") == 0);
+    REQUIRE(d[0].arguments.count("target") == 1);
+    REQUIRE(d[0].arguments.count("task") == 1);
+    REQUIRE(d[0].arguments_json.find("registrar") != std::string::npos);
+    REQUIRE(d[0].arguments_json.find("action") == std::string::npos);
+
+    // Canonical {"name":...} shape still recovered (issue mentions both).
+    auto n = entropic::recover_action_envelope_calls(
+        R"({"name":"fs.read","arguments":{"path":"x"}})");
+    REQUIRE(n.size() == 1);
+    REQUIRE(n[0].name == "fs.read");
+
+    // Multi-line: delegate + complete envelopes → two calls.
+    auto multi = entropic::recover_action_envelope_calls(
+        R"({"action":"delegate","target":"a","task":"t"})" "\n"
+        R"({"action":"complete","summary":"done"})");
+    REQUIRE(multi.size() == 2);
+    REQUIRE(multi[0].name == "entropic.delegate");
+    REQUIRE(multi[1].name == "entropic.complete");
+
+    // Non-call / noise / non-string action / malformed / empty → nothing.
+    REQUIRE(entropic::recover_action_envelope_calls("just prose").empty());
+    REQUIRE(entropic::recover_action_envelope_calls(R"({"foo":1})").empty());
+    REQUIRE(entropic::recover_action_envelope_calls(R"({"action":123})").empty());
+    REQUIRE(entropic::recover_action_envelope_calls("{bad json").empty());
+    REQUIRE(entropic::recover_action_envelope_calls("").empty());
+
+    // gh#88 audit: allow-list — only meta-tool action verbs recover. TodoTool
+    // sub-actions (add/update/remove) and arbitrary prose must NOT become
+    // bogus entropic.<x> calls.
+    REQUIRE(entropic::recover_action_envelope_calls(
+        R"({"action":"add","item":"x"})").empty());
+    REQUIRE(entropic::recover_action_envelope_calls(
+        R"({"action":"update","id":1})").empty());
+    REQUIRE(entropic::recover_action_envelope_calls(
+        R"({"action":"let me reconsider the plan"})").empty());
+    // All six known meta-tool verbs DO recover to entropic.<verb>.
+    for (const char* verb : {"delegate", "pipeline", "complete",
+                             "phase_change", "prune_context",
+                             "resume_delegation"}) {
+        auto r = entropic::recover_action_envelope_calls(
+            std::string(R"({"action":")") + verb + R"("})");
+        REQUIRE(r.size() == 1);
+        REQUIRE(r[0].name == std::string("entropic.") + verb);
+    }
+}
+
+TEST_CASE("apply_action_envelope_recovery substitutes only when empty + found",
+          "[gh88][inference][adapter_base_topup]")
+{
+    const std::string raw =
+        R"({"action":"delegate","target":"registrar","task":"x"})";
+
+    // Empty + recoverable → substituted.
+    std::vector<entropic::ToolCall> empty;
+    entropic::apply_action_envelope_recovery(empty, raw);
+    REQUIRE(empty.size() == 1);
+    REQUIRE(empty[0].name == "entropic.delegate");
+
+    // Non-empty → untouched (no double-parse) even if raw is recoverable.
+    std::vector<entropic::ToolCall> existing(1);
+    existing[0].name = "already.parsed";
+    entropic::apply_action_envelope_recovery(existing, raw);
+    REQUIRE(existing.size() == 1);
+    REQUIRE(existing[0].name == "already.parsed");
+
+    // Empty + nothing to recover → stays empty.
+    std::vector<entropic::ToolCall> none;
+    entropic::apply_action_envelope_recovery(none, "no calls here");
+    REQUIRE(none.empty());
+}

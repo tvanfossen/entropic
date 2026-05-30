@@ -189,6 +189,12 @@ set_tests_properties(model/test-gh87-multiparam-diag PROPERTIES TIMEOUT 360)
 add_model_test(test-gh88-envelope-priming test_gh88_envelope_priming.cpp)
 set_tests_properties(model/test-gh88-envelope-priming PROPERTIES TIMEOUT 300)
 
+# gh#90 (v2.7.2): gemma <|"|> string-escape must preserve string typing for
+# numeric-looking string args (coerce_string_typed_args). Deterministic
+# parse-path test on a real gemma render.
+add_model_test(test-gh90-string-typing test_gh90_string_typing.cpp)
+set_tests_properties(model/test-gh90-string-typing PROPERTIES TIMEOUT 300)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

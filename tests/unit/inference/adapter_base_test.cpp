@@ -431,3 +431,51 @@ TEST_CASE("apply_action_envelope_recovery substitutes only when empty + found",
     entropic::apply_action_envelope_recovery(none, "no calls here");
     REQUIRE(none.empty());
 }
+
+// ── gh#90: string-typed-arg coercion ────────────────────────
+
+TEST_CASE("coerce_string_typed_args restores string typing per schema",
+          "[gh90][inference][adapter_base_topup]")
+{
+    const std::string tools =
+        R"([{"name":"sassafras.create_student","inputSchema":{"type":"object",)"
+        R"("properties":{"grade_level":{"type":"string"},)"
+        R"("name":{"type":"string"},"age":{"type":"integer"}}}}])";
+
+    // grade_level (string schema) arrived as int 3 → coerce to "3";
+    // age (integer schema) stays int; name (string) already a string.
+    entropic::ToolCall tc;
+    tc.name = "sassafras.create_student";
+    tc.arguments_json = R"({"grade_level":3,"name":"Tamsin","age":9})";
+    tc.arguments["grade_level"] = "3";
+    tc.arguments["name"] = "Tamsin";
+    tc.arguments["age"] = "9";
+
+    std::vector<entropic::ToolCall> calls{tc};
+    entropic::coerce_string_typed_args(calls, tools);
+    const std::string& aj = calls[0].arguments_json;
+    INFO("coerced arguments_json: " << aj);
+    REQUIRE(aj.find(R"("grade_level":"3")") != std::string::npos);  // now string
+    REQUIRE(aj.find(R"("grade_level":3)") == std::string::npos);    // not bare int
+    REQUIRE(aj.find(R"("age":9)") != std::string::npos);            // int untouched
+    REQUIRE(aj.find("Tamsin") != std::string::npos);
+    REQUIRE(calls[0].arguments.at("grade_level") == "3");
+
+    // Empty tools_json → exact no-op.
+    std::vector<entropic::ToolCall> calls2{tc};
+    entropic::coerce_string_typed_args(calls2, "");
+    REQUIRE(calls2[0].arguments_json == tc.arguments_json);
+
+    // Unknown tool (no schema match) → no-op.
+    entropic::ToolCall other;
+    other.name = "unknown.tool";
+    other.arguments_json = R"({"x":5})";
+    std::vector<entropic::ToolCall> calls3{other};
+    entropic::coerce_string_typed_args(calls3, tools);
+    REQUIRE(calls3[0].arguments_json == R"({"x":5})");
+
+    // Empty calls → no crash.
+    std::vector<entropic::ToolCall> empty;
+    entropic::coerce_string_typed_args(empty, tools);
+    REQUIRE(empty.empty());
+}

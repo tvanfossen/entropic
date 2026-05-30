@@ -80,6 +80,27 @@ void apply_action_envelope_recovery(std::vector<ToolCall>& calls,
                                     const std::string& raw);
 
 /**
+ * @brief gh#90: coerce numeric scalars back to strings for string-typed
+ *        tool parameters.
+ *
+ * gemma's `<|"|>` string-escape loses type through PEG_GEMMA4 — a
+ * numeric-looking string arg (e.g. `grade_level:<|"|>3<|"|>`) arrives as a
+ * JSON number, a string-typed schema then rejects it (`3 is not of type
+ * 'string'`), and the delegation circuit-breaks. For each call, when the
+ * staged tool schema declares a parameter `"type":"string"` and the parsed
+ * value is a JSON number, coerce it to its string form (updates both
+ * `arguments_json` and the `arguments` map). No-op when @p tools_json is
+ * empty/invalid or the parameter is genuinely non-string. Applied on the
+ * common_chat-reliable (gemma) parse path.
+ *
+ * @param calls      In/out parsed tool calls.
+ * @param tools_json Staged MCP tool defs (array of {name, inputSchema,...}).
+ * @version 2.7.2
+ */
+void coerce_string_typed_args(std::vector<ToolCall>& calls,
+                              const std::string& tools_json);
+
+/**
  * @brief Concrete base class for chat format adapters (80% logic).
  *
  * Provides shared parsing primitives, think-block handling, JSON

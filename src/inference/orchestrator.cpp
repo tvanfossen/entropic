@@ -17,6 +17,7 @@
 
 #include "llama_cpp_backend.h"
 #include "adapters/adapter_registry.h"
+#include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
 #include <llama.h>
 #include <nlohmann/json.hpp>
@@ -379,7 +380,7 @@ static void stage_active_tools(InferenceBackend* model,
  * @param adapter Tier adapter for the autoparser/fallback path (may be null).
  * @param[in,out] result Generation result (content split, tools set).
  * @utility
- * @version 2.7.0 (Phase D)
+ * @version 2.7.1 (gh#88 recovery)
  */
 static void apply_adapter_parse(InferenceBackend* model,
                                 ChatAdapter* adapter,
@@ -389,6 +390,8 @@ static void apply_adapter_parse(InferenceBackend* model,
     result.raw_content = result.content;
     if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto parsed = llama->parse_response(result.content);
+        apply_action_envelope_recovery(  // gh#88
+            parsed.tool_calls, result.raw_content);
         result.content = parsed.content;
         result.tool_calls = std::move(parsed.tool_calls);
     } else if (adapter != nullptr) {

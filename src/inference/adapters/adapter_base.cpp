@@ -19,6 +19,7 @@
 #include <cstdint>
 #include <regex>
 #include <sstream>
+#include <unordered_set>
 
 namespace entropic {
 
@@ -311,6 +312,92 @@ std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
         }
     }
     return calls;
+}
+
+// ── gh#88 action-envelope recovery (free functions) ─────────
+
+/**
+ * @brief Map one parsed JSON object to a recovered ToolCall.
+ *
+ * Accepts the canonical `{"name":...}` shape (via tool_call_from_json) and
+ * the parroted `{"action":"<verb>",...}` meta envelope — the latter mapped
+ * to the `entropic.<verb>` call ONLY when <verb> names a known meta-tool
+ * (its action verb equals its tool short-name). gh#88 audit: without this
+ * allow-list, TodoTool's sub-action verbs (add/update/remove) and arbitrary
+ * prose strings were recovered as bogus `entropic.<x>` no-op calls — the
+ * recovery would WARN "recovered 1" while injecting a call to a tool that
+ * does not exist.
+ *
+ * @param j Parsed JSON object.
+ * @return ToolCall, or nullopt if neither shape matches a real tool.
+ * @internal
+ * @version 2.7.1
+ */
+static std::optional<ToolCall> action_envelope_to_call(
+    const nlohmann::json& j) {
+    if (auto tc = tool_call_from_json(j)) { return tc; }
+    // gh#88: meta-tools whose result `action` verb equals their tool name.
+    // TodoTool (add/update/remove) and free-text actions are excluded.
+    static const std::unordered_set<std::string> kMetaActions = {
+        "delegate", "pipeline", "complete",
+        "phase_change", "prune_context", "resume_delegation"};
+    std::string action;
+    if (j.contains("action") && j["action"].is_string()) {
+        action = j["action"].get<std::string>();
+    }
+    if (kMetaActions.find(action) == kMetaActions.end()) {
+        return std::nullopt;
+    }
+    ToolCall tc;
+    tc.id = generate_uuid();
+    tc.name = "entropic." + action;
+    nlohmann::json args = j;
+    args.erase("action");
+    tc.arguments_json = args.dump();
+    for (auto& [k, v] : args.items()) { tc.arguments[k] = v.dump(); }
+    return tc;
+}
+
+/**
+ * @brief gh#88 bare-JSON recovery — see header for the full rationale.
+ * @param raw Raw assistant output.
+ * @return Recovered tool calls (empty when none match).
+ * @utility
+ * @version 2.7.1
+ */
+std::vector<ToolCall> recover_action_envelope_calls(const std::string& raw) {
+    std::vector<ToolCall> calls;
+    std::istringstream stream(raw);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t start = line.find_first_not_of(" \t");
+        if (start == std::string::npos || line[start] != '{') { continue; }
+        auto j = nlohmann::json::parse(line.substr(start), nullptr, false);
+        if (!j.is_object()) { continue; }
+        if (auto tc = action_envelope_to_call(j)) {
+            calls.push_back(std::move(*tc));
+        }
+    }
+    return calls;
+}
+
+/**
+ * @brief gh#88 reliable-path recovery substitution — see header.
+ * @param calls In/out parsed calls; replaced by the recovery iff empty + found.
+ * @param raw   Raw assistant output to recover from.
+ * @utility
+ * @version 2.7.1
+ */
+void apply_action_envelope_recovery(std::vector<ToolCall>& calls,
+                                    const std::string& raw) {
+    if (!calls.empty()) { return; }
+    auto recovered = recover_action_envelope_calls(raw);
+    if (recovered.empty()) { return; }
+    logger->warn(
+        "gh#88: PEG_GEMMA4 parsed 0 tool calls; recovered {} from a "
+        "bare-JSON {{\"action\":...}} envelope (possible context priming)",
+        recovered.size());
+    calls = std::move(recovered);
 }
 
 // ── Think block handling ───────────────────────────────────

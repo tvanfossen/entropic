@@ -9,6 +9,7 @@
 #include <entropic/inference/orchestrator.h>
 #include <entropic/types/config.h>
 #include <entropic/types/message.h>
+#include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
 #include "llama_cpp_backend.h"  // gh#87 3b: common_chat parse routing
 
@@ -332,7 +333,7 @@ static std::string serialize_tool_calls(
  * tier's backend so a routed (non-default) tier parses correctly.
  *
  * @callback
- * @version 2.7.0 (Phase D)
+ * @version 2.7.1 (gh#88 recovery)
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -348,6 +349,7 @@ static int iface_parse_tool_calls(const char* raw,
 
     if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto parsed = llama->parse_response(raw_str);
+        apply_action_envelope_recovery(parsed.tool_calls, raw_str);  // gh#88
         *cleaned = dup(parsed.content);
         *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));
         return 0;

@@ -729,6 +729,30 @@ public:
         LoopContext& ctx, const Message& tool_result_msg) const;
 
     /**
+     * @brief gh#88: reshape a meta-tool `{"action":...}` result so the
+     *        model is not primed to parrot the call-shaped envelope.
+     *
+     * delegate / pipeline (and peers) return their result as
+     * `{"action":"x",...}` JSON. Pushed verbatim into context, the model
+     * echoes that shape as its next "tool call" — which common_chat
+     * (PEG_GEMMA4) does not parse, so the call no-ops and the loop spirals
+     * to the iteration cap. The typed directive is already built by
+     * ToolExecutor::build_directive (target/task copied into the struct)
+     * before this runs, so the model-facing content can be replaced with a
+     * non-call prose status line without affecting dispatch.
+     * `entropic.complete` is de-fanged earlier by the fold above.
+     *
+     * Public so unit tests can exercise the transform without spinning the
+     * full engine loop.
+     *
+     * @param msg Tool-result message; content reshaped in place when it is
+     *            an `entropic.*` meta-tool action envelope.
+     * @utility
+     * @version 2.7.1
+     */
+    void defang_meta_action_envelope(Message& msg) const;
+
+    /**
      * @brief Borrowed reference to the engine's built-in CompactionManager.
      *
      * gh#76 (v2.3.27): the facade-level `CompactorRegistry` borrows

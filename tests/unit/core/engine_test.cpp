@@ -1010,6 +1010,62 @@ SCENARIO("fold_complete_into_assistant: refuses on empty message history "
     }
 }
 
+SCENARIO("defang_meta_action_envelope: reshapes meta {action} results so "
+         "the model is not primed to parrot them (gh#88)",
+         "[engine][gh88][complete-shape]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    GIVEN("a delegate result message (entropic.delegate {action:...})") {
+        entropic::Message msg;
+        msg.role = "user";
+        msg.content =
+            R"({"action":"delegate","target":"registrar","task":"x"})";
+        msg.metadata["tool_name"] = "entropic.delegate";
+
+        WHEN("defang_meta_action_envelope is called") {
+            engine.defang_meta_action_envelope(msg);
+            THEN("content becomes a non-call prose status line") {
+                REQUIRE(msg.content.find(R"({"action")")
+                        == std::string::npos);
+                REQUIRE(msg.content.find("delegate") != std::string::npos);
+                REQUIRE(msg.content.find("accepted") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a NON-entropic tool result of the same shape") {
+        entropic::Message msg;
+        msg.content = R"({"action":"delegate","target":"x"})";
+        msg.metadata["tool_name"] = "filesystem.read_file";
+
+        WHEN("defang_meta_action_envelope is called") {
+            const std::string before = msg.content;
+            engine.defang_meta_action_envelope(msg);
+            THEN("content is untouched — only entropic.* meta tools") {
+                REQUIRE(msg.content == before);
+            }
+        }
+    }
+
+    GIVEN("an entropic meta result that is not an action envelope") {
+        entropic::Message msg;
+        msg.content = "plain non-JSON tool output";
+        msg.metadata["tool_name"] = "entropic.inspect";
+
+        WHEN("defang_meta_action_envelope is called") {
+            const std::string before = msg.content;
+            engine.defang_meta_action_envelope(msg);
+            THEN("content is untouched") {
+                REQUIRE(msg.content == before);
+            }
+        }
+    }
+}
+
 SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
          "(gh#68)",
          "[engine][gh68][complete-shape]") {

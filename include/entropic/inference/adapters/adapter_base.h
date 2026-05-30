@@ -47,6 +47,39 @@ struct ParseResult {
 };
 
 /**
+ * @brief gh#88: recover tool calls a gemma model parroted as bare-JSON.
+ *
+ * common_chat (PEG_GEMMA4) parses only the native call-prefix form. When a
+ * session primes the model with `{"action":"x",...}` meta-tool result
+ * envelopes (see the engine defang), the model echoes that bare-JSON shape
+ * and the dedicated grammar yields nothing. This permissive fallback
+ * (parity with the retired Gemma4Adapter) maps a `{"action":"<tool>",...}`
+ * envelope to the `entropic.<tool>` call (remaining fields as arguments),
+ * and also accepts a plain `{"name":...}` object.
+ *
+ * @param raw Raw assistant output.
+ * @return Recovered tool calls (empty when none match).
+ * @version 2.7.1
+ */
+std::vector<ToolCall> recover_action_envelope_calls(const std::string& raw);
+
+/**
+ * @brief gh#88: substitute recovered bare-JSON calls when a reliable
+ *        (PEG_GEMMA4 / gemma) parse produced none; logs the recovery.
+ *
+ * No-op unless @p calls is empty AND a recovery is found. The WARN keeps
+ * residual/future context-priming visible instead of silently masking it.
+ * Used only on the common_chat-reliable path (interface_factory /
+ * orchestrator).
+ *
+ * @param calls In/out parsed calls; replaced by the recovery iff empty + found.
+ * @param raw   Raw assistant output to recover from.
+ * @version 2.7.1
+ */
+void apply_action_envelope_recovery(std::vector<ToolCall>& calls,
+                                    const std::string& raw);
+
+/**
  * @brief Concrete base class for chat format adapters (80% logic).
  *
  * Provides shared parsing primitives, think-block handling, JSON

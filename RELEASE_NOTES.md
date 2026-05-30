@@ -1,3 +1,55 @@
+# entropic v2.7.3
+
+Patch release. **gh#94 — per-tier identity-frontmatter sampler knobs were
+silently dropped** (`temperature`, `enable_thinking`, `top_k`, `top_p`,
+`min_p`, `repeat_penalty`, …), so every tier ran the `GenerationParams`
+defaults (`temp=0.70`, `enable_thinking=true`, …) regardless of its
+identity. Sassafras-blocking: executor tiers configured `enable_thinking:
+false` kept emitting reasoning, fanning a trivial CRUD op out to ~5
+generations / ~37s.
+
+## Root cause
+
+`configure_common()` constructed the orchestrator (`init_orchestrator`,
+which snapshots the config **by value** — `config_ = config`) *before*
+frontmatter was threaded into the tiers (`wire_prompts_and_persistence` runs
+later, after the engine exists). The sampler knobs landed in the handle's
+`h->config` but never in the orchestrator's frozen copy, so the generate
+path read stale defaults. (The init order is constrained — the engine needs
+the orchestrator, and the frontmatter wiring needs the engine — so the bug
+wasn't a trivial swap.)
+
+## Fixes
+
+- **Split-reorder.** A new dependency-free pass, `thread_frontmatter_samplers`,
+  threads the per-tier sampler knobs into the config **before**
+  `init_orchestrator`, so the orchestrator's snapshot carries them. The
+  engine-bound frontmatter wiring (`allowed_tools`, `relay_single_delegate`,
+  tool-executor) stays in `wire_prompts_and_persistence` where the engine
+  exists. Config is now fully assembled before the orchestrator copies it.
+- **Loader sampler keys.** `parse_tier_config` now reads the sampler knobs
+  off a YAML tier node (`parse_sampler_overrides`). Before this there was
+  **no consumer override path at all** — neither YAML nor (ordering-broken)
+  frontmatter could set per-tier samplers. YAML is loaded before the
+  orchestrator snapshot, so this also gives a workaround for pinned releases.
+
+## Tests
+
+- Unit: `[gh94]` loader test — per-tier sampler keys parse into `TierConfig`
+  (and stay `nullopt` when absent, preserving the default precedence).
+- The existing facade C-ABI configure tests exercise the `configure_common`
+  ordering. Unit-gated per the patch policy; the config-plumbing change is
+  not exercised by the model harness (which bypasses the facade). A
+  facade-driven *behavioral* model test is tracked for the test-hardening
+  follow-up (gh#93).
+
+## Distribution
+
+- `pip install entropic-engine==2.7.3` then `entropic install-engine`
+- CPU + CUDA tarballs as for 2.7.2.
+
+---
+
 # entropic v2.7.2
 
 Patch release. Two strands: **gh#90 — gemma string-typed tool arguments**

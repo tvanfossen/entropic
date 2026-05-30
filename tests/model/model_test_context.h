@@ -569,7 +569,7 @@ inline std::string serialize_tool_calls(
  * @param user_data Pointer to ModelTestContext.
  * @return 0 on success, non-zero on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.7.1
  */
 inline int real_parse_tool_calls(const char* raw_content,
                                  char** cleaned_content,
@@ -588,6 +588,7 @@ inline int real_parse_tool_calls(const char* raw_content,
         ctx->orchestrator->get_backend(tier));
     if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto cc = llama->parse_response(raw);
+        apply_action_envelope_recovery(cc.tool_calls, raw);  // gh#88
         json tools = json::array();
         for (const auto& tc : cc.tool_calls) {
             json args_obj;

@@ -181,6 +181,14 @@ add_model_test(test-gh87-orchestrator-cutover
 add_model_test(test-gh87-multiparam-diag test_gh87_multiparam_diag.cpp)
 set_tests_properties(model/test-gh87-multiparam-diag PROPERTIES TIMEOUT 360)
 
+# gh#88 (v2.7.1): EMERGENT multi-turn regression — a real gemma session must
+# not accumulate parrotable {action:...} meta-tool result envelopes (Fix 1
+# de-fang) and must recover a parroted emission (Fix 2). The class of bug
+# that single-turn coverage structurally cannot catch (see test header).
+# Multi-turn loop over gemma-4 E4B (~4.5GB, full offload) — modest ceiling.
+add_model_test(test-gh88-envelope-priming test_gh88_envelope_priming.cpp)
+set_tests_properties(model/test-gh88-envelope-priming PROPERTIES TIMEOUT 300)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

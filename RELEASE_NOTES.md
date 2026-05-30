@@ -1,3 +1,53 @@
+# entropic v2.7.1
+
+Patch release. **gh#88 — fix gemma tool-calling degradation over a
+session.** On 2.7.0, gemma tiers intermittently emitted tool calls as a
+bare-JSON `{"action":...}` envelope that `common_chat` (PEG_GEMMA4) does
+not parse, so the call silently no-opped and the agentic loop spiraled to
+the iteration cap. The failure rate grew with conversation length because
+the model was parroting a shape it was being fed — the meta-tool *result*
+envelopes.
+
+## Root cause
+
+`entropic.delegate` / `entropic.pipeline` return their result as
+`{"action":"<x>",...}` JSON. The gh#68 fold de-fanged only
+`entropic.complete`, so delegate/pipeline results were pushed into context
+verbatim — priming the model to echo the call-shaped envelope, which the
+gh#87 native-only PEG_GEMMA4 (having retired the permissive `Gemma4Adapter`)
+no longer tolerated. Latent before 2.7.0; the parser tightening surfaced it.
+
+## Fixes
+
+- **Stop priming (root cause).** `AgentEngine::defang_meta_action_envelope`
+  reshapes any `entropic.*` meta-tool `{"action":...}` result into a
+  non-call prose status line before it enters context. The typed directive
+  is already built (`ToolExecutor::build_directive`) before this point, so
+  dispatch is unaffected. `entropic.complete` continues to fold (gh#68).
+- **Defense-in-depth (logged).** On the common_chat-reliable (gemma) parse
+  path, when PEG_GEMMA4 yields zero calls, `recover_action_envelope_calls`
+  recovers a parroted `{"action":"<tool>",...}` (or `{"name":...}`)
+  envelope as the `entropic.<tool>` call with the remaining fields as
+  arguments. It WARN-logs when it fires, so residual/future priming stays
+  visible rather than silently masked. Gemma-path only — does not
+  re-permissive the Qwen / nemotron3 adapters.
+
+## Tests
+
+- Unit: recovery helper (action / name / multi-line / noise / non-string /
+  malformed) + the engine de-fang transform (meta vs non-meta vs
+  non-envelope). The gh#68 fold scenarios are unchanged.
+- End-to-end proof is the multi-turn gemma delegate/complete repro (model
+  test, GPU); the patch gate is unit-only, so that validation is flagged
+  on gh#88.
+
+## Distribution
+
+- `pip install entropic-engine==2.7.1` then `entropic install-engine`
+- CPU + CUDA tarballs as for 2.7.0.
+
+---
+
 # entropic v2.7.0
 
 Minor release. **gh#87 — adopt llama.cpp `common_chat` for tool-call

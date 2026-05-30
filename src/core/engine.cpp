@@ -1373,12 +1373,30 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
 }
 
 /**
+ * @brief gh#88 de-fang logic — see header.
+ * @utility
+ * @version 2.7.1
+ */
+void AgentEngine::defang_meta_action_envelope(Message& msg) const {
+    auto tn = msg.metadata.find("tool_name");
+    bool is_meta = tn != msg.metadata.end()
+        && tn->second.rfind("entropic.", 0) == 0;
+    if (!is_meta) { return; }
+    auto j = nlohmann::json::parse(msg.content, nullptr, false);
+    bool is_envelope = j.is_object() && j.contains("action")
+        && j["action"].is_string();
+    if (!is_envelope) { return; }
+    msg.content = "(engine: " + j["action"].get<std::string>()
+        + " directive accepted)";
+}
+
+/**
  * @brief Process tool call results and directives.
  * @param ctx Loop context.
  * @param tool_calls Parsed tool calls.
  * @return True if any tool genuinely executed (gh#84, v2.5.1).
  * @internal
- * @version 2.5.1
+ * @version 2.7.1
  */
 bool AgentEngine::process_tool_results(
     LoopContext& ctx,
@@ -1406,6 +1424,7 @@ bool AgentEngine::process_tool_results(
         if (fold_complete_into_assistant(ctx, msg)) {
             continue;  // gh#68: folded; skip pushing JSON user message
         }
+        defang_meta_action_envelope(msg);  // gh#88: strip call-shaped envelope
         ctx.messages.push_back(std::move(msg));
     }
 

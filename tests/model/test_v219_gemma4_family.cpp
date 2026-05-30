@@ -23,7 +23,6 @@
  */
 
 #include "v219_family_test_helpers.h"
-#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4[] = "gemma4_e2b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4>)
@@ -53,43 +52,8 @@ SCENARIO("Gemma 4 family GGUF loads and generates first token",
     }
 }
 
-// ── Real-emission tool-call guarantee (gh#69 / gh#71-phase-2) ──
-
-SCENARIO("Gemma 4 E2B tool calls parse under the production prompt",
-         "[model][v219][gemma4][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("gemma4_e2b GGUF not present — run `entropic download gemma4_e2b`");
-    }
-    GIVEN("the adapter's own format_tools over the production system prompt") {
-        start_test_log("v219_gemma4_toolcall");
-        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
-        REQUIRE(adapter != nullptr);
-
-        const std::vector<std::string> markers = {
-            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
-
-        WHEN("a battery of tool-directed prompts runs through the live model") {
-            auto outcome = run_emission_battery(
-                adapter, production_base(), standard_tool_jsons(),
-                standard_tool_battery(), markers);
-
-            THEN("the adapter parses every NAMED emission, well-formed, no leak") {
-                // The adapter contract holds for E2B: every call that
-                // carries a tool name (incl. the `tool_name` alias) parses.
-                REQUIRE_FALSE(outcome.named_missed);
-                REQUIRE_FALSE(outcome.malformed);
-                REQUIRE_FALSE(outcome.leaked);
-                // E2B (2.5 GB, edge/router-class) omits the function name
-                // entirely on some prompts — a genuine model-capability
-                // limitation, NOT an adapter bug (recovering a tool from
-                // bare args would be a fragile heuristic). So E2B gets the
-                // weaker floor: at least one real named call parses. The
-                // strict per-prompt guarantee lives on the tool-calling
-                // tiers (E4B / A4B). See gh#71 — E2B is not a tool tier.
-                REQUIRE(outcome.parsed >= 1);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call scenario was retired with
+// the per-family adapters — common_chat now owns tool-call render+parse, and
+// per-family common_chat coverage lives in test_gh87_verify_* /
+// test_gh87_orchestrator_cutover. The smoke scenario above still gates GGUF
+// load + first-token generation.

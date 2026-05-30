@@ -36,16 +36,21 @@
 # ══════════════════════════════════════════════════════════════
 
 primary:
-  name: Qwen3.5-35B-A3B-UD-IQ3_XXS
-  url: https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf
-  size_gb: 13.1
-  adapter: qwen35
+  name: Qwen3.6-35B-A3B-UD-IQ3_XXS
+  url: https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-IQ3_XXS.gguf
+  size_gb: 13.2
+  # gh#87 (v2.7.0): primary default moved Qwen3.5-35B-A3B → Qwen3.6-35B-A3B
+  # (newer generation, same A3B MoE class + ~13GB IQ3_XXS footprint; stronger
+  # instruction-following / tool-calling for the agentic loop). The qwen3_6_a3b
+  # key remains as an explicit alias. `adapter` is cosmetic now — common_chat
+  # owns tool-call render+parse for every family (per-family adapters retired).
+  adapter: qwen36
   description: Primary workhorse — all roles (single model architecture)
-  # gh#42 (v2.1.8): Qwen3.5-35B-A3B is tagged image-text-to-text upstream
-  # (vision encoder + paired mmproj). Bundling the F16 mmproj turns the
-  # primary tier into a VLM without a separate VL model bundle. Consumers
-  # that want text-only can override `mmproj: ""` in their tier config.
-  mmproj_key: primary_mmproj
+  # gh#42 (v2.1.8): the A3B MoE is tagged image-text-to-text upstream (vision
+  # encoder + paired mmproj). Bundling the F16 mmproj turns the primary tier
+  # into a VLM without a separate VL model bundle. Consumers that want
+  # text-only can override `mmproj: ""` in their tier config.
+  mmproj_key: qwen3_6_a3b_mmproj
 
 primary_mmproj:
   name: mmproj-F16

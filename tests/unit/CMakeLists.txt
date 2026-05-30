@@ -56,16 +56,15 @@ target_compile_definitions(entropic-config-tests PRIVATE
 add_executable(entropic-inference-tests
     inference/backend_lifecycle_test.cpp
     inference/adapter_base_test.cpp
+    # gh#87 Phase D (v2.7.0): autoparser families keep their hand-rolled
+    # multi-parameter parser (common_chat's PEG autoparser only extracts the
+    # first <parameter=>), so these tests cover live code. The gemma4 adapter
+    # test + the per-adapter acceptance gate stay removed — gemma4 parses via
+    # common_chat's dedicated PEG_GEMMA4 grammar (covered by the gh#87 model
+    # tests).
     inference/qwen35_adapter_test.cpp
     inference/qwen36_adapter_test.cpp
-    inference/gemma4_adapter_test.cpp
     inference/nemotron3_adapter_test.cpp
-    # v2.3.8 (gh#71): per-adapter acceptance gate — verbatim consumer
-    # emits, strict asserts, no SKIP. Catches gh#69 + gh#70 format
-    # mismatches at the CPU layer on every commit.
-    inference/adapter_acceptance_test.cpp
-    # v2.4.1 (gh#79): shared XML parameter parser unit tests — the
-    # parser source is compiled into the linked inference library.
     inference/xml_parameter_parser_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
@@ -127,6 +126,26 @@ target_link_libraries(entropic-inference-tests PRIVATE
 target_compile_definitions(entropic-inference-tests PRIVATE
     TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../data"
     ENTROPIC_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
+# gh#87 (v2.7.0): unit-scope real-model smoke for the orchestrator
+# generate path (resolve_and_stage / stage_active_tools /
+# apply_adapter_parse + per-tier dispatch). SEPARATE binary so its one
+# Qwen3.5-0.8B load runs in its own process — never sharing with
+# backend_real_model_smoke_test's load in entropic-inference-tests,
+# which would re-introduce the repeated-load CUDA-shutdown SEGV.
+add_executable(entropic-inference-orch-realmodel-tests
+    inference/orchestrator_real_model_smoke_test.cpp
+)
+target_include_directories(entropic-inference-orch-realmodel-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+target_link_libraries(entropic-inference-orch-realmodel-tests PRIVATE
+    entropic::inference
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
 )
 
 # v1.9.2: Adapter manager tests (uses mock llama.cpp adapter symbols)
@@ -425,6 +444,7 @@ include(Catch)
 catch_discover_tests(entropic-tests)
 catch_discover_tests(entropic-config-tests)
 catch_discover_tests(entropic-inference-tests)
+catch_discover_tests(entropic-inference-orch-realmodel-tests)
 catch_discover_tests(entropic-adapter-tests)
 catch_discover_tests(entropic-speculative-compat-tests)
 catch_discover_tests(entropic-secondary-loader-tests)

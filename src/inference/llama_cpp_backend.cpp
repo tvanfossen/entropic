@@ -20,13 +20,17 @@
 #include <entropic/types/logging.h>
 
 #include <common.h>
+#include <chat.h>
 #include <sampling.h>
 #include <speculative.h>
 #include <mtmd.h>
 #include <mtmd-helper.h>
 
+#include <nlohmann/json.hpp>
+
 #include <cmath>
 #include <cstring>
+#include <optional>
 #include <stdexcept>
 
 namespace entropic {
@@ -333,8 +337,19 @@ bool LlamaCppBackend::do_activate() {
 /**
  * @brief Load the GGUF model onto the GPU (do_activate step 1).
  * @return true on success; sets last_error_ on failure.
+ *
+ * gh#87 (v2.7.0): frees the WARM CPU model BEFORE reloading with GPU
+ * layers. The prior order (load new_model, *then* free the old model_)
+ * held two full llama_model objects resident during a single activate —
+ * a transient double-load. Changing n_gpu_layers requires a reload (you
+ * cannot re-offload an already-loaded model), but there is no reason to
+ * keep the discarded CPU copy alive across it: a failed GPU reload
+ * leaves the backend unusable regardless, and the COLD path can recover
+ * it. Freeing first removes the simultaneity (and the duplicate model
+ * metadata/buffers) without changing the load contract.
+ *
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 bool LlamaCppBackend::load_gpu_model() {
     llama_model_params mparams = build_load_mparams(config());
@@ -344,14 +359,24 @@ bool LlamaCppBackend::load_gpu_model() {
         logger->warn("tensor_split not yet implemented, ignoring");
     }
 
-    llama_model* new_model = llama_model_load_from_file(
-        config().path.c_str(), mparams);
-    if (!new_model) {
+    // tokenizer_ borrows the old vocab_; reset it before the free so the
+    // borrow never dangles. Then free the WARM model and null the
+    // handles so a failed reload below leaves the backend in a clean,
+    // recoverable state rather than a dangling one.
+    tokenizer_.reset();
+    if (model_ != nullptr) {
+        llama_model_free(model_);
+        model_ = nullptr;
+        vocab_ = nullptr;
+    }
+
+    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    if (model_ == nullptr) {
         // llama.cpp returns null with no error string — the actual
-        // reason (OOM, CUDA init failure, GGUF parse error, etc.)
-        // only surfaces in ggml's log stream. Point the operator at
-        // it so multi-handle GPU failures (gh#58 v2.2.7 follow-up)
-        // are diagnosable without source-diving llama.cpp.
+        // reason (OOM, CUDA init failure, GGUF parse error, etc.) only
+        // surfaces in ggml's log stream. Point the operator at it so
+        // multi-handle GPU failures (gh#58 v2.2.7 follow-up) are
+        // diagnosable without source-diving llama.cpp.
         last_error_ = "Failed to reload model with GPU layers "
                       "(path=" + config().path.string()
                     + ", gpu_layers=" + std::to_string(config().gpu_layers)
@@ -360,12 +385,6 @@ bool LlamaCppBackend::load_gpu_model() {
         return false;
     }
 
-    // v2.3.10: tokenizer_ borrows the old vocab_. Reset it BEFORE we
-    // free the old model so the borrow never dangles, then re-create
-    // against the new vocab below.
-    tokenizer_.reset();
-    if (model_) { llama_model_free(model_); }
-    model_ = new_model;
     vocab_ = llama_model_get_vocab(model_);
     tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     return true;
@@ -441,8 +460,18 @@ void LlamaCppBackend::init_mmproj_if_configured() {
 
 /**
  * @brief Deactivate: free context, reload model CPU-only.
+ *
+ * gh#87 (v2.7.0): frees the GPU model BEFORE reloading CPU-only, the
+ * symmetric fix to load_gpu_model. Deactivate's whole purpose is to
+ * release VRAM and stay WARM, so freeing the GPU model first aligns
+ * with intent and avoids holding two full llama_model objects during
+ * the tier-switch reload. The old "keep GPU model on CPU-reload
+ * failure" fallback is dropped — it left VRAM pinned, contradicting the
+ * deactivation; a failed warm-reload now nulls the handle (recoverable
+ * via the next activate, which reloads from scratch).
+ *
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 void LlamaCppBackend::do_deactivate() {
     // v2.3.10: sampler factory borrows ctx_ + vocab_. Release it
@@ -460,25 +489,33 @@ void LlamaCppBackend::do_deactivate() {
         ctx_ = nullptr;
     }
 
-    // Reload model CPU-only for WARM state
+    // Free the GPU model FIRST (releasing VRAM — the point of
+    // deactivate), then reload CPU-only for the WARM state. tokenizer_
+    // borrows the old vocab_, so reset it before the free.
+    tokenizer_.reset();
+    if (model_ != nullptr) {
+        llama_model_free(model_);
+        model_ = nullptr;
+        vocab_ = nullptr;
+    }
+
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     mparams.use_mmap = true;
     mparams.use_mlock = config().use_mlock;
 
-    llama_model* cpu_model = llama_model_load_from_file(
-        config().path.c_str(), mparams);
-    if (cpu_model) {
-        // v2.3.10: same vocab-handoff rule as load_gpu_model — reset
-        // tokenizer_ before freeing the GPU model, then rewire to the
-        // CPU model's vocab.
-        tokenizer_.reset();
-        llama_model_free(model_);
-        model_ = cpu_model;
+    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    if (model_ != nullptr) {
         vocab_ = llama_model_get_vocab(model_);
         tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     } else {
-        logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
+        // VRAM is released, but the warm-reload failed: leave the handle
+        // null (state stays recoverable — the next activate reloads from
+        // scratch). Error, not warn: a same-file CPU reload failing here
+        // signals real trouble (disk/OOM).
+        logger->error("Failed to reload CPU model during deactivate "
+                      "(path={}); backend left unloaded until next activate",
+                      config().path.string());
     }
 }
 
@@ -754,19 +791,6 @@ float LlamaCppBackend::extract_token_logprob(
 // ── Chat template ──────────────────────────────────────────
 
 /**
- * @brief Apply GGUF-embedded chat template to messages.
- *
- * Uses llama_chat_apply_template() which reads the template from
- * GGUF metadata. Passes enable_thinking as a template variable
- * via the add_generation_prompt parameter.
- *
- * @param messages Conversation history.
- * @param params Generation parameters.
- * @return Formatted prompt string.
- * @internal
- * @version 2.3.7
- */
-/**
  * @brief Convert engine messages to llama_chat_message views.
  * @param messages Source messages (must outlive the returned views).
  * @return Vector of {role, content} c_str pointers into `messages`.
@@ -781,6 +805,138 @@ static std::vector<llama_chat_message> to_llama_chat(
         chat_msgs.push_back({msg.role.c_str(), msg.content.c_str()});
     }
     return chat_msgs;
+}
+
+/**
+ * @brief Convert engine messages to common_chat_msg (gh#86, v2.6.1).
+ *
+ * Role + content only. The legacy `apply_chat_template` path renders
+ * without tools (entropic injects tool prompts into the system message via
+ * ResponseGenerator::inject_tool_prompt); the gh#87 `render_with_tools`
+ * path supplies tools through `inputs.tools` instead.
+ *
+ * @param messages Source messages.
+ * @return Vector of common_chat_msg.
+ * @utility
+ * @version 2.6.1
+ */
+static std::vector<common_chat_msg> to_common_chat(
+    const std::vector<Message>& messages) {
+    std::vector<common_chat_msg> out;
+    out.reserve(messages.size());
+    for (const auto& msg : messages) {
+        common_chat_msg cm;
+        cm.role = msg.role;
+        cm.content = msg.content;
+        out.push_back(std::move(cm));
+    }
+    return out;
+}
+
+/**
+ * @brief Convert entropic MCP tool JSON to common_chat_tool defs (gh#87).
+ *
+ * Reads `ServerManager::list_tools()` shape — an array of
+ * `{name, description, inputSchema}` — into `common_chat_tool`
+ * (name + description + parameters-schema-string). Tools without a name
+ * are skipped. Malformed JSON yields an empty list (the render then
+ * proceeds tool-less rather than throwing).
+ *
+ * @param tools_json MCP tool-list JSON array string.
+ * @return Parsed common_chat tool definitions.
+ * @utility
+ * @version 2.7.0
+ */
+static std::vector<common_chat_tool> mcp_tools_to_common_chat(
+    const std::string& tools_json) {
+    std::vector<common_chat_tool> out;
+    if (tools_json.empty()) { return out; }
+    auto arr = nlohmann::json::parse(tools_json, nullptr, false);
+    if (!arr.is_array()) { return out; }
+    for (const auto& t : arr) {
+        common_chat_tool ct;
+        ct.name = t.value("name", "");
+        ct.description = t.value("description", "");
+        if (t.contains("inputSchema")) {
+            ct.parameters = t["inputSchema"].dump();
+        }
+        if (!ct.name.empty()) { out.push_back(std::move(ct)); }
+    }
+    return out;
+}
+
+/**
+ * @brief Map a common_chat_tool_call to entropic's ToolCall (gh#87).
+ *
+ * Name + id pass through; the JSON arguments string is kept verbatim in
+ * `arguments_json` (for passthrough dispatch) and also flattened into the
+ * string key-value `arguments` map (object values dumped back to JSON).
+ *
+ * @param cc Native common_chat tool call.
+ * @return entropic ToolCall.
+ * @utility
+ * @version 2.7.0
+ */
+static ToolCall to_entropic_tool_call(const common_chat_tool_call& cc) {
+    ToolCall tc;
+    tc.id = cc.id;
+    tc.name = cc.name;
+    tc.arguments_json = cc.arguments;
+    auto j = nlohmann::json::parse(cc.arguments, nullptr, false);
+    if (j.is_object()) {
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            tc.arguments[it.key()] =
+                it->is_string() ? it->get<std::string>() : it->dump();
+        }
+    }
+    return tc;
+}
+
+/**
+ * @brief Shared common_chat render core for both template paths (gh#87).
+ *
+ * Builds `common_chat_templates_inputs` (jinja, generation prompt,
+ * enable_thinking, optional tools) and applies the model's template.
+ * Returns the full `common_chat_params` so callers can use `.prompt`
+ * and — for the tools path — capture `.format`/`.generation_prompt`/
+ * `.parser` for a later parse. Returns nullopt when the model isn't
+ * loaded, the template can't init, or apply throws (caller falls back
+ * to the low-level path).
+ *
+ * @param model Loaded model (may be null → nullopt).
+ * @param messages Conversation history.
+ * @param params Generation parameters (enable_thinking honored).
+ * @param tools Tool defs for `inputs.tools` (empty for the legacy path).
+ * @return Rendered params, or nullopt on any failure.
+ * @utility
+ * @version 2.7.0
+ */
+static std::optional<common_chat_params> render_common_chat(
+    llama_model* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    const std::vector<common_chat_tool>& tools) {
+    if (model == nullptr) { return std::nullopt; }
+    auto tmpls = common_chat_templates_init(model, "");
+    std::optional<common_chat_params> out;
+    if (tmpls) {
+        common_chat_templates_inputs inputs;
+        inputs.messages = to_common_chat(messages);
+        inputs.add_generation_prompt = true;
+        inputs.use_jinja = true;
+        inputs.enable_thinking = params.enable_thinking;  // gh#86
+        inputs.tools = tools;
+        if (!tools.empty()) {
+            inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+        }
+        try {
+            out = common_chat_templates_apply(tmpls.get(), inputs);
+        } catch (const std::exception& e) {
+            logger->warn("jinja chat template apply failed ({}); "
+                         "falling back to low-level template", e.what());
+        }
+    }
+    return out;
 }
 
 /**
@@ -800,17 +956,176 @@ static std::string concat_messages_fallback(
 }
 
 /**
- * @brief Render the chat template for messages (fallback on failure).
+ * @brief Render the GGUF chat template for messages (gh#86/gh#87).
+ *
+ * The legacy (tool-less) render path: delegates to the shared
+ * `render_common_chat` core with no tools, so the template's
+ * `enable_thinking` variable receives `params.enable_thinking` (the
+ * low-level `llama_chat_apply_template()` had no thinking slot — its bool
+ * arg is `add_generation_prompt` — so a tier's `enable_thinking: false`
+ * was silently dropped pre-v2.6.1). Tools are intentionally absent here;
+ * the gh#87 `render_with_tools` path supplies them via `inputs.tools`.
+ *
+ * Falls back to the low-level template (then a plain join) if the jinja
+ * path is unavailable (e.g. a GGUF with no embedded template).
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters (enable_thinking honored).
+ * @return Formatted prompt string.
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 std::string LlamaCppBackend::apply_chat_template(
     const std::vector<Message>& messages,
     const GenerationParams& params) const
 {
+    auto rendered = render_common_chat(model_, messages, params, {});
+    return rendered ? rendered->prompt
+                    : apply_chat_template_lowlevel(messages);
+}
+
+/**
+ * @brief Generation render seam (gh#87): tools → common_chat, else legacy.
+ *
+ * Clears any stale captured params on the tool-less branch so
+ * has_common_chat_params() reflects only THIS render. See header.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return Formatted prompt string.
+ * @internal
+ * @version 2.7.0
+ */
+std::string LlamaCppBackend::render_prompt(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    if (!active_tools_json_.empty()) {
+        return render_with_tools(messages, params);
+    }
+    have_chat_params_ = false;
+    return apply_chat_template(messages, params);
+}
+
+/**
+ * @brief Stage tool defs for the next common_chat render (gh#87).
+ * @param tools_json MCP tool-list JSON array.
+ * @utility
+ * @version 2.7.0
+ */
+void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
+    active_tools_json_ = tools_json;
+    logger->info("Active tools staged for common_chat render: {} bytes",
+                 tools_json.size());
+}
+
+/**
+ * @brief Render messages through common_chat WITH active tools (gh#87).
+ *
+ * Captures the rendered params (format/generation_prompt/parser) so
+ * parse_response can decode the emission. See header for contract.
+ *
+ * @param messages Conversation history.
+ * @param params Generation parameters.
+ * @return Formatted prompt string.
+ * @internal
+ * @version 2.7.0
+ */
+std::string LlamaCppBackend::render_with_tools(
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    have_chat_params_ = false;
+    auto tools = mcp_tools_to_common_chat(active_tools_json_);
+    auto rendered = render_common_chat(model_, messages, params, tools);
+    std::string prompt;
+    if (rendered) {
+        last_chat_format_ = static_cast<int>(rendered->format);
+        last_generation_prompt_ = rendered->generation_prompt;
+        last_parser_ = rendered->parser;
+        have_chat_params_ = true;
+        prompt = rendered->prompt;
+        logger->info("render_with_tools: format={}, {} tool(s), captured "
+                     "parser ({} bytes)", last_chat_format_, tools.size(),
+                     last_parser_.size());
+    } else {
+        prompt = apply_chat_template_lowlevel(messages);
+    }
+    return prompt;
+}
+
+/**
+ * @brief True iff the captured common_chat format parses multi-param (gh#87).
+ *
+ * Only dedicated grammars (PEG_GEMMA4) are multi-parameter safe; the PEG
+ * autoparser (PEG_NATIVE/PEG_SIMPLE) drops parameters past the first. See
+ * header for the routing contract.
+ *
+ * @return true if parse_response is multi-parameter safe.
+ * @utility
+ * @version 2.7.0
+ */
+bool LlamaCppBackend::common_chat_parse_reliable() const {
+    return have_chat_params_
+        && last_chat_format_ == COMMON_CHAT_FORMAT_PEG_GEMMA4;
+}
+
+/**
+ * @brief Parse a raw emission via the last captured render params (gh#87).
+ *
+ * MUST load() the serialized PEG arena — the parser_params ctor copies
+ * only format + generation_prompt, so without the load the parser silently
+ * degrades to pure content (Increment-1 finding). See header for contract.
+ *
+ * @param raw Raw model output (assistant turn only).
+ * @return Parsed tool calls + cleaned content + reasoning.
+ * @internal
+ * @version 2.7.0
+ */
+LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
+    const std::string& raw) const
+{
+    CommonChatResult result;
+    if (!have_chat_params_) {
+        result.content = raw;
+        return result;
+    }
+    common_chat_parser_params pp;
+    pp.format = static_cast<common_chat_format>(last_chat_format_);
+    pp.generation_prompt = last_generation_prompt_;
+    pp.parser.load(last_parser_);  // mandatory — see header
+    try {
+        auto msg = common_chat_parse(raw, /*is_partial=*/false, pp);
+        result.content = msg.content;
+        result.reasoning_content = msg.reasoning_content;
+        for (const auto& tc : msg.tool_calls) {
+            result.tool_calls.push_back(to_entropic_tool_call(tc));
+        }
+    } catch (const std::exception& e) {
+        logger->warn("common_chat_parse failed ({}); raw kept as content",
+                     e.what());
+        result.content = raw;
+    }
+    return result;
+}
+
+/**
+ * @brief Pre-v2.6.1 low-level template path (fallback for gh#86).
+ *
+ * Reads the GGUF template via `llama_chat_apply_template()`. Retained
+ * as the fallback when the jinja path is unavailable. Does NOT honor
+ * `enable_thinking` (the low-level API has no slot for it).
+ *
+ * @param messages Conversation history.
+ * @return Formatted prompt string, or a plain join on failure.
+ * @internal
+ * @version 2.6.1
+ */
+std::string LlamaCppBackend::apply_chat_template_lowlevel(
+    const std::vector<Message>& messages) const
+{
     auto chat_msgs = to_llama_chat(messages);
 
-    // First call: measure required buffer size
     int n = llama_chat_apply_template(
         nullptr, chat_msgs.data(), chat_msgs.size(),
         true, nullptr, 0);
@@ -825,7 +1140,7 @@ std::string LlamaCppBackend::apply_chat_template(
         true, buf.data(), static_cast<int32_t>(buf.size()));
     if (written < 0) {
         logger->error("llama_chat_apply_template failed (render)");
-        return "";
+        return concat_messages_fallback(messages);
     }
 
     return std::string(buf.data(), static_cast<size_t>(written));
@@ -1434,7 +1749,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
 /**
  * @brief Multimodal generation core (v2.1.8, gh#37 / v1.9.11 Phase 6).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::generate_multimodal(
     const std::vector<Message>& messages,
@@ -1454,7 +1769,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
             "mtmd_helper_bitmap_init_from_file failed";
         return err;
     }
-    auto prompt = apply_chat_template(marked, params);
+    auto prompt = render_prompt(marked, params);
     logger->info("Multimodal generate: {} images, prompt={} chars, max_tokens={}",
                  bitmaps.size(), prompt.size(), params.max_tokens);
     std::string prefill_err;
@@ -1504,14 +1819,14 @@ GenerationResult LlamaCppBackend::do_generate(
 /**
  * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
     const GenerationParams& params)
 {
     auto t0 = entropic::log::now();
-    std::string prompt = apply_chat_template(messages, params);
+    std::string prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     std::string sys = extract_system_prompt(messages);
 
@@ -1591,7 +1906,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * contract.
  *
  * @internal
- * @version 2.4.2
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -1599,7 +1914,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
     std::atomic<bool>& cancel)
 {
     auto t0 = entropic::log::now();
-    std::string prompt = apply_chat_template(messages, params);
+    std::string prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     std::string sys = extract_system_prompt(messages);
 
@@ -1681,7 +1996,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
 /**
  * @brief Text-only streaming body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     const std::vector<Message>& messages,
@@ -1690,7 +2005,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     std::atomic<bool>& cancel)
 {
     auto t0 = entropic::log::now();
-    auto prompt = apply_chat_template(messages, params);
+    auto prompt = render_prompt(messages, params);
     auto tokens = tokenize(prompt, true);
     auto sys = extract_system_prompt(messages);
     logger->info("Stream: {} input tokens, max_tokens={}",
@@ -2518,7 +2833,7 @@ static GenerationResult spec_run_from_tokens(
 /**
  * @brief Speculative generation against a draft model (gh#36).
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -2540,7 +2855,7 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
                 : ENTROPIC_ERROR_NOT_SUPPORTED;
         result = spec_error(code, std::move(pre_err));
     } else {
-        auto prompt = apply_chat_template(messages, params);
+        auto prompt = render_prompt(messages, params);
         auto tokens = tokenize(prompt, true);
         if (tokens.size() < 2) {
             result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,

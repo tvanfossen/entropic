@@ -26,7 +26,6 @@
  */
 
 #include "v219_family_test_helpers.h"
-#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4_E4B[] = "gemma4_e4b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B>)
@@ -56,45 +55,8 @@ SCENARIO("Gemma 4 E4B GGUF loads and generates first token",
     }
 }
 
-// ── Real-emission tool-call guarantee (gh#69 / gh#71-phase-2) ──
-
-SCENARIO("Gemma 4 E4B tool calls parse under the production prompt",
-         "[model][v219][gemma4][e4b][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
-    }
-    GIVEN("the adapter's own format_tools over the production system prompt") {
-        start_test_log("v219_gemma4_e4b_toolcall");
-        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
-        REQUIRE(adapter != nullptr);
-
-        // Native tool-call markers the adapter claims to handle: the
-        // gh#69 channel header plus the asymmetric / plain tagged forms.
-        const std::vector<std::string> markers = {
-            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
-
-        WHEN("a battery of tool-directed prompts runs through the live model") {
-            // Single THEN: Catch2 re-runs WHEN once per leaf section, and
-            // each battery run is several live generations — keep it to one.
-            auto outcome = run_emission_battery(
-                adapter, production_base(), standard_tool_jsons(),
-                standard_tool_battery(), markers);
-
-            THEN("the adapter parses every named emission, well-formed, no leak") {
-                // gh#69 failure condition: model emits a named call,
-                // adapter returns zero and the loop spirals. Every NAMED
-                // emission MUST parse.
-                REQUIRE_FALSE(outcome.named_missed);
-                // Production path elicits AND parses a real call for
-                // EVERY directed prompt — the "completely functioning"
-                // guarantee. E4B (mid-class) is capable enough to hit this.
-                REQUIRE(outcome.parsed == outcome.total);
-                // Well-formed names, no native markup left in cleaned_content.
-                REQUIRE_FALSE(outcome.malformed);
-                REQUIRE_FALSE(outcome.leaked);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call scenario was retired with
+// the per-family adapters — common_chat now owns tool-call render+parse, and
+// per-family common_chat coverage lives in test_gh87_verify_* /
+// test_gh87_orchestrator_cutover. The smoke scenario above still gates GGUF
+// load + first-token generation.

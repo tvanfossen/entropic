@@ -46,38 +46,8 @@ SCENARIO("Qwen 3.6 family GGUF loads and generates first token",
     }
 }
 
-// ── Tool-call fixture (qwen3_coder XML) ────────────────────
-
-SCENARIO("Qwen 3.6 emits parseable tool calls",
-         "[model][v219][qwen36][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("qwen3_6_a3b GGUF not present — run `entropic download qwen3_6_a3b`");
-    }
-    GIVEN("a prompt instructing the model to emit a tool call") {
-        start_test_log("v219_qwen36_toolcall");
-        auto params = test_gen_params();
-        params.max_tokens = 256;
-        auto messages = make_messages(
-            "You may call tools. Emit calls in XML form: "
-            "<tool_call><function=name><parameter=key>value</parameter>"
-            "</function></tool_call>.",
-            "Call a tool named fs.read with parameter path set to "
-            "/etc/hostname. Emit only the tool call.");
-        WHEN("the model is asked to emit a tool call") {
-            auto result = g_ctx.orchestrator->generate(
-                messages, params, g_ctx.default_tier);
-            THEN("Qwen36Adapter extracts the tool call") {
-                // raw_content preserves the model output before the
-                // adapter strips tool-call tags; cleaned_content is
-                // empty by design when the entire output IS a tool
-                // call, so we assert on tool_calls + raw_content.
-                REQUIRE_FALSE(result.raw_content.empty());
-                REQUIRE(result.tool_calls.size() >= 1);
-                CHECK(result.tool_calls[0].name == "fs.read");
-                CHECK(result.token_count > 0);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call scenario was retired with
+// the per-family adapters — common_chat now owns tool-call render+parse, and
+// per-family common_chat coverage lives in test_gh87_verify_* /
+// test_gh87_orchestrator_cutover. The smoke scenario above still gates GGUF
+// load + first-token generation.

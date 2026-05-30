@@ -384,6 +384,19 @@ struct GenerationParams {
     /// 0.9 means "use at most 90% of time_limit_ms for generation".
     /// @version 1.9.7
     float adapt_headroom = 0.9f;
+
+    /// @brief Active tool definitions for this turn, as an MCP tool-list
+    /// JSON array (`[{name, description, inputSchema}, ...]`), already
+    /// filtered per-tier by the caller.
+    ///
+    /// gh#87 (v2.7.0): structured tool defs flow here instead of being
+    /// string-injected into the system message. The orchestrator stages
+    /// them on the backend (`LlamaCppBackend::set_active_tools`) so the
+    /// common_chat render emits — and parse extracts — the model's native
+    /// tool-call wire format. Empty (default) = no tools this turn (the
+    /// backend renders without a tool grammar).
+    /// @version 2.7.0
+    std::string tools;
 };
 
 /**

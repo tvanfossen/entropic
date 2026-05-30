@@ -197,14 +197,83 @@ TEST_CASE("LlamaCppBackend lifecycle on a small real model (one load)",
         (void)result;
     }
 
-    // complete() with enable_thinking=true — drives the thinking branch in apply_chat_template.
+    // gh#86 (v2.6.1): generate() (NOT complete()) drives apply_chat_template,
+    // which renders the GGUF jinja template with enable_thinking threaded.
+    // complete() is raw text completion and never touches the template, so
+    // the pre-v2.6.1 version of this block (complete() + a false
+    // "drives the thinking branch" comment + a discarded result) exercised
+    // nothing. Assert a real outcome on both thinking settings.
     {
+        std::vector<entropic::Message> msgs;
+        entropic::Message u;
+        u.role = "user";
+        u.content = "hi";
+        msgs.push_back(u);
+
         entropic::GenerationParams params;
         params.max_tokens = 2;
         params.temperature = 0.0f;
+
         params.enable_thinking = true;
-        auto result = backend.complete("hi", params);
-        (void)result;
+        auto think_on = backend.generate(msgs, params);
+        CHECK(think_on.error_message.empty());
+
+        params.enable_thinking = false;
+        auto think_off = backend.generate(msgs, params);
+        CHECK(think_off.error_message.empty());
+    }
+
+    // gh#87 (v2.7.0): common_chat tool-call render + parse paths.
+    // set_active_tools → render_with_tools (captures parse params) →
+    // has_common_chat_params / common_chat_parse_reliable (the routing
+    // getters) → generate() through the tools render seam →
+    // parse_response (reconstructs the captured PEG parser). Qwen3.5-0.8B
+    // routes parsing to the adapter (common_chat_parse_reliable is false —
+    // not gemma4), but every render/capture/getter/parse body runs here;
+    // this is the only in-gate exercise of the Phase D backend surface.
+    {
+        const std::string tools_json =
+            R"([{"name":"read_file","description":"Read a file",)"
+            R"("inputSchema":{"type":"object","properties":)"
+            R"({"path":{"type":"string"}},"required":["path"]}}])";
+        backend.set_active_tools(tools_json);
+
+        std::vector<entropic::Message> tmsgs;
+        entropic::Message tu;
+        tu.role = "user";
+        tu.content = "Read config.yaml";
+        tmsgs.push_back(tu);
+
+        entropic::GenerationParams tparams;
+        tparams.max_tokens = 4;
+        tparams.temperature = 0.0f;
+        tparams.enable_thinking = false;
+
+        // render_with_tools — routes the staged defs into common_chat and
+        // captures (or low-level-template falls back).
+        auto rendered = backend.render_with_tools(tmsgs, tparams);
+        CHECK_FALSE(rendered.empty());
+
+        // Routing getters the orchestrator/interface query post-generation.
+        (void)backend.has_common_chat_params();
+        (void)backend.common_chat_parse_reliable();
+
+        // generate() with tools staged — render_prompt routes through the
+        // tools render seam rather than apply_chat_template.
+        auto tool_gen = backend.generate(tmsgs, tparams);
+        CHECK(tool_gen.error_message.empty());
+
+        // parse_response — reconstruct captured parser params + common_chat
+        // parse on a synthetic native emission (content-only if no capture).
+        auto parsed = backend.parse_response(
+            "<function=read_file>\n<parameter=path>config.yaml"
+            "</parameter>\n</function>");
+        (void)parsed.tool_calls;
+        (void)parsed.content;
+        (void)parsed.reasoning_content;
+
+        // Clear staged tools (the empty / clear path).
+        backend.set_active_tools("");
     }
 
     // count_tokens on a longer string — drives the non-trivial tokenizer length path.

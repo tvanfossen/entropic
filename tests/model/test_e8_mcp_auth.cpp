@@ -45,22 +45,16 @@ SCENARIO("MCP authorization denial propagates through engine",
         engine.set_tool_executor(tei);
 
         WHEN("engine runs a write request with denial executor") {
+            // gh#87 (v2.7.0): tools flow via params.tools → common_chat, not
+            // a rigged prompt. The harness serves a write_file tool def. The
+            // "only the tool call" directive is the proven pattern (gh#87
+            // verify helpers) for eliciting a clean native call across
+            // families — without it a thinking model narrates + emits an
+            // empty <tool_call> stub.
             auto messages = make_messages(
-                "You are a helpful assistant with filesystem tools.\n\n"
-                "# Tools\n\n<tools>\n"
-                "[{\"type\":\"function\",\"function\":{\"name\":"
-                "\"filesystem.write_file\",\"description\":"
-                "\"Write to a file\",\"parameters\":{\"type\":"
-                "\"object\",\"properties\":{\"path\":{\"type\":"
-                "\"string\"},\"content\":{\"type\":\"string\"}},"
-                "\"required\":[\"path\",\"content\"]}}}]\n"
-                "</tools>\n\n"
-                "For each function call, return within "
-                "<tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n<function=example_function>\n"
-                "<parameter=param_name>value</parameter>\n"
-                "</function>\n</tool_call>",
-                "Write 'hello world' to output.txt");
+                "You are a helpful assistant with filesystem tools.",
+                "Use the write_file tool to write 'hello world' to the file "
+                "output.txt. Respond with only the tool call.");
             auto result = engine.run(std::move(messages));
 
             THEN("tool executor was invoked and engine completed with assistant response") {

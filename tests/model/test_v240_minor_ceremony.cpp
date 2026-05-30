@@ -291,3 +291,28 @@ SCENARIO("v2.3.10 min_p (anchor — must still pass at v2.4.0)",
     CHECK(result.token_count > 0);
     CHECK(result.error_message.empty());
 }
+
+// ── gh#86 (v2.6.1): enable_thinking reaches the jinja template ──
+
+SCENARIO("gh#86: enable_thinking=false suppresses <think> via jinja render",
+         "[v2.6.1][ceremony][gh86][enable_thinking]") {
+    REQUIRE(g_ctx.initialized);
+    auto* backend = g_ctx.orchestrator->get_backend(g_ctx.default_tier);
+    REQUIRE(backend != nullptr);
+
+    // generate() (not complete()) runs apply_chat_template, which now
+    // threads enable_thinking into the jinja template. Pre-v2.6.1 the
+    // low-level llama_chat_apply_template dropped it and the model kept
+    // emitting <think> regardless.
+    entropic::GenerationParams params;
+    params.max_tokens = 64;
+    params.temperature = 0.0f;
+    params.enable_thinking = false;
+
+    auto result = backend->generate(tiny_user_turn("List three colors."), params);
+    THEN("generation succeeds and emits no <think> block") {
+        CHECK(result.error_message.empty());
+        CHECK(result.token_count > 0);
+        CHECK(result.content.find("<think>") == std::string::npos);
+    }
+}

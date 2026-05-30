@@ -192,6 +192,110 @@ public:
      */
     llama_context* llama_context_ptr() { return ctx_; }
 
+    /* ── gh#87 (v2.7.0): common_chat tool-call render + parse ── */
+
+    /**
+     * @brief Result of a common_chat parse: native tool calls + split content.
+     *
+     * Mirrors the adapter `ParseResult` (cleaned content + calls) and adds
+     * the reasoning split that `common_chat_parse` produces natively, so the
+     * orchestrator no longer has to `strip_think_blocks` for covered families.
+     *
+     * @version 2.7.0
+     */
+    struct CommonChatResult {
+        std::vector<ToolCall> tool_calls;  ///< Extracted native tool calls
+        std::string content;               ///< Content with calls + reasoning removed
+        std::string reasoning_content;     ///< Extracted reasoning/thought block
+    };
+
+    /**
+     * @brief Stage tool definitions for the next common_chat render (gh#87).
+     *
+     * Accepts entropic's MCP tool-list JSON (array of
+     * `{name, description, inputSchema}`), as produced by
+     * `ServerManager::list_tools()` and filtered per-tier. The defs flow into
+     * `common_chat`'s `inputs.tools` at render time so the model is instructed
+     * in — and emits — its native tool-call wire format. Pass `""` or `"[]"`
+     * to clear.
+     *
+     * @param tools_json JSON array of MCP tool definitions (borrowed).
+     * @utility
+     * @version 2.7.0
+     */
+    void set_active_tools(const std::string& tools_json);
+
+    /**
+     * @brief Render messages through common_chat WITH the active tools.
+     *
+     * Like `apply_chat_template` but routes the staged tool defs into
+     * `inputs.tools` and CAPTURES the rendered `common_chat_params` (format,
+     * generation_prompt, serialized PEG parser) so a subsequent
+     * `parse_response` can decode the model's emission in the same context
+     * the render established. Falls back to the low-level template (no
+     * capture) if the jinja path is unavailable.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters (enable_thinking honored).
+     * @return Formatted prompt string.
+     * @internal
+     * @version 2.7.0
+     */
+    std::string render_with_tools(
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Parse a raw model emission via the last captured render params.
+     *
+     * Reconstructs the `common_chat_parser_params` from the state captured by
+     * the most recent `render_with_tools` and runs `common_chat_parse`. The
+     * converting ctor copies only format + generation_prompt, so this
+     * explicitly `load()`s the serialized PEG arena — without it the parser
+     * silently degrades to pure content and extracts zero tool calls (gh#87
+     * Increment-1 finding). If no render has captured params, returns the
+     * raw text as content with no calls.
+     *
+     * @param raw Raw model output (assistant turn only, no generation prompt).
+     * @return Parsed tool calls + cleaned content + reasoning.
+     * @internal
+     * @version 2.7.0
+     */
+    CommonChatResult parse_response(const std::string& raw) const;
+
+    /**
+     * @brief True iff the last render captured common_chat parse params (gh#87).
+     *
+     * Set when `render_with_tools` (via the internal render seam) renders with
+     * active tools; cleared on a tool-less render. The orchestrator queries
+     * this to route post-generation parsing through `parse_response` vs the
+     * legacy adapter `parse_tool_calls`.
+     *
+     * @return true if a tool render captured params for `parse_response`.
+     * @utility
+     * @version 2.7.0
+     */
+    bool has_common_chat_params() const { return have_chat_params_; }
+
+    /**
+     * @brief True iff common_chat parsing is reliable for the last render (gh#87).
+     *
+     * common_chat's PEG *autoparser* (PEG_NATIVE / PEG_SIMPLE — inferred from
+     * a template) only extracts the FIRST `<parameter=>` of a multi-parameter
+     * tool call. Only the DEDICATED grammars (currently PEG_GEMMA4) parse
+     * multi-parameter calls correctly. So the orchestrator routes parsing to
+     * `parse_response` ONLY when the captured format is dedicated; autoparser
+     * families fall back to their hand-rolled multi-parameter adapter.
+     *
+     * Extend the dedicated-format set here as llama.cpp gains hand-written
+     * parsers for more families.
+     *
+     * @return true if `parse_response` is multi-parameter safe for this render.
+     * @utility
+     * @version 2.7.0
+     */
+    bool common_chat_parse_reliable() const;
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 
@@ -370,6 +474,14 @@ protected:
     PromptCacheConfig prompt_cache_config_;      ///< Cache config (v1.8.3)
     std::unique_ptr<PromptCache> prompt_cache_;  ///< KV prefix cache (v1.8.3)
 
+    /* ── gh#87 (v2.7.0): common_chat tool-call render/parse state ─ */
+
+    std::string active_tools_json_;            ///< MCP tool defs for next render
+    int last_chat_format_ = 0;                 ///< Captured common_chat_format
+    std::string last_generation_prompt_;       ///< Captured generation_prompt
+    std::string last_parser_;                  ///< Captured serialized PEG arena
+    bool have_chat_params_ = false;            ///< True once a tool render captured params
+
     /* ── Internal helpers ────────────────────────────────── */
 
     /**
@@ -395,11 +507,39 @@ protected:
      * @param messages Conversation history.
      * @param params Generation parameters (for enable_thinking).
      * @return Formatted prompt string.
-     * @version 1.8.2
+     * @version 2.6.1
      */
     std::string apply_chat_template(
         const std::vector<Message>& messages,
         const GenerationParams& params) const;
+
+    /**
+     * @brief Generation render seam: common_chat-with-tools or legacy (gh#87).
+     *
+     * Routes to `render_with_tools` (capturing parse params) when tools have
+     * been staged via `set_active_tools`, else to `apply_chat_template`
+     * (clearing any stale captured params). Used by every message-generate
+     * entry point so the common_chat path is reachable from generate(), not
+     * just raw complete(). Raw completion + the router path bypass this.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters.
+     * @return Formatted prompt string.
+     * @internal
+     * @version 2.7.0
+     */
+    std::string render_prompt(
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief Low-level GGUF template path (gh#86 fallback, v2.6.1).
+     * @param messages Conversation history.
+     * @return Formatted prompt string, or a plain join on failure.
+     * @version 2.6.1
+     */
+    std::string apply_chat_template_lowlevel(
+        const std::vector<Message>& messages) const;
 
     /**
      * @brief Core decode loop — shared by generate and streaming.

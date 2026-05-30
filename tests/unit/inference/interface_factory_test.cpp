@@ -15,6 +15,8 @@
 #include <entropic/interfaces/i_inference_callbacks.h>
 
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -137,5 +139,50 @@ TEST_CASE("interface_factory: wiring + iface_* surface sweep",
         REQUIRE(fx.iface.is_response_complete(
             "x", R"([{"name":"f","arguments":{}}])",
             fx.iface.adapter_data) == 0);
+    }
+
+    // gh#87 (v2.7.0): iface_parse_tool_calls adapter branch + the
+    // serialize_tool_calls helper. create_tier_backends checks the model
+    // path EXISTS then creates the adapter, BEFORE activate_default_tier
+    // loads it. So a dummy *existing* (non-GGUF) file: the qwen35 adapter
+    // is created, activate fails cleanly (invalid GGUF → null, no model
+    // loaded → no SEGV), init returns false, and get_adapter returns a
+    // live adapter. The backend is COLD (common_chat_parse_reliable() →
+    // false), so parsing routes to the adapter — exercising the adapter
+    // branch and both serialize_tool_calls arg branches (string-fallback
+    // for "config.yaml" + JSON-number for 10), no real model load.
+    SECTION("iface_parse_tool_calls adapter branch + serialize_tool_calls") {
+        auto dummy = std::filesystem::temp_directory_path() /
+                     "entropic_cov_dummy_model.gguf";
+        { std::ofstream(dummy) << "not a real gguf"; }
+
+        entropic::ModelOrchestrator orch;
+        entropic::ParsedConfig cfg;
+        cfg.models.default_tier = "primary";
+        entropic::TierConfig lead;
+        lead.path = dummy;
+        lead.adapter = "qwen35";
+        cfg.models.tiers["primary"] = lead;
+        (void)orch.initialize(cfg);  // false (invalid GGUF); adapter created
+
+        entropic::InterfaceContext* ctx = nullptr;
+        auto iface = entropic::build_orchestrator_interface(
+            &orch, "primary", &ctx);
+
+        char* cleaned = nullptr;
+        char* calls = nullptr;
+        REQUIRE(iface.parse_tool_calls(
+            "<function=read_file>\n"
+            "<parameter=path>config.yaml</parameter>\n"
+            "<parameter=lines>10</parameter>\n</function>",
+            &cleaned, &calls, iface.backend_data) == 0);
+        REQUIRE(cleaned != nullptr);
+        REQUIRE(calls != nullptr);
+        // Adapter extracted the multi-param call → non-empty serialized array.
+        CHECK(std::string(calls) != "[]");
+        iface.free_fn(cleaned);
+        iface.free_fn(calls);
+        entropic::destroy_orchestrator_interface(ctx);
+        std::filesystem::remove(dummy);
     }
 }

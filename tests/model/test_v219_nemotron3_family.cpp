@@ -24,7 +24,6 @@
  */
 
 #include "v219_family_test_helpers.h"
-#include "production_emission_helpers.h"
 
 namespace { constexpr char K_NEMOTRON3[] = "nemotron3_nano_4b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_NEMOTRON3>)
@@ -58,48 +57,8 @@ SCENARIO("Nemotron 3 family GGUF loads and generates first token",
     }
 }
 
-// ── Real-emission tool-call guarantee (gh#70 / gh#71-phase-2) ──
-
-SCENARIO("Nemotron 3 tool calls parse under the production prompt",
-         "[model][v219][nemotron3][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("nemotron3_nano_4b GGUF not present — "
-             "run `entropic download nemotron3_nano_4b`");
-    }
-    GIVEN("the adapter's own format_tools over the production system prompt") {
-        start_test_log("v219_nemotron3_toolcall");
-        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
-        REQUIRE(adapter != nullptr);
-
-        // Native tool-call markers the adapter claims to handle: DSML
-        // invoke (primary, gh#70) plus the qwen XML / tagged-JSON
-        // backstops. NOT bare `<｜` — that would match BOS spam, which
-        // is not a tool call.
-        const std::vector<std::string> markers = {
-            "<｜DSML｜invoke", "<function=", "<tool_call>"};
-
-        WHEN("a battery of tool-directed prompts runs through the live model") {
-            // Single THEN: Catch2 re-runs WHEN once per leaf section, and
-            // each battery run is several live generations — keep it to one.
-            auto outcome = run_emission_battery(
-                adapter, production_base(), standard_tool_jsons(),
-                standard_tool_battery(), markers);
-
-            THEN("the adapter parses every named emission, well-formed, no leak") {
-                // gh#70 failure condition: model emits a named DSML call,
-                // adapter returns zero. Every NAMED emission MUST parse.
-                REQUIRE_FALSE(outcome.named_missed);
-                // Production path elicits AND parses a real call for
-                // EVERY directed prompt — the "completely functioning"
-                // guarantee, not just "extracted something once". Nemotron
-                // 3 (4B) is capable enough to hit this consistently.
-                REQUIRE(outcome.parsed == outcome.total);
-                // Well-formed names, no native markup left in cleaned_content.
-                REQUIRE_FALSE(outcome.malformed);
-                REQUIRE_FALSE(outcome.leaked);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call scenario was retired with
+// the per-family adapters — common_chat now owns tool-call render+parse, and
+// per-family common_chat coverage lives in test_gh87_verify_* /
+// test_gh87_orchestrator_cutover. The smoke scenario above still gates GGUF
+// load + first-token generation.

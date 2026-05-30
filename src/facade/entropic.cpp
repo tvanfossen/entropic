@@ -861,7 +861,7 @@ static void thread_frontmatter_sampler(
  * @param name Tier name.
  * @param fm Parsed frontmatter.
  * @internal
- * @version 2.5.3
+ * @version 2.7.3
  */
 static void apply_identity_frontmatter(
     entropic_handle_t h,
@@ -876,13 +876,11 @@ static void apply_identity_frontmatter(
     if (fm.relay_single_delegate) {
         h->engine->set_relay_single_delegate(name);
     }
-    // gh#82/gh#85: thread per-tier sampler config from frontmatter into
-    // the tier config so the orchestrator applies it at generation
-    // time. Pre-gh#82 these were parsed but dropped here.
-    auto tier_it = h->config.models.tiers.find(name);
-    if (tier_it != h->config.models.tiers.end()) {
-        thread_frontmatter_sampler(tier_it->second, fm);
-    }
+    // gh#94 (v2.7.3): per-tier frontmatter SAMPLERS are threaded earlier, in
+    // thread_frontmatter_samplers() BEFORE init_orchestrator, so they land in
+    // the orchestrator's by-value config snapshot. Threading them HERE (after
+    // the snapshot) was the gh#94 ordering bug — the values reached h->config
+    // but never the orchestrator's frozen copy, so tiers ran defaults.
 }
 
 /**
@@ -915,6 +913,45 @@ static void cache_tier_allowed_tools(
     // keeps this order-independent vs wire_tool_executor.
     if (h->tool_executor) {
         h->tool_executor->set_tier_allowed_tools(&h->tier_allowed_tools);
+    }
+}
+
+/**
+ * @brief Thread per-tier frontmatter SAMPLERS into config pre-orchestrator.
+ *
+ * gh#94 (v2.7.3): the orchestrator snapshots `h->config` BY VALUE in
+ * init_orchestrator() (`config_ = config`). The engine-bound frontmatter
+ * wiring (cache_tier_allowed_tools → apply_identity_frontmatter) necessarily
+ * runs LATER, after the engine exists. Threading sampler knobs there left them
+ * in `h->config` but never in the orchestrator's frozen copy, so every tier
+ * silently ran GenerationParams defaults regardless of frontmatter. This pass
+ * threads ONLY the dependency-free sampler knobs into each tier BEFORE
+ * init_orchestrator, so the snapshot carries them. The engine-dependent
+ * wiring (allowed_tools, relay_single_delegate, tool_executor) stays in
+ * wire_prompts_and_persistence.
+ *
+ * @param h Engine handle (config tiers mutated in place).
+ * @param data_dir Bundled data directory (identity file resolution).
+ * @internal
+ * @version 2.7.3
+ */
+static void thread_frontmatter_samplers(
+    entropic_handle_t h,
+    const std::filesystem::path& data_dir) {
+    for (auto& [name, tier] : h->config.models.tiers) {
+        std::filesystem::path id_path;
+        if (tier.identity.has_value()) {
+            id_path = tier.identity.value();
+        } else if (!tier.identity_disabled) {
+            id_path = data_dir / "prompts" / ("identity_" + name + ".md");
+        }
+        if (id_path.empty() || !std::filesystem::exists(id_path)) {
+            continue;
+        }
+        entropic::prompts::ParsedIdentity id;
+        if (entropic::prompts::load_identity(id_path, id).empty()) {
+            thread_frontmatter_sampler(tier, id.frontmatter);
+        }
     }
 }
 
@@ -1627,7 +1664,7 @@ static void wire_prompts_and_persistence(
 /**
  * @brief Shared body of all entropic_configure* entry points.
  * @internal
- * @version 2.3.8
+ * @version 2.7.3
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
@@ -1638,6 +1675,10 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     // there. Default (true) is a no-op; operators keep stderr logs.
     entropic::log::set_console_enabled(h->config.console_logging);
     auto data_dir = entropic::config::resolve_data_dir(h->config);
+    // gh#94 (v2.7.3): thread per-tier frontmatter samplers into the config
+    // BEFORE the orchestrator snapshots it by value. The engine-bound
+    // frontmatter wiring stays in wire_prompts_and_persistence (post-engine).
+    thread_frontmatter_samplers(h, data_dir);
     if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
         return rc;
     }

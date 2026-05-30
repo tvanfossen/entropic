@@ -687,3 +687,82 @@ SCENARIO("load_layered's consumer-defaults layer overlays before project",
         }
     }
 }
+
+SCENARIO("gh#94: per-tier sampler knobs parse from YAML into TierConfig",
+         "[config][loader][gh94][v2.7.3]")
+{
+    GIVEN("a tier YAML node declaring sampler overrides") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        // gh#94: before v2.7.3 the loader read NONE of these keys off a tier
+        // node — frontmatter was the only (ordering-broken) path, so a
+        // consumer had no YAML lever for per-tier samplers.
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "    temperature: 0.3\n"
+            "    enable_thinking: false\n"
+            "    top_k: 20\n"
+            "    top_p: 0.85\n"
+            "    min_p: 0.05\n"
+            "    repeat_penalty: 1.2\n"
+            "    max_output_tokens: 2048\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("every per-tier sampler knob lands on the TierConfig") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                const auto& t = config.models.tiers.at("lead");
+                REQUIRE(t.temperature.has_value());
+                CHECK(*t.temperature == Catch::Approx(0.3f));
+                REQUIRE(t.enable_thinking.has_value());
+                CHECK(*t.enable_thinking == false);
+                REQUIRE(t.top_k.has_value());
+                CHECK(*t.top_k == 20);
+                REQUIRE(t.top_p.has_value());
+                CHECK(*t.top_p == Catch::Approx(0.85f));
+                REQUIRE(t.min_p.has_value());
+                CHECK(*t.min_p == Catch::Approx(0.05f));
+                REQUIRE(t.repeat_penalty.has_value());
+                CHECK(*t.repeat_penalty == Catch::Approx(1.2f));
+                REQUIRE(t.max_output_tokens.has_value());
+                CHECK(*t.max_output_tokens == 2048);
+            }
+        }
+    }
+
+    GIVEN("a tier YAML node with NO sampler keys") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "  default: lead\n";
+
+        WHEN("parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the sampler optionals stay nullopt — the orchestrator "
+                 "keeps the incoming GenerationParams defaults") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                const auto& t = config.models.tiers.at("lead");
+                CHECK_FALSE(t.temperature.has_value());
+                CHECK_FALSE(t.enable_thinking.has_value());
+                CHECK_FALSE(t.top_k.has_value());
+                CHECK_FALSE(t.repeat_penalty.has_value());
+            }
+        }
+    }
+}

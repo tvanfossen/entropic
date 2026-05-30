@@ -50,6 +50,37 @@ static void parse_model_runtime_knobs(
 }
 
 /**
+ * @brief Read per-tier sampler overrides from a YAML model/tier node.
+ *
+ * gh#94 (v2.7.3): give config.local.yaml a per-tier sampler lever
+ * independent of identity frontmatter — both a consumer override and a
+ * workaround on pinned releases. Each optional is set ONLY when the key is
+ * present, so an absent key leaves the orchestrator's GenerationParams
+ * default in place (same precedence as the frontmatter path,
+ * thread_frontmatter_sampler). YAML is loaded before init_orchestrator, so
+ * unlike frontmatter these land in the orchestrator's config snapshot.
+ * @utility
+ * @internal
+ * @version 2.7.3
+ */
+static void parse_sampler_overrides(
+    ryml::ConstNodeRef node, TierConfig& config)
+{
+    float f = 0.0f;
+    int i = 0;
+    bool b = false;
+    if (extract(node, "temperature", f))       { config.temperature = f; }
+    if (extract(node, "top_p", f))             { config.top_p = f; }
+    if (extract(node, "min_p", f))             { config.min_p = f; }
+    if (extract(node, "presence_penalty", f))  { config.presence_penalty = f; }
+    if (extract(node, "frequency_penalty", f)) { config.frequency_penalty = f; }
+    if (extract(node, "repeat_penalty", f))    { config.repeat_penalty = f; }
+    if (extract(node, "top_k", i))             { config.top_k = i; }
+    if (extract(node, "max_output_tokens", i)) { config.max_output_tokens = i; }
+    if (extract(node, "enable_thinking", b))   { config.enable_thinking = b; }
+}
+
+/**
  * @brief Parse a ModelConfig from a YAML node.
  * @param node YAML node containing model fields.
  * @param registry Bundled models for path resolution.
@@ -95,7 +126,7 @@ static std::string parse_model_config(
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.1.8
+ * @version 2.7.3
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -106,6 +137,9 @@ static std::string parse_tier_config(
     if (!err.empty()) {
         return err;
     }
+
+    // gh#94 (v2.7.3): per-tier sampler overrides live on TierConfig.
+    parse_sampler_overrides(node, config);
 
     extract_tri_state_path(node, "identity",
                            config.identity, config.identity_disabled);

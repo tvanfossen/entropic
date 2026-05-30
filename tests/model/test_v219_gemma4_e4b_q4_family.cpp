@@ -21,7 +21,6 @@
  */
 
 #include "v219_family_test_helpers.h"
-#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4_E4B_Q4[] = "gemma4_e4b_q4"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_E4B_Q4>)
@@ -52,44 +51,8 @@ SCENARIO("Gemma 4 E4B (Q4) GGUF loads and generates first token",
     }
 }
 
-// ── Cross-quant tool-call consistency (gh#62) ──────────────
-
-SCENARIO("Gemma 4 E4B (Q4) tool calls parse under the production prompt",
-         "[model][v219][gemma4][e4b][q4][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b_q4 GGUF not present — "
-             "run `entropic download gemma4_e4b_q4`");
-    }
-    GIVEN("the adapter's own format_tools over the production system prompt") {
-        start_test_log("v219_gemma4_e4b_q4_toolcall");
-        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
-        REQUIRE(adapter != nullptr);
-
-        // Same native markers as the Q8_0 E4B test: the gh#69 channel
-        // header plus the asymmetric / plain tagged forms. Quant does
-        // not change the format the adapter is expected to handle.
-        const std::vector<std::string> markers = {
-            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
-
-        WHEN("a battery of tool-directed prompts runs through the live model") {
-            auto outcome = run_emission_battery(
-                adapter, production_base(), standard_tool_jsons(),
-                standard_tool_battery(), markers);
-
-            THEN("the adapter parses every named emission, well-formed, no leak") {
-                // Cross-quant consistency: the 4-bit variant MUST hit the
-                // same strict guarantee as the Q8_0 sibling — every named
-                // emission parses, every directed prompt yields a call,
-                // zero leakage. If a future quant degrades below this bar
-                // (e.g. starts emitting nameless calls like E2B), this
-                // fails loudly instead of silently regressing in production.
-                REQUIRE_FALSE(outcome.named_missed);
-                REQUIRE(outcome.parsed == outcome.total);
-                REQUIRE_FALSE(outcome.malformed);
-                REQUIRE_FALSE(outcome.leaked);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call scenario was retired with
+// the per-family adapters — common_chat now owns tool-call render+parse, and
+// per-family common_chat coverage lives in test_gh87_verify_* /
+// test_gh87_orchestrator_cutover. The smoke scenario above still gates GGUF
+// load + first-token generation.

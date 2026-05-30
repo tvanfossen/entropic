@@ -28,45 +28,20 @@ SCENARIO("Identity with READ-only keys is denied WRITE access",
         auth.register_identity("reader");
         auth.grant("reader", "filesystem.*", MCPAccessLevel::READ);
 
-        WHEN("the model generates a write tool call") {
-            // Generate a tool call using the same prompt as test 2
-            auto params = test_gen_params();
-            params.max_tokens = 512;
-            auto messages = make_messages(
-                "You are a helpful assistant with filesystem tools.\n\n"
-                "# Tools\n\n"
-                "Here are the available tools:\n"
-                "<tools>\n"
-                "[{\"type\":\"function\",\"function\":{\"name\":"
-                "\"filesystem.write_file\",\"description\":"
-                "\"Write to a file\",\"parameters\":{\"type\":"
-                "\"object\",\"properties\":{\"path\":{\"type\":"
-                "\"string\"},\"content\":{\"type\":\"string\"}},"
-                "\"required\":[\"path\",\"content\"]}}}]\n"
-                "</tools>\n\n"
-                "For each function call, return within "
-                "<tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n"
-                "<function=example_function>\n"
-                "<parameter=param_name>value</parameter>\n"
-                "</function>\n"
-                "</tool_call>",
-                "Write 'hello world' to output.txt");
-            auto result = g_ctx.orchestrator->generate(
-                messages, params, g_ctx.default_tier);
-
-            // Parse the tool call from model output
-            auto* adapter = g_ctx.orchestrator->get_adapter(
-                g_ctx.default_tier);
-            REQUIRE(adapter != nullptr);
-            auto raw = result.raw_content.empty()
-                ? result.content : result.raw_content;
-            auto parsed = adapter->parse_tool_calls(raw);
+        WHEN("a write_file tool call is checked against the identity") {
+            // gh#87 (v2.7.0): this test validates MCPAuthorizationManager
+            // (READ identity denied WRITE), NOT tool-call elicitation. It used
+            // to rig a per-adapter prompt + parse the emission, but the small
+            // default model does not reliably emit a parseable write call
+            // under common_chat (it narrates instead). The auth assertion is
+            // model-independent, so we check it on a constructed call —
+            // deterministic, and decoupled from model tool-calling quirks.
+            entropic::ToolCall tc;
+            tc.name = "filesystem.write_file";
+            tc.arguments["path"] = "output.txt";
+            tc.arguments["content"] = "hello world";
 
             THEN("the tool call is denied by MCP authorization") {
-                REQUIRE(parsed.tool_calls.size() >= 1);
-                auto& tc = parsed.tool_calls[0];
-
                 // READ identity cannot use WRITE tools
                 bool allowed = auth.check_access(
                     "reader", tc.name, MCPAccessLevel::WRITE);

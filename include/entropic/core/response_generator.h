@@ -156,21 +156,10 @@ private:
     /**
      * @brief Build generation params JSON with tier routing.
      * @param tier Locked tier name (embedded in params for orchestrator).
-     * @return JSON string.
-     * @version 2.0.1
+     * @return JSON string {tier, tools?}.
+     * @version 2.7.0
      */
-    static std::string build_params_json(const std::string& tier);
-
-    /**
-     * @brief Inject tool definitions into system message.
-     * @param messages Original message list.
-     * @param tier Locked tier name for tool filtering.
-     * @return Copy of messages with tool prompt appended to system message.
-     * @version 2.0.4
-     */
-    std::vector<Message> inject_tool_prompt(
-        const std::vector<Message>& messages,
-        const std::string& tier);
+    std::string build_params_json(const std::string& tier);
 
     /**
      * @brief Append an "[engine] iteration N/MAX..." reminder to the

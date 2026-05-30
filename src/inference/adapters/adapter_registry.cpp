@@ -2,11 +2,21 @@
 /**
  * @file adapter_registry.cpp
  * @brief Adapter factory implementation.
+ *
+ * gh#87 Phase D (v2.7.0): hybrid parse ownership. llama.cpp `common_chat`
+ * owns tool-call parsing for families it has a DEDICATED grammar for
+ * (gemma4 → PEG_GEMMA4, multi-parameter safe). Families that fall to
+ * common_chat's PEG autoparser (Qwen, nemotron3) keep their hand-rolled
+ * adapter, because the autoparser only extracts the first `<parameter=>`
+ * of a multi-parameter call. So:
+ *   - qwen35 / qwen36 / nemotron3 → their per-family adapter (multi-param).
+ *   - gemma4 / anything else      → GenericAdapter (identity assembly only;
+ *                                    parsing flows through common_chat).
+ *
  * @version 1.8.2
  */
 
 #include "adapter_registry.h"
-#include "gemma4_adapter.h"
 #include "generic_adapter.h"
 #include "nemotron3_adapter.h"
 #include "qwen35_adapter.h"
@@ -17,6 +27,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <string>
 #include <string_view>
 
 namespace entropic {
@@ -39,23 +50,22 @@ struct AdapterEntry {
 };
 
 /**
- * @brief Build the static adapter dispatch table.
+ * @brief Build the static adapter dispatch table (gh#87 Phase D).
  *
- * Populated once on first lookup. New adapter families register an
- * additional row here; create_adapter() stays at three returns.
+ * Only the autoparser families that need a multi-parameter parser are
+ * listed. gemma4 is intentionally absent — it parses via common_chat's
+ * dedicated PEG_GEMMA4 grammar and uses GenericAdapter for identity.
  *
  * @return Registered factories, in lookup order.
  * @internal
- * @version 2.1.9
+ * @version 2.7.0
  */
-const std::array<AdapterEntry, 4>& adapter_table() {
-    static const std::array<AdapterEntry, 4> table{{
+const std::array<AdapterEntry, 3>& adapter_table() {
+    static const std::array<AdapterEntry, 3> table{{
         {"qwen35",    [](auto& t, auto& p) {
             return std::make_unique<Qwen35Adapter>(t, p); }},
         {"qwen36",    [](auto& t, auto& p) {
             return std::make_unique<Qwen36Adapter>(t, p); }},
-        {"gemma4",    [](auto& t, auto& p) {
-            return std::make_unique<Gemma4Adapter>(t, p); }},
         {"nemotron3", [](auto& t, auto& p) {
             return std::make_unique<Nemotron3Adapter>(t, p); }},
     }};
@@ -79,19 +89,19 @@ std::string to_lower(const std::string& name) {
 } // anonymous namespace
 
 /**
- * @brief Create adapter by name. Falls back to GenericAdapter.
+ * @brief Create adapter by name (gh#87 Phase D hybrid).
  *
- * Looks up the lowercased adapter name in the static dispatch table.
- * Unknown names log a warning and fall back to GenericAdapter; the
- * "generic" name itself is silent.
+ * Autoparser families (qwen35 / qwen36 / nemotron3) resolve to their
+ * per-family multi-parameter adapter. Everything else — including gemma4,
+ * whose tool calls are parsed by common_chat's dedicated grammar — falls
+ * back to GenericAdapter (identity assembly + generic fallback parse).
  *
- * @param name Adapter name (e.g. "qwen35", "qwen36", "gemma4",
- *             "nemotron3", "generic").
+ * @param name Adapter name from config.
  * @param tier_name Identity tier name.
  * @param identity_prompt Assembled identity prompt.
  * @return Owned adapter instance.
  * @internal
- * @version 2.1.9
+ * @version 2.7.0 (Phase D)
  */
 std::unique_ptr<ChatAdapter> create_adapter(
     const std::string& name,
@@ -106,10 +116,8 @@ std::unique_ptr<ChatAdapter> create_adapter(
             return entry.factory(tier_name, identity_prompt);
         }
     }
-    if (lower != "generic") {
-        logger->warn("Unknown adapter '{}', falling back to generic", name);
-    }
-    logger->info("Adapter created: type=generic, tier={}", tier_name);
+    logger->info("Adapter created: generic (config='{}'), tier={} "
+                 "(tool parsing via common_chat)", name, tier_name);
     return std::make_unique<GenericAdapter>(tier_name, identity_prompt);
 }
 

@@ -44,20 +44,13 @@ SCENARIO("Tool call cycle: generate, parse, execute, regenerate",
         engine.set_tool_executor(tei);
 
         WHEN("engine runs a file-read request with tools") {
+            // gh#87 (v2.7.0): tools are no longer rigged into the prompt.
+            // They flow via the harness get_tool_prompt → params.tools →
+            // common_chat, which renders them in the model's native format.
             auto messages = make_messages(
-                "You are a helpful assistant with filesystem tools.\n\n"
-                "# Tools\n\n<tools>\n"
-                "[{\"type\":\"function\",\"function\":{\"name\":"
-                "\"filesystem.read_file\",\"description\":"
-                "\"Read a file\",\"parameters\":{\"type\":\"object\","
-                "\"properties\":{\"path\":{\"type\":\"string\"}},"
-                "\"required\":[\"path\"]}}}]\n</tools>\n\n"
-                "For each function call, return within "
-                "<tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n<function=example_function>\n"
-                "<parameter=param_name>value</parameter>\n"
-                "</function>\n</tool_call>",
-                "Read the file test.txt and tell me what it says");
+                "You are a helpful assistant with filesystem tools.",
+                "Read the file test.txt with the read_file tool and tell "
+                "me what it says.");
             auto result = engine.run(std::move(messages));
 
             THEN("tool executor was invoked and engine produced a final response") {

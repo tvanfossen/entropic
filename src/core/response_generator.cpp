@@ -10,6 +10,8 @@
 #include <entropic/types/error.h>
 #include <entropic/types/logging.h>
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -294,12 +296,15 @@ static std::string resolve_stream_finish_reason(int rc,
  * @param mode Label for the log line ("stream"/"batch").
  * @return {messages_json, params_json}.
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 std::pair<std::string, std::string> ResponseGenerator::prepare_prompts(
     LoopContext& ctx, const char* mode) {
-    auto messages = inject_tool_prompt(ctx.messages, ctx.locked_tier);
-    messages = inject_engine_state_reminder(messages, ctx);
+    // gh#87 (v2.7.0): tool defs no longer string-injected into the system
+    // message — they flow as structured JSON via build_params_json →
+    // params.tools, and common_chat renders them in the model's native
+    // format. Only the runtime engine-state reminder is injected here.
+    auto messages = inject_engine_state_reminder(ctx.messages, ctx);
     logger->info("Generate ({}): tier={}, {} messages",
                  mode, ctx.locked_tier, messages.size());
     log_prompt(messages, ctx.locked_tier);
@@ -630,52 +635,34 @@ std::string ResponseGenerator::serialize_messages(
 }
 
 /**
- * @brief Build generation params JSON.
- * @return JSON string with default params.
+ * @brief Build generation params JSON, including per-tier tool defs.
+ *
+ * gh#87 (v2.7.0): embeds the tier's structured tool definitions (from the
+ * repurposed get_tool_prompt callback — now an MCP JSON array) under
+ * `params.tools`. The backend stages them for common_chat rendering, which
+ * emits the model's native tool-call format. Replaces the old system-message
+ * string injection.
+ *
+ * @param tier Locked tier name.
+ * @return JSON string {tier, tools?}.
  * @internal
- * @version 2.0.2
+ * @version 2.7.0
  */
 std::string ResponseGenerator::build_params_json(
     const std::string& tier) {
-    if (tier.empty()) { return "{}"; }
-    return "{\"tier\":\"" + tier + "\"}";
-}
+    nlohmann::json j = nlohmann::json::object();
+    if (!tier.empty()) { j["tier"] = tier; }
 
-/**
- * @brief Inject tool definitions into the system message.
- *
- * Copies the message list and appends the adapter-formatted tool
- * prompt to the system message content. If no tool prompt callback
- * is wired or the tier has no tools, returns the original messages
- * unchanged.
- *
- * @param messages Original message list (not modified).
- * @param tier Locked tier name.
- * @return Messages with tool prompt injected into system message.
- * @internal
- * @version 2.0.4
- */
-std::vector<Message> ResponseGenerator::inject_tool_prompt(
-    const std::vector<Message>& messages,
-    const std::string& tier) {
-    if (inference_.get_tool_prompt == nullptr) { return messages; }
-
-    char* tool_prompt = nullptr;
-    int rc = inference_.get_tool_prompt(
-        tier.c_str(), &tool_prompt, inference_.tool_prompt_data);
-    if (rc != 0 || tool_prompt == nullptr) { return messages; }
-
-    std::string prompt_str(tool_prompt);
-    if (inference_.free_fn) { inference_.free_fn(tool_prompt); }
-
-    auto result = messages;
-    for (auto& msg : result) {
-        if (msg.role == "system") {
-            msg.content += "\n\n" + prompt_str;
-            break;
+    if (inference_.get_tool_prompt != nullptr) {
+        char* tools = nullptr;
+        int rc = inference_.get_tool_prompt(
+            tier.c_str(), &tools, inference_.tool_prompt_data);
+        if (rc == 0 && tools != nullptr) {
+            j["tools"] = std::string(tools);
+            if (inference_.free_fn) { inference_.free_fn(tools); }
         }
     }
-    return result;
+    return j.dump();
 }
 
 /**

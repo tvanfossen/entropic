@@ -139,3 +139,66 @@ add_model_test(test-v2310-backend-coverage-smoke
 # release notes flagged this as deferred to model-test scope).
 add_model_test(test-v240-minor-ceremony
                test_v240_minor_ceremony.cpp)
+
+# gh#87 increment-1 gate (v2.7.0): real-flow common_chat render→generate
+# →parse on gemma4. Needs the llama.cpp common/ include dir (private to
+# entropic-inference).
+add_model_test(test-gh87-common-chat-e2e test_gh87_common_chat_e2e.cpp)
+target_include_directories(test-gh87-common-chat-e2e PRIVATE
+    ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common)
+
+# gh#87 increment-2 gate (v2.7.0): drives the SAME triple through the
+# backend's additive public API (set_active_tools / render_with_tools /
+# parse_response). Uses entropic types + the backend header only — no
+# direct llama.cpp common/ include needed.
+add_model_test(test-gh87-backend-common-chat test_gh87_backend_common_chat.cpp)
+
+# gh#87 increment-3a gate (v2.7.0): the standard generate() entry point
+# routes through the common_chat path (render_prompt seam) when tools are
+# staged. Combined call site: set_active_tools → generate →
+# has_common_chat_params → parse_response.
+add_model_test(test-gh87-backend-generate-tools
+               test_gh87_backend_generate_tools.cpp)
+
+# gh#87 Phase A (v2.7.0): per-family verification that common_chat parses
+# each family's native tool-call format — the precondition for retiring the
+# hand-rolled adapters. Shared logic in gh87_verify_helpers.h; one thin
+# executable per family (one model load each, per the reload-SEGV constraint).
+add_model_test(test-gh87-verify-qwen35    test_gh87_verify_qwen35.cpp)
+add_model_test(test-gh87-verify-qwen36    test_gh87_verify_qwen36.cpp)
+add_model_test(test-gh87-verify-nemotron3 test_gh87_verify_nemotron3.cpp)
+# qwen36 is a 13GB A3B MoE under partial offload — give it headroom.
+set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)
+
+# gh#87 Phase B (v2.7.0): live cutover at the orchestrator level —
+# params.tools → stage_active_tools → common_chat render → parse_response →
+# result.tool_calls (the agent-loop production path).
+add_model_test(test-gh87-orchestrator-cutover
+               test_gh87_orchestrator_cutover.cpp)
+
+# gh#87 diagnostic (v2.7.0): multi-parameter tool-call parse through
+# common_chat on the default model. Dumps rendered prompt + raw + parse.
+add_model_test(test-gh87-multiparam-diag test_gh87_multiparam_diag.cpp)
+set_tests_properties(model/test-gh87-multiparam-diag PROPERTIES TIMEOUT 360)
+
+# gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
+#
+# The 120s default (add_model_test) was calibrated for FULL-GPU offload. The
+# Qwen3.6-35B-A3B and Gemma-4-26B-A4B GGUFs (~13GB) live on the dev box's HDD
+# and run at PARTIAL CPU offload (gpu_layers=20) on an 11GB GPU — far slower
+# than full-GPU, and a cold-cache HDD read of ~13GB compounds it (warm: ~6s;
+# cold-in-suite: well past 120s). These partial-offload runs validate
+# CORRECTNESS, not performance (you cannot estimate model throughput from a
+# partial-offload run). The real hazard: a 120s SIGKILL fires MID-CUDA, leaves
+# the GPU context corrupted, and the next heavy GPU test (the speculative
+# pair) then faults and takes down the terminal. A generous ceiling lets these
+# exit cleanly; a genuine hang (>600s) still trips it.
+set_tests_properties(
+    model/test-v219-gemma4-a4b
+    model/test-v219-qwen36
+    model/test-gh87-common-chat-e2e
+    model/test-gh87-backend-common-chat
+    model/test-gh87-backend-generate-tools
+    model/test-gh87-orchestrator-cutover
+    model/test-gh87-verify-qwen36
+    PROPERTIES TIMEOUT 600)

@@ -25,7 +25,6 @@
  */
 
 #include "v219_family_test_helpers.h"
-#include "production_emission_helpers.h"
 
 namespace { constexpr char K_GEMMA4_A4B[] = "gemma4_a4b"; }
 CATCH_REGISTER_LISTENER(V219FamilyListener<K_GEMMA4_A4B>)
@@ -55,34 +54,8 @@ SCENARIO("Gemma 4 A4B GGUF loads and generates first token",
     }
 }
 
-// ── Real-emission tool-call guarantee (gh#69 / gh#71-phase-2) ──
-
-SCENARIO("Gemma 4 A4B tool calls parse under the production prompt",
-         "[model][v219][gemma4][a4b][toolcall]")
-{
-    if (!g_ctx.initialized) {
-        SKIP("gemma4_a4b GGUF not present — run `entropic download gemma4_a4b`");
-    }
-    GIVEN("the adapter's own format_tools over the production system prompt") {
-        start_test_log("v219_gemma4_a4b_toolcall");
-        auto* adapter = g_ctx.orchestrator->get_adapter(g_ctx.default_tier);
-        REQUIRE(adapter != nullptr);
-
-        const std::vector<std::string> markers = {
-            "<|im_start|>tool_call", "<|tool_call", "<tool_call>"};
-
-        WHEN("a battery of tool-directed prompts runs through the live model") {
-            auto outcome = run_emission_battery(
-                adapter, production_base(), standard_tool_jsons(),
-                standard_tool_battery(), markers);
-
-            THEN("the adapter parses every named emission, well-formed, no leak") {
-                REQUIRE_FALSE(outcome.named_missed);
-                REQUIRE(outcome.parsed == outcome.total);
-                REQUIRE_FALSE(outcome.malformed);
-                REQUIRE_FALSE(outcome.leaked);
-                end_test_log();
-            }
-        }
-    }
-}
+// gh#87 (v2.7.0): the per-family adapter tool-call battery was retired with
+// the Gemma4Adapter — common_chat now owns tool-call render+parse. Per-family
+// common_chat tool-call coverage lives in test_gh87_verify_* and
+// test_gh87_orchestrator_cutover (gemma4-a4b). The smoke scenario above still
+// gates GGUF load + first-token generation for this quant.

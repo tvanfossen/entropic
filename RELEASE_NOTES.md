@@ -1,3 +1,85 @@
+# entropic v2.7.0
+
+Minor release. **gh#87 — adopt llama.cpp `common_chat` for tool-call
+render + parse**, retiring the hand-rolled gemma4 parsing lineage
+(gh#72/73/75) and absorbing the held gh#86 (`enable_thinking` final
+mile). Every family's prompt now renders through
+`common_chat_templates_apply` (jinja, kwargs-capable) so
+`enable_thinking` reaches the template, and tool calls parse with the
+model's native grammar where it is multi-parameter safe.
+
+## Highlights
+
+- **common_chat render for all families.** `apply_chat_template` takes
+  the jinja path; `enable_thinking` / `chat_template_kwargs` reach the
+  GGUF template. Fixes the gh#86 regression where the jinja switch made
+  gemma4 emit its native tool-call format that the old `Gemma4Adapter`
+  could not parse.
+- **Hybrid parse routing.** gemma4 parses via `common_chat`'s dedicated
+  `PEG_GEMMA4` grammar (multi-parameter safe). Qwen3.5/3.6 + Nemotron3
+  keep restored hand-rolled adapters — `common_chat`'s PEG *autoparser*
+  (PEG_NATIVE / PEG_SIMPLE) only extracts the FIRST `<parameter=>` of a
+  multi-parameter call. Routing keys on `common_chat_parse_reliable()`
+  (true iff the captured format is PEG_GEMMA4).
+- **Default model → Qwen3.6-35B-A3B-UD-IQ3_XXS.** Same A3B MoE class /
+  ~13GB IQ3_XXS as the prior 3.5 primary; stronger instruction-
+  following / tool-calling for the agentic loop. `qwen3_6_a3b` is the
+  model-keyed alias.
+
+## Engine changes
+
+- `LlamaCppBackend`: `set_active_tools` / `render_with_tools` /
+  `parse_response` / `common_chat_parse_reliable`. Stages MCP tool defs
+  into `common_chat`'s `inputs.tools`, captures the rendered
+  `common_chat_params` (incl. the serialized PEG arena — the converting
+  ctor copies only format + generation_prompt, so `parse_response`
+  explicitly `load()`s the arena), and decodes native emissions.
+- Orchestrator / interface_factory route post-generation parsing via
+  `common_chat_parse_reliable()`; tools flow through `params.tools` →
+  `stage_active_tools`, not a rigged system prompt.
+
+## Load-lifecycle hygiene
+
+- `load_gpu_model` / `do_deactivate` now **free-before-load**. The prior
+  load-new-then-free order held two `llama_model` objects resident
+  across a single activate. Pss analysis showed that transient was
+  RSS-only (shared mmap pages double-counted; physical footprint
+  unchanged), so this is hygiene — it removes the simultaneity +
+  duplicate metadata, not a memory fix. The model-suite OOM seen during
+  development was an *environment* issue (13GB models on a slow HDD,
+  since relocated to SSD), not an engine defect.
+
+## Breaking changes
+
+- `Gemma4Adapter` parsing retired — gemma4 tool calls decode via
+  `common_chat` (`PEG_GEMMA4`). The qwen35/qwen36/nemotron3 adapters are
+  retained for their multi-parameter XML format; a custom per-model
+  adapter remains a consumer override. No C-ABI break.
+
+## Test ceremony
+
+- Full model suite **48/48** on the maintainer's 1080 Ti (partial
+  offload for the 13GB A3B/A4B GGUFs), proper-quant model set.
+- New in-gate coverage: backend common_chat scenario, interface_factory
+  adapter-branch + `serialize_tool_calls`, and a separate-binary
+  orchestrator real-model smoke — `librentropic-inference` held ≥70%.
+- See `model-results-v2.7.0.json` attached for the GPU-validated matrix.
+
+## Distribution
+
+- CPU tarball: `entropic-2.7.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.7.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.7.0` then `entropic install-engine`
+
+## Known limitations
+
+- common_chat's autoparser is single-parameter only; multi-parameter
+  parsing for non-gemma4 families relies on the retained adapters.
+  Extend the dedicated-format set in `common_chat_parse_reliable` as
+  llama.cpp gains hand-written grammars for more families.
+
+---
+
 # entropic v2.6.0
 
 Minor release. **Bundles the v2.5.1 → v2.5.4 patch series into a

@@ -33,7 +33,7 @@
  * @return true on success, false if the GGUF isn't present or the
  *         orchestrator failed to load it.
  * @utility
- * @version 2.1.9
+ * @version 2.7.0
  */
 inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
                                               const std::string& key) {
@@ -66,6 +66,18 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     constexpr int V219_TEST_CTX = 4096;
     tier.context_length = V219_TEST_CTX;
 
+    // gh#86 (v2.6.1): these are tool-call PARSING + GGUF-load fixtures,
+    // not thinking-behavior tests. Disable thinking so the model emits
+    // its tool call directly instead of deliberating. Before v2.6.1 the
+    // low-level chat-template path silently rendered thinking-off, so
+    // the battery passed by accident; the v2.6.1 jinja render correctly
+    // honors the template's thinking variable, and a verbose 26B (a4b)
+    // would otherwise spend the whole max_tokens budget in a <channel>
+    // thought block and never reach the tool call. Setting it here both
+    // restores deterministic tool-call emission AND exercises the
+    // gh#86 wiring end-to-end.
+    tier.enable_thinking = false;
+
     // v2.4.0 (gh#23 MVP-10 follow-up): when the family GGUF is too
     // large for the host GPU's VRAM, llama_model_load_from_file with
     // n_gpu_layers=-1 fails outright (no graceful "fit as many as
@@ -82,7 +94,12 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
     // e4b_q4 (4.8 GB), e2b (2.5 GB), nemotron3 (3.1 GB) all stay
     // well below and continue full GPU offload (the prior behavior).
     constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
-    constexpr int PARTIAL_GPU_LAYERS = 20;
+    // v2.7.0: 20 → 15. At 20 the 13GB A3B/A4B GGUFs need ~8.8GB VRAM +
+    // a ~0.5GB compute buffer; with the desktop GPU at ~1.8GB the 11GB
+    // 1080 Ti OOM'd the compute-buffer alloc (model-results run7). 15
+    // (~6.6GB VRAM) leaves ~2GB headroom for competing desktop GPU —
+    // correctness is unaffected by the GPU/CPU offload split.
+    constexpr int PARTIAL_GPU_LAYERS = 15;
     std::error_code size_ec;
     auto file_size = fs::file_size(path, size_ec);
     if (!size_ec && file_size > LARGE_GGUF_BYTES) {

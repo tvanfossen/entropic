@@ -907,8 +907,15 @@ TEST_CASE("Routing fallback + tier callback + tool prompt branches "
         gen.generate_response(ctx);
         REQUIRE(cap.tier == "arch");
     }
-    SECTION("get_tool_prompt returns tools -> system msg augmented") {
-        auto iface = make_capturing_iface();
+    // gh#87 (v2.7.0): tool defs flow via params.tools (for common_chat
+    // rendering), NOT injected into the system message. These sections
+    // assert the new contract: tools land in the captured params_json,
+    // and the system message is left untouched.
+    SECTION("get_tool_prompt returns tools -> params.tools carries them") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing_params;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
         iface.get_tool_prompt = mock_get_tool_prompt_ok;
         ResponseGenerator gen(iface, make_loop_config(), cb, ev);
         LoopContext ctx{};
@@ -916,15 +923,17 @@ TEST_CASE("Routing fallback + tier callback + tool prompt branches "
         ctx.locked_tier = "lead";
         ctx.messages.push_back({"system", "base prompt"});
         ctx.messages.push_back({"user", "go"});
-        g_captured_msgs.clear();
+        g_captured_params.clear();
         gen.generate_response(ctx);
-        REQUIRE(g_captured_msgs.find("[tools]") != std::string::npos);
-        REQUIRE(g_captured_msgs.find("- foo") != std::string::npos);
-        REQUIRE(g_captured_msgs.find("base prompt") != std::string::npos);
+        REQUIRE(g_captured_params.find("\"tools\"") != std::string::npos);
+        REQUIRE(g_captured_params.find("[tools]") != std::string::npos);
         REQUIRE(ctx.messages[0].content == "base prompt");
     }
-    SECTION("get_tool_prompt rc != 0 -> NOT augmented") {
-        auto iface = make_capturing_iface();
+    SECTION("get_tool_prompt rc != 0 -> no tools in params") {
+        InferenceInterface iface{};
+        iface.generate = mock_generate_capturing_params;
+        iface.free_fn = mock_free;
+        iface.is_response_complete = mock_is_complete;
         iface.get_tool_prompt = mock_get_tool_prompt_none;
         ResponseGenerator gen(iface, make_loop_config(), cb, ev);
         LoopContext ctx{};
@@ -932,10 +941,9 @@ TEST_CASE("Routing fallback + tier callback + tool prompt branches "
         ctx.locked_tier = "lead";
         ctx.messages.push_back({"system", "base prompt"});
         ctx.messages.push_back({"user", "go"});
-        g_captured_msgs.clear();
+        g_captured_params.clear();
         gen.generate_response(ctx);
-        REQUIRE(g_captured_msgs.find("[tools]") == std::string::npos);
-        REQUIRE(g_captured_msgs.find("base prompt") != std::string::npos);
+        REQUIRE(g_captured_params.find("\"tools\"") == std::string::npos);
     }
 }
 

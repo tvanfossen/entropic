@@ -23,11 +23,15 @@ set(INFERENCE_SOURCES
     image_preprocessor.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp
+    adapters/adapter_registry.cpp
+    # gh#87 Phase D: autoparser families (Qwen, nemotron3) keep their
+    # hand-rolled multi-parameter parser — common_chat's PEG_NATIVE
+    # autoparser only extracts the first <parameter=>. gemma4 (PEG_GEMMA4,
+    # dedicated grammar) parses multi-param fine and stays on common_chat,
+    # so Gemma4Adapter is NOT restored.
     adapters/qwen35_adapter.cpp
     adapters/qwen36_adapter.cpp
-    adapters/gemma4_adapter.cpp
     adapters/nemotron3_adapter.cpp
-    adapters/adapter_registry.cpp
     adapters/xml_parameter_parser.cpp
 )
 

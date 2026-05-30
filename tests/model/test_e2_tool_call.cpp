@@ -57,6 +57,15 @@ SCENARIO("Tool call cycle: generate, parse, execute, regenerate",
                 CHECK(state.tool_exec_count >= 1);
                 REQUIRE(result.size() >= 3);
                 CHECK(result.back().role == "assistant");
+                // gh#89-B: the trio above ALL pass on a forced-synthetic-complete
+                // spiral (the engine pushes an assistant msg + COMPLETE at the
+                // iteration cap). Require dispatch to TRACK iterations — a
+                // parse/dispatch stall (gh#88 class) leaves count ~1 while
+                // iterations climb to the cap.
+                auto m = engine.last_loop_metrics();
+                INFO("iterations=" << m.iterations
+                     << " dispatches=" << state.tool_exec_count);
+                CHECK(state.tool_exec_count >= m.iterations - 1);
                 end_test_log();
             }
         }

@@ -1,3 +1,85 @@
+# entropic v2.7.2
+
+Patch release. Two strands: **gh#90 — gemma string-typed tool arguments**
+(a sassafras-blocking bug) and **gh#89 — model test-suite hardening** (the
+close-review of the agentic-loop coverage that let gh#88 ship green).
+
+## gh#90 — string-typed arguments coerced post-parse
+
+gemma emits quoted scalars as `<|"|>3<|"|>`. `common_chat`'s PEG_GEMMA4
+grammar (extern — not ours to change) types the inner token by shape, so
+`3` parses as a JSON **number** even when the tool's schema declares the
+parameter `"type":"string"`. The strict MCP argument validator then
+rejects the call, the agentic loop circuit-breaks, and the consumer sees
+a dead tool. Latent until a consumer (sassafras) shipped string-typed
+params like `grade_level`.
+
+- **Fix (post-parse coercion).** `coerce_string_typed_args` runs on the
+  backend parse path after PEG_GEMMA4: for each parsed call it looks up
+  the staged tool schema (retained in `active_tools_json_`) and, for any
+  property declared `"type":"string"` whose parsed value came back a
+  number, re-types it (`3` → `"3"`) in both `arguments_json` and the
+  `arguments` map. PEG_GEMMA4 is extern, so the repair sits one layer
+  above it — the grammar is untouched.
+
+## gh#89 — model test-suite hardening
+
+The post-gh#88 close review found the agentic-loop model tests could pass
+on a *spiral*: the engine force-completes at the iteration cap, satisfying
+weak "ended with an assistant message" assertions. Hardening:
+
+- **Spiral guard (BLOCKING).** E2/E7/E8 now assert
+  `tool_exec_count >= iterations - 1` — dispatch must track loop
+  iterations, so a cap-spiral fails instead of passing on the synthetic
+  forced-complete. (Ports the gh#88 audit fix to the rest of the suite.)
+- **Honest SKIP.** The two dead speculative-decoding gates (disabled at
+  the v2.1.11 pin) now `SKIP(...)` instead of a bare `return` that
+  reported PASS while asserting nothing. `inv test --model` counts and
+  reports SKIPPED separately from passed/failed, and enforces a per-test
+  TIMEOUT.
+- **Stronger assertions.** Constitutional-validation asserts the blatant
+  `rm -rf /` violation was actually flagged + revised
+  (`was_revised`/`revision_count`), not merely that content came back. E8
+  asserts the `DENIED` text propagated into the conversation. The gh#87
+  family-verify helper asserts the parsed `path` argument round-tripped,
+  not just that some call was made.
+- **Harness↔production fidelity (grammar path).** Strengthening the
+  constitutional test surfaced three stacked gaps that had let it pass
+  while exercising *nothing*: it validated the default-skipped `lead`
+  tier, and the model-test harness (which builds the orchestrator directly,
+  bypassing the facade) neither loaded the bundled grammars nor honored
+  `grammar_key` in its param parser. So the critique generation ran
+  *unconstrained*, the quantized model emitted free-form chain-of-thought
+  instead of the schema JSON, and the validator's documented parse
+  fail-open net swallowed it. The harness now mirrors the facade
+  (loads `data/grammars`, parses `grammar_key`), so the test exercises the
+  real grammar-constrained critique pipeline — the model now emits
+  `{"compliant":false,…}` and the violation is caught + revised.
+  *Production was never affected* (the facade loads the grammar); this is a
+  test-fidelity fix.
+- **Routed-tier parse bug.** `iface_parse_tool_calls` selected the adapter
+  for the *default* tier instead of the *routed* tier on the fallback
+  path, so a delegated sub-agent on a different family parsed with the
+  wrong grammar. Fixed in production and mirrored in the harness.
+
+Deferred to v2.7.3: emergent multi-turn coverage for the autoparser
+families (Qwen/Nemotron) + the cancel-bridge model test, and the
+test-infra refactors (shared serializer, C-ABI round-trip).
+
+## Tests
+
+- Unit: `coerce_string_typed_args` schema-driven re-typing.
+- Model (GPU): gh#90 string-typing repro on gemma; the E2/E7/E8 spiral
+  guards; the strengthened constitutional / auth-denial / family-verify
+  assertions.
+
+## Distribution
+
+- `pip install entropic-engine==2.7.2` then `entropic install-engine`
+- CPU + CUDA tarballs as for 2.7.1.
+
+---
+
 # entropic v2.7.1
 
 Patch release. **gh#88 — fix gemma tool-calling degradation over a

@@ -17,6 +17,7 @@
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 
+#include <entropic/inference/adapters/adapter_base.h>  // gh#90 coerce_string_typed_args
 #include <entropic/types/logging.h>
 
 #include <common.h>
@@ -1077,10 +1078,13 @@ bool LlamaCppBackend::common_chat_parse_reliable() const {
  * only format + generation_prompt, so without the load the parser silently
  * degrades to pure content (Increment-1 finding). See header for contract.
  *
+ * gh#90 (v2.7.2): coerces numeric scalars back to strings for string-typed
+ * params (the gemma `<|"|>` escape loses type through PEG_GEMMA4).
+ *
  * @param raw Raw model output (assistant turn only).
  * @return Parsed tool calls + cleaned content + reasoning.
  * @internal
- * @version 2.7.0
+ * @version 2.7.2
  */
 LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
     const std::string& raw) const
@@ -1101,6 +1105,9 @@ LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
         for (const auto& tc : msg.tool_calls) {
             result.tool_calls.push_back(to_entropic_tool_call(tc));
         }
+        // gh#90: gemma <|"|> string-escape loses type through PEG_GEMMA4 —
+        // restore string typing for params the staged schema declares string.
+        coerce_string_typed_args(result.tool_calls, active_tools_json_);
     } catch (const std::exception& e) {
         logger->warn("common_chat_parse failed ({}); raw kept as content",
                      e.what());

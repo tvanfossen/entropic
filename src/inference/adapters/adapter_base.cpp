@@ -400,6 +400,79 @@ void apply_action_envelope_recovery(std::vector<ToolCall>& calls,
     calls = std::move(recovered);
 }
 
+// ── gh#90 string-typed-arg coercion (free functions) ────────
+
+/**
+ * @brief String-typed property names for a tool in the staged MCP defs.
+ * @param tools Parsed MCP tool array.
+ * @param name  Tool name to match.
+ * @return Property names whose schema declares `"type":"string"`.
+ * @internal
+ * @version 2.7.2
+ */
+static std::unordered_set<std::string> tool_string_props(
+    const nlohmann::json& tools, const std::string& name) {
+    std::unordered_set<std::string> props;
+    for (const auto& t : tools) {
+        if (!t.is_object() || t.value("name", std::string()) != name) {
+            continue;
+        }
+        auto schema = t.value("inputSchema", nlohmann::json::object());
+        auto properties = schema.value("properties", nlohmann::json::object());
+        for (auto it = properties.begin(); it != properties.end(); ++it) {
+            if (it->is_object()
+                && it->value("type", std::string()) == "string") {
+                props.insert(it.key());
+            }
+        }
+        break;
+    }
+    return props;
+}
+
+/**
+ * @brief Coerce one call's numeric args to strings per the tool schema.
+ * @param tc    Tool call (arguments_json + arguments mutated in place).
+ * @param tools Parsed MCP tool array.
+ * @internal
+ * @version 2.7.2
+ */
+static void coerce_call_string_args(ToolCall& tc, const nlohmann::json& tools) {
+    auto props = tool_string_props(tools, tc.name);
+    if (props.empty()) { return; }
+    auto args = nlohmann::json::parse(tc.arguments_json, nullptr, false);
+    if (!args.is_object()) { return; }
+    bool changed = false;
+    for (const auto& key : props) {
+        auto it = args.find(key);
+        if (it != args.end() && it->is_number()) {
+            *it = it->dump();  // JSON number 3 → JSON string "3"
+            changed = true;
+        }
+    }
+    if (!changed) { return; }
+    tc.arguments_json = args.dump();
+    for (auto it = args.begin(); it != args.end(); ++it) {
+        tc.arguments[it.key()] =
+            it->is_string() ? it->get<std::string>() : it->dump();
+    }
+}
+
+/**
+ * @brief gh#90 string-typing coercion entry point — see header.
+ * @param calls      In/out parsed calls; numeric args re-typed in place.
+ * @param tools_json Staged MCP tool defs (JSON array) carrying the schema.
+ * @utility
+ * @version 2.7.2
+ */
+void coerce_string_typed_args(std::vector<ToolCall>& calls,
+                              const std::string& tools_json) {
+    if (calls.empty() || tools_json.empty()) { return; }
+    auto tools = nlohmann::json::parse(tools_json, nullptr, false);
+    if (!tools.is_array()) { return; }
+    for (auto& tc : calls) { coerce_call_string_args(tc, tools); }
+}
+
 // ── Think block handling ───────────────────────────────────
 
 /**

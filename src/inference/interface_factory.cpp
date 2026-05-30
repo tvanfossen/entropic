@@ -333,7 +333,7 @@ static std::string serialize_tool_calls(
  * tier's backend so a routed (non-default) tier parses correctly.
  *
  * @callback
- * @version 2.7.1 (gh#88 recovery)
+ * @version 2.7.2 (gh#88 recovery + gh#89 routed-tier fallback)
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -355,7 +355,10 @@ static int iface_parse_tool_calls(const char* raw,
         return 0;
     }
 
-    auto* adapter = ctx->orchestrator->get_adapter(ctx->default_tier);
+    // gh#89: fall back on the SAME routed tier as the reliable branch above
+    // (last_used_tier), not default_tier — a routed non-default autoparser tier
+    // was parsing with the wrong tier's adapter.
+    auto* adapter = ctx->orchestrator->get_adapter(tier);
     if (adapter == nullptr) {
         *cleaned = dup(raw_str);
         *tool_calls_json = dup("[]");

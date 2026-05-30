@@ -138,8 +138,13 @@ SCENARIO("Speculative decoding produces bit-identical output vs plain "
         auto orch = build_speculative_orchestrator(
             g_ctx.registry, spec_config);
         if (!orch) {
-            WARN("Speculative orchestrator unavailable — skipping");
-            return;
+            // gh#89-C: SKIP (rc=4) — a bare return reported PASS while
+            // asserting nothing. On boxes where the speculative orchestrator
+            // can't build (GGUF absent, or the v2.1.11-pin path init-fails)
+            // this is the branch actually taken, so it must SKIP too — not
+            // just the post-build disabled-gate return below.
+            SKIP("speculative orchestrator unavailable (GGUF/VRAM or "
+                 "disabled v2.1.11 pin path) — cannot build, skipping.");
         }
 
         const std::string prompt =
@@ -162,7 +167,10 @@ SCENARIO("Speculative decoding produces bit-identical output vs plain "
              "split-prefill boundary. Re-enable on pin bump. See "
              ".claude/proposals/ACTIVE/v2.1.11-speculative-decoding.md "
              "Gate A.");
-        return;
+        // gh#89-C: SKIP (reports SKIPPED) — a bare return reported PASS while
+        // asserting nothing, a gate that lied about being green.
+        SKIP("speculative bit-identical contract disabled at v2.1.11 pin "
+             "253ba110b — re-enable on pin bump (see WARN above).");
 
         // NOLINTNEXTLINE(readability-suspicious-call-argument)
         WHEN("running the prompt with speculative OFF then ON") {

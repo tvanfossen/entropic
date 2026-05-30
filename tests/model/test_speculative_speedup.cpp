@@ -140,8 +140,13 @@ SCENARIO("Speculative decoding delivers ≥1.8× speedup on long "
         auto orch = build_speedup_orchestrator(
             g_ctx.registry, spec_config);
         if (!orch) {
-            WARN("Speedup test setup failed — skipping");
-            return;
+            // gh#89-C: SKIP (rc=4) — a bare return reported PASS while
+            // asserting nothing. On boxes where the speculative orchestrator
+            // can't build (GGUF absent, or the v2.1.11-pin path init-fails)
+            // this is the branch actually taken, so it must SKIP too — not
+            // just the post-build disabled-gate return below.
+            SKIP("speculative speedup setup unavailable (GGUF/VRAM or "
+                 "disabled v2.1.11 pin path) — cannot build, skipping.");
         }
 
         // v2.1.11 pin `253ba110b`: the ≥1.8× speedup gate is
@@ -160,7 +165,10 @@ SCENARIO("Speculative decoding delivers ≥1.8× speedup on long "
              "output AND positive speedup. See "
              ".claude/proposals/ACTIVE/v2.1.11-speculative-decoding.md "
              "Gate A and the demo numbers in the Implementation Log.");
-        return;
+        // gh#89-C: SKIP (reports SKIPPED) — a bare return reported PASS while
+        // asserting nothing, a gate that lied about being green.
+        SKIP("speculative speedup gate disabled at v2.1.11 pin 253ba110b — "
+             "re-enable on pin bump (see WARN above).");
 
         WHEN("running the prompt with speculative OFF then ON") {
             // Warm-up pass to settle GPU clocks and any first-call

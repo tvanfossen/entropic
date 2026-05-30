@@ -61,6 +61,23 @@ SCENARIO("MCP authorization denial propagates through engine",
                 CHECK(state.tool_exec_count >= 1);
                 REQUIRE(result.size() >= 3);
                 CHECK(result.back().role == "assistant");
+                // gh#89-B: defeat the forced-synthetic-complete spiral blindspot
+                // — dispatch must track iterations (gh#88 class would stall it).
+                auto m = engine.last_loop_metrics();
+                INFO("iterations=" << m.iterations
+                     << " dispatches=" << state.tool_exec_count);
+                CHECK(state.tool_exec_count >= m.iterations - 1);
+                // gh#89-D: the test's whole point is that the DENIAL propagates
+                // — assert the "DENIED" text actually reached the conversation,
+                // not merely that the engine completed (which a refusal-to-call
+                // or a swallowed denial would also satisfy).
+                bool saw_denial = false;
+                for (const auto& msg : result) {
+                    if (msg.content.find("DENIED") != std::string::npos) {
+                        saw_denial = true;
+                    }
+                }
+                CHECK(saw_denial);
                 end_test_log();
             }
         }

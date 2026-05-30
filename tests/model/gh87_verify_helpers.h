@@ -129,6 +129,10 @@ inline void verify_family_common_chat(const std::string& gguf,
     REQUIRE(captured);                                // tool-capable format selected
     REQUIRE(n_calls >= 1);                            // parsed a real call
     CHECK(name.find("read_file") != std::string::npos);
+    // gh#89-D: path_arg was extracted (L117) but never asserted — a call to
+    // read_file with the wrong/empty path still "passed". Assert the argument
+    // round-tripped so this verifies parse FIDELITY, not just call presence.
+    CHECK(path_arg.find("/etc/hostname") != std::string::npos);
 }
 
 }  // namespace gh87verify

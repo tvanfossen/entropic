@@ -67,6 +67,15 @@ SCENARIO("Delegation wiring fires on_delegation_start callback",
             THEN("engine completed without error") {
                 REQUIRE(result.size() >= 3);
                 CHECK(result.back().role == "assistant");
+                // gh#89-B: dispatch must track iterations — defeats the
+                // forced-synthetic-complete spiral blindspot (gh#88 class).
+                // (delegation_started firing is verified separately in D —
+                // the mock harness may not exercise the directive path.)
+                auto m = engine.last_loop_metrics();
+                INFO("iterations=" << m.iterations
+                     << " dispatches=" << state.tool_exec_count
+                     << " delegation_started=" << state.delegation_started);
+                CHECK(state.tool_exec_count >= m.iterations - 1);
                 end_test_log();
             }
         }

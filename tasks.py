@@ -131,12 +131,46 @@ def _get_gpu_name():
         return "unknown"
 
 
-## @brief Run model tests 1:1 with retries.
+## @brief Run one model test exe with retries + a per-attempt timeout.
 ## @utility
-## @return Tuple of (results list, failed count).
-## @version 1
+## @return Tuple of (status, retries, duration_ms). status: pass|skipped|fail.
+## @version 2.7.2
+def _run_one_model_test(exe_path):
+    """Run one model test exe (retries + a 600s per-attempt timeout).
+
+    gh#89-C: a Catch2 SKIP (all scenarios SKIP — e.g. a GGUF/VRAM-gated test or
+    an intentionally-disabled gate) exits 4 with no assertions. Model tests have
+    1-2 scenarios, so a real failure exits 1-2 — making rc==4 an unambiguous SKIP
+    signal here, NOT a failure. A hung GPU test is killed at 600s (TimeoutExpired
+    → rc 124 → fail) so it cannot wedge the suite.
+    """
+    t0 = time.monotonic()
+    retries = 0
+    for attempt in range(MAX_MODEL_RETRIES + 1):
+        try:
+            rc = subprocess.call(
+                [exe_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=600,
+            )
+        except subprocess.TimeoutExpired:
+            rc = 124
+        if rc == 0:
+            return "pass", attempt, int((time.monotonic() - t0) * 1000)
+        if rc == 4:
+            return "skipped", attempt, int((time.monotonic() - t0) * 1000)
+        retries = attempt + 1
+    return "fail", retries, int((time.monotonic() - t0) * 1000)
+
+
+## @brief Run model tests 1:1; a Catch2 SKIP (rc=4) is reported, not failed.
+## @utility
+## @return Tuple of (results list, failed count). Skips do NOT count as failures.
+## @version 2.7.2
 def _run_model_tests(build_dir):
-    """Run model tests 1:1 with retries. Returns (results, failed_count)."""
+    """Run model tests 1:1. Returns (results, failed_count). gh#89: a Catch2
+    SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL."""
     test_dir = os.path.join(build_dir, "tests", "model")
     executables = sorted(
         f
@@ -151,40 +185,23 @@ def _run_model_tests(build_dir):
         return [], 1
 
     results = []
-    passed = 0
-    failed = 0
-    flaky = 0
+    passed = failed = flaky = skipped = 0
 
     for exe in executables:
-        exe_path = os.path.join(test_dir, exe)
-        retries = 0
-        status = "fail"
-        t0 = time.monotonic()
-
-        for attempt in range(MAX_MODEL_RETRIES + 1):
-            rc = subprocess.call(
-                [exe_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if rc == 0:
-                status = "pass"
-                retries = attempt
-                break
-            retries = attempt + 1
-
-        duration_ms = int((time.monotonic() - t0) * 1000)
-
+        status, retries, duration_ms = _run_one_model_test(os.path.join(test_dir, exe))
         if status == "pass":
+            passed += 1
             if retries > 0:
                 flaky += 1
                 print(f"  FLAKY  {exe} (retry {retries})")
             else:
                 print(f"  PASS   {exe}")
-            passed += 1
+        elif status == "skipped":
+            skipped += 1
+            print(f"  SKIP   {exe}")
         else:
-            print(f"  FAIL   {exe} (after {MAX_MODEL_RETRIES} retries)")
             failed += 1
+            print(f"  FAIL   {exe} (after {MAX_MODEL_RETRIES} retries)")
 
         results.append(
             {
@@ -195,7 +212,10 @@ def _run_model_tests(build_dir):
             }
         )
 
-    print(f"\n{passed}/{len(executables)} passed, " f"{flaky} flaky, {failed} failed")
+    print(
+        f"\n{passed}/{len(executables)} passed, "
+        f"{skipped} skipped, {flaky} flaky, {failed} failed"
+    )
     return results, failed
 
 
@@ -227,13 +247,18 @@ def _get_lead_model_key():
 
 ## @brief Write build/test-reports/model/results.json.
 ## @utility
-## @version 3
+## @version 4
 def _write_results_json(test_results, duration_ms):
     """Write build/test-reports/model/results.json."""
     os.makedirs(os.path.dirname(MODEL_RESULTS_FILE), exist_ok=True)
 
     total = len(test_results)
     passed = sum(1 for t in test_results if t["status"] == "pass")
+    skipped = sum(1 for t in test_results if t["status"] == "skipped")
+    # gh#89-C: a Catch2 SKIP (rc=4) is NOT a failure. Count it distinctly so
+    # the audit artifact matches the console roster; the prior
+    # `failed = total - passed` mis-bucketed every SKIP as a failure.
+    failed = sum(1 for t in test_results if t["status"] == "fail")
     flaky_count = sum(1 for t in test_results if t["retries"] > 0)
 
     data = {
@@ -248,7 +273,8 @@ def _write_results_json(test_results, duration_ms):
         "summary": {
             "total": total,
             "passed": passed,
-            "failed": total - passed,
+            "skipped": skipped,
+            "failed": failed,
             "flaky": flaky_count,
         },
     }

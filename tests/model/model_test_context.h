@@ -233,6 +233,18 @@ inline bool init_orchestrator(ModelTestContext& ctx) {
         spdlog::error("Orchestrator init failed");
         return false;
     }
+    // gh#89: mirror the facade's grammar fallback (entropic.cpp
+    // init_orchestrator). The model harness builds the orchestrator
+    // DIRECTLY, bypassing the facade, so without this the bundled grammars
+    // (e.g. constitutional_critique) never load and grammar-constrained
+    // generation silently runs UNCONSTRAINED — the harness↔production
+    // fidelity gap that let constitutional validation fail open in-test.
+    if (ctx.orchestrator->grammar_registry().size() == 0) {
+        auto loaded = ctx.orchestrator->load_grammars_from(
+            fs::path(MODEL_PATH) / "data" / "grammars");
+        spdlog::info("Test harness: loaded {} bundled grammar(s) "
+                     "(facade-parity fallback)", loaded);
+    }
     ctx.default_tier = ctx.config.models.default_tier;
     ctx.initialized = true;
     return true;
@@ -410,6 +422,17 @@ inline GenerationParams parse_gen_params(const char* params_json) {
     // rendering (the GenericAdapter can't parse native formats).
     if (obj.contains("tools") && obj["tools"].is_string()) {
         params.tools = obj["tools"].get<std::string>();
+    }
+    // gh#89: carry grammar selection through the harness, matching the
+    // production param parser. Without this the harness DROPPED grammar_key,
+    // so grammar-constrained generation (e.g. the constitutional critique
+    // schema) silently ran UNCONSTRAINED — the validator then fell through
+    // its fail-open net on the bundled model's free-form output.
+    if (obj.contains("grammar_key") && obj["grammar_key"].is_string()) {
+        params.grammar_key = obj["grammar_key"].get<std::string>();
+    }
+    if (obj.contains("grammar") && obj["grammar"].is_string()) {
+        params.grammar = obj["grammar"].get<std::string>();
     }
     return params;
 }
@@ -600,7 +623,7 @@ inline int real_parse_tool_calls(const char* raw_content,
         return 0;
     }
 
-    auto* adapter = ctx->orchestrator->get_adapter(ctx->default_tier);
+    auto* adapter = ctx->orchestrator->get_adapter(tier);  // gh#89: routed tier
     if (adapter == nullptr) {
         *cleaned_content = alloc_cstr(raw);
         *tool_calls_json = alloc_cstr("[]");

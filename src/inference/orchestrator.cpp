@@ -368,17 +368,18 @@ static void stage_active_tools(InferenceBackend* model,
 /**
  * @brief Split tool calls out of a result (gh#87: common_chat or adapter).
  *
- * When the backend rendered through common_chat (tools staged), parse via
- * its captured params (`parse_response`) — the model emitted its native
- * wire format. Otherwise fall back to the legacy per-family adapter. Never
- * both (the double-parse guard). raw_content always preserves the
- * pre-split output.
+ * gh#87 Phase D: parse via common_chat (`parse_response`) ONLY when its
+ * captured format is multi-parameter safe (`common_chat_parse_reliable` —
+ * the dedicated PEG_GEMMA4 grammar). Autoparser families (Qwen, nemotron3)
+ * fall back to their hand-rolled multi-parameter adapter, because the PEG
+ * autoparser drops parameters past the first. Never both (double-parse
+ * guard). raw_content always preserves the pre-split output.
  *
  * @param model Backend that produced the result (for common_chat routing).
- * @param adapter Tier adapter for the legacy path (may be null).
+ * @param adapter Tier adapter for the autoparser/fallback path (may be null).
  * @param[in,out] result Generation result (content split, tools set).
  * @utility
- * @version 2.7.0
+ * @version 2.7.0 (Phase D)
  */
 static void apply_adapter_parse(InferenceBackend* model,
                                 ChatAdapter* adapter,
@@ -386,7 +387,7 @@ static void apply_adapter_parse(InferenceBackend* model,
     if (result.content.empty()) { return; }
     auto* llama = dynamic_cast<LlamaCppBackend*>(model);
     result.raw_content = result.content;
-    if (llama != nullptr && llama->has_common_chat_params()) {
+    if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto parsed = llama->parse_response(result.content);
         result.content = parsed.content;
         result.tool_calls = std::move(parsed.tool_calls);

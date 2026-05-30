@@ -325,14 +325,14 @@ static std::string serialize_tool_calls(
 /**
  * @brief Parse tool calls from raw model output (gh#87 3b).
  *
- * When the last generate rendered through common_chat (tools staged), the
- * model emitted its NATIVE wire format — parse via the backend's captured
- * params (`LlamaCppBackend::parse_response`), which speaks that format.
- * Otherwise fall back to the legacy per-family adapter. Routed on the
- * last-used tier's backend so a routed (non-default) tier parses correctly.
+ * gh#87 Phase D: parse via common_chat (`parse_response`) only when its
+ * format is multi-parameter safe (`common_chat_parse_reliable` — the
+ * dedicated PEG_GEMMA4 grammar). Autoparser families (Qwen, nemotron3) fall
+ * back to their hand-rolled multi-parameter adapter. Routed on the last-used
+ * tier's backend so a routed (non-default) tier parses correctly.
  *
  * @callback
- * @version 2.7.0
+ * @version 2.7.0 (Phase D)
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -346,7 +346,7 @@ static int iface_parse_tool_calls(const char* raw,
     auto* llama = dynamic_cast<LlamaCppBackend*>(
         ctx->orchestrator->get_backend(tier));
 
-    if (llama != nullptr && llama->has_common_chat_params()) {
+    if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto parsed = llama->parse_response(raw_str);
         *cleaned = dup(parsed.content);
         *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));

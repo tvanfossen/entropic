@@ -277,6 +277,25 @@ public:
      */
     bool has_common_chat_params() const { return have_chat_params_; }
 
+    /**
+     * @brief True iff common_chat parsing is reliable for the last render (gh#87).
+     *
+     * common_chat's PEG *autoparser* (PEG_NATIVE / PEG_SIMPLE — inferred from
+     * a template) only extracts the FIRST `<parameter=>` of a multi-parameter
+     * tool call. Only the DEDICATED grammars (currently PEG_GEMMA4) parse
+     * multi-parameter calls correctly. So the orchestrator routes parsing to
+     * `parse_response` ONLY when the captured format is dedicated; autoparser
+     * families fall back to their hand-rolled multi-parameter adapter.
+     *
+     * Extend the dedicated-format set here as llama.cpp gains hand-written
+     * parsers for more families.
+     *
+     * @return true if `parse_response` is multi-parameter safe for this render.
+     * @utility
+     * @version 2.7.0
+     */
+    bool common_chat_parse_reliable() const;
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 

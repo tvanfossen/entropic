@@ -49,25 +49,12 @@ SCENARIO("Delegation wiring fires on_delegation_start callback",
         engine.set_tier_resolution(tri);
 
         WHEN("engine runs with delegation-triggering prompt") {
+            // gh#87 (v2.7.0): tools flow via params.tools → common_chat, not a
+            // rigged prompt. This scenario asserts loop completion (≥3 msgs
+            // ending in assistant), with the delegation infrastructure wired.
             auto messages = make_messages(
-                "You are a lead engineer.\n\n"
-                "# Tools\n\n<tools>\n"
-                "[{\"type\":\"function\",\"function\":{\"name\":"
-                "\"entropic.delegate\",\"description\":"
-                "\"Delegate a task to another team member\","
-                "\"parameters\":{\"type\":\"object\","
-                "\"properties\":{\"target\":{\"type\":\"string\","
-                "\"description\":\"Team member name\"},"
-                "\"task\":{\"type\":\"string\","
-                "\"description\":\"Task description\"}},"
-                "\"required\":[\"target\",\"task\"]}}}]\n"
-                "</tools>\n\n"
-                "For each function call, return within "
-                "<tool_call></tool_call> XML tags:\n"
-                "<tool_call>\n<function=example_function>\n"
-                "<parameter=param_name>value</parameter>\n"
-                "</function>\n</tool_call>",
-                "Delegate writing a hello world function to eng");
+                "You are a lead engineer who delegates work to your team.",
+                "Delegate writing a hello world function to eng.");
 
             // Wire a tool executor that detects delegate calls
             ToolExecutionInterface tei;

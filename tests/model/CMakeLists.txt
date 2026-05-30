@@ -175,3 +175,30 @@ set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)
 # result.tool_calls (the agent-loop production path).
 add_model_test(test-gh87-orchestrator-cutover
                test_gh87_orchestrator_cutover.cpp)
+
+# gh#87 diagnostic (v2.7.0): multi-parameter tool-call parse through
+# common_chat on the default model. Dumps rendered prompt + raw + parse.
+add_model_test(test-gh87-multiparam-diag test_gh87_multiparam_diag.cpp)
+set_tests_properties(model/test-gh87-multiparam-diag PROPERTIES TIMEOUT 360)
+
+# gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
+#
+# The 120s default (add_model_test) was calibrated for FULL-GPU offload. The
+# Qwen3.6-35B-A3B and Gemma-4-26B-A4B GGUFs (~13GB) live on the dev box's HDD
+# and run at PARTIAL CPU offload (gpu_layers=20) on an 11GB GPU — far slower
+# than full-GPU, and a cold-cache HDD read of ~13GB compounds it (warm: ~6s;
+# cold-in-suite: well past 120s). These partial-offload runs validate
+# CORRECTNESS, not performance (you cannot estimate model throughput from a
+# partial-offload run). The real hazard: a 120s SIGKILL fires MID-CUDA, leaves
+# the GPU context corrupted, and the next heavy GPU test (the speculative
+# pair) then faults and takes down the terminal. A generous ceiling lets these
+# exit cleanly; a genuine hang (>600s) still trips it.
+set_tests_properties(
+    model/test-v219-gemma4-a4b
+    model/test-v219-qwen36
+    model/test-gh87-common-chat-e2e
+    model/test-gh87-backend-common-chat
+    model/test-gh87-backend-generate-tools
+    model/test-gh87-orchestrator-cutover
+    model/test-gh87-verify-qwen36
+    PROPERTIES TIMEOUT 600)

@@ -337,8 +337,19 @@ bool LlamaCppBackend::do_activate() {
 /**
  * @brief Load the GGUF model onto the GPU (do_activate step 1).
  * @return true on success; sets last_error_ on failure.
+ *
+ * gh#87 (v2.7.0): frees the WARM CPU model BEFORE reloading with GPU
+ * layers. The prior order (load new_model, *then* free the old model_)
+ * held two full llama_model objects resident during a single activate —
+ * a transient double-load. Changing n_gpu_layers requires a reload (you
+ * cannot re-offload an already-loaded model), but there is no reason to
+ * keep the discarded CPU copy alive across it: a failed GPU reload
+ * leaves the backend unusable regardless, and the COLD path can recover
+ * it. Freeing first removes the simultaneity (and the duplicate model
+ * metadata/buffers) without changing the load contract.
+ *
  * @internal
- * @version 2.3.7
+ * @version 2.7.0
  */
 bool LlamaCppBackend::load_gpu_model() {
     llama_model_params mparams = build_load_mparams(config());
@@ -348,14 +359,24 @@ bool LlamaCppBackend::load_gpu_model() {
         logger->warn("tensor_split not yet implemented, ignoring");
     }
 
-    llama_model* new_model = llama_model_load_from_file(
-        config().path.c_str(), mparams);
-    if (!new_model) {
+    // tokenizer_ borrows the old vocab_; reset it before the free so the
+    // borrow never dangles. Then free the WARM model and null the
+    // handles so a failed reload below leaves the backend in a clean,
+    // recoverable state rather than a dangling one.
+    tokenizer_.reset();
+    if (model_ != nullptr) {
+        llama_model_free(model_);
+        model_ = nullptr;
+        vocab_ = nullptr;
+    }
+
+    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    if (model_ == nullptr) {
         // llama.cpp returns null with no error string — the actual
-        // reason (OOM, CUDA init failure, GGUF parse error, etc.)
-        // only surfaces in ggml's log stream. Point the operator at
-        // it so multi-handle GPU failures (gh#58 v2.2.7 follow-up)
-        // are diagnosable without source-diving llama.cpp.
+        // reason (OOM, CUDA init failure, GGUF parse error, etc.) only
+        // surfaces in ggml's log stream. Point the operator at it so
+        // multi-handle GPU failures (gh#58 v2.2.7 follow-up) are
+        // diagnosable without source-diving llama.cpp.
         last_error_ = "Failed to reload model with GPU layers "
                       "(path=" + config().path.string()
                     + ", gpu_layers=" + std::to_string(config().gpu_layers)
@@ -364,12 +385,6 @@ bool LlamaCppBackend::load_gpu_model() {
         return false;
     }
 
-    // v2.3.10: tokenizer_ borrows the old vocab_. Reset it BEFORE we
-    // free the old model so the borrow never dangles, then re-create
-    // against the new vocab below.
-    tokenizer_.reset();
-    if (model_) { llama_model_free(model_); }
-    model_ = new_model;
     vocab_ = llama_model_get_vocab(model_);
     tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     return true;
@@ -445,8 +460,18 @@ void LlamaCppBackend::init_mmproj_if_configured() {
 
 /**
  * @brief Deactivate: free context, reload model CPU-only.
+ *
+ * gh#87 (v2.7.0): frees the GPU model BEFORE reloading CPU-only, the
+ * symmetric fix to load_gpu_model. Deactivate's whole purpose is to
+ * release VRAM and stay WARM, so freeing the GPU model first aligns
+ * with intent and avoids holding two full llama_model objects during
+ * the tier-switch reload. The old "keep GPU model on CPU-reload
+ * failure" fallback is dropped — it left VRAM pinned, contradicting the
+ * deactivation; a failed warm-reload now nulls the handle (recoverable
+ * via the next activate, which reloads from scratch).
+ *
  * @internal
- * @version 2.1.8
+ * @version 2.7.0
  */
 void LlamaCppBackend::do_deactivate() {
     // v2.3.10: sampler factory borrows ctx_ + vocab_. Release it
@@ -464,25 +489,33 @@ void LlamaCppBackend::do_deactivate() {
         ctx_ = nullptr;
     }
 
-    // Reload model CPU-only for WARM state
+    // Free the GPU model FIRST (releasing VRAM — the point of
+    // deactivate), then reload CPU-only for the WARM state. tokenizer_
+    // borrows the old vocab_, so reset it before the free.
+    tokenizer_.reset();
+    if (model_ != nullptr) {
+        llama_model_free(model_);
+        model_ = nullptr;
+        vocab_ = nullptr;
+    }
+
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     mparams.use_mmap = true;
     mparams.use_mlock = config().use_mlock;
 
-    llama_model* cpu_model = llama_model_load_from_file(
-        config().path.c_str(), mparams);
-    if (cpu_model) {
-        // v2.3.10: same vocab-handoff rule as load_gpu_model — reset
-        // tokenizer_ before freeing the GPU model, then rewire to the
-        // CPU model's vocab.
-        tokenizer_.reset();
-        llama_model_free(model_);
-        model_ = cpu_model;
+    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    if (model_ != nullptr) {
         vocab_ = llama_model_get_vocab(model_);
         tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
     } else {
-        logger->warn("Failed to reload CPU model during deactivate, keeping GPU model");
+        // VRAM is released, but the warm-reload failed: leave the handle
+        // null (state stays recoverable — the next activate reloads from
+        // scratch). Error, not warn: a same-file CPU reload failing here
+        // signals real trouble (disk/OOM).
+        logger->error("Failed to reload CPU model during deactivate "
+                      "(path={}); backend left unloaded until next activate",
+                      config().path.string());
     }
 }
 
@@ -1019,6 +1052,22 @@ std::string LlamaCppBackend::render_with_tools(
         prompt = apply_chat_template_lowlevel(messages);
     }
     return prompt;
+}
+
+/**
+ * @brief True iff the captured common_chat format parses multi-param (gh#87).
+ *
+ * Only dedicated grammars (PEG_GEMMA4) are multi-parameter safe; the PEG
+ * autoparser (PEG_NATIVE/PEG_SIMPLE) drops parameters past the first. See
+ * header for the routing contract.
+ *
+ * @return true if parse_response is multi-parameter safe.
+ * @utility
+ * @version 2.7.0
+ */
+bool LlamaCppBackend::common_chat_parse_reliable() const {
+    return have_chat_params_
+        && last_chat_format_ == COMMON_CHAT_FORMAT_PEG_GEMMA4;
 }
 
 /**

@@ -19,6 +19,10 @@
 #include <entropic/core/identity_manager.h>
 #include <entropic/inference/orchestrator.h>
 #include <entropic/prompts/manager.h>
+
+// gh#87 (v2.7.0): the harness mirrors production tool-call routing —
+// parse via the backend's captured common_chat params, not the adapter.
+#include "../../src/inference/llama_cpp_backend.h"
 #include <entropic/interfaces/i_inference_callbacks.h>
 #include <entropic/mcp/mcp_authorization.h>
 #include <entropic/types/backend_capability.h>
@@ -137,7 +141,90 @@ inline bool load_test_config(const config::BundledModels& registry,
  * @utility
  * @version 1.10.2
  */
+/**
+ * @brief Repoint large default tiers to a small model for generic tests.
+ *
+ * gh#87 (v2.7.0): the generic subsystem + engine-loop tests validate ENGINE
+ * LOGIC (routing, tool-call cycle, compaction, delegation, state) — which is
+ * model-agnostic. On a resource-constrained dev box, loading the 13GB primary
+ * (Qwen3.6-35B-A3B) for every one of ~30 generic tests drove the user slice
+ * past systemd-oomd's 50% memory-pressure limit and got the test terminal
+ * reaped. So for the GENERIC path only, repoint any tier backed by a >10GB
+ * GGUF to a small model that fits fully on an 11GB GPU (~0 CPU-side RAM).
+ *
+ * Per-family / large-model validation at full size is covered by the
+ * dedicated v219 + gh87 family tests, which use init_orchestrator_for_v219_*
+ * (their own path) and intentionally keep the large models — so this does NOT
+ * touch them. Production sizing is per-deployment YAML; this only scopes the
+ * generic-test harness.
+ *
+ * @param ctx Test context (config tiers mutated in place).
+ * @utility
+ * @version 2.7.0
+ */
+inline void use_small_default_model(ModelTestContext& ctx) {
+    constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
+    const std::string small_key = "qwen3_5_4b";
+    const auto* entry = ctx.registry.get(small_key);
+    auto small_path = ctx.registry.resolve(small_key);
+    if (entry == nullptr || !fs::is_regular_file(small_path)) {
+        spdlog::warn("Small test model '{}' unavailable at {} — generic tests "
+                     "fall back to the configured model.",
+                     small_key, small_path.string());
+        return;
+    }
+    for (auto& [name, tier] : ctx.config.models.tiers) {
+        std::error_code size_ec;
+        auto sz = fs::file_size(tier.path, size_ec);
+        if (!size_ec && sz > LARGE_GGUF_BYTES) {
+            spdlog::info("Test harness: repointing generic tier '{}' to '{}' "
+                         "(was {} bytes — small model for engine-logic tests)",
+                         name, small_key, sz);
+            tier.path = small_path;
+            tier.adapter = entry->adapter;
+        }
+    }
+}
+
 inline bool init_orchestrator(ModelTestContext& ctx) {
+    // gh#87 (v2.7.0): harness footprint clamps for the dev box.
+    //
+    // (1) gpu_layers: the default primary tier is now Qwen3.6-35B-A3B (~13GB).
+    //     Full GPU offload OOMs on a small dev GPU (e.g. 1080 Ti, 11GB), so
+    //     clamp any tier backed by a >10GB GGUF to partial CPU offload.
+    //
+    // (2) context_length: a tier's configured context (the user's prod config
+    //     can be 128K) sizes the KV cache, which is allocated up front for the
+    //     FULL n_ctx regardless of prompt length. At 128K on a 13GB model the
+    //     KV is many GB of anonymous RAM PER tier — which, combined with the
+    //     13GB page-cache mmaps and a full 2GB swap, drove the user slice past
+    //     systemd-oomd's 50% memory-pressure limit and got the test terminal
+    //     reaped. Test prompts are tiny, so clamp to 16K — ample for every
+    //     scenario (incl. multi-turn / compaction) at a fraction of the KV.
+    //
+    // Production sizes VRAM + context for the deployment via YAML; both clamps
+    // only scope the test harness on a resource-constrained dev box.
+    constexpr uintmax_t LARGE_GGUF_BYTES = 10ULL * 1024 * 1024 * 1024;
+    constexpr int PARTIAL_GPU_LAYERS = 20;
+    constexpr int MAX_TEST_CONTEXT = 16384;
+    for (auto& [name, tier] : ctx.config.models.tiers) {
+        std::error_code size_ec;
+        auto sz = fs::file_size(tier.path, size_ec);
+        if (!size_ec && sz > LARGE_GGUF_BYTES) {
+            tier.gpu_layers = PARTIAL_GPU_LAYERS;
+            spdlog::info("Test harness: clamping tier '{}' to gpu_layers={} "
+                         "(GGUF {} bytes > {} GB, partial CPU offload)",
+                         name, PARTIAL_GPU_LAYERS, sz,
+                         LARGE_GGUF_BYTES / (1024ULL * 1024 * 1024));
+        }
+        if (tier.context_length > MAX_TEST_CONTEXT) {
+            spdlog::info("Test harness: clamping tier '{}' context_length "
+                         "{} -> {} (KV-cache memory footprint)",
+                         name, tier.context_length, MAX_TEST_CONTEXT);
+            tier.context_length = MAX_TEST_CONTEXT;
+        }
+    }
+
     ctx.orchestrator = std::make_unique<ModelOrchestrator>();
     if (!ctx.orchestrator->initialize(ctx.config)) {
         spdlog::error("Orchestrator init failed");
@@ -314,6 +401,13 @@ inline GenerationParams parse_gen_params(const char* params_json) {
     if (obj.contains("temperature")) {
         params.temperature = obj["temperature"].get<float>();
     }
+    // gh#87 (v2.7.0): carry the per-turn tool defs so they reach the
+    // orchestrator → set_active_tools → common_chat render. Without this
+    // the engine-loop harness would drop tools and fall back to no-tool
+    // rendering (the GenericAdapter can't parse native formats).
+    if (obj.contains("tools") && obj["tools"].is_string()) {
+        params.tools = obj["tools"].get<std::string>();
+    }
     return params;
 }
 
@@ -480,13 +574,35 @@ inline int real_parse_tool_calls(const char* raw_content,
                                  void* user_data)
 {
     auto* ctx = static_cast<ModelTestContext*>(user_data);
+    std::string raw = raw_content ? raw_content : "";
+
+    // gh#87 (v2.7.0): mirror production iface_parse_tool_calls — when the
+    // last generate rendered through common_chat (tools staged), parse via
+    // the backend's captured params; the model emitted its native format.
+    auto tier = ctx->orchestrator->last_used_tier();
+    if (tier.empty()) { tier = ctx->default_tier; }
+    auto* llama = dynamic_cast<LlamaCppBackend*>(
+        ctx->orchestrator->get_backend(tier));
+    if (llama != nullptr && llama->common_chat_parse_reliable()) {
+        auto cc = llama->parse_response(raw);
+        json tools = json::array();
+        for (const auto& tc : cc.tool_calls) {
+            json args_obj;
+            for (const auto& [k, v] : tc.arguments) { args_obj[k] = v; }
+            tools.push_back({{"name", tc.name}, {"arguments", args_obj}});
+        }
+        *cleaned_content = alloc_cstr(cc.content);
+        *tool_calls_json = alloc_cstr(tools.dump());
+        return 0;
+    }
+
     auto* adapter = ctx->orchestrator->get_adapter(ctx->default_tier);
     if (adapter == nullptr) {
-        *cleaned_content = alloc_cstr(raw_content);
+        *cleaned_content = alloc_cstr(raw);
         *tool_calls_json = alloc_cstr("[]");
         return 0;
     }
-    auto parsed = adapter->parse_tool_calls(raw_content);
+    auto parsed = adapter->parse_tool_calls(raw);
     *cleaned_content = alloc_cstr(parsed.cleaned_content);
     *tool_calls_json = alloc_cstr(serialize_tool_calls(parsed));
     return 0;
@@ -520,10 +636,43 @@ inline void real_free(void* ptr) {
 }
 
 /**
+ * @brief Provide structured tool defs for engine-loop tests (gh#87).
+ *
+ * Mirrors the production facade_get_tool_prompt contract: returns the
+ * tier's tools as an MCP JSON array ({name, description, inputSchema}),
+ * which the engine's build_params_json routes into params.tools →
+ * common_chat render. The harness has no ServerManager, so it serves a
+ * fixed read/write filesystem tool set — enough for the e2/e7/e8 loops,
+ * whose mock executor returns scripted content regardless of tool name.
+ *
+ * @param tier Tier name (unused — same tools for every tier here).
+ * @param result Output: heap JSON-array string. Caller frees.
+ * @param user_data Unused.
+ * @return 0 (tools always available in the harness).
+ * @callback
+ * @version 2.7.0
+ */
+inline int real_get_tool_prompt(const char* /*tier*/, char** result,
+                                void* /*user_data*/) {
+    static const char* kToolsJson =
+        R"([{"name":"filesystem.read_file",)"
+        R"("description":"Read a file from disk and return its contents.",)"
+        R"("inputSchema":{"type":"object","properties":{"path":)"
+        R"({"type":"string"}},"required":["path"]}},)"
+        R"({"name":"filesystem.write_file",)"
+        R"("description":"Write content to a file on disk.",)"
+        R"("inputSchema":{"type":"object","properties":{"path":)"
+        R"({"type":"string"},"content":{"type":"string"}},)"
+        R"("required":["path","content"]}}])";
+    *result = alloc_cstr(kToolsJson);
+    return 0;
+}
+
+/**
  * @brief Build an InferenceInterface wired to the live model.
  * @return Wired interface.
  * @utility
- * @version 1.10.2
+ * @version 2.7.0
  */
 inline InferenceInterface make_real_interface() {
     InferenceInterface iface;
@@ -533,6 +682,8 @@ inline InferenceInterface make_real_interface() {
     iface.complete = real_complete;
     iface.parse_tool_calls = real_parse_tool_calls;
     iface.is_response_complete = real_is_complete;
+    iface.get_tool_prompt = real_get_tool_prompt;  // gh#87: params.tools path
+    iface.tool_prompt_data = &g_ctx;
     iface.free_fn = real_free;
     iface.backend_data = &g_ctx;
     iface.orchestrator_data = &g_ctx;
@@ -649,6 +800,10 @@ public:
         fs::create_directories(LOG_DIR);
         bool ok = load_registry(g_ctx.registry);
         ok = ok && load_test_config(g_ctx.registry, g_ctx.config);
+        // gh#87: generic engine-logic tests use a small model (footprint /
+        // OOM safety). Family tests use init_orchestrator_for_v219_* and keep
+        // their large models — they do NOT go through this listener.
+        if (ok) { use_small_default_model(g_ctx); }
         ok = ok && init_orchestrator(g_ctx);
         if (!ok) {
             spdlog::error("Model test init failed — tests will skip");

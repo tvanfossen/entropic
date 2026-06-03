@@ -660,7 +660,7 @@ bool DelegationManager::run_pipeline_stage(
  * @param task Task description.
  * @return Fresh child context.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.7.4
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
@@ -669,6 +669,13 @@ LoopContext DelegationManager::build_child_context(
 
     LoopContext child;
     child.delegation_depth = parent_ctx.delegation_depth + 1;
+    // gh#48 (regression fix, v2.7.4): propagate the parent conversation id so
+    // the storage create_delegation INSERT satisfies the delegations→
+    // conversations FK. Without this the row is rejected, the delegations
+    // table stays empty, and entropic.followup returns the no-matches
+    // sentinel. (Present in build_resumed_child_context; lost here when the
+    // child-context builders were extracted.)
+    child.parent_conversation_id = parent_ctx.conversation_id;
     // P1-9: propagate ancestor chain + append parent tier so the
     // child can reject cycles (A→B→A) before executing.
     child.delegation_ancestor_tiers = parent_ctx.delegation_ancestor_tiers;

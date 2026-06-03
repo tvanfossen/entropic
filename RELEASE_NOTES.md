@@ -1,3 +1,62 @@
+# entropic v2.7.4
+
+Patch release. Two sassafras-blocking bugs, both **plumbing-not-feature**
+gaps where a parsed config field was dropped before it reached the code that
+acts on it.
+
+## gh#95 — identity `grammar:` registers but never constrains
+
+An identity frontmatter `grammar:` key was accepted and the grammar was
+registered, but generation stayed **unconstrained** — the field had no effect
+on output. `thread_frontmatter_sampler` (the facade pass that copies parsed
+identity frontmatter onto the tier) threaded every sampler knob *except*
+`grammar`, so `IdentityFrontmatter.grammar` never reached `TierConfig.grammar`.
+With nothing on the tier, the orchestrator's `resolve_grammar_key()` found no
+key and the sampler chain attached no grammar constraint. Same class as the
+gh#82/85/94 frontmatter-threading gaps.
+
+**Fix:** thread `fm.grammar` → `tc.grammar` in `thread_frontmatter_sampler`
+(one assignment). Plus observability: `add_grammar_sampler` now logs on
+successful attach and **errors** if `llama_sampler_init_grammar` returns null
+(previously a null grammar sampler left output silently unconstrained).
+
+## gh#48 — delegations FK-fail → `entropic.followup` always empty (regression)
+
+A regression of a bug originally fixed in v2.1.12. `build_child_context`
+dropped `child.parent_conversation_id = parent_ctx.conversation_id` when the
+child-context builders were extracted (gh#32, ef80058 — the assignment
+survived only in `build_resumed_child_context`). With an empty parent id, the
+storage `create_delegation` INSERT failed the delegations→conversations
+foreign-key guard, the delegations table stayed empty, and `search_delegations`
+returned the no-matches sentinel — so `entropic.followup` always came back
+empty.
+
+**Fix:** restore the one assignment in `build_child_context`.
+
+## Tests
+
+- gh#48: two layers, because testing them in isolation is the gh#88 trap.
+  - `delegation_manager_test` (CPU unit) — a `MockStorage` captures the
+    `parent_id` reaching `create_delegation`; red on the current rev (`"" ==
+    "root-conv-1"`), green after the fix.
+  - `test_storage_integration` (CPU integration) — the **combined path**: a
+    real `DelegationManager` driving the real `SqliteStorageBackend` FK guard,
+    then `get_delegations` (followup) must return the row. Red on the current
+    rev (the guard refuses the empty INSERT, `get_delegations` returns `[]`),
+    green after the fix. Note: the delegation reports `success` even on the
+    bug — only the persisted-row check discriminates, which is the silent
+    failure mode gh#48 actually is.
+- gh#95: `test_gh95_identity_grammar` (GPU, facade C-ABI + backend isolation)
+  — a deterministic `root ::= "HELLO"` grammar must force the literal output.
+  Red on the current rev (unconstrained output ≠ HELLO, no `Grammar resolved`
+  log), green after the fix. The facade scenario drives the real
+  `entropic_configure_dir` → `entropic_run` path the model harness normally
+  bypasses. (Test note: `context_length` must fit the staged tool prompt —
+  the 27 meta-tools bloat it to ~4900 tokens; a too-small ctx overflows and
+  garbles output regardless of grammar.)
+
+---
+
 # entropic v2.7.3
 
 Patch release. **gh#94 — per-tier identity-frontmatter sampler knobs were

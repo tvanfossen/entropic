@@ -38,11 +38,14 @@ namespace {
  * @brief Append grammar sampler to chain when a grammar string is set.
  *
  * Lifted from `llama_cpp_backend.cpp` (v2.3.10) so the gh#23 chain
- * construction stays exactly where the original logic lived.
+ * construction stays exactly where the original logic lived. v2.7.4
+ * adds gh#95 observability: an info log on successful attach and an
+ * error log if `llama_sampler_init_grammar` returns null (output would
+ * then be silently unconstrained).
  *
  * @utility
  * @internal
- * @version 2.3.10
+ * @version 2.7.4
  */
 void add_grammar_sampler(llama_sampler* chain,
                          const llama_vocab* vocab,
@@ -52,6 +55,14 @@ void add_grammar_sampler(llama_sampler* chain,
         vocab, grammar.c_str(), "root");
     if (g) {
         llama_sampler_chain_add(chain, g);
+        // gh#95: surface grammar attachment — the issue (and the
+        // tool-staged enforcement gap) had no log to confirm the sampler
+        // actually engaged the constraint.
+        logger->info("Grammar sampler attached ({} bytes)", grammar.size());
+    } else {
+        logger->error("Grammar sampler init FAILED for root rule — output "
+                      "will be UNCONSTRAINED. Grammar ({} bytes): {}",
+                      grammar.size(), grammar);
     }
 }
 

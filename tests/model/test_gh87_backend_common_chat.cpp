@@ -48,7 +48,7 @@ entropic::ModelConfig make_a4b_config(const std::filesystem::path& gguf) {
     cfg.path = gguf;
     cfg.adapter = "gemma4";
     cfg.context_length = 4096;
-    cfg.gpu_layers = 20;     // 26B partial CPU offload on an 11GB GPU
+    cfg.gpu_layers = 15;     // 26B partial CPU offload on an 11GB GPU (v2.7.4: 20->15, OOM headroom)
     cfg.keep_warm = false;
     cfg.use_mlock = false;
     cfg.flash_attn = false;

@@ -973,6 +973,25 @@ TEST_CASE("Storage interface lifecycle integration",
         CHECK(mock_storage.task == "ship it");
         CHECK(mock_storage.status == "completed");
     }
+    SECTION("gh#48 regression: parent_conversation_id reaches create_delegation") {
+        // gh#48 (regressed on 2.7.x): build_child_context() dropped the
+        // `child.parent_conversation_id = parent_ctx.conversation_id` line
+        // (kept only in build_resumed_child_context). A normal delegation then
+        // passes an EMPTY parent to storage_->create_delegation — which the
+        // real SqliteStorageBackend FK guard rejects, so the delegations table
+        // stays empty and entropic.followup always returns the no-matches
+        // sentinel. This asserts the parent propagates through the production
+        // path (build_child_context -> create_storage_record -> create_delegation).
+        MockChildLoop loop_mock;
+        DelegationManager mgr(mock_run_child, &loop_mock, tier_res);
+        mgr.set_storage(&storage_iface);
+        LoopContext parent;
+        parent.conversation_id = "root-conv-1";  // root conv (gh#48 v2.1.12)
+        auto result = mgr.execute_delegation(parent, "eng", "task");
+        CHECK(result.success);
+        REQUIRE(mock_storage.create_called == 1);
+        CHECK(mock_storage.parent_id == "root-conv-1");
+    }
     SECTION("failed loop -> status=failed (delegating_tier = target)") {
         auto stuck_loop = [](LoopContext& ctx, void*) {
             ctx.state = AgentState::IDLE;

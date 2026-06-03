@@ -195,6 +195,10 @@ set_tests_properties(model/test-gh88-envelope-priming PROPERTIES TIMEOUT 300)
 add_model_test(test-gh90-string-typing test_gh90_string_typing.cpp)
 set_tests_properties(model/test-gh90-string-typing PROPERTIES TIMEOUT 300)
 
+# gh#95 (v2.7.4): facade-driven — identity grammar: field must constrain output.
+add_model_test(test-gh95-identity-grammar test_gh95_identity_grammar.cpp)
+set_tests_properties(model/test-gh95-identity-grammar PROPERTIES TIMEOUT 300)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

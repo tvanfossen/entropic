@@ -11,6 +11,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/core/compaction.h>
+#include <entropic/core/delegation.h>
 #include <entropic/core/engine_types.h>
 #include <entropic/storage/backend.h>
 #include <nlohmann/json.hpp>
@@ -181,6 +182,114 @@ SCENARIO("StorageInterface delegation callbacks are invoked",
                     REQUIRE(arr.size() == 1);
                     REQUIRE(arr[0]["status"] == "completed");
                 }
+            }
+        }
+
+        fs::remove(db_path);
+    }
+}
+
+// ── gh#48 (regression, v2.7.4): combined real-storage delegation path ─────
+//
+// The unit test (MockStorage) proves build_child_context propagates the
+// parent_conversation_id to create_delegation; the scenario above proves the
+// storage layer persists a delegation given a *hardcoded* valid parent. But
+// neither exercises the COMBINED path — the real DelegationManager feeding the
+// real SqliteStorageBackend FK guard — which is exactly where gh#48 regressed
+// (build_child_context dropped the parent id, the guard rejected the empty
+// INSERT, the table stayed empty, and entropic.followup always came back
+// empty). Testing the layers in isolation is the gh#88 trap; this is the
+// end-to-end guard that would have caught the regression.
+
+/**
+ * @brief Always-valid tier resolution for the gh#48 combined-path test.
+ * @internal
+ * @version 2.7.4
+ */
+static entropic::ChildContextInfo gh48_resolve_tier(
+        const std::string& /*tier*/, void* /*ud*/) {
+    entropic::ChildContextInfo info;
+    info.valid = true;
+    info.system_prompt = "You are an engineer.";
+    info.explicit_completion = true;
+    info.completion_instructions = "Use entropic.complete when done.";
+    return info;
+}
+
+/**
+ * @brief tier_exists stub — every tier resolves for this test.
+ * @internal
+ * @version 2.7.4
+ */
+static bool gh48_tier_exists(const std::string& /*tier*/, void* /*ud*/) {
+    return true;
+}
+
+/**
+ * @brief No-op child loop — completes the child without invoking a model.
+ * @internal
+ * @version 2.7.4
+ */
+static void gh48_run_child(entropic::LoopContext& ctx, void* /*ud*/) {
+    entropic::Message a;
+    a.role = "assistant";
+    a.content = "done";
+    ctx.messages.push_back(std::move(a));
+    ctx.state = entropic::AgentState::COMPLETE;
+    ctx.metrics.iterations = 1;
+}
+
+SCENARIO("gh#48: a manager-driven delegation persists a row the FK accepts "
+         "and followup retrieves",
+         "[integration][storage][delegation][gh48]") {
+    GIVEN("a real SQLite store + root conversation + manager wired to it") {
+        auto db_path = fs::temp_directory_path() / "entropic_test" /
+                       "gh48_combined_deleg.db";
+        fs::remove(db_path);
+        StorageHarness harness(db_path);
+
+        // The root conversation row — the parent the child delegation
+        // references (init_session_conversation's job in production).
+        auto root_conv = harness.storage.create_conversation("root");
+        REQUIRE_FALSE(root_conv.empty());
+
+        // Real StorageInterface backed by the real SQLite backend.
+        entropic::StorageInterface si{};
+        si.create_delegation = test_create_delegation;
+        si.complete_delegation = test_complete_delegation;
+        si.user_data = &harness;
+
+        // Real DelegationManager — the layer gh#48 regressed in.
+        entropic::TierResolutionInterface tri{};
+        tri.resolve_tier = gh48_resolve_tier;
+        tri.tier_exists = gh48_tier_exists;
+        entropic::DelegationManager mgr(gh48_run_child, nullptr, tri);
+        mgr.set_storage(&si);
+
+        WHEN("execute_delegation runs with the root conversation as parent") {
+            entropic::LoopContext parent;
+            parent.conversation_id = root_conv;
+            auto result = mgr.execute_delegation(
+                parent, "eng", "Build feature");
+
+            THEN("the delegations row persists under root and followup finds it") {
+                // RED on the regression: build_child_context drops the parent
+                // id -> create_delegation refuses the empty INSERT -> no row ->
+                // get_delegations returns []. The callback still fires (returns
+                // false internally), so the count check passes either way; the
+                // array-size check is the discriminator.
+                INFO("result.success=" << result.success
+                     << " create_calls=" << harness.create_delegation_calls);
+                CHECK(result.success);
+                REQUIRE(harness.create_delegation_calls == 1);
+
+                std::string json_out;
+                harness.storage.get_delegations(root_conv, json_out);
+                auto arr = json::parse(json_out);
+                REQUIRE(arr.size() == 1);
+                CHECK(arr[0]["parent_conversation_id"] == root_conv);
+                CHECK(arr[0]["target_tier"] == "eng");
+                CHECK(arr[0]["task"] == "Build feature");
             }
         }
 

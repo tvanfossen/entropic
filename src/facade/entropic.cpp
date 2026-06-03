@@ -830,11 +830,18 @@ static std::string build_shared_prompt_prefix(
  * @param tc Tier config (mutated).
  * @param fm Parsed identity frontmatter.
  * @utility
- * @version 2.5.4
+ * @version 2.7.4
  */
 static void thread_frontmatter_sampler(
     entropic::TierConfig& tc,
     const entropic::prompts::IdentityFrontmatter& fm) {
+    // gh#95 (v2.7.4): thread the identity `grammar:` key so the orchestrator's
+    // resolve_grammar_key() finds it and constrains the tier's generation.
+    // Without this the field is parsed but dropped here — registers OK, never
+    // enforces (same class as the gh#82/85/94 sampler-threading gaps).
+    if (fm.grammar.has_value()) {
+        tc.grammar = std::filesystem::path(*fm.grammar);
+    }
     if (fm.temperature.has_value()) { tc.temperature = *fm.temperature; }
     if (fm.max_output_tokens.has_value()) {
         tc.max_output_tokens = *fm.max_output_tokens;

@@ -118,7 +118,7 @@ TEST_CASE("gh#87 gate: common_chat render→generate→parse extracts a gemma4 t
 
     llama_backend_init();
     auto mparams = llama_model_default_params();
-    mparams.n_gpu_layers = 20;  // a4b 26B: partial CPU offload on 11GB GPU
+    mparams.n_gpu_layers = 15;  // a4b 26B: partial CPU offload on 11GB GPU (v2.7.4: 20->15, OOM headroom)
     llama_model* model = llama_model_load_from_file(path.c_str(), mparams);
     REQUIRE(model != nullptr);
     const llama_vocab* vocab = llama_model_get_vocab(model);

@@ -232,7 +232,7 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
  * @param config Validated model config.
  * @return true on success.
  * @internal
- * @version 1.9.13
+ * @version 2.7.6
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
     llama_model_params mparams = llama_model_default_params();
@@ -248,6 +248,7 @@ bool LlamaCppBackend::do_load(const ModelConfig& config) {
 
     vocab_ = llama_model_get_vocab(model_);
     is_recurrent_ = llama_model_is_recurrent(model_);
+    is_hybrid_ = llama_model_is_hybrid(model_);  // gh#97: attn + recurrent/SSM
     // v2.3.10: wire the Tokenizer seam now that vocab_ is valid.
     // Lifetime: tokenizer_ borrows vocab_; do_unload resets
     // tokenizer_ BEFORE freeing the model so the borrow never dangles.
@@ -1531,7 +1532,7 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
  * @param params Generation parameters.
  * @return true on success.
  * @internal
- * @version 2.7.5
+ * @version 2.7.6
  */
 bool LlamaCppBackend::run_prefill_cached(
     const std::vector<llama_token>& tokens,
@@ -1547,19 +1548,31 @@ bool LlamaCppBackend::run_prefill_cached(
     // delta once warm-keep reuse lands. (llama_perf n_p_eval proved unreliable
     // across the state-restore boundary, so we count the decodes directly.)
     last_prefill_tokens_ = 0;
+    last_input_tokens_ = static_cast<int>(tokens.size());  // gh#97
     auto t_pre = entropic::log::now();
-    // gh#96 warm-keep: reuse the resident KV prefix + decode only the delta.
-    // Falls back to a cold prefill (clear + system-prefix cache) when reuse is
-    // off, the prefix diverged, or the KV was mutated out-of-band.
-    bool ok = try_warm_reuse(tokens);
-    if (!ok) {
-        ok = prefill_dispatch(tokens, system_prompt, messages, params);
-        // After a cold prefill the KV holds exactly `tokens`; record it so the
-        // next turn can warm-reuse. Clear the record on failure.
-        if (ok) {
-            resident_tokens_ = tokens;
-        } else {
-            invalidate_resident_kv();
+    bool ok;
+    if (is_hybrid_ || is_recurrent_) {
+        // gh#97 (v2.7.6): hybrid/recurrent (SSM) memory rejects the partial
+        // seq_rm warm-keep needs (state can't be partially erased at the tail),
+        // and the prompt-cache restore lands non-contiguous cells — both desync
+        // KV positions (pos_max inflates → eventual decode slot-failure with the
+        // cache mostly empty). Plain full prefill (clear + contiguous decode) is
+        // the only correct path for these archs at this llama.cpp pin. Mirrors
+        // the speculative-decoding guard. Forfeits the gh#96 reuse for them.
+        ok = run_prefill(tokens);
+        invalidate_resident_kv();
+    } else {
+        // gh#96 warm-keep: reuse the resident KV prefix + decode only the delta;
+        // fall back to a cold prefill (clear + system-prefix cache) when reuse
+        // is off, the prefix diverged, or the KV was mutated out-of-band.
+        ok = try_warm_reuse(tokens);
+        if (!ok) {
+            ok = prefill_dispatch(tokens, system_prompt, messages, params);
+            if (ok) {
+                resident_tokens_ = tokens;
+            } else {
+                invalidate_resident_kv();
+            }
         }
     }
     last_prefill_ms_ = entropic::log::elapsed_ms(t_pre, entropic::log::now());

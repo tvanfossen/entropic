@@ -1,3 +1,51 @@
+# entropic v2.7.6
+
+Patch release. **gh#97 — v2.7.5 warm-keep / prompt-cache corrupted KV
+bookkeeping on hybrid-architecture models.**
+
+## The bug
+
+On hybrid archs (`qwen35` / `qwen35moe` and anything in
+`llm_arch_is_hybrid()` — attention + recurrent/SSM memory), the prompt-cache
+prefix machinery desynced the KV cache. Warm-keep's partial
+`llama_memory_seq_rm(0, cut, -1)` is **rejected** by recurrent memory ("a
+state can't be partially erased at the end"); the rejected return was
+discarded, so the decode of the delta appended past the un-removed tail and
+the seq-0 position high-water mark inflated every turn (`pos_max` 140 after a
+107-token prompt, growing ~18/turn). At long context this eventually produced
+`decode: failed to find a memory slot for batch` with the cache ~85% empty —
+severe multi-turn thrash. The pre-existing prompt-cache restore path
+(`llama_state_seq_set_data` → non-contiguous cells) was independently broken
+on hybrid memory, so `warm_keep: false` only reduced the failures.
+
+The gh#96 benchmark model (gemma4-E2B) is a plain `llama_kv_cache` where both
+partial `seq_rm` and contiguous restore behave — so the hybrid path was never
+exercised. (Reported by a consumer running qwen3_6_a3b, source-grounded.)
+
+## The fix
+
+Guard the **entire** prompt-cache prefix path (warm-keep *and* cache restore)
+behind `is_hybrid_ || is_recurrent_` and fall back to plain `run_prefill`
+(clear + contiguous full decode) — the only correct path for these archs at
+the pinned llama.cpp. Mirrors the existing speculative-decoding guard.
+**Consequence:** hybrid models forgo the gh#96 warm-keep speedup (full
+re-prefill per turn, as before v2.7.5) but are correct; the optimization is
+unchanged for plain-KV-cache archs (gemma4 etc.). Internal change — no public
+API / interface header touched.
+
+## Tests
+
+- `test_gh97_hybrid_cache` (GPU, the repro arch Qwen3.6-35B-A3B / qwen35moe):
+  red→green on a deterministic desync gate — a correct prefill leaves
+  `kv_pos_max ≈ input + generated`, so the test asserts `kv_pos_max < input +
+  max_tokens` per turn. On v2.7.5 this is violated by turn 2 (the inflation);
+  the guard keeps it bounded. Closes the arch-coverage gap (every gh#96 test
+  ran on non-hybrid gemma4).
+- Regression: `test_gh96_warmkeep` still green — warm-keep keeps engaging on
+  the non-hybrid path.
+
+---
+
 # entropic v2.7.5
 
 Patch release. **gh#96 — agent-loop KV warm-keep (incremental prefill).**

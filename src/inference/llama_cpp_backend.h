@@ -226,6 +226,34 @@ public:
      */
     double last_prefill_ms() const { return last_prefill_ms_; }
 
+    /**
+     * @brief Tokenized prompt size of the last generation (input tokens).
+     * @return Input token count of the most recent generate() call.
+     * @utility
+     * @version 2.7.6
+     */
+    int last_input_tokens() const { return last_input_tokens_; }
+
+    /**
+     * @brief Highest occupied KV position in seq 0 right now (live query).
+     *
+     * gh#97 (v2.7.6): a correct prefill leaves exactly `input_tokens` positions
+     * resident, so after a generation this is ~`input + generated - 1`. If a
+     * prefix-reuse path (warm-keep / cache restore) leaves an un-removed tail
+     * — e.g. partial `seq_rm` rejected by recurrent/hybrid memory — this
+     * INFLATES beyond the prompt size and eventually exhausts the context with
+     * the cache mostly empty. Exposed so the gh#97 hybrid test can assert no
+     * inflation, catching the desync immediately instead of at exhaustion.
+     * @return seq-0 pos_max, or -1 if not active.
+     * @utility
+     * @version 2.7.6
+     */
+    int kv_pos_max() const {
+        return ctx_ != nullptr
+            ? static_cast<int>(llama_memory_seq_pos_max(llama_get_memory(ctx_), 0))
+            : -1;
+    }
+
     /* ── gh#87 (v2.7.0): common_chat tool-call render + parse ── */
 
     /**
@@ -481,6 +509,7 @@ protected:
     llama_context* ctx_ = nullptr;             ///< Inference context (ACTIVE)
     const llama_vocab* vocab_ = nullptr;       ///< Vocabulary (from model_)
     int last_prefill_tokens_ = 0;              ///< gh#96: prompt tokens decoded by last generate()
+    int last_input_tokens_ = 0;                ///< gh#97: tokenized prompt size of last generate()
     double last_prefill_ms_ = 0.0;             ///< gh#96: prefill wall-clock ms of last generate()
     std::vector<llama_token> resident_tokens_; ///< gh#96: tokens resident in KV seq 0 (warm-keep)
 
@@ -799,6 +828,7 @@ protected:
     /// decoding compatibility, etc.).
     /// @version 1.9.13
     bool is_recurrent_ = false;
+    bool is_hybrid_ = false;                   ///< gh#97: attention + recurrent/SSM memory
 
     /**
      * @brief Check if loaded model is recurrent.

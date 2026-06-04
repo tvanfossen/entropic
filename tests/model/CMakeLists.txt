@@ -205,6 +205,9 @@ set_tests_properties(model/test-gh96-warmkeep PROPERTIES TIMEOUT 300)
 add_model_test(test-gh96-warmkeep-oracle test_gh96_warmkeep_oracle.cpp)
 set_tests_properties(model/test-gh96-warmkeep-oracle PROPERTIES TIMEOUT 600)
 
+add_model_test(test-gh97-hybrid-cache test_gh97_hybrid_cache.cpp)
+set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

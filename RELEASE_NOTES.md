@@ -1,3 +1,57 @@
+# entropic v2.7.5
+
+Patch release. **gh#96 — agent-loop KV warm-keep (incremental prefill).**
+
+## What it does
+
+The agent loop re-prefilled the *entire* non-system conversation history on
+every turn: the prompt cache reused only the system prefix, so all prior
+turns' tokens were re-decoded through the transformer each generation. On a
+multi-turn agent (a researcher tracing a call chain over 15–20 turns) the same
+thousands of history tokens were pushed through the model dozens of times —
+prefill, not generation, dominated per-turn latency.
+
+Warm-keep keeps the prior turn's KV resident and re-decodes **only the
+appended delta**. Each turn: derive the true KV occupancy from
+`llama_memory_seq_pos_max`, find the longest token-prefix the resident KV still
+matches, `seq_rm` the divergent tail, and decode just the new tokens. Measured
+on gemma4-E2B: per-turn prefill dropped from 352 tokens / 102 ms to **64
+tokens / 24 ms (~4.3×)** by turn 6, and stays flat as the conversation grows
+instead of climbing. The realized win scales with model size + context length.
+
+## Behavior change (default ON)
+
+Warm-keep ships **on by default** (`inference.prompt_cache.warm_keep`). Like
+every KV-cache reuse (llama.cpp's server, continuous batching, the existing
+prompt cache), incremental prefill is **not bit-identical** to a full
+re-prefill: decoding the delta on top of reused KV rounds floats differently
+than decoding the whole prompt fresh (GPU matmuls aren't bit-stable across
+batch shapes). Output stays **coherent and on-task** but can differ token-for-
+token from a cold run — and over a multi-turn agentic loop that can mean a
+different-but-equally-valid trajectory. This drift sits **inside the baseline
+non-determinism the GPU already has** (greedy decode is non-deterministic
+run-to-run on the test hardware regardless of warm-keep). Set
+`warm_keep: false` to force the old full-re-prefill behavior.
+
+Internal-only change — no public API / interface header touched.
+
+## Tests
+
+- `warm_keep_util_test` (CPU unit) — the reuse-decision logic: longest-common-
+  token-prefix scan, the occupancy gate that catches out-of-band KV mutation
+  (multimodal / complete / speculative / a different conversation), and
+  divergence/cap rules. Pure + deterministic, runs every commit.
+- `test_gh96_warmkeep` (GPU) — red→green: per-turn prefill must collapse from
+  the whole history to the appended delta.
+- `test_gh96_warmkeep_oracle` (GPU) — coherence + deterministic reuse/fallback
+  structure across the adversarial vectors (append-growth, mid-history prune,
+  system-prompt swap, two interleaved conversations on a shared backend,
+  cancellation). Asserts coherence + token-count structure, NOT output
+  equality — a determinism probe in the suite proves the GPU is non-
+  deterministic run-to-run, so exact-output assertions are invalid here.
+
+---
+
 # entropic v2.7.4
 
 Patch release. Two sassafras-blocking bugs, both **plumbing-not-feature**

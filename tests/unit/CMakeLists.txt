@@ -69,6 +69,7 @@ add_executable(entropic-inference-tests
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp
+    inference/warm_keep_util_test.cpp
     inference/logprob_evaluation_test.cpp
     inference/vision_adapter_test.cpp
     inference/image_preprocessor_test.cpp

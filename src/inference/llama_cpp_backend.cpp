@@ -16,6 +16,7 @@
 #include "llama_cpp_backend.h"
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
+#include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 
 #include <entropic/inference/adapters/adapter_base.h>  // gh#90 coerce_string_typed_args
 #include <entropic/types/logging.h>
@@ -472,7 +473,7 @@ void LlamaCppBackend::init_mmproj_if_configured() {
  * via the next activate, which reloads from scratch).
  *
  * @internal
- * @version 2.7.0
+ * @version 2.7.5
  */
 void LlamaCppBackend::do_deactivate() {
     // v2.3.10: sampler factory borrows ctx_ + vocab_. Release it
@@ -489,6 +490,7 @@ void LlamaCppBackend::do_deactivate() {
         llama_free(ctx_);
         ctx_ = nullptr;
     }
+    invalidate_resident_kv();  // gh#96: KV is gone with the context
 
     // Free the GPU model FIRST (releasing VRAM — the point of
     // deactivate), then reload CPU-only for the WARM state. tokenizer_
@@ -578,7 +580,7 @@ void LlamaCppBackend::inject_sampler_factory_for_test(
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 2.1.8
+ * @version 2.7.5
  */
 void LlamaCppBackend::do_unload() {
     if (prompt_cache_) {
@@ -602,6 +604,7 @@ void LlamaCppBackend::do_unload() {
         llama_free(ctx_);
         ctx_ = nullptr;
     }
+    invalidate_resident_kv();  // gh#96: KV is gone with the context
     if (model_) {
         llama_model_free(model_);
         model_ = nullptr;
@@ -1190,7 +1193,7 @@ std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
  * @param tokens Input token sequence.
  * @return true on success.
  * @internal
- * @version 2.0.0
+ * @version 2.7.5
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
     llama_memory_clear(llama_get_memory(ctx_), true);
@@ -1209,6 +1212,7 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
             return false;
         }
     }
+    last_prefill_tokens_ += n_tokens;  // gh#96: count tokens decoded in prefill
     return true;
 }
 
@@ -1350,7 +1354,7 @@ std::string LlamaCppBackend::extract_system_prompt(
  * @param start_offset Index of the first token to decode.
  * @return true on success, false on decode failure.
  * @internal
- * @version 2.0.6
+ * @version 2.7.5
  */
 bool LlamaCppBackend::decode_tokens_from(
     const std::vector<llama_token>& tokens, int start_offset)
@@ -1360,6 +1364,7 @@ bool LlamaCppBackend::decode_tokens_from(
 
     int n_batch = llama_n_batch(ctx_);
     int n_remaining = total - start_offset;
+    last_prefill_tokens_ += n_remaining;  // gh#96: count tokens decoded here
     for (int off = 0; off < n_remaining; off += n_batch) {
         int chunk = std::min(n_batch, n_remaining - off);
         llama_batch batch = llama_batch_get_one(
@@ -1513,11 +1518,12 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
 }
 
 /**
- * @brief Run prefill with prompt cache integration.
+ * @brief Run prefill with prompt cache integration (perf-instrumented wrapper).
  *
- * On cache hit: restore prefix KV and decode the remainder.
- * On cache miss: two-pass prefill (prefix → save → remainder) so the
- * stored cache entry contains prefix-only state.
+ * Resets the llama perf counters, dispatches to the cache-aware prefill
+ * (prefill_dispatch), then captures this generation's prompt-eval token
+ * count (gh#96). Thin wrapper so the dispatch body stays under the knots
+ * SLOC gate.
  *
  * @param tokens Full token sequence.
  * @param system_prompt System prompt text for cache key.
@@ -1525,9 +1531,121 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
  * @param params Generation parameters.
  * @return true on success.
  * @internal
- * @version 2.0.6
+ * @version 2.7.5
  */
 bool LlamaCppBackend::run_prefill_cached(
+    const std::vector<llama_token>& tokens,
+    const std::string& system_prompt,
+    const std::vector<Message>& messages,
+    const GenerationParams& params)
+{
+    // gh#96 (v2.7.5): count tokens actually pushed through llama_decode during
+    // prefill this turn. run_prefill / decode_tokens_from accumulate into
+    // last_prefill_tokens_; a prompt-cache HIT restores the system prefix
+    // without a decode, so this counts the re-decoded post-system remainder —
+    // the per-turn waste that climbs today and should collapse to the appended
+    // delta once warm-keep reuse lands. (llama_perf n_p_eval proved unreliable
+    // across the state-restore boundary, so we count the decodes directly.)
+    last_prefill_tokens_ = 0;
+    auto t_pre = entropic::log::now();
+    // gh#96 warm-keep: reuse the resident KV prefix + decode only the delta.
+    // Falls back to a cold prefill (clear + system-prefix cache) when reuse is
+    // off, the prefix diverged, or the KV was mutated out-of-band.
+    bool ok = try_warm_reuse(tokens);
+    if (!ok) {
+        ok = prefill_dispatch(tokens, system_prompt, messages, params);
+        // After a cold prefill the KV holds exactly `tokens`; record it so the
+        // next turn can warm-reuse. Clear the record on failure.
+        if (ok) {
+            resident_tokens_ = tokens;
+        } else {
+            invalidate_resident_kv();
+        }
+    }
+    last_prefill_ms_ = entropic::log::elapsed_ms(t_pre, entropic::log::now());
+    logger->info("Prefill (gh#96): {} tokens / {:.1f} ms decoded this turn",
+                 last_prefill_tokens_, last_prefill_ms_);
+    return ok;
+}
+
+/**
+ * @brief gh#96 (v2.7.5): incremental prefill against resident KV.
+ *
+ * See header. The seq_rm here operates on LIVE (never state-restored) KV
+ * cells, so the partial-removal restriction noted in architecture decision
+ * #35 (non-contiguous restored cells) does not apply. decode_tokens_from
+ * auto-positions the delta at `cut` (same mechanism the cache-restore path
+ * relies on). Occupancy is derived from llama_memory_seq_pos_max, never a
+ * software counter — so an out-of-band wipe (multimodal / complete /
+ * speculative / a different conversation interleaved on a shared backend)
+ * either fails the warm_keep_cut occupancy gate or diverges in the prefix
+ * scan, and we fall back. Per-turn cost shrinks from the whole post-system
+ * history to just the appended delta.
+ *
+ * @param tokens Full incoming token sequence.
+ * @return true if reuse handled the prefill; false to fall back (no KV change).
+ * @internal
+ * @version 2.7.5
+ */
+bool LlamaCppBackend::try_warm_reuse(const std::vector<llama_token>& tokens) {
+    if (!prompt_cache_config_.warm_keep || ctx_ == nullptr) {
+        return false;
+    }
+    auto* mem = llama_get_memory(ctx_);
+    long pos_max = static_cast<long>(llama_memory_seq_pos_max(mem, 0));
+    std::size_t cut = warm_keep_cut(resident_tokens_, tokens, pos_max);
+    if (cut == 0) {
+        return false;  // nothing reusable — cold prefill
+    }
+    // Drop the divergent tail (and any prior generated tokens past `cut`),
+    // then decode only the appended delta. A single exit (returns <= 3 gate):
+    // success records the new resident set; failure invalidates and reports it.
+    llama_memory_seq_rm(mem, 0, static_cast<llama_pos>(cut), -1);
+    bool ok = decode_tokens_from(tokens, static_cast<int>(cut));
+    if (ok) {
+        resident_tokens_ = tokens;
+        if (prompt_cache_config_.log_hits) {
+            logger->info("Warm-keep: reused {} resident tokens, decoded {} "
+                         "delta (of {} total)", cut, tokens.size() - cut,
+                         tokens.size());
+        }
+    } else {
+        invalidate_resident_kv();
+    }
+    return ok;
+}
+
+/**
+ * @brief gh#96 (v2.7.5): drop the warm-keep resident-KV record.
+ *
+ * Out-of-line so the header carries no inline body here (an inline body in
+ * this region makes the knots complexity counter attribute the whole
+ * declaration run to the preceding declaration).
+ * @utility
+ * @internal
+ * @version 2.7.5
+ */
+void LlamaCppBackend::invalidate_resident_kv() {
+    resident_tokens_.clear();
+}
+
+/**
+ * @brief Cache-aware prefill dispatch (pre-v2.7.5 run_prefill_cached body).
+ *
+ * On cache hit: restore prefix KV and decode the remainder.
+ * On cache miss: two-pass prefill (prefix → save → remainder) so the stored
+ * cache entry contains prefix-only state. Extracted from run_prefill_cached
+ * in v2.7.5 so the wrapper can own the gh#96 perf reset + capture.
+ *
+ * @param tokens Full token sequence.
+ * @param system_prompt System prompt text for cache key.
+ * @param messages Original messages (for prefix boundary).
+ * @param params Generation parameters.
+ * @return true on success.
+ * @internal
+ * @version 2.7.5
+ */
+bool LlamaCppBackend::prefill_dispatch(
     const std::vector<llama_token>& tokens,
     const std::string& system_prompt,
     const std::vector<Message>& messages,
@@ -1756,7 +1874,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
 /**
  * @brief Multimodal generation core (v2.1.8, gh#37 / v1.9.11 Phase 6).
  * @internal
- * @version 2.7.0
+ * @version 2.7.5
  */
 GenerationResult LlamaCppBackend::generate_multimodal(
     const std::vector<Message>& messages,
@@ -1765,6 +1883,7 @@ GenerationResult LlamaCppBackend::generate_multimodal(
     std::atomic<bool>* cancel)
 {
     auto t0 = entropic::log::now();
+    invalidate_resident_kv();  // gh#96: mtmd_prefill mutates seq 0 out-of-band
     std::vector<::mtmd_bitmap*> bitmaps;
     auto marked = substitute_image_markers(
         messages, mtmd_ctx_, bitmaps);
@@ -2840,7 +2959,7 @@ static GenerationResult spec_run_from_tokens(
 /**
  * @brief Speculative generation against a draft model (gh#36).
  * @internal
- * @version 2.7.0
+ * @version 2.7.5
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -2852,6 +2971,7 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::string& draft_path)
 {
     auto t0 = entropic::log::now();
+    invalidate_resident_kv();  // gh#96: speculative path manages seq 0 itself
     auto pre_err = spec_check_preconditions(
         is_active(), draft.is_active(), ctx_, draft.ctx_);
     GenerationResult result;
@@ -2885,13 +3005,14 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
  * @param params Generation parameters.
  * @return GenerationResult.
  * @internal
- * @version 1.10.4
+ * @version 2.7.5
  */
 GenerationResult LlamaCppBackend::do_complete(
     const std::string& prompt,
     const GenerationParams& params)
 {
     auto t0 = entropic::log::now();
+    invalidate_resident_kv();  // gh#96: decode_loop/run_prefill mutate seq 0
     auto tokens = tokenize(prompt, false);
 
     logger->info("Complete: {} input tokens, max_tokens={}",

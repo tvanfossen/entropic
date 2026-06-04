@@ -199,6 +199,12 @@ set_tests_properties(model/test-gh90-string-typing PROPERTIES TIMEOUT 300)
 add_model_test(test-gh95-identity-grammar test_gh95_identity_grammar.cpp)
 set_tests_properties(model/test-gh95-identity-grammar PROPERTIES TIMEOUT 300)
 
+add_model_test(test-gh96-warmkeep test_gh96_warmkeep.cpp)
+set_tests_properties(model/test-gh96-warmkeep PROPERTIES TIMEOUT 300)
+
+add_model_test(test-gh96-warmkeep-oracle test_gh96_warmkeep_oracle.cpp)
+set_tests_properties(model/test-gh96-warmkeep-oracle PROPERTIES TIMEOUT 600)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

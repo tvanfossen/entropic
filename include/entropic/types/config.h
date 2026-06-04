@@ -267,6 +267,11 @@ struct PromptCacheConfig {
     size_t max_bytes = 536870912;  ///< Maximum cache RAM (512 MB default)
     bool enabled = true;           ///< Master switch (false = no caching)
     bool log_hits = true;          ///< Log cache hit/miss at INFO level
+    /// gh#96 (v2.7.5): keep the prior turn's KV resident and re-decode only
+    /// the appended delta (warm-keep / incremental prefill) instead of
+    /// re-decoding the whole post-system history every turn. Default on; the
+    /// oracle-equality tests toggle it off as the ground-truth comparison.
+    bool warm_keep = true;
 };
 
 /**

@@ -192,6 +192,40 @@ public:
      */
     llama_context* llama_context_ptr() { return ctx_; }
 
+    /**
+     * @brief Prompt (prefill) tokens actually decoded by the last generation.
+     *
+     * gh#96 (v2.7.5): counted directly as tokens pushed through llama_decode
+     * during prefill (run_prefill + decode_tokens_from accumulate into it;
+     * reset per generation in run_prefill_cached). A prompt-cache HIT restores
+     * the system prefix without a decode, so this is the re-decoded
+     * post-system remainder — in a multi-turn loop it climbs every turn today,
+     * and should collapse to the per-turn delta once warm-keep reuse lands.
+     * Exposed for the gh#96 behavioral tests to assert reuse without
+     * log-scraping. (Counted directly rather than via llama_perf n_p_eval,
+     * which proved unreliable across the state-restore boundary.)
+     * @return Prompt tokens decoded in the most recent generate() call.
+     * @utility
+     * @version 2.7.5
+     */
+    int last_prefill_tokens() const { return last_prefill_tokens_; }
+
+    /**
+     * @brief Wall-clock milliseconds spent in prefill by the last generation.
+     *
+     * gh#96 (v2.7.5): steady_clock around the prefill dispatch in
+     * run_prefill_cached — the real per-turn cost the optimization targets
+     * (token count is the deterministic proxy; this is the wall-clock the
+     * consumer actually feels). Climbs with history today; should flatten
+     * once warm-keep reuse lands. The realized magnitude scales with model
+     * size + context length (small on a tiny model, large on the consumer's
+     * MoE at long context). Measured directly, not via llama_perf.
+     * @return Prefill wall-clock ms for the most recent generate() call.
+     * @utility
+     * @version 2.7.5
+     */
+    double last_prefill_ms() const { return last_prefill_ms_; }
+
     /* ── gh#87 (v2.7.0): common_chat tool-call render + parse ── */
 
     /**
@@ -446,6 +480,9 @@ protected:
     llama_model* model_ = nullptr;             ///< Loaded model (WARM+)
     llama_context* ctx_ = nullptr;             ///< Inference context (ACTIVE)
     const llama_vocab* vocab_ = nullptr;       ///< Vocabulary (from model_)
+    int last_prefill_tokens_ = 0;              ///< gh#96: prompt tokens decoded by last generate()
+    double last_prefill_ms_ = 0.0;             ///< gh#96: prefill wall-clock ms of last generate()
+    std::vector<llama_token> resident_tokens_; ///< gh#96: tokens resident in KV seq 0 (warm-keep)
 
     /* ── v2.3.10 seam: tokenizer abstraction ─────────────── */
 
@@ -622,6 +659,48 @@ protected:
         const std::string& system_prompt,
         const std::vector<Message>& messages,
         const GenerationParams& params);
+
+    /**
+     * @brief Cache-aware prefill dispatch (gh#96 v2.7.5: extracted body of
+     *        run_prefill_cached so the wrapper owns the perf reset+capture).
+     * @param tokens Full token sequence.
+     * @param system_prompt System prompt text for cache key.
+     * @param messages Original messages (for prefix boundary).
+     * @param params Generation parameters.
+     * @return true on success.
+     * @version 2.7.5
+     */
+    bool prefill_dispatch(
+        const std::vector<llama_token>& tokens,
+        const std::string& system_prompt,
+        const std::vector<Message>& messages,
+        const GenerationParams& params);
+
+    /**
+     * @brief gh#96 (v2.7.5): try incremental prefill against resident KV.
+     *
+     * If warm-keep is enabled and the resident KV holds a usable token-prefix
+     * of `tokens` (warm_keep_cut > 0), seq_rm the divergent tail and decode
+     * only the delta, advancing in place. Returns false (no KV mutation) to
+     * fall back to a cold prefill on: warm-keep off, no/short resident match,
+     * or out-of-band KV mutation (occupancy mismatch).
+     * @param tokens Full incoming token sequence.
+     * @return true if reuse handled the prefill; false to fall back.
+     * @version 2.7.5
+     */
+    bool try_warm_reuse(const std::vector<llama_token>& tokens);
+
+    /**
+     * @brief gh#96 (v2.7.5): drop the warm-keep resident-KV record.
+     *
+     * Called by every non-text-cached generate path (multimodal, complete,
+     * speculative) that mutates seq 0 out-of-band, so the next text turn
+     * cannot reuse a stale record.
+     * @utility
+     * @internal
+     * @version 2.7.5
+     */
+    void invalidate_resident_kv();
 
     /**
      * @brief Decode tokens starting at a given offset.

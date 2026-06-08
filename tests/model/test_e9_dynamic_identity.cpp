@@ -66,6 +66,14 @@ SCENARIO("Dynamic identity creation and generation through engine loop",
                 REQUIRE(result.size() >= 3);
                 CHECK_FALSE(result.back().content.empty());
                 CHECK(result.back().role == "assistant");
+                // audit task #71: the dynamic identity's system prompt says
+                // "introduce yourself as TestBot when asked"; the user asks
+                // "What is your role?". Asserting the name proves the dynamic
+                // identity's system_prompt was actually threaded into the run
+                // — dropping it yields a generic answer with no "TestBot".
+                INFO("identity reply=[" << result.back().content << "]");
+                CHECK(result.back().content.find("TestBot")
+                      != std::string::npos);
 
                 auto has = [&](AgentState s) {
                     int v = static_cast<int>(s);

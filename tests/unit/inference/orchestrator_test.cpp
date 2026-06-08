@@ -840,3 +840,82 @@ SCENARIO("gh#86: enable_thinking + repeat_penalty thread through to params",
         }
     }
 }
+
+// ── gh#94 (v2.8.0, audit task #71): member-path effective-sampler mapping ──
+// The free apply_tier_sampler_overrides() precedence logic is covered above.
+// This drives the MEMBER apply_tier_sampler_defaults (via the test seam),
+// whose 9-line `ov.X = tier.X` hand-copy (orchestrator.cpp:1507-1515) is
+// otherwise untested — a transcription error there (wrong field, dropped
+// assignment) would silently mis-map/drop a tier sampler knob.
+
+namespace {
+
+/**
+ * @brief Config with one "lead" tier carrying 8 DISTINCT non-default
+ *        sampler values, backed by a placeholder GGUF so initialize()
+ *        fails on load but still assigns config_ (the seam reads it).
+ */
+entropic::ParsedConfig make_sampler_tier_config(
+    const std::filesystem::path& fake_gguf) {
+    entropic::ParsedConfig config;
+    config.models.default_tier = "lead";
+    config.vram_reserve_mb = 0;
+
+    entropic::TierConfig lead;
+    lead.path = fake_gguf;
+    lead.adapter = "generic";
+    lead.context_length = 1024;
+    // 8 distinct values, each != the GenerationParams struct default.
+    lead.temperature       = 0.33f;   // default 0.7
+    lead.max_output_tokens = 256;     // default 4096
+    lead.top_p             = 0.55f;   // default 0.9
+    lead.top_k             = 17;      // default 40
+    lead.min_p             = 0.05f;   // default 0.0
+    lead.presence_penalty  = 0.40f;   // default 0.0
+    lead.frequency_penalty = 0.60f;   // default 0.0
+    lead.repeat_penalty    = 1.25f;   // default 1.1
+
+    config.models.tiers["lead"] = lead;
+    return config;
+}
+
+}  // namespace
+
+SCENARIO("Orchestrator member apply_tier_sampler_defaults maps all 8 "
+         "tier knobs to effective params",
+         "[orchestrator][gh94][v2.8.0][sampler]")
+{
+    auto fake = make_placeholder_gguf("gh94_sampler");
+    auto cleanup = [&]() {
+        std::error_code ec;
+        std::filesystem::remove(fake, ec);
+    };
+
+    entropic::ModelOrchestrator orch;
+    auto config = make_sampler_tier_config(fake);
+
+    // initialize() fails on the placeholder GGUF load, but config_ is
+    // assigned before activation, so the "lead" tier is fully populated
+    // for the seam to read.
+    bool ok = orch.initialize(config);
+    REQUIRE_FALSE(ok);
+
+    GIVEN("default GenerationParams and a fully-configured 'lead' tier") {
+        entropic::GenerationParams params;  // all struct defaults
+        WHEN("the member sampler-default path runs for 'lead'") {
+            orch.apply_tier_sampler_defaults_for_test(params, "lead");
+            THEN("all 8 tier sampler values become the effective values") {
+                CHECK(params.temperature       == Catch::Approx(0.33f));
+                CHECK(params.max_tokens        == 256);
+                CHECK(params.top_p             == Catch::Approx(0.55f));
+                CHECK(params.top_k             == 17);
+                CHECK(params.min_p             == Catch::Approx(0.05f));
+                CHECK(params.presence_penalty  == Catch::Approx(0.40f));
+                CHECK(params.frequency_penalty == Catch::Approx(0.60f));
+                CHECK(params.repeat_penalty    == Catch::Approx(1.25f));
+            }
+        }
+    }
+
+    cleanup();
+}

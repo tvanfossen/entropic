@@ -1066,6 +1066,77 @@ SCENARIO("defang_meta_action_envelope: reshapes meta {action} results so "
     }
 }
 
+// ── gh#88 COMBINED-path: defang must run at the real process_tool_results
+//    call site, not only via the standalone helper (audit Pattern D /
+//    feedback_test_combined_call_path). The SCENARIO above proves the helper
+//    in isolation; this one proves the engine actually invokes it in-loop. ──
+
+namespace gh88_combined {
+/// @brief Executor returning an entropic.delegate meta result whose body is a
+/// raw {"action":...} envelope — the exact shape gh#88's defang must strip at
+/// the real call site so the model is not primed to parrot it. Mirrors the
+/// production ToolExecutor output for a delegate directive.
+/// @utility
+/// @version 2.8.1
+inline std::vector<Message> delegate_envelope_fn(
+    LoopContext& /*ctx*/,
+    const std::vector<ToolCall>& /*calls*/,
+    void* /*user_data*/) {
+    Message r;
+    r.role = "user";
+    r.content = R"({"action":"delegate","target":"registrar","task":"x"})";
+    r.metadata["tool_name"] = "entropic.delegate";
+    r.metadata["result_kind"] = "ok";
+    return {r};
+}
+inline ToolExecutionInterface delegate_envelope_executor() {
+    ToolExecutionInterface tex;
+    tex.process_tool_calls = &delegate_envelope_fn;
+    return tex;
+}
+}  // namespace gh88_combined
+
+SCENARIO("gh#88 combined: process_tool_results defangs a meta {action} "
+         "envelope at the real call site, not only the standalone helper",
+         "[engine][gh88][combined][complete-shape]") {
+    MockInference mock;
+    // Turn 1: model emits a delegate tool call -> the injected executor returns
+    // the raw {"action":...} envelope. Turn 2: no tool calls -> loop completes.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"entropic.delegate",)"
+        R"("arguments":{"target":"registrar","task":"x"}}])");
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    engine.set_tool_executor(gh88_combined::delegate_envelope_executor());
+
+    LoopContext ctx; ctx.messages = make_messages();
+
+    GIVEN("the executor returns a raw {\"action\":...} delegate envelope") {
+        WHEN("the engine runs the loop (process_tool_results executes in-line)") {
+            engine.run_loop(ctx);
+            THEN("the landed tool-result message is defanged at the call site") {
+                const Message* landed = nullptr;
+                for (const auto& m : ctx.messages) {
+                    auto it = m.metadata.find("tool_name");
+                    if (it != m.metadata.end()
+                        && it->second == "entropic.delegate") {
+                        landed = &m;
+                    }
+                }
+                REQUIRE(landed != nullptr);
+                // RED if the engine.cpp defang call is removed: the raw
+                // call-shaped envelope survives into the conversation and
+                // re-primes the gh#88 parrot spiral.
+                CHECK(landed->content.find(R"({"action")")
+                      == std::string::npos);
+                CHECK(landed->content.find("delegate") != std::string::npos);
+                CHECK(landed->content.find("accepted") != std::string::npos);
+            }
+        }
+    }
+}
+
 SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
          "(gh#68)",
          "[engine][gh68][complete-shape]") {

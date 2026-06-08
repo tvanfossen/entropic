@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_dynamic_identity.cpp
- * @brief BDD subsystem test — runtime-created identity participates in routing.
+ * @brief BDD subsystem test — runtime-created identity lifecycle (create,
+ *        router-dirty flag, destroy).
  *
  * Validates dynamic identity creation, routing, and destruction.
  * Uses ModelOrchestrator directly (not AgentEngine).
@@ -18,7 +19,7 @@ CATCH_REGISTER_LISTENER(ModelTestListener)
 
 // ── Test 8: Dynamic Identity + Routing ──────────────────────
 
-SCENARIO("Runtime-created identity participates in routing",
+SCENARIO("Runtime-created identity lifecycle (create, router-dirty, destroy)",
          "[model][test8]")
 {
     GIVEN("a configured engine with static identities") {
@@ -47,15 +48,18 @@ SCENARIO("Runtime-created identity participates in routing",
             auto err = mgr.create(npc);
             REQUIRE(err == ENTROPIC_OK);
 
-            THEN("identity exists, routing works, and destroy cleans up") {
+            THEN("identity exists, marks the router dirty, and destroy "
+                 "cleans up") {
                 REQUIRE(mgr.has("npc-guard"));
+                // audit task #71: the prior version also called
+                // g_ctx.orchestrator->route() and asserted tier non-empty, but
+                // g_ctx has routing.enabled=false so route() short-circuits to
+                // the default tier — a vacuous "participates in routing" claim
+                // (list_routable() has no production consumer). Dropped. The
+                // router-dirty flag below IS a real signal that the routable
+                // identity set changed.
                 REQUIRE(mgr.is_router_dirty());
                 REQUIRE(mgr.count_dynamic() == 1);
-
-                auto msgs = make_messages(
-                    "", "Who goes there? State your business.");
-                auto tier = g_ctx.orchestrator->route(msgs);
-                REQUIRE_FALSE(tier.empty());
 
                 mgr.clear_router_dirty();
                 auto err2 = mgr.destroy("npc-guard");

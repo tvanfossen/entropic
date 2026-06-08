@@ -115,34 +115,102 @@ int curl_download(const std::string& url, const std::filesystem::path& dest)
 struct DownloadArgs {
     std::string key;
     std::filesystem::path override_dir;
+    std::string family;  // gh#62 selector
+    std::string size;    // gh#62 selector
+    std::string quant;   // gh#62 selector
     bool want_list = false;
     bool error = false;
 };
 
 /**
+ * @brief Match a `--flag VALUE` pair and consume the value (gh#62).
+ * @return true if `arg` matched `flag` and a value was consumed into `dst`.
+ * @utility
+ * @version 2.8.0
+ */
+static bool match_value_flag(const std::string& arg, const char* flag,
+                             int& i, int argc, char* argv[], std::string& dst)
+{
+    if (arg == flag && i + 1 < argc) {
+        dst = argv[++i];
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Try the gh#62 selector value-flags (--family/--size/--quant).
+ *
+ * Short-circuits so the first match consumes its value; grouping the three
+ * keeps parse_download_args under the knots cognitive gate.
+ * @utility
+ * @return true if `arg` matched one selector flag and consumed its value.
+ * @version 2.8.0
+ */
+static bool match_any_value_flag(const std::string& arg, int& i, int argc,
+                                 char* argv[], DownloadArgs& out)
+{
+    return match_value_flag(arg, "--family", i, argc, argv, out.family)
+        || match_value_flag(arg, "--size", i, argc, argv, out.size)
+        || match_value_flag(arg, "--quant", i, argc, argv, out.quant);
+}
+
+/**
  * @brief Parse command-line args for `entropic download`.
  * @utility
  * @return Parsed args with .error=true on malformed input.
- * @version 1
+ * @version 2.8.0
  */
 DownloadArgs parse_download_args(int argc, char* argv[])
 {
     DownloadArgs out;
+    // Early-continue (flat) rather than an else-if chain — keeps the knots
+    // nesting gate happy as selector flags are added.
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
-        if (arg == "--list" || arg == "-l") {
-            out.want_list = true;
-        } else if (arg == "--dir" && i + 1 < argc) {
-            out.override_dir = argv[++i];
-        } else if (!arg.empty() && arg[0] != '-') {
-            out.key = arg;
-        } else {
-            std::fprintf(stderr, "entropic download: unknown option '%s'\n",
-                         arg.c_str());
-            out.error = true;
-        }
+        if (arg == "--list" || arg == "-l") { out.want_list = true; continue; }
+        if (arg == "--dir" && i + 1 < argc) { out.override_dir = argv[++i]; continue; }
+        if (match_any_value_flag(arg, i, argc, argv, out)) { continue; }
+        if (!arg.empty() && arg[0] != '-') { out.key = arg; continue; }
+        std::fprintf(stderr, "entropic download: unknown option '%s'\n",
+                     arg.c_str());
+        out.error = true;
     }
     return out;
+}
+
+/**
+ * @brief Resolve the target model key from an explicit key or a
+ *        `--family/--size/--quant` selector (gh#62).
+ * @return Registry key, or "" if unresolved. A partial or unmatched selector
+ *         prints a specific error; an absent selector is silent (caller
+ *         prints usage).
+ * @utility
+ * @version 2.8.0
+ */
+std::string resolve_selector_key(
+    const DownloadArgs& args,
+    const entropic::config::BundledModels& registry)
+{
+    if (!args.key.empty()) { return args.key; }
+    const bool hf = !args.family.empty();
+    const bool hs = !args.size.empty();
+    const bool hq = !args.quant.empty();
+    if (!hf && !hs && !hq) { return ""; }
+    std::string key;
+    if (!(hf && hs && hq)) {
+        std::fprintf(stderr, "entropic download: --family/--size/--quant "
+                     "must be given together (or pass a model key).\n");
+    } else {
+        key = registry.find_by(args.family, args.size, args.quant);
+        if (key.empty()) {
+            std::fprintf(stderr, "entropic download: no bundled model matches "
+                         "--family %s --size %s --quant %s. Try --list.\n",
+                         args.family.c_str(), args.size.c_str(),
+                         args.quant.c_str());
+        }
+    }
+    return key;
 }
 
 /**
@@ -256,26 +324,32 @@ int fetch_mmproj_if_paired(
  * @brief Dispatch after args parsed + registry loaded.
  * @utility
  * @return Subcommand exit code.
- * @version 2.1.8
+ * @version 2.8.0
  */
 int dispatch(const DownloadArgs& args,
              const entropic::config::BundledModels& registry)
 {
     int rc = 0;
+    const bool has_selector = !args.family.empty() || !args.size.empty()
+                              || !args.quant.empty();
     if (args.want_list) {
         rc = list_models(registry);
-    } else if (args.key.empty()) {
-        std::fprintf(stderr,
-                     "Usage: entropic download <model-key>\n"
-                     "       entropic download --list\n"
-                     "       entropic download --dir DIR <model-key>\n");
+    } else if (const std::string key = resolve_selector_key(args, registry);
+               key.empty()) {
+        if (!has_selector) {
+            std::fprintf(stderr,
+                         "Usage: entropic download <model-key>\n"
+                         "       entropic download --family F --size S --quant Q\n"
+                         "       entropic download --list\n"
+                         "       entropic download --dir DIR <model-key>\n");
+        }
         rc = 1;
-    } else if (const auto* entry = resolve_entry(registry, args.key); !entry) {
+    } else if (const auto* entry = resolve_entry(registry, key); !entry) {
         rc = 1;
     } else {
         auto target_dir = args.override_dir.empty()
             ? default_model_dir() : args.override_dir;
-        rc = fetch_to(*entry, target_dir, args.key);
+        rc = fetch_to(*entry, target_dir, key);
         if (rc == 0) {
             rc = fetch_mmproj_if_paired(*entry, registry, target_dir);
         }

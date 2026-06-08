@@ -1137,6 +1137,68 @@ SCENARIO("gh#88 combined: process_tool_results defangs a meta {action} "
     }
 }
 
+// ── gh#84 COMBINED-path: the loop must actually HALT on duplicate spam.
+//    The writer lives in mcp (tool_executor.cpp bumps
+//    consecutive_duplicate_attempts) and the reader in engine
+//    (should_stop). No engine test drove a duplicate-emitting executor
+//    through the loop and proved it stops at the threshold rather than
+//    running to max_iterations (audit Pattern D / gh#84 anti-spiral). ──
+
+namespace gh84_dupspam {
+/// @brief Executor mirroring src/mcp/tool_executor.cpp: a duplicate tool call
+/// bumps the stuck-model detector and returns a no-progress rejected result
+/// (so the thinking budget never refreshes, gh#84).
+/// @utility
+/// @version 2.8.1
+inline std::vector<Message> dup_reject_fn(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& /*calls*/,
+    void* /*user_data*/) {
+    ctx.consecutive_duplicate_attempts++;
+    Message r;
+    r.role = "user";
+    r.content = "[tool rejected: duplicate call]";
+    r.metadata["tool_name"] = "filesystem.read_file";
+    r.metadata["result_kind"] = "rejected_duplicate";
+    return {r};
+}
+inline ToolExecutionInterface dup_reject_executor() {
+    ToolExecutionInterface tex;
+    tex.process_tool_calls = &dup_reject_fn;
+    return tex;
+}
+}  // namespace gh84_dupspam
+
+SCENARIO("gh#84 combined: should_stop halts the loop when the duplicate "
+         "detector drives consecutive_duplicate_attempts to the threshold",
+         "[engine][gh84][combined][anti-spiral]") {
+    MockInference mock;
+    // Model NEVER completes: every parse yields a tool call, so only the
+    // duplicate-spam guard (not entropic.complete) can end the loop.
+    mock.tool_calls_json =
+        R"([{"name":"filesystem.read_file","arguments":{}}])";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 20; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    engine.set_tool_executor(gh84_dupspam::dup_reject_executor());
+
+    LoopContext ctx; ctx.messages = make_messages();
+
+    GIVEN("an executor that bumps consecutive_duplicate_attempts each call") {
+        WHEN("the engine runs the loop") {
+            engine.run_loop(ctx);
+            THEN("should_stop halts at the duplicate threshold, not max_iter") {
+                CHECK(ctx.consecutive_duplicate_attempts >= 3);
+                // RED if should_stop's duplicate term regresses: the loop
+                // would instead run all the way to max_iterations (20),
+                // i.e. the gh#84 stuck-model spiral is not contained.
+                CHECK(mock.generate_call_count < lc.max_iterations);
+                CHECK(ctx.metrics.iterations < lc.max_iterations);
+            }
+        }
+    }
+}
+
 SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
          "(gh#68)",
          "[engine][gh68][complete-shape]") {

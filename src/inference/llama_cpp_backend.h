@@ -138,6 +138,31 @@ public:
     }
 
     /**
+     * @brief Allocate a temp seq_id (test-only seam for gh#98).
+     *
+     * Exposes allocate_temp_seq_id so a CPU unit test can assert the pool hands
+     * out DISTINCT ids on an empty pool — the invariant the gh#98 multi-seq
+     * batch relies on (the model test can't catch a collision because a forcing
+     * grammar makes output independent of the corrupted KV).
+     * @return A temp seq_id.
+     * @utility
+     * @version 2.8.0
+     */
+    llama_seq_id allocate_temp_seq_id_for_test() {
+        return allocate_temp_seq_id();
+    }
+
+    /**
+     * @brief Release a temp seq_id (test-only seam, gh#98).
+     * @param id The seq_id to release.
+     * @utility
+     * @version 2.8.0
+     */
+    void release_temp_seq_id_for_test(llama_seq_id id) {
+        release_temp_seq_id(id);
+    }
+
+    /**
      * @brief Set prompt cache configuration.
      *
      * Must be called before activate(). The config is consumed when
@@ -209,6 +234,17 @@ public:
      * @version 2.7.5
      */
     int last_prefill_tokens() const { return last_prefill_tokens_; }
+
+    /**
+     * @brief Number of batched generation decodes in the last gh#98 batch.
+     *
+     * Observable that the multi-seq batched-decode engaged: ≈ the longest
+     * per-request output (one decode per step over all sequences), NOT the
+     * serial `Σ output_len`.
+     * @utility
+     * @version 2.8.0
+     */
+    int last_gen_decode_calls() const { return last_gen_decode_calls_; }
 
     /**
      * @brief Wall-clock milliseconds spent in prefill by the last generation.
@@ -406,6 +442,23 @@ protected:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel) override;
 
+    /**
+     * @brief Same-prefix batch generation (gh#98, v2.8.0).
+     *
+     * On a plain-KV arch with a real shared prefix and enough sequence slots
+     * (batch_is_viable), prefills the shared prefix once into seq 0 and runs
+     * each request's suffix + generation off that prefix, seq_rm-resetting the
+     * tail between requests — the proven warm-keep mechanism, applied N times.
+     * Otherwise falls back to the serial base implementation. Each request is
+     * sampled under its own grammar (option A).
+     *
+     * @version 2.8.0
+     */
+    std::vector<GenerationResult> do_generate_batch(
+        const std::vector<std::vector<Message>>& requests,
+        const std::vector<GenerationParams>& params,
+        std::atomic<bool>& cancel) override;
+
 public:
     /**
      * @brief Speculative-decoding kernel with explicit draft backend.
@@ -509,6 +562,7 @@ protected:
     llama_context* ctx_ = nullptr;             ///< Inference context (ACTIVE)
     const llama_vocab* vocab_ = nullptr;       ///< Vocabulary (from model_)
     int last_prefill_tokens_ = 0;              ///< gh#96: prompt tokens decoded by last generate()
+    int last_gen_decode_calls_ = 0;            ///< gh#98: batched-decode step count of last batch
     int last_input_tokens_ = 0;                ///< gh#97: tokenized prompt size of last generate()
     double last_prefill_ms_ = 0.0;             ///< gh#96: prefill wall-clock ms of last generate()
     std::vector<llama_token> resident_tokens_; ///< gh#96: tokens resident in KV seq 0 (warm-keep)
@@ -609,18 +663,105 @@ protected:
 
     /**
      * @brief Core decode loop — shared by generate and streaming.
+     *
+     * gh#98 (v2.8.0): the post-prefill sampling loop is now in
+     * generate_after_prefill (shared with the batch path); decode_loop is
+     * create_sampler + run_prefill + generate_after_prefill.
+     *
      * @param tokens Input token sequence.
      * @param params Generation parameters.
      * @param on_token Per-token callback (nullptr for batch).
      * @param cancel Cancel flag (nullptr for batch).
      * @return GenerationResult.
-     * @version 1.8.2
+     * @version 2.8.0
      */
     GenerationResult decode_loop(
         const std::vector<llama_token>& tokens,
         const GenerationParams& params,
         std::function<void(std::string_view)> on_token,
         std::atomic<bool>* cancel);
+
+    /**
+     * @brief The post-prefill sampling loop (extracted from decode_loop).
+     *
+     * gh#98 (v2.8.0): assumes the prompt is already prefilled into seq 0 (its
+     * last-position logits are ready) and runs the step_token loop. Reused by
+     * decode_loop (after run_prefill) and by the same-prefix batch path (after
+     * decode_tokens_from of a request's suffix off the shared prefix).
+     *
+     * @param sampler Per-request sampler (carries its grammar).
+     * @param params Generation parameters (max_tokens, stop).
+     * @param on_token Streaming callback (empty for batch).
+     * @param cancel Cancel flag (nullptr for batch).
+     * @return GenerationResult with content/finish_reason/token_count.
+     * @internal
+     * @version 2.8.0
+     */
+    GenerationResult generate_after_prefill(
+        Sampler& sampler,
+        const GenerationParams& params,
+        std::function<void(std::string_view)> on_token,
+        std::atomic<bool>* cancel);
+
+    /**
+     * @brief Per-sequence state for the gh#98 multi-seq batched decode.
+     *
+     * One per request: its own grammar sampler chain (option A), its KV
+     * sequence id, the batch cell holding its current logits, and its
+     * accumulated output. `sampler` owns the chain; `chain` borrows it.
+     * @version 2.8.0
+     */
+    struct BatchSeq {
+        std::unique_ptr<Sampler> sampler;   ///< Owns the per-request chain
+        llama_sampler* chain = nullptr;     ///< Borrowed native chain (sampled per-idx)
+        llama_seq_id seq_id = 0;            ///< KV sequence id
+        int pos = 0;                        ///< Next KV position to write
+        int logits_idx = -1;                ///< Batch cell holding current logits
+        int n_gen = 0;                      ///< Tokens generated so far
+        int max_tokens = 0;                 ///< Per-request generation cap
+        bool active = true;                 ///< Still generating?
+        std::vector<llama_token> out;       ///< Generated tokens
+        std::string finish = "stop";       ///< Finish reason
+    };
+
+    /**
+     * @brief Run the gh#98 multi-seq batched decode (v2.8.0).
+     *
+     * Prefills the shared prefix once into seq 0, `seq_cp`s it to N sequences,
+     * prefills each request's suffix, then decodes all sequences together —
+     * one `llama_decode` per step over N tokens, each sampled under its own
+     * grammar chain. Caller guarantees batch_is_viable (plain KV, n<=n_parallel,
+     * shared>0, suffixes fit n_batch). Returns one result per request.
+     * @version 2.8.0
+     */
+    std::vector<GenerationResult> run_batched_decode(
+        const std::vector<std::vector<llama_token>>& toks,
+        const std::vector<GenerationParams>& params,
+        std::size_t shared,
+        std::atomic<bool>& cancel);
+
+    /// @brief Build per-request sampler chains + seq ids. @version 2.8.0
+    bool prepare_batch_seqs(std::vector<BatchSeq>& seqs,
+                            const std::vector<GenerationParams>& params);
+    /// @brief Prefill shared prefix into seq 0 + seq_cp fan-out. @version 2.8.0
+    bool prefill_shared_and_fanout(std::vector<BatchSeq>& seqs,
+                                   const std::vector<llama_token>& seq0,
+                                   std::size_t shared);
+    /// @brief Prefill each request's suffix; set per-seq logits_idx. @version 2.8.0
+    bool prefill_batch_suffixes(
+        std::vector<BatchSeq>& seqs,
+        const std::vector<std::vector<llama_token>>& toks,
+        std::size_t shared);
+    /// @brief Decode all sequences together until each finishes. @version 2.8.0
+    void run_batch_gen_loop(std::vector<BatchSeq>& seqs, int max_steps,
+                            std::atomic<bool>& cancel);
+    /// @brief Sample+accept+classify each still-active sequence. @version 2.8.0
+    void sample_batch_active(std::vector<BatchSeq>& seqs);
+    /// @brief Detokenize each sequence into a GenerationResult. @version 2.8.0
+    std::vector<GenerationResult> build_batch_results(
+        std::vector<BatchSeq>& seqs);
+    /// @brief Release every batch sequence's temp seq_id (seq 0 excluded). @version 2.8.0
+    void release_temp_seqs(std::vector<BatchSeq>& seqs);
 
     /**
      * @brief Run batched prefill on input tokens.
@@ -819,6 +960,11 @@ protected:
 
     std::mutex seq_id_mutex_;                 ///< Guards temp seq_id pool (v1.9.10)
     std::vector<llama_seq_id> free_seq_ids_;  ///< Available temporary seq_ids (v1.9.10)
+    /// gh#98: monotonic high-water for NEW temp seq_ids (the old `1 + size()`
+    /// handed out duplicates when the pool was empty — every call returned 1 —
+    /// colliding the batch's sequences). Released ids return to free_seq_ids_
+    /// and are reused first, so this stays bounded by concurrent demand.
+    llama_seq_id next_temp_seq_id_ = 1;
 
     /* ── Architecture detection (v1.9.13) ──────────────── */
 

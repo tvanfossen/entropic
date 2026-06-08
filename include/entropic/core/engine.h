@@ -97,10 +97,13 @@ public:
     /**
      * @brief Run the engine on a set of messages.
      * @param messages Initial messages (system + user).
+     * @param tier_override gh#99: if non-empty, lock this run to the named
+     *        tier (skips routing) so its grammar/samplers apply; empty routes.
      * @return Final messages including all generated content.
-     * @version 1.8.4
+     * @version 2.8.0
      */
-    std::vector<Message> run(std::vector<Message> messages);
+    std::vector<Message> run(std::vector<Message> messages,
+                             const std::string& tier_override = "");
 
     /**
      * @brief Set callback functions for loop events.
@@ -385,6 +388,23 @@ public:
     std::vector<Message> run_turn(const std::string& input);
 
     /**
+     * @brief Run a single turn under a named tier's grammar/identity (gh#99).
+     *
+     * Per-call tier selection on the shared resident model: seeds the tier's
+     * system prompt (from `tier_info_`) and locks the run to `tier` so its
+     * grammar + samplers apply — no 2nd model load, no reconfigure. Mirrors
+     * the delegation precedent (a child LoopContext with locked_tier + the
+     * tier's system prompt), scoped to one top-level call.
+     *
+     * @param tier Tier name to run this call under.
+     * @param input User input string.
+     * @return Full result messages from the engine.
+     * @version 2.8.0
+     */
+    std::vector<Message> run_turn_as(const std::string& tier,
+                                     const std::string& input);
+
+    /**
      * @brief Run a single conversation turn from a pre-built message list (gh#37).
      *
      * Multimodal-aware overload. Each message in `new_messages` is
@@ -418,6 +438,36 @@ public:
      * @version 2.3.7
      */
     void seed_system_prompt(const std::vector<Message>& new_messages);
+
+    /**
+     * @brief Shared drain loop for run_turn / run_turn_as (gh#99).
+     *
+     * Appends `pending` as a user turn, runs the agentic loop under
+     * `tier_override` ("" = route), then drains any mid-generation queued
+     * user messages as further turns. Extracted so both entry points stay
+     * under the SLOC gate.
+     *
+     * @param pending First user turn for this call.
+     * @param tier_override Tier to lock the run to ("" = route).
+     * @return Result messages from the final turn.
+     * @internal
+     * @version 2.8.0
+     */
+    std::vector<Message> run_drain_loop(std::string pending,
+                                        const std::string& tier_override);
+
+    /**
+     * @brief Seed a tier's system prompt on an empty conversation (gh#99).
+     *
+     * Pushes `tier_info_[tier].system_prompt` as the system message when the
+     * conversation is empty; falls back to the global `system_prompt_` when
+     * the tier carries no info.
+     *
+     * @param tier Tier whose system prompt to seed.
+     * @internal
+     * @version 2.8.0
+     */
+    void seed_system_prompt_for_tier(const std::string& tier);
 
     /**
      * @brief Pull the next queued user message into `pending` (gh#40).
@@ -616,6 +666,30 @@ public:
      */
     void set_tier_info(const std::string& name,
                        const ChildContextInfo& info);
+
+    /**
+     * @brief Whether a tier name is known (gh#99).
+     *
+     * Backs entropic_run_as's unknown-tier validation. True once the tier
+     * has resolved context info (set_tier_info ran for it at configure time).
+     *
+     * @param name Tier name.
+     * @return true if the tier is known.
+     * @version 2.8.0
+     */
+    bool has_tier(const std::string& name) const;
+
+    /**
+     * @brief A tier's resolved system prompt (gh#98).
+     *
+     * Backs the batch entry point, which builds each request's messages with
+     * its tier's system prompt so same-tier requests share a prompt prefix.
+     *
+     * @param name Tier name.
+     * @return The tier's system prompt, or "" if the tier is unknown.
+     * @version 2.8.0
+     */
+    const std::string& tier_system_prompt(const std::string& name) const;
 
     /**
      * @brief Mark a tier as relay-on-single-delegate.

@@ -70,6 +70,14 @@ add_executable(entropic-inference-tests
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp
     inference/warm_keep_util_test.cpp
+    # gh#93 (v2.8.0): shared typed tool-call serializer — single source of
+    # truth for production + harness (closes a harness↔production fidelity gap).
+    inference/tool_call_serialize_test.cpp
+    # gh#98 (v2.8.0): same-prefix batch shared-prefix decision logic.
+    inference/batch_util_test.cpp
+    # gh#98 (v2.8.0): temp seq_id pool must hand out distinct ids (the
+    # collision the multi-seq batch relies against; model test can't catch it).
+    inference/seq_id_pool_test.cpp
     inference/logprob_evaluation_test.cpp
     inference/vision_adapter_test.cpp
     inference/image_preprocessor_test.cpp

@@ -17,6 +17,7 @@
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
+#include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
 
 #include <entropic/inference/adapters/adapter_base.h>  // gh#90 coerce_string_typed_args
 #include <entropic/types/logging.h>
@@ -276,10 +277,11 @@ namespace {
  * gate after v2.2.7 wired cache_type_k/v + the v2.2.8 diagnostic
  * expansion. gh#61: maps ModelConfig::cache_type_k/cache_type_v
  * (documented since v1.8.0, dead-code until v2.2.7) into the actual
- * llama.cpp KV-cache quantization slots.
+ * llama.cpp KV-cache quantization slots. gh#98 (v2.8.0): kv_unified when
+ * n_parallel>1 so the same-prefix batch fan-out's seq_cp is supported.
  *
  * @utility
- * @version 2.2.9
+ * @version 2.8.0
  */
 llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     llama_context_params c = llama_context_default_params();
@@ -308,6 +310,12 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     // gh#23 MVP item 11 (v2.3.23): n_parallel maps to cparams.n_seq_max.
     // 1 (default) matches llama.cpp's default — bit-identical.
     c.n_seq_max = static_cast<uint32_t>(cfg.n_parallel);
+    // gh#98 (v2.8.0): a unified KV buffer is REQUIRED for llama_memory_seq_cp
+    // (the same-prefix batch fan-out) — seq_cp asserts on per-sequence buffers.
+    // llama.cpp also recommends kv_unified exactly when sequences share a large
+    // prefix (our case). Only enabled when batching is configured (n_parallel>1)
+    // so single-sequence handles keep llama.cpp's default.
+    c.kv_unified = (cfg.n_parallel > 1);
     return c;
 }
 } // anonymous namespace
@@ -736,9 +744,18 @@ LogprobResult LlamaCppBackend::do_evaluate_logprobs(
 
 /**
  * @brief Allocate a temporary sequence ID for evaluation.
+ *
+ * Reuses a released id from the pool, else mints a fresh monotonic id.
+ * gh#98 (v2.8.0): the old `1 + free_seq_ids_.size()` returned 1 on EVERY
+ * empty-pool call, so a multi-seq batch (which allocates N ids back-to-back
+ * with no intervening release) got duplicate ids → seq_id collision →
+ * shared KV slots. The monotonic counter mints distinct ids; released ids
+ * still return to the pool and are reused first, so it stays bounded by
+ * concurrent demand (≤ n_parallel for a valid batch).
+ *
  * @return Unused seq_id (starts at 1, 0 is generation).
  * @internal
- * @version 1.10.2
+ * @version 2.8.0
  */
 llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
     std::lock_guard<std::mutex> lock(seq_id_mutex_);
@@ -747,7 +764,7 @@ llama_seq_id LlamaCppBackend::allocate_temp_seq_id() {
         free_seq_ids_.pop_back();
         return id;
     }
-    return static_cast<llama_seq_id>(1 + free_seq_ids_.size());
+    return next_temp_seq_id_++;
 }
 
 /**
@@ -1262,13 +1279,17 @@ std::string LlamaCppBackend::step_token(
 
 /**
  * @brief Core decode loop shared by generate, streaming, and complete.
+ *
+ * gh#98 (v2.8.0): the post-prefill sampling loop is extracted to
+ * generate_after_prefill (shared with the batch path).
+ *
  * @param tokens Input token sequence.
  * @param params Generation parameters.
  * @param on_token Per-token callback (nullptr for batch).
  * @param cancel Cancel flag (nullptr for batch).
  * @return GenerationResult.
  * @internal
- * @version 1.8.2
+ * @version 2.8.0
  */
 GenerationResult LlamaCppBackend::decode_loop(
     const std::vector<llama_token>& tokens,
@@ -1276,10 +1297,10 @@ GenerationResult LlamaCppBackend::decode_loop(
     std::function<void(std::string_view)> on_token,
     std::atomic<bool>* cancel)
 {
-    GenerationResult result;
     // v2.3.10: Sampler seam — factory installed in do_activate.
     auto sampler = create_sampler(params);
     if (!sampler) {
+        GenerationResult result;
         result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         result.error_message = "Sampler factory not initialized";
         result.finish_reason = "error";
@@ -1287,12 +1308,38 @@ GenerationResult LlamaCppBackend::decode_loop(
     }
 
     if (!run_prefill(tokens)) {
+        GenerationResult result;
         result.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         result.error_message = "Prefill decode failed";
         result.finish_reason = "error";
         return result;
     }
 
+    return generate_after_prefill(*sampler, params, std::move(on_token), cancel);
+}
+
+/**
+ * @brief Post-prefill sampling loop (gh#98, v2.8.0 extraction from decode_loop).
+ *
+ * The prompt is already prefilled into seq 0; runs step_token until EOS / stop
+ * / max_tokens / cancel. Shared by decode_loop (after run_prefill) and the
+ * same-prefix batch path (after a suffix decode_tokens_from).
+ *
+ * @param sampler Per-request sampler (carries its grammar).
+ * @param params Generation parameters (max_tokens, stop).
+ * @param on_token Streaming callback (empty for batch).
+ * @param cancel Cancel flag (nullptr for batch).
+ * @return GenerationResult with content/finish_reason/token_count.
+ * @internal
+ * @version 2.8.0
+ */
+GenerationResult LlamaCppBackend::generate_after_prefill(
+    Sampler& sampler,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>* cancel)
+{
+    GenerationResult result;
     std::string generated;
     int n_generated = 0;
 
@@ -1304,7 +1351,7 @@ GenerationResult LlamaCppBackend::decode_loop(
             break;
         }
 
-        auto status = step_token(*sampler, generated, on_token, params.stop);
+        auto status = step_token(sampler, generated, on_token, params.stop);
         if (status == "continue") {
             ++n_generated;
         } else {
@@ -1323,6 +1370,287 @@ GenerationResult LlamaCppBackend::decode_loop(
     result.content = generated;
     result.token_count = n_generated;
     return result;
+}
+
+// ── gh#98: same-prefix multi-seq batched generation ────────
+
+/**
+ * @brief Build a single error GenerationResult (gh#98 batch failures).
+ * @utility
+ * @version 2.8.0
+ */
+static GenerationResult batch_error_result(const std::string& msg) {
+    GenerationResult e;
+    e.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+    e.error_message = msg;
+    e.finish_reason = "error";
+    return e;
+}
+
+/**
+ * @brief Fill one cell of a multi-seq llama_batch.
+ * @utility
+ * @version 2.8.0
+ */
+static void fill_batch_cell(llama_batch& b, int k, llama_token tok,
+                            llama_pos pos, llama_seq_id seq, bool want_logits) {
+    b.token[k] = tok;
+    b.pos[k] = pos;
+    b.n_seq_id[k] = 1;
+    b.seq_id[k][0] = seq;
+    b.logits[k] = want_logits ? 1 : 0;
+}
+
+/**
+ * @brief Build per-request sampler chains + KV sequence ids (gh#98).
+ * @return false if any sampler chain could not be built.
+ * @internal
+ * @version 2.8.0
+ */
+bool LlamaCppBackend::prepare_batch_seqs(
+    std::vector<BatchSeq>& seqs,
+    const std::vector<GenerationParams>& params) {
+    for (std::size_t i = 0; i < seqs.size(); ++i) {
+        seqs[i].sampler = create_sampler(params[i]);
+        auto* ls = dynamic_cast<LlamaCppSampler*>(seqs[i].sampler.get());
+        if (ls == nullptr) { return false; }
+        seqs[i].chain = ls->native_chain();
+        seqs[i].seq_id = (i == 0) ? 0 : allocate_temp_seq_id();
+        seqs[i].max_tokens = params[i].max_tokens;
+    }
+    return true;
+}
+
+/**
+ * @brief Prefill the shared prefix into seq 0 and seq_cp it to the others.
+ * @internal
+ * @version 2.8.0
+ */
+bool LlamaCppBackend::prefill_shared_and_fanout(
+    std::vector<BatchSeq>& seqs, const std::vector<llama_token>& seq0,
+    std::size_t shared) {
+    std::vector<llama_token> prefix(
+        seq0.begin(), seq0.begin() + static_cast<long>(shared));
+    if (!decode_tokens_from(prefix, 0)) { return false; }  // into seq 0
+    auto* mem = llama_get_memory(ctx_);
+    for (std::size_t i = 1; i < seqs.size(); ++i) {
+        llama_memory_seq_cp(mem, 0, seqs[i].seq_id, 0,
+                            static_cast<llama_pos>(shared));
+    }
+    for (auto& s : seqs) { s.pos = static_cast<int>(shared); }
+    return true;
+}
+
+/**
+ * @brief Prefill every request's suffix in one multi-seq batch (gh#98).
+ *
+ * Each sequence's suffix tokens are decoded at their real positions; only the
+ * last token of each carries logits, recorded as that seq's first sample idx.
+ * @internal
+ * @version 2.8.0
+ */
+bool LlamaCppBackend::prefill_batch_suffixes(
+    std::vector<BatchSeq>& seqs,
+    const std::vector<std::vector<llama_token>>& toks,
+    std::size_t shared) {
+    int total = 0;
+    // shared <= shortest-1 < every t.size() by batch_shared_prefix_len, but
+    // guard the unsigned subtraction defensively (a bad `shared` would else
+    // underflow to a huge alloc).
+    for (const auto& t : toks) {
+        total += static_cast<int>(t.size() - std::min(shared, t.size()));
+    }
+    llama_batch batch = llama_batch_init(total, 0,
+                                         static_cast<int32_t>(seqs.size()));
+    int k = 0;
+    for (std::size_t i = 0; i < seqs.size(); ++i) {
+        int len = static_cast<int>(toks[i].size());
+        for (int p = static_cast<int>(shared); p < len; ++p) {
+            fill_batch_cell(batch, k, toks[i][p], p, seqs[i].seq_id,
+                            p == len - 1);
+            if (p == len - 1) { seqs[i].logits_idx = k; }
+            ++k;
+        }
+        seqs[i].pos = len;
+    }
+    batch.n_tokens = k;
+    last_prefill_tokens_ += k;
+    bool ok = (llama_decode(ctx_, batch) == 0);
+    llama_batch_free(batch);
+    return ok;
+}
+
+/**
+ * @brief Sample + accept + classify each still-active sequence (gh#98).
+ * @internal
+ * @version 2.8.0
+ */
+void LlamaCppBackend::sample_batch_active(std::vector<BatchSeq>& seqs) {
+    for (auto& s : seqs) {
+        if (!s.active) { continue; }
+        // llama_sampler_sample() accepts the drawn token into the chain
+        // internally (advancing grammar/penalties) — matching the single-seq
+        // step_token path. A second accept would double-advance the grammar.
+        llama_token tok = llama_sampler_sample(s.chain, ctx_, s.logits_idx);
+        if (llama_vocab_is_eog(vocab_, tok)) {
+            s.active = false;
+            s.finish = "stop";
+            continue;
+        }
+        s.out.push_back(tok);
+        ++s.n_gen;
+        if (s.n_gen >= s.max_tokens) { s.active = false; s.finish = "length"; }
+    }
+}
+
+/**
+ * @brief Decode all sequences together until each finishes (gh#98).
+ *
+ * One `llama_decode` per step over the still-active sequences' just-sampled
+ * tokens — the multi-seq throughput win. `last_gen_decode_calls_` counts the
+ * decodes (≈ longest output), the observable that batching engaged (vs N·len
+ * for a serial fallback).
+ * @internal
+ * @version 2.8.0
+ */
+void LlamaCppBackend::run_batch_gen_loop(
+    std::vector<BatchSeq>& seqs, int max_steps, std::atomic<bool>& cancel) {
+    llama_batch batch = llama_batch_init(static_cast<int32_t>(seqs.size()), 0,
+                                         static_cast<int32_t>(seqs.size()));
+    for (int step = 0; step < max_steps; ++step) {
+        if (cancel.load(std::memory_order_acquire)) { break; }
+        sample_batch_active(seqs);
+        int k = 0;
+        for (auto& s : seqs) {
+            if (!s.active) { continue; }
+            fill_batch_cell(batch, k, s.out.back(), s.pos, s.seq_id, true);
+            s.logits_idx = k;
+            ++s.pos;
+            ++k;
+        }
+        if (k == 0) { break; }
+        batch.n_tokens = k;
+        ++last_gen_decode_calls_;
+        if (llama_decode(ctx_, batch) != 0) { break; }
+    }
+    llama_batch_free(batch);
+}
+
+/**
+ * @brief Detokenize each sequence into a GenerationResult (gh#98).
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<GenerationResult> LlamaCppBackend::build_batch_results(
+    std::vector<BatchSeq>& seqs) {
+    std::vector<GenerationResult> out;
+    out.reserve(seqs.size());
+    for (auto& s : seqs) {
+        GenerationResult r;
+        for (llama_token t : s.out) { r.content += detokenize(t); }
+        r.token_count = s.n_gen;
+        r.finish_reason = s.finish;
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
+/**
+ * @brief Release every batch sequence's temp seq_id (seq 0 excluded, gh#98).
+ * @internal
+ * @version 2.8.0
+ */
+void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
+    for (std::size_t i = 1; i < seqs.size(); ++i) {
+        if (seqs[i].seq_id != 0) { release_temp_seq_id(seqs[i].seq_id); }
+    }
+}
+
+/**
+ * @brief Run the gh#98 multi-seq batched decode (v2.8.0).
+ *
+ * Prefill shared once → seq_cp fan-out → batched suffix prefill → batched
+ * generation loop (one decode/step over N sequences, each sampled under its
+ * own grammar). `last_prefill_tokens_` holds `shared + Σ suffix` (prefix
+ * prefilled once); `last_gen_decode_calls_` holds the batched step count.
+ *
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
+    const std::vector<std::vector<llama_token>>& toks,
+    const std::vector<GenerationParams>& params,
+    std::size_t shared,
+    std::atomic<bool>& cancel)
+{
+    const std::size_t n = toks.size();
+    std::vector<BatchSeq> seqs(n);
+    if (!prepare_batch_seqs(seqs, params)) {
+        release_temp_seqs(seqs);  // don't leak ids allocated before the failure
+        return std::vector<GenerationResult>(
+            n, batch_error_result("batch sampler init"));
+    }
+    int max_steps = 0;
+    for (const auto& p : params) { max_steps = std::max(max_steps, p.max_tokens); }
+
+    llama_memory_clear(llama_get_memory(ctx_), true);
+    invalidate_resident_kv();
+    last_prefill_tokens_ = 0;
+    last_gen_decode_calls_ = 0;
+
+    bool ok = prefill_shared_and_fanout(seqs, toks[0], shared)
+           && prefill_batch_suffixes(seqs, toks, shared);
+    if (ok) { run_batch_gen_loop(seqs, max_steps, cancel); }
+
+    auto out = ok ? build_batch_results(seqs)
+                  : std::vector<GenerationResult>(
+                        n, batch_error_result("batch prefill"));
+    release_temp_seqs(seqs);
+    invalidate_resident_kv();
+    logger->info("gh#98 batch: requests={} prefix.tokens_shared={} "
+                 "prefix.tokens_saved={} total_prefill_tokens={} gen_decodes={}",
+                 n, shared, shared * (n - 1), last_prefill_tokens_,
+                 last_gen_decode_calls_);
+    return out;
+}
+
+/**
+ * @brief Same-prefix batch generation override (gh#98, v2.8.0).
+ *
+ * Tokenizes each request, computes the shared prefix, and takes the batch
+ * fast-path when batch_is_viable (plain KV, real shared prefix, fits the seq
+ * slots + decode batch); otherwise falls back to the serial base path. The
+ * serial fallback is always correct — it is the unmodified single-request path
+ * per request — so disjoint prompts, hybrid archs, and over-capacity batches
+ * degrade gracefully with no regression.
+ *
+ * @param requests Per-request message lists.
+ * @param params Per-request generation params.
+ * @param cancel Cancel flag.
+ * @return One result per request, in input order.
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<GenerationResult> LlamaCppBackend::do_generate_batch(
+    const std::vector<std::vector<Message>>& requests,
+    const std::vector<GenerationParams>& params,
+    std::atomic<bool>& cancel)
+{
+    const std::size_t n = requests.size();
+    std::vector<std::vector<llama_token>> toks(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        toks[i] = tokenize(render_prompt(requests[i], params[i]), true);
+    }
+    const std::size_t shared = batch_shared_prefix_len(toks);
+    std::size_t total_suffix = 0;
+    for (const auto& t : toks) { total_suffix += t.size() - shared; }
+
+    const bool hybrid = is_hybrid_ || is_recurrent_;
+    if (!batch_is_viable(n, config().n_parallel, shared, hybrid,
+                         total_suffix, config().n_batch)) {
+        return InferenceBackend::do_generate_batch(requests, params, cancel);
+    }
+    return run_batched_decode(toks, params, shared, cancel);
 }
 
 // ── Prompt cache helpers ───────────────────────────────────

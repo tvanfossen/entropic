@@ -224,6 +224,35 @@ GenerationResult InferenceBackend::generate(
 }
 
 /**
+ * @brief Same-prefix batch generation. Requires ACTIVE state. (gh#98, v2.8.0)
+ * @param requests Per-request message lists.
+ * @param params Per-request generation params.
+ * @param cancel Atomic cancel flag.
+ * @return One result per request (single error result if not ACTIVE).
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<GenerationResult> InferenceBackend::generate_batch(
+    const std::vector<std::vector<Message>>& requests,
+    const std::vector<GenerationParams>& params,
+    std::atomic<bool>& cancel)
+{
+    if (!is_active()) {
+        GenerationResult err;
+        err.error_code = ENTROPIC_ERROR_INVALID_STATE;
+        err.error_message = "generate_batch() requires ACTIVE state";
+        err.finish_reason = "error";
+        logger->error("{}", err.error_message);
+        return {err};
+    }
+    auto start = entropic::log::now();
+    auto results = do_generate_batch(requests, params, cancel);
+    double ms = entropic::log::elapsed_ms(start, entropic::log::now());
+    for (auto& r : results) { r.total_ms = ms; }
+    return results;
+}
+
+/**
  * @brief Streaming generation. Requires ACTIVE state.
  * @param messages Conversation history.
  * @param params Generation parameters.

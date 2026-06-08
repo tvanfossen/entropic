@@ -81,15 +81,18 @@ static void parse_sampler_overrides(
 }
 
 /**
- * @brief Parse a ModelConfig from a YAML node.
- * @param node YAML node containing model fields.
- * @param registry Bundled models for path resolution.
- * @param[out] config Output model config.
- * @return Empty string on success, error message on failure.
+ * @brief Resolve `config.path` from an explicit `path:` or a selector (gh#62).
+ *
+ * Precedence: an explicit `path:` (bundled key or literal path) wins.
+ * Otherwise, if ALL of `family`/`size`/`quant` are present, resolve via the
+ * bundled registry (`find_by` → `resolve`). A partial selector (some but not
+ * all three) or an unmatched triple is a clear error. Absent both leaves
+ * `config.path` untouched (downstream validation reports the missing model).
+ * @utility
  * @internal
- * @version 2.1.8
+ * @version 2.8.0
  */
-static std::string parse_model_config(
+static std::string resolve_model_path(
     ryml::ConstNodeRef node,
     const BundledModels& registry,
     ModelConfig& config)
@@ -97,7 +100,48 @@ static std::string parse_model_config(
     std::string path_str;
     if (extract(node, "path", path_str)) {
         config.path = registry.resolve(path_str);
+        return "";
     }
+
+    std::string family;
+    std::string size;
+    std::string quant;
+    const bool hf = extract(node, "family", family);
+    const bool hs = extract(node, "size", size);
+    const bool hq = extract(node, "quant", quant);
+    if (!hf && !hs && !hq) { return ""; }  // no path, no selector
+
+    // Single-exit accumulator (knots returns gate ≤ 3).
+    std::string err;
+    if (!(hf && hs && hq)) {
+        err = "model selector requires all of family/size/quant "
+              "(or use path:)";
+    } else if (const std::string key = registry.find_by(family, size, quant);
+               key.empty()) {
+        err = "no bundled model matches family=" + family
+              + " size=" + size + " quant=" + quant;
+    } else {
+        config.path = registry.resolve(key);
+    }
+    return err;
+}
+
+/**
+ * @brief Parse a ModelConfig from a YAML node.
+ * @param node YAML node containing model fields.
+ * @param registry Bundled models for path resolution.
+ * @param[out] config Output model config.
+ * @return Empty string on success, error message on failure.
+ * @internal
+ * @version 2.8.0
+ */
+static std::string parse_model_config(
+    ryml::ConstNodeRef node,
+    const BundledModels& registry,
+    ModelConfig& config)
+{
+    const std::string err = resolve_model_path(node, registry, config);
+    if (!err.empty()) { return err; }
 
     extract(node, "adapter", config.adapter);
     extract(node, "context_length", config.context_length);

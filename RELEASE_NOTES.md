@@ -1,3 +1,75 @@
+# entropic v2.8.0
+
+Minor release — two consumer-facing capabilities for the games consumer
+(many cheap agents on one small GPU), the family/size/quant selector UX, and
+test-infra hardening that closes the harness↔production fidelity gap. Two
+additive public C ABI symbols; **no `i_*.h` interface header touched.**
+
+## gh#98 — `entropic_run_batch`: same-prefix batched generation
+
+N independent requests that share a large prompt prefix (e.g. NPC agents per
+game tick: a shared constitution/context + a short per-agent suffix) now run
+**together in one forward pass per step** instead of N serial calls. The shared
+prefix is prefilled once into seq 0, `llama_memory_seq_cp`-fanned out to N
+sequences, the suffixes prefilled in one batch, then a generation loop decodes
+**all N sequences in a single `llama_decode` per step**, each sampled under its
+own tier's grammar (fixed-N grammar chains). This is the "process many
+same-prefix requests in one forward pass" win the issue asks for — it breaks the
+sequential-NPC ceiling that warm-keep (gh#96, which shares the prefill but still
+decodes sequentially) cannot.
+
+- ABI: `entropic_run_batch(handle, const char** tiers, const char** prompts,
+  size_t n, char** result_json)` → JSON array of `{content, finish_reason,
+  tool_calls}`. Additive.
+- `kv_unified` is enabled when `n_parallel > 1` (required for `seq_cp`; also
+  llama.cpp's recommendation for shared-prefix sequences).
+- Guarded (`batch_is_viable`): hybrid/recurrent archs, <2 requests, no shared
+  prefix, over sequence-slot capacity, or suffixes exceeding the decode batch
+  all fall back to the unmodified per-request serial path — no regression.
+
+## gh#99 — `entropic_run_as`: per-call tier/grammar on a shared model
+
+One process can interleave agent *kinds* (NPC / companion / BBEG) that need
+different grammars per call while sharing ONE resident model — essential on an
+11 GB GPU where a second model can't fit. `entropic_run_as(handle, tier, prompt,
+result)` runs a single turn under the named tier's grammar + system prompt +
+samplers, reusing the resident model (no second load, no reconfigure). Builds on
+the per-tier resolution that already existed internally; the gap was purely the
+ABI surface. Unknown tier → `ENTROPIC_ERROR_IDENTITY_NOT_FOUND`.
+
+## gh#62 — model family/size/quant selectors
+
+`BundledModels::find_by` is now wired into both consumer surfaces: a tier may
+omit `path:` and give flat `family:` / `size:` / `quant:` keys (resolved to the
+bundled key), and `entropic download` gains `--family/--size/--quant`. Explicit
+`path:` still wins; a partial or unmatched selector errors clearly.
+
+## gh#93 — test-infra hardening (closes the harness↔production gap)
+
+The model-test harness built the orchestrator directly, bypassing
+`configure_common` — the seam that let three reactive consumer bugs
+(gh#88/90/94) through. Two structural fixes:
+- A single typed `serialize_tool_calls` (`src/inference/tool_call_serialize.h`)
+  is now the source of truth for BOTH production and the harness; the harness
+  previously emitted untyped (raw-string) tool-call arguments, a silent
+  divergence — now faithful by construction.
+- A facade-driven model-test harness (`tests/model/facade_model_helpers.h`)
+  exercises the real `entropic_create → entropic_configure_dir → run` path,
+  hosting new behavioral tests (gh#94 `enable_thinking:false`, autoparser
+  multi-parameter tool calls, cancel-bridge interrupt — closes #103).
+
+## Tests
+
+- CPU: `batch_shared_prefix_len` + `batch_is_viable` (the gh#98 guard);
+  `entropic_run_as` precedence + unknown-tier; gh#62 selector resolve/error;
+  the typed serializer.
+- GPU (validated): `test_gh99_run_as` (per-call grammar switching on a shared
+  model — reproduces the consumer's "loads companion, still emits npc grammar"
+  symptom), `test_gh98_batch` (multi-seq decode engaged + prefix-once + hybrid
+  serial-fallback), `test_gh93_behavioral` (thinking / autoparser / cancel).
+
+---
+
 # entropic v2.7.6
 
 Patch release. **gh#97 — v2.7.5 warm-keep / prompt-cache corrupted KV

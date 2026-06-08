@@ -208,6 +208,20 @@ set_tests_properties(model/test-gh96-warmkeep-oracle PROPERTIES TIMEOUT 600)
 add_model_test(test-gh97-hybrid-cache test_gh97_hybrid_cache.cpp)
 set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
 
+# gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
+add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
+set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)
+
+# gh#98 (v2.8.0): same-prefix batch — prefill-once + correctness + hybrid
+# serial fallback (the qwen35moe case needs the larger partial-offload timeout).
+add_model_test(test-gh98-batch test_gh98_batch.cpp)
+set_tests_properties(model/test-gh98-batch PROPERTIES TIMEOUT 600)
+
+# gh#93 (v2.8.0): facade-harness behavioral — enable_thinking:false, autoparser
+# multi-param, cancel-bridge interrupt.
+add_model_test(test-gh93-behavioral test_gh93_behavioral.cpp)
+set_tests_properties(model/test-gh93-behavioral PROPERTIES TIMEOUT 300)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

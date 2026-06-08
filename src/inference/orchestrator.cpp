@@ -556,6 +556,48 @@ GenerationResult ModelOrchestrator::generate(
 }
 
 /**
+ * @brief Same-prefix batch generation on a shared model — see header (gh#98).
+ *
+ * All requests resolve to ONE backend (the lead tier's model — tiers share the
+ * pool). Each request's params are resolved per its own tier (grammar +
+ * samplers), then the backend's `generate_batch` prefills the shared prefix
+ * once and fans out. Tool staging is per-model, so this path targets
+ * grammar-constrained requests (params.grammar), not common_chat tool
+ * injection.
+ *
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<GenerationResult> ModelOrchestrator::generate_batch(
+    const std::vector<std::vector<Message>>& messages_list,
+    const std::vector<GenerationParams>& params_list,
+    const std::vector<std::string>& tiers,
+    std::atomic<bool>& cancel)
+{
+    const std::size_t n = messages_list.size();
+    const std::string lead =
+        (tiers.empty() || tiers[0].empty()) ? "default" : tiers[0];
+    InferenceBackend* model = get_model(lead);
+    if (model == nullptr) {
+        return std::vector<GenerationResult>(n, build_no_model_error(lead));
+    }
+
+    std::vector<GenerationParams> resolved;
+    resolved.reserve(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        const std::string& t = tiers[i].empty() ? lead : tiers[i];
+        resolved.push_back(resolve_and_stage(model, params_list[i], t));
+    }
+
+    auto results = model->generate_batch(messages_list, resolved, cancel);
+    for (std::size_t i = 0; i < results.size() && i < tiers.size(); ++i) {
+        const std::string& t = tiers[i].empty() ? lead : tiers[i];
+        apply_adapter_parse(model, get_adapter(t), results[i]);
+    }
+    return results;
+}
+
+/**
  * @brief Streaming generation with speculative dispatch.
  *
  * Speculative routing added in v2.1.11 (gh#36): when the kernel is

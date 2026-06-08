@@ -14,24 +14,46 @@
 
 #include "model_test_context.h"
 
+#include <set>
+
 CATCH_REGISTER_LISTENER(ModelTestListener)
 
-// ── Test 3: Tier Routing ────────────────────────────────────
+// ── Test 3: Tier Routing (audit task #71) ───────────────────────────
+// PRIOR vacuous form: routed on the shared g_ctx whose config.local.yaml sets
+// routing.enabled=false, so route() short-circuited to the default tier and
+// REQUIRE_FALSE(tier.empty()) passed without classify_task ever running.
+// This builds a LOCAL routing-ENABLED orchestrator from routing_config.yaml
+// (which sets routing.classification_prompt so the router is actually told the
+// digit scheme — see classify_task, audit task #71) and asserts model_raw (the
+// matched tier_map digit) is non-empty, which can ONLY be true if classify_task
+// ran the router AND it emitted a routing digit.
 
-SCENARIO("Classification routes to the correct identity",
+SCENARIO("Classification runs the router and yields a configured tier",
          "[model][test3]")
 {
-    GIVEN("a configured engine with multiple identities") {
-        REQUIRE(g_ctx.initialized);
+    GIVEN("a routing-ENABLED orchestrator (router model + classify prompt)") {
         start_test_log("test3_tier_routing");
-        auto messages = make_messages(
-            "", "Write a Python function that sorts a list");
+        config::BundledModels reg;
+        REQUIRE(load_registry(reg));
+        ParsedConfig cfg;
+        REQUIRE(load_test_config(reg, cfg, routing_config_path()));
+        ModelOrchestrator orch;
+        REQUIRE(orch.initialize(cfg));
+        const std::set<std::string> kConfigured = {"eng", "qa"};
 
-        WHEN("I send a programming task") {
-            auto tier = g_ctx.orchestrator->route(messages);
+        WHEN("a programming task is routed") {
+            auto code = make_messages(
+                "", "Write a Python function that sorts a list");
+            auto tier = orch.route(code);
+            auto rr = orch.last_routing_result();
 
-            THEN("the router classifies to a code-oriented tier") {
-                REQUIRE_FALSE(tier.empty());
+            THEN("the router actually classified (raw digit present)") {
+                INFO("routed tier=[" << tier << "] model_raw=["
+                     << rr.model_raw << "]");
+                // model_raw is the matched tier_map digit; "" when routing is
+                // disabled OR the router emitted no digit — the bug this catches.
+                REQUIRE_FALSE(rr.model_raw.empty());
+                REQUIRE(kConfigured.count(tier) == 1);
                 end_test_log();
             }
         }

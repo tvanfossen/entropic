@@ -692,10 +692,18 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  * loaded — the caller treats that as a routing miss and falls back to
  * the default tier.
  *
+ * audit task #71 (v2.8.0): when `routing.classification_prompt` is configured,
+ * prepend it to the router prompt so a general instruct model is actually told
+ * the digit scheme (without it the router was fed a bare "<msg> ->" and just
+ * continued the text — routing silently always fell back to the default tier).
+ * The router token budget widens to 4 on that path to capture the digit after
+ * a model's leading space; the bare-prompt path keeps the original 1-token
+ * behavior for back-compat.
+ *
  * @param messages Conversation history.
  * @return Pair of (tier_name, raw_digit), or ("","") on miss.
  * @internal
- * @version 2.1.11
+ * @version 2.8.0
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -711,8 +719,23 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
         logger->warn("classify_task: router not loaded; returning empty");
         return {"", ""};
     }
-    auto result = router_backend->complete(
-        user_msg + " ->", router_params);
+    // audit task #71: a non-fine-tuned router fed the bare "<msg> ->" just
+    // CONTINUES the text and never emits a routing digit, so classify_task
+    // silently always fell back to the default tier. When the deployment
+    // configures routing.classification_prompt, prepend it so a general
+    // instruct model is actually told the digit scheme. (The trailing " ->"
+    // still constrains it to a single digit, per build_classification_prompt.)
+    std::string router_prompt = user_msg + " ->";
+    const auto& cprompt = config_.routing.classification_prompt;
+    if (cprompt.has_value() && !cprompt->empty()) {
+        router_prompt = *cprompt + "\n" + user_msg + " ->";
+        // A general instruct model emits a leading space before the digit;
+        // max_tokens=1 would cut it off. 4 captures "<space>1"; the digit scan
+        // below takes the first tier_map char. Only widened on the prompt path
+        // so unconfigured deployments keep the original 1-token behavior.
+        router_params.max_tokens = 4;
+    }
+    auto result = router_backend->complete(router_prompt, router_params);
     std::string raw = result.content;
 
     // Trim whitespace

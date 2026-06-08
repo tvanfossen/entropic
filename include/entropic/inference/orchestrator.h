@@ -501,6 +501,29 @@ public:
      */
     std::string select_vision_tier() const;
 
+    /**
+     * @brief Test-only forwarder to the private per-tier sampler default
+     *        application (gh#94, audit task #71).
+     *
+     * Exposes ModelOrchestrator::apply_tier_sampler_defaults so a CPU unit
+     * test can assert the effective sampler values produced by the MEMBER
+     * path — specifically the `tier.X -> ov.X` 9-line hand-copy
+     * (orchestrator.cpp) that the free `apply_tier_sampler_overrides` tests
+     * cannot reach. The tier is looked up in `config_`, so the caller must
+     * have a config assigned (initialize() assigns config_ before any model
+     * load, so a failed init still populates it). Pure forwarder — no
+     * behavior of its own.
+     *
+     * @param params Generation params (mutated in place).
+     * @param tier_name Tier whose frontmatter sampler config to apply.
+     * @internal
+     * @version 2.8.0
+     */
+    void apply_tier_sampler_defaults_for_test(GenerationParams& params,
+                                              const std::string& tier_name) {
+        apply_tier_sampler_defaults(params, tier_name);
+    }
+
 private:
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;

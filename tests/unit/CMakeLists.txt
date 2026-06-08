@@ -96,6 +96,12 @@ add_executable(entropic-inference-tests
     inference/tokenizer_seam_test.cpp
     # v2.3.10: LlamaCppBackend ↔ Sampler seam coverage via MockSamplerFactory
     inference/sampler_seam_test.cpp
+    # gh#95 (audit Pattern C): CPU-tier proof that a non-empty
+    # GenerationParams.grammar actually ENGAGES a grammar constraint in the
+    # REAL LlamaCppSamplerFactory chain (vocab-only GGUF, no llama_context).
+    # Closes the fail-open previously only caught by GPU model tests that
+    # SKIP on CI. Links `llama` (already linked) + uses ENTROPIC_SOURCE_DIR.
+    inference/grammar_engagement_test.cpp
     # v2.3.10: REAL llama.cpp paths for LlamaCppTokenizer + do_load /
     # do_unload using vocab-only ggml-vocab-*.gguf fixtures (CPU-only,
     # sub-100MB). Pushes llama_cpp_tokenizer.cpp 0% → ~100% and the

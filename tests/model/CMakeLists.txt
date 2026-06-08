@@ -217,6 +217,11 @@ set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)
 add_model_test(test-gh98-batch test_gh98_batch.cpp)
 set_tests_properties(model/test-gh98-batch PROPERTIES TIMEOUT 600)
 
+# gh#100 (v2.8.0): q8_0 KV-cache validation on Gemma-4 E2B-Q4 + flash_attn —
+# per-seq KV ~halved (→ ~2x #98 batch slots) without the E4B-Q4 breakage.
+add_model_test(test-gh100-q8-kv test_gh100_q8_kv.cpp)
+set_tests_properties(model/test-gh100-q8-kv PROPERTIES TIMEOUT 300)
+
 # gh#93 (v2.8.0): facade-harness behavioral — enable_thinking:false, autoparser
 # multi-param, cancel-bridge interrupt.
 add_model_test(test-gh93-behavioral test_gh93_behavioral.cpp)

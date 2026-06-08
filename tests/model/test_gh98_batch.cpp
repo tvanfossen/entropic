@@ -167,11 +167,21 @@ SCENARIO("gh#98: hybrid arch falls back to serial (no seq-op corruption)",
         WHEN("running generate_batch on the hybrid arch") {
             std::atomic<bool> cancel{false};
             auto batch = backend.generate_batch(reqs, pv, cancel);
+            // gh#98 instrumentation (audit task #71): run_batched_decode is the
+            // ONLY writer of last_gen_decode_calls_; the hybrid guard routes to
+            // the serial InferenceBackend::do_generate_batch, which never enters
+            // that loop. 0 here proves the serial fallback was actually taken —
+            // the inverse of the plain-KV sibling's CHECK(gen_decodes > 0).
+            int gen_decodes = backend.last_gen_decode_calls();
             backend.deactivate();
             backend.unload();
 
             THEN("the serial fallback produces clean output for every request") {
                 REQUIRE(batch.size() == static_cast<size_t>(kN));
+                // Without this, a regression that ran the unsafe seq_cp/seq_rm
+                // batched path on recurrent memory (gh#97) would still pass.
+                INFO("gen_decodes=" << gen_decodes << " (must be 0 on fallback)");
+                CHECK(gen_decodes == 0);
                 for (int i = 0; i < kN; ++i) {
                     INFO("req " << i << " finish=[" << batch[i].finish_reason
                          << "] content=[" << batch[i].content << "]");

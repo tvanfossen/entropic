@@ -232,6 +232,23 @@ gemma4_e4b_mmproj:
 # adapter / mmproj / license as gemma4_e4b. Tagged with the gh#62
 # selector fields so find_by(family=gemma4, size_label=e4b,
 # quant=UD-Q4_K_XL) resolves to this entry alongside the Q8_0 variant.
+gemma4_e2b_q4:
+  name: gemma-4-E2B-it-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-UD-Q4_K_XL.gguf
+  size_gb: 3.2
+  adapter: gemma4
+  description: Gemma 4 E2B instruct — NPC/edge tier, 4-bit (~3 GB, fits an 11 GB GPU fully offloaded beside a 2nd handle)
+  provider: unsloth
+  family: gemma4
+  size_label: e2b
+  quant: UD-Q4_K_XL
+  # gh#100: the model sassafras's NPC tier actually loads. Dynamic 4-bit
+  # (~3 GB resident) leaves headroom on the 1080 Ti for a 2nd E4B-Q4
+  # companion handle + the viewer framebuffer + per-NPC KV growth. The
+  # q8_0-KV validation (gh#100) targets THIS gguf + flash_attn.
+  # Vision: shares the gemma4_e2b mmproj (same upstream repo).
+  mmproj_key: gemma4_e2b_mmproj
+
 gemma4_e4b_q4:
   name: gemma-4-E4B-it-UD-Q4_K_XL
   url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/gemma-4-E4B-it-UD-Q4_K_XL.gguf

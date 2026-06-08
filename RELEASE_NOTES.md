@@ -5,6 +5,12 @@ Minor release — two consumer-facing capabilities for the games consumer
 test-infra hardening that closes the harness↔production fidelity gap. Two
 additive public C ABI symbols; **no `i_*.h` interface header touched.**
 
+Also folds in a full test-suite plumbing-not-feature **audit** (task #71) and
+its RED-first fixes — which surfaced a real production finding: a **q8-KV
+NPC-tier validation** (#100). (The audit also found model-based tier routing is
+a silent no-op; that production fix is split to **v2.8.1**, since no consumer
+uses routing yet.) See the audit section below.
+
 ## gh#98 — `entropic_run_batch`: same-prefix batched generation
 
 N independent requests that share a large prompt prefix (e.g. NPC agents per
@@ -67,6 +73,35 @@ The model-test harness built the orchestrator directly, bypassing
   model — reproduces the consumer's "loads companion, still emits npc grammar"
   symptom), `test_gh98_batch` (multi-seq decode engaged + prefix-once + hybrid
   serial-fallback), `test_gh93_behavioral` (thinking / autoparser / cancel).
+
+## Test-suite audit (task #71)
+
+A full plumbing-not-feature audit of the 170-file test suite (tests that pass
+green while the feature is broken). Each fix is RED-first verified. It surfaced
+a real production finding plus RED-first hardening:
+
+- **#100 — q8-KV is safe on the E2B-Q4 NPC tier.** Validated on-box:
+  `cache_type_k/v: q8_0` + `flash_attn` on Gemma-4 **E2B-Q4** halves per-context
+  KV (48→25.5 MiB alloc; ~0.53× per-seq) with no activation breakage — unlike
+  E4B-Q4, which it breaks. The `cache_type_k/v` knob is honored **per-tier**, so
+  the `npc` tier can run q8-KV alone → ~2× more #98 batch slots in the same
+  VRAM. Adds the `gemma4_e2b_q4` registry entry + `test_gh100_q8_kv`.
+- **Hardening (RED-first):** gh#88 defang + gh#84 anti-spiral combined-path
+  SCENARIOs (closed the isolated-helper / pre-commit-blind gap); gh#95 CPU
+  grammar-engagement proof (closed the fail-open that only GPU tests caught);
+  gh#94 effective-sampler member-path test; dynamic-identity (test8) vacuous
+  assertion strengthened; gh#98 hybrid serial-fallback decode-count assertion.
+
+**Split out to v2.8.1:** the audit also found that model-based tier routing is
+a **silent no-op** (`classify_task` never feeds the router its classification
+prompt). That production fix + its test are held for v2.8.1 — no consumer uses
+routing yet, so it does not gate this release. Fully wiring model-routing from
+identity focus/examples (the dead `build_classification_prompt`) remains a
+v2.9.0 item.
+
+Other deferred audit strengthenings (lower-value or high-harness-risk): e5
+post-compaction, e7 real-delegation harness, gh#93 autoparser backend-direct
+re-seam, gh#64 accumulator.
 
 ---
 

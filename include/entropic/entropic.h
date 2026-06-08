@@ -279,6 +279,76 @@ ENTROPIC_EXPORT entropic_error_t entropic_run(
     char** result_json);
 
 /**
+ * @brief Single-turn agentic run under a named tier (gh#99).
+ *
+ * Per-call tier/grammar/identity selection on the shared resident model.
+ * Runs `input` under `tier_or_identity`'s grammar + system prompt + samplers
+ * without loading a second model or reconfiguring the handle — so one process
+ * can interleave agent kinds (e.g. an "npc" verb-grammar tier and a
+ * "companion" free-text tier) on a single resident model. Identical result
+ * contract to entropic_run().
+ *
+ * @param handle Engine handle.
+ * @param tier_or_identity Tier name to run this call under (null-terminated).
+ * @param input User message (null-terminated).
+ * @param[out] result_json JSON result string. Caller must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — NULL tier/input/result_json.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_IDENTITY_NOT_FOUND — unknown tier name.
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.8.0
+ *
+ * @par Memory ownership
+ * Caller must free *result_json with entropic_free().
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_as(
+    entropic_handle_t handle,
+    const char* tier_or_identity,
+    const char* input,
+    char** result_json);
+
+/**
+ * @brief Same-prefix batch run on a shared resident model (gh#98).
+ *
+ * Runs N independent requests that share a large prompt prefix (e.g. game
+ * agents per tick: a shared constitution/context + a short per-agent suffix)
+ * together — the shared prefix is prefilled once and fanned out, each request
+ * sampled under its tier's grammar. These are one-shot generations (no agentic
+ * tool loop). On a plain-KV model with a real shared prefix and enough
+ * sequence slots (configure n_parallel >= n) the batch fast-path engages;
+ * otherwise each request runs serially (correct, just without the prefill win).
+ *
+ * @param handle Engine handle.
+ * @param tiers Array of N tier names; an entry may be NULL for the default
+ *        tier. May be NULL to use the default tier for all.
+ * @param prompts Array of N user prompt strings (null-terminated).
+ * @param n Number of requests.
+ * @param[out] result_json JSON array of N objects
+ *        `{"content","finish_reason","tool_calls"}`, in input order. Caller
+ *        must free with entropic_free().
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — NULL prompts/result_json or n==0.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_GENERATE_FAILED — inference error.
+ *
+ * @threadsafety Serialized per-handle.
+ * @version 2.8.0
+ *
+ * @par Memory ownership
+ * Caller must free *result_json with entropic_free().
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_run_batch(
+    entropic_handle_t handle,
+    const char** tiers,
+    const char** prompts,
+    size_t n,
+    char** result_json);
+
+/**
  * @brief Streaming agentic loop with token callback.
  *
  * Same as entropic_run() but invokes on_token for each generated token.

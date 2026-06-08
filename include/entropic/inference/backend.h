@@ -414,6 +414,28 @@ public:
         std::function<void(std::string_view token)> on_token,
         std::atomic<bool>& cancel);
 
+    /* ── Same-prefix batch generation (gh#98, v2.8.0) ────── */
+
+    /**
+     * @brief Generate N independent same-prefix requests together.
+     *
+     * For traffic where N requests share a large verbatim prompt prefix and
+     * differ only in a short suffix (e.g. NPC agents per game tick): the
+     * shared prefix is prefilled once and fanned out to N sequences, then the
+     * suffixes + outputs are decoded in batched forward passes, each sampled
+     * under its own request's grammar. Requires ACTIVE state.
+     *
+     * @param requests Per-request message lists (all sharing a prefix).
+     * @param params Per-request generation params (each may carry its grammar).
+     * @param cancel Cooperative cancel flag.
+     * @return One GenerationResult per request, in input order.
+     * @version 2.8.0
+     */
+    std::vector<GenerationResult> generate_batch(
+        const std::vector<std::vector<Message>>& requests,
+        const std::vector<GenerationParams>& params,
+        std::atomic<bool>& cancel);
+
 protected:
     /* ── Subclass overrides (20%) ────────────────────────── */
 
@@ -476,6 +498,33 @@ protected:
         std::atomic<bool>& cancel) {
         (void)cancel;
         return do_generate(messages, params);
+    }
+
+    /**
+     * @brief Subclass same-prefix batch generation (gh#98, v2.8.0).
+     *
+     * Default implementation is a transparent serial fallback: each request
+     * runs through the single-request `do_generate` in turn. Backends that
+     * support multi-sequence batched decode (LlamaCppBackend on a plain-KV
+     * arch) override this to prefill the shared prefix once and fan out.
+     *
+     * @param requests Per-request message lists.
+     * @param params Per-request generation params.
+     * @param cancel Atomic cancel flag.
+     * @return One result per request, in input order.
+     * @internal
+     * @version 2.8.0
+     */
+    virtual std::vector<GenerationResult> do_generate_batch(
+        const std::vector<std::vector<Message>>& requests,
+        const std::vector<GenerationParams>& params,
+        std::atomic<bool>& cancel) {
+        std::vector<GenerationResult> out;
+        out.reserve(requests.size());
+        for (std::size_t i = 0; i < requests.size(); ++i) {
+            out.push_back(do_generate(requests[i], params[i], cancel));
+        }
+        return out;
     }
 
     /**

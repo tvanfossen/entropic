@@ -766,3 +766,109 @@ SCENARIO("gh#94: per-tier sampler knobs parse from YAML into TierConfig",
         }
     }
 }
+
+// ── gh#62 (v2.8.0): family/size/quant model selector ──────────
+SCENARIO("A tier selects a bundled model by family/size/quant",
+         "[config][loader][gh62]")
+{
+    GIVEN("a tier with family/size/quant and no explicit path") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        // qwen3_5_4b is the one test-registry entry carrying structured
+        // selectors (family=qwen3_5, size_label=4b, quant=Q8_0).
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    family: qwen3_5\n"
+            "    size: 4b\n"
+            "    quant: Q8_0\n"
+            "    adapter: qwen35\n"
+            "  default: lead\n";
+
+        WHEN("parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("config.path resolves to the matching registry entry") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                const auto& lead = config.models.tiers.at("lead");
+                // resolve() maps the registry key to <name>.gguf.
+                CHECK(lead.path.filename().string()
+                      == "Qwen3.5-4B-Q8_0.gguf");
+            }
+        }
+    }
+
+    GIVEN("a tier whose selector matches no bundled entry") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    family: qwen3_5\n"
+            "    size: 4b\n"
+            "    quant: Q2_K\n"  // no such quant in the registry
+            "    adapter: qwen35\n"
+            "  default: lead\n";
+
+        WHEN("parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it errors clearly (no silent empty path)") {
+                CHECK_FALSE(err.empty());
+                CHECK(err.find("no bundled model") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a tier with a partial selector (missing quant)") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    family: qwen3_5\n"
+            "    size: 4b\n"
+            "    adapter: qwen35\n"
+            "  default: lead\n";
+
+        WHEN("parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it errors asking for all three selector keys") {
+                CHECK_FALSE(err.empty());
+                CHECK(err.find("family/size/quant") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a tier with an explicit path AND a selector") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        // path: wins; the (mismatched) selector is ignored.
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    family: qwen3_5\n"
+            "    size: 4b\n"
+            "    quant: Q2_K\n"
+            "    adapter: qwen35\n"
+            "  default: lead\n";
+
+        WHEN("parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the explicit path wins and no selector error is raised") {
+                REQUIRE(err.empty());
+                const auto& lead = config.models.tiers.at("lead");
+                CHECK(lead.path.filename().string()
+                      == "Qwen3.5-35B-A3B-UD-IQ3_XXS.gguf");
+            }
+        }
+    }
+}

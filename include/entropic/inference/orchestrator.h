@@ -179,6 +179,29 @@ public:
         const std::string& tier_name = "");
 
     /**
+     * @brief Same-prefix batch generation on a shared resident model (gh#98).
+     *
+     * All N requests run on ONE backend (resolved from the lead tier — they
+     * share the model pool). Each request's params are resolved per its tier
+     * (grammar + samplers), then dispatched to the backend's `generate_batch`,
+     * which prefills the shared prompt prefix once and fans out. Adapter parse
+     * is applied per result.
+     *
+     * @param messages_list Per-request message lists (built with each tier's
+     *        system prompt so same-tier requests share a prefix).
+     * @param params_list Per-request base params.
+     * @param tiers Per-request tier names ("" = lead/default).
+     * @param cancel Cancel flag.
+     * @return One GenerationResult per request, in input order.
+     * @version 2.8.0
+     */
+    std::vector<GenerationResult> generate_batch(
+        const std::vector<std::vector<Message>>& messages_list,
+        const std::vector<GenerationParams>& params_list,
+        const std::vector<std::string>& tiers,
+        std::atomic<bool>& cancel);
+
+    /**
      * @brief Streaming generation.
      * @version 1.8.2
      */

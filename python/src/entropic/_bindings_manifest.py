@@ -100,6 +100,8 @@ EXPORTS = frozenset(
         "entropic_residency_snapshot",
         "entropic_revoke_mcp_key",
         "entropic_run",
+        "entropic_run_as",
+        "entropic_run_batch",
         "entropic_run_messages",
         "entropic_run_messages_streaming",
         "entropic_run_streaming",

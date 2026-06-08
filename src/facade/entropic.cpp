@@ -24,8 +24,11 @@
 #include <entropic/types/messages_json.h>
 #include "json_serializers.h"
 #include "utf8_safe.h"
+#include "../inference/tool_call_serialize.h"  // gh#98: shared typed serializer
 
 #include <nlohmann/json.hpp>
+
+#include <atomic>
 
 #include <cstdlib>
 #include <fstream>
@@ -1984,6 +1987,190 @@ entropic_error_t entropic_run(
         } catch (...) {
             *result_json = nullptr;
         }
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+/**
+ * @brief Run + serialize for entropic_run_as (gh#99).
+ *
+ * Extracted so entropic_run_as stays within the knots returns gate.
+ * @utility
+ * @return ENTROPIC_OK or ENTROPIC_ERROR_GENERATE_FAILED.
+ * @version 2.8.0
+ */
+static entropic_error_t run_as_inner(
+    entropic_handle_t handle, const char* tier, const char* input,
+    char** result_json) {
+    try {
+        auto result = handle->engine->run_turn_as(tier, input);
+        *result_json = alloc_cstr(facade_json::serialize_messages(result));
+        // Synthetic completion sentinel (token="", len=0), matching run().
+        if (handle->stream_observer != nullptr) {
+            handle->stream_observer("", 0, handle->stream_observer_data);
+        }
+        return ENTROPIC_OK;
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_as: {}", handle->last_error);
+        // Define *result_json on the error path, matching entropic_run()'s
+        // documented identical contract: surface partial context, else nullptr.
+        try {
+            *result_json = alloc_cstr(
+                facade_json::serialize_messages(handle->engine->get_messages()));
+        } catch (...) {
+            *result_json = nullptr;
+        }
+        return ENTROPIC_ERROR_GENERATE_FAILED;
+    }
+}
+
+/**
+ * @brief Single-turn blocking run under a named tier (gh#99).
+ *
+ * Per-call tier/grammar/identity selection on the shared resident model: runs
+ * `input` under `tier_or_identity`'s grammar + system prompt + samplers with no
+ * 2nd model load and no reconfigure. Same result contract as entropic_run().
+ *
+ * @param handle Engine handle returned by entropic_create.
+ * @param tier_or_identity Tier name to run this call under.
+ * @param input Null-terminated user input string.
+ * @param result_json Out: newly allocated JSON result (caller frees with
+ *                    entropic_free).
+ * @return ENTROPIC_OK on success; ENTROPIC_ERROR_IDENTITY_NOT_FOUND for an
+ *         unknown tier; other error codes per entropic_run().
+ * @internal
+ * @version 2.8.0
+ */
+entropic_error_t entropic_run_as(
+    entropic_handle_t handle,
+    const char* tier_or_identity,
+    const char* input,
+    char** result_json) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK || !tier_or_identity || !input || !result_json
+        || !handle->engine) {
+        return rc != ENTROPIC_OK ? rc
+            : (!tier_or_identity || !input || !result_json)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_INVALID_STATE;
+    }
+    if (!handle->engine->has_tier(tier_or_identity)) {
+        handle->last_error =
+            std::string("unknown tier: ") + tier_or_identity;
+        s_log->error("run_as: {}", handle->last_error);
+        return ENTROPIC_ERROR_IDENTITY_NOT_FOUND;
+    }
+    return run_as_inner(handle, tier_or_identity, input, result_json);
+}
+
+/**
+ * @brief Serialize batch results to a JSON array string (gh#98).
+ * @param results Per-request generation results.
+ * @return JSON array: [{content, finish_reason, tool_calls}, ...].
+ * @utility
+ * @version 2.8.0
+ */
+static std::string serialize_batch_results(
+    const std::vector<entropic::GenerationResult>& results) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& r : results) {
+        nlohmann::json obj;
+        obj["content"] = r.content;
+        obj["finish_reason"] = r.finish_reason;
+        obj["tool_calls"] = nlohmann::json::parse(
+            entropic::serialize_tool_calls(r.tool_calls), nullptr, false);
+        arr.push_back(std::move(obj));
+    }
+    return arr.dump();
+}
+
+/**
+ * @brief Build per-request messages for entropic_run_batch (gh#98).
+ *
+ * Each request becomes [system(tier prompt), user(prompt)] so same-tier
+ * requests share a prompt prefix the backend can prefill once.
+ * @param handle Engine handle (for per-tier system prompts).
+ * @param tiers C array of tier names (entries may be NULL → default).
+ * @param prompts C array of user prompts.
+ * @param n Request count.
+ * @param[out] tiers_out Normalized tier strings ("" for NULL/default).
+ * @return Per-request message lists.
+ * @utility
+ * @version 2.8.0
+ */
+static std::vector<std::vector<entropic::Message>> build_batch_messages(
+    entropic_handle_t handle, const char** tiers, const char** prompts,
+    size_t n, std::vector<std::string>& tiers_out) {
+    std::vector<std::vector<entropic::Message>> msgs(n);
+    tiers_out.resize(n);
+    for (size_t i = 0; i < n; ++i) {
+        tiers_out[i] = (tiers && tiers[i]) ? tiers[i] : "";
+        const std::string& sys =
+            handle->engine->tier_system_prompt(tiers_out[i]);
+        std::vector<entropic::Message> m;
+        if (!sys.empty()) {
+            entropic::Message s;
+            s.role = "system";
+            s.content = sys;
+            m.push_back(std::move(s));
+        }
+        entropic::Message u;
+        u.role = "user";
+        u.content = prompts[i] ? prompts[i] : "";
+        m.push_back(std::move(u));
+        msgs[i] = std::move(m);
+    }
+    return msgs;
+}
+
+/**
+ * @brief Same-prefix batch run on a shared resident model (gh#98).
+ *
+ * Runs N independent same-prefix requests together: the shared prompt prefix
+ * is prefilled once and fanned out, each request sampled under its tier's
+ * grammar. One-shot generations (no agentic loop) — suited to per-tick game
+ * agents. Results are returned as a single JSON array string.
+ *
+ * @param handle Engine handle.
+ * @param tiers C array of N tier names (entries may be NULL → default tier).
+ * @param prompts C array of N user prompts.
+ * @param n Request count.
+ * @param[out] result_json JSON array of N {content, finish_reason, tool_calls}.
+ *             Caller frees with entropic_free().
+ * @return ENTROPIC_OK on success; error codes per entropic_run().
+ * @internal
+ * @version 2.8.0
+ */
+entropic_error_t entropic_run_batch(
+    entropic_handle_t handle,
+    const char** tiers,
+    const char** prompts,
+    size_t n,
+    char** result_json) {
+    auto rc = check_orchestrator(handle);
+    if (rc != ENTROPIC_OK || !prompts || !result_json || !handle->engine
+        || n == 0) {
+        return rc != ENTROPIC_OK ? rc
+            : (!prompts || !result_json || n == 0)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_INVALID_STATE;
+    }
+    try {
+        std::vector<std::string> tiers_vec;
+        auto msgs = build_batch_messages(handle, tiers, prompts, n, tiers_vec);
+        std::vector<entropic::GenerationParams> params(n);
+        std::atomic<bool> cancel{false};
+        auto results = handle->orchestrator->generate_batch(
+            msgs, params, tiers_vec, cancel);
+        *result_json = alloc_cstr(serialize_batch_results(results));
+        return ENTROPIC_OK;
+    } catch (const std::exception& e) {
+        handle->last_error = e.what();
+        s_log->error("run_batch: {}", handle->last_error);
+        // Define *result_json on the error path (C-ABI: output params must be
+        // defined). No partial batch recovery — an empty JSON array.
+        *result_json = alloc_cstr("[]");
         return ENTROPIC_ERROR_GENERATE_FAILED;
     }
 }

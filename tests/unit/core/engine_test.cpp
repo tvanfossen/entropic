@@ -2032,3 +2032,64 @@ SCENARIO("gh#84: a successful tool call DOES reset the budget",
         }
     }
 }
+
+// ── gh#99: per-call tier selection (run_turn_as) ──────────
+
+TEST_CASE("has_tier reflects set_tier_info (gh#99)", "[engine][gh99]") {
+    MockInference mock;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    ChildContextInfo npc;
+    npc.system_prompt = "You are an NPC.";
+    npc.valid = true;
+    engine.set_tier_info("npc", npc);
+
+    CHECK(engine.has_tier("npc"));
+    CHECK_FALSE(engine.has_tier("bbeg"));
+}
+
+TEST_CASE("run_turn_as locks the named tier and seeds its system prompt "
+          "(gh#99 combined path)", "[engine][gh99]") {
+    MockInference mock;
+    mock.tier = "router_choice";  // what routing WOULD pick if consulted
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    ChildContextInfo npc;
+    npc.system_prompt = "You are a terse NPC. Answer in one word.";
+    npc.valid = true;
+    engine.set_tier_info("npc", npc);
+
+    auto result = engine.run_turn_as("npc", "hi");
+
+    // The tier is pre-locked, so routing is skipped entirely (precedence:
+    // per-call tier override > routing > default).
+    CHECK(mock.route_call_count == 0);
+    // The conversation opens with the NPC tier's system prompt — proving the
+    // per-tier prompt was seeded, not the (empty) global system_prompt_.
+    const auto& msgs = engine.get_messages();
+    REQUIRE(msgs.size() >= 2);
+    CHECK(msgs.front().role == "system");
+    CHECK(msgs.front().content == "You are a terse NPC. Answer in one word.");
+    CHECK_FALSE(result.empty());
+}
+
+TEST_CASE("run_turn (no override) still routes (gh#99 contrast)",
+          "[engine][gh99]") {
+    MockInference mock;
+    mock.tier = "eng";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    engine.run_turn("hi");
+
+    // With no tier override and a router wired, routing runs as before.
+    CHECK(mock.route_call_count >= 1);
+}

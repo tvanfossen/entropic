@@ -12,6 +12,7 @@
 #include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
 #include "llama_cpp_backend.h"  // gh#87 3b: common_chat parse routing
+#include "tool_call_serialize.h"  // gh#93: shared (typed) tool-call serialization
 
 #include <nlohmann/json.hpp>
 
@@ -299,28 +300,6 @@ static int iface_complete(const char* prompt,
         {msg}, params, tier);
     *result_json = dup(result.content);
     return 0;
-}
-
-/**
- * @brief Serialize extracted tool calls to the C-ABI JSON array form.
- * @param calls Tool calls (from common_chat or the legacy adapter).
- * @return JSON array: [{name, arguments}, ...].
- * @utility
- * @version 2.7.0
- */
-static std::string serialize_tool_calls(
-    const std::vector<ToolCall>& calls) {
-    nlohmann::json arr = nlohmann::json::array();
-    for (const auto& tc : calls) {
-        nlohmann::json args;
-        for (const auto& [k, v] : tc.arguments) {
-            auto parsed_val = nlohmann::json::parse(v, nullptr, false);
-            args[k] = parsed_val.is_discarded()
-                ? nlohmann::json(v) : parsed_val;
-        }
-        arr.push_back({{"name", tc.name}, {"arguments", args}});
-    }
-    return arr.dump();
 }
 
 /**

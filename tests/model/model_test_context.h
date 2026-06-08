@@ -32,6 +32,8 @@
 #include <entropic/types/message.h>
 #include <entropic/entropic_config.h>
 
+#include "../../src/inference/tool_call_serialize.h"  // gh#93: shared (typed) serialization
+
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_test_case_info.hpp>
 #include <catch2/reporters/catch_reporter_event_listener.hpp>
@@ -566,25 +568,6 @@ inline int real_complete(const char* prompt,
  * @version 1.10.2
  */
 /**
- * @brief Serialize parsed tool calls to JSON array string.
- * @param parsed Parsed tool call result from adapter.
- * @return JSON array as string.
- * @utility
- * @version 2.0.0
- */
-inline std::string serialize_tool_calls(
-    const entropic::ParseResult& parsed)
-{
-    json tools = json::array();
-    for (const auto& tc : parsed.tool_calls) {
-        json args_obj;
-        for (const auto& [k, v] : tc.arguments) { args_obj[k] = v; }
-        tools.push_back({{"name", tc.name}, {"arguments", args_obj}});
-    }
-    return tools.dump();
-}
-
-/**
  * @brief Parse tool calls from raw model output via the adapter.
  * @param raw_content Raw model output string.
  * @param cleaned_content Output: content with tool calls stripped.
@@ -612,14 +595,9 @@ inline int real_parse_tool_calls(const char* raw_content,
     if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto cc = llama->parse_response(raw);
         apply_action_envelope_recovery(cc.tool_calls, raw);  // gh#88
-        json tools = json::array();
-        for (const auto& tc : cc.tool_calls) {
-            json args_obj;
-            for (const auto& [k, v] : tc.arguments) { args_obj[k] = v; }
-            tools.push_back({{"name", tc.name}, {"arguments", args_obj}});
-        }
         *cleaned_content = alloc_cstr(cc.content);
-        *tool_calls_json = alloc_cstr(tools.dump());
+        // gh#93: shared typed serialization — mirror production exactly.
+        *tool_calls_json = alloc_cstr(serialize_tool_calls(cc.tool_calls));
         return 0;
     }
 
@@ -631,7 +609,7 @@ inline int real_parse_tool_calls(const char* raw_content,
     }
     auto parsed = adapter->parse_tool_calls(raw);
     *cleaned_content = alloc_cstr(parsed.cleaned_content);
-    *tool_calls_json = alloc_cstr(serialize_tool_calls(parsed));
+    *tool_calls_json = alloc_cstr(serialize_tool_calls(parsed.tool_calls));
     return 0;
 }
 

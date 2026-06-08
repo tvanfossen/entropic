@@ -370,11 +370,14 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
 /**
  * @brief Run the engine on initial messages.
  * @param messages System + user messages.
+ * @param tier_override gh#99: if non-empty, lock the run to this tier
+ *        (lock_tier_if_needed honors a pre-set locked_tier and skips routing).
  * @return Final messages.
  * @internal
- * @version 2.3.7
+ * @version 2.8.0
  */
-std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
+std::vector<Message> AgentEngine::run(std::vector<Message> messages,
+                                      const std::string& tier_override) {
     // gh#35: update activity timestamp at run() entry so any host
     // polling `seconds_since_last_activity` for an idle-exit policy
     // sees a fresh value as soon as work begins.
@@ -384,6 +387,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages) {
 
     LoopContext ctx;
     ctx.messages = std::move(messages);
+    ctx.locked_tier = tier_override;  // gh#99: "" routes; non-empty locks
     ctx.metrics.start_time = now_seconds();
 
     init_session_conversation(ctx);
@@ -2706,19 +2710,18 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
  * gh#40 (v2.1.10): after the agent loop reaches top-level COMPLETE,
  * drains any messages enqueued mid-generation via
  * `queue_user_message` as additional turns under the same call.
+ * gh#99 (v2.8.0): the drain loop is shared with run_turn_as via run_drain_loop.
  *
  * @param input User input string.
  * @return Result messages from engine.
  * @internal
- * @version 2.1.10
+ * @version 2.8.0
  */
 std::vector<Message> AgentEngine::run_turn(const std::string& input) {
-    // gh#40 (v2.1.10): wrap the agent loop in a drain loop so any
-    // user messages enqueued mid-generation become subsequent turns
-    // at this single structural top-level COMPLETE boundary. The
-    // running_flag_ gate lets the facade reject
-    // entropic_queue_user_message with INVALID_STATE when no run is
-    // in flight (validation criterion #1).
+    // gh#40 (v2.1.10): the drain loop turns mid-generation queued user
+    // messages into subsequent turns at this single top-level COMPLETE
+    // boundary. running_flag_ lets the facade reject
+    // entropic_queue_user_message with INVALID_STATE when idle.
     running_flag_.store(true);
     if (conversation_.empty() && !system_prompt_.empty()) {
         Message sys;
@@ -2726,7 +2729,73 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
         sys.content = system_prompt_;
         conversation_.push_back(std::move(sys));
     }
-    std::string pending = input;
+    auto result = run_drain_loop(input, /*tier_override=*/"");
+    running_flag_.store(false);
+    return result;
+}
+
+/**
+ * @brief Run one turn under a named tier's grammar/identity (gh#99).
+ *
+ * The tier's grammar + samplers apply to THIS call (via the tier_override that
+ * pre-locks the tier, skipping routing). The tier's system prompt is seeded
+ * only when the conversation is empty (the first call on a fresh handle) — on a
+ * stateful handle that interleaves tiers, later calls switch grammar per call
+ * but keep the existing system prompt + accumulated history. For isolated
+ * per-kind runs (e.g. distinct game-agent identities), clear context between
+ * calls or use a fresh handle.
+ *
+ * @param tier Tier to lock this call to.
+ * @param input User input string.
+ * @return Result messages.
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<Message> AgentEngine::run_turn_as(const std::string& tier,
+                                              const std::string& input) {
+    running_flag_.store(true);
+    seed_system_prompt_for_tier(tier);
+    auto result = run_drain_loop(input, tier);
+    running_flag_.store(false);
+    return result;
+}
+
+/**
+ * @brief Seed a tier's system prompt on an empty conversation (gh#99).
+ *
+ * Pushes `tier_info_[tier].system_prompt`; falls back to the global
+ * `system_prompt_` when the tier carries no info. No-op once the conversation
+ * has started — like run_turn's first-turn seeding, the system prompt is NOT
+ * re-seeded mid-session when a later run_turn_as names a different tier (the
+ * grammar/samplers still switch; only the prompt persists). See run_turn_as.
+ * @param tier Tier whose system prompt to seed.
+ * @internal
+ * @version 2.8.0
+ */
+void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
+    if (!conversation_.empty()) { return; }
+    auto it = tier_info_.find(tier);
+    const std::string& sp =
+        (it != tier_info_.end() && !it->second.system_prompt.empty())
+            ? it->second.system_prompt
+            : system_prompt_;
+    if (sp.empty()) { return; }
+    Message sys;
+    sys.role = "system";
+    sys.content = sp;
+    conversation_.push_back(std::move(sys));
+}
+
+/**
+ * @brief Shared drain loop for run_turn / run_turn_as (gh#99).
+ * @param pending First user turn for this call.
+ * @param tier_override Tier to lock the run to ("" = route).
+ * @return Result messages from the final turn.
+ * @internal
+ * @version 2.8.0
+ */
+std::vector<Message> AgentEngine::run_drain_loop(
+    std::string pending, const std::string& tier_override) {
     std::vector<Message> result;
     while (true) {
         Message usr;
@@ -2735,7 +2804,7 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
         conversation_.push_back(std::move(usr));
 
         size_t sent_len = conversation_.size();
-        result = run(conversation_);  // copy — run() may mutate
+        result = run(conversation_, tier_override);  // copy — run() may mutate
         for (size_t i = sent_len; i < result.size(); ++i) {
             conversation_.push_back(result[i]);
         }
@@ -2744,7 +2813,6 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
         fire_queue_consumed(*next, user_message_queue_depth());
         pending = std::move(*next);
     }
-    running_flag_.store(false);
     return result;
 }
 
@@ -3150,6 +3218,31 @@ void AgentEngine::set_tier_info(
     const ChildContextInfo& info)
 {
     tier_info_[name] = info;
+}
+
+/**
+ * @brief Whether a tier name is known (gh#99).
+ * @param name Tier name.
+ * @return true if the tier has resolved context info.
+ * @internal
+ * @version 2.8.0
+ */
+bool AgentEngine::has_tier(const std::string& name) const {
+    return tier_info_.count(name) > 0;
+}
+
+/**
+ * @brief A tier's resolved system prompt (gh#98).
+ * @param name Tier name.
+ * @return The tier's system prompt, or "" if unknown.
+ * @internal
+ * @version 2.8.0
+ */
+const std::string& AgentEngine::tier_system_prompt(
+    const std::string& name) const {
+    static const std::string kEmpty;
+    auto it = tier_info_.find(name);
+    return it == tier_info_.end() ? kEmpty : it->second.system_prompt;
 }
 
 /**

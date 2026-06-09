@@ -1,3 +1,36 @@
+# entropic v2.8.1
+
+Patch — **activates model-based tier routing** (the v2.8.0 audit found it was a
+silent no-op) and hardens the surrounding config. No `i_*.h` interface header
+touched.
+
+## Routing: `classify_task` instructs the router
+
+`ModelOrchestrator::classify_task` fed a non-fine-tuned router the bare
+`"<msg> ->"` with `max_tokens=1`; a general instruct model just continues the
+text and never emits a routing digit, so `model_raw` was always empty and
+`route()` silently fell back to the default tier. When
+`routing.classification_prompt` is configured, it is now prepended (so the model
+is told the digit scheme) and `max_tokens` is widened to 4 to capture the
+leading-space digit. **Unconfigured deployments keep the exact bare
+`"<msg> ->"` + `max_tokens=1` path — byte-identical, no behavior change.**
+
+## Config hardening (review fixes)
+
+- **Empty `tier_map` is now rejected** when `routing.enabled` +
+  `classification_prompt` are set — otherwise the router emits a digit that maps
+  to no tier and every route silently falls back (the same no-op by a different
+  door). `validate_routing` now fails loudly at load.
+- **`classification_prompt` logs an INFO line** when its (active) path is taken —
+  it was parsed-but-never-read before v2.8.0, so a deployment carrying a stale
+  prompt now sees the inert→active switch + the widened token budget.
+- Removed the stale `@deprecated` banner on `RoutingConfig` (it claimed removal
+  in v2.2.0 — false; v2.8.x actively builds on it).
+- Added a cleared-prompt **RED control** test so the routing model-test is
+  non-vacuous (the bare path is asserted to be a no-op).
+
+---
+
 # entropic v2.8.0
 
 Minor release — two consumer-facing capabilities for the games consumer

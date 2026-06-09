@@ -543,10 +543,13 @@ struct ModelsConfig {
 
 /**
  * @brief Configuration for model routing.
- * @deprecated Since v2.1.0 — router model removed; use a dedicated identity
- *             as the lead/router instead. This struct is retained for ABI
- *             compatibility only and will be removed in v2.2.0.
- * @version 2.1.0
+ *
+ * v2.8.0 (gh#87): model-based tier routing is LIVE — ModelOrchestrator::
+ * classify_task feeds the router its `classification_prompt` and routes on the
+ * emitted digit via `tier_map`. (A prior banner here claimed this struct was
+ * deprecated since v2.1.0 and would be removed in v2.2.0 — that was never true;
+ * the struct was never removed and v2.8.x actively builds on it.)
+ * @version 2.8.1
  */
 struct RoutingConfig {
     bool enabled = false;                                          ///< Enable routing

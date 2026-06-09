@@ -1,77 +1,55 @@
 # SPDX-License-Identifier: Apache-2.0
-# Test-owned config for routing classification tests.
-# Independent of user/global config — tests control their own environment.
-# All tiers marked routable: true to override identity frontmatter defaults.
+# Test-owned, routing-ENABLED config. Self-contained: uses on-disk registry
+# keys (resolve -> ~/.entropic/models/<name>.gguf), NOT the dead
+# ~/models/gguf absolute paths the old version had. Loaded ONLY by the
+# routing classification tests via
+#   load_test_config(registry, config, routing_config_path()).
+# The dev box's .entropic/config.local.yaml sets routing.enabled=false, which
+# is why every routing test was vacuously passing on the default tier.
+log_level: INFO
 
 models:
-  tiers:
-    lead:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
+  eng:                 # code-oriented tier (digit 1)
+    path: qwen3_5_0_8b
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: -1
+  qa:                  # prose/review tier (digit 2)
+    path: qwen3_5_0_8b
+    adapter: qwen35
+    context_length: 8192
+    gpu_layers: -1
+  default: eng
 
-    eng:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    arch:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    qa:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    ux:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    ui:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    analyst:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-    devops:
-      path: ~/models/gguf/Qwen3.5-35B-A3B-Q2_K.gguf
-      adapter: qwen35
-      context_length: 32768
-      gpu_layers: 40
-      routable: true
-
-  default: lead
-
+  # Router classifier. classify_task() prepends routing.classification_prompt
+  # (audit task #71) then appends "<msg> ->" and reads back one token, scanning
+  # for the first char in routing.tier_map.
   router:
-    path: ~/models/gguf/Qwen3-0.6B-Q8_0.gguf
-    adapter: qwen3
+    path: qwen3_5_0_8b
+    adapter: qwen35
     context_length: 4096
     gpu_layers: -1
     logits_all: false
 
 routing:
   enabled: true
-  fallback_tier: lead
-
-log_level: INFO
+  fallback_tier: eng
+  # audit task #71: WITHOUT this instruction a general instruct model fed the
+  # bare "<msg> ->" just continues the text and never emits a routing digit
+  # (proven: 0.8B emitted '[' / 'list'), so routing silently no-ops. The
+  # prompt + few-shot tells the router the digit scheme.
+  classification_prompt: |
+    You are a task router. Read the task and answer with ONLY one digit.
+    1 = software/code: writing, debugging, or explaining code.
+    2 = prose/review: documentation, writing, editing, or review.
+    Examples:
+    "Fix the segfault in the C parser" -> 1
+    "Proofread the intro paragraph of my essay" -> 2
+    "Implement binary search in Python" -> 1
+    "Summarize this report for the newsletter" -> 2
+    Task:
+  # digit -> tier. classify_task scans the router's raw output for the first
+  # char that is a key here. 1=code, 2=review.
+  tier_map:
+    "1": eng
+    "2": qa

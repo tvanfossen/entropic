@@ -703,7 +703,7 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  * @param messages Conversation history.
  * @return Pair of (tier_name, raw_digit), or ("","") on miss.
  * @internal
- * @version 2.8.0
+ * @version 2.8.1
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
@@ -734,6 +734,12 @@ std::pair<std::string, std::string> ModelOrchestrator::classify_task(
         // below takes the first tier_map char. Only widened on the prompt path
         // so unconfigured deployments keep the original 1-token behavior.
         router_params.max_tokens = 4;
+        // v2.8.1 (review #3): classification_prompt was parsed-but-never-read
+        // before the v2.8.0 fix. Log when the active (prompt) path is taken so
+        // a deployment carrying a stale prompt sees the inert->active switch +
+        // the widened token budget instead of a silent behavior change.
+        logger->info("classify_task: using configured classification_prompt "
+                     "(router instructed; max_tokens widened to 4)");
     }
     auto result = router_backend->complete(router_prompt, router_params);
     std::string raw = result.content;

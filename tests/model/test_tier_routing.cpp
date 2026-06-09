@@ -59,3 +59,44 @@ SCENARIO("Classification runs the router and yields a configured tier",
         }
     }
 }
+
+// ── Test 3b (v2.8.1, review #4): cleared-prompt RED control ──────────
+// Exercises the FALSE branch of classify_task's prompt gate. With NO
+// classification_prompt the router gets the bare "<msg> ->", and a general
+// instruct model just CONTINUES the text (it is never told the digit scheme),
+// so no routing digit is emitted → model_raw empty → silent fallback to the
+// default tier. This is exactly the no-op the v2.8.0 fix closed; asserting it
+// here makes the GREEN scenario above non-vacuous (the bare path is the thing
+// that USED to "pass" while routing did nothing).
+SCENARIO("Cleared classification_prompt makes routing a no-op (RED control)",
+         "[model][test3b]")
+{
+    GIVEN("the routing config with classification_prompt cleared") {
+        start_test_log("test3b_cleared_prompt");
+        config::BundledModels reg;
+        REQUIRE(load_registry(reg));
+        ParsedConfig cfg;
+        REQUIRE(load_test_config(reg, cfg, routing_config_path()));
+        cfg.routing.classification_prompt.reset();  // force the bare "<msg> ->"
+        ModelOrchestrator orch;
+        REQUIRE(orch.initialize(cfg));
+
+        WHEN("a programming task is routed on the bare path") {
+            auto code = make_messages(
+                "", "Write a Python function that sorts a list");
+            auto tier = orch.route(code);
+            auto rr = orch.last_routing_result();
+
+            THEN("the router emits no routing digit (no-op fallback)") {
+                INFO("routed tier=[" << tier << "] model_raw=["
+                     << rr.model_raw << "]");
+                // Bare "<msg> ->" → general model continues prose, no tier digit
+                // → model_raw empty. CHECK (not REQUIRE): a 1-token greedy on a
+                // code prompt won't emit a bare tier digit, but GPU decode is
+                // non-deterministic — record a stray hit rather than hard-fail.
+                CHECK(rr.model_raw.empty());
+                end_test_log();
+            }
+        }
+    }
+}

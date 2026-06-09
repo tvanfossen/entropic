@@ -183,6 +183,29 @@ SCENARIO("RoutingConfig validation", "[config][validate]") {
         }
     }
 
+    GIVEN("routing enabled + classification_prompt set but tier_map empty") {
+        // v2.8.1 (review #4): an empty tier_map passes validate_tier_map (it
+        // only checks map VALUES), so a configured classification_prompt with
+        // no tier_map silently re-creates the v2.8.0 no-op. Router must be
+        // present so validation reaches the new cross-field check.
+        RoutingConfig routing;
+        routing.enabled = true;
+        routing.fallback_tier = "lead";
+        routing.classification_prompt = "Classify: 1=eng 2=qa\n";
+        // tier_map intentionally left empty
+        models.router = ModelConfig{};
+        models.router->path = "/tmp/router.gguf";
+
+        WHEN("validate_routing is called") {
+            auto err = validate_routing(routing, models);
+
+            THEN("it fails — the prompt is inert without a tier_map") {
+                REQUIRE_FALSE(err.empty());
+                REQUIRE(err.find("tier_map is empty") != std::string::npos);
+            }
+        }
+    }
+
     GIVEN("handoff_rules source not in tiers") {
         RoutingConfig routing;
         routing.fallback_tier = "lead";

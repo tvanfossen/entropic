@@ -394,6 +394,24 @@ public:
      */
     bool common_chat_parse_reliable() const;
 
+    /**
+     * @brief Tool-call close marker for the captured chat format (gh#103).
+     *
+     * Maps the last render's `last_chat_format_` to the string that terminates
+     * a single tool call in that family's native emission, so the orchestrator
+     * can append it to GenerationParams.stop for "sequential" tiers (hard-stop
+     * at the first closed tool call). Returns "" when no tool render captured
+     * params or the format has no reliable marker → caller injects no stop
+     * (batch behavior). Markers track the vendored PEG parser defaults
+     * (chat-peg-parser.cpp) and are validated empirically by the gh#103 model
+     * test; CONTENT_ONLY/unknown → "".
+     *
+     * @return Close marker for the active format, or "".
+     * @utility
+     * @version 2.8.2
+     */
+    std::string tool_call_close_marker() const override;
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 

@@ -363,6 +363,13 @@ struct GenerationParams {
     /// @version 1.9.3
     std::string grammar_key;
     std::vector<std::string> stop;           ///< Stop sequences
+    /// @brief Per-call tool-call generation mode (gh#103). Empty = defer to
+    /// tier/default ("batch"). "sequential" → the orchestrator appends the
+    /// resolved family tool-call close marker to `stop` at stage time, so the
+    /// decode loop halts at the FIRST closed tool call (one tool/turn,
+    /// observe-between-actions). "batch" = no injection (parallel calls).
+    /// @version 2.8.2
+    std::string tool_call_mode;
     int logprobs = 0;                        ///< Top log-probs per token (0 = disabled)
 
     /* ── v1.9.7: Time cap + profile fields ────────────── */
@@ -477,6 +484,13 @@ struct TierConfig : ModelConfig {
     /// @version 2.5.4
     std::optional<float> repeat_penalty;
     std::optional<bool>  enable_thinking;   ///< gh#86
+    /// @brief Per-tier tool-call generation mode (gh#103). nullopt = engine
+    /// default ("batch"). "sequential" halts generation at the first closed
+    /// tool call (the family close marker is appended to GenerationParams.stop)
+    /// so a tier doing dependent tracing observes each result before the next
+    /// call; "batch" keeps generating (parallel/independent calls preserved).
+    /// @version 2.8.2
+    std::optional<std::string> tool_call_mode;
 
     /**
      * @brief Return true if this tier declares the named capability.

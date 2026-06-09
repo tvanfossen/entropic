@@ -17,6 +17,7 @@
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
+#include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
 
 #include <entropic/inference/adapters/adapter_base.h>  // gh#90 coerce_string_typed_args
@@ -1090,6 +1091,22 @@ std::string LlamaCppBackend::render_with_tools(
 bool LlamaCppBackend::common_chat_parse_reliable() const {
     return have_chat_params_
         && last_chat_format_ == COMMON_CHAT_FORMAT_PEG_GEMMA4;
+}
+
+/**
+ * @brief Tool-call close marker for the captured chat format (gh#103). See
+ *        the header + tool_call_markers.h. "" when no tool render captured
+ *        params (no format) or the format has no confirmed per-call marker.
+ * @return Close marker, or "".
+ * @utility
+ * @version 2.8.2
+ */
+std::string LlamaCppBackend::tool_call_close_marker() const {
+    // last_chat_format_ is stored as int (the captured common_chat_format).
+    return have_chat_params_
+        ? close_marker_for_format(
+              static_cast<common_chat_format>(last_chat_format_))
+        : "";
 }
 
 /**

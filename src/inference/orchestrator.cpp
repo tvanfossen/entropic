@@ -22,6 +22,8 @@
 #include <llama.h>
 #include <nlohmann/json.hpp>
 
+#include "tool_call_markers.h"  // gh#103: append_sequential_stop
+
 #include <cstdlib>
 #include <filesystem>
 
@@ -408,7 +410,7 @@ static void apply_adapter_parse(InferenceBackend* model,
  * @param tier_name Selected tier.
  * @return Resolved params.
  * @internal
- * @version 2.7.0
+ * @version 2.8.2
  */
 GenerationParams ModelOrchestrator::resolve_and_stage(
     InferenceBackend* model,
@@ -418,7 +420,32 @@ GenerationParams ModelOrchestrator::resolve_and_stage(
     resolve_grammar_key(resolved, tier_name);          // v1.9.3
     apply_tier_sampler_defaults(resolved, tier_name);  // gh#82
     stage_active_tools(model, resolved);               // gh#87 3b
+    inject_sequential_stop(model, resolved);           // gh#103
     return resolved;
+}
+
+/**
+ * @brief Append the family tool-call close marker for sequential tiers (gh#103).
+ *
+ * See orchestrator.h. No-op unless tool_call_mode == "sequential" and the
+ * backend reports a non-empty close marker; dedupes so the marker is never
+ * added twice (an explicit per-call stop may already carry it).
+ *
+ * @param model Active backend (queried for the format's close marker).
+ * @param params Resolved generation params (stop list mutated).
+ * @internal
+ * @version 2.8.2
+ */
+void ModelOrchestrator::inject_sequential_stop(
+    InferenceBackend* model, GenerationParams& params) const {
+    if (model == nullptr) { return; }
+    std::size_t before = params.stop.size();
+    // Pure engagement decision (CPU-unit-tested in tool_call_markers_test).
+    append_sequential_stop(params, model->tool_call_close_marker());
+    if (params.stop.size() > before) {
+        logger->info("Sequential tier: tool-call close marker added to stop "
+                     "(hard-stop at first tool call)");
+    }
 }
 
 /**
@@ -1500,7 +1527,7 @@ inline void apply_if_default(T& field, const std::optional<T>& ov, T dflt) {
 /**
  * @brief Pure precedence helper — see header. (gh#82/gh#85)
  * @utility
- * @version 2.5.4
+ * @version 2.8.2
  */
 void apply_tier_sampler_overrides(
     GenerationParams& params, const TierSamplerOverrides& ov)
@@ -1515,6 +1542,7 @@ void apply_tier_sampler_overrides(
     apply_if_default(params.frequency_penalty, ov.frequency_penalty, 0.0f);
     apply_if_default(params.repeat_penalty,    ov.repeat_penalty,    1.1f);  // gh#86
     apply_if_default(params.enable_thinking,   ov.enable_thinking,   true);  // gh#86
+    apply_if_default(params.tool_call_mode,    ov.tool_call_mode, std::string{});  // gh#103
 }
 
 /**
@@ -1524,7 +1552,7 @@ void apply_tier_sampler_overrides(
  * precedence decision to the free `apply_tier_sampler_overrides`.
  *
  * @internal
- * @version 2.5.4
+ * @version 2.8.2
  */
 void ModelOrchestrator::apply_tier_sampler_defaults(
     GenerationParams& params, const std::string& tier_name)
@@ -1542,6 +1570,7 @@ void ModelOrchestrator::apply_tier_sampler_defaults(
     ov.frequency_penalty = tier.frequency_penalty;  // gh#85
     ov.repeat_penalty    = tier.repeat_penalty;     // gh#86
     ov.enable_thinking   = tier.enable_thinking;    // gh#86
+    ov.tool_call_mode    = tier.tool_call_mode;     // gh#103
     float before_temp = params.temperature;
     int before_max = params.max_tokens;
     apply_tier_sampler_overrides(params, ov);

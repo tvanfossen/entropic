@@ -137,6 +137,41 @@ inline bool load_test_config(const config::BundledModels& registry,
 }
 
 /**
+ * @brief Load a test config from an explicit single YAML file (override).
+ *
+ * Bypasses the layered global+project resolution so a test can supply a
+ * self-contained environment (e.g. routing-ENABLED) independent of the dev
+ * box's routing-disabled config.local.yaml. Uses the same single-file loader
+ * the facade uses, so env-overrides + validation run identically. The standard
+ * 2-arg form is untouched, so generic tests are unaffected. (audit task #71)
+ *
+ * @param registry Bundled model registry.
+ * @param config Output parsed config.
+ * @param override_path Path to a standalone config YAML.
+ * @return true on success.
+ * @utility
+ * @version 2.8.0
+ */
+inline bool load_test_config(const config::BundledModels& registry,
+                             ParsedConfig& config,
+                             const fs::path& override_path) {
+    auto err = config::load_config_from_file(override_path, registry, config);
+    if (!err.empty()) {
+        spdlog::error("Override config load failed ({}): {}",
+                      override_path.string(), err);
+        return false;
+    }
+    return true;
+}
+
+/// @brief Path to the routing-enabled test config (project source tree).
+/// @utility
+/// @version 2.8.0
+inline fs::path routing_config_path() {
+    return fs::path(MODEL_PATH) / "tests" / "model" / "routing_config.yaml";
+}
+
+/**
  * @brief Initialize the orchestrator with loaded config.
  * @param ctx Test context to populate.
  * @return true on success.

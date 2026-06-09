@@ -227,6 +227,20 @@ set_tests_properties(model/test-gh100-q8-kv PROPERTIES TIMEOUT 300)
 add_model_test(test-gh93-behavioral test_gh93_behavioral.cpp)
 set_tests_properties(model/test-gh93-behavioral PROPERTIES TIMEOUT 300)
 
+# gh#103 (v2.8.2): EMERGENT multi-turn proof that "sequential" tool_call_mode
+# hard-stops generation at the first tool call, through the combined orchestrator
+# path, on qwen35moe (PEG_NATIVE close marker + hybrid-arch coherence). 13GB
+# partial-offload + 3-turn loop → generous timeout.
+add_model_test(test-gh103-sequential-stop test_gh103_sequential_stop.cpp)
+set_tests_properties(model/test-gh103-sequential-stop PROPERTIES TIMEOUT 600)
+
+# gh#103 (v2.8.2): gemma4 severe-case proof — sequential mode stops at the gemma
+# close marker `<tool_call|>` AND the tool call extracts (resolves the consumer's
+# "delegate registers as zero tool calls" report: runaway-defeats-extraction vs a
+# parse bug). gemma4_e4b ~4.5-7.7GB → generous timeout.
+add_model_test(test-gh103-gemma-sequential test_gh103_gemma_sequential.cpp)
+set_tests_properties(model/test-gh103-gemma-sequential PROPERTIES TIMEOUT 600)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

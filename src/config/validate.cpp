@@ -181,11 +181,38 @@ std::string validate_handoff_rules(
 }
 
 /**
+ * @brief A configured classification_prompt is inert without a tier_map.
+ *
+ * v2.8.1 (gh#87 follow-up): routing.enabled + a classification_prompt instructs
+ * the router to emit a routing digit (see classify_task), but with an EMPTY
+ * tier_map no digit can resolve to a tier — every route burns a router
+ * generation and silently falls back to the default tier (the exact no-op the
+ * v2.8.0 classify_task fix closed). validate_tier_map only checks map VALUES, so
+ * an empty map passes it; reject the prompt+empty-map combination here so a
+ * misconfigured deployment fails loudly at load instead of degrading silently.
+ *
+ * @param routing Routing config.
+ * @return Error string if a classification_prompt is set with an empty tier_map.
+ * @version 2.8.1
+ * @utility
+ */
+std::string validate_classification_routable(const RoutingConfig& routing) {
+    bool has_prompt = routing.classification_prompt.has_value()
+                   && !routing.classification_prompt->empty();
+    if (routing.enabled && has_prompt && routing.tier_map.empty()) {
+        return "routing.classification_prompt is set but routing.tier_map is "
+               "empty — the router emits a digit that maps to no tier, so every "
+               "route falls back to the default (configure routing.tier_map)";
+    }
+    return "";
+}
+
+/**
  * @brief Validate RoutingConfig against defined tiers.
  * @param routing Routing config.
  * @param models Models config.
  * @return Empty string on success, error message on failure.
- * @version 1.8.2
+ * @version 2.8.1
  * @utility
  */
 std::string validate_routing(
@@ -206,6 +233,9 @@ std::string validate_routing(
         }
         if (err.empty()) {
             err = validate_handoff_rules(routing.handoff_rules, models.tiers);
+        }
+        if (err.empty()) {
+            err = validate_classification_routable(routing);
         }
     }
 

@@ -61,7 +61,7 @@ static void parse_model_runtime_knobs(
  * unlike frontmatter these land in the orchestrator's config snapshot.
  * @utility
  * @internal
- * @version 2.7.3
+ * @version 2.8.2
  */
 static void parse_sampler_overrides(
     ryml::ConstNodeRef node, TierConfig& config)
@@ -69,6 +69,7 @@ static void parse_sampler_overrides(
     float f = 0.0f;
     int i = 0;
     bool b = false;
+    std::string s;
     if (extract(node, "temperature", f))       { config.temperature = f; }
     if (extract(node, "top_p", f))             { config.top_p = f; }
     if (extract(node, "min_p", f))             { config.min_p = f; }
@@ -78,6 +79,7 @@ static void parse_sampler_overrides(
     if (extract(node, "top_k", i))             { config.top_k = i; }
     if (extract(node, "max_output_tokens", i)) { config.max_output_tokens = i; }
     if (extract(node, "enable_thinking", b))   { config.enable_thinking = b; }
+    if (extract(node, "tool_call_mode", s))    { config.tool_call_mode = s; }  // gh#103
 }
 
 /**

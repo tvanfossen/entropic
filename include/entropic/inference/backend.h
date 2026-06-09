@@ -295,6 +295,23 @@ public:
     virtual void clear_prompt_cache() {}
 
     /**
+     * @brief The tool-call CLOSE marker for the active chat format (gh#103).
+     *
+     * Returns the string that terminates a single tool call in the model's
+     * native format (e.g. "</tool_call>"), or "" when there is no reliable
+     * marker (no tools staged / content-only format). The orchestrator appends
+     * it to GenerationParams.stop for tiers in "sequential" tool_call_mode so
+     * the decode loop halts at the FIRST closed tool call (one tool/turn).
+     * Default "" → no stop injected (batch behavior). Backends that own a
+     * native tool-call format override this. (gh#103)
+     *
+     * @return Close marker, or empty if none applies.
+     * @utility
+     * @version 2.8.2
+     */
+    virtual std::string tool_call_close_marker() const { return ""; }
+
+    /**
      * @brief Stored model config.
      * @return Const reference to the ModelConfig used for this backend.
      * @utility

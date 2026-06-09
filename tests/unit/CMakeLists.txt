@@ -70,6 +70,10 @@ add_executable(entropic-inference-tests
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp
     inference/warm_keep_util_test.cpp
+    # gh#103 (v2.8.2): CPU pin for the family-aware tool-call close-marker map
+    # (sequential tool_call_mode). Vendor-coupled to the common_chat PEG
+    # section_end defaults; needs the llama.cpp common/ include for <chat.h>.
+    inference/tool_call_markers_test.cpp
     # gh#93 (v2.8.0): shared typed tool-call serializer — single source of
     # truth for production + harness (closes a harness↔production fidelity gap).
     inference/tool_call_serialize_test.cpp
@@ -119,6 +123,8 @@ add_executable(entropic-inference-tests
 
 target_include_directories(entropic-inference-tests PRIVATE
     ${PROJECT_SOURCE_DIR}/src/inference
+    # gh#103: tool_call_markers.h includes <chat.h> (common_chat_format enum).
+    ${PROJECT_SOURCE_DIR}/extern/llama.cpp/common
 )
 
 target_link_libraries(entropic-inference-tests PRIVATE

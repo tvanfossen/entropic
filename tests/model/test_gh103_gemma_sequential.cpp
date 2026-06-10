@@ -123,6 +123,14 @@ SCENARIO("gh#103 gemma severe case: sequential mode stops at <tool_call|> AND "
                 CHECK(r.tool_calls[0].name.find("read_file") != std::string::npos);
                 // Halted AT the close — did not run past it (the consumer shape).
                 CHECK(rtrim_ends_with(r.raw_content, kGemmaClose));
+                // gh#105: NON-VACUITY GUARD — prove the sequential hard-stop
+                // lever actually ENGAGED (the marker was injected post-render),
+                // not that the model voluntarily hit EOG. Before the gh#105
+                // ordering fix the marker was injected pre-render off the
+                // previous/empty format and never fired on the first call, so
+                // this line was absent — the gh#103 tests passed vacuously.
+                CHECK(test_log_contains("gh103_gemma_sequential",
+                                        "marker injected post-render"));
                 end_test_log();
             }
         }

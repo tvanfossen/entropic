@@ -146,6 +146,12 @@ SCENARIO("gh#103: sequential tool_call_mode hard-stops at the first tool call "
                 // else the cap is vacuous.
                 INFO("tool_turns=" << tool_turns << "/" << kTurns);
                 CHECK(tool_turns >= 1);
+                // gh#105: NON-VACUITY GUARD — prove the sequential hard-stop
+                // lever ENGAGED (marker injected post-render), not that the
+                // model voluntarily hit EOG. Pre-gh#105 the marker was injected
+                // pre-render and never fired on the first call → this was absent.
+                CHECK(test_log_contains("gh103_sequential_stop",
+                                        "marker injected post-render"));
                 end_test_log();
             }
         }

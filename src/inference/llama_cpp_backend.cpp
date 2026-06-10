@@ -129,6 +129,39 @@ void finalize_result(GenerationResult& result,
 }
 
 /**
+ * @brief Apply the terminal length-finish + content/token-count fields and
+ *        finalize timing on a completed text-generation result.
+ *
+ * Shared tail of every text decode loop (run_sampling_loop, both
+ * do_generate_text_only variants, do_generate_streaming_text_only). Extracted
+ * (DRY, v2.8.3) so each loop body stays within the knots ABC budget and the
+ * "ran to the token cap => finish_reason=length" convention lives in one place.
+ *
+ * @param result      Result accumulated by the loop. finish_reason is set by
+ *                    the loop on EOS/stop/error/cancel; empty here means the
+ *                    loop ran to the token cap (=> "length").
+ * @param generated   Accumulated decoded text.
+ * @param n_generated Tokens generated.
+ * @param params      Generation params (max_tokens for the length check).
+ * @param t0          Loop start time, passed through to finalize_result.
+ * @utility
+ * @version 2.8.3
+ */
+void finalize_generation(GenerationResult& result,
+    const std::string& generated, int n_generated,
+    const GenerationParams& params,
+    std::chrono::steady_clock::time_point t0)
+{
+    if (n_generated >= params.max_tokens
+            && result.finish_reason.empty()) {
+        result.finish_reason = "length";
+    }
+    result.content = generated;
+    result.token_count = n_generated;
+    finalize_result(result, t0);
+}
+
+/**
  * @brief Build a fully-finalized GenerationResult for sampler-init failure.
  *
  * Extracted in v2.3.10 to keep do_generate_text_only and
@@ -1052,7 +1085,7 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
  * @param params Generation parameters.
  * @return Formatted prompt string.
  * @internal
- * @version 2.7.0
+ * @version 2.8.3
  */
 std::string LlamaCppBackend::render_with_tools(
     const std::vector<Message>& messages,
@@ -1067,6 +1100,13 @@ std::string LlamaCppBackend::render_with_tools(
         last_generation_prompt_ = rendered->generation_prompt;
         last_parser_ = rendered->parser;
         have_chat_params_ = true;
+        // gh#105: snapshot this TOOLED render for the engine's later re-parse.
+        // A toolless interleave (validator critique) clears have_chat_params_
+        // but NOT this snapshot, so parse_response still decodes the main call.
+        parse_chat_format_ = last_chat_format_;
+        parse_generation_prompt_ = last_generation_prompt_;
+        parse_parser_ = last_parser_;
+        parse_params_valid_ = true;
         prompt = rendered->prompt;
         logger->info("render_with_tools: format={}, {} tool(s), captured "
                      "parser ({} bytes)", last_chat_format_, tools.size(),
@@ -1086,11 +1126,14 @@ std::string LlamaCppBackend::render_with_tools(
  *
  * @return true if parse_response is multi-parameter safe.
  * @utility
- * @version 2.7.0
+ * @version 2.8.3
  */
 bool LlamaCppBackend::common_chat_parse_reliable() const {
-    return have_chat_params_
-        && last_chat_format_ == COMMON_CHAT_FORMAT_PEG_GEMMA4;
+    // gh#105: read the sticky last-TOOLED snapshot, not the live capture — the
+    // engine queries this AFTER a toolless validator render would have cleared
+    // have_chat_params_, so the live flag is unreliable here.
+    return parse_params_valid_
+        && parse_chat_format_ == COMMON_CHAT_FORMAT_PEG_GEMMA4;
 }
 
 /**
@@ -1110,6 +1153,29 @@ std::string LlamaCppBackend::tool_call_close_marker() const {
 }
 
 /**
+ * @brief params.stop plus the sequential close marker (gh#105). See header.
+ *
+ * Called post-render by each decode body so the marker reflects THIS
+ * generation's captured format (the live capture). append_sequential_stop is
+ * a no-op unless params.tool_call_mode == "sequential".
+ * @param params Generation params.
+ * @return Effective stop list.
+ * @utility
+ * @version 2.8.3
+ */
+std::vector<std::string> LlamaCppBackend::effective_stop(
+    const GenerationParams& params) const {
+    GenerationParams p = params;
+    const std::size_t before = p.stop.size();
+    append_sequential_stop(p, tool_call_close_marker());
+    if (p.stop.size() > before) {
+        logger->info("Sequential tier: tool-call close marker injected "
+                     "post-render (gh#105) — hard-stop at first tool call");
+    }
+    return p.stop;
+}
+
+/**
  * @brief Parse a raw emission via the last captured render params (gh#87).
  *
  * MUST load() the serialized PEG arena — the parser_params ctor copies
@@ -1122,20 +1188,23 @@ std::string LlamaCppBackend::tool_call_close_marker() const {
  * @param raw Raw model output (assistant turn only).
  * @return Parsed tool calls + cleaned content + reasoning.
  * @internal
- * @version 2.7.2
+ * @version 2.8.3
  */
 LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
     const std::string& raw) const
 {
     CommonChatResult result;
-    if (!have_chat_params_) {
+    // gh#105: decode from the sticky last-TOOLED snapshot (parse_*), NOT the
+    // live capture — a toolless validator render between the main generation
+    // and this re-parse would have cleared the live params.
+    if (!parse_params_valid_) {
         result.content = raw;
         return result;
     }
     common_chat_parser_params pp;
-    pp.format = static_cast<common_chat_format>(last_chat_format_);
-    pp.generation_prompt = last_generation_prompt_;
-    pp.parser.load(last_parser_);  // mandatory — see header
+    pp.format = static_cast<common_chat_format>(parse_chat_format_);
+    pp.generation_prompt = parse_generation_prompt_;
+    pp.parser.load(parse_parser_);  // mandatory — see header
     try {
         auto msg = common_chat_parse(raw, /*is_partial=*/false, pp);
         result.content = msg.content;
@@ -1348,7 +1417,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  * @param cancel Cancel flag (nullptr for batch).
  * @return GenerationResult with content/finish_reason/token_count.
  * @internal
- * @version 2.8.0
+ * @version 2.8.3
  */
 GenerationResult LlamaCppBackend::generate_after_prefill(
     Sampler& sampler,
@@ -1359,6 +1428,7 @@ GenerationResult LlamaCppBackend::generate_after_prefill(
     GenerationResult result;
     std::string generated;
     int n_generated = 0;
+    const auto stop = effective_stop(params);  // gh#105: per-call sequential marker
 
     while (n_generated < params.max_tokens) {
         bool cancelled = cancel && cancel->load(std::memory_order_acquire);
@@ -1368,7 +1438,7 @@ GenerationResult LlamaCppBackend::generate_after_prefill(
             break;
         }
 
-        auto status = step_token(sampler, generated, on_token, params.stop);
+        auto status = step_token(sampler, generated, on_token, stop);
         if (status == "continue") {
             ++n_generated;
         } else {
@@ -2183,7 +2253,7 @@ entropic_error_t LlamaCppBackend::mtmd_prefill(
  * generate_multimodal can reuse it after mtmd_prefill.
  *
  * @internal
- * @version 2.1.8
+ * @version 2.8.3
  */
 GenerationResult LlamaCppBackend::run_sampling_loop(
     const GenerationParams& params,
@@ -2203,6 +2273,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
     }
     std::string generated;
     int n_generated = 0;
+    const auto stop = effective_stop(params);  // gh#105: per-call sequential marker
     while (n_generated < params.max_tokens) {
         if (cancel != nullptr
                 && cancel->load(std::memory_order_acquire)) {
@@ -2211,7 +2282,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
             break;
         }
         auto status = step_token(
-            *sampler, generated, on_token, params.stop);
+            *sampler, generated, on_token, stop);
         if (status == "continue") { ++n_generated; continue; }
         result.finish_reason = (status == "error") ? "error" : "stop";
         if (status == "error") {
@@ -2219,13 +2290,7 @@ GenerationResult LlamaCppBackend::run_sampling_loop(
         }
         break;
     }
-    if (n_generated >= params.max_tokens
-            && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
-    result.content = generated;
-    result.token_count = n_generated;
-    finalize_result(result, t0);
+    finalize_generation(result, generated, n_generated, params, t0);
     return result;
 }
 
@@ -2303,7 +2368,7 @@ GenerationResult LlamaCppBackend::do_generate(
 /**
  * @brief Text-only generate body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.7.0
+ * @version 2.8.3
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -2330,10 +2395,11 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
     std::string generated;
     int n_generated = 0;
     std::function<void(std::string_view)> no_cb = nullptr;
+    const auto stop = effective_stop(params);  // gh#105: per-call sequential marker
 
     while (n_generated < params.max_tokens) {
         auto status = step_token(
-            *sampler, generated, no_cb, params.stop);
+            *sampler, generated, no_cb, stop);
         if (status == "continue") { ++n_generated; }
         else {
             result.finish_reason =
@@ -2345,14 +2411,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
         }
     }
 
-    if (n_generated >= params.max_tokens
-        && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
-
-    result.content = generated;
-    result.token_count = n_generated;
-    finalize_result(result, t0);
+    finalize_generation(result, generated, n_generated, params, t0);
     return result;
 }
 
@@ -2390,7 +2449,7 @@ GenerationResult LlamaCppBackend::do_generate(
  * contract.
  *
  * @internal
- * @version 2.7.0
+ * @version 2.8.3
  */
 GenerationResult LlamaCppBackend::do_generate_text_only(
     const std::vector<Message>& messages,
@@ -2418,6 +2477,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
     int n_generated = 0;
     std::function<void(std::string_view)> no_cb = nullptr;
 
+    const auto stop = effective_stop(params);  // gh#105: per-call sequential marker
     while (n_generated < params.max_tokens) {
         if (cancel.load(std::memory_order_acquire)) {
             result.finish_reason = "cancelled";
@@ -2425,7 +2485,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
             break;
         }
         auto status = step_token(
-            *sampler, generated, no_cb, params.stop);
+            *sampler, generated, no_cb, stop);
         if (status == "continue") { ++n_generated; }
         else {
             result.finish_reason =
@@ -2437,14 +2497,7 @@ GenerationResult LlamaCppBackend::do_generate_text_only(
         }
     }
 
-    if (n_generated >= params.max_tokens
-        && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
-
-    result.content = generated;
-    result.token_count = n_generated;
-    finalize_result(result, t0);
+    finalize_generation(result, generated, n_generated, params, t0);
     return result;
 }
 
@@ -2480,7 +2533,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming(
 /**
  * @brief Text-only streaming body (v2.1.8, extracted for knots SLOC).
  * @internal
- * @version 2.7.0
+ * @version 2.8.3
  */
 GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     const std::vector<Message>& messages,
@@ -2505,6 +2558,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
     GenerationResult result;
     std::string generated;
     int n_generated = 0;
+    const auto stop = effective_stop(params);  // gh#105: per-call sequential marker
     while (n_generated < params.max_tokens) {
         if (cancel.load(std::memory_order_acquire)) {
             result.finish_reason = "cancelled";
@@ -2512,7 +2566,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
             break;
         }
         auto status = step_token(
-            *sampler, generated, on_token, params.stop);
+            *sampler, generated, on_token, stop);
         if (status == "continue") { ++n_generated; }
         else {
             result.finish_reason =
@@ -2523,13 +2577,7 @@ GenerationResult LlamaCppBackend::do_generate_streaming_text_only(
             break;
         }
     }
-    if (n_generated >= params.max_tokens
-        && result.finish_reason.empty()) {
-        result.finish_reason = "length";
-    }
-    result.content = generated;
-    result.token_count = n_generated;
-    finalize_result(result, t0);
+    finalize_generation(result, generated, n_generated, params, t0);
     return result;
 }
 

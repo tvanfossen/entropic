@@ -22,8 +22,6 @@
 #include <llama.h>
 #include <nlohmann/json.hpp>
 
-#include "tool_call_markers.h"  // gh#103: append_sequential_stop
-
 #include <cstdlib>
 #include <filesystem>
 
@@ -405,12 +403,19 @@ static void apply_adapter_parse(InferenceBackend* model,
 
 /**
  * @brief Resolve params + stage tools for a generate dispatch (gh#87).
+ *
+ * gh#105 (v2.8.3): the gh#103 sequential close-marker injection was REMOVED
+ * from here — it ran PRE-render, off the previous/empty captured format, so it
+ * never fired on the generation it was configured for (and never on the first
+ * call). The backend now injects the marker POST-render
+ * (LlamaCppBackend::effective_stop), using THIS call's resolved format.
+ *
  * @param model Active backend (tools staged here).
  * @param params Incoming generation params.
  * @param tier_name Selected tier.
  * @return Resolved params.
  * @internal
- * @version 2.8.2
+ * @version 2.8.3
  */
 GenerationParams ModelOrchestrator::resolve_and_stage(
     InferenceBackend* model,
@@ -420,32 +425,7 @@ GenerationParams ModelOrchestrator::resolve_and_stage(
     resolve_grammar_key(resolved, tier_name);          // v1.9.3
     apply_tier_sampler_defaults(resolved, tier_name);  // gh#82
     stage_active_tools(model, resolved);               // gh#87 3b
-    inject_sequential_stop(model, resolved);           // gh#103
     return resolved;
-}
-
-/**
- * @brief Append the family tool-call close marker for sequential tiers (gh#103).
- *
- * See orchestrator.h. No-op unless tool_call_mode == "sequential" and the
- * backend reports a non-empty close marker; dedupes so the marker is never
- * added twice (an explicit per-call stop may already carry it).
- *
- * @param model Active backend (queried for the format's close marker).
- * @param params Resolved generation params (stop list mutated).
- * @internal
- * @version 2.8.2
- */
-void ModelOrchestrator::inject_sequential_stop(
-    InferenceBackend* model, GenerationParams& params) const {
-    if (model == nullptr) { return; }
-    std::size_t before = params.stop.size();
-    // Pure engagement decision (CPU-unit-tested in tool_call_markers_test).
-    append_sequential_stop(params, model->tool_call_close_marker());
-    if (params.stop.size() > before) {
-        logger->info("Sequential tier: tool-call close marker added to stop "
-                     "(hard-stop at first tool call)");
-    }
 }
 
 /**

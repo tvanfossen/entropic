@@ -879,23 +879,6 @@ private:
                                        const std::string& tier_name);
 
     /**
-     * @brief Append the family tool-call close marker to params.stop when the
-     *        resolved tier is in "sequential" tool_call_mode (gh#103).
-     *
-     * For a sequential tier, the decode loop halts at the FIRST closed tool
-     * call (one tool/turn — the model observes each result before the next
-     * call). No-op for "batch"/empty mode or when the backend reports no marker
-     * (the marker is RETAINED in the output so common_chat still parses).
-     *
-     * @param model Active backend (queried for the format's close marker).
-     * @param params Resolved generation params (stop list mutated).
-     * @internal
-     * @version 2.8.2
-     */
-    void inject_sequential_stop(InferenceBackend* model,
-                                GenerationParams& params) const;
-
-    /**
      * @brief Resolve speculative target/draft llama_model pointers
      *        from current orchestrator state.
      *

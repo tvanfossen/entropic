@@ -412,6 +412,25 @@ public:
      */
     std::string tool_call_close_marker() const override;
 
+    /**
+     * @brief params.stop + the sequential tool-call close marker, if applicable.
+     *
+     * gh#105 (v2.8.3): the gh#103 sequential hard-stop must be injected with
+     * THIS generation's family marker, derived AFTER render captured the format.
+     * Each decode body calls this post-render and feeds the result to step_token
+     * — so the marker matches the current render (gh#103 injected it pre-render
+     * off the previous/empty format, so it never fired on the first call). Gated
+     * on params.tool_call_mode == "sequential"; otherwise returns params.stop
+     * unchanged (batch is byte-identical).
+     *
+     * @param params Generation params (read-only).
+     * @return Effective stop-sequence list for the decode loop.
+     * @utility
+     * @version 2.8.3
+     */
+    std::vector<std::string> effective_stop(
+        const GenerationParams& params) const;
+
 protected:
     /* ── Lifecycle overrides ─────────────────────────────── */
 
@@ -615,10 +634,23 @@ protected:
     /* ── gh#87 (v2.7.0): common_chat tool-call render/parse state ─ */
 
     std::string active_tools_json_;            ///< MCP tool defs for next render
+    // LIVE capture — overwritten by EVERY render (incl. a toolless interleave
+    // like the constitutional validator's critique). Serves has_common_chat_
+    // params() / tool_call_close_marker() — "what THIS render produced".
     int last_chat_format_ = 0;                 ///< Captured common_chat_format
     std::string last_generation_prompt_;       ///< Captured generation_prompt
     std::string last_parser_;                  ///< Captured serialized PEG arena
     bool have_chat_params_ = false;            ///< True once a tool render captured params
+    // gh#105 (v2.8.3): "sticky last-tooled" parse snapshot — written ONLY by a
+    // successful render_with_tools, NEVER cleared by a toolless render. The
+    // engine RE-parses the main output (engine.cpp:543) AFTER the validator's
+    // toolless critique render; parse_response/common_chat_parse_reliable read
+    // THIS so that interleave can't clobber the main call's parser → no more
+    // zero-tool-call extraction with constitutional validation on.
+    int parse_chat_format_ = 0;                ///< Last TOOLED render's format
+    std::string parse_generation_prompt_;      ///< Last TOOLED render's gen prompt
+    std::string parse_parser_;                 ///< Last TOOLED render's PEG arena
+    bool parse_params_valid_ = false;          ///< True once a tooled render snapshotted
 
     /* ── Internal helpers ────────────────────────────────── */
 

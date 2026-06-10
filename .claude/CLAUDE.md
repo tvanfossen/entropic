@@ -18,8 +18,12 @@ main          <- User handles merges from develop (stable releases)
         └── feature/xyz <- Claude creates branches for each task
 ```
 
-- Claude merges to develop, user merges develop → main
-- Never push — user reviews and pushes
+- Claude merges to develop; the user owns the release decision (whether/when to
+  ship develop → main)
+- **Push requires explicit per-push user approval** — NOT never-push. `git push`
+  is allow-listed; for a release Claude may merge develop → main, tag, and push,
+  but only after the user gives a clear go-ahead for that specific push (a vague
+  "go ahead" is not enough — get explicit approval to push to `main`)
 - Version bumps per `docs/roadmap.md` — each feature has an assigned version
 
 ## Current State (v2.2.4 — C++ engine on `main`)

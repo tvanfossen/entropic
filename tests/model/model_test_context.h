@@ -48,6 +48,7 @@
 #include <cstring>
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -813,6 +814,31 @@ inline void end_test_log() {
     g_file_sink->flush();
     set_all_sinks({g_console_sink});
     g_file_sink.reset();
+}
+
+/**
+ * @brief Does the active per-test log file contain `needle`? (gh#105)
+ *
+ * Flushes the file sink and scans the on-disk log. Lets a model test assert on
+ * a deterministic INFO line the production code emits (e.g. the gh#105 "marker
+ * injected post-render" line) — proving a lever ENGAGED rather than inferring it
+ * from non-deterministic model output (the gh#103 vacuity).
+ *
+ * @param test_name The name passed to start_test_log (the log file stem).
+ * @param needle Substring to find.
+ * @return true if any log line contains needle.
+ * @utility
+ * @version 2.8.3
+ */
+inline bool test_log_contains(const std::string& test_name,
+                              const std::string& needle) {
+    if (g_file_sink) { g_file_sink->flush(); }
+    std::ifstream in((LOG_DIR / (test_name + ".log")).string());
+    std::string line;
+    while (std::getline(in, line)) {
+        if (line.find(needle) != std::string::npos) { return true; }
+    }
+    return false;
 }
 
 // ── Catch2 event listener for model lifecycle ───────────────

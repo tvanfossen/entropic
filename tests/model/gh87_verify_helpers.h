@@ -65,7 +65,8 @@ inline const char* read_file_tool_json() {
  *
  * @param gguf Model filename under ~/.entropic/models.
  * @param adapter Adapter key (identity only; parsing goes via common_chat).
- * @param gpu_layers GPU offload (99 = all for small models; ~20 partial for 13GB).
+ * @param gpu_layers GPU offload (99 = all for small models; 15 partial for the
+ *        13GB qwen36 — == PARTIAL_GPU_LAYERS, OOM-safe on an 11GB card).
  * @version 2.8.2
  */
 inline void verify_family_common_chat(const std::string& gguf,

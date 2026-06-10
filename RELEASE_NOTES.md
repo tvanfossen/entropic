@@ -1,3 +1,53 @@
+# entropic v2.8.3
+
+Patch — fixes gh#105: a severe bug where, with **constitutional validation on**,
+the validator's interleaved toolless critique render clobbered the backend's
+GLOBAL captured PEG parser before the engine re-parsed the main generation — so a
+syntactically-perfect tool call extracted as **ZERO calls** and the turn spiraled
+(consumer fully blocked with validation enabled). Also fixes the gh#103
+sequential hard-stop, which resolved its close marker one generation late and so
+never fired on the generation it was configured for. No `i_*.h` touched.
+
+## gh#105 (A) — per-call render-param capture (the killer)
+
+The captured common_chat render params (format / generation_prompt / parser) were
+single GLOBAL mutable backend state. A toolless render (`render_prompt` clears
+`have_chat_params_`) — e.g. the constitutional validator's critique, which the
+engine fires on POST_GENERATE **between** the main generation and its re-parse
+(`engine.cpp:529-543`) — cleared the main call's parser before `parse_response`
+ran → `common_chat_parse_reliable()` false → fallback → 0 tool calls → the engine
+injected "no tool call, retry" → spiral. (Pre-existing global-state design;
+unrelated to gh#103.)
+
+Fix: a **"sticky last-tooled"** snapshot (`parse_*`), written ONLY by a successful
+`render_with_tools` and NEVER cleared by a toolless render. `parse_response` /
+`common_chat_parse_reliable` read the snapshot; the live capture still serves
+`has_common_chat_params()` / `tool_call_close_marker()` (this-render semantics).
+A validator interleave can no longer clobber the main call's parser.
+
+## gh#105 (B) — gh#103 sequential stop resolved one generation late
+
+`inject_sequential_stop` ran at `resolve_and_stage` time, BEFORE this call's
+render, so the close marker came from the PREVIOUS render's format (or empty on
+the first call) — it never fired on the generation it was configured for. Moved
+the injection POST-render into the backend (`LlamaCppBackend::effective_stop`,
+applied in every decode loop), deriving the marker from THIS call's captured
+format. Removed the orchestrator's pre-render `inject_sequential_stop`.
+
+## Tests
+- **New RED-first engine-loop test** (`test_gh105_validator_clobbers`): full
+  `AgentEngine::run` with constitutional validation ON + tools on gemma4_e4b —
+  FAILS on v2.8.2 (0 tool-call extraction; verified), passes with the snapshot.
+- The gh#103 sequential model tests (gemma4_e4b + qwen35moe) were **vacuous** —
+  the marker was never injected (pre-render, first call), so they passed on the
+  model's voluntary EOG. Strengthened with a log-scan **non-vacuity guard** that
+  proves the marker actually injected post-render.
+
+INTERFACE NOTE: no `interfaces/i_*.h` change; removed an internal orchestrator
+method (`inject_sequential_stop`).
+
+---
+
 # entropic v2.8.2
 
 Patch — two consumer-reported correctness fixes around terminal/looping tool

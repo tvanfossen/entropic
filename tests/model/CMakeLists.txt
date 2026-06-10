@@ -241,6 +241,13 @@ set_tests_properties(model/test-gh103-sequential-stop PROPERTIES TIMEOUT 600)
 add_model_test(test-gh103-gemma-sequential test_gh103_gemma_sequential.cpp)
 set_tests_properties(model/test-gh103-gemma-sequential PROPERTIES TIMEOUT 600)
 
+# gh#105 (v2.8.3): RED-first — constitutional validator's toolless render must
+# not clobber the main generation's PEG parser before the engine re-parses
+# (zero tool-call extraction with validation on). Full engine loop + validation,
+# gemma4_e4b (the only family on the reliable-parse path).
+add_model_test(test-gh105-validator-clobbers test_gh105_validator_clobbers.cpp)
+set_tests_properties(model/test-gh105-validator-clobbers PROPERTIES TIMEOUT 600)
+
 # gh#87 (v2.7.0): generous timeout for the 13GB A3B/A4B tests.
 #
 # The 120s default (add_model_test) was calibrated for FULL-GPU offload. The

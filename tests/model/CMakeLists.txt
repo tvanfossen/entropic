@@ -170,6 +170,9 @@ add_model_test(test-gh87-verify-nemotron3 test_gh87_verify_nemotron3.cpp)
 # qwen36 is a 13GB A3B MoE under partial offload — give it headroom.
 set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)
 
+# gh#106 (v2.9.0): observe QAT thinking-model tool-call structure (TEMP/TDD).
+add_model_test(test-gh106-qat-thinking     test_gh106_qat_thinking.cpp)
+
 # gh#87 Phase B (v2.7.0): live cutover at the orchestrator level —
 # params.tools → stage_active_tools → common_chat render → parse_response →
 # result.tool_calls (the agent-loop production path).

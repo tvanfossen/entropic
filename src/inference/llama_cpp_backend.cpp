@@ -1176,6 +1176,46 @@ std::vector<std::string> LlamaCppBackend::effective_stop(
 }
 
 /**
+ * @brief Strip Gemma 4 QAT reasoning channels (`<|channel>…<channel|>`) from
+ *        content, accumulating the stripped text into reasoning.
+ *
+ * The Gemma 4 QAT re-exports (it-qat / it-qat-mobile) are THINKING models: their
+ * template emits a `<|channel>thought … <channel|>` reasoning block before the
+ * final answer/tool-call — and ALWAYS when tools are staged. common_chat has no
+ * channel parser at this pin, so the block survives in `msg.content`. This moves
+ * it into reasoning so the user-facing content is clean. No-op for any content
+ * without the markers — safe for every non-channel family. (gh#106, v2.9.0)
+ *
+ * @param content [in,out] Content to clean (channel spans removed in place).
+ * @param reasoning_out [in,out,nullable] Accumulates the stripped reasoning text.
+ * @utility
+ * @version 2.9.0
+ */
+void strip_thinking_channels(std::string& content, std::string* reasoning_out) {
+    static const std::string kOpen = "<|channel>";
+    static const std::string kClose = "<channel|>";
+    bool stripped = false;
+    std::size_t pos;
+    while ((pos = content.find(kOpen)) != std::string::npos) {
+        stripped = true;
+        std::size_t end = content.find(kClose, pos + kOpen.size());
+        std::size_t span_end =
+            (end == std::string::npos) ? content.size() : end + kClose.size();
+        if (reasoning_out != nullptr) {
+            std::size_t inner = pos + kOpen.size();
+            std::size_t inner_end =
+                (end == std::string::npos) ? content.size() : end;
+            reasoning_out->append(content, inner, inner_end - inner);
+        }
+        content.erase(pos, span_end - pos);
+    }
+    if (stripped) {
+        std::size_t nb = content.find_first_not_of(" \t\r\n");
+        content.erase(0, nb == std::string::npos ? content.size() : nb);
+    }
+}
+
+/**
  * @brief Parse a raw emission via the last captured render params (gh#87).
  *
  * MUST load() the serialized PEG arena — the parser_params ctor copies
@@ -1185,10 +1225,12 @@ std::vector<std::string> LlamaCppBackend::effective_stop(
  * gh#90 (v2.7.2): coerces numeric scalars back to strings for string-typed
  * params (the gemma `<|"|>` escape loses type through PEG_GEMMA4).
  *
+ * gh#106 (v2.9.0): strips Gemma 4 QAT `<|channel>` reasoning into reasoning_content.
+ *
  * @param raw Raw model output (assistant turn only).
  * @return Parsed tool calls + cleaned content + reasoning.
  * @internal
- * @version 2.8.3
+ * @version 2.9.0
  */
 LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
     const std::string& raw) const
@@ -1209,6 +1251,8 @@ LlamaCppBackend::CommonChatResult LlamaCppBackend::parse_response(
         auto msg = common_chat_parse(raw, /*is_partial=*/false, pp);
         result.content = msg.content;
         result.reasoning_content = msg.reasoning_content;
+        // gh#106: Gemma 4 QAT reasoning channels common_chat doesn't parse.
+        strip_thinking_channels(result.content, &result.reasoning_content);
         for (const auto& tc : msg.tool_calls) {
             result.tool_calls.push_back(to_entropic_tool_call(tc));
         }

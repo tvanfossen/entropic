@@ -269,6 +269,57 @@ gemma4_e4b_q4:
   # Vision: shares the gemma4_e4b mmproj (same upstream repo).
   mmproj_key: gemma4_e4b_mmproj
 
+# ── Gemma 4 QAT (gh#106, v2.9.0) — quantization-aware-trained re-exports.
+# QAT preserves near-bf16 fidelity at the Q4 footprint. These are THINKING
+# models: they emit a <|channel>thought ... <channel|> reasoning block before
+# the answer/tool-call (always when tools are staged) — entropic strips it into
+# reasoning_content (parse_response/strip_thinking_channels), but allow a
+# GENEROUS max_tokens (the thinking precedes the call). Opt-in (additive to the
+# non-QAT entries); the per-HW default lives in selection logic, not here.
+gemma4_e2b_qat:
+  name: gemma-4-E2B-it-qat-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-qat-GGUF/resolve/main/gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf
+  size_gb: 2.5
+  adapter: gemma4
+  description: Gemma 4 E2B QAT — Q8-class quality at Q4 footprint (~2.5 GB); thinking model. Floor-safe (~116 t/s on a 1080 Ti, full CUDA).
+  provider: unsloth
+  family: gemma4
+  size_label: e2b
+  quant: UD-Q4_K_XL
+gemma4_e4b_qat:
+  name: gemma-4-E4B-it-qat-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf
+  size_gb: 4.8
+  adapter: gemma4
+  description: Gemma 4 E4B QAT — Q8-class quality at Q4 footprint; thinking model. Standard K-quant, full CUDA on the current pin.
+  provider: unsloth
+  family: gemma4
+  size_label: e4b
+  quant: UD-Q4_K_XL
+# Mobile-QAT (TQ2_0 ternary "2-bit decoding layers"): smallest footprint, but the
+# TQ2_0 CUDA kernel is ~3x SLOWER than Q4 on Pascal (compute-bound) — OPT-IN /
+# modern-HW only. Pairs with the tiny MTP drafter (mtp-gemma-4-*.gguf, ~57 MB).
+gemma4_e2b_qat_mobile:
+  name: gemma-4-E2B-it-qat-UD-Q2_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-qat-mobile-GGUF/resolve/main/gemma-4-E2B-it-qat-UD-Q2_K_XL.gguf
+  size_gb: 2.1
+  adapter: gemma4
+  description: Gemma 4 E2B mobile-QAT (TQ2_0) — smallest footprint (~1.95 GB VRAM); OPT-IN, ~3x slower than Q4 on Pascal (modern-HW lever).
+  provider: unsloth
+  family: gemma4
+  size_label: e2b
+  quant: UD-Q2_K_XL
+gemma4_e4b_qat_mobile:
+  name: gemma-4-E4B-it-qat-UD-Q2_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-qat-mobile-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf
+  size_gb: 3.2
+  adapter: gemma4
+  description: Gemma 4 E4B mobile-QAT (TQ2_0) — OPT-IN, modern-HW (ternary kernel compute-bound on Pascal).
+  provider: unsloth
+  family: gemma4
+  size_label: e4b
+  quant: UD-Q2_K_XL
+
 gemma4_e2b:
   name: gemma-4-E2B-it-Q8_0
   url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/gemma-4-E2B-it-Q8_0.gguf

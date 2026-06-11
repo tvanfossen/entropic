@@ -931,6 +931,24 @@ private:
         std::function<void(std::string_view)> on_token,
         std::atomic<bool>& cancel,
         GenerationResult& result);
+
+    /**
+     * @brief Route a generate call through the target-owned MTP kernel
+     *        (gh#106). The target backend owns the MTP head (no separate
+     *        draft backend); the head GGUF is `speculative.draft.path` and
+     *        the draft window is `speculative.n_draft`. Returns true when
+     *        the kernel ran (result populated); false to fall back to
+     *        plain decode (non-llama backend, or kernel NOT_SUPPORTED).
+     * @internal
+     * @version 2.9.0
+     */
+    bool try_mtp_route(
+        InferenceBackend* model,
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view)> on_token,
+        std::atomic<bool>& cancel,
+        GenerationResult& result);
 };
 
 } // namespace entropic

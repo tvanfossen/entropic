@@ -1,3 +1,70 @@
+# entropic v2.9.0
+
+Minor — **llama.cpp pin bump + Gemma 4 QAT + MTP speculative decode** (gh#106).
+No `interfaces/i_*.h` touched.
+
+## llama.cpp bump → b9592 (+423 commits)
+
+`extern/llama.cpp` `253ba110b → ac4cddeb` (2026-06-11). Brings Gemma 4 QAT tensor
+support (TQ2_0 CUDA kernels) and the MTP runtime. Build delta against our code was
+a **single** API change (`mtmd_helper_bitmap_init_from_file` gained a `bool` param +
+a wrapper return). **Regression-gated**: the full model suite passes on the bumped
+build with zero failures across every family, hybrid-KV, and multimodal path — the
+bump is transparent to existing consumers and models.
+
+## Gemma 4 QAT (quantization-aware training)
+
+QAT preserves near-bf16 fidelity at a 4-bit footprint. New **opt-in** registry
+entries (additive — non-breaking):
+- **`gemma4_e2b_qat` / `gemma4_e4b_qat`** (UD-Q4_K_XL) — the **recommended** QAT
+  models: Q8-class quality at the Q4 footprint, full CUDA on this pin (~116 tok/s
+  for E2B on a GTX 1080 Ti).
+- **`gemma4_e2b_qat_mobile` / `gemma4_e4b_qat_mobile`** (TQ2_0 ternary) — smallest
+  footprint (~1.95 GB VRAM for E2B), but the ternary CUDA kernel is **compute-bound
+  on older GPUs** (≈3× slower than Q4 on Pascal). Opt-in / modern-HW.
+
+The QAT models are **thinking models** — they emit a `<|channel>thought … <channel|>`
+reasoning block before the answer/tool-call (always when tools are staged). The
+engine now strips this into `reasoning_content` (`strip_thinking_channels` in
+`parse_response`), so user-facing content stays clean and tool-calls extract
+normally. Give them a generous `max_tokens` (the reasoning precedes the call).
+
+## MTP — multi-token-prediction speculative decode (target-owned)
+
+Lossless speculative decode driven by a tiny (~57 MB) trunk-sharing drafter head
+(`mtp-gemma-4-E2B-it.gguf`). **Opt-in** via `inference.speculative.{enabled,mtp}`
+with `speculative.draft.path` pointing at the head GGUF. A clean, separate path
+from the gh#36 separate-draft kernel (which is untouched):
+
+- **Target owns the head.** The MTP context shares the target trunk's KV via
+  `ctx_other` (`LLAMA_CONTEXT_TYPE_MTP`, `n_rs_seq=0`), set up lazily against the
+  live context and torn down on deactivate. No second resident model — ~15 MiB
+  marginal VRAM.
+- **Lossless by construction.** At `temperature=0` the head only contributes a
+  token when it equals the target's own greedy argmax (`sample_and_accept_n`); the
+  loop is `draft → decode(target) → process → sample_and_accept_n → accept`,
+  mirroring upstream's server MTP consumer. The caller never decodes the head
+  context — the impl owns it (shared-KV gemma4-assistant topology).
+- **Validated** on GPU: engaged (drafts proposed) with a healthy accept-rate on a
+  Q8 E2B trunk, through both the backend kernel and the full
+  `orchestrator->generate()` route. `GenerationResult.n_drafted` / `n_accepted`
+  expose the speculative observability.
+- **Quant coverage:** also validated *functional* (lossless, head drives the trunk,
+  coherent output) on the mobile QAT **TQ2_0 ternary** trunks for **both E2B and
+  E4B**. Accept-rate is low on the ternary quant (~0.06–0.12 vs ~0.26 on Q8) — the
+  head's predictions degrade with the lower-fidelity hidden states, so there is no
+  throughput win there; it simply works correctly.
+
+MTP's throughput payoff is a modern-HW lever (~+15% on Pascal, more on newer GPUs).
+Recurrent/hybrid targets are out of scope for this path (shared-KV gemma4 only).
+
+## Distribution
+- CPU tarball: `entropic-2.9.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.9.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.9.0` then `entropic install-engine`
+
+---
+
 # entropic v2.8.3
 
 Patch — fixes gh#105: a severe bug where, with **constitutional validation on**,

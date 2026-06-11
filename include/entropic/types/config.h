@@ -867,6 +867,12 @@ inline ModelConfig make_default_draft_model_config() {
 struct SpeculativeConfig {
     bool enabled = false;                  ///< Master switch (off by default)
     int n_draft = 16;                      ///< Window size (proposed tokens)
+    bool mtp = false;                      ///< gh#106 (v2.9.0): drive MTP (the
+                                           ///< draft is a trunk-sharing head via
+                                           ///< ctx_other) instead of the gh#36
+                                           ///< separate-draft kernel. draft.path
+                                           ///< points at the mtp-*.gguf head;
+                                           ///< target-owned, lossless.
 
     /**
      * @brief Full ModelConfig for the draft model.

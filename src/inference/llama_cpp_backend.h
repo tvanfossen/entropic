@@ -539,6 +539,41 @@ public:
         int n_draft_max,
         const std::string& draft_path);
 
+    /**
+     * @brief Speculative generation via a target-owned MTP head (gh#106).
+     *
+     * Unlike gh#36's separate-draft kernel, the MTP head (a small
+     * trunk-sharing GGUF, e.g. `mtp-gemma-4-E2B-it.gguf`) shares the
+     * target's KV via `ctx_other` and reads the target's hidden states.
+     * The head context is created lazily against the live `ctx_` (and
+     * torn down on deactivate). The decode loop is lossless: every draft
+     * is verified against the target's own logits.
+     *
+     * @param messages Conversation history.
+     * @param params Generation parameters (samplers, max_tokens, seed).
+     * @param on_token Callback fired once per accepted token.
+     * @param cancel Cancellation flag (polled between accept rounds).
+     * @param head_path Path to the MTP head GGUF.
+     * @param n_max Draft window (proposed tokens per round; ≤0 → 16).
+     * @return GenerationResult.
+     * @version 2.9.0
+     */
+    GenerationResult generate_mtp(
+        const std::vector<Message>& messages,
+        const GenerationParams& params,
+        std::function<void(std::string_view token)> on_token,
+        std::atomic<bool>& cancel,
+        const std::string& head_path,
+        int n_max);
+
+    /**
+     * @brief True when an MTP head context is live against the current ctx_.
+     * @return true if mtp_draft_ctx_ is set (head ready), false otherwise.
+     * @utility
+     * @version 2.9.0
+     */
+    bool mtp_active() const { return mtp_draft_ctx_ != nullptr; }
+
 protected:
     GenerationResult do_complete(
         const std::string& prompt,
@@ -603,6 +638,12 @@ protected:
     int last_input_tokens_ = 0;                ///< gh#97: tokenized prompt size of last generate()
     double last_prefill_ms_ = 0.0;             ///< gh#96: prefill wall-clock ms of last generate()
     std::vector<llama_token> resident_tokens_; ///< gh#96: tokens resident in KV seq 0 (warm-keep)
+
+    /* ── gh#106 (v2.9.0): MTP draft head (target-owned, shared-KV) ── */
+    llama_model* mtp_draft_model_ = nullptr;   ///< MTP head GGUF (separate, trunk-sharing)
+    llama_context* mtp_draft_ctx_ = nullptr;   ///< MTP context (ctx_type=MTP, ctx_other=ctx_)
+    std::string mtp_head_path_;                ///< Path the live mtp_draft_ctx_ was built from
+    int mtp_n_max_ = 16;                        ///< MTP draft window (n_max) of the live head
 
     /* ── v2.3.10 seam: tokenizer abstraction ─────────────── */
 
@@ -1103,6 +1144,52 @@ protected:
      * @version 2.3.7
      */
     bool create_inference_context();
+
+    /**
+     * @brief Lazily build the MTP head context against the live ctx_ (gh#106).
+     *
+     * Loads the head GGUF (full GPU) and creates a context with
+     * `ctx_type=MTP`, `ctx_other=ctx_`, `n_rs_seq=0` — the shared-KV
+     * gemma4-assistant topology. Idempotent: a no-op when the live head
+     * already matches `head_path`; rebuilds when `ctx_` changed.
+     *
+     * @param head_path Path to the MTP head GGUF.
+     * @param n_max Draft window (stored for the decode loop).
+     * @return true when mtp_draft_ctx_ is live; false (with last_error_) on failure.
+     * @internal
+     * @version 2.9.0
+     */
+    bool setup_mtp_draft(const std::string& head_path, int n_max);
+
+    /**
+     * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
+     *
+     * Helper extracted from setup_mtp_draft to keep both under the knots
+     * returns gate. On success sets mtp_draft_model_/ctx_ + mtp_head_path_;
+     * on failure sets last_error_ and tears down any partial state.
+     * @internal
+     * @version 2.9.0
+     */
+    bool build_mtp_head(const std::string& head_path);
+
+    /**
+     * @brief Free the MTP head context + model (gh#106 lifecycle).
+     *
+     * Must run BEFORE ctx_ is freed (mtp_draft_ctx_ borrows it via
+     * ctx_other). Called from do_deactivate / do_unload and idempotent.
+     * @internal
+     * @version 2.9.0
+     */
+    void teardown_mtp_draft();
+
+    /**
+     * @brief Reload the model CPU-only for the WARM state (do_deactivate tail).
+     *
+     * Extracted from do_deactivate to keep it under the knots ABC gate.
+     * @internal
+     * @version 2.9.0
+     */
+    void reload_model_cpu_only();
 
     /**
      * @brief Run mtmd_tokenize + mtmd_helper_eval_chunks on a prompt.

@@ -173,6 +173,12 @@ set_tests_properties(model/test-gh87-verify-qwen36 PROPERTIES TIMEOUT 360)
 # gh#106 (v2.9.0): observe QAT thinking-model tool-call structure (TEMP/TDD).
 add_model_test(test-gh106-qat-thinking     test_gh106_qat_thinking.cpp)
 
+# gh#106 (v2.9.0): target-owned MTP speculative decode — engaged + lossless.
+add_model_test(test-gh106-mtp              test_gh106_mtp.cpp)
+
+# gh#106 (v2.9.0): MTP combined call path through orchestrator->generate().
+add_model_test(test-gh106-mtp-route        test_gh106_mtp_route.cpp)
+
 # gh#87 Phase B (v2.7.0): live cutover at the orchestrator level —
 # params.tools → stage_active_tools → common_chat render → parse_response →
 # result.tool_calls (the agent-loop production path).

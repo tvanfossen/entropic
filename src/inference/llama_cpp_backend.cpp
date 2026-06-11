@@ -504,6 +504,83 @@ void LlamaCppBackend::init_mmproj_if_configured() {
 }
 
 /**
+ * @brief Free the MTP head context + model (gh#106 lifecycle).
+ *
+ * Ordered context-then-model, both null-guarded so it is idempotent and
+ * safe to call from do_deactivate / do_unload / the destructor. MUST run
+ * before ctx_ is freed: mtp_draft_ctx_ borrows ctx_ via ctx_other.
+ *
+ * @internal
+ * @version 2.9.0
+ */
+void LlamaCppBackend::teardown_mtp_draft() {
+    if (mtp_draft_ctx_ != nullptr) {
+        llama_free(mtp_draft_ctx_);
+        mtp_draft_ctx_ = nullptr;
+    }
+    if (mtp_draft_model_ != nullptr) {
+        llama_model_free(mtp_draft_model_);
+        mtp_draft_model_ = nullptr;
+    }
+    mtp_head_path_.clear();
+}
+
+/**
+ * @brief Lazily build the MTP head context against the live ctx_ (gh#106).
+ *
+ * Mirrors the server's separate-head branch (server-context.cpp:944-956):
+ * load the head GGUF, then a context with ctx_type=MTP, ctx_other=ctx_,
+ * n_rs_seq=0 so its KV is the target's (shared-memory gemma4-assistant
+ * topology). The remaining cparams inherit the target's geometry so the
+ * shared KV dimensions match. Idempotent when the live head already
+ * matches head_path; otherwise tears the stale head down and rebuilds.
+ *
+ * @internal
+ * @version 2.9.0
+ */
+bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
+    mtp_n_max_ = (n_max > 0) ? n_max : 16;
+    if (mtp_draft_ctx_ != nullptr && mtp_head_path_ == head_path) {
+        return true;  // live head already bound to this ctx_
+    }
+    teardown_mtp_draft();
+    return build_mtp_head(head_path);
+}
+
+/**
+ * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
+ * @internal
+ * @version 2.9.0
+ */
+bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
+    if (ctx_ == nullptr) {
+        last_error_ = "MTP setup requires an ACTIVE target context";
+        return false;
+    }
+    llama_model_params mparams = llama_model_default_params();
+    mparams.n_gpu_layers = config().gpu_layers;  // head is tiny — follow target
+    mparams.use_mmap = true;
+    mtp_draft_model_ = llama_model_load_from_file(head_path.c_str(), mparams);
+    if (mtp_draft_model_ != nullptr) {
+        llama_context_params cparams = build_cparams(config());
+        cparams.ctx_type = LLAMA_CONTEXT_TYPE_MTP;
+        cparams.ctx_other = ctx_;   // share the target's KV memory
+        cparams.n_rs_seq = 0;
+        mtp_draft_ctx_ = llama_init_from_model(mtp_draft_model_, cparams);
+    }
+    bool ok = (mtp_draft_ctx_ != nullptr);
+    if (ok) {
+        mtp_head_path_ = head_path;
+        logger->info("MTP head ready: {} (n_max={}, ctx_other=target, "
+                     "shared-KV)", head_path, mtp_n_max_);
+    } else {
+        last_error_ = "MTP head setup failed: " + head_path;
+        teardown_mtp_draft();
+    }
+    return ok;
+}
+
+/**
  * @brief Deactivate: free context, reload model CPU-only.
  *
  * gh#87 (v2.7.0): frees the GPU model BEFORE reloading CPU-only, the
@@ -516,9 +593,12 @@ void LlamaCppBackend::init_mmproj_if_configured() {
  * via the next activate, which reloads from scratch).
  *
  * @internal
- * @version 2.7.5
+ * @version 2.9.0
  */
 void LlamaCppBackend::do_deactivate() {
+    // gh#106 (v2.9.0): the MTP head borrows ctx_ via ctx_other — free it
+    // FIRST so the borrow never dangles past the context.
+    teardown_mtp_draft();
     // v2.3.10: sampler factory borrows ctx_ + vocab_. Release it
     // BEFORE freeing the context so the borrow never dangles.
     sampler_factory_.reset();
@@ -544,7 +624,19 @@ void LlamaCppBackend::do_deactivate() {
         model_ = nullptr;
         vocab_ = nullptr;
     }
+    reload_model_cpu_only();
+}
 
+/**
+ * @brief Reload the model CPU-only for the WARM state (do_deactivate tail).
+ *
+ * Extracted from do_deactivate to keep it under the knots ABC gate. On
+ * success rebinds model_/vocab_/tokenizer_; on failure leaves model_ null
+ * (recoverable — the next activate reloads from scratch).
+ * @internal
+ * @version 2.9.0
+ */
+void LlamaCppBackend::reload_model_cpu_only() {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     mparams.use_mmap = true;
@@ -623,12 +715,14 @@ void LlamaCppBackend::inject_sampler_factory_for_test(
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 2.7.5
+ * @version 2.9.0
  */
 void LlamaCppBackend::do_unload() {
     if (prompt_cache_) {
         prompt_cache_->clear();
     }
+    // gh#106 (v2.9.0): MTP head borrows ctx_ — free it before the context.
+    teardown_mtp_draft();
     // v2.3.10: sampler factory borrows ctx_ + vocab_ — release it
     // BEFORE the context/model are freed below so the borrow never
     // points into freed memory. (do_deactivate normally releases
@@ -3318,7 +3412,7 @@ static void spec_run_loop(
  * @brief Assemble final GenerationResult + log metrics. Helper to
  *        keep the public entry under SLOC ≤ 50.
  * @internal
- * @version 2.1.11
+ * @version 2.9.0
  */
 static GenerationResult spec_finalize(
     SpeculativeRunState& state,
@@ -3329,6 +3423,10 @@ static GenerationResult spec_finalize(
     result.finish_reason = state.finish_reason;
     result.error_code = state.error_code;
     result.error_message = state.error_message;
+    // gh#106: surface the draft/accept counts so callers (and the MTP
+    // engagement test) can verify the kernel actually ran + accepted.
+    result.n_drafted = state.n_drafted;
+    result.n_accepted = state.n_accepted;
     result.generation_time_ms =
         entropic::log::elapsed_ms(t0, entropic::log::now());
     if (state.n_drafted > 0) {
@@ -3444,6 +3542,282 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
             result = spec_run_from_tokens(
                 ctx_, draft.ctx_, model_, tokens, params, on_token,
                 cancel, n_draft_max, draft_path, t0);
+        }
+    }
+    return result;
+}
+
+// ── gh#106 (v2.9.0): target-owned MTP speculative kernel ───────────
+//
+// Distinct from the gh#36 separate-draft kernel above. The MTP head
+// (ctx_dft) shares the target's KV via ctx_other, so the CALLER only
+// ever decodes ctx_tgt; the impl owns every ctx_dft decode. The loop is
+// draft → decode(ctx_tgt) → process → sample_and_accept_n → accept,
+// mirroring extern/llama.cpp/tools/server/server-context.cpp. Reuses the
+// gh#36 file-local helpers (spec_build_batch / spec_emit_token /
+// spec_commit_accepted / spec_trim_rejected_drafts / spec_finalize /
+// spec_cleanup / spec_error / to_common_sampling) — only the decode step
+// and the prefill differ. NO checkpoint dance: shared-KV gemma4 targets
+// are PART-seq_rm, so the FULL-only rollback path never applies.
+
+namespace {
+
+/**
+ * @brief Drive one MTP draft via common_speculative_draft.
+ *
+ * Sets a POSITIVE dp.n_max (matching the server) — unlike gh#36's -1.
+ * The impl reads dp.id_last/n_past + the carried pending_h; the draft
+ * tokens land in state.draft.
+ * @return Number of draft tokens proposed.
+ * @internal
+ * @version 2.9.0
+ */
+int mtp_run_draft(SpeculativeRunState& state, int n_max) {
+    auto& dp = common_speculative_get_draft_params(state.spec, state.seq_id);
+    dp.drafting = true;
+    dp.n_max = n_max;
+    dp.n_past = state.n_past;
+    dp.id_last = state.id_last;
+    dp.prompt = &state.prompt_tgt;
+    dp.result = &state.draft;
+    common_speculative_draft(state.spec);
+    return static_cast<int>(state.draft.size());
+}
+
+/**
+ * @brief Verify batch on the TARGET only, then feed hidden states back.
+ *
+ * The MTP head reads the target's nextn hidden states, so after the
+ * single target decode we MUST call common_speculative_process on the
+ * very same batch (it harvests the rows the next draft needs). The
+ * caller never decodes ctx_dft (shared-KV: process() skips it).
+ * @return true on success; sets state.error_* on failure.
+ * @internal
+ * @version 2.9.0
+ */
+bool mtp_decode_and_process(SpeculativeRunState& state) {
+    spec_build_batch(state);  // [id_last@n_past, draft@n_past+1 ...]
+    if (llama_decode(state.ctx_tgt, state.batch_tgt) != 0) {
+        state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        state.error_message = "MTP target decode failed";
+        state.finish_reason = "error";
+        return false;
+    }
+    if (!common_speculative_process(state.spec, state.batch_tgt)) {
+        state.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+        state.error_message = "common_speculative_process failed";
+        state.finish_reason = "error";
+        return false;
+    }
+    return true;
+}
+
+/**
+ * @brief One MTP accept round: draft → verify → accept → emit.
+ * @return true to continue the outer loop, false to stop.
+ * @internal
+ * @version 2.9.0
+ */
+bool mtp_accept_round(
+    SpeculativeRunState& state, int n_max, const llama_vocab* vocab,
+    int max_tokens, std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel) {
+    int drafted = mtp_run_draft(state, n_max);
+    if (!mtp_decode_and_process(state)) { return false; }
+    auto ids = common_sampler_sample_and_accept_n(
+        state.smpl, state.ctx_tgt, state.draft);
+    int accepted = static_cast<int>(ids.size()) - 1;
+    if (accepted < 0) { accepted = 0; }
+    common_speculative_accept(state.spec, state.seq_id, accepted);
+    state.n_drafted += drafted;
+    state.n_accepted += accepted;
+    // Same layout as gh#36: id_last fills one slot at n_past, the
+    // `accepted` drafts fill the next slots — n_past advances by ids.size().
+    state.n_past += static_cast<int>(ids.size());
+    bool stop = spec_commit_accepted(
+        state, ids, vocab, max_tokens, on_token, cancel);
+    state.draft.clear();
+    spec_trim_rejected_drafts(state);
+    return !stop;
+}
+
+/**
+ * @brief Decode + process one prefill chunk (seeds pending_h).
+ *
+ * Built with common_batch_add (full seq metadata) — process() asserts
+ * n_seq_id[k]==1, which llama_batch_get_one cannot satisfy.
+ * @internal
+ * @version 2.9.0
+ */
+bool mtp_process_chunk(SpeculativeRunState& state, int off, int chunk) {
+    common_batch_clear(state.batch_tgt);
+    for (int j = 0; j < chunk; ++j) {
+        common_batch_add(state.batch_tgt, state.prompt_tgt[off + j],
+                         off + j, {state.seq_id}, false);
+    }
+    if (llama_decode(state.ctx_tgt, state.batch_tgt) != 0) { return false; }
+    return common_speculative_process(state.spec, state.batch_tgt);
+}
+
+/**
+ * @brief Prefill prompt-minus-last on ctx_tgt, processing each chunk so
+ *        pending_h is seeded before the first draft.
+ * @return true on success.
+ * @internal
+ * @version 2.9.0
+ */
+bool mtp_prefill_and_seed(SpeculativeRunState& state) {
+    int total = static_cast<int>(state.prompt_tgt.size());
+    if (total == 0) { return true; }  // 1-token prompt: round 1 drafts cold
+    int n_batch = llama_n_batch(state.ctx_tgt);
+    for (int off = 0; off < total; off += n_batch) {
+        int chunk = std::min(n_batch, total - off);
+        if (!mtp_process_chunk(state, off, chunk)) { return false; }
+    }
+    return true;
+}
+
+/**
+ * @brief Init the MTP sampler + speculative decoder (DRAFT_MTP type).
+ *
+ * The ctx_dft is the pre-created shared-KV head context — no model load
+ * here, so no mparams.path (unlike gh#36's DRAFT_SIMPLE gate).
+ * @return Empty on success, diagnostic on failure.
+ * @internal
+ * @version 2.9.0
+ */
+std::string mtp_init_decoder(
+    SpeculativeRunState& state, llama_model* model_tgt,
+    const GenerationParams& params, int n_max) {
+    auto common_sampling = to_common_sampling(params);
+    state.smpl = common_sampler_init(model_tgt, common_sampling);
+    if (!state.smpl) { return "common_sampler_init failed"; }
+    common_params_speculative sp;
+    sp.types = {COMMON_SPECULATIVE_TYPE_DRAFT_MTP};
+    sp.draft.n_max = n_max;
+    sp.draft.ctx_tgt = state.ctx_tgt;
+    sp.draft.ctx_dft = state.ctx_dft;
+    state.spec = common_speculative_init(sp, 1);
+    if (!state.spec) {
+        common_sampler_free(state.smpl);
+        state.smpl = nullptr;
+        return "common_speculative_init (MTP) failed";
+    }
+    state.batch_tgt = llama_batch_init(llama_n_batch(state.ctx_tgt), 0, 1);
+    state.batch_initialized = true;
+    return "";
+}
+
+/**
+ * @brief Initialize the MTP run: decoder → prefill+seed → begin.
+ *
+ * Uses gh#36's id_last/n_past convention (id_last = last prompt token,
+ * verified in round 1). Clears only ctx_tgt's memory — ctx_dft shares it.
+ * @return Empty on success, diagnostic on failure.
+ * @internal
+ * @version 2.9.0
+ */
+std::string mtp_init_run(
+    SpeculativeRunState& state, llama_model* model_tgt,
+    const std::vector<llama_token>& tokens,
+    const GenerationParams& params, int n_max) {
+    state.id_last = tokens.back();
+    state.prompt_tgt.assign(tokens.begin(), tokens.end() - 1);
+    state.n_past = static_cast<int>(tokens.size()) - 1;
+    llama_memory_clear(llama_get_memory(state.ctx_tgt), true);
+    auto err = mtp_init_decoder(state, model_tgt, params, n_max);
+    if (!err.empty()) { return err; }
+    if (!mtp_prefill_and_seed(state)) { return "MTP prefill/process failed"; }
+    common_speculative_begin(state.spec, state.seq_id, state.prompt_tgt);
+    return "";
+}
+
+/**
+ * @brief Run the MTP accept-round loop until completion / EOS / cancel.
+ * @internal
+ * @version 2.9.0
+ */
+void mtp_run_loop(
+    SpeculativeRunState& state, int n_max, const llama_vocab* vocab,
+    int max_tokens, std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel) {
+    while (state.n_generated < max_tokens) {
+        if (cancel.load(std::memory_order_acquire)) {
+            state.error_code = ENTROPIC_ERROR_CANCELLED;
+            state.finish_reason = "cancelled";
+            break;
+        }
+        if (!mtp_accept_round(state, n_max, vocab, max_tokens,
+                              on_token, cancel)) {
+            break;
+        }
+    }
+    if (state.finish_reason.empty()) {
+        state.finish_reason = (state.n_generated >= max_tokens)
+                                  ? "length" : "stop";
+    }
+}
+
+/**
+ * @brief MTP kernel over already-tokenized input.
+ * @internal
+ * @version 2.9.0
+ */
+GenerationResult mtp_run_from_tokens(
+    llama_context* ctx_tgt, llama_context* ctx_dft, llama_model* model_tgt,
+    const std::vector<llama_token>& tokens, const GenerationParams& params,
+    std::function<void(std::string_view)>& on_token,
+    std::atomic<bool>& cancel, int n_max,
+    std::chrono::steady_clock::time_point t0) {
+    SpeculativeRunState state;
+    state.ctx_tgt = ctx_tgt;
+    state.ctx_dft = ctx_dft;
+    auto init_err = mtp_init_run(state, model_tgt, tokens, params, n_max);
+    if (!init_err.empty()) {
+        spec_cleanup(state);
+        return spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+                          std::move(init_err));
+    }
+    mtp_run_loop(state, n_max, llama_model_get_vocab(model_tgt),
+                 params.max_tokens, on_token, cancel);
+    return spec_finalize(state, t0);
+}
+
+}  // anonymous namespace
+
+/**
+ * @brief Speculative generation via a target-owned MTP head (gh#106).
+ * @internal
+ * @version 2.9.0
+ */
+GenerationResult LlamaCppBackend::generate_mtp(
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>& cancel,
+    const std::string& head_path,
+    int n_max)
+{
+    auto t0 = entropic::log::now();
+    GenerationResult result;
+    if (!is_active()) {
+        result = spec_error(ENTROPIC_ERROR_INVALID_STATE,
+                            "MTP requires an ACTIVE target");
+    } else if (!setup_mtp_draft(head_path, n_max)) {
+        result = spec_error(ENTROPIC_ERROR_NOT_SUPPORTED, last_error_);
+    } else {
+        invalidate_resident_kv();  // MTP kernel owns seq 0 itself
+        auto prompt = render_prompt(messages, params);
+        auto tokens = tokenize(prompt, true);
+        if (tokens.size() < 2) {
+            result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+                "MTP prompt must have at least 2 tokens");
+        } else {
+            logger->info("MTP: {} input tokens, max_tokens={}, n_max={}",
+                         tokens.size(), params.max_tokens, mtp_n_max_);
+            result = mtp_run_from_tokens(
+                ctx_, mtp_draft_ctx_, model_, tokens, params, on_token,
+                cancel, mtp_n_max_, t0);
         }
     }
     return result;

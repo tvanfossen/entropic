@@ -65,6 +65,19 @@ struct GenerationResult {
     /// @version 1.9.13
     int seq_id = 0;
 
+    /* ── gh#36 / gh#106: speculative-decode observability ── */
+
+    /// @brief Tokens proposed by the draft/MTP head across all rounds.
+    /// 0 when no speculative kernel ran (plain decode). The instrumentation
+    /// signal that MTP/speculative actually engaged vs silently fell back.
+    /// @version 2.9.0
+    int n_drafted = 0;
+
+    /// @brief Draft tokens the target accepted (≤ n_drafted). >0 proves the
+    /// head's drafts are lossless-verified hits, not just proposed.
+    /// @version 2.9.0
+    int n_accepted = 0;
+
     /* ── Error state (for partial results on failure) ── */
     entropic_error_t error_code = ENTROPIC_OK; ///< Error code (ENTROPIC_OK if no error)
     std::string error_message;              ///< Error description (empty if no error)

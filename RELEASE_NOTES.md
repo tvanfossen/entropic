@@ -1,8 +1,7 @@
 # entropic v2.9.0
 
-Minor — **llama.cpp pin bump + Gemma 4 QAT support** (gh#106). The bump also lands
-the MTP (multi-token-prediction) *runtime*; the engine-side MTP wiring follows in
-v2.9.1 (see below). No `interfaces/i_*.h` touched.
+Minor — **llama.cpp pin bump + Gemma 4 QAT + MTP speculative decode** (gh#106).
+No `interfaces/i_*.h` touched.
 
 ## llama.cpp bump → b9592 (+423 commits)
 
@@ -30,15 +29,29 @@ engine now strips this into `reasoning_content` (`strip_thinking_channels` in
 `parse_response`), so user-facing content stays clean and tool-calls extract
 normally. Give them a generous `max_tokens` (the reasoning precedes the call).
 
-## MTP — runtime present, engine wiring in v2.9.1
+## MTP — multi-token-prediction speculative decode (target-owned)
 
-The bumped llama.cpp ships the MTP runtime (`LLAMA_CONTEXT_TYPE_MTP`) and Unsloth
-publishes tiny (~57 MB) MTP drafter heads. Wiring MTP into the backend requires a
-shared-memory-aware speculative path (the MTP draft shares the target trunk via
-`ctx_other`, unlike the gh#36 separate-draft kernel) and a lossless-correctness
-GPU validation pass — deliberately deferred to **v2.9.1** rather than rushed. The
-full design is recorded in gh#106. MTP's throughput payoff is a modern-HW lever
-regardless (it measured ~+15% on Pascal).
+Lossless speculative decode driven by a tiny (~57 MB) trunk-sharing drafter head
+(`mtp-gemma-4-E2B-it.gguf`). **Opt-in** via `inference.speculative.{enabled,mtp}`
+with `speculative.draft.path` pointing at the head GGUF. A clean, separate path
+from the gh#36 separate-draft kernel (which is untouched):
+
+- **Target owns the head.** The MTP context shares the target trunk's KV via
+  `ctx_other` (`LLAMA_CONTEXT_TYPE_MTP`, `n_rs_seq=0`), set up lazily against the
+  live context and torn down on deactivate. No second resident model — ~15 MiB
+  marginal VRAM.
+- **Lossless by construction.** At `temperature=0` the head only contributes a
+  token when it equals the target's own greedy argmax (`sample_and_accept_n`); the
+  loop is `draft → decode(target) → process → sample_and_accept_n → accept`,
+  mirroring upstream's server MTP consumer. The caller never decodes the head
+  context — the impl owns it (shared-KV gemma4-assistant topology).
+- **Validated** on GPU: engaged (drafts proposed) with a healthy accept-rate on a
+  Q8 E2B trunk, through both the backend kernel and the full
+  `orchestrator->generate()` route. `GenerationResult.n_drafted` / `n_accepted`
+  expose the speculative observability.
+
+MTP's throughput payoff is a modern-HW lever (~+15% on Pascal, more on newer GPUs).
+Recurrent/hybrid targets are out of scope for this path (shared-KV gemma4 only).
 
 ## Distribution
 - CPU tarball: `entropic-2.9.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)

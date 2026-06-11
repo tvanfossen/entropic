@@ -158,11 +158,20 @@ void ModelOrchestrator::activate_router(const ParsedConfig& config) {
  *
  * @param config Parsed engine config.
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.9.0
  */
 void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
     const auto& spec = config.inference.speculative;
     if (!spec.enabled || spec.draft.path.empty()) { return; }
+    // gh#106 (v2.9.0): under MTP the target owns the head (lazily, via
+    // generate_mtp → setup_mtp_draft). Loading draft.path as a standalone
+    // secondary backend here would double-load the head GGUF and never use
+    // it — skip the gh#36 separate-draft activation entirely.
+    if (spec.mtp) {
+        logger->info("Speculative MTP: head '{}' is target-owned; skipping "
+                     "separate draft activation", spec.draft.path.string());
+        return;
+    }
     // Full ModelConfig comes from the YAML's
     // `inference.speculative.draft:` block — every llama.cpp knob is
     // consumer-tunable. Defaults come from
@@ -281,14 +290,54 @@ GenerationResult ModelOrchestrator::run_generate_dispatch(
 }
 
 /**
+ * @brief Route a generate call through the target-owned MTP kernel (gh#106).
+ *
+ * No separate draft backend + no compat-pair gate: the target backend
+ * owns the MTP head (lazily set up against its live context). On a
+ * non-llama backend or a NOT_SUPPORTED kernel return, falls back to plain
+ * decode (returns false).
+ * @internal
+ * @version 2.9.0
+ */
+bool ModelOrchestrator::try_mtp_route(
+    InferenceBackend* model,
+    const std::vector<Message>& messages,
+    const GenerationParams& params,
+    std::function<void(std::string_view)> on_token,
+    std::atomic<bool>& cancel,
+    GenerationResult& result)
+{
+    auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
+    bool kernel_ran = false;
+    if (llama_target == nullptr) {
+        logger->info("MTP requested but target is not llama.cpp; "
+                     "using plain decode");
+    } else {
+        auto spec = llama_target->generate_mtp(
+            messages, params, on_token, cancel,
+            config_.inference.speculative.draft.path.string(),
+            config_.inference.speculative.n_draft);
+        if (spec.error_code == ENTROPIC_ERROR_NOT_SUPPORTED) {
+            logger->info("MTP kernel returned NOT_SUPPORTED ({}); "
+                         "falling back to plain decode", spec.error_message);
+        } else {
+            result = std::move(spec);
+            kernel_ran = true;
+        }
+    }
+    return kernel_ran;
+}
+
+/**
  * @brief Common implementation: returns true if the speculative
  *        kernel ran (result populated), false to fall back to plain.
  *
  * Centralises the dynamic_cast + compat check shared by both
- * generate and generate_streaming (v2.1.11, gh#36).
+ * generate and generate_streaming (v2.1.11, gh#36). gh#106 (v2.9.0):
+ * MTP routes out to try_mtp_route before the gh#36 compat path.
  *
  * @internal
- * @version 2.1.11
+ * @version 2.9.0
  */
 bool ModelOrchestrator::try_speculative_route_streaming(
     InferenceBackend* model,
@@ -298,6 +347,13 @@ bool ModelOrchestrator::try_speculative_route_streaming(
     std::atomic<bool>& cancel,
     GenerationResult& result)
 {
+    // gh#106 (v2.9.0): MTP routes BEFORE the gh#36 compat/pair path — the
+    // target owns the head (no separate draft backend), and MTP tolerates
+    // shared-KV gemma4 archs the gh#36 compat gate rejects.
+    if (config_.inference.speculative.mtp) {
+        return try_mtp_route(model, messages, params, on_token, cancel,
+                             result);
+    }
     auto compat = check_speculative_compat();
     bool kernel_ran = false;
     if (!compat.compatible) {

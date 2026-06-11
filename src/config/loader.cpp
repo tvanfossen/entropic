@@ -512,7 +512,7 @@ static void parse_constitutional_validation_config(
  * @param node YAML node for `inference.speculative`.
  * @param[out] config Output speculative config.
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.9.0
  */
 static void parse_speculative_config(
     ryml::ConstNodeRef node,
@@ -521,6 +521,7 @@ static void parse_speculative_config(
 {
     extract(node, "enabled", config.enabled);
     extract(node, "n_draft", config.n_draft);
+    extract(node, "mtp", config.mtp);  // gh#106: drive the MTP head path
     // Nested ModelConfig — every llama.cpp knob is consumer-tunable
     // via `inference.speculative.draft.<field>`. Defaults come from
     // `make_default_draft_model_config()` (gpu_layers=0, flash_attn=

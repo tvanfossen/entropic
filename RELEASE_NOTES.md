@@ -1,3 +1,52 @@
+# entropic v2.9.0
+
+Minor — **llama.cpp pin bump + Gemma 4 QAT support** (gh#106). The bump also lands
+the MTP (multi-token-prediction) *runtime*; the engine-side MTP wiring follows in
+v2.9.1 (see below). No `interfaces/i_*.h` touched.
+
+## llama.cpp bump → b9592 (+423 commits)
+
+`extern/llama.cpp` `253ba110b → ac4cddeb` (2026-06-11). Brings Gemma 4 QAT tensor
+support (TQ2_0 CUDA kernels) and the MTP runtime. Build delta against our code was
+a **single** API change (`mtmd_helper_bitmap_init_from_file` gained a `bool` param +
+a wrapper return). **Regression-gated**: the full model suite passes on the bumped
+build with zero failures across every family, hybrid-KV, and multimodal path — the
+bump is transparent to existing consumers and models.
+
+## Gemma 4 QAT (quantization-aware training)
+
+QAT preserves near-bf16 fidelity at a 4-bit footprint. New **opt-in** registry
+entries (additive — non-breaking):
+- **`gemma4_e2b_qat` / `gemma4_e4b_qat`** (UD-Q4_K_XL) — the **recommended** QAT
+  models: Q8-class quality at the Q4 footprint, full CUDA on this pin (~116 tok/s
+  for E2B on a GTX 1080 Ti).
+- **`gemma4_e2b_qat_mobile` / `gemma4_e4b_qat_mobile`** (TQ2_0 ternary) — smallest
+  footprint (~1.95 GB VRAM for E2B), but the ternary CUDA kernel is **compute-bound
+  on older GPUs** (≈3× slower than Q4 on Pascal). Opt-in / modern-HW.
+
+The QAT models are **thinking models** — they emit a `<|channel>thought … <channel|>`
+reasoning block before the answer/tool-call (always when tools are staged). The
+engine now strips this into `reasoning_content` (`strip_thinking_channels` in
+`parse_response`), so user-facing content stays clean and tool-calls extract
+normally. Give them a generous `max_tokens` (the reasoning precedes the call).
+
+## MTP — runtime present, engine wiring in v2.9.1
+
+The bumped llama.cpp ships the MTP runtime (`LLAMA_CONTEXT_TYPE_MTP`) and Unsloth
+publishes tiny (~57 MB) MTP drafter heads. Wiring MTP into the backend requires a
+shared-memory-aware speculative path (the MTP draft shares the target trunk via
+`ctx_other`, unlike the gh#36 separate-draft kernel) and a lossless-correctness
+GPU validation pass — deliberately deferred to **v2.9.1** rather than rushed. The
+full design is recorded in gh#106. MTP's throughput payoff is a modern-HW lever
+regardless (it measured ~+15% on Pascal).
+
+## Distribution
+- CPU tarball: `entropic-2.9.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.9.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.9.0` then `entropic install-engine`
+
+---
+
 # entropic v2.8.3
 
 Patch — fixes gh#105: a severe bug where, with **constitutional validation on**,

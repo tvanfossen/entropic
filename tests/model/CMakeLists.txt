@@ -179,6 +179,12 @@ add_model_test(test-gh106-mtp              test_gh106_mtp.cpp)
 # gh#106 (v2.9.0): MTP combined call path through orchestrator->generate().
 add_model_test(test-gh106-mtp-route        test_gh106_mtp_route.cpp)
 
+# gh#106 (v2.9.0): MTP functions on the mobile QAT (TQ2_0) trunks (E2B+E4B) —
+# new×new interaction. Two cases in one binary; TQ2_0 is compute-bound on Pascal
+# (~3x) and E4B is a 3GB trunk, so allow a generous timeout for both.
+add_model_test(test-gh106-mtp-qat-mobile   test_gh106_mtp_qat_mobile.cpp)
+set_tests_properties(model/test-gh106-mtp-qat-mobile PROPERTIES TIMEOUT 600)
+
 # gh#87 Phase B (v2.7.0): live cutover at the orchestrator level —
 # params.tools → stage_active_tools → common_chat render → parse_response →
 # result.tool_calls (the agent-loop production path).

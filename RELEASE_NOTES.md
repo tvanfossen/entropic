@@ -49,6 +49,11 @@ from the gh#36 separate-draft kernel (which is untouched):
   Q8 E2B trunk, through both the backend kernel and the full
   `orchestrator->generate()` route. `GenerationResult.n_drafted` / `n_accepted`
   expose the speculative observability.
+- **Quant coverage:** also validated *functional* (lossless, head drives the trunk,
+  coherent output) on the mobile QAT **TQ2_0 ternary** trunks for **both E2B and
+  E4B**. Accept-rate is low on the ternary quant (~0.06–0.12 vs ~0.26 on Q8) — the
+  head's predictions degrade with the lower-fidelity hidden states, so there is no
+  throughput win there; it simply works correctly.
 
 MTP's throughput payoff is a modern-HW lever (~+15% on Pascal, more on newer GPUs).
 Recurrent/hybrid targets are out of scope for this path (shared-KV gemma4 only).

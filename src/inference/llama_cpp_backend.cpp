@@ -2162,7 +2162,7 @@ std::vector<Message> strip_image_parts(
  * @return Messages with content flattened to marker-substituted text,
  *         or empty vector if any image fails to load.
  * @internal
- * @version 2.1.8
+ * @version 2.9.0
  */
 std::vector<Message> substitute_image_markers(
     const std::vector<Message>& messages,
@@ -2188,7 +2188,7 @@ std::vector<Message> substitute_image_markers(
             ::mtmd_bitmap* bm = nullptr;
             if (!p.image_path.empty()) {
                 bm = mtmd_helper_bitmap_init_from_file(
-                    ctx, p.image_path.c_str());
+                    ctx, p.image_path.c_str(), /*placeholder=*/false).bitmap;
             }
             if (bm == nullptr) { return {}; }
             bitmaps_out.push_back(bm);

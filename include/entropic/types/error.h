@@ -87,6 +87,7 @@ typedef enum {
     ENTROPIC_ERROR_QUEUE_FULL,               ///< Mid-gen user-message queue at capacity (v2.1.10, gh#40)
     ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_ARCH, ///< Target/draft architecture is recurrent or hybrid; speculative refused (v2.1.11, gh#36)
     ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE,      ///< A single tier's model weights+KV exceed the engine's VRAM budget; eviction cannot help (v2.2.4, gh#57)
+    ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG, ///< MTP/speculative enabled but the request can't run correctly (temp>0, grammar, tools, or streaming) — fix the config or disable speculative (v2.9.1, gh#108)
 } entropic_error_t;
 
 /**

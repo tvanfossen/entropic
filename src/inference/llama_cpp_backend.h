@@ -644,6 +644,7 @@ protected:
     llama_context* mtp_draft_ctx_ = nullptr;   ///< MTP context (ctx_type=MTP, ctx_other=ctx_)
     std::string mtp_head_path_;                ///< Path the live mtp_draft_ctx_ was built from
     int mtp_n_max_ = 16;                        ///< MTP draft window (n_max) of the live head
+    std::mutex mtp_mutex_;                      ///< gh#108: serialises MTP head setup/teardown vs in-flight generate_mtp (no deactivate-during-generate UAF)
 
     /* ── v2.3.10 seam: tokenizer abstraction ─────────────── */
 
@@ -1190,6 +1191,20 @@ protected:
      * @version 2.9.0
      */
     void reload_model_cpu_only();
+
+    /**
+     * @brief Validate MTP run preconditions (gh#108, fail-fast/fail-loud).
+     *
+     * ACTIVE → envelope (temp/grammar/tools/streaming via mtp_unsupported_reason)
+     * → head setup → draft-window bound. Returns an ENTROPIC_OK result to
+     * proceed, or a typed loud error (caller propagates it — no fallback).
+     * @internal
+     * @version 2.9.1
+     */
+    GenerationResult mtp_guard(
+        const GenerationParams& params,
+        const std::function<void(std::string_view)>& on_token,
+        const std::string& head_path, int n_max);
 
     /**
      * @brief Run mtmd_tokenize + mtmd_helper_eval_chunks on a prompt.

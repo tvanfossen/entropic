@@ -179,6 +179,11 @@ add_model_test(test-gh106-mtp              test_gh106_mtp.cpp)
 # gh#106 (v2.9.0): MTP combined call path through orchestrator->generate().
 add_model_test(test-gh106-mtp-route        test_gh106_mtp_route.cpp)
 
+# gh#108 (v2.9.1): MTP fail-loud guards (temp/grammar/tools/streaming/n_draft)
+# + greedy engagement + emergent multi-turn, on the live backend.
+add_model_test(test-gh108-mtp-guards       test_gh108_mtp_guards.cpp)
+set_tests_properties(model/test-gh108-mtp-guards PROPERTIES TIMEOUT 360)
+
 # gh#106 (v2.9.0): MTP functions on the mobile QAT (TQ2_0) trunks (E2B+E4B) —
 # new×new interaction. Two cases in one binary; TQ2_0 is compute-bound on Pascal
 # (~3x) and E4B is a 3GB trunk, so allow a generous timeout for both.

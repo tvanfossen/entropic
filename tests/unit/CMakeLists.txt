@@ -79,6 +79,9 @@ add_executable(entropic-inference-tests
     inference/tool_call_serialize_test.cpp
     # gh#98 (v2.8.0): same-prefix batch shared-prefix decision logic.
     inference/batch_util_test.cpp
+    # gh#108 (v2.9.1): MTP fail-loud envelope predicate (greedy/unconstrained/
+    # no-tools/non-streaming) — pure, CPU-testable decision behind the loud errors.
+    inference/mtp_envelope_test.cpp
     # gh#98 (v2.8.0): temp seq_id pool must hand out distinct ids (the
     # collision the multi-seq batch relies against; model test can't catch it).
     inference/seq_id_pool_test.cpp

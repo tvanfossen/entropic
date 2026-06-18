@@ -19,6 +19,7 @@
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 #include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
+#include "mtp_envelope.h"  // gh#108: mtp_unsupported_reason (fail-loud envelope)
 
 #include <entropic/inference/adapters/adapter_base.h>  // gh#90 coerce_string_typed_args
 #include <entropic/types/logging.h>
@@ -510,8 +511,12 @@ void LlamaCppBackend::init_mmproj_if_configured() {
  * safe to call from do_deactivate / do_unload / the destructor. MUST run
  * before ctx_ is freed: mtp_draft_ctx_ borrows ctx_ via ctx_other.
  *
+ * @note Does NOT lock mtp_mutex_ — it is also reached from within the
+ *       already-locked generate_mtp→setup_mtp_draft rebuild path, so locking
+ *       here would self-deadlock. Callers that race generate_mtp
+ *       (do_deactivate/do_unload) hold mtp_mutex_ around the call instead.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 void LlamaCppBackend::teardown_mtp_draft() {
     if (mtp_draft_ctx_ != nullptr) {
@@ -550,11 +555,18 @@ bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
 /**
  * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
     if (ctx_ == nullptr) {
         last_error_ = "MTP setup requires an ACTIVE target context";
+        return false;
+    }
+    if (head_path.empty()) {
+        // gh#108: fail loud before llama_model_load_from_file("") — a bare
+        // mtp=true with no draft.path is a config error, not a load to attempt.
+        last_error_ = "MTP requires speculative.draft.path (the head GGUF); "
+                      "none configured";
         return false;
     }
     llama_model_params mparams = llama_model_default_params();
@@ -593,9 +605,13 @@ bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
  * via the next activate, which reloads from scratch).
  *
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 void LlamaCppBackend::do_deactivate() {
+    // gh#108 (v2.9.1): serialise vs an in-flight generate_mtp — it holds
+    // mtp_mutex_ across its decode, so this blocks until that decode finishes
+    // before freeing the MTP head + ctx_ (no deactivate-during-generate UAF).
+    std::lock_guard<std::mutex> lk(mtp_mutex_);
     // gh#106 (v2.9.0): the MTP head borrows ctx_ via ctx_other — free it
     // FIRST so the borrow never dangles past the context.
     teardown_mtp_draft();
@@ -715,9 +731,11 @@ void LlamaCppBackend::inject_sampler_factory_for_test(
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 void LlamaCppBackend::do_unload() {
+    // gh#108 (v2.9.1): serialise vs in-flight generate_mtp (see do_deactivate).
+    std::lock_guard<std::mutex> lk(mtp_mutex_);
     if (prompt_cache_) {
         prompt_cache_->clear();
     }
@@ -3412,7 +3430,7 @@ static void spec_run_loop(
  * @brief Assemble final GenerationResult + log metrics. Helper to
  *        keep the public entry under SLOC ≤ 50.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 static GenerationResult spec_finalize(
     SpeculativeRunState& state,
@@ -3429,6 +3447,13 @@ static GenerationResult spec_finalize(
     result.n_accepted = state.n_accepted;
     result.generation_time_ms =
         entropic::log::elapsed_ms(t0, entropic::log::now());
+    // gh#108: the speculative path previously left throughput_tok_s=0.0 — the
+    // one metric the feature exists for. Compute it like finalize_result.
+    if (result.token_count > 0 && result.generation_time_ms > 0.0) {
+        result.throughput_tok_s =
+            static_cast<double>(result.token_count)
+            / result.generation_time_ms * 1000.0;
+    }
     if (state.n_drafted > 0) {
         const float accept_rate =
             static_cast<float>(state.n_accepted)
@@ -3616,7 +3641,7 @@ bool mtp_decode_and_process(SpeculativeRunState& state) {
  * @brief One MTP accept round: draft → verify → accept → emit.
  * @return true to continue the outer loop, false to stop.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 bool mtp_accept_round(
     SpeculativeRunState& state, int n_max, const llama_vocab* vocab,
@@ -3628,7 +3653,14 @@ bool mtp_accept_round(
         state.smpl, state.ctx_tgt, state.draft);
     int accepted = static_cast<int>(ids.size()) - 1;
     if (accepted < 0) { accepted = 0; }
-    common_speculative_accept(state.spec, state.seq_id, accepted);
+    // gh#108: only accept into the spec when this round actually drafted.
+    // common_speculative_accept asserts impl_last[seq] (speculative.cpp:1650),
+    // which is set ONLY for a non-empty draft (1604/1614) — a zero-draft round
+    // would abort. The round still progresses by one token (the bonus in ids),
+    // and process() already updated pending_h, so skipping accept is equivalent.
+    if (drafted > 0) {
+        common_speculative_accept(state.spec, state.seq_id, accepted);
+    }
     state.n_drafted += drafted;
     state.n_accepted += accepted;
     // Same layout as gh#36: id_last fills one slot at n_past, the
@@ -3786,9 +3818,48 @@ GenerationResult mtp_run_from_tokens(
 }  // anonymous namespace
 
 /**
- * @brief Speculative generation via a target-owned MTP head (gh#106).
+ * @brief Validate the MTP run preconditions (gh#108). Returns an OK result to
+ *        proceed, or a typed loud error (no fallback) when MTP cannot run.
+ *
+ * Order: ACTIVE → envelope (temp/grammar/tools/streaming) → head setup →
+ * draft-window bound. Runs the envelope check BEFORE loading the head so a
+ * misconfigured call fails fast without a wasted GGUF load.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
+ */
+GenerationResult LlamaCppBackend::mtp_guard(
+    const GenerationParams& params,
+    const std::function<void(std::string_view)>& on_token,
+    const std::string& head_path, int n_max) {
+    GenerationResult r;  // ENTROPIC_OK by default → proceed
+    std::string reason = mtp_unsupported_reason(
+        params.temperature, !params.grammar.empty(),
+        !active_tools_json_.empty(), static_cast<bool>(on_token));
+    if (!is_active()) {
+        r = spec_error(ENTROPIC_ERROR_INVALID_STATE,
+                       "MTP requires an ACTIVE target");
+    } else if (!reason.empty()) {
+        r = spec_error(ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG, reason);
+    } else if (!setup_mtp_draft(head_path, n_max)) {
+        r = spec_error(ENTROPIC_ERROR_LOAD_FAILED, last_error_);
+    } else if (1 + mtp_n_max_ > llama_n_batch(ctx_)) {
+        r = spec_error(ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG,
+            "speculative.n_draft+1 (" + std::to_string(1 + mtp_n_max_)
+            + ") exceeds n_batch (" + std::to_string(llama_n_batch(ctx_))
+            + "); reduce n_draft or raise n_batch");
+    }
+    return r;
+}
+
+/**
+ * @brief Speculative generation via a target-owned MTP head (gh#106).
+ *
+ * gh#108: holds mtp_mutex_ across head setup + the whole decode so a concurrent
+ * deactivate/unload teardown cannot free mtp_draft_ctx_ mid-flight (gh#58 UAF).
+ * Fails loudly (no plain-decode fallback) when the request is outside the MTP
+ * envelope — see mtp_guard / mtp_unsupported_reason.
+ * @internal
+ * @version 2.9.1
  */
 GenerationResult LlamaCppBackend::generate_mtp(
     const std::vector<Message>& messages,
@@ -3799,28 +3870,21 @@ GenerationResult LlamaCppBackend::generate_mtp(
     int n_max)
 {
     auto t0 = entropic::log::now();
-    GenerationResult result;
-    if (!is_active()) {
-        result = spec_error(ENTROPIC_ERROR_INVALID_STATE,
-                            "MTP requires an ACTIVE target");
-    } else if (!setup_mtp_draft(head_path, n_max)) {
-        result = spec_error(ENTROPIC_ERROR_NOT_SUPPORTED, last_error_);
-    } else {
-        invalidate_resident_kv();  // MTP kernel owns seq 0 itself
-        auto prompt = render_prompt(messages, params);
-        auto tokens = tokenize(prompt, true);
-        if (tokens.size() < 2) {
-            result = spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
-                "MTP prompt must have at least 2 tokens");
-        } else {
-            logger->info("MTP: {} input tokens, max_tokens={}, n_max={}",
-                         tokens.size(), params.max_tokens, mtp_n_max_);
-            result = mtp_run_from_tokens(
-                ctx_, mtp_draft_ctx_, model_, tokens, params, on_token,
-                cancel, mtp_n_max_, t0);
-        }
+    std::lock_guard<std::mutex> lk(mtp_mutex_);  // serialise vs teardown
+    GenerationResult result = mtp_guard(params, on_token, head_path, n_max);
+    if (result.error_code != ENTROPIC_OK) {
+        return result;
     }
-    return result;
+    invalidate_resident_kv();  // MTP kernel owns seq 0 itself
+    auto tokens = tokenize(render_prompt(messages, params), true);
+    if (tokens.size() < 2) {
+        return spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
+            "MTP prompt must have at least 2 tokens");
+    }
+    logger->info("MTP: {} input tokens, max_tokens={}, n_max={}",
+                 tokens.size(), params.max_tokens, mtp_n_max_);
+    return mtp_run_from_tokens(ctx_, mtp_draft_ctx_, model_, tokens, params,
+                               on_token, cancel, mtp_n_max_, t0);
 }
 
 /**

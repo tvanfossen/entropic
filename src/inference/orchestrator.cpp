@@ -292,12 +292,16 @@ GenerationResult ModelOrchestrator::run_generate_dispatch(
 /**
  * @brief Route a generate call through the target-owned MTP kernel (gh#106).
  *
- * No separate draft backend + no compat-pair gate: the target backend
- * owns the MTP head (lazily set up against its live context). On a
- * non-llama backend or a NOT_SUPPORTED kernel return, falls back to plain
- * decode (returns false).
+ * No separate draft backend + no compat-pair gate: the target backend owns
+ * the MTP head (lazily set up against its live context). gh#108 (v2.9.1):
+ * MTP **never silently falls back to plain decode** — when the consumer
+ * enabled speculative.mtp, this route OWNS the outcome and ALWAYS returns
+ * true. generate_mtp either runs or returns a loud typed error
+ * (ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG for an out-of-envelope
+ * request), which is propagated so the consumer corrects the config rather
+ * than getting silent plain decode that masks MTP never engaging.
  * @internal
- * @version 2.9.0
+ * @version 2.9.1
  */
 bool ModelOrchestrator::try_mtp_route(
     InferenceBackend* model,
@@ -308,24 +312,21 @@ bool ModelOrchestrator::try_mtp_route(
     GenerationResult& result)
 {
     auto* llama_target = dynamic_cast<LlamaCppBackend*>(model);
-    bool kernel_ran = false;
     if (llama_target == nullptr) {
-        logger->info("MTP requested but target is not llama.cpp; "
-                     "using plain decode");
+        // Fail loud — no silent plain-decode fallback (gh#108).
+        result = GenerationResult{};
+        result.error_code = ENTROPIC_ERROR_NOT_SUPPORTED;
+        result.error_message = "speculative.mtp enabled but the target backend "
+                               "is not llama.cpp; disable speculative.mtp";
+        result.finish_reason = "error";
+        logger->error("{}", result.error_message);
     } else {
-        auto spec = llama_target->generate_mtp(
+        result = llama_target->generate_mtp(
             messages, params, on_token, cancel,
             config_.inference.speculative.draft.path.string(),
             config_.inference.speculative.n_draft);
-        if (spec.error_code == ENTROPIC_ERROR_NOT_SUPPORTED) {
-            logger->info("MTP kernel returned NOT_SUPPORTED ({}); "
-                         "falling back to plain decode", spec.error_message);
-        } else {
-            result = std::move(spec);
-            kernel_ran = true;
-        }
     }
-    return kernel_ran;
+    return true;  // MTP owns the outcome — never fall back to plain decode
 }
 
 /**
@@ -386,8 +387,11 @@ bool ModelOrchestrator::try_speculative_route_streaming(
 /**
  * @brief Non-streaming speculative route — wraps the streaming form
  *        with an empty on_token and a local cancel flag.
+ *
+ * gh#108: passes an EMPTY std::function (not a bound no-op lambda) so the MTP
+ * path can distinguish non-streaming from streaming by callback bound-ness.
  * @internal
- * @version 2.1.11
+ * @version 2.9.1
  */
 bool ModelOrchestrator::try_speculative_route(
     InferenceBackend* model,
@@ -396,9 +400,12 @@ bool ModelOrchestrator::try_speculative_route(
     GenerationResult& result)
 {
     std::atomic<bool> local_cancel{false};
+    // gh#108: pass an EMPTY std::function (not a bound no-op lambda) so the MTP
+    // path can distinguish non-streaming from streaming via the callback's
+    // bound-ness. gh#36's emit guards `if (on_token)`, so empty is equivalent.
     return try_speculative_route_streaming(
         model, messages, params,
-        [](std::string_view){}, local_cancel, result);
+        std::function<void(std::string_view)>{}, local_cancel, result);
 }
 
 // ── Generation ─────────────────────────────────────────────

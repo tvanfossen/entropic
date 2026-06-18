@@ -1,3 +1,46 @@
+# entropic v2.9.1
+
+Patch — **MTP hardening: fail-fast / fail-loud** (gh#108). v2.9.0 shipped MTP
+documented as "validated / lossless," but it silently bypassed grammar, tools,
+stop-sequences, and streaming, and was lossless **only at `temperature=0`**.
+v2.9.1 makes MTP refuse — loudly — to run outside that envelope so a consumer
+corrects the config instead of getting silently-wrong output. No capability
+change (MTP still only *runs* in the greedy envelope); the *honesty* changes.
+No `interfaces/i_*.h` touched.
+
+- **Loud incompatibility errors (never a silent fallback).** When
+  `speculative.mtp` is enabled but the request can't run correctly —
+  `temperature>0`, an active grammar, staged tools, or a streaming call —
+  generation returns the new typed **`ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG`**
+  with an actionable message (e.g. *"MTP is lossless only at temperature=0 …
+  set temperature=0 or disable speculative.mtp"*). The orchestrator
+  **propagates** it — it does not quietly run plain decode, which would mask
+  that MTP never engaged.
+- **No-abort robustness.** `speculative.n_draft` larger than the batch, an empty
+  `draft.path`, or a zero-draft round now produce a clear error or are handled
+  gracefully — never a `GGML_ABORT` that crashes the embedding host.
+- **Thread-safety.** A coarse mutex serialises MTP head setup/teardown against an
+  in-flight `generate_mtp`, so a tier-swap `deactivate` can no longer free the
+  head context mid-decode (use-after-free).
+- **Observability.** The speculative path now populates
+  `GenerationResult.throughput_tok_s` (it previously reported `0.0` — the one
+  metric the feature exists for; also fixes the gh#36 path).
+
+**Lossless scope clarified:** MTP is lossless **by construction at
+`temperature=0`** (greedy argmax accept) — *not* at temperature>0, where the
+accept step is naive token-equality rather than speculative rejection sampling.
+MTP remains **experimental** and engages only in the greedy / unconstrained /
+non-streaming envelope. Making MTP actually *honor* grammar / stop / streaming /
+prompt-cache is a designed follow-up (gh#108).
+
+**Perf note (correcting v2.9.0):** MTP measured ~+15% in an *isolated* greedy
+benchmark on Pascal, but it is bandwidth-bound there and is **not a net
+throughput win** on that hardware — it is a modern-HW lever. (v2.9.0 stated both
+"+15%" and "no speedup"; the accurate framing is "engages + lossless, but no net
+win on Pascal".)
+
+---
+
 # entropic v2.9.0
 
 Minor — **llama.cpp pin bump + Gemma 4 QAT + MTP speculative decode** (gh#106).

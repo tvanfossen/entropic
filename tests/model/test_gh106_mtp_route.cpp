@@ -57,7 +57,10 @@ std::string configure_mtp_route(ModelTestContext& ctx) {
     tier.adapter = "gemma4";
     tier.gpu_layers = 99;
     tier.context_length = 4096;
-    tier.grammar.reset();  // greedy, unconstrained — the MTP envelope
+    tier.flash_attn = false;     // gh#108: MTP head aborts the flash kernel on this pin
+    tier.cache_type_k = "f16";   // gh#108: MTP is locked to f16 KV — quantized V
+    tier.cache_type_v = "f16";   // cache requires flash, which MTP can't use
+    tier.grammar.reset();        // greedy, unconstrained — the MTP envelope
     auto& spec = ctx.config.inference.speculative;
     spec.enabled = true;
     spec.mtp = true;
@@ -125,4 +128,38 @@ TEST_CASE("gh#108 MTP loud error propagates through orchestrator (no fallback)",
     REQUIRE(r.error_code == ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG);
     REQUIRE(r.error_message.find("n_batch") != std::string::npos);
     REQUIRE(r.n_drafted == 0);
+}
+
+TEST_CASE("gh#108 MTP engages with tools staged through orchestrator (agent loop)",
+          "[model][gh108][mtp][route][tools]") {
+    // The reachability fix: the agent loop stages tools, and v2.9.2 no longer
+    // refuses MTP for tooled tiers (MTP+tools is lossless-correct). So a tooled
+    // generate through the orchestrator must ENGAGE MTP, not loud-fail.
+    ModelTestContext ctx;
+    auto tier_name = configure_mtp_route(ctx);
+    if (!init_orchestrator(ctx)) {
+        SKIP("orchestrator init failed (resource/config) — route untested");
+    }
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = "You must call the read_file tool to read /etc/hostname.";
+    auto params = greedy_params();
+    params.max_tokens = 200;
+    params.tools = R"([{"type":"function","function":{"name":"read_file",)"
+                   R"("description":"Read a file","parameters":{"type":"object",)"
+                   R"("properties":{"path":{"type":"string"}},"required":["path"]}}}])";
+
+    auto r = ctx.orchestrator->generate({u}, params, tier_name);
+    std::printf("\n===gh108 MTP route + tools===\ncode=%d drafted=%d calls=%zu\n[%s]\n===\n",
+                r.error_code, r.n_drafted, r.tool_calls.size(), r.content.c_str());
+
+    // The reachability gate: MTP ENGAGED through the tooled orchestrator path
+    // instead of loud-failing (v2.9.1 would have returned code 54 here). The
+    // orchestrator parses the MTP result via apply_adapter_parse exactly as for
+    // plain decode (MTP is lossless → identical content → identical parse); the
+    // tool-call EXTRACTION itself is gated by test_gh108_mtp_guards (direct).
+    // The small Q8 base model's tool FORMAT is too unreliable to hard-assert here.
+    REQUIRE(r.error_code == 0);  // NOT a loud refusal — tools are allowed under MTP
+    REQUIRE(r.n_drafted > 0);    // MTP actually ran with tools staged
 }

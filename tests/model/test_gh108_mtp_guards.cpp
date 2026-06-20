@@ -96,15 +96,44 @@ TEST_CASE("gh#108 MTP guards: out-of-envelope requests fail loud",
         auto r = backend.generate_mtp(msgs, p, on_token, cancel, head.string(), 16);
         REQUIRE(r.error_code == INCOMPAT);
     }
-    // tools staged → loud (sequential-tool stop + parse snapshot bypassed).
+    // gh#108 (v2.9.2): tools staged → MTP RUNS (no false refusal). MTP is
+    // lossless at temp=0 and gemma4 tool-calls are parsed post-hoc (not
+    // sampler-grammar-constrained), so MTP + tools produces the same correct
+    // tool call as plain decode. This is the reachability fix.
     {
         backend.set_active_tools(gh87verify::read_file_tool_json());
         entropic::GenerationParams p;
-        p.max_tokens = 16;
+        p.max_tokens = 200;
         p.temperature = 0.0f;
-        auto r = backend.generate_mtp(msgs, p, no_stream, cancel, head.string(), 16);
-        REQUIRE(r.error_code == INCOMPAT);
-        backend.set_active_tools("");  // clear for the greedy case below
+        auto r = backend.generate_mtp(
+            one_turn("You must call the read_file tool to read /etc/hostname. "
+                     "Respond with the tool call."),
+            p, no_stream, cancel, head.string(), 4);
+        auto parsed = backend.parse_response(r.content);
+        std::printf("[gh108] tools → code=%d drafted=%d calls=%zu\n[%s]\n",
+                    r.error_code, r.n_drafted, parsed.tool_calls.size(),
+                    r.content.c_str());
+        REQUIRE(r.error_code == 0);             // NOT a loud refusal anymore
+        REQUIRE(r.n_drafted > 0);               // MTP engaged with tools staged
+        REQUIRE(parsed.tool_calls.size() >= 1); // correct tool call produced
+        backend.set_active_tools("");           // clear for the cases below
+    }
+    // gh#108 (v2.9.2): MTP honors stop sequences — halts on the stop instead of
+    // over-generating past it (the mechanism that makes the sequential-tool
+    // hard-stop work under MTP).
+    {
+        entropic::GenerationParams p;
+        p.max_tokens = 64;
+        p.temperature = 0.0f;
+        p.stop = {"STOPHERE"};
+        auto r = backend.generate_mtp(
+            one_turn("Output exactly this text and nothing else: BEGIN STOPHERE END"),
+            p, no_stream, cancel, head.string(), 4);
+        std::printf("[gh108] stop → finish=%s [%s]\n", r.finish_reason.c_str(),
+                    r.content.c_str());
+        REQUIRE(r.error_code == 0);
+        REQUIRE(r.finish_reason == "stop");                  // halted on the stop
+        REQUIRE(r.content.find("END") == std::string::npos); // did not run past it
     }
     // oversized n_draft (1+n_max > n_batch) → clear error, NOT a GGML_ABORT.
     {
@@ -176,6 +205,39 @@ TEST_CASE("gh#108 MTP greedy holds across a multi-turn context",
         a.content = r.content;
         conv.push_back(a);
     }
+
+    backend.deactivate();
+    backend.unload();
+}
+
+TEST_CASE("gh#108 MTP + flash attention fails loud (no GGML_ABORT)",
+          "[model][gh108][mtp][flash]") {
+    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    if (!std::filesystem::is_regular_file(target) ||
+        !std::filesystem::is_regular_file(head)) {
+        SKIP("MTP target/head GGUF not present");
+    }
+    // The gemma4-assistant head (GQA-2 + head_dim-512) aborts the flash MMA
+    // kernel on this pin. The guard must catch flash_attn BEFORE the head loads,
+    // so this returns a clean error instead of crashing the process.
+    entropic::ModelConfig cfg = gh108_cfg(target);
+    cfg.flash_attn = true;
+    entropic::LlamaCppBackend backend;
+    REQUIRE(backend.load(cfg));
+    REQUIRE(backend.activate());
+
+    std::atomic<bool> cancel{false};
+    std::function<void(std::string_view)> no_stream;
+    entropic::GenerationParams p;
+    p.max_tokens = 16;
+    p.temperature = 0.0f;
+    auto r = backend.generate_mtp(one_turn("Hello."), p, no_stream, cancel,
+                                  head.string(), 4);
+    std::printf("[gh108] mtp+flash → code=%d msg=%s\n", r.error_code,
+                r.error_message.c_str());
+    REQUIRE(r.error_code == ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG);
+    REQUIRE(r.error_message.find("flash") != std::string::npos);
 
     backend.deactivate();
     backend.unload();

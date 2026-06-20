@@ -1,3 +1,40 @@
+# entropic v2.9.2
+
+Patch — **MTP made usable** (gh#108). Real-hardware testing on an RTX PRO 4000
+(Blackwell) confirmed MTP genuinely accelerates when reached in-envelope — **up to
+~2.3× on Q8** at `n_draft=4`, byte-correct vs plain. v2.9.1's guards were correct
+but left MTP unreachable from the consumer path and over-broad on tools. v2.9.2
+makes it actually usable.
+
+- **Tools are no longer refused.** MTP is lossless at temperature=0 and gemma4
+  tool-calling is parsed post-hoc (not sampler-grammar-constrained), so MTP +
+  staged tools produces the same correct tool call as plain decode. The v2.9.1
+  "tools" guard was over-broad — dropped. This makes MTP **reachable through the
+  existing agent loop** (`entropic_run`), which stages the built-in meta-tools.
+- **MTP honors stop sequences.** The kernel now applies `effective_stop`
+  (`params.stop` + the gh#103 sequential-tool close marker), so it stops where
+  plain decode would instead of over-generating past the first tool call — the
+  actual gap the "tools" guard was masking.
+- **`n_draft` default 16 → 4.** 16 over-drafts the tiny MTP head — measured a NET
+  slowdown on Q2 (0.53× @16 vs 1.39× @2) and 1.91× vs 2.34× on Q8. 4 is the sweet
+  spot (upstream's MTP example uses 3).
+- **`swa_full=false`** (general, all Gemma-4 tiers). `llama_context_default_params`
+  returns `true` (a full-context SWA cache); the CLI default is `false`. For
+  Gemma-4 (sliding-window 512, 5:1 SWA:global) the un-windowed cache wastes ~5 GB
+  at 128k. Now windowed — correctness-neutral (SWA attention only uses the window),
+  pure memory savings.
+- **MTP + flash attention fails loud** (no `GGML_ABORT`). The gemma4-assistant head
+  (GQA-2 + head_dim-512) aborts the flash kernel on this pin → a clear error asking
+  you to set `flash_attn=false` for MTP tiers. MTP is consequently **locked to f16
+  KV** (quantized KV requires flash). The flash + quantized-KV speedup waits on an
+  upstream `fattn` fix — tracked in gh#108.
+
+Still **experimental** and lossless **only at `temperature=0`**; grammar-constrained
+and streaming tiers still error loudly (those are real sampler/strip constraints,
+unlike tools). No `interfaces/i_*.h` touched.
+
+---
+
 # entropic v2.9.1
 
 Patch — **MTP hardening: fail-fast / fail-loud** (gh#108). v2.9.0 shipped MTP

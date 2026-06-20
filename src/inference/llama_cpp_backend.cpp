@@ -316,7 +316,7 @@ namespace {
  * n_parallel>1 so the same-prefix batch fan-out's seq_cp is supported.
  *
  * @utility
- * @version 2.8.0
+ * @version 2.9.2
  */
 llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     llama_context_params c = llama_context_default_params();
@@ -351,6 +351,14 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
     // prefix (our case). Only enabled when batching is configured (n_parallel>1)
     // so single-sequence handles keep llama.cpp's default.
     c.kv_unified = (cfg.n_parallel > 1);
+    // gh#108 (v2.9.2): llama_context_default_params() returns swa_full=true (a
+    // full-context SWA cache), but the CLI default is false. For Gemma-4 (mostly
+    // sliding-window: window=512, 5:1 SWA:global) the un-windowed cache wastes
+    // ~5 GB at 128k. Set false — the memory-efficient windowed mode. Validated
+    // against warm-keep / prompt-cache reuse over a >window prefix (the SWA layers
+    // keep only the last `window` tokens, so KV reuse must not assume full-context
+    // SWA residency — covered by the long-context warm-keep model test).
+    c.swa_full = false;
     return c;
 }
 } // anonymous namespace
@@ -2894,6 +2902,7 @@ struct SpeculativeRunState {
     std::vector<llama_token> prompt_tgt;
     std::vector<llama_token> draft;
     std::string generated;
+    std::vector<std::string> stop;  ///< gh#108: stop seqs (effective_stop); empty for gh#36
     int n_generated = 0;
     int n_drafted = 0;
     int n_accepted = 0;
@@ -3008,7 +3017,7 @@ static int spec_run_draft(SpeculativeRunState& state) {
  *  - "cancel"  cancel flag set (sets error_code=CANCELLED)
  *
  * @internal
- * @version 2.1.11
+ * @version 2.9.2
  */
 static std::string spec_emit_token(
     SpeculativeRunState& state, llama_token id,
@@ -3029,7 +3038,14 @@ static std::string spec_emit_token(
             common_token_to_piece(state.ctx_tgt, id);
         state.generated += piece;
         if (on_token) { on_token(piece); }
-        if (cancel.load(std::memory_order_acquire)) {
+        // gh#108: honor stop sequences (params.stop + gh#103 sequential-tool
+        // close marker) so MTP stops where plain decode would, instead of
+        // over-generating past the first tool call. state.stop is empty for the
+        // gh#36 path, so this is a no-op there.
+        if (check_stop_sequences(state.generated, state.stop)) {
+            state.finish_reason = "stop";
+            signal = "stop";
+        } else if (cancel.load(std::memory_order_acquire)) {
             state.error_code = ENTROPIC_ERROR_CANCELLED;
             state.finish_reason = "cancelled";
             signal = "cancel";
@@ -3793,17 +3809,19 @@ void mtp_run_loop(
 /**
  * @brief MTP kernel over already-tokenized input.
  * @internal
- * @version 2.9.0
+ * @version 2.9.2
  */
 GenerationResult mtp_run_from_tokens(
     llama_context* ctx_tgt, llama_context* ctx_dft, llama_model* model_tgt,
     const std::vector<llama_token>& tokens, const GenerationParams& params,
     std::function<void(std::string_view)>& on_token,
     std::atomic<bool>& cancel, int n_max,
+    const std::vector<std::string>& stop,
     std::chrono::steady_clock::time_point t0) {
     SpeculativeRunState state;
     state.ctx_tgt = ctx_tgt;
     state.ctx_dft = ctx_dft;
+    state.stop = stop;  // gh#108: MTP honors stop sequences (effective_stop)
     auto init_err = mtp_init_run(state, model_tgt, tokens, params, n_max);
     if (!init_err.empty()) {
         spec_cleanup(state);
@@ -3821,11 +3839,12 @@ GenerationResult mtp_run_from_tokens(
  * @brief Validate the MTP run preconditions (gh#108). Returns an OK result to
  *        proceed, or a typed loud error (no fallback) when MTP cannot run.
  *
- * Order: ACTIVE → envelope (temp/grammar/tools/streaming) → head setup →
+ * Order: ACTIVE → envelope (temp/grammar/streaming) → head setup →
  * draft-window bound. Runs the envelope check BEFORE loading the head so a
- * misconfigured call fails fast without a wasted GGUF load.
+ * misconfigured call fails fast without a wasted GGUF load. gh#108 (v2.9.2):
+ * tools are NO LONGER guarded (MTP+tools is lossless-correct; stops now honored).
  * @internal
- * @version 2.9.1
+ * @version 2.9.2
  */
 GenerationResult LlamaCppBackend::mtp_guard(
     const GenerationParams& params,
@@ -3834,7 +3853,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
     GenerationResult r;  // ENTROPIC_OK by default → proceed
     std::string reason = mtp_unsupported_reason(
         params.temperature, !params.grammar.empty(),
-        !active_tools_json_.empty(), static_cast<bool>(on_token));
+        static_cast<bool>(on_token), config().flash_attn);
     if (!is_active()) {
         r = spec_error(ENTROPIC_ERROR_INVALID_STATE,
                        "MTP requires an ACTIVE target");
@@ -3859,7 +3878,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
  * Fails loudly (no plain-decode fallback) when the request is outside the MTP
  * envelope — see mtp_guard / mtp_unsupported_reason.
  * @internal
- * @version 2.9.1
+ * @version 2.9.2
  */
 GenerationResult LlamaCppBackend::generate_mtp(
     const std::vector<Message>& messages,
@@ -3884,7 +3903,8 @@ GenerationResult LlamaCppBackend::generate_mtp(
     logger->info("MTP: {} input tokens, max_tokens={}, n_max={}",
                  tokens.size(), params.max_tokens, mtp_n_max_);
     return mtp_run_from_tokens(ctx_, mtp_draft_ctx_, model_, tokens, params,
-                               on_token, cancel, mtp_n_max_, t0);
+                               on_token, cancel, mtp_n_max_,
+                               effective_stop(params), t0);  // gh#108: honor stops
 }
 
 /**

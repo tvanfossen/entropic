@@ -866,7 +866,12 @@ inline ModelConfig make_default_draft_model_config() {
  */
 struct SpeculativeConfig {
     bool enabled = false;                  ///< Master switch (off by default)
-    int n_draft = 16;                      ///< Window size (proposed tokens)
+    int n_draft = 4;                       ///< Window size (proposed tokens). gh#108
+                                           ///< (v2.9.2): 16 over-drafts the small MTP
+                                           ///< head — measured a NET slowdown on Q2
+                                           ///< (0.53x @16 vs 1.39x @2) and 1.91x vs
+                                           ///< 2.34x on Q8; ~4 is the sweet spot
+                                           ///< (upstream MTP example uses 3).
     bool mtp = false;                      ///< gh#106 (v2.9.0): drive MTP (the
                                            ///< draft is a trunk-sharing head via
                                            ///< ctx_other) instead of the gh#36

@@ -1,3 +1,51 @@
+# entropic v2.9.3
+
+Patch — **MTP + flash attention unblocked, verified with real speedup data**
+(gh#108). v2.9.2 shipped a loud, correct guard for the MTP-draft-crashes-with-
+flash issue rather than a silent fallback or a `GGML_ABORT`. That guard is now
+obsolete: upstream llama.cpp merged the fix, and extensive benchmarking
+(single-turn, multi-turn agentic, and a 24-config permutation matrix at true
+128k context) confirms a genuine speedup — on the right weight quant.
+
+- **`extern/llama.cpp` pin bumped** `ac4cddeb` (2026-06-10) → `b9886`
+  (`20a04b22`, 2026-07-06). Pulls in upstream #25148, "CUDA: fix Gemma E4B MTP
+  FlashAttention" (merged 2026-06-30, fixes ggml-org/llama.cpp#24400): the
+  flash-attn MMA template had disabled the GQA-1/2 specializations as part of
+  an earlier compile-time optimization (#21768) — GQA-2 is exactly what the
+  Gemma-4 E4B/E2B MTP assistant head uses, so it hit the `DKQ<=256` fallback
+  path at head_dim=512 and `GGML_ABORT`ed.
+- **Dropped the `flash_attn` guard in `mtp_unsupported_reason`.** MTP now runs
+  with flash attention enabled instead of erroring — engaging flash also
+  unlocks quantized KV cache (`cache_type_k/v=q4_0`/`q8_0`), which llama.cpp
+  requires flash for.
+- **Verified real speedup with UD-Q4_K_XL / qat-UD-Q4_K_XL trunks**: 1.05–1.65x
+  over Q8 baseline across single-turn and multi-turn agentic benchmarks (see
+  gh#108 for the full 24-config matrix). **Mobile-QAT (TQ2_0, `*_qat_mobile`)
+  is NOT recommended for this config** — this llama.cpp pin has zero CUDA
+  kernels for TQ2_0 (confirmed via source audit, any GPU architecture), which
+  forces the tied token_embd/output tensor onto CPU every decode step and
+  erases the win regardless of hardware; independently, TQ2_0 also showed
+  real reasoning-coherence degradation in testing (non-convergent looping),
+  not just a speed cost. Upstream CUDA support (llama.cpp #11183) has been
+  open since 2025-01-10 and remains unmerged — tracked, not fixed here.
+  `bundled_models.yaml` descriptions updated accordingly; added `mtp_e2b`/
+  `mtp_e4b` registry entries so the MTP drafters are downloadable by key.
+- **Fixed a tool-calling test-harness bug** (not a production bug): several
+  gh#106/gh#108 model tests staged `GenerationParams.tools` in OpenAI's
+  `{type:"function", function:{...}}` wire shape, but `mcp_tools_to_common_chat`
+  expects entropic's native MCP shape (`{name, description, inputSchema}`).
+  The mismatch silently parsed to zero tools every time (`t.value("name","")`
+  finds nothing at the top level), so those tests' "tools staged" claims were
+  never actually exercising real tool-call parsing. Fixed the JSON shape and
+  strengthened `test_gh106_mtp_route.cpp`'s assertion from a hedge ("format
+  too unreliable to hard-assert") to a real `tool_calls.size() == 1` check,
+  now that the actual cause is fixed.
+- Temperature and grammar guards in the MTP envelope are unchanged — MTP is
+  still lossless **only at `temperature=0`** and still errors loudly on
+  grammar-constrained or streaming tiers.
+
+No `interfaces/i_*.h` touched.
+
 # entropic v2.9.2
 
 Patch — **MTP made usable** (gh#108). Real-hardware testing on an RTX PRO 4000

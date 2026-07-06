@@ -1195,11 +1195,11 @@ protected:
     /**
      * @brief Validate MTP run preconditions (gh#108, fail-fast/fail-loud).
      *
-     * ACTIVE → envelope (temp/grammar/tools/streaming via mtp_unsupported_reason)
+     * ACTIVE → envelope (temp/grammar/streaming via mtp_unsupported_reason)
      * → head setup → draft-window bound. Returns an ENTROPIC_OK result to
      * proceed, or a typed loud error (caller propagates it — no fallback).
      * @internal
-     * @version 2.9.1
+     * @version 2.9.3
      */
     GenerationResult mtp_guard(
         const GenerationParams& params,

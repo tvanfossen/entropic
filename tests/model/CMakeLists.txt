@@ -184,6 +184,25 @@ add_model_test(test-gh106-mtp-route        test_gh106_mtp_route.cpp)
 add_model_test(test-gh108-mtp-guards       test_gh108_mtp_guards.cpp)
 set_tests_properties(model/test-gh108-mtp-guards PROPERTIES TIMEOUT 360)
 
+# gh#108 (v2.9.3): side-by-side benchmark, E4B Q8 baseline vs the target
+# optimized config (E4B Q2-mobile + MTP + flash + q4 KV). Functional-only
+# assertions; prints both full responses + timing for human quality judgment.
+add_model_test(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
+set_tests_properties(model/test-gh108-config-benchmark PROPERTIES TIMEOUT 360)
+
+# gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
+# E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator
+# route. Loads/runs 2 models x up to 10 orchestrator calls each — generous
+# timeout.
+add_model_test(test-gh108-agentic-benchmark test_gh108_agentic_benchmark.cpp)
+set_tests_properties(model/test-gh108-agentic-benchmark PROPERTIES TIMEOUT 900)
+
+# gh#108 follow-up: CPU-only (gpu_layers=0) feasibility check for an
+# embedded-SoC-class deployment (RK3588-style: no CUDA, unified memory).
+# CPU decode is slow — generous timeout for 4 configs x ~8 calls each.
+add_model_test(test-gh108-cpu-feasibility test_gh108_cpu_feasibility.cpp)
+set_tests_properties(model/test-gh108-cpu-feasibility PROPERTIES TIMEOUT 3600)
+
 # gh#106 (v2.9.0): MTP functions on the mobile QAT (TQ2_0) trunks (E2B+E4B) —
 # new×new interaction. Two cases in one binary; TQ2_0 is compute-bound on Pascal
 # (~3x) and E4B is a 3GB trunk, so allow a generous timeout for both.

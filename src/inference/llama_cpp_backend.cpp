@@ -3843,8 +3843,11 @@ GenerationResult mtp_run_from_tokens(
  * draft-window bound. Runs the envelope check BEFORE loading the head so a
  * misconfigured call fails fast without a wasted GGUF load. gh#108 (v2.9.2):
  * tools are NO LONGER guarded (MTP+tools is lossless-correct; stops now honored).
+ * gh#108 (v2.9.3): flash_attn is NO LONGER guarded — the extern/llama.cpp pin
+ * is past upstream #25148, which fixes the GQA-2 flash-attn abort the guard
+ * existed for.
  * @internal
- * @version 2.9.2
+ * @version 2.9.3
  */
 GenerationResult LlamaCppBackend::mtp_guard(
     const GenerationParams& params,
@@ -3853,7 +3856,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
     GenerationResult r;  // ENTROPIC_OK by default → proceed
     std::string reason = mtp_unsupported_reason(
         params.temperature, !params.grammar.empty(),
-        static_cast<bool>(on_token), config().flash_attn);
+        static_cast<bool>(on_token));
     if (!is_active()) {
         r = spec_error(ENTROPIC_ERROR_INVALID_STATE,
                        "MTP requires an ACTIVE target");

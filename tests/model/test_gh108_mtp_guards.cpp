@@ -210,7 +210,7 @@ TEST_CASE("gh#108 MTP greedy holds across a multi-turn context",
     backend.unload();
 }
 
-TEST_CASE("gh#108 MTP + flash attention fails loud (no GGML_ABORT)",
+TEST_CASE("gh#108 MTP + flash attention succeeds (v2.9.3, upstream #25148)",
           "[model][gh108][mtp][flash]") {
     auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
     auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
@@ -218,9 +218,11 @@ TEST_CASE("gh#108 MTP + flash attention fails loud (no GGML_ABORT)",
         !std::filesystem::is_regular_file(head)) {
         SKIP("MTP target/head GGUF not present");
     }
-    // The gemma4-assistant head (GQA-2 + head_dim-512) aborts the flash MMA
-    // kernel on this pin. The guard must catch flash_attn BEFORE the head loads,
-    // so this returns a clean error instead of crashing the process.
+    // Pre-v2.9.3 the gemma4-assistant head (GQA-2 + head_dim-512) aborted the
+    // flash MMA kernel on this pin, so flash_attn was guarded loud. The
+    // extern/llama.cpp pin is now past upstream #25148 ("CUDA: fix Gemma E4B
+    // MTP FlashAttention"), which restores the GQA-2 specialization — flash
+    // attention must now engage MTP successfully instead of erroring.
     entropic::ModelConfig cfg = gh108_cfg(target);
     cfg.flash_attn = true;
     entropic::LlamaCppBackend backend;
@@ -234,10 +236,51 @@ TEST_CASE("gh#108 MTP + flash attention fails loud (no GGML_ABORT)",
     p.temperature = 0.0f;
     auto r = backend.generate_mtp(one_turn("Hello."), p, no_stream, cancel,
                                   head.string(), 4);
-    std::printf("[gh108] mtp+flash → code=%d msg=%s\n", r.error_code,
-                r.error_message.c_str());
-    REQUIRE(r.error_code == ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG);
-    REQUIRE(r.error_message.find("flash") != std::string::npos);
+    std::printf("[gh108] mtp+flash → code=%d msg=%s n_drafted=%d\n", r.error_code,
+                r.error_message.c_str(), r.n_drafted);
+    REQUIRE(r.error_code == 0);
+    REQUIRE_FALSE(r.content.empty());
+    REQUIRE(r.n_drafted > 0);
+
+    backend.deactivate();
+    backend.unload();
+}
+
+TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B Q2-mobile "
+          "(the target consumer config)",
+          "[model][gh108][mtp][flash]") {
+    // This is the exact config gh#108 asked for: Gemma-4 E4B Q2-mobile
+    // (TQ2_0 QAT) + MTP + flash_attn + quantized (q4_0) KV + windowed SWA
+    // (already the build_cparams default since v2.9.2). Quantized KV cache
+    // requires flash in llama.cpp, so this also exercises the KV-quant unlock
+    // that the flash fix (upstream #25148) recovers, not just the flash path
+    // alone.
+    auto target = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E4B-it.gguf");
+    if (!std::filesystem::is_regular_file(target) ||
+        !std::filesystem::is_regular_file(head)) {
+        SKIP("MTP target/head GGUF not present");
+    }
+    entropic::ModelConfig cfg = gh108_cfg(target);
+    cfg.flash_attn = true;
+    cfg.cache_type_k = "q4_0";
+    cfg.cache_type_v = "q4_0";
+    entropic::LlamaCppBackend backend;
+    REQUIRE(backend.load(cfg));
+    REQUIRE(backend.activate());
+
+    std::atomic<bool> cancel{false};
+    std::function<void(std::string_view)> no_stream;
+    entropic::GenerationParams p;
+    p.max_tokens = 16;
+    p.temperature = 0.0f;
+    auto r = backend.generate_mtp(one_turn("Hello."), p, no_stream, cancel,
+                                  head.string(), 4);
+    std::printf("[gh108] mtp+flash+q4kv(E4B Q2-mobile) → code=%d msg=%s n_drafted=%d\n",
+                r.error_code, r.error_message.c_str(), r.n_drafted);
+    REQUIRE(r.error_code == 0);
+    REQUIRE_FALSE(r.content.empty());
+    REQUIRE(r.n_drafted > 0);
 
     backend.deactivate();
     backend.unload();

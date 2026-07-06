@@ -296,15 +296,21 @@ gemma4_e4b_qat:
   family: gemma4
   size_label: e4b
   quant: UD-Q4_K_XL
-# Mobile-QAT (TQ2_0 ternary "2-bit decoding layers"): smallest footprint, but the
-# TQ2_0 CUDA kernel is ~3x SLOWER than Q4 on Pascal (compute-bound) — OPT-IN /
-# modern-HW only. Pairs with the tiny MTP drafter (mtp-gemma-4-*.gguf, ~57 MB).
+# Mobile-QAT (TQ2_0 ternary): NOT RECOMMENDED for the MTP+flash+q4KV target
+# config (gh#108, v2.9.3). Root cause is deeper than "slow on Pascal": this
+# llama.cpp pin has ZERO CUDA kernels for TQ2_0 (confirmed via source grep,
+# any GPU arch) — the tied token_embd/output tensor is forced onto CPU every
+# decode step regardless of hardware. Upstream fix (llama.cpp #11183) has
+# been open since 2025-01-10, stalled unmerged. Independently, this quant
+# also showed real reasoning-coherence degradation (non-convergent looping)
+# in gh#108's own benchmark, not just a speed cost. Prefer gemma4_e{2,4}b_qat
+# (UD-Q4_K_XL, full CUDA support) for MTP+flash+q4KV — see mtp_e2b/mtp_e4b.
 gemma4_e2b_qat_mobile:
   name: gemma-4-E2B-it-qat-UD-Q2_K_XL
   url: https://huggingface.co/unsloth/gemma-4-E2B-it-qat-mobile-GGUF/resolve/main/gemma-4-E2B-it-qat-UD-Q2_K_XL.gguf
   size_gb: 2.1
   adapter: gemma4
-  description: Gemma 4 E2B mobile-QAT (TQ2_0) — smallest footprint (~1.95 GB VRAM); OPT-IN, ~3x slower than Q4 on Pascal (modern-HW lever).
+  description: Gemma 4 E2B mobile-QAT (TQ2_0) — smallest footprint; NOT RECOMMENDED for MTP+flash+q4KV (gh#108 — no CUDA kernel for TQ2_0 on this pin, plus observed coherence issues). Prefer gemma4_e2b_qat.
   provider: unsloth
   family: gemma4
   size_label: e2b
@@ -314,11 +320,33 @@ gemma4_e4b_qat_mobile:
   url: https://huggingface.co/unsloth/gemma-4-E4B-it-qat-mobile-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf
   size_gb: 3.2
   adapter: gemma4
-  description: Gemma 4 E4B mobile-QAT (TQ2_0) — OPT-IN, modern-HW (ternary kernel compute-bound on Pascal).
+  description: Gemma 4 E4B mobile-QAT (TQ2_0) — NOT RECOMMENDED for MTP+flash+q4KV (gh#108 — no CUDA kernel for TQ2_0 on this pin, plus observed coherence issues). Prefer gemma4_e4b_qat.
   provider: unsloth
   family: gemma4
   size_label: e4b
   quant: UD-Q2_K_XL
+
+# MTP (multi-token-prediction) target-owned draft heads (gh#106/gh#108).
+# Pair with a same-size trunk via inference.speculative.draft.path — e.g.
+# mtp_e4b with gemma4_e4b_qat. gh#108 (v2.9.3): verified genuine speedup
+# (1.05-1.65x over Q8 baseline) paired with UD-Q4_K_XL/qat-UD-Q4_K_XL trunks
+# + flash_attn + q4_0 KV cache; NOT the qat_mobile (TQ2_0) trunks above.
+mtp_e2b:
+  name: mtp-gemma-4-E2B-it
+  url: https://huggingface.co/unsloth/gemma-4-E2B-it-GGUF/resolve/main/mtp-gemma-4-E2B-it.gguf
+  size_gb: 0.06
+  description: MTP drafter for Gemma 4 E2B (arch gemma4-assistant, shared-KV, target-owned). Pair with gemma4_e2b / gemma4_e2b_qat.
+  provider: unsloth
+  family: gemma4
+  size_label: e2b
+mtp_e4b:
+  name: mtp-gemma-4-E4B-it
+  url: https://huggingface.co/unsloth/gemma-4-E4B-it-GGUF/resolve/main/mtp-gemma-4-E4B-it.gguf
+  size_gb: 0.06
+  description: MTP drafter for Gemma 4 E4B (arch gemma4-assistant, shared-KV, target-owned). Pair with gemma4_e4b / gemma4_e4b_qat.
+  provider: unsloth
+  family: gemma4
+  size_label: e4b
 
 gemma4_e2b:
   name: gemma-4-E2B-it-Q8_0

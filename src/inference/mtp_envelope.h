@@ -16,7 +16,15 @@
  * guard was over-broad; the real gap was stop-handling, now fixed (MTP honors
  * effective_stop). This makes MTP reachable through the agent loop.
  *
- * @version 2.9.2
+ * gh#108 (v2.9.3): the flash_attn guard is dropped. It existed because the
+ * gemma4-assistant head (GQA-2 + head_dim-512) hit an unsupported MMA
+ * specialization in ggml_cuda_flash_attn_ext and GGML_ABORTed. Upstream
+ * llama.cpp #25148 ("CUDA: fix Gemma E4B MTP FlashAttention", merged
+ * 2026-06-30) restores that specialization; the extern/llama.cpp pin was
+ * bumped past it, so MTP + flash_attn is now safe (and unblocks quantized KV,
+ * which requires flash).
+ *
+ * @version 2.9.3
  */
 
 #pragma once
@@ -33,13 +41,12 @@ namespace entropic {
  *        active — a sampler constraint to_common_sampling drops (NOTE: gemma4
  *        common_chat tool grammars are post-hoc parse, not this).
  * @param streaming True when a per-token callback is bound (streaming call).
- * @param flash_attn True when flash attention is enabled (config.flash_attn).
  * @return Actionable message when MTP is unsupported for the request, else "".
  * @utility
- * @version 2.9.2
+ * @version 2.9.3
  */
 inline std::string mtp_unsupported_reason(float temperature, bool has_grammar,
-                                          bool streaming, bool flash_attn) {
+                                          bool streaming) {
     std::string r;
     if (temperature > 0.0f) {
         r = "MTP is lossless only at temperature=0 (the accept step is naive "
@@ -48,14 +55,6 @@ inline std::string mtp_unsupported_reason(float temperature, bool has_grammar,
     } else if (has_grammar) {
         r = "MTP does not enforce grammar constraints; disable speculative.mtp "
             "for grammar-constrained tiers";
-    } else if (flash_attn) {
-        // gh#108: the gemma4-assistant head is GQA-2 + head_dim-512, which the
-        // flash MMA kernel does not cover at this llama.cpp pin → GGML_ABORT in
-        // ggml_cuda_flash_attn_ext. Fail loud (don't silently override flash,
-        // and don't crash). The no-flash path is validated + fast (~2.3x).
-        r = "MTP aborts with flash attention on this llama.cpp pin (the "
-            "gemma4-assistant head is GQA-2 + head_dim-512, unsupported by the "
-            "flash kernel); set flash_attn=false for MTP tiers";
     } else if (streaming) {
         r = "MTP does not support streaming (the thinking-channel strip is a "
             "post-buffer operation); disable speculative.mtp for streaming calls";

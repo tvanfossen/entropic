@@ -19,13 +19,13 @@
  * /proc/self/status, sampled right after model activation, to check
  * against an assumed 8GB total-system budget.
  *
- * v2.9.4: max_tokens matches test_gh108_agentic_benchmark.cpp (1500), not a
+ * v2.9.4: max_tokens matches test_gh108_agentic_benchmark.cpp (8000), not a
  * CPU-reduced budget as originally set at 300. The 300 figure was root-caused
  * as the actual cause of empty-content failures on post-tool-answer turns —
  * tokens needed to resolve tool-result ambiguity is a function of model
  * reasoning length, not decode speed, so shrinking the budget for CPU speed
- * just truncates the same answer earlier. This makes the CPU run slower;
- * that's the accepted cost of not silently truncating real answers.
+ * just truncates the same answer earlier. This makes the CPU run much
+ * slower; that's the accepted cost of not silently truncating real answers.
  */
 
 #include "model_test_context.h"  // helpers only — NO CATCH_REGISTER_LISTENER
@@ -128,30 +128,47 @@ bool init_orchestrator_full_ctx(ModelTestContext& ctx) {
     return true;
 }
 
-// gh#108 (v2.9.4): max_tokens raised 300 -> 1500 (matches
-// test_gh108_agentic_benchmark.cpp's fix). The original 300 was chosen for
-// CPU-speed reasons, not correctness — but 300 was root-caused as the actual
-// cause of "empty content" failures on post-tool-answer turns (E2B needs
-// ~713 tokens to work through tool-result ambiguity when tools stay staged;
-// token count needed is a function of model reasoning length, not decode
-// speed, so a CPU-specific reduced budget just truncates the same answer
-// earlier). This makes the CPU run noticeably slower; that's the accepted
-// cost of not silently truncating real answers.
+// gh#108 (v2.9.4): max_tokens raised 300 -> 8000, matching
+// test_gh108_agentic_benchmark.cpp's fix. Also matches that file's retry and
+// temperature change: repeated full-matrix runs at identical max_tokens
+// showed DIFFERENT configs failing run-to-run at the same budget — greedy
+// decode on this stack is not perfectly reproducible (confirmed
+// independently: the same single call at temperature=0 produced
+// 15/155/177-token outputs across separate runs, from floating-point
+// non-associativity, not intentional sampling). temperature=0 was chosen
+// for reproducibility that turned out not to hold — switched to the
+// engine's real default (0.7, config.h), which is also the exact capability
+// gh#108 v2.9.4 added (MTP now works at temperature>0). No fixed budget
+// deterministically bounds an unbounded nondeterministic tail, so a
+// genuinely empty turn (no content, no tool call) is retried before being
+// treated as a failure — real production agent loops need this resilience
+// regardless of temperature or this test.
 TurnResult run_turn(ModelOrchestrator& orch, std::vector<entropic::Message>& conv,
                     const std::string& tier_name, const char* label) {
     entropic::GenerationParams params;
-    params.max_tokens = 1500;
-    params.temperature = 0.0f;
+    params.max_tokens = 8000;
+    params.temperature = 0.7f;  // engine default (config.h) — was 0.0f
     params.tools = kTools;
 
-    auto t0 = std::chrono::steady_clock::now();
-    auto r = orch.generate(conv, params, tier_name);
-    auto t1 = std::chrono::steady_clock::now();
+    entropic::GenerationResult r;
+    double wall_ms = 0.0;
+    constexpr int kMaxAttempts = 3;
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        auto t0 = std::chrono::steady_clock::now();
+        r = orch.generate(conv, params, tier_name);
+        auto t1 = std::chrono::steady_clock::now();
+        wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        if (r.error_code != 0 || !r.content.empty() || !r.tool_calls.empty()) {
+            break;
+        }
+        std::printf("[gh108] %s: empty turn on attempt %d/%d, retrying\n",
+                   label, attempt + 1, kMaxAttempts);
+    }
 
     TurnResult tr;
     tr.label = label;
     tr.tokens = r.token_count;
-    tr.wall_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    tr.wall_ms = wall_ms;
     tr.decode_tok_s = r.throughput_tok_s;
     tr.content = r.content;
 

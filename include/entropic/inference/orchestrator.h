@@ -895,13 +895,16 @@ private:
      * @brief Attempt to route through the speculative kernel for
      *        non-streaming generate. Returns true when the kernel ran
      *        (result populated); false to fall back to plain decode.
+     * @param tier_name Resolved tier name, for the per-tier `speculative.mtp`
+     *        override (gh#108, v2.9.4) — empty when no tier context applies.
      * @internal
-     * @version 2.1.11
+     * @version 2.9.4
      */
     bool try_speculative_route(
         InferenceBackend* model,
         const std::vector<Message>& messages,
         const GenerationParams& params,
+        const std::string& tier_name,
         GenerationResult& result);
 
     /**
@@ -909,25 +912,31 @@ private:
      *        (when enabled + pair compatible) or the standard
      *        non-streaming path. Extracted to keep generate() under
      *        the SLOC gate.
+     * @param tier_name Resolved tier name, threaded through to the
+     *        per-tier `speculative.mtp` override (gh#108, v2.9.4).
      * @internal
-     * @version 2.1.11
+     * @version 2.9.4
      */
     GenerationResult run_generate_dispatch(
         InferenceBackend* model,
         const std::vector<Message>& messages,
-        const GenerationParams& params);
+        const GenerationParams& params,
+        const std::string& tier_name);
 
     /**
      * @brief Same as `try_speculative_route` but for the streaming
      *        path — passes the per-token callback and cancel flag
      *        through to the kernel.
+     * @param tier_name Resolved tier name, for the per-tier `speculative.mtp`
+     *        override (gh#108, v2.9.4).
      * @internal
-     * @version 2.1.11
+     * @version 2.9.4
      */
     bool try_speculative_route_streaming(
         InferenceBackend* model,
         const std::vector<Message>& messages,
         const GenerationParams& params,
+        const std::string& tier_name,
         std::function<void(std::string_view)> on_token,
         std::atomic<bool>& cancel,
         GenerationResult& result);
@@ -949,6 +958,17 @@ private:
         std::function<void(std::string_view)> on_token,
         std::atomic<bool>& cancel,
         GenerationResult& result);
+
+    /**
+     * @brief Resolve whether MTP should be attempted for this tier+request
+     *        (gh#108, v2.9.4): a tier's `speculative_mtp` override wins over
+     *        the global `speculative.mtp` flag when set; the request-level
+     *        grammar safety net (a dynamic `params.grammar` on an
+     *        MTP-effective tier) is applied by the caller, not here.
+     * @internal
+     * @version 2.9.4
+     */
+    bool resolve_mtp_effective(const std::string& tier_name) const;
 };
 
 } // namespace entropic

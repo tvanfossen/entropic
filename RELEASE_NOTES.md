@@ -2,6 +2,44 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.9.4
+
+Patch — **MTP works with `temperature>0` and grammar-constrained tiers**
+(gh#108). v2.9.1-v2.9.3 hardened MTP to fail loud outside a narrow envelope
+(greedy-only, no grammar, non-streaming) — but combined with
+`speculative.mtp` being a global-only flag, that envelope blocked MTP for
+most realistic multi-tier consumer configs. Two fixes, both non-breaking:
+
+- **Dropped the `temperature>0` guard.** Re-derivation found MTP's draft
+  proposal (`common_speculative_impl_draft_mtp::draft()`) always proposes the
+  argmax of its filtered distribution, never a genuine stochastic sample —
+  a deterministic point mass, at any temperature. For a point-mass proposal,
+  the standard rejection-sampling accept rule collapses algebraically to
+  exactly what entropic's existing accept step already does, so the guard
+  was stricter than the math required — not a new sampling algorithm, a
+  proof that the existing one was already correct. A statistical model test
+  (`test_gh108_mtp_guards.cpp`) empirically confirms MTP's output
+  distribution matches plain decode's at `temperature=0.7` and serves as a
+  regression tripwire if a future `extern/llama.cpp` pin bump changes the
+  draft's selection logic.
+- **Per-tier `speculative.mtp` override + request-level grammar safety
+  net.** A new `TierConfig::speculative_mtp` (inherits the global flag
+  unless set) lets a consumer keep MTP on globally while excluding a
+  specific identity/model — e.g. a grammar-heavy tier that should always
+  run plain decode. A tier that statically combines `speculative_mtp=true`
+  with a static `grammar` is now rejected at config-load time instead of
+  failing every request. Independently, a *dynamic* per-request grammar
+  (e.g. the constitutional validator's critique call, which is not a
+  static tier property) on an otherwise MTP-effective tier now falls back
+  to plain decode instead of propagating
+  `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG` — fixing a real bug
+  where that error was silently swallowed by the validator, disabling
+  grammar-based constitutional validation without any visible signal.
+- MTP is still grammar-*blind* — these fixes make grammar and MTP coexist
+  in a config, not make MTP itself grammar-aware. Grammar-constrained
+  speculative decode (validating drafted tokens against the grammar) is
+  deferred as a separate capability-track item.
+
 # entropic v2.9.3
 
 Patch — **MTP + flash attention unblocked, verified with real speedup data**

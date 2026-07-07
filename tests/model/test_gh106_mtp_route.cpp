@@ -180,3 +180,58 @@ TEST_CASE("gh#108 MTP engages with tools staged through orchestrator (agent loop
     REQUIRE(r.tool_calls.size() == 1);
     CHECK(r.tool_calls[0].name == "read_file");
 }
+
+TEST_CASE("gh#108 per-tier speculative_mtp=false overrides the global flag",
+          "[model][gh108][mtp][route][tier-override]") {
+    // v2.9.4: a tier can opt OUT of MTP even when speculative.{enabled,mtp}
+    // are globally true — e.g. an identity/model combo that always wants
+    // plain decode. Confirms resolve_mtp_effective's per-tier precedence
+    // through the real orchestrator dispatch, not just the pure function.
+    ModelTestContext ctx;
+    auto tier_name = configure_mtp_route(ctx);
+    ctx.config.models.tiers[tier_name].speculative_mtp = false;
+    if (!init_orchestrator(ctx)) {
+        SKIP("orchestrator init failed (resource/config) — route untested");
+    }
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = "Say hello.";
+    auto r = ctx.orchestrator->generate({u}, greedy_params(), tier_name);
+
+    std::printf("\n===gh108 per-tier mtp=false===\ncode=%d drafted=%d\n===\n",
+                r.error_code, r.n_drafted);
+    REQUIRE(r.error_code == 0);
+    REQUIRE_FALSE(r.content.empty());
+    // Plain decode ran instead of MTP — n_drafted stays 0 (only generate_mtp
+    // populates it).
+    REQUIRE(r.n_drafted == 0);
+}
+
+TEST_CASE("gh#108 a request-level grammar falls back to plain decode on an "
+          "MTP-effective tier (no loud error)",
+          "[model][gh108][mtp][route][grammar]") {
+    // v2.9.4: the request-level safety net — a tier with MTP effectively on
+    // (global speculative.mtp=true here, no per-tier override) still
+    // succeeds via plain decode when a SPECIFIC call carries a dynamic
+    // grammar (e.g. the constitutional validator's critique call), instead
+    // of propagating ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG.
+    ModelTestContext ctx;
+    auto tier_name = configure_mtp_route(ctx);
+    if (!init_orchestrator(ctx)) {
+        SKIP("orchestrator init failed (resource/config) — route untested");
+    }
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = "Say ok.";
+    auto params = greedy_params();
+    params.grammar = "root ::= \"ok\"";
+    auto r = ctx.orchestrator->generate({u}, params, tier_name);
+
+    std::printf("\n===gh108 grammar-on-mtp-tier===\ncode=%d drafted=%d [%s]\n===\n",
+                r.error_code, r.n_drafted, r.content.c_str());
+    REQUIRE(r.error_code == 0);  // NOT INCOMPATIBLE_CONFIG
+    REQUIRE_FALSE(r.content.empty());
+    REQUIRE(r.n_drafted == 0);   // plain decode ran, not generate_mtp
+}

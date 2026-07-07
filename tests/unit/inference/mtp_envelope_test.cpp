@@ -7,7 +7,10 @@
  * raises when speculative.mtp is enabled outside MTP's correct envelope. v2.9.2:
  * TOOLS are no longer guarded (MTP+tools is lossless-correct; stops now honored).
  * v2.9.3: flash attention is no longer guarded either — the extern/llama.cpp pin
- * is past upstream #25148, which fixed the GQA-2 flash-attn abort. Keeping the
+ * is past upstream #25148, which fixed the GQA-2 flash-attn abort. v2.9.4:
+ * temperature is no longer guarded — the draft proposal is a deterministic
+ * point mass (see mtp_envelope.h's file-level doc comment), so the existing
+ * exact-match accept step is already lossless at any temperature. Keeping the
  * logic pure lets this run on CPU; the model tests verify the backend consults
  * it and propagates the error.
  */
@@ -37,11 +40,6 @@ TEST_CASE("gh#108 MTP envelope: tools are NOT guarded (lossless-correct)",
 
 TEST_CASE("gh#108 MTP envelope: each incompatible condition fails loud",
           "[mtp][envelope]") {
-    SECTION("temperature > 0 (lossless only at greedy)") {
-        auto r = mtp_unsupported_reason(0.7f, false, false);
-        REQUIRE_FALSE(r.empty());
-        REQUIRE(r.find("temperature=0") != std::string::npos);
-    }
     SECTION("grammar active") {
         auto r = mtp_unsupported_reason(0.0f, true, false);
         REQUIRE_FALSE(r.empty());
@@ -56,21 +54,27 @@ TEST_CASE("gh#108 MTP envelope: each incompatible condition fails loud",
 
 TEST_CASE("gh#108 MTP envelope: every message is actionable (mentions mtp)",
           "[mtp][envelope]") {
-    for (auto r : {mtp_unsupported_reason(0.7f, false, false),
-                   mtp_unsupported_reason(0.0f, true, false),
+    for (auto r : {mtp_unsupported_reason(0.0f, true, false),
                    mtp_unsupported_reason(0.0f, false, true)}) {
         REQUIRE_FALSE(r.empty());
         REQUIRE(r.find("mtp") != std::string::npos);  // names the knob to change
     }
 }
 
-TEST_CASE("gh#108 MTP envelope: temperature is the highest-precedence gate",
+TEST_CASE("gh#108 MTP envelope: grammar is the highest-precedence gate",
           "[mtp][envelope]") {
+    // v2.9.4: temperature is no longer a gate at all, so grammar (checked
+    // first in mtp_unsupported_reason) wins over streaming when both are set.
     auto r = mtp_unsupported_reason(0.7f, true, true);
-    REQUIRE(r.find("temperature=0") != std::string::npos);
+    REQUIRE(r.find("grammar") != std::string::npos);
 }
 
-TEST_CASE("gh#108 MTP envelope: temperature boundary is exactly 0", "[mtp][envelope]") {
+TEST_CASE("gh#108 MTP envelope: temperature is not guarded at any value",
+          "[mtp][envelope]") {
+    // v2.9.4: dropped as a gate — the draft proposal is a deterministic point
+    // mass, so the existing exact-match accept step is lossless regardless.
     REQUIRE(mtp_unsupported_reason(0.0f, false, false).empty());
-    REQUIRE_FALSE(mtp_unsupported_reason(1e-6f, false, false).empty());
+    REQUIRE(mtp_unsupported_reason(1e-6f, false, false).empty());
+    REQUIRE(mtp_unsupported_reason(0.7f, false, false).empty());
+    REQUIRE(mtp_unsupported_reason(2.0f, false, false).empty());
 }

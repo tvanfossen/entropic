@@ -19,9 +19,13 @@
  * /proc/self/status, sampled right after model activation, to check
  * against an assumed 8GB total-system budget.
  *
- * max_tokens reduced to 300 (from the GPU benchmark's 700) — CPU decode is
- * far slower and this file's purpose is speed/memory-fit, not a fresh
- * quality read (that was already done at higher token budgets on GPU).
+ * v2.9.4: max_tokens matches test_gh108_agentic_benchmark.cpp (1500), not a
+ * CPU-reduced budget as originally set at 300. The 300 figure was root-caused
+ * as the actual cause of empty-content failures on post-tool-answer turns —
+ * tokens needed to resolve tool-result ambiguity is a function of model
+ * reasoning length, not decode speed, so shrinking the budget for CPU speed
+ * just truncates the same answer earlier. This makes the CPU run slower;
+ * that's the accepted cost of not silently truncating real answers.
  */
 
 #include "model_test_context.h"  // helpers only — NO CATCH_REGISTER_LISTENER
@@ -124,10 +128,19 @@ bool init_orchestrator_full_ctx(ModelTestContext& ctx) {
     return true;
 }
 
+// gh#108 (v2.9.4): max_tokens raised 300 -> 1500 (matches
+// test_gh108_agentic_benchmark.cpp's fix). The original 300 was chosen for
+// CPU-speed reasons, not correctness — but 300 was root-caused as the actual
+// cause of "empty content" failures on post-tool-answer turns (E2B needs
+// ~713 tokens to work through tool-result ambiguity when tools stay staged;
+// token count needed is a function of model reasoning length, not decode
+// speed, so a CPU-specific reduced budget just truncates the same answer
+// earlier). This makes the CPU run noticeably slower; that's the accepted
+// cost of not silently truncating real answers.
 TurnResult run_turn(ModelOrchestrator& orch, std::vector<entropic::Message>& conv,
                     const std::string& tier_name, const char* label) {
     entropic::GenerationParams params;
-    params.max_tokens = 300;
+    params.max_tokens = 1500;
     params.temperature = 0.0f;
     params.tools = kTools;
 
@@ -160,8 +173,12 @@ TurnResult run_turn(ModelOrchestrator& orch, std::vector<entropic::Message>& con
         conv.push_back(tool_result);
     }
 
+    // gh#108 (v2.9.4): a tool-call-only turn (no narrative preamble) is a
+    // legitimate, well-behaved response — content is correctly empty then
+    // (the answer lives in tool_calls, not content). Only flag a turn that
+    // produced neither.
     CHECK(r.error_code == 0);
-    CHECK_FALSE(r.content.empty());
+    CHECK_FALSE((r.content.empty() && r.tool_calls.empty()));
     return tr;
 }
 
@@ -255,7 +272,9 @@ TEST_CASE("gh#108 CPU-only feasibility: E2B-QAT-Q4 x MTP x flash+q4KV, "
         summaries.push_back({cfg.label, rss, avg});
         for (const auto& t : stats) {
             INFO(cfg.label << " " << t.label);
-            CHECK_FALSE(t.content.empty());
+            // gh#108 (v2.9.4): tool-call-only turns legitimately have empty
+            // content — see the matching comment in run_turn().
+            CHECK_FALSE((t.content.empty() && !t.tool_called));
         }
     }
 

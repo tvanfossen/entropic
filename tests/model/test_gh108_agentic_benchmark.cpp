@@ -148,10 +148,20 @@ bool init_orchestrator_full_ctx(ModelTestContext& ctx) {
 }
 
 // One orchestrator call + timing, with tool-call detection.
+//
+// gh#108 (v2.9.4): max_tokens raised 700 -> 1500. Root-caused a class of
+// "empty content" failures on E2B post-tool-answer turns: tools stay staged
+// on every turn (mirrors the real agent loop), so a tool-result message
+// leaves E2B genuinely uncertain whether it needs another tool call — it
+// works through that via a long, visibly self-correcting reasoning chain
+// (observed: 713 tokens needed vs. the old 700 budget, cut off 13 tokens
+// short). E4B doesn't hit this because it resolves the ambiguity faster.
+// This is a budget-truncation bug, not an MTP or quant issue — confirmed by
+// reproducing it with MTP off and no flash/quantized KV at all.
 TurnResult run_turn(ModelOrchestrator& orch, std::vector<entropic::Message>& conv,
                     const std::string& tier_name, const char* label) {
     entropic::GenerationParams params;
-    params.max_tokens = 700;
+    params.max_tokens = 3000;  // v2.9.4: 1500 still truncated T6b (deepest turn)
     params.temperature = 0.0f;
     params.tools = kTools;
 
@@ -194,8 +204,12 @@ TurnResult run_turn(ModelOrchestrator& orch, std::vector<entropic::Message>& con
 
     // Non-fatal: an empty/errored turn IS a data point this benchmark exists
     // to surface, not a harness bug to crash on.
+    // gh#108 (v2.9.4): a turn that answers with ONLY a tool call (no
+    // narrative preamble) is a legitimate, well-behaved response — content
+    // is correctly empty in that case (the answer lives in tool_calls, not
+    // content). Only flag a turn that produced neither.
     CHECK(r.error_code == 0);
-    CHECK_FALSE(r.content.empty());
+    CHECK_FALSE((r.content.empty() && r.tool_calls.empty()));
     return tr;
 }
 
@@ -373,7 +387,9 @@ TEST_CASE("gh#108 agentic benchmark: full 24-config permutation matrix "
         summaries.push_back({cfg.label, vram, avg, quality});
         for (const auto& t : stats) {
             INFO(cfg.label << " " << t.label);
-            CHECK_FALSE(t.content.empty());
+            // gh#108 (v2.9.4): tool-call-only turns legitimately have empty
+            // content — see the matching comment in run_turn().
+            CHECK_FALSE((t.content.empty() && !t.tool_called));
         }
     }
 

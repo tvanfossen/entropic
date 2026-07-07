@@ -390,6 +390,122 @@ SCENARIO("load_config_from_string drives parse_config_string + validate",
     }
 }
 
+SCENARIO("gh#108 (v2.9.4): a tier cannot statically combine speculative.mtp "
+         "with a grammar",
+         "[config][loader][gh108][mtp]")
+{
+    GIVEN("a tier with speculative.mtp=true and a static grammar") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "    gpu_layers: 0\n"
+            "    grammar: /tmp/some.gbnf\n"
+            "    speculative:\n"
+            "      mtp: true\n"
+            "  default: lead\n";
+
+        WHEN("load_config_from_string is called") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it fails loud at load time, not per-request") {
+                REQUIRE_FALSE(err.empty());
+                CHECK(err.find("speculative.mtp") != std::string::npos);
+                CHECK(err.find("grammar") != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a tier with speculative.mtp=true and NO grammar") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "    gpu_layers: 0\n"
+            "    speculative:\n"
+            "      mtp: true\n"
+            "  default: lead\n";
+
+        WHEN("load_config_from_string is called") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it succeeds and the per-tier override is set") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                auto& tier = config.models.tiers.at("lead");
+                REQUIRE(tier.speculative_mtp.has_value());
+                CHECK(*tier.speculative_mtp == true);
+            }
+        }
+    }
+
+    GIVEN("a tier with speculative.mtp=false, overriding a global mtp=true") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "    gpu_layers: 0\n"
+            "    speculative:\n"
+            "      mtp: false\n"
+            "  default: lead\n"
+            "inference:\n"
+            "  speculative:\n"
+            "    enabled: true\n"
+            "    mtp: true\n";
+
+        WHEN("load_config_from_string is called") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("both the global and per-tier values parse independently") {
+                REQUIRE(err.empty());
+                CHECK(config.inference.speculative.mtp == true);
+                auto& tier = config.models.tiers.at("lead");
+                REQUIRE(tier.speculative_mtp.has_value());
+                CHECK(*tier.speculative_mtp == false);
+            }
+        }
+    }
+
+    GIVEN("a tier with no speculative block at all") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    adapter: qwen35\n"
+            "    context_length: 8192\n"
+            "    gpu_layers: 0\n"
+            "  default: lead\n";
+
+        WHEN("load_config_from_string is called") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("speculative_mtp stays nullopt (inherit global)") {
+                REQUIRE(err.empty());
+                auto& tier = config.models.tiers.at("lead");
+                CHECK_FALSE(tier.speculative_mtp.has_value());
+            }
+        }
+    }
+}
+
 SCENARIO("parse_config_file rejects missing file with read error",
          "[config][loader][v2.3.10][coverage][failure-mode]")
 {

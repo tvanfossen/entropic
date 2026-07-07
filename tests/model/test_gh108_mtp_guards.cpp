@@ -17,7 +17,10 @@
 #include "gh87_verify_helpers.h"  // LlamaCppBackend + config/result/message
 
 #include <atomic>
+#include <cmath>
 #include <cstdio>
+#include <map>
+#include <set>
 
 namespace {
 
@@ -66,17 +69,21 @@ TEST_CASE("gh#108 MTP guards: out-of-envelope requests fail loud",
 
     const auto INCOMPAT = ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG;
 
-    // temperature > 0 → loud (lossless only at greedy). Errors before any head
-    // load, so the message must be present and the code exact.
+    // gh#108 (v2.9.4): temperature > 0 → MTP now RUNS instead of refusing.
+    // The draft proposal is a deterministic point mass (mtp_envelope.h), so
+    // the existing exact-match accept step is already lossless at any
+    // temperature. See the dedicated distribution test below for the
+    // empirical check that this is actually true, not just argued.
     {
         entropic::GenerationParams p;
         p.max_tokens = 16;
         p.temperature = 0.7f;
         auto r = backend.generate_mtp(msgs, p, no_stream, cancel, head.string(), 16);
-        std::printf("\n[gh108] temp>0 → code=%d msg=%s\n", r.error_code,
-                    r.error_message.c_str());
-        REQUIRE(r.error_code == INCOMPAT);
-        REQUIRE_FALSE(r.error_message.empty());
+        std::printf("\n[gh108] temp>0 → code=%d drafted=%d [%s]\n", r.error_code,
+                    r.n_drafted, r.content.c_str());
+        REQUIRE(r.error_code == 0);
+        REQUIRE_FALSE(r.content.empty());
+        REQUIRE(r.n_drafted > 0);
     }
     // grammar active → loud (MTP does not enforce GBNF).
     {
@@ -281,6 +288,90 @@ TEST_CASE("gh#108 MTP + flash + q4 KV succeeds on E4B Q2-mobile "
     REQUIRE(r.error_code == 0);
     REQUIRE_FALSE(r.content.empty());
     REQUIRE(r.n_drafted > 0);
+
+    backend.deactivate();
+    backend.unload();
+}
+
+TEST_CASE("gh#108 MTP is lossless at temperature>0 (empirical distribution check)",
+          "[model][gh108][mtp][temperature]") {
+    // Regression tripwire for the mtp_envelope.h v2.9.4 point-mass proof: if a
+    // future extern/llama.cpp pin bump changes the MTP draft() to honor
+    // cur_p->selected instead of data[0] (making the proposal genuinely
+    // stochastic, not a point mass), the accept step's exact-match shortcut
+    // stops being lossless and this test should start failing the band check
+    // below — that is its job, not a false positive to silence.
+    auto target = gh87verify::model_path("gemma-4-E2B-it-Q8_0.gguf");
+    auto head = gh87verify::model_path("mtp-gemma-4-E2B-it.gguf");
+    if (!std::filesystem::is_regular_file(target) ||
+        !std::filesystem::is_regular_file(head)) {
+        SKIP("MTP target/head GGUF not present");
+    }
+
+    entropic::LlamaCppBackend backend;
+    REQUIRE(backend.load(gh108_cfg(target)));
+    REQUIRE(backend.activate());
+
+    std::atomic<bool> cancel{false};
+    std::function<void(std::string_view)> no_stream;
+    auto msgs = one_turn("Continue: 1\n2\n3\n4\n");
+
+    constexpr int kSamples = 200;
+    constexpr float kTemperature = 0.7f;
+
+    // Empirical first-token frequency, MTP-engaged vs plain decode, at the
+    // same stochastic temperature and unseeded (params.seed=-1 default, so
+    // each call draws fresh). If the accept step silently biased the output
+    // distribution, MTP's histogram would diverge from plain decode's beyond
+    // sampling noise.
+    std::map<std::string, int> mtp_freq;
+    std::map<std::string, int> plain_freq;
+    long long mtp_drafted_total = 0;
+    for (int i = 0; i < kSamples; ++i) {
+        entropic::GenerationParams p;
+        p.max_tokens = 1;
+        p.temperature = kTemperature;
+        auto r = backend.generate_mtp(msgs, p, no_stream, cancel, head.string(), 16);
+        REQUIRE(r.error_code == 0);
+        mtp_freq[r.content]++;
+        mtp_drafted_total += r.n_drafted;
+    }
+    for (int i = 0; i < kSamples; ++i) {
+        entropic::GenerationParams p;
+        p.max_tokens = 1;
+        p.temperature = kTemperature;
+        auto r = backend.generate_streaming(msgs, p, no_stream, cancel);
+        REQUIRE(r.error_code == 0);
+        plain_freq[r.content]++;
+    }
+
+    // Tolerance-band check on every token seen by either path: ~3 std devs
+    // of a binomial proportion at N=200, plus a small floor to absorb
+    // low-count noise, generous enough for sampling variance while still
+    // catching a systematically biased accept step.
+    std::set<std::string> tokens;
+    for (auto& kv : mtp_freq) { tokens.insert(kv.first); }
+    for (auto& kv : plain_freq) { tokens.insert(kv.first); }
+    for (auto& t : tokens) {
+        double p_plain = static_cast<double>(plain_freq[t]) / kSamples;
+        double p_mtp = static_cast<double>(mtp_freq[t]) / kSamples;
+        double band = 3.0 * std::sqrt(p_plain * (1.0 - p_plain) / kSamples) + 0.02;
+        std::printf("[gh108 dist] token=%-8s plain=%.3f mtp=%.3f band=%.3f\n",
+                    t.c_str(), p_plain, p_mtp, band);
+        REQUIRE(std::abs(p_mtp - p_plain) <= band);
+    }
+
+    // Sanity: acceptance shouldn't be implausibly higher at temp>0 than at
+    // temp=0 for the same prompt — a red flag the accept comparison runs
+    // against the wrong distribution.
+    entropic::GenerationParams p0;
+    p0.max_tokens = 16;
+    p0.temperature = 0.0f;
+    auto r0 = backend.generate_mtp(msgs, p0, no_stream, cancel, head.string(), 16);
+    REQUIRE(r0.error_code == 0);
+    double mtp_avg_drafted = static_cast<double>(mtp_drafted_total) / kSamples;
+    std::printf("[gh108 dist] avg n_drafted temp=0.7: %.2f, temp=0: %d\n",
+                mtp_avg_drafted, r0.n_drafted);
 
     backend.deactivate();
     backend.unload();

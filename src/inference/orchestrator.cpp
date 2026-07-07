@@ -271,18 +271,34 @@ ModelOrchestrator::~ModelOrchestrator() {
 }
 
 /**
+ * @brief Resolve whether MTP should be attempted for this tier (gh#108,
+ *        v2.9.4): `TierConfig::speculative_mtp` overrides the global
+ *        `speculative.mtp` flag when set, else inherits it.
+ * @internal
+ * @version 2.9.4
+ */
+bool ModelOrchestrator::resolve_mtp_effective(const std::string& tier_name) const {
+    auto it = config_.models.tiers.find(tier_name);
+    if (it != config_.models.tiers.end() && it->second.speculative_mtp) {
+        return *it->second.speculative_mtp;
+    }
+    return config_.inference.speculative.mtp;
+}
+
+/**
  * @brief Run a generate call through speculative (if enabled+pair
  *        compatible) or fall back to plain decode.
  * @internal
- * @version 2.1.11
+ * @version 2.9.4
  */
 GenerationResult ModelOrchestrator::run_generate_dispatch(
     InferenceBackend* model,
     const std::vector<Message>& messages,
-    const GenerationParams& params) {
+    const GenerationParams& params,
+    const std::string& tier_name) {
     GenerationResult result;
     bool kernel_ran = config_.inference.speculative.enabled
-        && try_speculative_route(model, messages, params, result);
+        && try_speculative_route(model, messages, params, tier_name, result);
     if (!kernel_ran) {
         result = model->generate(messages, params);
     }
@@ -337,13 +353,27 @@ bool ModelOrchestrator::try_mtp_route(
  * generate and generate_streaming (v2.1.11, gh#36). gh#106 (v2.9.0):
  * MTP routes out to try_mtp_route before the gh#36 compat path.
  *
+ * gh#108 (v2.9.4): MTP-attempt is gated on two things before routing to
+ * try_mtp_route — (1) `resolve_mtp_effective(tier_name)`, the per-tier
+ * override (a tier can opt out of MTP even when the global flag is on,
+ * e.g. a grammar-heavy identity), and (2) `params.grammar.empty()`, a
+ * request-level safety net: even on an MTP-effective tier, a call that
+ * carries a dynamic grammar (e.g. the constitutional validator's critique,
+ * which is not a static tier property) falls through to plain decode
+ * instead of hitting generate_mtp's loud INCOMPATIBLE_CONFIG refusal. This
+ * is not a violation of the "fail loud, no silent fallback" principle
+ * (decision #43): both checks are known request/tier properties available
+ * before any MTP-specific work starts, the same way the global on/off flag
+ * already silently selects plain decode — see docs/architecture-cpp.md.
+ *
  * @internal
- * @version 2.9.0
+ * @version 2.9.4
  */
 bool ModelOrchestrator::try_speculative_route_streaming(
     InferenceBackend* model,
     const std::vector<Message>& messages,
     const GenerationParams& params,
+    const std::string& tier_name,
     std::function<void(std::string_view)> on_token,
     std::atomic<bool>& cancel,
     GenerationResult& result)
@@ -351,7 +381,7 @@ bool ModelOrchestrator::try_speculative_route_streaming(
     // gh#106 (v2.9.0): MTP routes BEFORE the gh#36 compat/pair path — the
     // target owns the head (no separate draft backend), and MTP tolerates
     // shared-KV gemma4 archs the gh#36 compat gate rejects.
-    if (config_.inference.speculative.mtp) {
+    if (resolve_mtp_effective(tier_name) && params.grammar.empty()) {
         return try_mtp_route(model, messages, params, on_token, cancel,
                              result);
     }
@@ -391,12 +421,13 @@ bool ModelOrchestrator::try_speculative_route_streaming(
  * gh#108: passes an EMPTY std::function (not a bound no-op lambda) so the MTP
  * path can distinguish non-streaming from streaming by callback bound-ness.
  * @internal
- * @version 2.9.1
+ * @version 2.9.4
  */
 bool ModelOrchestrator::try_speculative_route(
     InferenceBackend* model,
     const std::vector<Message>& messages,
     const GenerationParams& params,
+    const std::string& tier_name,
     GenerationResult& result)
 {
     std::atomic<bool> local_cancel{false};
@@ -404,7 +435,7 @@ bool ModelOrchestrator::try_speculative_route(
     // path can distinguish non-streaming from streaming via the callback's
     // bound-ness. gh#36's emit guards `if (on_token)`, so empty is equivalent.
     return try_speculative_route_streaming(
-        model, messages, params,
+        model, messages, params, tier_name,
         std::function<void(std::string_view)>{}, local_cancel, result);
 }
 
@@ -534,7 +565,7 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.7.0
+ * @version 2.9.4
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -564,7 +595,7 @@ GenerationResult ModelOrchestrator::generate(
 
     // Generate — speculative routing applies here too (v2.1.11, gh#36)
     GenerationResult result = run_generate_dispatch(
-        model, messages, resolved_params);
+        model, messages, resolved_params, selected);
 
     apply_adapter_parse(model, get_adapter(selected), result);
 
@@ -678,7 +709,7 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
  * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
  * @internal
- * @version 2.7.0
+ * @version 2.9.4
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -710,7 +741,7 @@ GenerationResult ModelOrchestrator::generate_streaming(
     GenerationResult spec_streaming;
     if (config_.inference.speculative.enabled
         && try_speculative_route_streaming(
-               model, messages, resolved_params, on_token, cancel,
+               model, messages, resolved_params, selected, on_token, cancel,
                spec_streaming)) {
         return spec_streaming;
     }

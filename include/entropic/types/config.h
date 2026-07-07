@@ -492,6 +492,15 @@ struct TierConfig : ModelConfig {
     /// @version 2.8.2
     std::optional<std::string> tool_call_mode;
 
+    /// @brief Per-tier MTP speculative-decode override (gh#108). nullopt =
+    /// inherit `InferenceConfig::speculative.mtp` (the global flag); when
+    /// set, this tier's effective MTP-attempt decision regardless of the
+    /// global value. Lets a consumer keep MTP on globally while opting a
+    /// specific identity/model out (e.g. a grammar-heavy tier that should
+    /// always run plain decode) rather than an all-or-nothing global switch.
+    /// @version 2.9.4
+    std::optional<bool> speculative_mtp;
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").

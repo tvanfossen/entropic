@@ -2,6 +2,58 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.9.6
+
+Patch — **MTP/speculative decoding is now reachable through the agent loop**
+(gh#110). v2.9.0–v2.9.4 proved MTP correct and fast when the orchestrator is
+called directly, but every agent-loop turn (`entropic_run` and friends) with
+`speculative.mtp` enabled failed loud — the kernel never ran.
+
+## The bug (two independent gates)
+
+1. `build_loop_config()` hardcoded `LoopConfig::stream_output = true`, so the
+   agent loop always streamed. The streaming path unconditionally binds a
+   non-empty `on_token` callback, and `LlamaCppBackend::mtp_guard` derives its
+   "is this a streaming call" check as `static_cast<bool>(on_token)` — a bound
+   callback is indistinguishable from "this is streaming," so every agent-loop
+   MTP call tripped `mtp_unsupported_reason`'s streaming rejection and
+   returned `ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG`, every time.
+2. Even with streaming disabled, the batch path's cancel-aware bridge
+   (`inference_.generate_cancellable`, always wired in production) calls an
+   orchestrator overload that deliberately bypasses `run_generate_dispatch` —
+   batch-with-cancel only ever ran plain decode, never speculative.
+
+Existing MTP tests never caught this because they call
+`orchestrator->generate()` directly — shaped like the agent loop's traffic,
+but never actually routed through `AgentEngine`/`ResponseGenerator`/the
+facade.
+
+## The fix
+
+- New `generation.stream_output` config key (default `true`, no behavior
+  change for existing consumers) threads through `build_loop_config()`,
+  making batch mode reachable from config.
+- `dispatch_batch_generate` now prefers the dispatching (non-cancellable)
+  `generate` entry point over the cancel-aware one whenever speculative
+  decoding is enabled, so the batch path actually reaches
+  `run_generate_dispatch` → MTP. v1 tradeoff, documented not hidden: a
+  speculative batch turn is not cancellable mid-decode.
+
+To use MTP from the agent loop: set `generation.stream_output: false` +
+`inference.speculative.{enabled,mtp}: true`.
+
+## Tests
+
+- `test_gh110_mtp_agent_loop.cpp` — drives the real `entropic_create` →
+  `entropic_configure_dir` → `entropic_run` path (not a direct orchestrator
+  call) and asserts on the backend's own `"Speculative: generated=..."` log
+  line, the only MTP-engagement signal that crosses the C-ABI boundary.
+  Verified on real hardware (RTX PRO 4000 Blackwell, gemma-4-E2B-it-Q8_0 +
+  MTP head): the kernel engaged across multiple turns of the same
+  conversation (`accept_rate` 0.08–0.14).
+
+No `interfaces/i_*.h` touched.
+
 # entropic v2.9.5
 
 Patch — **turn/run entry points now log to `session.log` with the console
@@ -405,158 +457,3 @@ leading-space digit. **Unconfigured deployments keep the exact bare
   in v2.2.0 — false; v2.8.x actively builds on it).
 - Added a cleared-prompt **RED control** test so the routing model-test is
   non-vacuous (the bare path is asserted to be a no-op).
-
----
-
-# entropic v2.8.0
-
-Minor release — two consumer-facing capabilities for the games consumer
-(many cheap agents on one small GPU), the family/size/quant selector UX, and
-test-infra hardening that closes the harness↔production fidelity gap. Two
-additive public C ABI symbols; **no `i_*.h` interface header touched.**
-
-Also folds in a full test-suite plumbing-not-feature **audit** (task #71) and
-its RED-first fixes — which surfaced a real production finding: a **q8-KV
-NPC-tier validation** (#100). (The audit also found model-based tier routing is
-a silent no-op; that production fix is split to **v2.8.1**, since no consumer
-uses routing yet.) See the audit section below.
-
-## gh#98 — `entropic_run_batch`: same-prefix batched generation
-
-N independent requests that share a large prompt prefix (e.g. NPC agents per
-game tick: a shared constitution/context + a short per-agent suffix) now run
-**together in one forward pass per step** instead of N serial calls. The shared
-prefix is prefilled once into seq 0, `llama_memory_seq_cp`-fanned out to N
-sequences, the suffixes prefilled in one batch, then a generation loop decodes
-**all N sequences in a single `llama_decode` per step**, each sampled under its
-own tier's grammar (fixed-N grammar chains). This is the "process many
-same-prefix requests in one forward pass" win the issue asks for — it breaks the
-sequential-NPC ceiling that warm-keep (gh#96, which shares the prefill but still
-decodes sequentially) cannot.
-
-- ABI: `entropic_run_batch(handle, const char** tiers, const char** prompts,
-  size_t n, char** result_json)` → JSON array of `{content, finish_reason,
-  tool_calls}`. Additive.
-- `kv_unified` is enabled when `n_parallel > 1` (required for `seq_cp`; also
-  llama.cpp's recommendation for shared-prefix sequences).
-- Guarded (`batch_is_viable`): hybrid/recurrent archs, <2 requests, no shared
-  prefix, over sequence-slot capacity, or suffixes exceeding the decode batch
-  all fall back to the unmodified per-request serial path — no regression.
-
-## gh#99 — `entropic_run_as`: per-call tier/grammar on a shared model
-
-One process can interleave agent *kinds* (NPC / companion / BBEG) that need
-different grammars per call while sharing ONE resident model — essential on an
-11 GB GPU where a second model can't fit. `entropic_run_as(handle, tier, prompt,
-result)` runs a single turn under the named tier's grammar + system prompt +
-samplers, reusing the resident model (no second load, no reconfigure). Builds on
-the per-tier resolution that already existed internally; the gap was purely the
-ABI surface. Unknown tier → `ENTROPIC_ERROR_IDENTITY_NOT_FOUND`.
-
-## gh#62 — model family/size/quant selectors
-
-`BundledModels::find_by` is now wired into both consumer surfaces: a tier may
-omit `path:` and give flat `family:` / `size:` / `quant:` keys (resolved to the
-bundled key), and `entropic download` gains `--family/--size/--quant`. Explicit
-`path:` still wins; a partial or unmatched selector errors clearly.
-
-## gh#93 — test-infra hardening (closes the harness↔production gap)
-
-The model-test harness built the orchestrator directly, bypassing
-`configure_common` — the seam that let three reactive consumer bugs
-(gh#88/90/94) through. Two structural fixes:
-- A single typed `serialize_tool_calls` (`src/inference/tool_call_serialize.h`)
-  is now the source of truth for BOTH production and the harness; the harness
-  previously emitted untyped (raw-string) tool-call arguments, a silent
-  divergence — now faithful by construction.
-- A facade-driven model-test harness (`tests/model/facade_model_helpers.h`)
-  exercises the real `entropic_create → entropic_configure_dir → run` path,
-  hosting new behavioral tests (gh#94 `enable_thinking:false`, autoparser
-  multi-parameter tool calls, cancel-bridge interrupt — closes #103).
-
-## Tests
-
-- CPU: `batch_shared_prefix_len` + `batch_is_viable` (the gh#98 guard);
-  `entropic_run_as` precedence + unknown-tier; gh#62 selector resolve/error;
-  the typed serializer.
-- GPU (validated): `test_gh99_run_as` (per-call grammar switching on a shared
-  model — reproduces the consumer's "loads companion, still emits npc grammar"
-  symptom), `test_gh98_batch` (multi-seq decode engaged + prefix-once + hybrid
-  serial-fallback), `test_gh93_behavioral` (thinking / autoparser / cancel).
-
-## Test-suite audit (task #71)
-
-A full plumbing-not-feature audit of the 170-file test suite (tests that pass
-green while the feature is broken). Each fix is RED-first verified. It surfaced
-a real production finding plus RED-first hardening:
-
-- **#100 — q8-KV is safe on the E2B-Q4 NPC tier.** Validated on-box:
-  `cache_type_k/v: q8_0` + `flash_attn` on Gemma-4 **E2B-Q4** halves per-context
-  KV (48→25.5 MiB alloc; ~0.53× per-seq) with no activation breakage — unlike
-  E4B-Q4, which it breaks. The `cache_type_k/v` knob is honored **per-tier**, so
-  the `npc` tier can run q8-KV alone → ~2× more #98 batch slots in the same
-  VRAM. Adds the `gemma4_e2b_q4` registry entry + `test_gh100_q8_kv`.
-- **Hardening (RED-first):** gh#88 defang + gh#84 anti-spiral combined-path
-  SCENARIOs (closed the isolated-helper / pre-commit-blind gap); gh#95 CPU
-  grammar-engagement proof (closed the fail-open that only GPU tests caught);
-  gh#94 effective-sampler member-path test; dynamic-identity (test8) vacuous
-  assertion strengthened; gh#98 hybrid serial-fallback decode-count assertion.
-
-**Split out to v2.8.1:** the audit also found that model-based tier routing is
-a **silent no-op** (`classify_task` never feeds the router its classification
-prompt). That production fix + its test are held for v2.8.1 — no consumer uses
-routing yet, so it does not gate this release. Fully wiring model-routing from
-identity focus/examples (the dead `build_classification_prompt`) remains a
-v2.9.0 item.
-
-Other deferred audit strengthenings (lower-value or high-harness-risk): e5
-post-compaction, e7 real-delegation harness, gh#93 autoparser backend-direct
-re-seam, gh#64 accumulator.
-
----
-
-# entropic v2.7.6
-
-Patch release. **gh#97 — v2.7.5 warm-keep / prompt-cache corrupted KV
-bookkeeping on hybrid-architecture models.**
-
-## The bug
-
-On hybrid archs (`qwen35` / `qwen35moe` and anything in
-`llm_arch_is_hybrid()` — attention + recurrent/SSM memory), the prompt-cache
-prefix machinery desynced the KV cache. Warm-keep's partial
-`llama_memory_seq_rm(0, cut, -1)` is **rejected** by recurrent memory ("a
-state can't be partially erased at the end"); the rejected return was
-discarded, so the decode of the delta appended past the un-removed tail and
-the seq-0 position high-water mark inflated every turn (`pos_max` 140 after a
-107-token prompt, growing ~18/turn). At long context this eventually produced
-`decode: failed to find a memory slot for batch` with the cache ~85% empty —
-severe multi-turn thrash. The pre-existing prompt-cache restore path
-(`llama_state_seq_set_data` → non-contiguous cells) was independently broken
-on hybrid memory, so `warm_keep: false` only reduced the failures.
-
-The gh#96 benchmark model (gemma4-E2B) is a plain `llama_kv_cache` where both
-partial `seq_rm` and contiguous restore behave — so the hybrid path was never
-exercised. (Reported by a consumer running qwen3_6_a3b, source-grounded.)
-
-## The fix
-
-Guard the **entire** prompt-cache prefix path (warm-keep *and* cache restore)
-behind `is_hybrid_ || is_recurrent_` and fall back to plain `run_prefill`
-(clear + contiguous full decode) — the only correct path for these archs at
-the pinned llama.cpp. Mirrors the existing speculative-decoding guard.
-**Consequence:** hybrid models forgo the gh#96 warm-keep speedup (full
-re-prefill per turn, as before v2.7.5) but are correct; the optimization is
-unchanged for plain-KV-cache archs (gemma4 etc.). Internal change — no public
-API / interface header touched.
-
-## Tests
-
-- `test_gh97_hybrid_cache` (GPU, the repro arch Qwen3.6-35B-A3B / qwen35moe):
-  red→green on a deterministic desync gate — a correct prefill leaves
-  `kv_pos_max ≈ input + generated`, so the test asserts `kv_pos_max < input +
-  max_tokens` per turn. On v2.7.5 this is violated by turn 2 (the inflation);
-  the guard keeps it bounded. Closes the arch-coverage gap (every gh#96 test
-  ran on non-hybrid gemma4).
-- Regression: `test_gh96_warmkeep` still green — warm-keep keeps engaging on
-  the non-hybrid path.

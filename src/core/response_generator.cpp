@@ -374,7 +374,7 @@ GenerateResult ResponseGenerator::generate_streaming(LoopContext& ctx) {
 /**
  * @brief Dispatch the batch backend call. See header. (gh#81, v2.4.2)
  * @internal
- * @version 2.4.2
+ * @version 2.9.6
  */
 int ResponseGenerator::dispatch_batch_generate(
     const std::string& msgs_json,
@@ -382,7 +382,17 @@ int ResponseGenerator::dispatch_batch_generate(
     char** result_json) {
     // Fall back to the no-cancel entry for backends that predate the
     // generate_cancellable ABI field.
-    if (inference_.generate_cancellable == nullptr) {
+    //
+    // gh#110 (v2.9.6): also prefer the no-cancel entry whenever
+    // speculative decoding is enabled. `generate_cancellable`'s
+    // backing orchestrator call deliberately bypasses
+    // run_generate_dispatch (speculative/MTP routing) — batch-with-
+    // cancel only ever calls plain decode. The plain `generate` entry
+    // point runs run_generate_dispatch and is therefore the only
+    // batch path that can reach MTP. v1 tradeoff: a speculative batch
+    // turn is not cancellable mid-decode (documented, not silent).
+    if (inference_.generate_cancellable == nullptr
+        || loop_config_.speculative_enabled) {
         return inference_.generate(
             msgs_json.c_str(), params_json.c_str(),
             result_json, inference_.backend_data);

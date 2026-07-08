@@ -18,7 +18,9 @@
 
 #include <cstring>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 /**
@@ -596,6 +598,59 @@ SCENARIO("entropic_run_messages_streaming validates args",
                 REQUIRE(rc == ENTROPIC_ERROR_INVALID_HANDLE);
             }
         }
+    }
+}
+
+// ── gh#109: run entry points must log under the handle's file sink ─────
+
+SCENARIO("entropic_run_messages with console logging disabled still "
+         "appends to session.log (gh#109 regression)",
+         "[api][facade][run_messages][gh109]") {
+    GIVEN("a handle configured (via entropic_configure_dir, matching the "
+          "gh#109 repro) with console_logging=false and a log_dir") {
+        auto base = std::filesystem::temp_directory_path() / "gh109-run-log";
+        std::filesystem::remove_all(base);
+        std::filesystem::create_directories(base);
+
+        // entropic_configure (JSON string) never wires up session
+        // logging — only entropic_configure_dir / entropic_configure_from_file
+        // do (they call setup_session + register_handle_log before
+        // configure_common). Use configure_dir, matching the issue's repro.
+        std::ofstream cfg_file(base / "default_config.yaml");
+        cfg_file << "log_level: WARN\nconsole_logging: false\n";
+        cfg_file.close();
+
+        entropic_handle_t h = nullptr;
+        REQUIRE(entropic_create(&h) == ENTROPIC_OK);
+        REQUIRE(entropic_configure_dir(h, base.string().c_str()) == ENTROPIC_OK);
+
+        auto session_log = base / "session.log";
+        REQUIRE(std::filesystem::exists(session_log));
+
+        auto size_before = std::filesystem::file_size(session_log);
+
+        WHEN("entropic_run_messages is called (malformed JSON forces the "
+             "error-logging path without needing a loaded model)") {
+            char* result = nullptr;
+            auto rc = entropic_run_messages(h, "not json", &result);
+
+            THEN("the run's error is appended to this handle's session.log, "
+                 "not silently dropped") {
+                REQUIRE(rc == ENTROPIC_ERROR_GENERATE_FAILED);
+
+                std::ifstream in(session_log);
+                std::ostringstream ss;
+                ss << in.rdbuf();
+                auto contents = ss.str();
+
+                REQUIRE(contents.size() > size_before);
+                REQUIRE(contents.find("run_messages") != std::string::npos);
+            }
+
+            if (result) { entropic_free(result); }
+        }
+
+        entropic_destroy(h);
     }
 }
 

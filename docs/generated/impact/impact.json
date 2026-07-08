@@ -1,13 +1,1 @@
-[
-  {
-    "req_id": "REQ-API-002",
-    "req_name": null,
-    "functions": [
-      {
-        "name": "entropic_run",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.9.5"
-      }
-    ]
-  }
-]
+[]

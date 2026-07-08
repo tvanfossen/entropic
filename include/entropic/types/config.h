@@ -728,6 +728,16 @@ struct GenerationConfig {
     /// nudges-then-hard-cuts. Must be > 0 to engage.
     /// @version 2.5.0
     int budget_limit = 0;
+
+    /// @brief gh#110 (v2.9.6) agent-loop token delivery mode: true
+    /// streams tokens via the per-token callback path, false batches
+    /// the full response. Default true preserves existing behavior.
+    /// MTP/speculative decoding rejects streaming calls (the
+    /// thinking-channel strip is a post-buffer operation) — set this
+    /// false to make the agent loop reachable by
+    /// inference.speculative.mtp.
+    /// @version 2.9.6
+    bool stream_output = true;
 };
 
 /**

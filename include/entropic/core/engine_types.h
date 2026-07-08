@@ -96,6 +96,16 @@ struct LoopConfig {
     int context_length = 16384;         ///< Context budget for compaction (v2.0.4)
     bool require_plan_for_complex = true; ///< Planning gate (reserved)
     bool stream_output = true;          ///< Stream vs batch generation
+    /// @brief gh#110 (v2.9.6): mirrors `inference.speculative.enabled`
+    /// from config, plumbed through since core.so has zero dependency
+    /// on config.so (design rule 2). Used only by
+    /// `ResponseGenerator::dispatch_batch_generate` to pick the
+    /// dispatching (speculative-capable) batch entry point over the
+    /// cancel-aware one when `stream_output` is false — the
+    /// cancel-aware `generate_cancellable` bypasses speculative/MTP
+    /// routing entirely (see orchestrator.cpp `generate(...cancel...)`
+    /// doc comment).
+    bool speculative_enabled = false;
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
     /// @brief Anti-spiral SOFT threshold: after N consecutive calls of
     /// the SAME tool (regardless of arg similarity, since exact-arg

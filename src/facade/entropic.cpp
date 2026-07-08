@@ -1705,7 +1705,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
 /**
  * @brief entropic_configure body — wrapped by `c_api_try` in the public entry.
  * @internal
- * @version 2.3.13
+ * @version 2.9.5
  */
 static entropic_error_t do_configure_json(
     entropic_handle_t handle, const char* config_json) {
@@ -1716,6 +1716,17 @@ static entropic_error_t do_configure_json(
         handle->last_error = err;
         s_log->error("configure: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    // gh#109 follow-up: parity with configure_dir/configure_from_file.
+    // Without this, a JSON-string config that sets "log_dir" got no
+    // session.log at all — config.log_dir was honored for the sqlite/
+    // conversation store (init_persistence) but never wired to the
+    // per-handle log dispatcher, so no file sink existed for any
+    // HandleLogScope-tagged log line to route to.
+    if (!handle->config.log_dir.empty()) {
+        entropic::log::setup_session(handle->config.log_dir);
+        entropic::log::register_handle_log(
+            handle->log_id, handle->config.log_dir);
     }
     return configure_common(handle);
 }
@@ -1950,7 +1961,7 @@ void entropic_free(void* ptr) {
  *                    entropic_free).
  * @return ENTROPIC_OK on success, error code otherwise.
  * @req REQ-API-002
- * @version 2.0.6-rc16.2
+ * @version 2.9.5
  */
 entropic_error_t entropic_run(
     entropic_handle_t handle,
@@ -1962,6 +1973,9 @@ entropic_error_t entropic_run(
             : (!input || !result_json) ? ENTROPIC_ERROR_INVALID_ARGUMENT
             : ENTROPIC_ERROR_INVALID_STATE;
     }
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
     try {
         auto result = handle->engine->run_turn(input);
         *result_json = alloc_cstr(
@@ -2040,7 +2054,7 @@ static entropic_error_t run_as_inner(
  * @return ENTROPIC_OK on success; ENTROPIC_ERROR_IDENTITY_NOT_FOUND for an
  *         unknown tier; other error codes per entropic_run().
  * @internal
- * @version 2.8.0
+ * @version 2.9.5
  */
 entropic_error_t entropic_run_as(
     entropic_handle_t handle,
@@ -2055,6 +2069,9 @@ entropic_error_t entropic_run_as(
                 ? ENTROPIC_ERROR_INVALID_ARGUMENT
                 : ENTROPIC_ERROR_INVALID_STATE;
     }
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
     if (!handle->engine->has_tier(tier_or_identity)) {
         handle->last_error =
             std::string("unknown tier: ") + tier_or_identity;
@@ -2140,7 +2157,7 @@ static std::vector<std::vector<entropic::Message>> build_batch_messages(
  *             Caller frees with entropic_free().
  * @return ENTROPIC_OK on success; error codes per entropic_run().
  * @internal
- * @version 2.8.0
+ * @version 2.9.5
  */
 entropic_error_t entropic_run_batch(
     entropic_handle_t handle,
@@ -2156,6 +2173,9 @@ entropic_error_t entropic_run_batch(
                 ? ENTROPIC_ERROR_INVALID_ARGUMENT
                 : ENTROPIC_ERROR_INVALID_STATE;
     }
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
     try {
         std::vector<std::string> tiers_vec;
         auto msgs = build_batch_messages(handle, tiers, prompts, n, tiers_vec);
@@ -2189,7 +2209,7 @@ entropic_error_t entropic_run_batch(
  * @param cancel_flag Optional pointer; set *cancel_flag to non-zero from another thread to stop generation.
  * @return ENTROPIC_OK on success.
  * @internal
- * @version 2.1.8
+ * @version 2.9.5
  */
 entropic_error_t entropic_run_streaming(
     entropic_handle_t handle,
@@ -2201,6 +2221,10 @@ entropic_error_t entropic_run_streaming(
     if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
+
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
 
     // Observer multiplexing is handled inside ResponseGenerator — the
     // facade passes on_token through untouched. (P0-1, 2.0.6-rc16)
@@ -2300,7 +2324,7 @@ static entropic_error_t run_messages_inner(
  * @param result_json Out-param: malloc'd JSON result. Caller frees.
  * @return ENTROPIC_OK or one of the documented error codes.
  * @internal
- * @version 2.1.8
+ * @version 2.9.5
  */
 entropic_error_t entropic_run_messages(
     entropic_handle_t handle,
@@ -2311,6 +2335,9 @@ entropic_error_t entropic_run_messages(
             || !messages_json || !result_json || !handle->engine) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
     try {
         return run_messages_inner(handle, messages_json, result_json);
     } catch (const std::exception& e) {
@@ -2363,7 +2390,7 @@ static entropic_error_t run_messages_stream_inner(
  * @param cancel_flag Optional int*; non-zero cancels.
  * @return ENTROPIC_OK or one of the documented error codes.
  * @internal
- * @version 2.1.8
+ * @version 2.9.5
  */
 entropic_error_t entropic_run_messages_streaming(
     entropic_handle_t handle,
@@ -2376,6 +2403,9 @@ entropic_error_t entropic_run_messages_streaming(
             || !messages_json || !on_token || !handle->engine) {
         return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
     }
+    // gh#109: log scope only (no api_mutex) — a long turn must not block
+    // entropic_interrupt() called from another thread.
+    entropic::log::HandleLogScope log_scope(handle->log_id);
     try {
         return run_messages_stream_inner(
             handle, messages_json, on_token, user_data, cancel_flag);

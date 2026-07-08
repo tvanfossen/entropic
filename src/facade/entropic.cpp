@@ -1473,11 +1473,15 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
  * @param h Engine handle with config populated.
  * @return Populated LoopConfig.
  * @utility
- * @version 2.5.0
+ * @version 2.9.6
  */
 static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     entropic::LoopConfig lc;
-    lc.stream_output = true;
+    // gh#110 (v2.9.6): was hardcoded true, making the agent loop always
+    // stream and therefore permanently out of MTP's envelope (MTP
+    // rejects a bound on_token callback — see mtp_envelope.h).
+    lc.stream_output = h->config.generation.stream_output;
+    lc.speculative_enabled = h->config.inference.speculative.enabled;
     lc.auto_approve_tools = h->config.permissions.auto_approve;
     auto it = h->config.models.tiers.find(h->config.models.default_tier);
     if (it != h->config.models.tiers.end()) {

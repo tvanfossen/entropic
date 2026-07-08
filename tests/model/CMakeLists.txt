@@ -203,6 +203,11 @@ set_tests_properties(model/test-gh108-agentic-benchmark PROPERTIES TIMEOUT 900)
 add_model_test(test-gh108-cpu-feasibility test_gh108_cpu_feasibility.cpp)
 set_tests_properties(model/test-gh108-cpu-feasibility PROPERTIES TIMEOUT 3600)
 
+# gh#110 (v2.9.6): MTP through the REAL agent loop (entropic_run), not just
+# an orchestrator call shaped like the agent loop (test-gh106-mtp-route).
+add_model_test(test-gh110-mtp-agent-loop test_gh110_mtp_agent_loop.cpp)
+set_tests_properties(model/test-gh110-mtp-agent-loop PROPERTIES TIMEOUT 300)
+
 # gh#106 (v2.9.0): MTP functions on the mobile QAT (TQ2_0) trunks (E2B+E4B) —
 # new×new interaction. Two cases in one binary; TQ2_0 is compute-bound on Pascal
 # (~3x) and E4B is a 3GB trunk, so allow a generous timeout for both.

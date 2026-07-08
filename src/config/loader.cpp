@@ -460,7 +460,7 @@ static std::string parse_mcp_config(
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.5.0
+ * @version 2.9.6
  */
 static std::string parse_generation_config(
     ryml::ConstNodeRef node,
@@ -472,6 +472,8 @@ static std::string parse_generation_config(
     // gh#80 (v2.5.0): thinking-budget knobs (validated in build_loop_config).
     extract(node, "budget_mode", config.budget_mode);
     extract(node, "budget_limit", config.budget_limit);
+    // gh#110 (v2.9.6): batch vs streaming agent-loop delivery mode.
+    extract(node, "stream_output", config.stream_output);
     return "";
 }
 

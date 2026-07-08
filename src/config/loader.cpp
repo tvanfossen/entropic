@@ -745,7 +745,7 @@ std::string parse_config_file(
  * @param[in,out] config Config to populate.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.9.5
  */
 static std::string load_bundled_default(
     const std::filesystem::path& global_path,
@@ -763,8 +763,13 @@ static std::string load_bundled_default(
     auto err = parse_config_file(bundled, registry, config);
     if (!err.empty()) { return "bundled default: " + err; }
 
-    // Auto-create global config so this only happens once
-    if (!std::filesystem::exists(global_path)) {
+    // Auto-create global config so this only happens once. gh#109
+    // follow-up: load_layered() intentionally passes an empty global_path
+    // (it doesn't want the auto-create side effect) — exists("") is
+    // always false, so without this guard every fresh-install call
+    // through load_layered (no ~/.entropic/config.yaml yet) threw
+    // filesystem_error trying to create_directories("").
+    if (!global_path.empty() && !std::filesystem::exists(global_path)) {
         auto parent = global_path.parent_path();
         std::filesystem::create_directories(parent);
         std::filesystem::copy_file(bundled, global_path);

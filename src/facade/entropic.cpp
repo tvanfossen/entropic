@@ -1705,7 +1705,7 @@ static entropic_error_t configure_common(entropic_handle_t h) {
 /**
  * @brief entropic_configure body — wrapped by `c_api_try` in the public entry.
  * @internal
- * @version 2.3.13
+ * @version 2.9.5
  */
 static entropic_error_t do_configure_json(
     entropic_handle_t handle, const char* config_json) {
@@ -1716,6 +1716,17 @@ static entropic_error_t do_configure_json(
         handle->last_error = err;
         s_log->error("configure: {}", err);
         return ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    // gh#109 follow-up: parity with configure_dir/configure_from_file.
+    // Without this, a JSON-string config that sets "log_dir" got no
+    // session.log at all — config.log_dir was honored for the sqlite/
+    // conversation store (init_persistence) but never wired to the
+    // per-handle log dispatcher, so no file sink existed for any
+    // HandleLogScope-tagged log line to route to.
+    if (!handle->config.log_dir.empty()) {
+        entropic::log::setup_session(handle->config.log_dir);
+        entropic::log::register_handle_log(
+            handle->log_id, handle->config.log_dir);
     }
     return configure_common(handle);
 }

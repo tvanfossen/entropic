@@ -16,6 +16,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
 
+#include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
@@ -606,23 +607,32 @@ SCENARIO("entropic_run_messages_streaming validates args",
 SCENARIO("entropic_run_messages with console logging disabled still "
          "appends to session.log (gh#109 regression)",
          "[api][facade][run_messages][gh109]") {
-    GIVEN("a handle configured (via entropic_configure_dir, matching the "
-          "gh#109 repro) with console_logging=false and a log_dir") {
+    GIVEN("a handle configured via entropic_configure (JSON) with "
+          "console_logging=false and an explicit log_dir, and no models "
+          "(so configure succeeds without a real GGUF on disk, matching "
+          "the zero-tier ConfiguredHandle pattern used elsewhere in this "
+          "file)") {
         auto base = std::filesystem::temp_directory_path() / "gh109-run-log";
         std::filesystem::remove_all(base);
         std::filesystem::create_directories(base);
 
-        // entropic_configure (JSON string) never wires up session
-        // logging — only entropic_configure_dir / entropic_configure_from_file
-        // do (they call setup_session + register_handle_log before
-        // configure_common). Use configure_dir, matching the issue's repro.
-        std::ofstream cfg_file(base / "default_config.yaml");
-        cfg_file << "log_level: WARN\nconsole_logging: false\n";
-        cfg_file.close();
+        // entropic_configure_dir's layered discovery (global config →
+        // consumer defaults → project config → bundled-default fallback
+        // when tiers are still empty) always resolves the bundled
+        // default_config.yaml's real tiers when nothing else supplies
+        // models — those tiers point at GGUF files that don't exist in
+        // CI, so configure would fail with LOAD_FAILED before ever
+        // reaching entropic_run_messages. entropic_configure (JSON) has
+        // no such fallback: give it log_dir + console_logging only, no
+        // "models" key, and it configures with zero tiers — same shape
+        // ConfiguredHandle relies on above.
+        std::string cfg = std::string(R"({"log_level":"WARN",)")
+            + R"("console_logging":false,"log_dir":")" + base.string()
+            + R"("})";
 
         entropic_handle_t h = nullptr;
         REQUIRE(entropic_create(&h) == ENTROPIC_OK);
-        REQUIRE(entropic_configure_dir(h, base.string().c_str()) == ENTROPIC_OK);
+        REQUIRE(entropic_configure(h, cfg.c_str()) == ENTROPIC_OK);
 
         auto session_log = base / "session.log";
         REQUIRE(std::filesystem::exists(session_log));

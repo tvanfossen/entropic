@@ -21,7 +21,8 @@
  *     multi-byte codepoint can split across token boundaries)
  *   - Inbound from audit-log files  → ``src/facade/entropic_audit.cpp``
  *   - Inbound from hook plugins     → ``src/core/engine.cpp``
- *     (``fire_post_generate_hook``, ``fire_complete_hook`` — a hook's
+ *     (``fire_post_generate_hook``, ``fire_complete_hook``) and
+ *     ``src/mcp/tool_executor.cpp`` (``fire_post_tool_hook``) — a hook's
  *     revised/returned text crosses a plugin ``.so`` boundary the same
  *     way an MCP tool result does. Missed by the original v2.1.1 pass;
  *     fixed as a gh#3 recurrence in v2.9.7, gh#111)

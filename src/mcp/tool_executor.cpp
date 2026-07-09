@@ -971,7 +971,7 @@ PreconditionCheck ToolExecutor::check_anti_spiral_hard_block(
  * @param kind Typed outcome.
  * @param msg Message produced by this call; mutated if hook transforms.
  * @internal
- * @version 2.1.1
+ * @version 2.9.7
  */
 void ToolExecutor::fire_post_tool_hook(
     const LoopContext& ctx, const ToolCall& call,
@@ -985,7 +985,11 @@ void ToolExecutor::fire_post_tool_hook(
     hook_iface_.fire_post(hook_iface_.registry,
         ENTROPIC_HOOK_POST_TOOL_CALL, json.c_str(), &out);
     if (out != nullptr) {
-        msg.content = out;
+        // gh#3 recurrence (gh#111, v2.9.7): a hook's transformed result is
+        // an inbound boundary crossing a plugin .so, same class as
+        // fire_post_generate_hook/fire_complete_hook in engine.cpp —
+        // sanitize before it becomes msg.content.
+        msg.content = mcp::sanitize_utf8(out);
         free(out);
     }
 }

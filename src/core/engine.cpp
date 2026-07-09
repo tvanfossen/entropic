@@ -8,6 +8,7 @@
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
 #include <entropic/core/sandbox.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 #include <entropic/types/tool_result.h>
 
@@ -1703,7 +1704,7 @@ static std::string extract_system_prompt(
  * @param tier Active tier name at the time of generation.
  * @param messages Current conversation messages.
  * @internal
- * @version 2.1.3
+ * @version 2.9.7
  */
 void AgentEngine::fire_post_generate_hook(
     GenerateResult& result,
@@ -1734,7 +1735,12 @@ void AgentEngine::fire_post_generate_hook(
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_POST_GENERATE, json.c_str(), &out);
     if (out != nullptr) {
-        result.content = out;
+        // gh#3 recurrence (v2.9.6): a hook's revised content is an
+        // inbound boundary crossing a plugin .so, same class as the
+        // MCP tool-result boundary — sanitize before it re-enters the
+        // engine so downstream json::dump() (delegate-complete hook,
+        // facade serialization, storage) cannot throw type_error 316.
+        result.content = mcp::sanitize_utf8(out);
         logger->info("POST_GENERATE hook revised content");
         free(out);
     }
@@ -1853,7 +1859,7 @@ static std::string build_tool_results_json(
  * @param ctx Loop context with tool results in messages.
  * @return true if hook cancelled (completion rejected).
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.9.7
  */
 bool AgentEngine::fire_complete_hook(
     const std::string& summary,
@@ -1883,10 +1889,14 @@ bool AgentEngine::fire_complete_hook(
     int rc = hooks_.fire_pre(hooks_.registry,
         ENTROPIC_HOOK_ON_COMPLETE, json.c_str(), &modified);
     if (modified != nullptr) {
-        // Hook provided rejection feedback — inject as user message
+        // Hook provided rejection feedback — inject as user message.
+        // Same inbound-boundary gap as fire_post_generate_hook above:
+        // sanitize the hook's returned bytes before they enter a
+        // Message that later flows to json::dump() call sites.
         Message feedback;
         feedback.role = "user";
-        feedback.content = std::string("[CITATION VALIDATION] ") + modified;
+        feedback.content =
+            std::string("[CITATION VALIDATION] ") + mcp::sanitize_utf8(modified);
         const_cast<LoopContext&>(ctx).messages.push_back(
             std::move(feedback));
         free(modified);

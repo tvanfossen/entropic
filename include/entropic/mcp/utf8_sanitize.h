@@ -20,13 +20,20 @@
  *     (sanitize once at message-finalization, NEVER per-token — a
  *     multi-byte codepoint can split across token boundaries)
  *   - Inbound from audit-log files  → ``src/facade/entropic_audit.cpp``
+ *   - Inbound from hook plugins     → ``src/core/engine.cpp``
+ *     (``fire_post_generate_hook``, ``fire_complete_hook`` — a hook's
+ *     revised/returned text crosses a plugin ``.so`` boundary the same
+ *     way an MCP tool result does. Missed by the original v2.1.1 pass;
+ *     fixed as a gh#3 recurrence in v2.9.7, gh#111)
  *   - Outbound to C-API consumers   → ``src/facade/json_serializers.h``
  *
- * Interior code (engine memory, hook contexts, dedup cache, per-tier
- * routing) trusts the bytes — once a string has crossed an inbound
- * boundary, no further sanitize call is needed. Conversely, do NOT add
- * sanitize calls inside loops or hot interior paths; they belong at the
- * outermost system seam each direction.
+ * Interior code (engine memory, dedup cache, per-tier routing) trusts
+ * the bytes — once a string has crossed an inbound boundary, no further
+ * sanitize call is needed. Conversely, do NOT add sanitize calls inside
+ * loops or hot interior paths; they belong at the outermost system seam
+ * each direction. Hook contexts are NOT interior — a registered hook is
+ * a plugin `.so`, i.e. an external boundary in both directions (see
+ * gh#3 recurrence above).
  *
  * sanitize_utf8() walks the input as a byte sequence, validates each
  * codepoint per RFC 3629, and writes U+FFFD (REPLACEMENT CHARACTER,

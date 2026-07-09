@@ -131,18 +131,69 @@ def _get_gpu_name():
         return "unknown"
 
 
+DEFAULT_MODEL_TEST_TIMEOUT_S = 600
+
+
+## @brief Read each model test's CMake-declared TIMEOUT property.
+## @utility
+## @return Dict of {executable_name: timeout_seconds}. Missing/unset
+##         TIMEOUT (CMake reports 0 for "no timeout set") falls back to
+##         DEFAULT_MODEL_TEST_TIMEOUT_S.
+## @version 2.9.7
+def _get_model_test_timeouts(build_dir):
+    """Query ctest for the CMake TIMEOUT property of every model/* test.
+
+    gh#111 fallout: _run_one_model_test previously hardcoded a 600s
+    per-attempt timeout regardless of each test's own declared CMake
+    TIMEOUT (e.g. test-gh108-agentic-benchmark: 900s,
+    test-gh108-cpu-feasibility: 3600s), so legitimately slow-but-passing
+    tests were killed and reported FAIL. This reads the real budget per
+    test so the runner's timeout can never be tighter than what the test
+    author declared.
+    """
+    try:
+        out = subprocess.check_output(
+            [
+                "ctest",
+                "--test-dir",
+                build_dir,
+                "--show-only=json-v1",
+                "-L",
+                "model",
+            ],
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return {}
+
+    data = json.loads(out)
+    timeouts = {}
+    for test in data.get("tests", []):
+        name = test.get("name", "").rsplit("/", 1)[-1]
+        for prop in test.get("properties", []):
+            if prop.get("name") == "TIMEOUT":
+                value = prop.get("value") or 0
+                timeouts[name] = int(value) if value else DEFAULT_MODEL_TEST_TIMEOUT_S
+                break
+    return timeouts
+
+
 ## @brief Run one model test exe with retries + a per-attempt timeout.
 ## @utility
 ## @return Tuple of (status, retries, duration_ms). status: pass|skipped|fail.
-## @version 2.7.2
-def _run_one_model_test(exe_path):
-    """Run one model test exe (retries + a 600s per-attempt timeout).
+## @version 2.9.7
+def _run_one_model_test(exe_path, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S):
+    """Run one model test exe (retries + a per-attempt timeout).
 
     gh#89-C: a Catch2 SKIP (all scenarios SKIP — e.g. a GGUF/VRAM-gated test or
     an intentionally-disabled gate) exits 4 with no assertions. Model tests have
     1-2 scenarios, so a real failure exits 1-2 — making rc==4 an unambiguous SKIP
-    signal here, NOT a failure. A hung GPU test is killed at 600s (TimeoutExpired
-    → rc 124 → fail) so it cannot wedge the suite.
+    signal here, NOT a failure. A hung GPU test is killed at timeout_s
+    (TimeoutExpired → rc 124 → fail) so it cannot wedge the suite.
+
+    gh#111 fallout: timeout_s must come from the test's own CMake TIMEOUT
+    property (see _get_model_test_timeouts), not a blanket constant —
+    otherwise legitimately slow tests are killed and misreported as failed.
     """
     t0 = time.monotonic()
     retries = 0
@@ -152,7 +203,7 @@ def _run_one_model_test(exe_path):
                 [exe_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                timeout=600,
+                timeout=timeout_s,
             )
         except subprocess.TimeoutExpired:
             rc = 124
@@ -167,10 +218,14 @@ def _run_one_model_test(exe_path):
 ## @brief Run model tests 1:1; a Catch2 SKIP (rc=4) is reported, not failed.
 ## @utility
 ## @return Tuple of (results list, failed count). Skips do NOT count as failures.
-## @version 2.7.2
+## @version 2.9.7
 def _run_model_tests(build_dir):
     """Run model tests 1:1. Returns (results, failed_count). gh#89: a Catch2
-    SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL."""
+    SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL.
+
+    gh#111 fallout: per-test timeout comes from each test's own CMake
+    TIMEOUT property (_get_model_test_timeouts), not a blanket constant.
+    """
     test_dir = os.path.join(build_dir, "tests", "model")
     executables = sorted(
         f
@@ -184,11 +239,14 @@ def _run_model_tests(build_dir):
         print("ERROR: No model test executables found")
         return [], 1
 
+    timeouts = _get_model_test_timeouts(build_dir)
+
     results = []
     passed = failed = flaky = skipped = 0
 
     for exe in executables:
-        status, retries, duration_ms = _run_one_model_test(os.path.join(test_dir, exe))
+        timeout_s = timeouts.get(exe, DEFAULT_MODEL_TEST_TIMEOUT_S)
+        status, retries, duration_ms = _run_one_model_test(os.path.join(test_dir, exe), timeout_s)
         if status == "pass":
             passed += 1
             if retries > 0:

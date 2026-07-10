@@ -1231,6 +1231,7 @@ SCENARIO("fold_complete_into_assistant: long summary preserves UTF-8 "
 #include <entropic/core/directives.h>
 #include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/types/hooks.h>
+#include <nlohmann/json.hpp>
 
 namespace v2310 {
 
@@ -1318,6 +1319,33 @@ SCENARIO("hook dispatch: info / PRE_GENERATE cancel / POST_GENERATE rewrite / ON
         REQUIRE(result.back().content == "rewritten by hook");
         REQUIRE(v2310::has(cap.post, ENTROPIC_HOOK_POST_GENERATE));
     }
+    SECTION("gh#111: POST_GENERATE hook returning malformed UTF-8 is "
+            "sanitized before it re-enters engine content") {
+        // gh#3 recurrence (v2.9.6/v2.9.7): a hook's revised content is
+        // an inbound boundary crossing a plugin .so, same as an MCP
+        // tool result. Without sanitizing at acceptance, this byte
+        // sequence (0xC3 not followed by a valid continuation byte)
+        // would propagate into ctx.metadata/delegation summaries and
+        // eventually crash nlohmann::json::dump() with type_error 316.
+        MockInference mock; mock.response = "original";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap;
+        cap.post_mod = std::string("bad byte: \xC3\x28 end");
+        engine.set_hooks(v2310::make_hooks(&cap));
+        auto result = engine.run(make_messages());
+
+        THEN("the raw malformed sequence does not survive verbatim") {
+            REQUIRE(result.back().content.find("\xC3\x28")
+                    == std::string::npos);
+        }
+        THEN("the sanitized content can be JSON-dumped without throwing") {
+            nlohmann::json arr = nlohmann::json::array();
+            arr.push_back({{"role", "assistant"},
+                           {"content", result.back().content}});
+            REQUIRE_NOTHROW(arr.dump());
+        }
+    }
     SECTION("ON_ERROR info hook fires when state hits ERROR") {
         MockInference mock; mock.response = "no tools"; mock.tier = "lead";
         mock.is_complete = false;
@@ -1361,6 +1389,35 @@ SCENARIO("dir_complete: hook rejection + coverage_gap metadata",
             }
         }
         REQUIRE(found);
+    }
+    SECTION("gh#111: ON_COMPLETE hook feedback with malformed UTF-8 is "
+            "sanitized before entering a Message") {
+        MockInference mock; auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc; AgentEngine engine(iface, lc, cc);
+        v2310::HookCap cap; cap.cancel = true;
+        cap.cancel_point = ENTROPIC_HOOK_ON_COMPLETE;
+        cap.pre_mod = std::string("cite sources: \xC3\x28 end");
+        engine.set_hooks(v2310::make_hooks(&cap));
+        LoopContext ctx; ctx.messages = make_messages();
+        ctx.state = AgentState::EXECUTING;
+        CompleteDirective cd("draft");
+        std::vector<const Directive*> list{&cd};
+        engine.directive_processor().process(ctx, list);
+
+        std::string feedback;
+        for (const auto& m : ctx.messages) {
+            if (m.content.rfind("[CITATION VALIDATION]", 0) == 0) {
+                feedback = m.content; break;
+            }
+        }
+        THEN("the raw malformed sequence does not survive verbatim") {
+            REQUIRE(feedback.find("\xC3\x28") == std::string::npos);
+        }
+        THEN("the sanitized feedback can be JSON-dumped without throwing") {
+            nlohmann::json arr = nlohmann::json::array();
+            arr.push_back({{"role", "user"}, {"content", feedback}});
+            REQUIRE_NOTHROW(arr.dump());
+        }
     }
     SECTION("coverage_gap fields persist into ctx.metadata") {
         MockInference mock; auto iface = make_mock_interface(mock);

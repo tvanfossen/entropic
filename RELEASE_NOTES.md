@@ -2,6 +2,60 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.9.7
+
+Patch — **UTF-8 sanitize gap at the hook-plugin return boundary** (gh#3
+recurrence, gh#111). `entropic_run()` could throw `nlohmann::json::type_error
+316` mid-agentic-turn in a lead→researcher delegation, immediately after
+generation completed.
+
+## The bug
+
+The v2.1.1 fix for gh#3 established a boundary-of-ownership UTF-8 sanitize
+policy covering four boundaries: MCP tool-result inbound, llama.cpp stream
+inbound, audit-log inbound, and C-API outbound. It missed a class of
+boundary: **a hook plugin's returned content crossing back into the
+engine.** Three call sites accepted a hook's output verbatim, with no
+sanitize call before the bytes could re-enter engine state and later reach
+an unguarded `nlohmann::json::dump()`:
+
+- `fire_post_generate_hook` (`src/core/engine.cpp`) — POST_GENERATE hook
+  revision. In a delegation, unsanitized content here became the child
+  loop's summary, which `fire_delegate_complete_hook` dumps directly.
+- `fire_complete_hook` (`src/core/engine.cpp`) — ON_COMPLETE hook feedback,
+  injected into a `Message`.
+- `ToolExecutor::fire_post_tool_hook` (`src/mcp/tool_executor.cpp`) —
+  POST_TOOL_CALL hook transform, applied to the tool-result `Message`.
+
+v2.9.6/gh#110 made MTP reachable from the agent loop's *batch* dispatch path
+for the first time — exactly the path (`generate_batch` →
+`fire_post_generate_hook` → delegation summary) that exercises the first
+gap, which is why the recurrence surfaced now rather than earlier.
+
+## The fix
+
+- All three call sites now sanitize a hook's returned bytes via
+  `mcp::sanitize_utf8` before they re-enter engine state, matching the
+  treatment already given to MCP tool results.
+- Documented the hook-plugin boundary in
+  `include/entropic/mcp/utf8_sanitize.h`'s policy table; corrected prior text
+  that incorrectly listed hook contexts as "interior/trusted."
+- Added regression coverage in `tests/unit/core/engine_test.cpp` and
+  `tests/unit/mcp/tool_executor_test.cpp` exercising all three hook points
+  with malformed UTF-8, asserting the sanitized content JSON-dumps without
+  throwing.
+
+## Deferred
+
+`src/storage/backend.cpp`'s SQLite message-load path reads `content` off the
+column with no sanitize before a later `.dump()` — same class of gap as the
+(already-fixed) audit-replay path, for the SQLite backend. Not the confirmed
+root cause of this crash; fixing it cleanly needs `entropic-storage` to gain
+access to the sanitizer (currently only linked into `entropic-core`). Tracked
+separately, not blocking this release.
+
+---
+
 # entropic v2.9.6
 
 Patch — **MTP/speculative decoding is now reachable through the agent loop**
@@ -424,36 +478,3 @@ topology** — that is `allowed_tools`' job. Rewrote `complete.json` capability-
 (dropped the availability + parent/child framing; kept purpose + `coverage_gap`
 effect semantics). A sweep confirmed it was the only such violation across the
 bundled schemas.
-
----
-
-# entropic v2.8.1
-
-Patch — **activates model-based tier routing** (the v2.8.0 audit found it was a
-silent no-op) and hardens the surrounding config. No `i_*.h` interface header
-touched.
-
-## Routing: `classify_task` instructs the router
-
-`ModelOrchestrator::classify_task` fed a non-fine-tuned router the bare
-`"<msg> ->"` with `max_tokens=1`; a general instruct model just continues the
-text and never emits a routing digit, so `model_raw` was always empty and
-`route()` silently fell back to the default tier. When
-`routing.classification_prompt` is configured, it is now prepended (so the model
-is told the digit scheme) and `max_tokens` is widened to 4 to capture the
-leading-space digit. **Unconfigured deployments keep the exact bare
-`"<msg> ->"` + `max_tokens=1` path — byte-identical, no behavior change.**
-
-## Config hardening (review fixes)
-
-- **Empty `tier_map` is now rejected** when `routing.enabled` +
-  `classification_prompt` are set — otherwise the router emits a digit that maps
-  to no tier and every route silently falls back (the same no-op by a different
-  door). `validate_routing` now fails loudly at load.
-- **`classification_prompt` logs an INFO line** when its (active) path is taken —
-  it was parsed-but-never-read before v2.8.0, so a deployment carrying a stale
-  prompt now sees the inert→active switch + the widened token budget.
-- Removed the stale `@deprecated` banner on `RoutingConfig` (it claimed removal
-  in v2.2.0 — false; v2.8.x actively builds on it).
-- Added a cleared-prompt **RED control** test so the routing model-test is
-  non-vacuous (the bare path is asserted to be a no-op).

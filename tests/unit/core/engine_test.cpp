@@ -2283,3 +2283,154 @@ TEST_CASE("run_turn (no override) still routes (gh#99 contrast)",
     // With no tier override and a router wired, routing runs as before.
     CHECK(mock.route_call_count >= 1);
 }
+
+// ── gh#111 (v2.9.8): tool-call parse channel is a UTF-8 inbound boundary ──
+//
+// The v2.9.7 fix sanitized only the plugin-revised (out!=null) hook branches,
+// which never run on the headless path — so a split multi-byte UTF-8 codepoint
+// (routine under MTP speculative decode) still reached json::dump() and threw
+// type_error.316. Root cause: the tool-call parse callback returns *cleaned and
+// *tool_calls_json derived from the backend's parse of the RAW generation, a
+// SEPARATE channel from response_generator's content sanitize. Both cross into
+// engine state at AgentEngine::parse_tool_calls, now sanitized there.
+//
+// These reproduce BOTH taint channels by having the mock backend's parse return
+// raw invalid UTF-8 — exactly what MTP produces — and assert no 316 escapes.
+
+namespace gh111 {
+// 0xC3 is the leading byte of a 2-byte sequence; 0x28 '(' is NOT a valid
+// continuation byte — a split/lone multi-byte codepoint, i.e. what MTP emits
+// when a character splits across the draft/target token boundary.
+static const std::string kBadUtf8 = std::string("summary \xC3\x28 end");
+
+static bool dumps_clean(const std::vector<Message>& msgs) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& m : msgs) {
+        arr.push_back({{"role", m.role}, {"content", m.content}});
+    }
+    try { (void)arr.dump(); return true; }
+    catch (const nlohmann::json::exception&) { return false; }
+}
+static bool any_raw_bytes(const std::vector<Message>& msgs) {
+    for (const auto& m : msgs) {
+        if (m.content.find("\xC3\x28") != std::string::npos) { return true; }
+    }
+    return false;
+}
+}  // namespace gh111
+
+SCENARIO("gh#111: a delegation whose child produces raw UTF-8 content does not "
+         "throw type_error.316 at fire_delegate_complete_hook (the exact crash)",
+         "[engine][gh111][utf8][regression][2.9.8]") {
+    // GOLD-STANDARD reproduction of the reported crash: a lead->child delegation
+    // where the child's summary carries a split multi-byte codepoint. Without the
+    // fix, extract_summary's fallback returns the child's raw last-assistant
+    // content -> DelegationResult.summary -> fire_delegate_complete_hook builds
+    // j["summary"]=summary and calls j.dump() -> type_error.316 propagates out of
+    // run_loop BEFORE the ON_DELEGATE_COMPLETE hook is ever dispatched.
+    GIVEN("a parent that delegates to a child producing raw invalid-UTF8 content") {
+        MockInference mock;
+        // Child must COMPLETE with the raw message as its LAST assistant message
+        // (no iteration-cap synthetic message masking it), so extract_summary's
+        // fallback returns the raw content. is_complete=true => the child ends on
+        // its first no-tool generation with raw content as the last message.
+        mock.is_complete = true;
+        mock.parse_cleaned_override = gh111::kBadUtf8;  // raw child content
+        // Parent's FIRST parse returns a tool call (so the injector fires and a
+        // delegation is dispatched); the child's parse then falls back to "[]".
+        mock.tool_calls_queue.push_back(
+            R"([{"name":"test.mock","arguments":{}}])");
+        mock.tool_calls_json = "[]";
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 3; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        // ON_DELEGATE_COMPLETE must have a post hook or the builder early-returns
+        // before ever reaching j.dump().
+        v2310::HookCap cap;
+        engine.set_hooks(v2310::make_hooks(&cap));
+
+        TierResolutionInterface tri{};
+        tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+            ChildContextInfo info; info.valid = true;
+            info.system_prompt = "child agent"; return info;
+        };
+        engine.set_tier_resolution(tri);
+
+        DelegInjector injector;
+        ToolExecutionInterface tex{};
+        tex.process_tool_calls = inject_delegation_once;
+        tex.user_data = &injector;
+        engine.set_tool_executor(tex);
+
+        WHEN("the parent loop delegates and fires ON_DELEGATE_COMPLETE") {
+            LoopContext ctx; ctx.messages = make_messages();
+            ctx.locked_tier = "lead";
+            THEN("no type_error.316 escapes and the hook dump is reached") {
+                REQUIRE_NOTHROW(engine.run_loop(ctx));
+                REQUIRE(v2310::has(cap.post,
+                                   ENTROPIC_HOOK_ON_DELEGATE_COMPLETE));
+            }
+        }
+    }
+}
+
+SCENARIO("gh#111: a tool call whose arg carries raw UTF-8 is preserved, not "
+         "silently dropped at parse (tc_str sanitize)",
+         "[engine][gh111][utf8][regression][2.9.8]") {
+    // The tool-call JSON channel is parse-gated: nlohmann::json::parse rejects
+    // invalid UTF-8, so WITHOUT the tc_str sanitize a raw-arg tool call is
+    // discarded (0 calls) and the model's directive is silently lost under MTP.
+    // WITH the sanitize the call survives and is dispatched.
+    GIVEN("a backend whose tool-call parse returns a raw invalid-UTF8 arg") {
+        MockInference mock;
+        mock.is_complete = false;
+        mock.tool_calls_json =
+            std::string("[{\"name\":\"test.mock\",\"arguments\":"
+                        "{\"note\":\"x \xC3\x28 y\"}}]");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; lc.max_iterations = 1; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        int dispatched = 0;
+        ToolExecutionInterface tex{};
+        tex.user_data = &dispatched;
+        tex.process_tool_calls = [](LoopContext&,
+                                    const std::vector<ToolCall>& calls,
+                                    void* ud) -> std::vector<Message> {
+            *static_cast<int*>(ud) += static_cast<int>(calls.size());
+            return {};
+        };
+        engine.set_tool_executor(tex);
+
+        WHEN("a turn runs") {
+            REQUIRE_NOTHROW(engine.run(make_messages()));
+            THEN("the raw-arg tool call was parsed and dispatched, not dropped") {
+                REQUIRE(dispatched >= 1);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#111: raw UTF-8 in backend-cleaned content is sanitized before it "
+         "becomes a message (delegation-summary fallback source)",
+         "[engine][gh111][utf8][regression][2.9.8]") {
+    GIVEN("a backend whose parse returns raw invalid-UTF8 cleaned content") {
+        MockInference mock;
+        mock.is_complete = true;  // final answer, no tool call
+        mock.parse_cleaned_override = gh111::kBadUtf8;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc; CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        WHEN("a turn runs") {
+            auto result = engine.run(make_messages());
+            THEN("the assistant content that would feed extract_summary is valid UTF-8") {
+                REQUIRE(gh111::dumps_clean(result));
+            }
+            THEN("the raw split codepoint did not survive into any message") {
+                REQUIRE_FALSE(gh111::any_raw_bytes(result));
+            }
+        }
+    }
+}

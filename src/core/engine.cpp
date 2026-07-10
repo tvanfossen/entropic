@@ -1345,9 +1345,10 @@ static std::vector<ToolCall> decode_tool_calls_json(
  * objects with populated name, id, and arguments fields.
  *
  * @param raw_content Raw model output string.
- * @return Pair of (cleaned content, fully-parsed tool call vector).
+ * @return Pair of (cleaned content, fully-parsed tool call vector), both
+ *         guaranteed valid UTF-8 (gh#111 sanitize boundary).
  * @utility
- * @version 2.0.2
+ * @version 2.9.8
  */
 std::pair<std::string, std::vector<ToolCall>>
 AgentEngine::parse_tool_calls(const std::string& raw_content) {
@@ -1361,8 +1362,27 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
         raw_content.c_str(), &cleaned, &tc_json,
         inference_.adapter_data);
 
-    std::string cleaned_str = cleaned ? cleaned : raw_content;
-    std::string tc_str = tc_json ? tc_json : "[]";
+    // gh#111 (v2.9.8): the tool-call parse callback is a SEPARATE inbound
+    // boundary from response_generator's content sanitize. The backend derives
+    // both `*cleaned` and `*tool_calls_json` from its own parse of the RAW
+    // generation (common_chat / adapter parse_response), so a split multi-byte
+    // UTF-8 codepoint — routine under MTP speculative decode — arrives here as
+    // invalid bytes EVEN THOUGH result.content was already sanitized upstream
+    // (response_generator.cpp:470). Both outputs cross into engine-owned state
+    // at this one function:
+    //   cleaned_str -> assistant Message.content -> (delegation) extract_summary
+    //                  fallback -> DelegationResult.summary
+    //                  -> fire_delegate_complete_hook j.dump()  [the gh#111 throw]
+    //   tc_str      -> decode_tool_calls_json -> build_tool_call_from_json
+    //                  obj["arguments"].dump() + CompleteTool result.dump()
+    // v2.9.7 patched only the plugin-revised (out!=null) hook branches, which
+    // never run on the headless path — so the raw summary still reached the
+    // dump. Sanitize BOTH channels at this single boundary (the tool-call-channel
+    // sibling of the content sanitize) so no downstream nlohmann::json::dump()
+    // can throw type_error.316. (gh#3 recurrence.)
+    std::string cleaned_str =
+        mcp::sanitize_utf8(cleaned ? cleaned : raw_content);
+    std::string tc_str = mcp::sanitize_utf8(tc_json ? tc_json : "[]");
 
     if (inference_.free_fn != nullptr) {
         if (cleaned != nullptr) { inference_.free_fn(cleaned); }

@@ -19,6 +19,15 @@
  *   - Inbound from llama_cpp stream → ``src/core/response_generator.cpp``
  *     (sanitize once at message-finalization, NEVER per-token — a
  *     multi-byte codepoint can split across token boundaries)
+ *   - Inbound from tool-call parse  → ``src/core/engine.cpp``
+ *     (``AgentEngine::parse_tool_calls`` — a SEPARATE channel from the
+ *     content sanitize above. The backend re-derives ``*cleaned`` and
+ *     ``*tool_calls_json`` from its own parse of the RAW generation, so a
+ *     split multi-byte codepoint survives here even after the content
+ *     string was sanitized. Both feed downstream ``json::dump()`` — the
+ *     cleaned content becomes an assistant message / delegation-summary
+ *     fallback, the tool args become CompleteTool / directive JSON.
+ *     v2.9.8, gh#111 recurrence)
  *   - Inbound from audit-log files  → ``src/facade/entropic_audit.cpp``
  *   - Inbound from hook plugins     → ``src/core/engine.cpp``
  *     (``fire_post_generate_hook``, ``fire_complete_hook``) and

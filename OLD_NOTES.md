@@ -6,6 +6,70 @@ GitHub's 125,000-char release-body limit for `gh release create --notes-file`.
 
 ---
 
+# entropic v2.8.2
+
+Patch — two consumer-reported correctness fixes around terminal/looping tool
+calls (gh#103, gh#104). No `i_*.h` interface header touched.
+
+## gh#103 — `tool_call_mode: sequential` hard-stops generation at the first tool call
+
+Terminal directives (`delegate`/`pipeline`/`complete`) and dependent-tracing
+workers had no way to stop generating at a tool-call boundary: the model
+generated its *entire* response past the action, and only afterward did the
+engine process directives. A worker doing a dependent trace emitted multiple
+tool calls in one turn with **no result seen between them** → blind planning →
+non-convergence (the gh#103 repro: 37 calls, 0 `complete`, delegations failed).
+
+New per-tier (and per-call) **`tool_call_mode`**:
+- `"sequential"` → the orchestrator appends the family's tool-call close marker
+  to `GenerationParams.stop`, so the **existing decode-loop stop check** halts
+  generation at the FIRST closed tool call (one tool/turn — the model observes
+  each result before the next call). Reuses `check_stop_sequences` on the shared
+  decode loop (streaming + batch); **no new streaming detector, no `cancel_flag`
+  plumbing**. The marker is RETAINED in the output, so common_chat still parses
+  the complete call.
+- `"batch"` (default, unset) → unchanged: parallel/independent tool calls in one
+  turn are preserved.
+
+Close markers are derived family-aware from the resolved common_chat format
+(`tool_call_markers.h`): PEG_NATIVE / PEG_SIMPLE → `</tool_call>`; PEG_GEMMA4 →
+`<tool_call|>` (gemma wraps a call as `<|tool_call>call:NAME{…}<tool_call|>` — the
+close is distinct from the open, so the ends-with check fires on the close);
+CONTENT_ONLY / unknown → `""` → no stop injected (batch-safe). The marker map AND
+the engagement decision (`append_sequential_stop`) are CPU-unit-pinned; the
+end-to-end hard-stop is validated by emergent model tests on **qwen35moe**
+(hybrid: `≤ 1` tool call/turn, ends AT the marker, KV coherence) and on
+**gemma4_e4b** (the severe case below).
+
+**gemma4 was the severe case, and the hard-stop fixes it.** A consumer session
+showed gemma4 emit a complete `entropic.delegate`, generate *past* it, and the
+call register as **zero tool calls** — the terminal directive dropped entirely
+(0 rows in the `delegations` table), not just tokens wasted. Root cause: the
+runaway past the call defeated extraction. Sequential mode stops at the first
+`<tool_call|>`, leaving a clean single-call stream that common_chat parses — the
+GPU test confirms the call now **extracts** under sequential mode (it was
+runaway-defeats-extraction, not a parse bug). Consumers hit by this set the
+affected tier to `tool_call_mode: sequential`.
+
+Terminal-action halting for *batch* tiers is unchanged (the existing post-parse
+`stop_processing` directive path). The generation-time hard-stop is the
+sequential lever; a consumer marks its lead/worker tiers `sequential` to claim it.
+
+## gh#104 — tool descriptions present capability, not availability
+
+`complete.json` hardcoded *"This tool is only available during delegation (child
+contexts)"* — false for any root tier that allow-lists + requires `complete`
+(`explicit_completion: true`). The claim was never enforced (verified against the
+engine headers); it only misled the model, and a thinking lead burned a turn
+litigating the contradiction. A tool description is broadcast to every tier that
+allow-lists it, so it **cannot assert a per-context availability or caller
+topology** — that is `allowed_tools`' job. Rewrote `complete.json` capability-only
+(dropped the availability + parent/child framing; kept purpose + `coverage_gap`
+effect semantics). A sweep confirmed it was the only such violation across the
+bundled schemas.
+
+---
+
 # entropic v2.8.1
 
 Patch — **activates model-based tier routing** (the v2.8.0 audit found it was a

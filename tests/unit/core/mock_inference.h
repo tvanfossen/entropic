@@ -38,6 +38,13 @@ struct MockInference {
     int complete_call_count = 0;                  ///< Complete call counter
     std::string tool_calls_json = "[]";           ///< Default parse result (no tools)
     std::vector<std::string> tool_calls_queue;    ///< Pop front per parse, fall back to tool_calls_json
+
+    // gh#111: when non-empty, mock_parse_tool_calls returns this as the
+    // *cleaned output instead of passing raw_content through. Simulates the
+    // real backend's common_chat/adapter parse_response, which derives cleaned
+    // content from the RAW generation (not the engine-sanitized result.content)
+    // — so a split multi-byte UTF-8 codepoint from MTP survives into *cleaned.
+    std::string parse_cleaned_override;
 };
 
 /**
@@ -184,7 +191,12 @@ inline int mock_parse_tool_calls(
     char** tool_calls_json,
     void* user_data) {
     auto* mock = static_cast<MockInference*>(user_data);
-    *cleaned_content = mock_strdup(raw_content);
+    // gh#111: emulate a backend parse that returns raw-derived cleaned content
+    // (bypassing the engine's content sanitize) when an override is set.
+    *cleaned_content = mock_strdup(
+        mock->parse_cleaned_override.empty()
+            ? std::string(raw_content ? raw_content : "")
+            : mock->parse_cleaned_override);
     if (!mock->tool_calls_queue.empty()) {
         *tool_calls_json = mock_strdup(
             mock->tool_calls_queue.front());

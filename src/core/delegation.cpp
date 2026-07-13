@@ -15,6 +15,7 @@
 
 #include <entropic/core/delegation.h>
 #include <entropic/core/engine_types.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
 
 #include <nlohmann/json.hpp>
@@ -711,21 +712,21 @@ LoopContext DelegationManager::build_child_context(
  * @param child_ctx Completed child context.
  * @return Summary text.
  * @internal
- * @version 1.8.6
+ * @version 2.9.10
  */
 std::string DelegationManager::extract_summary(
     const LoopContext& child_ctx) const {
     // Prefer explicit completion summary
     auto it = child_ctx.metadata.find("explicit_completion_summary");
     if (it != child_ctx.metadata.end() && !it->second.empty()) {
-        return it->second;
+        return mcp::sanitize_utf8(it->second);
     }
 
     // Fall back to last assistant message
     for (auto rit = child_ctx.messages.rbegin();
          rit != child_ctx.messages.rend(); ++rit) {
         if (rit->role == "assistant" && !rit->content.empty()) {
-            return rit->content;
+            return mcp::sanitize_utf8(rit->content);
         }
     }
 

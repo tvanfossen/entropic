@@ -364,3 +364,111 @@ SCENARIO("search_delegations finds completed rows by substring",
         }
     }
 }
+
+// ── gh#112 / gh#113 (v2.9.9): storage read boundary sanitizes UTF-8 ──────────
+//
+// Root cause of the type_error.316 family: MTP can split a multi-byte UTF-8
+// codepoint at a token boundary, producing an invalid byte sequence. That
+// sequence flows into DelegationResult.summary and is stored verbatim in
+// delegations.result_summary via complete_delegation (sqlite3_bind_text, no
+// validation). On the read side, delegation_row_to_json does a direct
+// assignment entry["result_summary"] = col_text(...); the subsequent
+// entry.dump() in get_delegation_by_id throws type_error.316.
+//
+// Note: the messages table is NOT a viable attack surface — save_messages
+// calls json::parse which rejects strings containing invalid UTF-8, so
+// message_row_to_json / load_conversation cannot see bad bytes.
+//
+// RED/GREEN protocol (verified manually, see commit message):
+//   RED:   current code — entry["result_summary"] = col_opt_text(s, 8)...
+//          (no sanitize). get_delegation_by_id → entry.dump() throws 316.
+//   GREEN: fix applied — sanitize at read boundary in delegation_row_to_json.
+//          All assertions pass; bad bytes replaced with U+FFFD.
+
+SCENARIO("gh#112/gh#113: get_delegation_by_id sanitizes invalid UTF-8 in "
+         "result_summary at the storage read boundary (v2.9.9 permanent fix)",
+         "[storage][backend][gh112][gh113][utf8][regression][2.9.9]") {
+    // The exact bytes from the production gh#113 crash: MTP split a 3-byte
+    // CJK codepoint. First two bytes (0xE6 0x9E) survived; the expected
+    // third continuation byte was replaced by ASCII '.' (0x2E).
+    const std::string kSplitCjk =
+        std::string(125, 'a') + "\xE6\x9E\x2E" + " rest of summary";
+    const std::string kLoneContinuation =
+        std::string("result: ") + "\x80" + " done";
+    const std::string kTruncatedAtEnd =
+        std::string("truncated ") + "\xE4\xB8";  // 3-byte lead, only 1 cont
+
+    GIVEN("a delegation whose result_summary has a split MTP codepoint") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh112 split-cjk parent");
+        std::string del_id, child;
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", "research task", 0, del_id, child));
+        // complete_delegation stores via sqlite3_bind_text — no UTF-8 check.
+        // This is the exact path from the production crash.
+        t.storage.complete_delegation(del_id, "completed", kSplitCjk);
+
+        WHEN("get_delegation_by_id reads the row back") {
+            std::string out;
+            bool found = t.storage.get_delegation_by_id(del_id, out);
+
+            THEN("it succeeds (does not throw type_error.316)") {
+                REQUIRE(found);
+                REQUIRE_NOTHROW(json::parse(out));
+            }
+            AND_THEN("the JSON round-trips through dump without throwing") {
+                REQUIRE(found);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+            AND_THEN("result_summary is valid UTF-8 (bad bytes replaced)") {
+                REQUIRE(found);
+                auto j = json::parse(out);
+                nlohmann::json probe;
+                probe["summary"] = j["result_summary"].get<std::string>();
+                REQUIRE_NOTHROW(probe.dump());
+            }
+            AND_THEN("clean fields (id, status) are not mangled") {
+                REQUIRE(found);
+                auto j = json::parse(out);
+                CHECK(j["id"] == del_id);
+                CHECK(j["status"] == "completed");
+            }
+        }
+    }
+
+    GIVEN("a delegation result_summary with a lone continuation byte") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh112 lone-cont parent");
+        std::string del_id, child;
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", "task", 0, del_id, child));
+        t.storage.complete_delegation(del_id, "completed", kLoneContinuation);
+
+        WHEN("loaded via get_delegation_by_id") {
+            std::string out;
+            bool found = t.storage.get_delegation_by_id(del_id, out);
+            THEN("dump does not throw type_error.316") {
+                REQUIRE(found);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+        }
+    }
+
+    GIVEN("a delegation result_summary with a truncated multi-byte sequence") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh112 truncated parent");
+        std::string del_id, child;
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", "task", 0, del_id, child));
+        t.storage.complete_delegation(del_id, "completed", kTruncatedAtEnd);
+
+        WHEN("loaded via get_delegation_by_id") {
+            std::string out;
+            bool found = t.storage.get_delegation_by_id(del_id, out);
+            THEN("dump does not throw type_error.316") {
+                REQUIRE(found);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+        }
+    }
+}

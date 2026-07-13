@@ -12,6 +12,7 @@
 #include <sqlite3.h>
 
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <random>
 
@@ -20,7 +21,84 @@ using json = nlohmann::json;
 namespace entropic {
 
 namespace {
+
 auto logger = entropic::log::get("storage.backend");
+
+// ── UTF-8 sanitizer (gh#112/gh#113) ──────────────────────────────────────────
+// Mirrors mcp::sanitize_utf8 but lives here so entropic-storage stays
+// self-contained (no dependency on entropic-mcp or core).
+// Called at the delegation read boundary to prevent type_error.316.
+
+/** @brief True when b is a UTF-8 continuation byte. @utility @version 2.9.9 */
+inline bool su8_is_cont(uint8_t b) { return (b & 0xC0) == 0x80; }
+
+/**
+ * @brief Required continuation bytes for a leading byte; -1 if not a leader.
+ * @utility
+ * @version 2.9.9
+ */
+inline int su8_follow(uint8_t b) {
+    int n = -1;
+    if (b < 0x80)                   { n = 0; }
+    else if (b >= 0xC2 && b < 0xE0) { n = 1; }
+    else if (b >= 0xE0 && b < 0xF0) { n = 2; }
+    else if (b >= 0xF0 && b < 0xF5) { n = 3; }
+    return n;
+}
+
+/**
+ * @brief RFC 3629 sub-range check on first continuation byte.
+ * @utility
+ * @version 2.9.9
+ */
+inline bool su8_first_cont_ok(uint8_t lead, uint8_t c1) {
+    bool ok = su8_is_cont(c1);
+    if (lead == 0xE0)      { ok = ok && c1 >= 0xA0; }
+    else if (lead == 0xED) { ok = ok && c1 <= 0x9F; }
+    else if (lead == 0xF0) { ok = ok && c1 >= 0x90; }
+    else if (lead == 0xF4) { ok = ok && c1 <= 0x8F; }
+    return ok;
+}
+
+/**
+ * @brief Length of the valid sequence at p; 0 if malformed.
+ * @utility
+ * @version 2.9.9
+ */
+size_t su8_seq_len(const uint8_t* p, const uint8_t* end) {
+    int n = su8_follow(*p);
+    bool ok = (n >= 0)
+           && (n == 0 || (p + n < end && su8_first_cont_ok(*p, p[1])));
+    for (int i = 2; ok && i <= n; ++i) { ok = su8_is_cont(p[i]); }
+    return ok ? static_cast<size_t>(n + 1) : 0;
+}
+
+/**
+ * @brief Replace invalid UTF-8 byte sequences with U+FFFD (gh#112/gh#113).
+ * @param s Raw bytes from SQLite (possibly invalid UTF-8).
+ * @return Valid UTF-8 string; bad sequences replaced with U+FFFD.
+ * @internal
+ * @version 2.9.9
+ */
+std::string sanitize_storage_utf8(const std::string& s) {
+    static constexpr const char* kRepl = "\xEF\xBF\xBD";
+    const auto* p   = reinterpret_cast<const uint8_t*>(s.data());
+    const auto* end = p + s.size();
+    std::string out;
+    out.reserve(s.size());
+    while (p < end) {
+        size_t len = su8_seq_len(p, end);
+        if (len > 0) {
+            out.append(reinterpret_cast<const char*>(p), len);
+            p += len;
+        } else {
+            out.append(kRepl, 3);
+            ++p;
+        }
+    }
+    return out;
+}
+
 } // anonymous namespace
 
 // ── Helpers ───────────────────────────────────────────────
@@ -50,6 +128,19 @@ static std::optional<std::string> col_opt_text(sqlite3_stmt* stmt, int col) {
     auto* p = sqlite3_column_text(stmt, col);
     if (!p) return std::nullopt;
     return std::string(reinterpret_cast<const char*>(p));
+}
+
+/**
+ * @brief Get a nullable integer column as a JSON value.
+ * @param stmt Prepared statement.
+ * @param col Column index.
+ * @return json(nullptr) for SQL NULL, json(value) otherwise.
+ * @utility
+ * @version 2.9.9
+ */
+static json col_nullable_int(sqlite3_stmt* stmt, int col) {
+    if (sqlite3_column_type(stmt, col) == SQLITE_NULL) { return json(nullptr); }
+    return json(sqlite3_column_int(stmt, col));
 }
 
 /**
@@ -623,7 +714,7 @@ namespace {
  * @param s Stepped statement (SELECT * FROM delegations).
  * @return JSON delegation object (all columns).
  * @utility
- * @version 2.3.7
+ * @version 2.9.10
  */
 json delegation_row_to_json(sqlite3_stmt* s) {
     json entry;
@@ -633,11 +724,9 @@ json delegation_row_to_json(sqlite3_stmt* s) {
     entry["delegating_tier"] = col_text(s, 3);
     entry["target_tier"] = col_text(s, 4);
     entry["task"] = col_text(s, 5);
-    auto mt = sqlite3_column_int(s, 6);
-    entry["max_turns"] = (sqlite3_column_type(s, 6) == SQLITE_NULL)
-                             ? json(nullptr) : json(mt);
+    entry["max_turns"] = col_nullable_int(s, 6);
     entry["status"] = col_text(s, 7);
-    entry["result_summary"] = col_opt_text(s, 8).value_or("");
+    entry["result_summary"] = sanitize_storage_utf8(col_opt_text(s, 8).value_or(""));
     entry["created_at"] = col_text(s, 9);
     entry["completed_at"] = col_opt_text(s, 10).value_or("");
     return entry;
@@ -652,7 +741,7 @@ json delegation_row_to_json(sqlite3_stmt* s) {
  * @param s Stepped statement (SELECT * FROM delegations).
  * @return JSON summary object.
  * @utility
- * @version 2.3.7
+ * @version 2.9.10
  */
 json delegation_summary_to_json(sqlite3_stmt* s) {
     json entry;
@@ -663,7 +752,7 @@ json delegation_summary_to_json(sqlite3_stmt* s) {
     entry["target_tier"] = col_text(s, 4);
     entry["task"] = col_text(s, 5);
     entry["status"] = col_text(s, 7);
-    entry["result_summary"] = col_opt_text(s, 8).value_or("");
+    entry["result_summary"] = sanitize_storage_utf8(col_opt_text(s, 8).value_or(""));
     entry["completed_at"] = col_opt_text(s, 10).value_or("");
     return entry;
 }

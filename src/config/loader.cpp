@@ -83,6 +83,27 @@ static void parse_sampler_overrides(
 }
 
 /**
+ * @brief Parse the per-tier `speculative.mtp` override (gh#108, v2.9.4).
+ *
+ * Nested under `models.<tier>.speculative.mtp` — a tier-scoped mirror of
+ * the global `inference.speculative.mtp` flag. nullopt (key absent) means
+ * inherit the global value; `resolve_mtp_effective` applies the precedence.
+ *
+ * @param node YAML node for a single tier.
+ * @param[out] config Output tier config.
+ * @internal
+ * @version 2.9.4
+ */
+static void parse_tier_speculative_override(
+    ryml::ConstNodeRef node, TierConfig& config)
+{
+    if (!node.has_child("speculative")) { return; }
+    auto spec = node["speculative"];
+    bool mtp = false;
+    if (extract(spec, "mtp", mtp)) { config.speculative_mtp = mtp; }
+}
+
+/**
  * @brief Resolve `config.path` from an explicit `path:` or a selector (gh#62).
  *
  * Precedence: an explicit `path:` (bundled key or literal path) wins.
@@ -167,12 +188,18 @@ static std::string parse_model_config(
 
 /**
  * @brief Parse a TierConfig from a YAML node.
+ *
+ * gh#108 (v2.9.4): also parses the per-tier `speculative.mtp` override and
+ * rejects a tier that statically combines `speculative.mtp=true` with a
+ * static `grammar` — that combination fails every request at generate-time
+ * (MTP does not enforce GBNF), so it's caught here instead.
+ *
  * @param node YAML node containing tier fields.
  * @param registry Bundled models for path resolution.
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.7.3
+ * @version 2.9.4
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -187,12 +214,25 @@ static std::string parse_tier_config(
     // gh#94 (v2.7.3): per-tier sampler overrides live on TierConfig.
     parse_sampler_overrides(node, config);
 
+    // gh#108 (v2.9.4): per-tier speculative.mtp override.
+    parse_tier_speculative_override(node, config);
+
     extract_tri_state_path(node, "identity",
                            config.identity, config.identity_disabled);
 
     std::string grammar_str;
     if (extract(node, "grammar", grammar_str)) {
         config.grammar = expand_home(std::filesystem::path(grammar_str));
+    }
+
+    // gh#108 (v2.9.4): a tier that statically opts into MTP while also
+    // statically configuring a grammar would fail every request (MTP does
+    // not enforce GBNF) — catch that at load time instead of per-call.
+    if (config.speculative_mtp && *config.speculative_mtp
+        && config.grammar.has_value()) {
+        return "speculative.mtp=true is incompatible with a static grammar "
+               "on this tier (MTP does not enforce GBNF constraints); "
+               "remove speculative.mtp or the grammar for this tier";
     }
 
     std::string auto_chain_str;
@@ -420,7 +460,7 @@ static std::string parse_mcp_config(
  * @param[out] config Output generation config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.5.0
+ * @version 2.9.6
  */
 static std::string parse_generation_config(
     ryml::ConstNodeRef node,
@@ -432,6 +472,8 @@ static std::string parse_generation_config(
     // gh#80 (v2.5.0): thinking-budget knobs (validated in build_loop_config).
     extract(node, "budget_mode", config.budget_mode);
     extract(node, "budget_limit", config.budget_limit);
+    // gh#110 (v2.9.6): batch vs streaming agent-loop delivery mode.
+    extract(node, "stream_output", config.stream_output);
     return "";
 }
 
@@ -705,7 +747,7 @@ std::string parse_config_file(
  * @param[in,out] config Config to populate.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.0
+ * @version 2.9.5
  */
 static std::string load_bundled_default(
     const std::filesystem::path& global_path,
@@ -723,8 +765,13 @@ static std::string load_bundled_default(
     auto err = parse_config_file(bundled, registry, config);
     if (!err.empty()) { return "bundled default: " + err; }
 
-    // Auto-create global config so this only happens once
-    if (!std::filesystem::exists(global_path)) {
+    // Auto-create global config so this only happens once. gh#109
+    // follow-up: load_layered() intentionally passes an empty global_path
+    // (it doesn't want the auto-create side effect) — exists("") is
+    // always false, so without this guard every fresh-install call
+    // through load_layered (no ~/.entropic/config.yaml yet) threw
+    // filesystem_error trying to create_directories("").
+    if (!global_path.empty() && !std::filesystem::exists(global_path)) {
         auto parent = global_path.parent_path();
         std::filesystem::create_directories(parent);
         std::filesystem::copy_file(bundled, global_path);

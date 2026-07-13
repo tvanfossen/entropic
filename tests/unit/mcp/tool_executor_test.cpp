@@ -856,6 +856,27 @@ static int noop_post_cb(
     return 0;
 }
 
+/**
+ * @brief Hook that emits malformed UTF-8 as its transform.
+ *
+ * gh#111 (v2.9.7): a hook's transformed result is an inbound boundary
+ * crossing a plugin .so, same as an MCP tool result. Before the fix,
+ * ToolExecutor::fire_post_tool_hook assigned ``out`` straight to
+ * ``msg.content`` with no sanitize_utf8 call, letting a hook-introduced
+ * invalid byte sequence (0xC3 not followed by a valid continuation
+ * byte) reach a later ``nlohmann::json::dump()`` and throw
+ * type_error 316.
+ *
+ * @internal
+ * @version 2.9.7
+ */
+static int malformed_utf8_post_cb(
+    entropic_hook_point_t /*hp*/, const char* /*ctx*/,
+    char** mod, void* /*ud*/) {
+    *mod = dup_to_heap("bad byte: \xC3\x28 end");
+    return 0;
+}
+
 } // namespace
 
 SCENARIO("POST_TOOL_CALL hook transforms successful tool result content",
@@ -883,6 +904,41 @@ SCENARIO("POST_TOOL_CALL hook transforms successful tool result content",
                         != std::string::npos);
                 REQUIRE(results[0].content.find("ok")
                         != std::string::npos);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#111: POST_TOOL_CALL hook returning malformed UTF-8 is "
+         "sanitized before it becomes Message::content",
+         "[tool_executor][hooks][regression][2.9.7]") {
+    GIVEN("an executor with a POST_TOOL_CALL hook emitting malformed UTF-8") {
+        auto mgr = make_manager();
+        LoopConfig lc;
+        lc.auto_approve_tools = true;
+        EngineCallbacks cb;
+        ToolExecutor executor(mgr, lc, cb);
+
+        HookRegistry reg;
+        reg.register_hook(ENTROPIC_HOOK_POST_TOOL_CALL,
+                          malformed_utf8_post_cb, nullptr, 0);
+        attach_registry(executor, reg);
+
+        WHEN("a successful tool call is processed") {
+            LoopContext ctx;
+            auto results = executor.process_tool_calls(
+                ctx, {make_call("ok.do_thing")});
+
+            THEN("the raw malformed sequence does not survive verbatim") {
+                REQUIRE(results.size() == 1);
+                REQUIRE(results[0].content.find("\xC3\x28")
+                        == std::string::npos);
+            }
+            THEN("the sanitized content can be JSON-dumped without throwing") {
+                nlohmann::json arr = nlohmann::json::array();
+                arr.push_back({{"role", "tool"},
+                               {"content", results[0].content}});
+                REQUIRE_NOTHROW(arr.dump());
             }
         }
     }

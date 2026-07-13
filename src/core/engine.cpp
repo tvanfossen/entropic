@@ -7,6 +7,7 @@
 
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
+#include <entropic/core/delegate_hook_payload.h>
 #include <entropic/core/sandbox.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
@@ -1345,9 +1346,10 @@ static std::vector<ToolCall> decode_tool_calls_json(
  * objects with populated name, id, and arguments fields.
  *
  * @param raw_content Raw model output string.
- * @return Pair of (cleaned content, fully-parsed tool call vector).
+ * @return Pair of (cleaned content, fully-parsed tool call vector), both
+ *         guaranteed valid UTF-8 (gh#111 sanitize boundary).
  * @utility
- * @version 2.0.2
+ * @version 2.9.8
  */
 std::pair<std::string, std::vector<ToolCall>>
 AgentEngine::parse_tool_calls(const std::string& raw_content) {
@@ -1361,8 +1363,27 @@ AgentEngine::parse_tool_calls(const std::string& raw_content) {
         raw_content.c_str(), &cleaned, &tc_json,
         inference_.adapter_data);
 
-    std::string cleaned_str = cleaned ? cleaned : raw_content;
-    std::string tc_str = tc_json ? tc_json : "[]";
+    // gh#111 (v2.9.8): the tool-call parse callback is a SEPARATE inbound
+    // boundary from response_generator's content sanitize. The backend derives
+    // both `*cleaned` and `*tool_calls_json` from its own parse of the RAW
+    // generation (common_chat / adapter parse_response), so a split multi-byte
+    // UTF-8 codepoint — routine under MTP speculative decode — arrives here as
+    // invalid bytes EVEN THOUGH result.content was already sanitized upstream
+    // (response_generator.cpp:470). Both outputs cross into engine-owned state
+    // at this one function:
+    //   cleaned_str -> assistant Message.content -> (delegation) extract_summary
+    //                  fallback -> DelegationResult.summary
+    //                  -> fire_delegate_complete_hook j.dump()  [the gh#111 throw]
+    //   tc_str      -> decode_tool_calls_json -> build_tool_call_from_json
+    //                  obj["arguments"].dump() + CompleteTool result.dump()
+    // v2.9.7 patched only the plugin-revised (out!=null) hook branches, which
+    // never run on the headless path — so the raw summary still reached the
+    // dump. Sanitize BOTH channels at this single boundary (the tool-call-channel
+    // sibling of the content sanitize) so no downstream nlohmann::json::dump()
+    // can throw type_error.316. (gh#3 recurrence.)
+    std::string cleaned_str =
+        mcp::sanitize_utf8(cleaned ? cleaned : raw_content);
+    std::string tc_str = mcp::sanitize_utf8(tc_json ? tc_json : "[]");
 
     if (inference_.free_fn != nullptr) {
         if (cleaned != nullptr) { inference_.free_fn(cleaned); }
@@ -1704,7 +1725,7 @@ static std::string extract_system_prompt(
  * @param tier Active tier name at the time of generation.
  * @param messages Current conversation messages.
  * @internal
- * @version 2.1.3
+ * @version 2.9.7
  */
 void AgentEngine::fire_post_generate_hook(
     GenerateResult& result,
@@ -1735,7 +1756,12 @@ void AgentEngine::fire_post_generate_hook(
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_POST_GENERATE, json.c_str(), &out);
     if (out != nullptr) {
-        result.content = out;
+        // gh#3 recurrence (v2.9.6): a hook's revised content is an
+        // inbound boundary crossing a plugin .so, same class as the
+        // MCP tool-result boundary — sanitize before it re-enters the
+        // engine so downstream json::dump() (delegate-complete hook,
+        // facade serialization, storage) cannot throw type_error 316.
+        result.content = mcp::sanitize_utf8(out);
         logger->info("POST_GENERATE hook revised content");
         free(out);
     }
@@ -1854,7 +1880,7 @@ static std::string build_tool_results_json(
  * @param ctx Loop context with tool results in messages.
  * @return true if hook cancelled (completion rejected).
  * @internal
- * @version 2.0.6-rc17
+ * @version 2.9.7
  */
 bool AgentEngine::fire_complete_hook(
     const std::string& summary,
@@ -1884,10 +1910,14 @@ bool AgentEngine::fire_complete_hook(
     int rc = hooks_.fire_pre(hooks_.registry,
         ENTROPIC_HOOK_ON_COMPLETE, json.c_str(), &modified);
     if (modified != nullptr) {
-        // Hook provided rejection feedback — inject as user message
+        // Hook provided rejection feedback — inject as user message.
+        // Same inbound-boundary gap as fire_post_generate_hook above:
+        // sanitize the hook's returned bytes before they enter a
+        // Message that later flows to json::dump() call sites.
         Message feedback;
         feedback.role = "user";
-        feedback.content = std::string("[CITATION VALIDATION] ") + modified;
+        feedback.content =
+            std::string("[CITATION VALIDATION] ") + mcp::sanitize_utf8(modified);
         const_cast<LoopContext&>(ctx).messages.push_back(
             std::move(feedback));
         free(modified);
@@ -1919,6 +1949,38 @@ bool AgentEngine::fire_delegate_pre_hook(
     return rc != 0;
 }
 
+// ── detail::build_delegate_complete_json (gh#113, v2.9.9) ──────────────────
+// Extracted from fire_delegate_complete_hook so it can be driven directly in
+// unit tests with a bad-UTF8 summary (simulating gh#112 storage-load path).
+
+/**
+ * @brief Build and dump the ON_DELEGATE_COMPLETE JSON payload.
+ *
+ * v2.9.9 sink guard: summary is sanitized here before j.dump(). Without the
+ * fix, a split MTP codepoint that arrived via storage-loaded context (gh#112
+ * interaction — SQLite loads messages without sanitize; bytes survive
+ * extract_summary into DelegationResult.summary) would throw type_error.316.
+ * v2.9.8 guarded the parse-channel boundary (engine.cpp parse_tool_calls)
+ * but left this dump sink unguarded.
+ *
+ * @return Compact JSON string safe for hook dispatch.
+ * @internal
+ * @version 2.9.9
+ */
+std::string entropic::detail::build_delegate_complete_json(
+    const std::string& target,
+    bool success,
+    const std::string& summary) {
+    nlohmann::json j;
+    j["target_tier"] = target;
+    j["success"] = success;
+    j["result_kind"] = result_kind_to_string(success
+        ? ToolResultKind::ok
+        : ToolResultKind::delegation_failed);
+    j["summary"] = mcp::sanitize_utf8(summary);
+    return j.dump();
+}
+
 /**
  * @brief Fire ON_DELEGATE_COMPLETE post-hook.
  *
@@ -1930,10 +1992,9 @@ bool AgentEngine::fire_delegate_pre_hook(
  *
  * @param target Target tier.
  * @param success Whether delegation succeeded.
- * @param summary Child-loop-produced summary or terminal_reason
- *                (passed verbatim; may be empty).
+ * @param summary Child-loop-produced summary or terminal_reason (verbatim).
  * @internal
- * @version 2.9.9
+ * @version 2.9.9.1
  */
 void AgentEngine::fire_delegate_complete_hook(
     const std::string& target, bool success,
@@ -1941,20 +2002,8 @@ void AgentEngine::fire_delegate_complete_hook(
     if (hooks_.fire_post == nullptr) {
         return;
     }
-    nlohmann::json j;
-    j["target_tier"] = target;
-    j["success"] = success;
-    j["result_kind"] = result_kind_to_string(success
-        ? ToolResultKind::ok
-        : ToolResultKind::delegation_failed);
-    // gh#113 (v2.9.9): sanitize at the dump sink. summary may carry a split
-    // MTP codepoint from storage-loaded context (gh#112 interaction — SQLite
-    // loads messages without sanitize; unsanitized bytes survive extract_summary
-    // and reach this j.dump()). v2.9.8 guarded the parse-channel boundary
-    // (engine.cpp:1383/1385) but left this sink unguarded; the fix is
-    // defense-in-depth at the point of dump.
-    j["summary"] = mcp::sanitize_utf8(summary);
-    std::string json = j.dump();
+    std::string json = detail::build_delegate_complete_json(
+        target, success, summary);
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_ON_DELEGATE_COMPLETE, json.c_str(), &out);

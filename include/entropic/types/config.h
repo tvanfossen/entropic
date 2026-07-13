@@ -492,6 +492,15 @@ struct TierConfig : ModelConfig {
     /// @version 2.8.2
     std::optional<std::string> tool_call_mode;
 
+    /// @brief Per-tier MTP speculative-decode override (gh#108). nullopt =
+    /// inherit `InferenceConfig::speculative.mtp` (the global flag); when
+    /// set, this tier's effective MTP-attempt decision regardless of the
+    /// global value. Lets a consumer keep MTP on globally while opting a
+    /// specific identity/model out (e.g. a grammar-heavy tier that should
+    /// always run plain decode) rather than an all-or-nothing global switch.
+    /// @version 2.9.4
+    std::optional<bool> speculative_mtp;
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").
@@ -719,6 +728,16 @@ struct GenerationConfig {
     /// nudges-then-hard-cuts. Must be > 0 to engage.
     /// @version 2.5.0
     int budget_limit = 0;
+
+    /// @brief gh#110 (v2.9.6) agent-loop token delivery mode: true
+    /// streams tokens via the per-token callback path, false batches
+    /// the full response. Default true preserves existing behavior.
+    /// MTP/speculative decoding rejects streaming calls (the
+    /// thinking-channel strip is a post-buffer operation) — set this
+    /// false to make the agent loop reachable by
+    /// inference.speculative.mtp.
+    /// @version 2.9.6
+    bool stream_output = true;
 };
 
 /**

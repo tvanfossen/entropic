@@ -1306,19 +1306,30 @@ std::vector<std::string> LlamaCppBackend::effective_stop(
  * it into reasoning so the user-facing content is clean. No-op for any content
  * without the markers — safe for every non-channel family. (gh#106, v2.9.0)
  *
+ * gh#108 (v2.9.4): when a channel opens but never closes (generation hit
+ * max_tokens while still inside the reasoning block — a real non-convergence
+ * case seen on some quant/MTP combos, not just a hypothetical), everything
+ * from the open marker onward is still treated as reasoning and erased —
+ * correct, since no actual answer was ever produced — but this used to be
+ * silent: a caller saw only an empty `content` with no signal WHY. Now logs
+ * a WARN so this is diagnosable instead of indistinguishable from any other
+ * empty-content cause.
+ *
  * @param content [in,out] Content to clean (channel spans removed in place).
  * @param reasoning_out [in,out,nullable] Accumulates the stripped reasoning text.
  * @utility
- * @version 2.9.0
+ * @version 2.9.4
  */
 void strip_thinking_channels(std::string& content, std::string* reasoning_out) {
     static const std::string kOpen = "<|channel>";
     static const std::string kClose = "<channel|>";
     bool stripped = false;
+    bool truncated_unclosed = false;
     std::size_t pos;
     while ((pos = content.find(kOpen)) != std::string::npos) {
         stripped = true;
         std::size_t end = content.find(kClose, pos + kOpen.size());
+        if (end == std::string::npos) { truncated_unclosed = true; }
         std::size_t span_end =
             (end == std::string::npos) ? content.size() : end + kClose.size();
         if (reasoning_out != nullptr) {
@@ -1332,6 +1343,13 @@ void strip_thinking_channels(std::string& content, std::string* reasoning_out) {
     if (stripped) {
         std::size_t nb = content.find_first_not_of(" \t\r\n");
         content.erase(0, nb == std::string::npos ? content.size() : nb);
+    }
+    if (truncated_unclosed && content.empty()) {
+        logger->warn("strip_thinking_channels: generation hit max_tokens "
+                     "while still inside a <|channel> reasoning block — no "
+                     "answer was ever produced, so content is empty (not a "
+                     "parse error). Raise max_tokens or investigate why this "
+                     "config/prompt doesn't converge within budget.");
     }
 }
 
@@ -3839,12 +3857,17 @@ GenerationResult mtp_run_from_tokens(
  * @brief Validate the MTP run preconditions (gh#108). Returns an OK result to
  *        proceed, or a typed loud error (no fallback) when MTP cannot run.
  *
- * Order: ACTIVE → envelope (temp/grammar/streaming) → head setup →
+ * Order: ACTIVE → envelope (grammar/streaming) → head setup →
  * draft-window bound. Runs the envelope check BEFORE loading the head so a
  * misconfigured call fails fast without a wasted GGUF load. gh#108 (v2.9.2):
  * tools are NO LONGER guarded (MTP+tools is lossless-correct; stops now honored).
+ * gh#108 (v2.9.3): flash_attn is NO LONGER guarded — the extern/llama.cpp pin
+ * is past upstream #25148, which fixes the GQA-2 flash-attn abort the guard
+ * existed for. gh#108 (v2.9.4): temperature is NO LONGER guarded — the MTP
+ * draft proposal is a deterministic point mass (see mtp_envelope.h), so the
+ * existing exact-match accept step is already lossless at any temperature.
  * @internal
- * @version 2.9.2
+ * @version 2.9.4
  */
 GenerationResult LlamaCppBackend::mtp_guard(
     const GenerationParams& params,
@@ -3853,7 +3876,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
     GenerationResult r;  // ENTROPIC_OK by default → proceed
     std::string reason = mtp_unsupported_reason(
         params.temperature, !params.grammar.empty(),
-        static_cast<bool>(on_token), config().flash_attn);
+        static_cast<bool>(on_token));
     if (!is_active()) {
         r = spec_error(ENTROPIC_ERROR_INVALID_STATE,
                        "MTP requires an ACTIVE target");

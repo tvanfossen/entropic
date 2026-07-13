@@ -57,9 +57,12 @@ std::string configure_mtp_route(ModelTestContext& ctx) {
     tier.adapter = "gemma4";
     tier.gpu_layers = 99;
     tier.context_length = 4096;
-    tier.flash_attn = false;     // gh#108: MTP head aborts the flash kernel on this pin
-    tier.cache_type_k = "f16";   // gh#108: MTP is locked to f16 KV — quantized V
-    tier.cache_type_v = "f16";   // cache requires flash, which MTP can't use
+    // gh#108 (v2.9.3): flash+q4 KV both work now (extern/llama.cpp past upstream
+    // #25148); left flash-off/f16 here since this test's purpose is orchestrator
+    // routing/wiring, not perf — see test_gh108_mtp_guards.cpp for the flash case.
+    tier.flash_attn = false;
+    tier.cache_type_k = "f16";
+    tier.cache_type_v = "f16";
     tier.grammar.reset();        // greedy, unconstrained — the MTP envelope
     auto& spec = ctx.config.inference.speculative;
     spec.enabled = true;
@@ -145,10 +148,19 @@ TEST_CASE("gh#108 MTP engages with tools staged through orchestrator (agent loop
     u.role = "user";
     u.content = "You must call the read_file tool to read /etc/hostname.";
     auto params = greedy_params();
-    params.max_tokens = 200;
-    params.tools = R"([{"type":"function","function":{"name":"read_file",)"
-                   R"("description":"Read a file","parameters":{"type":"object",)"
-                   R"("properties":{"path":{"type":"string"}},"required":["path"]}}}])";
+    // gh#108: 200 was too tight once tools actually render (was masked by the
+    // schema bug below never staging a real tool at all) — gemma4's thinking
+    // chain can exceed 200 before reaching the call, leaving content empty.
+    params.max_tokens = 500;
+    // gh#108 fix: GenerationParams.tools expects entropic's native MCP shape
+    // {name, description, inputSchema} (see mcp_tools_to_common_chat in
+    // llama_cpp_backend.cpp) — NOT OpenAI's {type:"function", function:{...}}
+    // wire format. The latter silently parses to 0 tools (t.value("name","")
+    // finds nothing at the top level, every entry gets skipped), so this call
+    // previously rendered tool-LESS despite staging 154 bytes of JSON.
+    params.tools = R"([{"name":"read_file","description":"Read a file",)"
+                   R"("inputSchema":{"type":"object","properties":{"path":)"
+                   R"({"type":"string"}},"required":["path"]}}])";
 
     auto r = ctx.orchestrator->generate({u}, params, tier_name);
     std::printf("\n===gh108 MTP route + tools===\ncode=%d drafted=%d calls=%zu\n[%s]\n===\n",
@@ -157,9 +169,69 @@ TEST_CASE("gh#108 MTP engages with tools staged through orchestrator (agent loop
     // The reachability gate: MTP ENGAGED through the tooled orchestrator path
     // instead of loud-failing (v2.9.1 would have returned code 54 here). The
     // orchestrator parses the MTP result via apply_adapter_parse exactly as for
-    // plain decode (MTP is lossless → identical content → identical parse); the
-    // tool-call EXTRACTION itself is gated by test_gh108_mtp_guards (direct).
-    // The small Q8 base model's tool FORMAT is too unreliable to hard-assert here.
+    // plain decode (MTP is lossless → identical content → identical parse).
+    // gh#108 (v2.9.3): previously hedged as "tool FORMAT too unreliable to
+    // hard-assert" — root-caused to this test staging OpenAI-shaped JSON
+    // against an API that expects entropic's native MCP shape, silently
+    // rendering tool-LESS every time. Fixed (see params.tools above); now a
+    // real tool call reliably parses, so this asserts it directly.
     REQUIRE(r.error_code == 0);  // NOT a loud refusal — tools are allowed under MTP
     REQUIRE(r.n_drafted > 0);    // MTP actually ran with tools staged
+    REQUIRE(r.tool_calls.size() == 1);
+    CHECK(r.tool_calls[0].name == "read_file");
+}
+
+TEST_CASE("gh#108 per-tier speculative_mtp=false overrides the global flag",
+          "[model][gh108][mtp][route][tier-override]") {
+    // v2.9.4: a tier can opt OUT of MTP even when speculative.{enabled,mtp}
+    // are globally true — e.g. an identity/model combo that always wants
+    // plain decode. Confirms resolve_mtp_effective's per-tier precedence
+    // through the real orchestrator dispatch, not just the pure function.
+    ModelTestContext ctx;
+    auto tier_name = configure_mtp_route(ctx);
+    ctx.config.models.tiers[tier_name].speculative_mtp = false;
+    if (!init_orchestrator(ctx)) {
+        SKIP("orchestrator init failed (resource/config) — route untested");
+    }
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = "Say hello.";
+    auto r = ctx.orchestrator->generate({u}, greedy_params(), tier_name);
+
+    std::printf("\n===gh108 per-tier mtp=false===\ncode=%d drafted=%d\n===\n",
+                r.error_code, r.n_drafted);
+    REQUIRE(r.error_code == 0);
+    REQUIRE_FALSE(r.content.empty());
+    // Plain decode ran instead of MTP — n_drafted stays 0 (only generate_mtp
+    // populates it).
+    REQUIRE(r.n_drafted == 0);
+}
+
+TEST_CASE("gh#108 a request-level grammar falls back to plain decode on an "
+          "MTP-effective tier (no loud error)",
+          "[model][gh108][mtp][route][grammar]") {
+    // v2.9.4: the request-level safety net — a tier with MTP effectively on
+    // (global speculative.mtp=true here, no per-tier override) still
+    // succeeds via plain decode when a SPECIFIC call carries a dynamic
+    // grammar (e.g. the constitutional validator's critique call), instead
+    // of propagating ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG.
+    ModelTestContext ctx;
+    auto tier_name = configure_mtp_route(ctx);
+    if (!init_orchestrator(ctx)) {
+        SKIP("orchestrator init failed (resource/config) — route untested");
+    }
+
+    entropic::Message u;
+    u.role = "user";
+    u.content = "Say ok.";
+    auto params = greedy_params();
+    params.grammar = "root ::= \"ok\"";
+    auto r = ctx.orchestrator->generate({u}, params, tier_name);
+
+    std::printf("\n===gh108 grammar-on-mtp-tier===\ncode=%d drafted=%d [%s]\n===\n",
+                r.error_code, r.n_drafted, r.content.c_str());
+    REQUIRE(r.error_code == 0);  // NOT INCOMPATIBLE_CONFIG
+    REQUIRE_FALSE(r.content.empty());
+    REQUIRE(r.n_drafted == 0);   // plain decode ran, not generate_mtp
 }

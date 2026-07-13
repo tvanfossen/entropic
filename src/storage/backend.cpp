@@ -714,7 +714,7 @@ namespace {
  * @param s Stepped statement (SELECT * FROM delegations).
  * @return JSON delegation object (all columns).
  * @utility
- * @version 2.9.10
+ * @version 2.9.11
  */
 json delegation_row_to_json(sqlite3_stmt* s) {
     json entry;
@@ -723,7 +723,7 @@ json delegation_row_to_json(sqlite3_stmt* s) {
     entry["child_conversation_id"] = col_text(s, 2);
     entry["delegating_tier"] = col_text(s, 3);
     entry["target_tier"] = col_text(s, 4);
-    entry["task"] = col_text(s, 5);
+    entry["task"] = sanitize_storage_utf8(col_text(s, 5));
     entry["max_turns"] = col_nullable_int(s, 6);
     entry["status"] = col_text(s, 7);
     entry["result_summary"] = sanitize_storage_utf8(col_opt_text(s, 8).value_or(""));
@@ -741,7 +741,7 @@ json delegation_row_to_json(sqlite3_stmt* s) {
  * @param s Stepped statement (SELECT * FROM delegations).
  * @return JSON summary object.
  * @utility
- * @version 2.9.10
+ * @version 2.9.11
  */
 json delegation_summary_to_json(sqlite3_stmt* s) {
     json entry;
@@ -750,7 +750,7 @@ json delegation_summary_to_json(sqlite3_stmt* s) {
     entry["child_conversation_id"] = col_text(s, 2);
     entry["delegating_tier"] = col_text(s, 3);
     entry["target_tier"] = col_text(s, 4);
-    entry["task"] = col_text(s, 5);
+    entry["task"] = sanitize_storage_utf8(col_text(s, 5));
     entry["status"] = col_text(s, 7);
     entry["result_summary"] = sanitize_storage_utf8(col_opt_text(s, 8).value_or(""));
     entry["completed_at"] = col_opt_text(s, 10).value_or("");

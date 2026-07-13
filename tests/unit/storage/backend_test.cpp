@@ -472,3 +472,128 @@ SCENARIO("gh#112/gh#113: get_delegation_by_id sanitizes invalid UTF-8 in "
         }
     }
 }
+
+// ── gh#114 (v2.9.11): task field also needs UTF-8 sanitize at read boundary ──
+//
+// gh#112 sanitized result_summary but left the task column unsanitized.
+// The task description is model-generated (MTP-enabled runs produce it via
+// a delegation tool-call); split codepoints land in delegations.task via
+// create_delegation → bind_delegation_insert → sqlite3_bind_text (no check).
+// On the read side, delegation_row_to_json returns
+//   entry["task"] = col_text(s, 5)     // ← raw, no sanitize
+// and the caller's arr.dump() / entry.dump() throws type_error.316.
+//
+// Consumer symptom: crash after "follow-up recall party on accumulated stores"
+// — engine calls get_delegations / search_delegations to recall prior work
+// after a multi-delegation session where MTP split a codepoint in a task field.
+//
+// RED/GREEN protocol:
+//   RED:   unfixed code — get_delegations / get_delegation_by_id / search_delegations
+//          all throw type_error.316 when the stored task has bad UTF-8.
+//   GREEN: fix applied — sanitize_storage_utf8() on task at read boundary in
+//          both delegation_row_to_json and delegation_summary_to_json; bad bytes
+//          replaced with U+FFFD replacement character.
+
+SCENARIO("gh#114: get_delegations sanitizes invalid UTF-8 in task field "
+         "at the storage read boundary (v2.9.11 permanent fix)",
+         "[storage][backend][gh114][utf8][regression][2.9.11]") {
+    // Same MTP split-codepoint pattern as gh#112/gh#113: 3-byte CJK sequence
+    // with the final continuation byte replaced by ASCII '.' — exact shape of
+    // what MTP emits when a Chinese/Japanese token is split at a batch boundary.
+    const std::string kSplitTask =
+        std::string("Summarise the ") + "\xE6\x9E\x2E" + " module findings";
+    const std::string kLoneContTask =
+        std::string("Analyse results\x80 of run");
+    const std::string kTruncatedTask =
+        std::string("Compare with baseline \xE4\xB8");
+
+    GIVEN("a delegation whose task has a split MTP codepoint in the description") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh114 split-task parent");
+        std::string del_id, child;
+        // create_delegation stores task via sqlite3_bind_text — no UTF-8 check.
+        // This is the production path: engine builds a delegation tool-call
+        // with MTP-produced task text and calls create_delegation.
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", kSplitTask, 0, del_id, child));
+        t.storage.complete_delegation(del_id, "completed", "clean summary");
+
+        WHEN("get_delegations reads all delegations for the parent") {
+            std::string out;
+            bool ok = t.storage.get_delegations(parent, out);
+
+            THEN("it succeeds without throwing type_error.316") {
+                REQUIRE(ok);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+            AND_THEN("task field is valid UTF-8 (bad bytes replaced)") {
+                REQUIRE(ok);
+                auto arr = json::parse(out);
+                REQUIRE(arr.size() == 1);
+                nlohmann::json probe;
+                probe["task"] = arr[0]["task"].get<std::string>();
+                REQUIRE_NOTHROW(probe.dump());
+            }
+            AND_THEN("clean fields (id, status) are not mangled") {
+                REQUIRE(ok);
+                auto arr = json::parse(out);
+                CHECK(arr[0]["id"] == del_id);
+                CHECK(arr[0]["status"] == "completed");
+            }
+        }
+
+        WHEN("get_delegation_by_id reads the same row") {
+            std::string out;
+            bool found = t.storage.get_delegation_by_id(del_id, out);
+            THEN("dump does not throw type_error.316") {
+                REQUIRE(found);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+        }
+    }
+
+    GIVEN("a delegation task with a lone continuation byte") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh114 lone-cont-task parent");
+        std::string del_id, child;
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", kLoneContTask, 0, del_id, child));
+
+        WHEN("get_delegations is called") {
+            std::string out;
+            bool ok = t.storage.get_delegations(parent, out);
+            THEN("dump does not throw type_error.316") {
+                REQUIRE(ok);
+                REQUIRE_NOTHROW(json::parse(out).dump());
+            }
+        }
+    }
+
+    GIVEN("a delegation task with a truncated multi-byte sequence") {
+        TempStorage t;
+        auto parent = t.storage.create_conversation("gh114 truncated-task parent");
+        std::string del_id, child;
+        REQUIRE(t.storage.create_delegation(
+            parent, "lead", "researcher", kTruncatedTask, 0, del_id, child));
+        // search_delegations finds rows by result_summary; give it a clean one
+        t.storage.complete_delegation(del_id, "completed", "clean-searchable-summary");
+
+        WHEN("search_delegations returns the row (bad task, clean summary)") {
+            std::string out;
+            bool ok = t.storage.search_delegations("clean-searchable-summary", 5, out);
+            THEN("dump does not throw type_error.316") {
+                REQUIRE(ok);
+                auto arr = json::parse(out);
+                REQUIRE(arr.size() >= 1);
+                REQUIRE_NOTHROW(arr.dump());
+            }
+            AND_THEN("task field is valid UTF-8") {
+                REQUIRE(ok);
+                auto arr = json::parse(out);
+                nlohmann::json probe;
+                probe["task"] = arr[0]["task"].get<std::string>();
+                REQUIRE_NOTHROW(probe.dump());
+            }
+        }
+    }
+}

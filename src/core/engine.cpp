@@ -7,6 +7,7 @@
 
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
+#include <entropic/core/delegate_hook_payload.h>
 #include <entropic/core/sandbox.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
@@ -1948,6 +1949,38 @@ bool AgentEngine::fire_delegate_pre_hook(
     return rc != 0;
 }
 
+// ── detail::build_delegate_complete_json (gh#113, v2.9.9) ──────────────────
+// Extracted from fire_delegate_complete_hook so it can be driven directly in
+// unit tests with a bad-UTF8 summary (simulating gh#112 storage-load path).
+
+/**
+ * @brief Build and dump the ON_DELEGATE_COMPLETE JSON payload.
+ *
+ * v2.9.9 sink guard: summary is sanitized here before j.dump(). Without the
+ * fix, a split MTP codepoint that arrived via storage-loaded context (gh#112
+ * interaction — SQLite loads messages without sanitize; bytes survive
+ * extract_summary into DelegationResult.summary) would throw type_error.316.
+ * v2.9.8 guarded the parse-channel boundary (engine.cpp parse_tool_calls)
+ * but left this dump sink unguarded.
+ *
+ * @return Compact JSON string safe for hook dispatch.
+ * @internal
+ * @version 2.9.9
+ */
+std::string entropic::detail::build_delegate_complete_json(
+    const std::string& target,
+    bool success,
+    const std::string& summary) {
+    nlohmann::json j;
+    j["target_tier"] = target;
+    j["success"] = success;
+    j["result_kind"] = result_kind_to_string(success
+        ? ToolResultKind::ok
+        : ToolResultKind::delegation_failed);
+    j["summary"] = mcp::sanitize_utf8(summary);
+    return j.dump();
+}
+
 /**
  * @brief Fire ON_DELEGATE_COMPLETE post-hook.
  *
@@ -1959,10 +1992,9 @@ bool AgentEngine::fire_delegate_pre_hook(
  *
  * @param target Target tier.
  * @param success Whether delegation succeeded.
- * @param summary Child-loop-produced summary or terminal_reason
- *                (passed verbatim; may be empty).
+ * @param summary Child-loop-produced summary or terminal_reason (verbatim).
  * @internal
- * @version 2.9.9
+ * @version 2.9.9.1
  */
 void AgentEngine::fire_delegate_complete_hook(
     const std::string& target, bool success,
@@ -1970,20 +2002,8 @@ void AgentEngine::fire_delegate_complete_hook(
     if (hooks_.fire_post == nullptr) {
         return;
     }
-    nlohmann::json j;
-    j["target_tier"] = target;
-    j["success"] = success;
-    j["result_kind"] = result_kind_to_string(success
-        ? ToolResultKind::ok
-        : ToolResultKind::delegation_failed);
-    // gh#113 (v2.9.9): sanitize at the dump sink. summary may carry a split
-    // MTP codepoint from storage-loaded context (gh#112 interaction — SQLite
-    // loads messages without sanitize; unsanitized bytes survive extract_summary
-    // and reach this j.dump()). v2.9.8 guarded the parse-channel boundary
-    // (engine.cpp:1383/1385) but left this sink unguarded; the fix is
-    // defense-in-depth at the point of dump.
-    j["summary"] = mcp::sanitize_utf8(summary);
-    std::string json = j.dump();
+    std::string json = detail::build_delegate_complete_json(
+        target, success, summary);
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,
         ENTROPIC_HOOK_ON_DELEGATE_COMPLETE, json.c_str(), &out);

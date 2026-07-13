@@ -7,6 +7,7 @@
 
 #include <entropic/core/engine.h>
 #include <entropic/core/delegation.h>
+#include <entropic/core/delegate_hook_payload.h>
 #include <entropic/core/engine_types.h>
 #include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
@@ -2431,6 +2432,123 @@ SCENARIO("gh#111: raw UTF-8 in backend-cleaned content is sanitized before it "
             THEN("the raw split codepoint did not survive into any message") {
                 REQUIRE_FALSE(gh111::any_raw_bytes(result));
             }
+        }
+    }
+}
+
+// ── gh#113 (v2.9.9): build_delegate_complete_json sink guard ─────────────────
+//
+// gh#111's parse_cleaned_override path goes through v2.9.8's
+// cleaned_str = mcp::sanitize_utf8(...) in parse_tool_calls, so by the time
+// extract_summary reads the child's last assistant message the bytes are already
+// clean. The gh#113 crash path is DIFFERENT: storage-loaded context (gh#112 —
+// SQLite loads messages WITHOUT sanitize) seeds child_ctx.messages directly,
+// bypassing the parse channel entirely. extract_summary returns the raw bytes →
+// DelegationResult.summary → fire_delegate_complete_hook → j.dump() throws
+// type_error.316 BEFORE hooks_.fire_post is ever dispatched.
+//
+// We test the extracted build_delegate_complete_json seam directly, which is
+// the EXACT code path that fire_delegate_complete_hook calls. This lets us
+// inject a storage-derived bad-UTF8 summary without a storage backend.
+//
+// RED/GREEN protocol (verified manually, see commit message):
+//   RED:   revert  j["summary"] = mcp::sanitize_utf8(summary)
+//          to      j["summary"] = summary
+//          in delegate_hook_payload.h — all REQUIRE_NOTHROW cases fail.
+//   GREEN: restore j["summary"] = mcp::sanitize_utf8(summary) — all pass.
+
+namespace gh113 {
+
+// Production crash input: gemma4_e4b_qat + MTP, deep lead→researcher.
+// MTP split a 3-byte CJK codepoint at the token boundary; only the first
+// two lead bytes (0xE6 0x9E) survived before a '.' (0x2E) ASCII byte.
+// JSON prefix for tier "researcher": {"target_tier":"researcher","success":true,
+// "result_kind":"ok","summary":"  = 73 bytes.
+// 0x2E at JSON index 200 → summary[127] = 0x2E where continuation expected.
+static const std::string kProductionCrash =
+    std::string(125, 'a') + "\xE6\x9E\x2E" + "rest";  // 125 clean + split + rest
+
+// Lone continuation byte — different invalid class from a split lead sequence.
+static const std::string kLoneContinuation =
+    std::string("ok result ") + "\x80" + " done";
+
+// Truncated 3-byte sequence at end-of-string (no continuation bytes at all).
+static const std::string kTruncatedAtEnd =
+    std::string("summary ends with ") + "\xE4\xB8";
+
+}  // namespace gh113
+
+SCENARIO("gh#113: build_delegate_complete_json sanitizes summary at dump sink "
+         "(v2.9.9 fix — RED on unfixed, GREEN after)",
+         "[engine][gh113][utf8][regression][2.9.9]") {
+    // This is the EXACT function called by fire_delegate_complete_hook before
+    // dispatching to hooks_.fire_post. Testing it directly simulates the
+    // storage-load path (gh#112) that bypasses v2.9.8's parse-channel guard.
+
+    GIVEN("the production crash input: 125 clean bytes + split 3-byte CJK + '.'") {
+        // Without fix: j["summary"]=summary; j.dump() throws type_error.316
+        // at index 200 (73-byte JSON prefix + 125 'a' + 2 lead bytes = 200).
+        WHEN("built as a successful researcher delegation") {
+            THEN("no type_error.316 escapes the dump sink") {
+                REQUIRE_NOTHROW(entropic::detail::build_delegate_complete_json(
+                    "researcher", true, gh113::kProductionCrash));
+            }
+            AND_THEN("result round-trips through nlohmann::json::parse") {
+                auto payload = entropic::detail::build_delegate_complete_json(
+                    "researcher", true, gh113::kProductionCrash);
+                auto parsed = nlohmann::json::parse(payload);
+                CHECK(parsed["target_tier"] == "researcher");
+                CHECK(parsed["success"] == true);
+                CHECK(parsed["result_kind"] == "ok");
+                CHECK_FALSE(parsed["summary"].get<std::string>().empty());
+            }
+        }
+        WHEN("built as a failed delegation (delegation_failed result_kind)") {
+            THEN("no type_error.316 escapes on the failure path either") {
+                REQUIRE_NOTHROW(entropic::detail::build_delegate_complete_json(
+                    "researcher", false, gh113::kProductionCrash));
+            }
+            AND_THEN("result_kind is delegation_failed, not ok") {
+                auto payload = entropic::detail::build_delegate_complete_json(
+                    "researcher", false, gh113::kProductionCrash);
+                auto parsed = nlohmann::json::parse(payload);
+                CHECK(parsed["success"] == false);
+                CHECK(parsed["result_kind"] == "delegation_failed");
+            }
+        }
+    }
+
+    GIVEN("a lone continuation byte in the summary (different invalid class)") {
+        THEN("no type_error.316 escapes") {
+            REQUIRE_NOTHROW(entropic::detail::build_delegate_complete_json(
+                "lead", true, gh113::kLoneContinuation));
+        }
+    }
+
+    GIVEN("a truncated 3-byte sequence at end-of-string") {
+        THEN("no type_error.316 escapes") {
+            REQUIRE_NOTHROW(entropic::detail::build_delegate_complete_json(
+                "analyst", true, gh113::kTruncatedAtEnd));
+        }
+    }
+
+    GIVEN("an empty summary (delegation with no output)") {
+        THEN("payload is valid and summary field is empty string") {
+            auto payload = entropic::detail::build_delegate_complete_json(
+                "researcher", true, "");
+            REQUIRE_NOTHROW(nlohmann::json::parse(payload));
+            auto parsed = nlohmann::json::parse(payload);
+            CHECK(parsed["summary"].get<std::string>().empty());
+        }
+    }
+
+    GIVEN("a fully clean summary (regression: clean input must survive unchanged)") {
+        const std::string clean = "Completed the analysis. Found 3 items.";
+        THEN("clean content is not mangled by the sanitizer") {
+            auto payload = entropic::detail::build_delegate_complete_json(
+                "researcher", true, clean);
+            auto parsed = nlohmann::json::parse(payload);
+            CHECK(parsed["summary"].get<std::string>() == clean);
         }
     }
 }

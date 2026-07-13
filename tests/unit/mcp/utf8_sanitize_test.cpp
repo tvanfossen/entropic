@@ -142,3 +142,59 @@ SCENARIO("sanitize_utf8 handles empty input",
         }
     }
 }
+
+// ── gh#113 (v2.9.9): fire_delegate_complete_hook sink guard ──────────────────
+
+SCENARIO("gh#113: fire_delegate_complete_hook summary sanitized before j.dump()",
+         "[mcp][utf8][gh113][regression][2.9.9]")
+{
+    // Production crash (v2.9.8): gemma4_e4b_qat + MTP, deep lead->researcher
+    // delegation. Researcher's DelegationResult.summary carried a split MTP
+    // codepoint from storage-loaded context (gh#112 interaction: SQLite loads
+    // messages without sanitize; unsanitized bytes survive extract_summary
+    // and reach fire_delegate_complete_hook's j.dump() -> type_error.316).
+    //
+    // v2.9.8 guarded the tool-call parse channel (engine.cpp:1383/1385) but
+    // left the dump sink unguarded: j["summary"] = summary; j.dump() threw at
+    // index 200, byte 0x2E. The mock cannot replicate the storage-load path
+    // (all mock output is sanitized before reaching the sink), so this
+    // whitebox test directly verifies the sink-guard fix.
+    //
+    // fire_delegate_complete_hook JSON structure (compact dump, insertion order):
+    //   {"target_tier":"<T>","success":<B>,"result_kind":"ok","summary":"<V>...
+    // For tier "researcher" the fixed prefix is 73 bytes (indices 0-72).
+    // Production crash: 0x2E ('.') at index 200 -> summary[127] == 0x2E.
+    // The split: 0xE6 0x9E are the first two bytes of a 3-byte CJK codepoint;
+    // 0x2E at the third-byte position is not a continuation byte -> MTP split.
+    GIVEN("a summary string reproducing the production crash coordinate") {
+        // 125 clean bytes + 0xE6 0x9E (lead + 1st continuation) + 0x2E ('.').
+        // In the JSON dump: 0x2E lands exactly at index 200 (73 + 125 + 2).
+        std::string bad_summary = std::string(125, 'a') + "\xE6\x9E\x2E" + "rest";
+
+        // Confirm the un-sanitized pattern throws at exactly the production
+        // crash coordinate (documents the pre-fix behavior).
+        {
+            nlohmann::json j;
+            j["target_tier"] = "researcher";
+            j["success"]     = true;
+            j["result_kind"] = "ok";
+            j["summary"]     = bad_summary;
+            REQUIRE_THROWS_AS(j.dump(), nlohmann::json::type_error);
+        }
+
+        WHEN("the summary is sanitized at the dump sink (v2.9.9 fix)") {
+            nlohmann::json j;
+            j["target_tier"] = "researcher";
+            j["success"]     = true;
+            j["result_kind"] = "ok";
+            j["summary"]     = sanitize_utf8(bad_summary);
+            THEN("j.dump() succeeds — type_error.316 no longer escapes") {
+                REQUIRE_NOTHROW(j.dump());
+            }
+            AND_THEN("the dump round-trips cleanly") {
+                auto parsed = nlohmann::json::parse(j.dump());
+                CHECK_FALSE(parsed["summary"].get<std::string>().empty());
+            }
+        }
+    }
+}

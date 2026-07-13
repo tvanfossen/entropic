@@ -1962,7 +1962,7 @@ bool AgentEngine::fire_delegate_pre_hook(
  * @param summary Child-loop-produced summary or terminal_reason
  *                (passed verbatim; may be empty).
  * @internal
- * @version 2.1.4
+ * @version 2.9.9
  */
 void AgentEngine::fire_delegate_complete_hook(
     const std::string& target, bool success,
@@ -1976,7 +1976,13 @@ void AgentEngine::fire_delegate_complete_hook(
     j["result_kind"] = result_kind_to_string(success
         ? ToolResultKind::ok
         : ToolResultKind::delegation_failed);
-    j["summary"] = summary;
+    // gh#113 (v2.9.9): sanitize at the dump sink. summary may carry a split
+    // MTP codepoint from storage-loaded context (gh#112 interaction — SQLite
+    // loads messages without sanitize; unsanitized bytes survive extract_summary
+    // and reach this j.dump()). v2.9.8 guarded the parse-channel boundary
+    // (engine.cpp:1383/1385) but left this sink unguarded; the fix is
+    // defense-in-depth at the point of dump.
+    j["summary"] = mcp::sanitize_utf8(summary);
     std::string json = j.dump();
     char* out = nullptr;
     hooks_.fire_post(hooks_.registry,

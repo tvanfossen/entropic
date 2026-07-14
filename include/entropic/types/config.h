@@ -607,12 +607,16 @@ struct FilesystemConfig {
 
 /**
  * @brief External MCP server configuration (Entropic-as-server).
- * @version 1.8.1
+ * @version 2.9.12
  */
 struct ExternalMCPConfig {
     bool enabled = false;                                ///< Enable external MCP
     std::optional<std::filesystem::path> socket_path;    ///< Socket path (nullopt = derived)
     int rate_limit = 10;                                 ///< Requests per minute (1–100)
+    /// Route entropic.ask through entropic_run (false) or entropic_run_streaming
+    /// (true, default). Set false when MTP is active — streaming binds on_token
+    /// and trips the MTP incompatibility guard (gh#115, v2.9.12).
+    bool ask_streaming = true;
 };
 
 /**

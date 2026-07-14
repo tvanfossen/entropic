@@ -63,7 +63,7 @@ namespace entropic {
  * monitors can use inotify rather than parsing log output.
  *
  * @internal
- * @version 2.1.4
+ * @version 2.9.12
  */
 class ENTROPIC_EXPORT ExternalBridge {
 public:
@@ -101,6 +101,20 @@ public:
      * @version 2.0.8
      */
     const std::filesystem::path& socket_path() const { return socket_path_; }
+
+    /**
+     * @brief Whether entropic.ask routes through entropic_run_streaming.
+     *
+     * When false, handle_ask uses entropic_run (no on_token callback),
+     * which is compatible with MTP and avoids the streaming-path 316
+     * throw (gh#115, v2.9.12). Static-dispatch helper for
+     * file-scope functions that hold ExternalBridge*.
+     *
+     * @return config_.ask_streaming (default true).
+     * @utility
+     * @version 2.9.12
+     */
+    bool ask_streaming() const { return config_.ask_streaming; }
 
     /**
      * @brief Handle entropic.ask_status — check async task state.

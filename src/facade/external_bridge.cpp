@@ -207,11 +207,44 @@ static void send_progress(int fd, const std::string& token_text,
 }
 
 /**
+ * @brief Handle entropic.ask — non-streaming path (gh#115, v2.9.12).
+ *
+ * Routes through entropic_run (no on_token callback) so that MTP can
+ * engage without hitting the streaming-incompatibility guard. Also
+ * avoids the run_streaming dump-site 316 throw. Used when the bridge
+ * is configured with mcp.external.ask_streaming: false.
+ *
+ * @param handle Engine handle.
+ * @param args Tool arguments (must contain "prompt" string).
+ * @return MCP tool result JSON (final clean text from entropic_run).
+ * @internal
+ * @version 2.9.12
+ */
+static json handle_ask_plain(entropic_handle_t handle, const json& args) {
+    auto it = args.find("prompt");
+    if (it == args.end() || !it->is_string()) {
+        return tool_text("error: missing 'prompt' argument");
+    }
+    char* result_json = nullptr;
+    auto err = entropic_run(handle, it->get<std::string>().c_str(),
+                            &result_json);
+    if (err != ENTROPIC_OK) {
+        const char* msg = entropic_last_error(handle);
+        entropic_free(result_json);
+        return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
+    }
+    auto text = result_json ? extract_final_text(result_json) : std::string{};
+    entropic_free(result_json);
+    return tool_text(text.empty() ? "(no response)" : text);
+}
+
+/**
  * @brief Handle entropic.ask — stream tokens then return final text.
  *
  * Uses entropic_run_streaming to send MCP progress notifications
  * for each token (streaming to client), then extracts the final
  * clean assistant text from the conversation for the tool result.
+ * Used when mcp.external.ask_streaming: true (the default).
  *
  * @param handle Engine handle.
  * @param args Tool arguments.
@@ -219,7 +252,7 @@ static void send_progress(int fd, const std::string& token_text,
  * @param call_id JSON-RPC request id (for progress token correlation).
  * @return MCP tool result JSON (final clean text).
  * @internal
- * @version 2.0.11
+ * @version 2.9.12
  */
 static json handle_ask(entropic_handle_t handle, const json& args,
                        int client_fd, const std::string& call_id) {
@@ -501,7 +534,7 @@ static std::string generate_task_id() {
  * @param call_id Request id.
  * @return MCP tool result JSON.
  * @internal
- * @version 2.0.11
+ * @version 2.9.12
  */
 static json dispatch_ask(entropic_handle_t handle,
                          ExternalBridge* bridge,
@@ -514,6 +547,7 @@ static json dispatch_ask(entropic_handle_t handle,
             args.value("prompt", ""), task_id, client_fd);
         return tool_text("async task started: " + task_id);
     }
+    if (!bridge->ask_streaming()) { return handle_ask_plain(handle, args); }
     return handle_ask(handle, args, client_fd, call_id);
 }
 

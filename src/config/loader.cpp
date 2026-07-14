@@ -404,7 +404,7 @@ static std::string parse_filesystem_config(
  * @param[out] config Output external MCP config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 1.8.2
+ * @version 2.9.12
  */
 static std::string parse_external_mcp_config(
     ryml::ConstNodeRef node,
@@ -412,6 +412,7 @@ static std::string parse_external_mcp_config(
 {
     extract(node, "enabled", config.enabled);
     extract(node, "rate_limit", config.rate_limit);
+    extract(node, "ask_streaming", config.ask_streaming);
 
     if (node.is_map() && node.has_child("socket_path")
         && !node["socket_path"].val_is_null()) {

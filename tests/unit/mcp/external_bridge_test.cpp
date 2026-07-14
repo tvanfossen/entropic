@@ -991,3 +991,35 @@ SCENARIO("Bridge accepts same-uid client (SO_PEERCRED baseline)",
         ::unlink(sock_path.c_str());
     }
 }
+
+// ── gh#115 (v2.9.12): ask_streaming config knob ─────────
+
+SCENARIO("ExternalMCPConfig.ask_streaming defaults to true",
+         "[external_bridge][config][gh115][2.9.12]") {
+    GIVEN("a default-constructed ExternalMCPConfig") {
+        entropic::ExternalMCPConfig cfg;
+        THEN("ask_streaming is true by default") {
+            REQUIRE(cfg.ask_streaming);
+        }
+    }
+}
+
+SCENARIO("ExternalBridge::ask_streaming() reflects the config field",
+         "[external_bridge][config][gh115][2.9.12]") {
+    GIVEN("a bridge configured with ask_streaming = false") {
+        entropic::ExternalMCPConfig cfg;
+        cfg.ask_streaming = false;
+        entropic::ExternalBridge bridge(nullptr, cfg, "/tmp");
+        THEN("ask_streaming() returns false") {
+            REQUIRE_FALSE(bridge.ask_streaming());
+        }
+    }
+    GIVEN("a bridge configured with ask_streaming = true (explicit)") {
+        entropic::ExternalMCPConfig cfg;
+        cfg.ask_streaming = true;
+        entropic::ExternalBridge bridge(nullptr, cfg, "/tmp");
+        THEN("ask_streaming() returns true") {
+            REQUIRE(bridge.ask_streaming());
+        }
+    }
+}

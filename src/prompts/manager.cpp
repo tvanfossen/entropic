@@ -278,14 +278,17 @@ static void extract_sampler_knobs(ryml::ConstNodeRef root,
  * @param root YAML root node.
  * @param[out] fm Identity frontmatter to populate.
  * @utility
- * @version 2.5.4
+ * @version 2.9.15
  */
 static void extract_identity_flags(ryml::ConstNodeRef root,
                                    IdentityFrontmatter& fm) {
     extract_sampler_knobs(root, fm);  // gh#82/gh#85/gh#86
     extract(root, "interstitial", fm.interstitial);
     extract(root, "routable", fm.routable);
-    extract(root, "explicit_completion", fm.explicit_completion);
+    bool ec_val{};
+    if (extract(root, "explicit_completion", ec_val)) {
+        fm.explicit_completion = ec_val;
+    }
     extract(root, "relay_single_delegate", fm.relay_single_delegate);
     // E6 (2.0.6-rc18): per-identity loop + tool-call caps
     extract(root, "max_iterations", fm.max_iterations);

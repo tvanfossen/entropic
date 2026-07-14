@@ -1266,13 +1266,13 @@ private:
  * @param args_json JSON arguments.
  * @return ServerResponse with directory listing.
  * @internal
- * @version 1.8.5
+ * @version 2.9.13
  */
 ServerResponse ListDirectoryTool::execute(
     const std::string& args_json) {
 
     auto args = json::parse(args_json);
-    auto requested = args.at("path").get<std::string>();
+    auto requested = args.value("path", std::string("."));
     auto recursive = args.value("recursive", false);
     auto max_depth = args.value("max_depth", 3);
 

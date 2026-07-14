@@ -807,6 +807,38 @@ TEST_CASE("test_list_directory_recursive", "[filesystem]") {
     REQUIRE(found_nested);
 }
 
+// ── gh#116 (v2.9.13): list_directory optional path default ──────────────────
+
+SCENARIO("gh#116: list_directory with path omitted uses project root default",
+         "[filesystem][gh116][regression][2.9.13]") {
+    GIVEN("a filesystem server with files at project root") {
+        TempDir tmp;
+        write_test_file(tmp.path(), "root_file.txt", "x");
+        fs::create_directory(tmp.path() / "root_subdir");
+        auto server = make_server(tmp.path());
+
+        WHEN("list_directory is called with no 'path' argument") {
+            json args = json::object();
+            std::string envelope;
+            THEN("it does not throw and returns a listing of the project root") {
+                REQUIRE_NOTHROW(
+                    envelope = server.execute("list_directory", args.dump()));
+                auto result = json::parse(raw_result(envelope));
+                REQUIRE(result.is_array());
+                bool found_file = false;
+                bool found_dir  = false;
+                for (const auto& entry : result) {
+                    auto n = entry["name"].get<std::string>();
+                    if (n == "root_file.txt") { found_file = true; }
+                    if (n == "root_subdir")   { found_dir  = true; }
+                }
+                CHECK(found_file);
+                CHECK(found_dir);
+            }
+        }
+    }
+}
+
 TEST_CASE("test_path_security_rejects_traversal",
           "[filesystem]") {
     /**

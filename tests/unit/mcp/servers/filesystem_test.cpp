@@ -839,6 +839,30 @@ SCENARIO("gh#116: list_directory with path omitted uses project root default",
     }
 }
 
+// ── gh#116 (v2.9.14): read_file with directory path ─────────────────────────
+
+SCENARIO("gh#116: read_file with a directory path returns is_directory error",
+         "[filesystem][gh116][regression][2.9.14]") {
+    GIVEN("a filesystem server with a subdirectory") {
+        TempDir tmp;
+        fs::create_directory(tmp.path() / "mydir");
+        auto server = make_server(tmp.path());
+
+        WHEN("read_file is called with a directory path") {
+            json args;
+            args["path"] = "mydir";
+            std::string envelope;
+            THEN("it does not throw and returns an is_directory error") {
+                REQUIRE_NOTHROW(
+                    envelope = server.execute("read_file", args.dump()));
+                auto result = json::parse(raw_result(envelope));
+                REQUIRE(result.is_object());
+                CHECK(result["error"].get<std::string>() == "is_directory");
+            }
+        }
+    }
+}
+
 TEST_CASE("test_path_security_rejects_traversal",
           "[filesystem]") {
     /**

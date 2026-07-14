@@ -824,7 +824,7 @@ private:
  * ignore matching uses the server's IgnoreMatcher (#15, v2.1.4).
  *
  * @internal
- * @version 2.1.4
+ * @version 2.9.14
  */
 std::string check_read_gates(FilesystemServer& server,
                              const fs::path& resolved,
@@ -833,6 +833,9 @@ std::string check_read_gates(FilesystemServer& server,
     if (!fs::exists(resolved)) {
         err = make_error("not_found",
             "File not found: " + path_str);
+    } else if (fs::is_directory(resolved)) {
+        err = make_error("is_directory",
+            "Path is a directory, not a file: " + path_str);
     } else {
         auto rel = fs::relative(resolved, server.root_dir())
                      .generic_string();

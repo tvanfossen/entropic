@@ -84,7 +84,7 @@ struct IdentityFrontmatter {
     std::optional<bool> enable_thinking;       ///< Per-tier thinking mode (gh#86); nullopt = use param default
     bool interstitial = false;                 ///< Interstitial role
     bool routable = true;                      ///< Visible to router
-    bool explicit_completion = false;          ///< Requires explicit completion
+    std::optional<bool> explicit_completion;   ///< Requires explicit completion; nullopt = derive from auto_chain (gh#117)
     std::vector<std::string> validation_rules; ///< Per-identity constitutional rules (v2.0.6)
     bool relay_single_delegate = false;        ///< Skip re-synthesis when single delegate returns (v2.0.11)
     int max_iterations = -1;                   ///< Per-identity loop iteration cap; -1 = use global (E6)

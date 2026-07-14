@@ -202,3 +202,36 @@ SCENARIO("Constitution loading with tri-state", "[prompts][constitution]") {
         }
     }
 }
+
+// ── gh#117 (v2.9.15): explicit_completion frontmatter honored ────────────────
+
+SCENARIO("gh#117: explicit_completion: false in frontmatter is honored when "
+         "no auto_chain is present",
+         "[prompts][identity][gh117][regression][2.9.15]") {
+    GIVEN("an identity with explicit_completion: false and no auto_chain") {
+        entropic::TierConfig tier;
+        tier.identity = test_data() / "prompts" / "test_identity_no_autochain.md";
+
+        auto parsed = entropic::prompts::resolve_tier_identity_full(
+            tier, "lead", test_data());
+
+        REQUIRE(parsed.frontmatter.name == "lead");
+
+        WHEN("ChildContextInfo.explicit_completion is derived as populate_tier_info does") {
+            // Pre-fix: ignores frontmatter, derives from auto_chain presence only.
+            // No auto_chain → !has_value() = true (wrong — frontmatter says false).
+            bool pre_fix = !tier.auto_chain.has_value();
+
+            // Post-fix: frontmatter wins via value_or.
+            bool post_fix = parsed.frontmatter.explicit_completion
+                                .value_or(!tier.auto_chain.has_value());
+
+            THEN("pre-fix derivation is true (the bug)") {
+                REQUIRE(pre_fix);
+            }
+            THEN("post-fix value honors frontmatter and is false") {
+                REQUIRE_FALSE(post_fix);
+            }
+        }
+    }
+}

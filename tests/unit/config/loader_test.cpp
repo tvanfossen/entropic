@@ -287,6 +287,8 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.mcp.external.enabled == true);
                 CHECK(config.mcp.external.rate_limit == 100);
                 REQUIRE(config.mcp.external.socket_path.has_value());
+                // gh#115 (v2.9.12): ask_streaming knob for MTP compatibility
+                CHECK(config.mcp.external.ask_streaming == false);
             }
 
             THEN("generation section parses defaults") {

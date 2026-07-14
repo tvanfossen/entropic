@@ -114,6 +114,7 @@ mcp:
     enabled: true
     rate_limit: 100
     socket_path: /tmp/entropic-test-external.sock
+    ask_streaming: false
 
 generation:
   max_tokens: 2048

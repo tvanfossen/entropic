@@ -517,7 +517,7 @@ static void rewire_observers(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.0.6-rc18
+ * @version 2.9.15
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -528,7 +528,8 @@ static void populate_tier_info(entropic_handle_t h,
         auto parsed = entropic::prompts::resolve_tier_identity_full(
             tier, name, data_dir);
         info.system_prompt = shared_prefix + parsed.body;
-        info.explicit_completion = !tier.auto_chain.has_value();
+        info.explicit_completion = parsed.frontmatter.explicit_completion
+            .value_or(!tier.auto_chain.has_value());
         // E6 (2.0.6-rc18): propagate per-identity caps from frontmatter
         // so AgentEngine::tri_get_tier_param surfaces them to the loop
         // and tool executor. -1 = "use global loop_config default".

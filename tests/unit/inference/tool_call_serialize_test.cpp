@@ -77,6 +77,26 @@ TEST_CASE("serialize_tool_calls: JSON-valued argument strings keep their type",
     }
 }
 
+TEST_CASE("gh#118: serialize_tool_calls does not throw on MTP-split UTF-8 argument value",
+          "[inference][tool_call_serialize][gh118][regression][2.9.16]") {
+    // 0xE2 0x80 0x2E: incomplete 3-byte sequence (em-dash split at MTP draft
+    // boundary). Without sanitization, nlohmann::json::dump() throws
+    // type_error.316 inside serialize_tool_calls before the engine's
+    // mcp::sanitize_utf8 guard at parse_tool_calls:1386 can run.
+    std::string bad_payload = "temperature: 23\xE2\x80\x2E";  // split codepoint at index 17
+
+    REQUIRE_NOTHROW(serialize_tool_calls(
+        {make_call("mqtt_publish", {{"topic", "sensor/data"}, {"payload", bad_payload}})}));
+
+    auto out = json::parse(serialize_tool_calls(
+        {make_call("mqtt_publish", {{"topic", "sensor/data"}, {"payload", bad_payload}})}));
+    REQUIRE(out.is_array());
+    REQUIRE(out.size() == 1);
+    // Argument values must be present; invalid bytes replaced by U+FFFD.
+    CHECK(out[0]["arguments"]["topic"] == "sensor/data");
+    CHECK(out[0]["arguments"]["payload"].get<std::string>().find('\xE2') == std::string::npos);
+}
+
 TEST_CASE("serialize_tool_calls: multiple calls preserve order",
           "[inference][tool_call_serialize]") {
     auto out = json::parse(serialize_tool_calls({

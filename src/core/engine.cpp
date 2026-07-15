@@ -2261,6 +2261,32 @@ static std::string build_coverage_gap_message(
 }
 
 /**
+ * @brief gh#119 (v2.9.17): fold child summary into the lead's empty delegate turn.
+ *
+ * push_delegation_result appends [DELEGATION COMPLETE] as a user message.
+ * Intermediate executor result messages may sit between it and the lead's
+ * empty assistant turn. Searches backward for the last empty assistant
+ * message and sets its content to the summary text so extract_final_text
+ * (external_bridge) returns the child's answer, not "" → "(no response)".
+ * Extracted from finalize_delegation_result to keep ABC under the 20.0 gate.
+ *
+ * @param ctx Loop context (messages mutated in-place).
+ * @param summary Child delegation summary text.
+ * @internal
+ * @version 2.9.17
+ */
+static void fold_delegation_summary(
+    LoopContext& ctx, const std::string& summary) {
+    for (auto rit = ctx.messages.rbegin();
+         rit != ctx.messages.rend(); ++rit) {
+        if (rit->role == "assistant" && rit->content.empty()) {
+            rit->content = summary;
+            break;
+        }
+    }
+}
+
+/**
  * @brief Promote relayed delegate output or set next engine state.
  *
  * Handles the relay_single_delegate path (validate + promote), the
@@ -2278,7 +2304,7 @@ static std::string build_coverage_gap_message(
  * @param ctx Loop context.
  * @param result Delegation result from DelegationManager.
  * @utility
- * @version 2.1.4
+ * @version 2.9.17
  */
 void AgentEngine::finalize_delegation_result(
     LoopContext& ctx, const DelegationResult& result) {
@@ -2313,6 +2339,9 @@ void AgentEngine::finalize_delegation_result(
     }
     bool needs_explicit = tier_requires_explicit_completion(
         ctx.locked_tier);
+    if (result.success && !needs_explicit) {
+        fold_delegation_summary(ctx, result.summary);  // gh#119
+    }
     set_state(ctx, (result.success && !needs_explicit)
         ? AgentState::COMPLETE : AgentState::EXECUTING);
 }

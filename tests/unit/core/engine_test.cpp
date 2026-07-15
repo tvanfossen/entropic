@@ -2552,3 +2552,120 @@ SCENARIO("gh#113: build_delegate_complete_json sanitizes summary at dump sink "
         }
     }
 }
+
+// ── gh#119 (v2.9.17): ExternalBridge returns (no response) after delegation ──
+//
+// When a lead auto-completes after delegation (explicit_completion=false and
+// child returns success), finalize_delegation_result called set_state(COMPLETE)
+// without folding the child's summary into the lead's empty assistant turn.
+//
+// ctx.messages at finalize_delegation_result time:
+//   {role:"assistant", content:""}           ← lead's empty delegate turn
+//   {role:"tool/user", "<executor result>"}  ← intermediate from process_tool_results
+//   {role:"user", "[DELEGATION COMPLETE: reader] <summary>"}  ← push_delegation_result
+//
+// extract_final_text (external_bridge.cpp) reverse-iterates and finds the
+// first role=="assistant" message — returns "" → (no response) to the caller.
+//
+// Fix: in the auto-complete branch of finalize_delegation_result, search
+// backward for the last empty assistant message and fold result.summary into it.
+//
+// RED: last assistant message content is "" before fix (CHECK fails).
+// GREEN: last assistant message content == child's summary after fix.
+
+namespace gh119 {
+
+/// @brief Inject a delegation to "reader" on first call; set lead's pending.
+/// @utility
+/// @version 2.9.17
+static std::vector<Message> inject_reader_delegation(
+    LoopContext& ctx,
+    const std::vector<ToolCall>& /*calls*/,
+    void* ud) {
+    auto* fired = static_cast<bool*>(ud);
+    if (!*fired) {
+        *fired = true;
+        ctx.pending_delegation = PendingDelegation{"reader", "list functions", -1};
+    }
+    Message m;
+    m.role = "tool";
+    m.content = "delegation dispatched";
+    return {m};
+}
+
+}  // namespace gh119
+
+SCENARIO("gh#119: delegation auto-complete folds child summary into lead's "
+         "empty assistant turn (fix for ExternalBridge (no response))",
+         "[engine][gh119][regression][2.9.17]") {
+    // Lead: generates "" (empty content → empty assistant message), emits a
+    // tool call so inject_reader_delegation fires and sets pending_delegation.
+    // Child: generates the summary text, no tool calls, is_complete=true →
+    // auto-complete path in finalize_delegation_result.
+    // lead tier has no get_tier_param → tier_requires_explicit_completion=false.
+
+    const std::string kSummary =
+        "int_to_roman and roman_to_int are defined in roman.py";
+
+    MockInference mock;
+    mock.is_complete = true;
+    // response_queue: [0]=lead generate (empty), [1]=child generate (summary).
+    mock.response_queue.push_back("");
+    mock.response_queue.push_back(kSummary);
+    // Lead's first parse: tool call → triggers inject_reader_delegation.
+    mock.tool_calls_queue.push_back(
+        R"([{"name":"test.mock","arguments":{}}])");
+    // Subsequent parses (child's): no tool calls → evaluate_no_tool_decision.
+    mock.tool_calls_json = "[]";
+
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc; lc.max_iterations = 4; CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    TierResolutionInterface tri{};
+    tri.resolve_tier = [](const std::string&, void*) -> ChildContextInfo {
+        ChildContextInfo info; info.valid = true;
+        info.system_prompt = "reader agent"; return info;
+    };
+    engine.set_tier_resolution(tri);
+
+    bool injector_fired = false;
+    ToolExecutionInterface tex{};
+    tex.process_tool_calls = gh119::inject_reader_delegation;
+    tex.user_data = &injector_fired;
+    engine.set_tool_executor(tex);
+
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "lead";
+
+    GIVEN("a lead that delegates to 'reader' and child auto-completes") {
+        WHEN("the engine runs the loop") {
+            engine.run_loop(ctx);
+
+            THEN("state is COMPLETE") {
+                REQUIRE(ctx.state == AgentState::COMPLETE);
+            }
+
+            AND_THEN("the last role=assistant message holds the child's summary") {
+                // RED before fix: the last assistant message is the lead's empty
+                // delegate turn ("") — finalize_delegation_result never folds the
+                // delegation summary into it. extract_final_text returns "" which
+                // ExternalBridge surfaces as "(no response)".
+                //
+                // GREEN after fix: the backward fold sets the empty assistant
+                // content to result.summary so extract_final_text returns the
+                // child's actual answer.
+                std::string last_assistant;
+                for (auto rit = ctx.messages.rbegin();
+                     rit != ctx.messages.rend(); ++rit) {
+                    if (rit->role == "assistant") {
+                        last_assistant = rit->content;
+                        break;
+                    }
+                }
+                CHECK(last_assistant == kSummary);
+            }
+        }
+    }
+}

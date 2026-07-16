@@ -680,6 +680,21 @@ public:
     bool has_tier(const std::string& name) const;
 
     /**
+     * @brief Return the allowed tool names registered for a tier (gh#121 regression).
+     *
+     * Exposed so facade-level tests can verify that `populate_tier_info`
+     * captured the correct `allowed_tools` list after `cache_tier_allowed_tools`
+     * filled `h->tier_allowed_tools`. Returns empty when the tier is unknown
+     * or when no allowed_tools were registered.
+     *
+     * @param name Tier name.
+     * @return Allowed tool names (empty = unknown tier or all tools permitted).
+     * @version 2.9.19
+     */
+    std::vector<std::string> get_tier_allowed_tools(
+        const std::string& name) const;
+
+    /**
      * @brief A tier's resolved system prompt (gh#98).
      *
      * Backs the batch entry point, which builds each request's messages with

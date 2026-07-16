@@ -1655,13 +1655,13 @@ static void init_engine_and_interfaces(
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
  * @internal
- * @version 2.3.8
+ * @version 2.9.19
  */
 static void wire_prompts_and_persistence(
     entropic_handle_t h, const std::filesystem::path& data_dir) {
     auto shared_prefix = build_shared_prompt_prefix(h, data_dir);
-    populate_tier_info(h, data_dir, shared_prefix);
-    cache_tier_allowed_tools(h, data_dir);
+    cache_tier_allowed_tools(h, data_dir);       // gh#121: must fill h->tier_allowed_tools
+    populate_tier_info(h, data_dir, shared_prefix);  // before populate reads it
     h->engine->set_handoff_rules(h->config.routing.handoff_rules);
 
     wire_hooks_and_validator(h, h->inference_iface, shared_prefix);

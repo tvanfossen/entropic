@@ -3323,6 +3323,20 @@ bool AgentEngine::has_tier(const std::string& name) const {
 }
 
 /**
+ * @brief Return allowed tool names for a tier (gh#121 regression test hook).
+ * @param name Tier name.
+ * @return Allowed tools, empty when tier unknown or no filter registered.
+ * @internal
+ * @version 2.9.19
+ */
+std::vector<std::string> AgentEngine::get_tier_allowed_tools(
+    const std::string& name) const {
+    auto it = tier_info_.find(name);
+    if (it == tier_info_.end()) { return {}; }
+    return it->second.allowed_tools;
+}
+
+/**
  * @brief A tier's resolved system prompt (gh#98).
  * @param name Tier name.
  * @return The tier's system prompt, or "" if unknown.

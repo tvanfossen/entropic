@@ -15,6 +15,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
+#include "engine_handle.h"  // white-box access to h->engine, h->tier_allowed_tools
 
 #include <cstdlib>
 #include <cstring>
@@ -1135,4 +1136,78 @@ SCENARIO("entropic_get_default_compactor on NULL handle returns INVALID_HANDLE",
             }
         }
     }
+}
+
+// gh#121 regression (v2.9.18): populate_tier_info ran before
+// cache_tier_allowed_tools, so resolve_allowed_tools always read an empty
+// h->tier_allowed_tools map. The engine's ChildContextInfo.allowed_tools
+// was never populated — tri_get_tier_param("allowed_tools") returned ""
+// and the zero-tool-call correction nudge fell back to meta-tools only.
+//
+// RED before fix: get_tier_allowed_tools("worker") returns empty even
+// though the identity file declares allowed_tools.
+// GREEN after fix: swap fills h->tier_allowed_tools first.
+//
+// Requires gemma-4-E2B-it-Q8_0.gguf so we can load the lead tier and
+// reach wire_prompts_and_persistence. Tagged [.realmodel] to exclude
+// from the pre-commit unit suite; run explicitly or via the release gate.
+TEST_CASE("gh#121 regression: configure populates engine's allowed_tools from identity frontmatter",
+          "[api][facade][gh121][regression][2.9.19][.realmodel]") {
+    const char* home_cstr = std::getenv("HOME");
+    REQUIRE(home_cstr != nullptr);
+    std::filesystem::path gguf = std::filesystem::path(home_cstr)
+        / ".entropic" / "models" / "gemma-4-E2B-it-Q8_0.gguf";
+    if (!std::filesystem::is_regular_file(gguf)) {
+        SKIP("gemma-4-E2B-it-Q8_0.gguf not present — run `entropic download gemma4_e2b`");
+    }
+
+    // Write a minimal identity file with allowed_tools frontmatter.
+    auto tmp_dir = std::filesystem::temp_directory_path()
+        / "entropic_gh121_reg_test";
+    std::filesystem::create_directories(tmp_dir);
+    auto id_path = tmp_dir / "identity_worker.md";
+    {
+        std::ofstream id(id_path);
+        id << "---\ntype: identity\nversion: 1\nname: worker\n"
+           << "focus:\n  - complete assigned tasks\n"
+           << "allowed_tools:\n  - editor.edit\n  - editor.append\n---\n"
+           << "You are a worker tier.\n";
+    }
+
+    // lead = default tier (loads the real model); worker = same GGUF (shared
+    // backend — no extra load) with the test identity. Only lead activates
+    // at configure time, so the test measures purely the init-order bug.
+    std::string gs = gguf.string();
+    std::string is = id_path.string();
+    std::string cfg =
+        "{\"log_level\":\"WARN\",\"models\":{"
+        "\"default\":\"lead\","
+        "\"lead\":{\"path\":\"" + gs + "\",\"adapter\":\"gemma4\","
+        "\"gpu_layers\":40,\"context_length\":8192},"
+        "\"worker\":{\"path\":\"" + gs + "\",\"adapter\":\"gemma4\","
+        "\"identity\":\"" + is + "\"}}}";
+
+    entropic_handle_t h = nullptr;
+    REQUIRE(entropic_create(&h) == ENTROPIC_OK);
+    REQUIRE(h != nullptr);
+
+    auto rc = entropic_configure(h, cfg.c_str());
+    if (rc != ENTROPIC_OK || !h->engine) {
+        entropic_destroy(h);
+        std::filesystem::remove_all(tmp_dir);
+        SKIP("configure failed — env issue");
+    }
+
+    // RED before fix: populate_tier_info ran before cache_tier_allowed_tools;
+    // engine's ChildContextInfo.allowed_tools is empty.
+    // GREEN after fix: cache runs first; get_tier_allowed_tools returns the list.
+    auto tools = h->engine->get_tier_allowed_tools("worker");
+    CHECK_FALSE(tools.empty());
+    if (!tools.empty()) {
+        CHECK(tools[0] == "editor.edit");
+        CHECK(tools[1] == "editor.append");
+    }
+
+    entropic_destroy(h);
+    std::filesystem::remove_all(tmp_dir);
 }

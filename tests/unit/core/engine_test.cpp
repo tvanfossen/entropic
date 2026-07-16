@@ -2669,3 +2669,54 @@ SCENARIO("gh#119: delegation auto-complete folds child summary into lead's "
         }
     }
 }
+
+// gh#121 — zero-tool-call correction nudge should name the tier's actual tools,
+// not just the hardcoded meta-tools (entropic.complete/delegate/inspect).
+//
+// RED before fix: record_explicit_completion_failure hardcodes the meta-tool
+// list in the correction message; it never calls get_tier_param("allowed_tools").
+// GREEN after fix: the message includes the tier's actual tool names.
+TEST_CASE("gh#121: zero-tool-call correction names tier's actual tools",
+          "[engine][gh121][regression][2.9.18]") {
+    MockInference mock;
+    mock.response = "I'll do it!";  // no tool calls
+    mock.tier = "worker";
+    mock.finish_reason = "stop";
+    mock.is_complete = false;
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 10;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier,
+                            const std::string& param,
+                            void* /*ud*/) -> std::string {
+        if (tier != "worker") { return ""; }
+        if (param == "explicit_completion") { return "true"; }
+        if (param == "allowed_tools") {
+            return "filesystem.read_file,filesystem.write_file";
+        }
+        return "";
+    };
+    engine.set_tier_resolution(tri);
+
+    auto result = engine.run(make_messages(), "worker");
+
+    // Find the first correction message injected by record_explicit_completion_failure.
+    std::string correction;
+    for (const auto& m : result) {
+        if (m.role == "user"
+            && m.content.find("[SYSTEM]") != std::string::npos
+            && m.content.find("no tool call") != std::string::npos) {
+            correction = m.content;
+            break;
+        }
+    }
+    REQUIRE_FALSE(correction.empty());
+    // RED before fix: correction contains only the hardcoded meta-tools,
+    // not the tier's actual tool names.
+    CHECK(correction.find("filesystem.read_file") != std::string::npos);
+    CHECK(correction.find("filesystem.write_file") != std::string::npos);
+}

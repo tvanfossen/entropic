@@ -761,7 +761,7 @@ bool AgentEngine::handle_terminal_finish_reasons(
  * @param finish_reason Generation finish reason (for logging).
  * @return true if the failure was recorded and state transitioned.
  * @utility
- * @version 2.0.6-rc16.2
+ * @version 2.9.18
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason) {
@@ -783,13 +783,19 @@ bool AgentEngine::record_explicit_completion_failure(
         set_state(ctx, AgentState::ERROR);
         return true;
     }
+    std::string tools_hint =
+        "(entropic.complete, entropic.delegate, or entropic.inspect)";
+    if (tier_res_.get_tier_param != nullptr) {
+        auto allowed = tier_res_.get_tier_param(
+            ctx.locked_tier, "allowed_tools", tier_res_.user_data);
+        if (!allowed.empty()) { tools_hint = "(" + allowed + ")"; }
+    }
     Message correction;
     correction.role = "user";
     correction.content =
         "[SYSTEM] Your previous response contained no tool call. "
         "You must end every turn with exactly one tool call "
-        "(entropic.complete, entropic.delegate, or entropic.inspect). "
-        "Retry.";
+        + tools_hint + ". Retry.";
     ctx.messages.push_back(std::move(correction));
     retries = std::to_string(n + 1);
     set_state(ctx, AgentState::EXECUTING);
@@ -3403,6 +3409,22 @@ std::vector<std::string> AgentEngine::tri_get_handoff_targets(
 }
 
 /**
+ * @brief Join a vector of strings with comma separators.
+ * @param v Strings to join.
+ * @return CSV string.
+ * @utility
+ * @version 2.9.18
+ */
+static std::string join_csv(const std::vector<std::string>& v) {
+    std::string out;
+    for (const auto& s : v) {
+        if (!out.empty()) { out += ','; }
+        out += s;
+    }
+    return out;
+}
+
+/**
  * @brief Get a named parameter for a tier.
  * @param name Tier name.
  * @param param Parameter name.
@@ -3423,7 +3445,7 @@ std::vector<std::string> AgentEngine::tri_get_handoff_targets(
  * @param ud Untyped AgentEngine* pointer.
  * @return String value, empty if tier or param unknown.
  * @internal
- * @version 2.0.6-rc16
+ * @version 2.9.18
  */
 std::string AgentEngine::tri_get_tier_param(const std::string& name,
     const std::string& param, void* ud) {
@@ -3440,6 +3462,9 @@ std::string AgentEngine::tri_get_tier_param(const std::string& name,
     } else if (param == "max_tool_calls_per_turn"
                && info.max_tool_calls_per_turn_override >= 0) {
         result = std::to_string(info.max_tool_calls_per_turn_override);
+    } else if (param == "allowed_tools"
+               && !info.allowed_tools.empty()) {
+        result = join_csv(info.allowed_tools);
     }
     return result;
 }

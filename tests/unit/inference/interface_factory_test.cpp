@@ -186,3 +186,49 @@ TEST_CASE("interface_factory: wiring + iface_* surface sweep",
         std::filesystem::remove(dummy);
     }
 }
+
+TEST_CASE("gh#122: fenced-json block in model output yields a tool call",
+          "[inference][gh122][regression][2.9.18]") {
+    // Some models emit tool calls as a fenced ```json``` block when the
+    // template doesn't match a known native format. The PEG parser and all
+    // adapter parsers return 0 calls for this format.
+    //
+    // RED before fix: iface_parse_tool_calls returns "[]" for fenced-json.
+    // GREEN after fix: fenced-json fallback fires and returns the call.
+    auto dummy = std::filesystem::temp_directory_path()
+        / "entropic_gh122_dummy.gguf";
+    { std::ofstream(dummy) << "not a real gguf"; }
+
+    entropic::ModelOrchestrator orch;
+    entropic::ParsedConfig cfg;
+    cfg.models.default_tier = "primary";
+    entropic::TierConfig lead;
+    lead.path = dummy;
+    lead.adapter = "qwen35";
+    cfg.models.tiers["primary"] = lead;
+    (void)orch.initialize(cfg);
+
+    entropic::InterfaceContext* ctx = nullptr;
+    auto iface = entropic::build_orchestrator_interface(&orch, "primary", &ctx);
+
+    // Fenced JSON block: single call, name + arguments.
+    const char* fenced =
+        "Sure, let me read the file.\n"
+        "```json\n"
+        "{\"name\":\"filesystem.read_file\","
+        "\"arguments\":{\"path\":\"config.yaml\"}}\n"
+        "```";
+
+    char* cleaned = nullptr;
+    char* calls = nullptr;
+    REQUIRE(iface.parse_tool_calls(
+        fenced, &cleaned, &calls, iface.backend_data) == 0);
+    REQUIRE(cleaned != nullptr);
+    REQUIRE(calls != nullptr);
+    // RED before fix: calls == "[]" (no native parse matches fenced-json).
+    CHECK(std::string(calls) != "[]");
+    iface.free_fn(cleaned);
+    iface.free_fn(calls);
+    entropic::destroy_orchestrator_interface(ctx);
+    std::filesystem::remove(dummy);
+}

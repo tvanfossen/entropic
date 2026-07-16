@@ -538,7 +538,7 @@ void AgentEngine::execute_iteration(LoopContext& ctx) {
  * @param ctx Loop context.
  * @param result Generation result.
  * @internal
- * @version 2.5.1
+ * @version 2.9.19
  */
 void AgentEngine::process_generation_result(LoopContext& ctx,
                                             GenerateResult& result) {
@@ -557,6 +557,11 @@ void AgentEngine::process_generation_result(LoopContext& ctx,
     bool made_progress = false;
     if (made_tool_call) {
         made_progress = process_tool_results(ctx, tool_calls);
+        // gh#123: reset retry counter so a genuine tool call clears prior
+        // consecutive-empty-turn debt.
+        if (made_progress) {
+            ctx.metadata["zero_tool_call_retries"] = "0";
+        }
     } else {
         evaluate_no_tool_decision(ctx, cleaned, result.finish_reason);
     }
@@ -761,7 +766,7 @@ bool AgentEngine::handle_terminal_finish_reasons(
  * @param finish_reason Generation finish reason (for logging).
  * @return true if the failure was recorded and state transitioned.
  * @utility
- * @version 2.9.18
+ * @version 2.9.19
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason) {
@@ -770,14 +775,22 @@ bool AgentEngine::record_explicit_completion_failure(
     }
     auto& retries = ctx.metadata["zero_tool_call_retries"];
     int n = retries.empty() ? 0 : std::atoi(retries.c_str());
+    // gh#123: ceiling is per-tier configurable via max_consecutive_empty_turns
+    int ceiling = 2;
+    if (tier_res_.get_tier_param != nullptr) {
+        auto cv = tier_res_.get_tier_param(
+            ctx.locked_tier, "max_consecutive_empty_turns",
+            tier_res_.user_data);
+        if (!cv.empty()) { ceiling = std::atoi(cv.c_str()); }
+    }
     logger->warn("[DECISION] tier '{}' requires explicit completion "
                  "but iteration emitted zero tool calls "
-                 "(finish_reason={}) retry={}/2",
-                 ctx.locked_tier, finish_reason, n);
+                 "(finish_reason={}) retry={}/{}",
+                 ctx.locked_tier, finish_reason, n, ceiling);
     ctx.metadata["failure_reason"] =
         "zero_tool_calls_with_explicit_completion";
     ctx.metadata["failure_tier"] = ctx.locked_tier;
-    if (n >= 2) {
+    if (n >= ceiling) {
         logger->error("[DECISION] zero-tool-call retries exhausted "
                       "(tier={}), failing turn", ctx.locked_tier);
         set_state(ctx, AgentState::ERROR);

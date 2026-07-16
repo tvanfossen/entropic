@@ -165,8 +165,8 @@ TEST_CASE("test_read_file_returns_json", "[filesystem]") {
 
     REQUIRE(result.contains("path"));
     REQUIRE(result["total"].get<int>() == 2);
-    REQUIRE(result["lines"]["1"].get<std::string>() == "hello");
-    REQUIRE(result["lines"]["2"].get<std::string>() == "world");
+    REQUIRE(result["lines"][0].get<std::string>() == "hello");
+    REQUIRE(result["lines"][1].get<std::string>() == "world");
 }
 
 TEST_CASE("test_read_file_not_found", "[filesystem]") {
@@ -998,4 +998,30 @@ TEST_CASE("FilesystemServer tools advertise their required access levels",
         (void)lvl;
     }
     REQUIRE(true);
+}
+
+TEST_CASE("gh#120: read_file lines are an ordered array not a keyed object",
+          "[filesystem][gh120][regression][2.9.18]") {
+    // With the old dict schema, string keys are iterated in lexicographic
+    // order: "1","10","11","12","2","3",... — line 10 appears before line 2.
+    // The fix changes lines to json::array() so natural file order is
+    // preserved. RED: result["lines"].is_array() is false before the fix.
+    TempDir tmp;
+    std::string content;
+    for (int i = 1; i <= 12; ++i) {
+        content += "line " + std::to_string(i) + "\n";
+    }
+    write_test_file(tmp.path(), "twelve.txt", content);
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["path"] = "twelve.txt";
+    auto result = parse_result(server.execute("read_file", args.dump()));
+
+    REQUIRE(result["total"].get<int>() == 12);
+    // RED before fix: lines is a json::object, not an array.
+    REQUIRE(result["lines"].is_array());
+    // Natural order: index 0 is the first physical line, index 9 is line 10.
+    CHECK(result["lines"][0].get<std::string>() == "line 1");
+    CHECK(result["lines"][9].get<std::string>() == "line 10");
 }

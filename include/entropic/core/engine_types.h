@@ -217,6 +217,7 @@ struct PendingPipeline {
 struct ChildContextInfo {
     std::string system_prompt;              ///< Built for target tier
     std::vector<std::string> tools;         ///< Tool JSON definitions for tier
+    std::vector<std::string> allowed_tools; ///< Allowed tool names (gh#121)
     bool explicit_completion = false;       ///< Requires entropic.complete?
     std::string completion_instructions;    ///< Instructions for explicit completion
     bool valid = false;                     ///< False if tier not found

@@ -174,7 +174,7 @@ std::string make_error(const std::string& code,
  * @param content File content.
  * @return JSON string with path, total lines, and numbered lines.
  * @internal
- * @version 1.8.5
+ * @version 2.9.18
  */
 std::string build_read_result(const std::string& path,
                               const std::string& content) {
@@ -183,15 +183,13 @@ std::string build_read_result(const std::string& path,
 
     std::istringstream stream(content);
     std::string line;
-    json lines = json::object();
-    int num = 0;
+    json lines = json::array();
 
     while (std::getline(stream, line)) {
-        ++num;
-        lines[std::to_string(num)] = line;
+        lines.push_back(line);
     }
 
-    result["total"] = num;
+    result["total"] = static_cast<int>(lines.size());
     result["lines"] = std::move(lines);
     return result.dump();
 }

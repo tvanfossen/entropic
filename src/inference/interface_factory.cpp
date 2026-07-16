@@ -303,6 +303,89 @@ static int iface_complete(const char* prompt,
 }
 
 /**
+ * @brief Build a ToolCall from a parsed JSON object with name/tool + arguments/parameters.
+ * @return Single-element vector on success; empty vector on schema mismatch.
+ * @utility
+ * @version 2.9.18
+ */
+static std::vector<ToolCall> tc_from_json_obj(const nlohmann::json& j) {
+    // j.value() returns default when key absent or wrong type — fewer branches.
+    std::string name = j.value("name", std::string{});
+    if (name.empty()) { name = j.value("tool", std::string{}); }
+
+    auto it = j.find("arguments");
+    if (it == j.end() || !it->is_object()) { it = j.find("parameters"); }
+    const nlohmann::json* args =
+        (it != j.end() && it->is_object()) ? &(*it) : nullptr;
+
+    std::vector<ToolCall> result;
+    if (!name.empty() && args != nullptr) {
+        ToolCall tc;
+        tc.name = std::move(name);
+        for (const auto& [k, v] : args->items()) {
+            tc.arguments[k] = v.is_string() ? v.get<std::string>() : v.dump();
+        }
+        result.push_back(std::move(tc));
+    }
+    return result;
+}
+
+/**
+ * @brief Extract a tool call from a single fenced json block in raw model output (gh#122).
+ *
+ * Fires only when both the PEG parser and adapter return 0 calls and the
+ * output contains exactly one fenced ```json``` block that matches the
+ * {name/tool, arguments/parameters} schema. Conservative: does nothing if
+ * the block is missing, malformed, or there are multiple blocks.
+ *
+ * @param raw Raw model output.
+ * @return Single-element vector on success; empty on mismatch.
+ * @utility
+ * @version 2.9.18
+ */
+static std::vector<ToolCall> try_fenced_json_call(const std::string& raw) {
+    const std::string kOpen = "```json";
+    const std::string kClose = "```";
+    auto ob = raw.find(kOpen);
+    auto bs = (ob != std::string::npos) ? (ob + kOpen.size()) : std::string::npos;
+    auto cb = (bs != std::string::npos) ? raw.find(kClose, bs) : std::string::npos;
+    bool single = (ob != std::string::npos) && (cb != std::string::npos)
+        && (raw.find(kOpen, ob + 1) == std::string::npos
+            || raw.find(kOpen, ob + 1) > cb);
+    if (!single) { return {}; }
+    auto j = nlohmann::json::parse(raw.substr(bs, cb - bs), nullptr, false);
+    if (!j.is_object()) { return {}; }
+    return tc_from_json_obj(j);
+}
+
+/**
+ * @brief Parse tool calls via the adapter for the given tier (gh#89).
+ *
+ * gh#89: uses the SAME routed tier (last_used_tier) so a non-default
+ * autoparser tier parses with the correct adapter, not the default.
+ * Returns the raw content and empty calls when no adapter is registered.
+ *
+ * @param orch Model orchestrator (adapter lookup).
+ * @param raw Raw model output.
+ * @param tier Active tier name.
+ * @param out_cleaned Cleaned content (raw if no adapter).
+ * @param out_calls Parsed tool calls (empty if no adapter or 0 found).
+ * @utility
+ * @version 2.9.18
+ */
+static void parse_via_adapter(ModelOrchestrator* orch,
+                              const std::string& raw,
+                              const std::string& tier,
+                              std::string& out_cleaned,
+                              std::vector<ToolCall>& out_calls) {
+    auto* adapter = orch->get_adapter(tier);
+    if (adapter == nullptr) { out_cleaned = raw; return; }
+    auto p = adapter->parse_tool_calls(raw);
+    out_cleaned = std::move(p.cleaned_content);
+    out_calls = std::move(p.tool_calls);
+}
+
+/**
  * @brief Parse tool calls from raw model output (gh#87 3b).
  *
  * gh#87 Phase D: parse via common_chat (`parse_response`) only when its
@@ -311,8 +394,12 @@ static int iface_complete(const char* prompt,
  * back to their hand-rolled multi-parameter adapter. Routed on the last-used
  * tier's backend so a routed (non-default) tier parses correctly.
  *
+ * gh#122 (v2.9.18): when both paths yield 0 calls and the output contains
+ * exactly one fenced ```json``` block, try extracting a {name, arguments}
+ * call from it. Handles models that emit tool calls in markdown fence format.
+ *
  * @callback
- * @version 2.7.2 (gh#88 recovery + gh#89 routed-tier fallback)
+ * @version 2.9.18
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -320,32 +407,29 @@ static int iface_parse_tool_calls(const char* raw,
                                   void* user_data) {
     auto* ctx = static_cast<InterfaceContext*>(user_data);
     std::string raw_str = raw ? raw : "";
-
     auto tier = ctx->orchestrator->last_used_tier();
     if (tier.empty()) { tier = ctx->default_tier; }
     auto* llama = dynamic_cast<LlamaCppBackend*>(
         ctx->orchestrator->get_backend(tier));
 
+    std::string cleaned_str;
+    std::vector<ToolCall> calls;
     if (llama != nullptr && llama->common_chat_parse_reliable()) {
         auto parsed = llama->parse_response(raw_str);
         apply_action_envelope_recovery(parsed.tool_calls, raw_str);  // gh#88
-        *cleaned = dup(parsed.content);
-        *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));
-        return 0;
+        cleaned_str = std::move(parsed.content);
+        calls = std::move(parsed.tool_calls);
+    } else {
+        parse_via_adapter(ctx->orchestrator, raw_str, tier, cleaned_str, calls);
     }
 
-    // gh#89: fall back on the SAME routed tier as the reliable branch above
-    // (last_used_tier), not default_tier — a routed non-default autoparser tier
-    // was parsing with the wrong tier's adapter.
-    auto* adapter = ctx->orchestrator->get_adapter(tier);
-    if (adapter == nullptr) {
-        *cleaned = dup(raw_str);
-        *tool_calls_json = dup("[]");
-        return 0;
+    if (calls.empty()) {
+        auto fb = try_fenced_json_call(raw_str);  // gh#122
+        if (!fb.empty()) { calls = std::move(fb); }
     }
-    auto parsed = adapter->parse_tool_calls(raw_str);
-    *cleaned = dup(parsed.cleaned_content);
-    *tool_calls_json = dup(serialize_tool_calls(parsed.tool_calls));
+
+    *cleaned = dup(cleaned_str);
+    *tool_calls_json = dup(serialize_tool_calls(calls));
     return 0;
 }
 

@@ -2720,3 +2720,120 @@ TEST_CASE("gh#121: zero-tool-call correction names tier's actual tools",
     CHECK(correction.find("filesystem.read_file") != std::string::npos);
     CHECK(correction.find("filesystem.write_file") != std::string::npos);
 }
+
+// gh#123 part 1 — zero-tool-call counter must reset after a genuine tool call,
+// not accumulate cumulatively across the whole loop.
+//
+// Consumer symptom: an editor tier with explicit_completion: true errors out
+// mid-session because empty reasoning turns (between read → edit calls) bank
+// strikes that were never cleared by the successful edits.
+//
+// RED before fix: counter is never reset in process_generation_result when
+// made_progress=true, so two empty turns separated by a real tool call still
+// reach n=2 and error on the 4th generate call.
+// GREEN after fix: counter resets to "0" on made_progress → only consecutive
+// empty turns count, so the 4th call is just another correction (n=1).
+TEST_CASE("gh#123 part 1: zero-tool-call counter resets after genuine tool call progress",
+          "[engine][gh123][2.9.19]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.finish_reason = "stop";
+    mock.tier = "worker";
+    // Sequence: empty, tool-call, empty, empty, empty
+    // iter1: no tool call (retry 0→1)
+    // iter2: real tool call → made_progress=true (counter should reset to 0)
+    // iter3: no tool call (retry should be 0→1 after fix, 1→2 before fix)
+    // iter4: no tool call (retry 1→2 after fix → correction, 2→ERROR before fix)
+    // iter5: no tool call (after fix: 2→ERROR)
+    mock.tool_calls_queue.push_back("[]");
+    mock.tool_calls_queue.push_back(R"([{"name":"editor.edit","arguments":{"path":"f.txt","content":"x"}}])");
+    // iter3+ fall through to mock.tool_calls_json = "[]"
+
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 20;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    // Executor returns an "ok" result so process_tool_results reports made_progress.
+    ToolExecutionInterface tex{};
+    tex.process_tool_calls = [](LoopContext& /*ctx*/,
+                                const std::vector<ToolCall>& /*calls*/,
+                                void* /*ud*/) -> std::vector<Message> {
+        Message r;
+        r.role = "tool";
+        r.content = "ok";
+        r.metadata["result_kind"] = "ok";
+        return {r};
+    };
+    engine.set_tool_executor(tex);
+
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier,
+                            const std::string& param,
+                            void* /*ud*/) -> std::string {
+        if (tier != "worker") { return ""; }
+        if (param == "explicit_completion") { return "true"; }
+        return "";
+    };
+    engine.set_tier_resolution(tri);
+
+    auto msgs = engine.run(make_messages(), "worker");
+
+    // Count correction messages injected by record_explicit_completion_failure.
+    int corrections = 0;
+    for (const auto& m : msgs) {
+        if (m.role == "user"
+            && m.content.find("[SYSTEM]") != std::string::npos
+            && m.content.find("no tool call") != std::string::npos) {
+            corrections++;
+        }
+    }
+    // RED before fix: corrections=2 (iter1 + iter3 exhausts retries; iter4 = ERROR,
+    // no 3rd correction). The counter never reset after iter2's tool call.
+    // GREEN after fix: corrections=3 (iter1, iter3, iter4 are all non-exhausting;
+    // iter5 is the ERROR, so iter4 still got a correction first).
+    CHECK(corrections == 3);
+}
+
+// gh#123 part 2 — zero-tool-call ceiling must be configurable per tier via
+// max_consecutive_empty_turns frontmatter, not hardcoded at 2.
+//
+// RED before fix: hardcoded `n >= 2` always fires at 3 consecutive empty turns
+// regardless of what the tier identity declares.
+// GREEN after fix: ceiling reads from get_tier_param("max_consecutive_empty_turns"),
+// so a tier declaring 4 doesn't error at the 3rd consecutive empty turn.
+TEST_CASE("gh#123 part 2: zero-tool-call ceiling is per-tier configurable",
+          "[engine][gh123][2.9.19]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.finish_reason = "stop";
+    mock.tier = "worker";
+    // 3 empty turns; with ceiling=4 the 3rd should be a correction, not ERROR.
+
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 3;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier,
+                            const std::string& param,
+                            void* /*ud*/) -> std::string {
+        if (tier != "worker") { return ""; }
+        if (param == "explicit_completion") { return "true"; }
+        if (param == "max_consecutive_empty_turns") { return "4"; }
+        return "";
+    };
+    engine.set_tier_resolution(tri);
+
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "worker";
+    engine.run_loop(ctx);
+
+    // RED before fix: hardcoded ceiling=2 means the 3rd empty turn (n=2>=2) errors.
+    // GREEN after fix: ceiling=4 → n=2<4 → correction only; ERROR not reached at max_iterations.
+    CHECK(ctx.state != AgentState::ERROR);
+}

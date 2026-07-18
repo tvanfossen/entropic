@@ -517,7 +517,7 @@ static void rewire_observers(entropic_handle_t h) {
  * @param data_dir Resolved data directory for identity files.
  * @param shared_prefix Prefix assembled from constitution + app context.
  * @utility
- * @version 2.9.18
+ * @version 2.9.20
  */
 static void populate_tier_info(entropic_handle_t h,
                                const std::filesystem::path& data_dir,
@@ -537,6 +537,8 @@ static void populate_tier_info(entropic_handle_t h,
             parsed.frontmatter.max_iterations;
         info.max_tool_calls_per_turn_override =
             parsed.frontmatter.max_tool_calls_per_turn;
+        info.max_consecutive_empty_turns_override =
+            parsed.frontmatter.max_consecutive_empty_turns;
         info.allowed_tools = resolve_allowed_tools(h, name);  // gh#121
         h->engine->set_tier_info(name, info);
     }

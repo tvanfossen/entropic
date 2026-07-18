@@ -221,8 +221,9 @@ struct ChildContextInfo {
     bool explicit_completion = false;       ///< Requires entropic.complete?
     std::string completion_instructions;    ///< Instructions for explicit completion
     bool valid = false;                     ///< False if tier not found
-    int max_iterations_override = -1;          ///< Per-tier max_iterations (-1 = global, P3-18)
-    int max_tool_calls_per_turn_override = -1; ///< Per-tier tool cap (-1 = global, P3-18)
+    int max_iterations_override = -1;              ///< Per-tier max_iterations (-1 = global, P3-18)
+    int max_tool_calls_per_turn_override = -1;     ///< Per-tier tool cap (-1 = global, P3-18)
+    int max_consecutive_empty_turns_override = -1; ///< Per-tier empty-turn allowance (-1 = global default, gh#123)
 };
 
 /**

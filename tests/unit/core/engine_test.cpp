@@ -456,8 +456,8 @@ SCENARIO("zero-tool-call with explicit_completion halts within retry cap",
         WHEN("the loop runs") {
             engine.run(make_messages());
 
-            THEN("generation is capped at 3 (initial + 2 corrections)") {
-                REQUIRE(mock.generate_call_count <= 3);
+            THEN("generation is capped at 4 (initial + 3 corrections, default ceiling=3)") {
+                REQUIRE(mock.generate_call_count <= 4);
             }
             AND_THEN("loop stops well short of max_iterations") {
                 REQUIRE(mock.generate_call_count < 15);
@@ -2791,9 +2791,9 @@ TEST_CASE("gh#123 part 1: zero-tool-call counter resets after genuine tool call 
     }
     // RED before fix: corrections=2 (iter1 + iter3 exhausts retries; iter4 = ERROR,
     // no 3rd correction). The counter never reset after iter2's tool call.
-    // GREEN after fix: corrections=3 (iter1, iter3, iter4 are all non-exhausting;
-    // iter5 is the ERROR, so iter4 still got a correction first).
-    CHECK(corrections == 3);
+    // GREEN after fix: corrections=4 (ceiling=3; iter1+iter3+iter4+iter5 nudge;
+    // iter6 is ERROR). Without reset: 3 corrections then ERROR at iter5.
+    CHECK(corrections == 4);
 }
 
 // gh#123 part 2 — zero-tool-call ceiling must be configurable per tier via
@@ -2835,5 +2835,70 @@ TEST_CASE("gh#123 part 2: zero-tool-call ceiling is per-tier configurable",
 
     // RED before fix: hardcoded ceiling=2 means the 3rd empty turn (n=2>=2) errors.
     // GREEN after fix: ceiling=4 → n=2<4 → correction only; ERROR not reached at max_iterations.
+    CHECK(ctx.state != AgentState::ERROR);
+}
+
+TEST_CASE("gh#123 part 3: prose-only nudge turn does NOT set failure_reason in metadata",
+          "[engine][gh123][2.9.20]") {
+    MockInference mock;
+    mock.is_complete = false;
+    mock.finish_reason = "stop";
+    mock.tier = "worker";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 2;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+    TierResolutionInterface tri{};
+    tri.get_tier_param = [](const std::string& tier,
+                            const std::string& param,
+                            void* /*ud*/) -> std::string {
+        if (tier != "worker") { return ""; }
+        if (param == "explicit_completion") { return "true"; }
+        return "";
+    };
+    engine.set_tier_resolution(tri);
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "worker";
+    engine.run_loop(ctx);
+    // After first prose-only turn a nudge fires but it is NOT a failure yet —
+    // failure_reason should only appear when the ceiling is exhausted.
+    // RED: currently failure_reason is set on the first nudge turn.
+    CHECK(ctx.metadata.count("failure_reason") == 0);
+}
+
+TEST_CASE("gh#123 part 4: ChildContextInfo.max_consecutive_empty_turns_override wired through engine",
+          "[engine][gh123][2.9.20]") {
+    // With override=5 set on ChildContextInfo, the engine should allow
+    // 5 consecutive empty turns before ERRORing (not the hardcoded 3 default).
+    // With max_iterations=4 the loop exits normally (not via ERROR) because
+    // ceiling=5 is never reached.
+    MockInference mock;
+    mock.is_complete = false;
+    mock.finish_reason = "stop";
+    mock.tier = "worker";
+    auto iface = make_mock_interface(mock);
+    LoopConfig lc;
+    lc.max_iterations = 4;
+    CompactionConfig cc;
+    AgentEngine engine(iface, lc, cc);
+
+    ChildContextInfo info;
+    info.valid = true;
+    info.explicit_completion = true;
+    info.max_consecutive_empty_turns_override = 5;
+    engine.set_tier_info("worker", info);
+    // Wire internal TRI so tier_info_ is used for explicit_completion lookup.
+    engine.set_handoff_rules({});
+
+    LoopContext ctx;
+    ctx.messages = make_messages();
+    ctx.locked_tier = "worker";
+    engine.run_loop(ctx);
+
+    // RED: override not surfaced by tri_get_tier_param → default ceiling (2)
+    //      fires at n>=2 (3rd empty turn), ERROR before max_iterations.
+    // GREEN: ceiling=5 surfaced → max_iterations exits normally, not ERROR.
     CHECK(ctx.state != AgentState::ERROR);
 }

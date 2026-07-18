@@ -766,7 +766,7 @@ bool AgentEngine::handle_terminal_finish_reasons(
  * @param finish_reason Generation finish reason (for logging).
  * @return true if the failure was recorded and state transitioned.
  * @utility
- * @version 2.9.19
+ * @version 2.9.20
  */
 bool AgentEngine::record_explicit_completion_failure(
     LoopContext& ctx, const std::string& finish_reason) {
@@ -775,27 +775,29 @@ bool AgentEngine::record_explicit_completion_failure(
     }
     auto& retries = ctx.metadata["zero_tool_call_retries"];
     int n = retries.empty() ? 0 : std::atoi(retries.c_str());
-    // gh#123: ceiling is per-tier configurable via max_consecutive_empty_turns
-    int ceiling = 2;
+    // gh#123: default 3; per-tier override via max_consecutive_empty_turns
+    int ceiling = 3;
     if (tier_res_.get_tier_param != nullptr) {
         auto cv = tier_res_.get_tier_param(
             ctx.locked_tier, "max_consecutive_empty_turns",
             tier_res_.user_data);
         if (!cv.empty()) { ceiling = std::atoi(cv.c_str()); }
     }
-    logger->warn("[DECISION] tier '{}' requires explicit completion "
-                 "but iteration emitted zero tool calls "
-                 "(finish_reason={}) retry={}/{}",
-                 ctx.locked_tier, finish_reason, n, ceiling);
-    ctx.metadata["failure_reason"] =
-        "zero_tool_calls_with_explicit_completion";
-    ctx.metadata["failure_tier"] = ctx.locked_tier;
     if (n >= ceiling) {
-        logger->error("[DECISION] zero-tool-call retries exhausted "
-                      "(tier={}), failing turn", ctx.locked_tier);
+        // Allowance exhausted — this is a genuine failure.
+        ctx.metadata["failure_reason"] =
+            "zero_tool_calls_with_explicit_completion";
+        ctx.metadata["failure_tier"] = ctx.locked_tier;
+        logger->error("[DECISION] empty-turn allowance exhausted "
+                      "(tier={}, n={}/{}), failing turn",
+                      ctx.locked_tier, n, ceiling);
         set_state(ctx, AgentState::ERROR);
         return true;
     }
+    // Reasoning turn — nudge toward action, not a failure yet.
+    logger->info("[DECISION] tier '{}' empty turn {}/{} "
+                 "(finish_reason={}), nudging toward action",
+                 ctx.locked_tier, n + 1, ceiling, finish_reason);
     std::string tools_hint =
         "(entropic.complete, entropic.delegate, or entropic.inspect)";
     if (tier_res_.get_tier_param != nullptr) {
@@ -3463,16 +3465,17 @@ static std::string join_csv(const std::vector<std::string>& v) {
 /**
  * @brief Look up named tier parameter (TierResolutionInterface trampoline).
  *
- * Surfaces explicit_completion, max_iterations, and max_tool_calls_per_turn
- * from pre-resolved ChildContextInfo. Returns empty string when tier or
- * param is not found, or when a numeric override is unset (-1).
+ * Surfaces explicit_completion, max_iterations, max_tool_calls_per_turn,
+ * max_consecutive_empty_turns, and allowed_tools from pre-resolved
+ * ChildContextInfo. Returns empty string when tier or param is not found,
+ * or when a numeric override is unset (-1).
  *
  * @param name Tier name.
  * @param param Parameter key.
  * @param ud Untyped AgentEngine* pointer.
  * @return String value, empty if tier or param unknown.
  * @internal
- * @version 2.9.18
+ * @version 2.9.20
  */
 std::string AgentEngine::tri_get_tier_param(const std::string& name,
     const std::string& param, void* ud) {
@@ -3483,14 +3486,19 @@ std::string AgentEngine::tri_get_tier_param(const std::string& name,
     std::string result;
     if (param == "explicit_completion") {
         result = info.explicit_completion ? "true" : "false";
-    } else if (param == "max_iterations"
-               && info.max_iterations_override >= 0) {
+    }
+    if (param == "max_iterations" && info.max_iterations_override >= 0) {
         result = std::to_string(info.max_iterations_override);
-    } else if (param == "max_tool_calls_per_turn"
-               && info.max_tool_calls_per_turn_override >= 0) {
+    }
+    if (param == "max_tool_calls_per_turn"
+        && info.max_tool_calls_per_turn_override >= 0) {
         result = std::to_string(info.max_tool_calls_per_turn_override);
-    } else if (param == "allowed_tools"
-               && !info.allowed_tools.empty()) {
+    }
+    if (param == "max_consecutive_empty_turns"
+        && info.max_consecutive_empty_turns_override >= 0) {
+        result = std::to_string(info.max_consecutive_empty_turns_override);
+    }
+    if (param == "allowed_tools" && !info.allowed_tools.empty()) {
         result = join_csv(info.allowed_tools);
     }
     return result;

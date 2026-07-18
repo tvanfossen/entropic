@@ -278,7 +278,7 @@ static void extract_sampler_knobs(ryml::ConstNodeRef root,
  * @param root YAML root node.
  * @param[out] fm Identity frontmatter to populate.
  * @utility
- * @version 2.9.15
+ * @version 2.9.20
  */
 static void extract_identity_flags(ryml::ConstNodeRef root,
                                    IdentityFrontmatter& fm) {
@@ -293,6 +293,7 @@ static void extract_identity_flags(ryml::ConstNodeRef root,
     // E6 (2.0.6-rc18): per-identity loop + tool-call caps
     extract(root, "max_iterations", fm.max_iterations);
     extract(root, "max_tool_calls_per_turn", fm.max_tool_calls_per_turn);
+    extract(root, "max_consecutive_empty_turns", fm.max_consecutive_empty_turns);
     extract_string_list(root, "validation_rules", fm.validation_rules);
 }
 

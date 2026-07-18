@@ -89,6 +89,7 @@ struct IdentityFrontmatter {
     bool relay_single_delegate = false;        ///< Skip re-synthesis when single delegate returns (v2.0.11)
     int max_iterations = -1;                   ///< Per-identity loop iteration cap; -1 = use global (E6)
     int max_tool_calls_per_turn = -1;          ///< Per-identity tool call cap; -1 = use global (E6)
+    int max_consecutive_empty_turns = -1;      ///< Per-identity empty-turn allowance; -1 = use global default (gh#123)
     std::optional<std::unordered_map<std::string, PhaseConfig>> phases; ///< Named phases
     std::optional<BenchmarkSpec> benchmark;    ///< Benchmark definition
 };

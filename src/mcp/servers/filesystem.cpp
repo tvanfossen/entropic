@@ -822,7 +822,7 @@ private:
  * ignore matching uses the server's IgnoreMatcher (#15, v2.1.4).
  *
  * @internal
- * @version 2.9.14
+ * @version 2.10.0
  */
 std::string check_read_gates(FilesystemServer& server,
                              const fs::path& resolved,
@@ -830,7 +830,10 @@ std::string check_read_gates(FilesystemServer& server,
     std::string err;
     if (!fs::exists(resolved)) {
         err = make_error("not_found",
-            "File not found: " + path_str);
+            "File not found: " + path_str
+            + ". Use list_directory(\".\") to see available files"
+              " in the working directory, or verify the path is"
+              " relative to the configured root.");
     } else if (fs::is_directory(resolved)) {
         err = make_error("is_directory",
             "Path is a directory, not a file: " + path_str);

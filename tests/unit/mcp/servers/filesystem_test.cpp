@@ -1025,3 +1025,25 @@ TEST_CASE("gh#120: read_file lines are an ordered array not a keyed object",
     CHECK(result["lines"][0].get<std::string>() == "line 1");
     CHECK(result["lines"][9].get<std::string>() == "line 10");
 }
+
+// ── gh#124 (v2.10.0): read_file not-found gives corrective guidance ──────────
+
+TEST_CASE("gh#124: read_file not-found error message names list_directory",
+          "[filesystem][gh124][regression]") {
+    // Pre-fix: error["message"] = "File not found: path" with no next step.
+    // The agent stalls: no hint to use list_directory or that paths are
+    // root-relative.
+    // Fix: appended corrective guidance at check_read_gates line 832-833.
+    TempDir tmp;
+    auto server = make_server(tmp.path());
+
+    json args;
+    args["path"] = "does_not_exist.txt";
+    auto result = parse_result(server.execute("read_file", args.dump()));
+
+    REQUIRE(result.contains("error"));
+    REQUIRE(result["error"].get<std::string>() == "not_found");
+    // Core requirement: message must name the recovery tool.
+    REQUIRE(result["message"].get<std::string>().find("list_directory")
+            != std::string::npos);
+}

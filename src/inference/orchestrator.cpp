@@ -16,6 +16,7 @@
 #include <entropic/types/logging.h>
 
 #include "llama_cpp_backend.h"
+#include "mtp_envelope.h"
 #include "adapters/adapter_registry.h"
 #include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
@@ -346,6 +347,32 @@ bool ModelOrchestrator::try_mtp_route(
 }
 
 /**
+ * @brief gh#107: return true (and populate result) when draft looks like
+ *        an MTP head GGUF routed to the classical separate-draft path.
+ *
+ * An MTP head GGUF (1-2 layers) crashes in fattn.cu when the classical
+ * `generate_speculative_with_draft` path creates a separate KV context.
+ * Fail loud with INCOMPATIBLE_CONFIG instead of crashing.
+ *
+ * @param draft  Draft LlamaCppBackend (model must be loaded for the check).
+ * @param result [out] Populated on true return.
+ * @return True when the guard fires and result is populated; false otherwise.
+ * @internal
+ * @version 2.10.0
+ */
+static bool mtp_head_guard_fires(LlamaCppBackend* draft,
+                                 GenerationResult& result) {
+    auto* dm = draft->llama_model_ptr();
+    if (dm == nullptr) { return false; }
+    int n = llama_model_n_layer(dm);
+    if (!looks_like_mtp_head(n)) { return false; }
+    result.error_code = ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG;
+    result.error_message = mtp_head_classical_path_error(n);
+    result.finish_reason = "error";
+    return true;
+}
+
+/**
  * @brief Common implementation: returns true if the speculative
  *        kernel ran (result populated), false to fall back to plain.
  *
@@ -366,8 +393,12 @@ bool ModelOrchestrator::try_mtp_route(
  * before any MTP-specific work starts, the same way the global on/off flag
  * already silently selects plain decode — see docs/architecture-cpp.md.
  *
+ * gh#107 (v2.10.0): before entering the classical gh#36 draft path, check
+ * whether the loaded draft GGUF looks like an MTP head (≤2 layers). If so,
+ * fail loud with INCOMPATIBLE_CONFIG instead of crashing in fattn.cu.
+ *
  * @internal
- * @version 2.9.4
+ * @version 2.10.0
  */
 bool ModelOrchestrator::try_speculative_route_streaming(
     InferenceBackend* model,
@@ -398,6 +429,11 @@ bool ModelOrchestrator::try_speculative_route_streaming(
             logger->info("Speculative compat passed but target/draft "
                          "is not llama.cpp; using plain decode");
         } else {
+            // gh#107 (v2.10.0): guard against MTP head GGUFs on classical path.
+            if (mtp_head_guard_fires(llama_draft, result)) {
+                logger->error("{}", result.error_message);
+                return true;
+            }
             auto spec = llama_target->generate_speculative_with_draft(
                 messages, params, on_token, cancel, *llama_draft,
                 config_.inference.speculative.n_draft,

@@ -86,4 +86,40 @@ inline std::string mtp_unsupported_reason(float temperature, bool has_grammar,
     return r;
 }
 
+/**
+ * @brief True when the model's layer count is consistent with an MTP head GGUF.
+ *
+ * A Gemma-4 MTP assistant head has 1–2 transformer layers. A classical
+ * draft model (Llama/Mistral small-variant) has at least 4. Used by
+ * try_speculative_route_streaming (gh#107) to fail loud when such a GGUF
+ * is supplied without setting speculative.mtp: true.
+ *
+ * @param n_layer Layer count from llama_model_n_layer.
+ * @return True for 1–2 layers; false otherwise.
+ * @utility
+ * @version 2.10.0
+ */
+inline bool looks_like_mtp_head(int n_layer) {
+    return n_layer >= 1 && n_layer <= 2;
+}
+
+/**
+ * @brief Actionable error message for gh#107: MTP head on classical path.
+ *
+ * Called by try_speculative_route_streaming when looks_like_mtp_head is true
+ * and speculative.mtp is false. The message names the layer count and the
+ * corrective config knob.
+ *
+ * @param n_layer Layer count from llama_model_n_layer.
+ * @return Actionable INCOMPATIBLE_CONFIG message.
+ * @utility
+ * @version 2.10.0
+ */
+inline std::string mtp_head_classical_path_error(int n_layer) {
+    return "Draft model has " + std::to_string(n_layer)
+           + " layer(s) — this looks like an MTP head GGUF. "
+             "Set speculative.mtp: true in your config to route through "
+             "the target-owned shared-KV MTP path instead of crashing.";
+}
+
 }  // namespace entropic

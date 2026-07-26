@@ -1026,6 +1026,62 @@ TEST_CASE("gh#120: read_file lines are an ordered array not a keyed object",
     CHECK(result["lines"][9].get<std::string>() == "line 10");
 }
 
+// ── gh#126 (v2.10.0): glob path matching — relative path + ** pattern ────────
+
+TEST_CASE("gh#126: glob ** pattern matches files at root and in subdirectories",
+          "[filesystem][gh126][regression]") {
+    // Pre-fix: classify_glob_entry matched entry.path().filename() (basename
+    // only). A pattern like **/*.cpp compiled to regex .*.*\/.*\.cpp which
+    // requires a '/' in the subject string — basenames never have one, so
+    // zero files matched regardless of depth.
+    // Fix: use fs::relative(entry.path(), root).generic_string() so the
+    // subject includes the directory path, and emit_glob_star so ** → .*
+    // (not .*.*).
+    TempDir tmp;
+    write_test_file(tmp.path(), "foo.cpp", "// root");
+    write_test_file(tmp.path(), "src/bar.cpp", "// nested");
+    write_test_file(tmp.path(), "src/baz.h", "// header, excluded");
+
+    auto server = make_server(tmp.path());
+    auto prev_cwd = fs::current_path();
+    fs::current_path(tmp.path());
+
+    json args;
+    args["pattern"] = "**/*.cpp";
+    auto result = json::parse(raw_result(server.execute("glob", args.dump())));
+
+    fs::current_path(prev_cwd);
+
+    // RED before fix: basename matching means no filename contains '/', so
+    // the **/ portion never satisfies → 0 results.
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 2);
+}
+
+TEST_CASE("gh#126: glob with directory prefix matches only files in that subdir",
+          "[filesystem][gh126][regression]") {
+    // Pre-fix: "bar.cpp" basename does not match src/*.cpp regex
+    // src\/.*\.cpp → 0 results even though src/bar.cpp exists.
+    TempDir tmp;
+    write_test_file(tmp.path(), "foo.cpp", "// root");
+    write_test_file(tmp.path(), "src/bar.cpp", "// nested");
+
+    auto server = make_server(tmp.path());
+    auto prev_cwd = fs::current_path();
+    fs::current_path(tmp.path());
+
+    json args;
+    args["pattern"] = "src/*.cpp";
+    auto result = json::parse(raw_result(server.execute("glob", args.dump())));
+
+    fs::current_path(prev_cwd);
+
+    // RED before fix: 0 results; post-fix: exactly 1 (src/bar.cpp, not foo.cpp).
+    REQUIRE(result.is_array());
+    REQUIRE(result.size() == 1);
+    REQUIRE(result[0].get<std::string>().find("bar.cpp") != std::string::npos);
+}
+
 // ── gh#124 (v2.10.0): read_file not-found gives corrective guidance ──────────
 
 TEST_CASE("gh#124: read_file not-found error message names list_directory",

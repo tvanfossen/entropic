@@ -17,6 +17,7 @@
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/core/directives.h>
 #include <entropic/types/logging.h>
 
@@ -400,7 +401,7 @@ public:
  *                  "suggested_files".
  * @return ServerResponse with summary and directives.
  * @internal
- * @version 2.1.4
+ * @version 2.10.0
  */
 ServerResponse CompleteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -436,9 +437,9 @@ ServerResponse CompleteTool::execute(const std::string& args_json) {
 
     nlohmann::json result;
     result["action"] = "complete";
-    result["summary"] = summary;
+    result["summary"] = entropic::mcp::sanitize_utf8(summary);
     result["coverage_gap"] = coverage_gap;
-    result["gap_description"] = gap_description;
+    result["gap_description"] = entropic::mcp::sanitize_utf8(gap_description);
     result["suggested_files"] = suggested;
 
     Directive complete_d;

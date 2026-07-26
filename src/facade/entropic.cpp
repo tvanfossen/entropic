@@ -2094,14 +2094,14 @@ entropic_error_t entropic_run_as(
  * @param results Per-request generation results.
  * @return JSON array: [{content, finish_reason, tool_calls}, ...].
  * @utility
- * @version 2.8.0
+ * @version 2.10.0
  */
 static std::string serialize_batch_results(
     const std::vector<entropic::GenerationResult>& results) {
     nlohmann::json arr = nlohmann::json::array();
     for (const auto& r : results) {
         nlohmann::json obj;
-        obj["content"] = r.content;
+        obj["content"] = entropic::mcp::sanitize_utf8(r.content);
         obj["finish_reason"] = r.finish_reason;
         obj["tool_calls"] = nlohmann::json::parse(
             entropic::serialize_tool_calls(r.tool_calls), nullptr, false);
@@ -3947,7 +3947,7 @@ entropic_error_t entropic_validation_set_identity(
  *
  * @return JSON string (caller frees), or NULL if no result.
  * @internal
- * @version 2.0.2
+ * @version 2.10.0
  */
 char* entropic_validation_last_result(entropic_handle_t handle)
 {
@@ -3955,7 +3955,7 @@ char* entropic_validation_last_result(entropic_handle_t handle)
     try {
         auto result = handle->validator->last_result();
         nlohmann::json j;
-        j["content"] = result.content;
+        j["content"] = entropic::mcp::sanitize_utf8(result.content);
         j["was_revised"] = result.was_revised;
         j["revision_count"] = result.revision_count;
         return alloc_cstr(j.dump().c_str());

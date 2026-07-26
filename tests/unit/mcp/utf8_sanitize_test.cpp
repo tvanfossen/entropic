@@ -11,7 +11,7 @@
  *   3. Boundary cases: start, end, repeated invalid runs.
  *   4. JSON-roundtrip: nlohmann::json::dump() succeeds on the result.
  *
- * @version 2.1.0
+ * @version 2.10.0
  */
 
 #include <entropic/mcp/utf8_sanitize.h>
@@ -139,6 +139,109 @@ SCENARIO("sanitize_utf8 handles empty input",
         WHEN("sanitized") {
             auto out = sanitize_utf8("");
             THEN("output is empty") { CHECK(out.empty()); }
+        }
+    }
+}
+
+// ── gh#132 (v2.10.0): serialize_batch_results + validation_last_result sinks ─
+
+SCENARIO("gh#132: serialize_batch_results assigns raw content without sanitize_utf8",
+         "[mcp][utf8][gh132][regression]")
+{
+    // Production crash vector: entropic_run_batch returns a GenerationResult
+    // whose content is raw model-output bytes.  serialize_batch_results at
+    // entropic.cpp:2104 does obj["content"] = r.content with no sanitize_utf8
+    // guard → arr.dump() at line 2110 throws type_error.316 on a split MTP
+    // codepoint (e.g., 0xE6 0x9E are the first two bytes of a 3-byte CJK
+    // sequence; 0x2E '.' is not a valid continuation byte).
+    GIVEN("a batch result with a MTP-split 3-byte codepoint in content") {
+        std::string bad_content =
+            std::string("result text") + "\xE6\x9E\x2E" + " done";
+
+        // Confirm the un-sanitized pattern throws (documents pre-fix behavior).
+        {
+            nlohmann::json arr = nlohmann::json::array();
+            nlohmann::json obj;
+            obj["content"] = bad_content;   // entropic.cpp:2104, no sanitize
+            arr.push_back(std::move(obj));
+            REQUIRE_THROWS_AS(arr.dump(), nlohmann::json::type_error);
+        }
+
+        WHEN("sanitize_utf8 is applied before assignment (v2.10.0 fix)") {
+            nlohmann::json arr = nlohmann::json::array();
+            nlohmann::json obj;
+            obj["content"] = sanitize_utf8(bad_content);
+            arr.push_back(std::move(obj));
+            THEN("arr.dump() succeeds") {
+                REQUIRE_NOTHROW(arr.dump());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#132: entropic_validation_last_result assigns raw content without sanitize_utf8",
+         "[mcp][utf8][gh132][regression]")
+{
+    // entropic_validation_last_result at entropic.cpp:3958-3961:
+    //   j["content"] = result.content;   ← no sanitize_utf8
+    //   j.dump()                         ← throws on bad UTF-8
+    // result.content is a raw GenerationResult::content (model output bytes).
+    GIVEN("a validation result with a bad UTF-8 byte sequence in content") {
+        std::string bad_content =
+            std::string("valid text") + "\xC3\x28" + " rest";
+
+        {
+            nlohmann::json j;
+            j["content"] = bad_content;   // entropic.cpp:3958, no sanitize
+            j["was_revised"]    = false;
+            j["revision_count"] = 0;
+            REQUIRE_THROWS_AS(j.dump(), nlohmann::json::type_error);
+        }
+
+        WHEN("sanitize_utf8 is applied before assignment (v2.10.0 fix)") {
+            nlohmann::json j;
+            j["content"]        = sanitize_utf8(bad_content);
+            j["was_revised"]    = false;
+            j["revision_count"] = 0;
+            THEN("j.dump() succeeds") {
+                REQUIRE_NOTHROW(j.dump());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#132: CompleteTool::execute summary dump fails on direct bad-UTF-8 assignment",
+         "[mcp][utf8][gh132][regression]")
+{
+    // Defense-in-depth: entropic_server.cpp:439 result["summary"] = summary
+    // followed by result.dump() at line 450.  While the normal tool-call parse
+    // path validates UTF-8 at lex time, a future code path that supplies
+    // args_json from raw byte concatenation (not via nlohmann round-trip) would
+    // reach the dump sink unguarded.  Sanitize at the assignment site regardless.
+    GIVEN("a summary string with a split codepoint") {
+        std::string bad_summary =
+            std::string(20, 'a') + "\xE6\x9E\x2E" + "end";
+
+        {
+            nlohmann::json result;
+            result["action"]         = "complete";
+            result["summary"]        = bad_summary;  // entropic_server.cpp:439
+            result["coverage_gap"]   = false;
+            result["gap_description"] = std::string{};
+            result["suggested_files"] = nlohmann::json::array();
+            REQUIRE_THROWS_AS(result.dump(), nlohmann::json::type_error);
+        }
+
+        WHEN("sanitize_utf8 is applied before assignment (v2.10.0 fix)") {
+            nlohmann::json result;
+            result["action"]          = "complete";
+            result["summary"]         = sanitize_utf8(bad_summary);
+            result["coverage_gap"]    = false;
+            result["gap_description"] = std::string{};
+            result["suggested_files"] = nlohmann::json::array();
+            THEN("result.dump() succeeds") {
+                REQUIRE_NOTHROW(result.dump());
+            }
         }
     }
 }

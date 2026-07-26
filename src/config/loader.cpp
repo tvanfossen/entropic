@@ -189,17 +189,17 @@ static std::string parse_model_config(
 /**
  * @brief Parse a TierConfig from a YAML node.
  *
- * gh#108 (v2.9.4): also parses the per-tier `speculative.mtp` override and
- * rejects a tier that statically combines `speculative.mtp=true` with a
- * static `grammar` — that combination fails every request at generate-time
- * (MTP does not enforce GBNF), so it's caught here instead.
+ * gh#108 (v2.9.4): also parses the per-tier `speculative.mtp` override.
+ * The earlier static rejection of `speculative.mtp=true` + static `grammar`
+ * is removed in v2.10.0: `to_common_sampling` now propagates grammar to the
+ * MTP sampler chain, so the combination is valid.
  *
  * @param node YAML node containing tier fields.
  * @param registry Bundled models for path resolution.
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.9.4
+ * @version 2.10.0
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -223,16 +223,6 @@ static std::string parse_tier_config(
     std::string grammar_str;
     if (extract(node, "grammar", grammar_str)) {
         config.grammar = expand_home(std::filesystem::path(grammar_str));
-    }
-
-    // gh#108 (v2.9.4): a tier that statically opts into MTP while also
-    // statically configuring a grammar would fail every request (MTP does
-    // not enforce GBNF) — catch that at load time instead of per-call.
-    if (config.speculative_mtp && *config.speculative_mtp
-        && config.grammar.has_value()) {
-        return "speculative.mtp=true is incompatible with a static grammar "
-               "on this tier (MTP does not enforce GBNF constraints); "
-               "remove speculative.mtp or the grammar for this tier";
     }
 
     std::string auto_chain_str;

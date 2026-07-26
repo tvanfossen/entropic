@@ -380,25 +380,18 @@ static bool mtp_head_guard_fires(LlamaCppBackend* draft,
  * generate and generate_streaming (v2.1.11, gh#36). gh#106 (v2.9.0):
  * MTP routes out to try_mtp_route before the gh#36 compat path.
  *
- * gh#108 (v2.9.4): MTP-attempt is gated on two things before routing to
- * try_mtp_route — (1) `resolve_mtp_effective(tier_name)`, the per-tier
- * override (a tier can opt out of MTP even when the global flag is on,
- * e.g. a grammar-heavy identity), and (2) `params.grammar.empty()`, a
- * request-level safety net: even on an MTP-effective tier, a call that
- * carries a dynamic grammar (e.g. the constitutional validator's critique,
- * which is not a static tier property) falls through to plain decode
- * instead of hitting generate_mtp's loud INCOMPATIBLE_CONFIG refusal. This
- * is not a violation of the "fail loud, no silent fallback" principle
- * (decision #43): both checks are known request/tier properties available
- * before any MTP-specific work starts, the same way the global on/off flag
- * already silently selects plain decode — see docs/architecture-cpp.md.
+ * gh#108 (v2.9.4): MTP-attempt was gated on `params.grammar.empty()` as a
+ * request-level safety net. gh#108 (v2.10.0): that gate is removed —
+ * `to_common_sampling` now propagates params.grammar to the MTP sampler
+ * chain so grammar constraints are correctly enforced under speculative.mtp.
+ * The per-tier `resolve_mtp_effective(tier_name)` override remains.
  *
  * gh#107 (v2.10.0): before entering the classical gh#36 draft path, check
  * whether the loaded draft GGUF looks like an MTP head (≤2 layers). If so,
  * fail loud with INCOMPATIBLE_CONFIG instead of crashing in fattn.cu.
  *
  * @internal
- * @version 2.10.0
+ * @version 2.10.0 [reviewed]
  */
 bool ModelOrchestrator::try_speculative_route_streaming(
     InferenceBackend* model,
@@ -412,7 +405,7 @@ bool ModelOrchestrator::try_speculative_route_streaming(
     // gh#106 (v2.9.0): MTP routes BEFORE the gh#36 compat/pair path — the
     // target owns the head (no separate draft backend), and MTP tolerates
     // shared-KV gemma4 archs the gh#36 compat gate rejects.
-    if (resolve_mtp_effective(tier_name) && params.grammar.empty()) {
+    if (resolve_mtp_effective(tier_name)) {  // gh#108 v2.10.0: grammar no longer blocks MTP
         return try_mtp_route(model, messages, params, on_token, cancel,
                              result);
     }

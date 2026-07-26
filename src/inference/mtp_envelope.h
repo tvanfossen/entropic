@@ -70,20 +70,17 @@ namespace entropic {
  * @param streaming True when a per-token callback is bound (streaming call).
  * @return Actionable message when MTP is unsupported for the request, else "".
  * @utility
- * @version 2.9.4
+ * @version 2.10.0
  */
 inline std::string mtp_unsupported_reason(float temperature, bool has_grammar,
                                           bool streaming) {
     (void)temperature;
-    std::string r;
-    if (has_grammar) {
-        r = "MTP does not enforce grammar constraints; disable speculative.mtp "
-            "for grammar-constrained tiers";
-    } else if (streaming) {
-        r = "MTP does not support streaming (the thinking-channel strip is a "
-            "post-buffer operation); disable speculative.mtp for streaming calls";
+    (void)has_grammar;  // gh#108 v2.10.0: grammar propagated via to_common_sampling
+    if (streaming) {
+        return "MTP does not support streaming (the thinking-channel strip is a "
+               "post-buffer operation); disable speculative.mtp for streaming calls";
     }
-    return r;
+    return {};
 }
 
 /**

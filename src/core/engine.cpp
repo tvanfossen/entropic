@@ -2424,7 +2424,7 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
  * @brief Execute a pending pipeline after tool processing.
  * @param ctx Loop context with pending_pipeline set.
  * @internal
- * @version 2.1.6
+ * @version 2.10.0
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -2457,13 +2457,21 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto cb_snap = delegation_callbacks_snapshot();
     mgr.set_delegation_callbacks(
         cb_snap.start, cb_snap.complete, cb_snap.user_data);
+    std::vector<DelegationResult> stage_log;
     auto result = mgr.execute_pipeline(
-        ctx, pending.stages, pending.task);
+        ctx, pending.stages, pending.task, stage_log);
 
     std::string tag = result.success ? "COMPLETE" : "FAILED";
+    std::string content = "[PIPELINE " + tag + "]";
+    for (size_t i = 0; i < stage_log.size(); ++i) {
+        content += "\nStage " + std::to_string(i + 1)
+                   + " (" + stage_log[i].target_tier + "): "
+                   + stage_log[i].summary;
+    }
+    content += "\nFinal: " + result.summary;
     Message result_msg;
     result_msg.role = "user";
-    result_msg.content = "[PIPELINE " + tag + "] " + result.summary;
+    result_msg.content = std::move(content);
     ctx.messages.push_back(std::move(result_msg));
 
     set_state(ctx, AgentState::EXECUTING);

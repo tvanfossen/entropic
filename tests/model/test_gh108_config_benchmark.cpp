@@ -103,7 +103,7 @@ void print_run(const char* label, const RunStats& s, int max_tokens) {
 
 TEST_CASE("gh#108 benchmark: E4B Q8 baseline vs E4B Q2-mobile+MTP+flash+q4KV "
           "vs E4B Q4_K_XL+MTP+flash+q4KV",
-          "[model][gh108][benchmark]") {
+          "[.][model][gh108][benchmark]") {
     auto q8_path = gh87verify::model_path("gemma-4-E4B-it-Q8_0.gguf");
     auto q2_path = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf");
     auto q4_path = gh87verify::model_path("gemma-4-E4B-it-UD-Q4_K_XL.gguf");

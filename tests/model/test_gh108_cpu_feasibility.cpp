@@ -248,7 +248,7 @@ double avg_decode_tok_s(const std::vector<TurnResult>& stats) {
 
 TEST_CASE("gh#108 CPU-only feasibility: E2B-QAT-Q4 x MTP x flash+q4KV, "
           "128k context, RSS vs assumed 8GB budget",
-          "[model][gh108][benchmark][cpu][feasibility]") {
+          "[.][model][gh108][benchmark][cpu][feasibility]") {
     auto path = models_dir() / "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf";
     auto head = models_dir() / "mtp-gemma-4-E2B-it.gguf";
     if (!std::filesystem::is_regular_file(path) || !std::filesystem::is_regular_file(head)) {

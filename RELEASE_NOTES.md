@@ -2,6 +2,71 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.10.0
+
+Minor release — **MTP grammar + streaming support, tool-call robustness, and
+filesystem/pipeline polish.**
+
+## Highlights
+
+- **MTP grammar (gh#108)**: tiers with `speculative.mtp: true` and a static
+  GBNF grammar now work correctly. `to_common_sampling` propagates
+  `params.grammar` to the MTP sampler chain; the loader rejection and the
+  orchestrator routing gate are removed.
+- **MTP streaming (gh#108)**: `speculative.mtp: true` is now compatible with
+  streaming calls. `generate_streaming` wraps `on_token` with `StreamThinkFilter`
+  for incremental thinking-channel stripping, and calls `apply_adapter_parse` on
+  return — matching the non-streaming path.
+- **MTP head guard (gh#107)**: using a Gemma-4 MTP head GGUF on the classical
+  separate-draft path now fails loud with `INCOMPATIBLE_CONFIG` instead of
+  crashing in `fattn.cu`. Message names `speculative.mtp: true` as the fix.
+- **Lenient tool-call parse (gh#127)**: fenced JSON blocks containing only an
+  arguments object (no `name` key) are now matched against registered tool
+  schemas and synthesized into a `ToolCall` when exactly one schema matches.
+- **Pipeline stage validation (gh#129)**: `PipelineTool` rejects unknown stage
+  names at emission time with an `invalid_stage` error, instead of silently
+  passing them to `DelegationManager` and failing per-stage.
+- **Per-stage pipeline output (gh#125)**: pipeline context messages now include
+  per-stage `{tier, task}` summaries in addition to the final result.
+- **`read_file` guidance (gh#124)**: not-found errors now name `list_directory`
+  as the corrective action.
+- **`glob` path matching (gh#126)**: `**/*.cpp` and similar patterns now match
+  root-level files and path-relative entries; `**` maps to `.*` (cross-directory)
+  while bare `*` maps to `[^/]*` (single segment).
+- **UTF-8 safety (gh#132)**: `CompleteTool::execute`, `serialize_batch_results`,
+  and `entropic_validation_last_result` sanitize output before JSON serialization.
+
+## Engine bug fixes
+
+- gh#132: `type_error.316` on malformed model output in `CompleteTool::execute`
+- gh#127: tool-call lost when model emits arguments-only fence (no `name` key)
+- gh#129: silent per-stage failure on unknown tier names in `pipeline` tool
+- gh#126: `glob("**/*.cpp")` returned nothing for root-level and path-relative files
+- gh#124: `read_file` not-found error provided no recovery guidance
+- gh#107: crash (`GGML_ABORT` in `fattn.cu`) when MTP head GGUF routed to classical draft path
+- gh#108: MTP sampler did not enforce GBNF grammar constraints
+- gh#108: MTP streaming emitted raw `<think>` tokens and skipped `apply_adapter_parse`
+
+## New features
+
+- gh#125: pipeline output includes per-stage tier + task summary
+- gh#107: `looks_like_mtp_head(n_layer)` + `mtp_head_classical_path_error` in `mtp_envelope.h`
+
+## Breaking changes
+
+- Loader no longer rejects `speculative.mtp: true` + static grammar combination
+  (was: validation error at parse time). Existing configs that relied on this
+  gate as a safety net may now route to MTP with grammar applied.
+- `mtp_unsupported_reason` always returns `""` — all three guards (temperature,
+  grammar, streaming) are removed. Direct callers asserting non-empty for any
+  condition should update their tests.
+
+## Distribution
+
+- CPU tarball: `entropic-2.10.0-linux-x86_64-cpu.tar.gz` (sha256 in companion file)
+- CUDA tarball: `entropic-2.10.0-linux-x86_64-cuda.tar.gz` (sha256 in companion file)
+- Python wrapper: `pip install entropic-engine==2.10.0` then `entropic install-engine`
+
 # entropic v2.9.8
 
 Patch — **completes the gh#111 UTF-8 fix that v2.9.7 left half-done.**

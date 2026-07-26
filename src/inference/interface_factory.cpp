@@ -359,6 +359,129 @@ static std::vector<ToolCall> try_fenced_json_call(const std::string& raw) {
 }
 
 /**
+ * @brief Find the unique tool whose required params are all present in obj.
+ *
+ * Returns the tool name when exactly one tool in `tools` satisfies the
+ * constraint. Returns empty when zero or more than one tool matches
+ * (ambiguous) to avoid false-positive tool-call synthesis.
+ *
+ * @param obj    Parsed arguments JSON object (no name/tool key).
+ * @param tools  JSON array of MCP tool definitions.
+ * @return Matched tool name, or empty string.
+ * @utility
+ * @version 2.10.0
+ */
+static std::string find_unique_args_match(
+    const nlohmann::json& obj,
+    const nlohmann::json& tools) {
+    std::string matched;
+    for (const auto& t : tools) {
+        auto name = t.value("name", std::string{});
+        if (name.empty()) { continue; }
+        auto req = t.value("inputSchema", nlohmann::json{})
+                     .value("required", nlohmann::json::array());
+        bool ok = true;
+        for (const auto& r : req) {
+            if (!r.is_string()
+                || !obj.contains(r.get<std::string>())) {
+                ok = false; break;
+            }
+        }
+        if (!ok) { continue; }
+        if (!matched.empty()) { return {}; }
+        matched = name;
+    }
+    return matched;
+}
+
+/**
+ * @brief Extract and validate the fenced JSON block for args-only inference.
+ *
+ * Parses exactly one fenced ```json``` block from `raw`, validates it is a
+ * JSON object with no name/tool key (handled by the gh#122 path), and returns
+ * it. Returns nullopt when the block is absent, malformed, multiple, or
+ * already has a name/tool key.
+ *
+ * @param raw Raw model output.
+ * @return Parsed object if valid for args-only inference, nullopt otherwise.
+ * @utility
+ * @version 2.10.0
+ */
+static std::optional<nlohmann::json> extract_args_only_fence(
+    const std::string& raw) {
+    const std::string kOpen = "```json";
+    const std::string kClose = "```";
+    auto ob = raw.find(kOpen);
+    auto bs = ob != std::string::npos ? ob + kOpen.size() : std::string::npos;
+    auto cb = bs != std::string::npos ? raw.find(kClose, bs) : std::string::npos;
+    bool single = ob != std::string::npos && cb != std::string::npos
+        && (raw.find(kOpen, ob + 1) == std::string::npos
+            || raw.find(kOpen, ob + 1) > cb);
+    if (!single) { return std::nullopt; }
+    auto j = nlohmann::json::parse(raw.substr(bs, cb - bs), nullptr, false);
+    if (!j.is_object() || j.contains("name") || j.contains("tool")) {
+        return std::nullopt;
+    }
+    return j;
+}
+
+/**
+ * @brief Try to synthesise a tool call from a fenced args-only JSON object (gh#127).
+ *
+ * Fires after the gh#122 named-object path returns empty. When the fenced
+ * block is a valid JSON object with NO name or tool key, checks `tools_json`
+ * for a unique tool whose required parameters are all present as object keys.
+ * If exactly one tool matches, synthesises a ToolCall with that name and the
+ * object as arguments. Zero or multiple matches → empty (no false positive).
+ *
+ * @param raw       Raw model output.
+ * @param tools_json JSON array of staged MCP tool definitions.
+ * @return Single-element vector on unique match; empty otherwise.
+ * @utility
+ * @version 2.10.0
+ */
+static std::vector<ToolCall> try_fenced_args_object_call(
+    const std::string& raw,
+    const std::string& tools_json) {
+    auto j_opt = extract_args_only_fence(raw);
+    if (!j_opt) { return {}; }
+    auto tools = nlohmann::json::parse(tools_json, nullptr, false);
+    auto name = tools.is_array()
+        ? find_unique_args_match(*j_opt, tools) : std::string{};
+    if (name.empty()) { return {}; }
+    ToolCall tc;
+    tc.name = std::move(name);
+    for (const auto& [k, v] : j_opt->items()) {
+        tc.arguments[k] = v.is_string() ? v.get<std::string>() : v.dump();
+    }
+    return {std::move(tc)};
+}
+
+/**
+ * @brief Apply fenced-json and fenced-args-only fallback parsers (gh#122, gh#127).
+ *
+ * Called when both the primary parse paths (common_chat PEG + adapter) yield
+ * zero calls. Tries the gh#122 named-fence path first; on miss, tries the
+ * gh#127 args-only schema-match path. `calls` is updated in-place.
+ *
+ * @param raw   Raw model output.
+ * @param llama Active LlamaCppBackend (may be nullptr → gh#127 skipped).
+ * @param calls [in/out] Tool call accumulator (no-op unless currently empty).
+ * @utility
+ * @version 2.10.0
+ */
+static void apply_fenced_fallbacks(const std::string& raw,
+                                   LlamaCppBackend* llama,
+                                   std::vector<ToolCall>& calls) {
+    if (!calls.empty()) { return; }
+    auto fb = try_fenced_json_call(raw);
+    if (fb.empty() && llama != nullptr) {
+        fb = try_fenced_args_object_call(raw, llama->active_tools_json());
+    }
+    if (!fb.empty()) { calls = std::move(fb); }
+}
+
+/**
  * @brief Parse tool calls via the adapter for the given tier (gh#89).
  *
  * gh#89: uses the SAME routed tier (last_used_tier) so a non-default
@@ -398,8 +521,12 @@ static void parse_via_adapter(ModelOrchestrator* orch,
  * exactly one fenced ```json``` block, try extracting a {name, arguments}
  * call from it. Handles models that emit tool calls in markdown fence format.
  *
+ * gh#127 (v2.10.0): if gh#122 also returns empty and the fenced block is an
+ * args-only object (no name key), match against the staged tool schemas —
+ * synthesise the call when exactly one tool's required params are all present.
+ *
  * @callback
- * @version 2.9.18
+ * @version 2.10.0
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -423,10 +550,7 @@ static int iface_parse_tool_calls(const char* raw,
         parse_via_adapter(ctx->orchestrator, raw_str, tier, cleaned_str, calls);
     }
 
-    if (calls.empty()) {
-        auto fb = try_fenced_json_call(raw_str);  // gh#122
-        if (!fb.empty()) { calls = std::move(fb); }
-    }
+    apply_fenced_fallbacks(raw_str, llama, calls);  // gh#122, gh#127
 
     *cleaned = dup(cleaned_str);
     *tool_calls_json = dup(serialize_tool_calls(calls));

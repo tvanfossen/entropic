@@ -17,6 +17,7 @@
 
 #include "llama_cpp_backend.h"
 #include "mtp_envelope.h"
+#include <entropic/core/stream_think_filter.h>
 #include "adapters/adapter_registry.h"
 #include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
@@ -728,17 +729,37 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
 }
 
 /**
+ * @brief Trampoline: bridges TokenCallback C signature to std::function.
+ * @param data Token bytes.
+ * @param len Byte count.
+ * @param ud Pointer to `std::function<void(std::string_view)>`.
+ * @utility
+ * @version 2.10.0
+ */
+static void stream_token_trampoline(const char* data, std::size_t len,
+                                    void* ud) {
+    (*static_cast<std::function<void(std::string_view)>*>(ud))(
+        std::string_view(data, len));
+}
+
+/**
  * @brief Streaming generation with speculative dispatch.
  *
  * Speculative routing added in v2.1.11 (gh#36): when the kernel is
  * configured and the target/draft pair is compatible, dispatches to
  * `LlamaCppBackend::generate_speculative_with_draft` via
- * `try_speculative_route_streaming` with the draft resolved from
- * `secondary_loader_.get("draft")`. Falls back to plain streaming on
+ * `try_speculative_route_streaming`. Falls back to plain streaming on
  * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
+ * gh#108 (v2.10.0): `on_token` is wrapped with StreamThinkFilter so
+ * thinking-channel tokens are stripped from the live stream. The
+ * buffered `result.content` is post-processed via `apply_adapter_parse`
+ * on return, mirroring the non-streaming generate() path. This also
+ * enables MTP streaming (the streaming guard in mtp_unsupported_reason
+ * is removed in the same gh#108 v2.10.0 change).
+ *
  * @internal
- * @version 2.9.4
+ * @version 2.10.0
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -761,21 +782,24 @@ GenerationResult ModelOrchestrator::generate_streaming(
     GenerationParams resolved_params =
         resolve_and_stage(model, params, selected);  // gh#87 3b
 
-    // Speculative routing (v2.1.11, gh#36): when speculative is
-    // enabled in config AND target/draft pair is compatible, attempt
-    // the speculative kernel. On NOT_SUPPORTED (kernel staged), fall
-    // back to plain streaming. This keeps the v2.1.11 ship-without-
-    // kernel state observable as "plain decode, speculative
-    // requested but deferred."
-    GenerationResult spec_streaming;
-    if (config_.inference.speculative.enabled
-        && try_speculative_route_streaming(
-               model, messages, resolved_params, selected, on_token, cancel,
-               spec_streaming)) {
-        return spec_streaming;
-    }
+    // gh#108 (v2.10.0): strip thinking-channel tokens from the live stream.
+    StreamThinkFilter filter(stream_token_trampoline, &on_token);
+    auto filtered = [&filter](std::string_view sv) {
+        filter.on_token(sv.data(), sv.size());
+    };
 
-    return model->generate_streaming(messages, resolved_params, on_token, cancel);
+    GenerationResult result;
+    bool routed = config_.inference.speculative.enabled
+        && try_speculative_route_streaming(
+               model, messages, resolved_params, selected, filtered, cancel,
+               result);
+    if (!routed) {
+        result = model->generate_streaming(
+            messages, resolved_params, filtered, cancel);
+    }
+    filter.flush();
+    apply_adapter_parse(model, get_adapter(selected), result);
+    return result;
 }
 
 // ── Routing ────────────────────────────────────────────────

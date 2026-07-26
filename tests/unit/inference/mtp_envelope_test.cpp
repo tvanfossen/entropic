@@ -40,34 +40,28 @@ TEST_CASE("gh#108 MTP envelope: tools are NOT guarded (lossless-correct)",
     REQUIRE(safe().empty());
 }
 
-TEST_CASE("gh#108 MTP envelope: streaming is the only incompatible condition",
+TEST_CASE("gh#108 MTP envelope: all conditions are now open (full envelope)",
           "[mtp][envelope]") {
-    // v2.10.0 (gh#108): grammar is no longer guarded — to_common_sampling
-    // propagates it. Only streaming remains blocked.
-    SECTION("grammar alone — no longer guarded") {
+    // v2.10.0 (gh#108): grammar and streaming guards both removed. The
+    // full envelope is now: any temperature, grammar OK, streaming OK.
+    SECTION("grammar alone — not guarded") {
         REQUIRE(mtp_unsupported_reason(0.0f, true, false).empty());
     }
-    SECTION("streaming still fails loud") {
-        auto r = mtp_unsupported_reason(0.0f, false, true);
-        REQUIRE_FALSE(r.empty());
-        REQUIRE(r.find("streaming") != std::string::npos);
+    SECTION("streaming alone — not guarded (StreamThinkFilter handles it)") {
+        REQUIRE(mtp_unsupported_reason(0.0f, false, true).empty());
+    }
+    SECTION("grammar + streaming — both open") {
+        REQUIRE(mtp_unsupported_reason(0.7f, true, true).empty());
     }
 }
 
-TEST_CASE("gh#108 MTP envelope: every active message is actionable (mentions mtp)",
+TEST_CASE("gh#108 MTP envelope: no condition produces an error (envelope fully open)",
           "[mtp][envelope]") {
-    // v2.10.0: only streaming is still a guard.
-    auto r = mtp_unsupported_reason(0.0f, false, true);
-    REQUIRE_FALSE(r.empty());
-    REQUIRE(r.find("mtp") != std::string::npos);  // names the knob to change
-}
-
-TEST_CASE("gh#108 MTP envelope: streaming wins when grammar+streaming both set",
-          "[mtp][envelope]") {
-    // v2.10.0: grammar is no longer a gate, so streaming error fires even
-    // when has_grammar=true.
-    auto r = mtp_unsupported_reason(0.7f, true, true);
-    REQUIRE(r.find("streaming") != std::string::npos);
+    // v2.10.0: all guards removed. mtp_unsupported_reason always returns "".
+    REQUIRE(mtp_unsupported_reason(0.0f, false, false).empty());
+    REQUIRE(mtp_unsupported_reason(0.0f, true, false).empty());
+    REQUIRE(mtp_unsupported_reason(0.0f, false, true).empty());
+    REQUIRE(mtp_unsupported_reason(0.7f, true, true).empty());
 }
 
 TEST_CASE("gh#108 MTP envelope: temperature is not guarded at any value",
@@ -89,6 +83,18 @@ TEST_CASE("gh#108: grammar is not guarded (propagated via to_common_sampling)",
     // GREEN after fix: to_common_sampling propagates params.grammar to
     // common_params_sampling so the guard is no longer needed and removed.
     REQUIRE(mtp_unsupported_reason(0.0f, true, false).empty());
+}
+
+// ── gh#108 (v2.10.0): streaming is no longer a hard guard ───────────────────
+
+TEST_CASE("gh#108: streaming is not guarded (StreamThinkFilter handles live strip)",
+          "[mtp][envelope][gh108-streaming][2.10.0]") {
+    // RED before fix: mtp_unsupported_reason returns a non-empty error when
+    // streaming=true (the v2.9.1 guard blocked MTP+streaming because
+    // strip_thinking_channels is post-buffer only). GREEN after fix:
+    // generate_streaming now wraps on_token with StreamThinkFilter so
+    // incremental stripping is safe; the guard is removed.
+    REQUIRE(mtp_unsupported_reason(0.0f, false, true).empty());
 }
 
 // ── gh#107 (v2.10.0): MTP head detection ────────────────────────────────────

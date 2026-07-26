@@ -215,13 +215,15 @@ public:
      * @param parent_ctx Parent loop context.
      * @param stages Ordered list of tier names.
      * @param task Task description (shared across stages).
+     * @param stage_log [out] Per-stage results appended in order.
      * @return DelegationResult from the final stage.
-     * @version 1.8.6
+     * @version 2.10.0
      */
     DelegationResult execute_pipeline(
         LoopContext& parent_ctx,
         const std::vector<std::string>& stages,
-        const std::string& task);
+        const std::string& task,
+        std::vector<DelegationResult>& stage_log);
 
 private:
     /**
@@ -475,12 +477,13 @@ private:
      * @param stage_idx  Index of the stage to execute.
      * @param task       Original task text.
      * @param shared_sb  Shared pipeline sandbox (optional).
+     * @param stage_log  [out] Accumulator — completed stage result appended.
      * @param last_result In/out: prior-stage result on entry, this
      *                    stage's result on return.
      * @return false if the pipeline should stop (failure or unknown
      *         tier); true to continue to the next stage.
      * @internal
-     * @version 2.1.5
+     * @version 2.10.0
      */
     bool run_pipeline_stage(
         LoopContext& parent_ctx,
@@ -488,6 +491,7 @@ private:
         size_t stage_idx,
         const std::string& task,
         const std::optional<SandboxInfo>& shared_sb,
+        std::vector<DelegationResult>& stage_log,
         DelegationResult& last_result);
 };
 

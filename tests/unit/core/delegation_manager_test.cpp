@@ -339,8 +339,9 @@ TEST_CASE("pipeline executes stages sequentially",
     DelegationManager mgr(loop_fn, &executed_tiers, tier_res);
     LoopContext parent;
 
+    std::vector<DelegationResult> sl0;
     auto result = mgr.execute_pipeline(
-        parent, {"eng", "qa"}, "build and test");
+        parent, {"eng", "qa"}, "build and test", sl0);
 
     REQUIRE(result.success);
     REQUIRE(executed_tiers.size() == 2);
@@ -398,8 +399,9 @@ TEST_CASE("pipeline forwards prior stage output as context",
 
     DelegationManager mgr(loop_fn, &cap, tier_res);
     LoopContext parent;
+    std::vector<DelegationResult> sl1;
     auto result = mgr.execute_pipeline(
-        parent, {"eng", "qa"}, "do the thing");
+        parent, {"eng", "qa"}, "do the thing", sl1);
 
     REQUIRE(result.success);
     REQUIRE(cap.seen_user_content.size() == 2);
@@ -635,7 +637,8 @@ TEST_CASE("pipeline start_cb fires once with is_pipeline=1",
 
     LoopContext parent;
     std::vector<std::string> stages{"researcher", "reader"};
-    mgr.execute_pipeline(parent, stages, "investigate");
+    std::vector<DelegationResult> sl2;
+    mgr.execute_pipeline(parent, stages, "investigate", sl2);
     CHECK(s.count == 1);
     CHECK(s.is_pipeline == 1);
     CHECK(s.id == "pipeline");
@@ -659,7 +662,8 @@ TEST_CASE("pipeline start_cb REJECT skips all stages",
 
     LoopContext parent;
     std::vector<std::string> stages{"a", "b"};
-    auto result = mgr.execute_pipeline(parent, stages, "task");
+    std::vector<DelegationResult> sl3;
+    auto result = mgr.execute_pipeline(parent, stages, "task", sl3);
     CHECK_FALSE(result.success);
     CHECK(loop_mock.call_count == 0);
 }
@@ -1112,7 +1116,8 @@ TEST_CASE("Pipeline mid-stream failure paths break the loop",
         };
         DelegationManager mgr(loop_fn, &call_count, tier_res);
         LoopContext parent;
-        auto result = mgr.execute_pipeline(parent, {"a", "b"}, "do it");
+        std::vector<DelegationResult> sl4;
+        auto result = mgr.execute_pipeline(parent, {"a", "b"}, "do it", sl4);
         CHECK_FALSE(result.success);
         CHECK(result.summary.find("Unknown tier") != std::string::npos);
         CHECK(call_count == 1);
@@ -1127,9 +1132,45 @@ TEST_CASE("Pipeline mid-stream failure paths break the loop",
         };
         DelegationManager mgr(stuck_loop, &call_count, tier_res);
         LoopContext parent;
+        std::vector<DelegationResult> sl5;
         auto result = mgr.execute_pipeline(
-            parent, {"a", "b", "c"}, "task");
+            parent, {"a", "b", "c"}, "task", sl5);
         CHECK_FALSE(result.success);
         CHECK(call_count == 1);
     }
+}
+
+// ── gh#125 (v2.10.0): per-stage {tier, task} accumulated in stage_log ────────
+
+TEST_CASE("gh#125: execute_pipeline populates stage_log with per-stage results",
+          "[delegation][gh125][regression]") {
+    // Pre-fix: execute_pipeline takes 3 parameters; no stage log is
+    // accumulated. The caller in execute_pending_pipeline only has the
+    // final-stage DelegationResult and cannot produce per-stage output.
+    // Fix: add std::vector<DelegationResult>& stage_log out-parameter.
+    // run_pipeline_stage pushes a copy of last_result after run_child.
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    auto loop_fn = [](LoopContext& ctx, void* /*ud*/) {
+        ctx.state = AgentState::COMPLETE;
+        Message m;
+        m.role = "assistant";
+        m.content = "done for " + ctx.locked_tier;
+        ctx.messages.push_back(std::move(m));
+    };
+
+    DelegationManager mgr(loop_fn, nullptr, tier_res);
+    LoopContext parent;
+
+    // RED before fix: execute_pipeline(parent, stages, task, stage_log) does
+    // not compile — there is no 4th parameter.
+    std::vector<DelegationResult> stage_log;
+    auto result = mgr.execute_pipeline(
+        parent, {"eng", "qa"}, "build and test", stage_log);
+
+    REQUIRE(result.success);
+    REQUIRE(stage_log.size() == 2);
+    CHECK(stage_log[0].target_tier == "eng");
+    CHECK(stage_log[1].target_tier == "qa");
 }

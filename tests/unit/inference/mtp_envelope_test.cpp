@@ -78,3 +78,31 @@ TEST_CASE("gh#108 MTP envelope: temperature is not guarded at any value",
     REQUIRE(mtp_unsupported_reason(0.7f, false, false).empty());
     REQUIRE(mtp_unsupported_reason(2.0f, false, false).empty());
 }
+
+// ── gh#107 (v2.10.0): MTP head detection ────────────────────────────────────
+
+TEST_CASE("gh#107: looks_like_mtp_head detects small-layer GGUFs",
+          "[mtp][envelope][gh107][2.10.0]") {
+    // An MTP head GGUF (e.g. Gemma4 assistant head) has 1-2 transformer
+    // layers. A classical draft model has at least 4. The predicate guards
+    // try_speculative_route_streaming: routing a head GGUF to the classical
+    // separate-draft path crashes in fattn.cu — fail loud instead.
+    //
+    // RED before fix: looks_like_mtp_head is not defined (compile failure).
+    REQUIRE(entropic::looks_like_mtp_head(1));   // gemma4 head = 1 layer
+    REQUIRE(entropic::looks_like_mtp_head(2));   // 2-layer head GGUF
+    REQUIRE_FALSE(entropic::looks_like_mtp_head(0));   // invalid
+    REQUIRE_FALSE(entropic::looks_like_mtp_head(4));   // small but not an MTP head
+    REQUIRE_FALSE(entropic::looks_like_mtp_head(32));  // normal draft model
+}
+
+TEST_CASE("gh#107: looks_like_mtp_head message mentions mtp flag",
+          "[mtp][envelope][gh107][2.10.0]") {
+    // The guard in the orchestrator must emit an actionable message that
+    // tells the consumer to set speculative.mtp: true. Verified at the
+    // predicate level — the orchestrator wiring is covered by model tests.
+    std::string reason = entropic::mtp_head_classical_path_error(1);
+    REQUIRE_FALSE(reason.empty());
+    REQUIRE(reason.find("mtp") != std::string::npos);
+    REQUIRE(reason.find("layer") != std::string::npos);
+}

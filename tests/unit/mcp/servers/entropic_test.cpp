@@ -181,7 +181,12 @@ TEST_CASE("test_pipeline_requires_two_stages", "[entropic]") {
     REQUIRE(result.find("2 stages") != std::string::npos);
 }
 
-TEST_CASE("test_pipeline_validates_tiers", "[entropic]") {
+TEST_CASE("gh#129: pipeline rejects stage names not in tier_names",
+          "[entropic][gh129][regression]") {
+    // Pre-fix: PipelineTool::execute accepted any strings with >= 2 stages.
+    // "unknown_tier" was silently forwarded; DelegationManager then silently
+    // failed at resolve_tier (info.valid = false), hiding a misconfigured call.
+    // Fix: store tier_names_ in PipelineTool; reject any stage not in the list.
     EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
 
     json args;
@@ -191,7 +196,24 @@ TEST_CASE("test_pipeline_validates_tiers", "[entropic]") {
     auto envelope = server.execute("pipeline", args.dump());
     auto types = extract_directive_types(envelope);
 
-    // Runtime validation: pipeline accepts any strings with >= 2 stages
+    // RED before fix: pipeline directive IS emitted (no validation).
+    REQUIRE_FALSE(has_directive(types, "pipeline"));
+    auto result = extract_result(envelope);
+    REQUIRE(result.find("unknown_tier") != std::string::npos);
+}
+
+TEST_CASE("gh#129: pipeline emits directives for all-valid stages",
+          "[entropic][gh129]") {
+    // Regression guard: a call with only known tiers must still succeed.
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["stages"] = json::array({"lead", "eng"});
+    args["task"] = "do it";
+
+    auto envelope = server.execute("pipeline", args.dump());
+    auto types = extract_directive_types(envelope);
+
     REQUIRE(has_directive(types, "pipeline"));
     REQUIRE(has_directive(types, "stop_processing"));
 }

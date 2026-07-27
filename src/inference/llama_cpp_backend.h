@@ -324,6 +324,14 @@ public:
     void set_active_tools(const std::string& tools_json);
 
     /**
+     * @brief Return the tool definitions staged for the current turn.
+     * @return JSON array string passed to the last set_active_tools call.
+     * @utility
+     * @version 2.10.0
+     */
+    const std::string& active_tools_json() const { return active_tools_json_; }
+
+    /**
      * @brief Render messages through common_chat WITH the active tools.
      *
      * Like `apply_chat_template` but routes the staged tool defs into

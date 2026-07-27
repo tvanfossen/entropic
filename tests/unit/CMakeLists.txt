@@ -132,6 +132,7 @@ target_include_directories(entropic-inference-tests PRIVATE
 
 target_link_libraries(entropic-inference-tests PRIVATE
     entropic::inference
+    entropic-core  # gh#108 (v2.10.0): StreamThinkFilter used in orchestrator.cpp
     entropic-types
     # v2.3.10: vocab_only_smoke_test.cpp calls the llama.cpp C API
     # directly (llama_model_load_from_file with vocab_only=true) to
@@ -166,6 +167,7 @@ target_include_directories(entropic-inference-orch-realmodel-tests PRIVATE
 )
 target_link_libraries(entropic-inference-orch-realmodel-tests PRIVATE
     entropic::inference
+    entropic-core  # gh#108 (v2.10.0): StreamThinkFilter used in orchestrator.cpp
     entropic-types
     nlohmann_json::nlohmann_json
     spdlog::spdlog
@@ -234,6 +236,7 @@ add_executable(entropic-secondary-loader-tests
 
 target_link_libraries(entropic-secondary-loader-tests PRIVATE
     entropic::inference
+    entropic-core  # gh#108 (v2.10.0): StreamThinkFilter used in orchestrator.cpp
     entropic-types
     spdlog::spdlog
     Catch2::Catch2WithMain

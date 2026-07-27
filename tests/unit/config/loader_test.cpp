@@ -392,8 +392,8 @@ SCENARIO("load_config_from_string drives parse_config_string + validate",
     }
 }
 
-SCENARIO("gh#108 (v2.9.4): a tier cannot statically combine speculative.mtp "
-         "with a grammar",
+SCENARIO("gh#108 (v2.10.0): speculative.mtp and static grammar can coexist "
+         "(to_common_sampling now propagates grammar to the MTP sampler)",
          "[config][loader][gh108][mtp]")
 {
     GIVEN("a tier with speculative.mtp=true and a static grammar") {
@@ -415,10 +415,15 @@ SCENARIO("gh#108 (v2.9.4): a tier cannot statically combine speculative.mtp "
             auto err = entropic::config::load_config_from_string(
                 yaml, registry, config);
 
-            THEN("it fails loud at load time, not per-request") {
-                REQUIRE_FALSE(err.empty());
-                CHECK(err.find("speculative.mtp") != std::string::npos);
-                CHECK(err.find("grammar") != std::string::npos);
+            THEN("it succeeds — grammar is now propagated by to_common_sampling") {
+                // v2.10.0 (gh#108): the load-time rejection is removed.
+                // to_common_sampling propagates params.grammar so the combination
+                // is valid; the guard is no longer needed.
+                REQUIRE(err.empty());
+                auto& tier = config.models.tiers.at("lead");
+                REQUIRE(tier.speculative_mtp.has_value());
+                CHECK(*tier.speculative_mtp == true);
+                CHECK(tier.grammar.has_value());
             }
         }
     }

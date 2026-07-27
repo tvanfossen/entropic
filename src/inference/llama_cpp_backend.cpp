@@ -2803,12 +2803,17 @@ namespace {
  * @param params Entropic generation params.
  * @return Populated common_params_sampling.
  * @internal
- * @version 2.1.11 [reviewed]
+ * @version 2.10.0
  */
 common_params_sampling to_common_sampling(
     const GenerationParams& params) {
     common_params_sampling cps;
     cps.temp = params.temperature;
+    // gh#108 (v2.10.0): propagate GBNF grammar to the MTP sampler chain so
+    // grammar-constrained tiers are correctly enforced under speculative.mtp.
+    if (!params.grammar.empty()) {
+        cps.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, params.grammar);
+    }
     cps.top_k = params.top_k;
     cps.top_p = params.top_p;
     cps.penalty_repeat = params.repeat_penalty;

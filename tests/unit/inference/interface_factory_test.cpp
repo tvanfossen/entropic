@@ -13,6 +13,7 @@
 #include <entropic/inference/interface_factory.h>
 #include <entropic/inference/orchestrator.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
+#include "../../../src/inference/llama_cpp_backend.h"
 
 #include <cstring>
 #include <filesystem>
@@ -227,6 +228,110 @@ TEST_CASE("gh#122: fenced-json block in model output yields a tool call",
     REQUIRE(calls != nullptr);
     // RED before fix: calls == "[]" (no native parse matches fenced-json).
     CHECK(std::string(calls) != "[]");
+    iface.free_fn(cleaned);
+    iface.free_fn(calls);
+    entropic::destroy_orchestrator_interface(ctx);
+    std::filesystem::remove(dummy);
+}
+
+// ── gh#127 (v2.10.0): fenced args-only object inferred from tool schema ──────
+
+TEST_CASE("gh#127: fenced args-only object matched by registered tool schema",
+          "[inference][gh127][regression][2.10.0]") {
+    // Some models emit only the arguments object (no "name" key) inside
+    // the fenced JSON block. The gh#122 path calls tc_from_json_obj which
+    // requires a "name" key and returns empty, so the call is lost.
+    //
+    // RED before fix: iface_parse_tool_calls returns "[]" for a fenced
+    // args-only object even when exactly one registered tool's required
+    // params are satisfied.
+    // GREEN after fix: try_fenced_args_object_call fires, matches
+    // "entropic.complete" (only required param "summary" is present), and
+    // synthesises the ToolCall.
+    auto dummy = std::filesystem::temp_directory_path()
+        / "entropic_gh127_dummy.gguf";
+    { std::ofstream(dummy) << "not a real gguf"; }
+
+    entropic::ModelOrchestrator orch;
+    entropic::ParsedConfig cfg;
+    cfg.models.default_tier = "primary";
+    entropic::TierConfig lead;
+    lead.path = dummy;
+    lead.adapter = "qwen35";
+    cfg.models.tiers["primary"] = lead;
+    (void)orch.initialize(cfg);
+
+    // Stage a single tool with one required parameter.
+    auto* be = dynamic_cast<entropic::LlamaCppBackend*>(
+        orch.get_backend("primary"));
+    REQUIRE(be != nullptr);
+    const char* tools_json =
+        R"([{"name":"entropic.complete","inputSchema":{"type":"object","required":["summary"],"properties":{"summary":{"type":"string"}}}}])";
+    be->set_active_tools(tools_json);
+
+    entropic::InterfaceContext* ctx = nullptr;
+    auto iface = entropic::build_orchestrator_interface(&orch, "primary", &ctx);
+
+    // Args-only fence: no "name" or "tool" key.
+    const char* fenced =
+        "Here is the answer.\n"
+        "```json\n"
+        "{\"summary\":\"task completed successfully\"}\n"
+        "```";
+
+    char* cleaned = nullptr;
+    char* calls = nullptr;
+    REQUIRE(iface.parse_tool_calls(
+        fenced, &cleaned, &calls, iface.backend_data) == 0);
+    REQUIRE(calls != nullptr);
+    // RED before fix: calls == "[]" (no name key → tc_from_json_obj returns empty).
+    CHECK(std::string(calls) != "[]");
+    iface.free_fn(cleaned);
+    iface.free_fn(calls);
+    entropic::destroy_orchestrator_interface(ctx);
+    std::filesystem::remove(dummy);
+}
+
+TEST_CASE("gh#127: ambiguous fenced args object returns empty (no false positive)",
+          "[inference][gh127][regression][2.10.0]") {
+    // When the object matches NO registered tool's required params, the
+    // fallback must return "[]" — not guess.
+    auto dummy = std::filesystem::temp_directory_path()
+        / "entropic_gh127b_dummy.gguf";
+    { std::ofstream(dummy) << "not a real gguf"; }
+
+    entropic::ModelOrchestrator orch;
+    entropic::ParsedConfig cfg;
+    cfg.models.default_tier = "primary";
+    entropic::TierConfig lead;
+    lead.path = dummy;
+    lead.adapter = "qwen35";
+    cfg.models.tiers["primary"] = lead;
+    (void)orch.initialize(cfg);
+
+    auto* be = dynamic_cast<entropic::LlamaCppBackend*>(
+        orch.get_backend("primary"));
+    REQUIRE(be != nullptr);
+    // Tool requires "required_field" which is absent in the object.
+    const char* tools_json =
+        R"([{"name":"entropic.complete","inputSchema":{"type":"object","required":["required_field"]}}])";
+    be->set_active_tools(tools_json);
+
+    entropic::InterfaceContext* ctx = nullptr;
+    auto iface = entropic::build_orchestrator_interface(&orch, "primary", &ctx);
+
+    const char* fenced =
+        "```json\n"
+        "{\"summary\":\"done\"}\n"
+        "```";
+
+    char* cleaned = nullptr;
+    char* calls = nullptr;
+    REQUIRE(iface.parse_tool_calls(
+        fenced, &cleaned, &calls, iface.backend_data) == 0);
+    REQUIRE(calls != nullptr);
+    // No match — required_field absent → must stay "[]" (no false positive).
+    CHECK(std::string(calls) == "[]");
     iface.free_fn(cleaned);
     iface.free_fn(calls);
     entropic::destroy_orchestrator_interface(ctx);

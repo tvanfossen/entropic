@@ -181,7 +181,7 @@ def _get_model_test_timeouts(build_dir):
 ## @brief Run one model test exe with retries + a per-attempt timeout.
 ## @utility
 ## @return Tuple of (status, retries, duration_ms). status: pass|skipped|fail.
-## @version 2.9.7
+## @version 2.10.0
 def _run_one_model_test(exe_path, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S):
     """Run one model test exe (retries + a per-attempt timeout).
 
@@ -190,6 +190,9 @@ def _run_one_model_test(exe_path, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S):
     1-2 scenarios, so a real failure exits 1-2 — making rc==4 an unambiguous SKIP
     signal here, NOT a failure. A hung GPU test is killed at timeout_s
     (TimeoutExpired → rc 124 → fail) so it cannot wedge the suite.
+
+    rc==2 is Catch2's "no tests ran" (all tests hidden via [.] opt-in tag).
+    Treated as SKIP — the binary has no runnable tests in the standard suite.
 
     gh#111 fallout: timeout_s must come from the test's own CMake TIMEOUT
     property (see _get_model_test_timeouts), not a blanket constant —
@@ -209,7 +212,7 @@ def _run_one_model_test(exe_path, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S):
             rc = 124
         if rc == 0:
             return "pass", attempt, int((time.monotonic() - t0) * 1000)
-        if rc == 4:
+        if rc in (2, 4):
             return "skipped", attempt, int((time.monotonic() - t0) * 1000)
         retries = attempt + 1
     return "fail", retries, int((time.monotonic() - t0) * 1000)

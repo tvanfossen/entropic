@@ -44,7 +44,20 @@
  * longer holds and the guard must be reinstated; the statistical distribution
  * test in test_gh108_mtp_guards.cpp is the regression tripwire for that.
  *
- * @version 2.9.4
+ * gh#108 (v2.10.0): the grammar guard is dropped. It existed because
+ * to_common_sampling did not propagate params.grammar to the MTP sampler chain,
+ * so GBNF constraints were silently ignored under speculative.mtp. Fixed by
+ * propagating cps.grammar in to_common_sampling (llama_cpp_backend.cpp). The
+ * loader static check rejecting mtp+grammar at parse time is also removed.
+ *
+ * gh#108 (v2.10.0): the streaming guard is dropped. It existed because
+ * strip_thinking_channels is a post-buffer operation — live tokens fired
+ * through on_token would expose raw thinking channel markers. Fixed by wrapping
+ * on_token with StreamThinkFilter in generate_streaming (orchestrator.cpp) so
+ * incremental stripping is correct; apply_adapter_parse handles the buffered
+ * result.content on return. MTP streaming is now fully supported.
+ *
+ * @version 2.10.0
  */
 
 #pragma once
@@ -60,30 +73,62 @@ namespace entropic {
  * deterministic point mass (see the file-level doc comment), so the existing
  * exact-match accept step is lossless at any temperature, not just 0.
  *
- * @param temperature Effective sampling temperature (unused; kept in the
- *        signature so call sites don't need to change if a future
- *        extern/llama.cpp pin bump reinstates the need for a temperature
- *        guard — see the v2.9.4 file-level doc comment).
- * @param has_grammar True when a GBNF grammar constraint (params.grammar) is
- *        active — a sampler constraint to_common_sampling drops (NOTE: gemma4
- *        common_chat tool grammars are post-hoc parse, not this).
- * @param streaming True when a per-token callback is bound (streaming call).
+ * streaming is no longer a guard (gh#108, v2.10.0): generate_streaming now
+ * wraps on_token with StreamThinkFilter for incremental thinking-channel
+ * stripping, resolving the post-buffer-only limitation that motivated the
+ * original v2.9.1 guard.
+ *
+ * @param temperature Effective sampling temperature (unused; see v2.9.4 note).
+ * @param has_grammar True when a GBNF grammar constraint is active (unused;
+ *        see v2.10.0 grammar note — propagated via to_common_sampling).
+ * @param streaming True when a per-token callback is bound (unused; see
+ *        v2.10.0 streaming note above).
  * @return Actionable message when MTP is unsupported for the request, else "".
  * @utility
- * @version 2.9.4
+ * @version 2.10.0 [reviewed]
  */
 inline std::string mtp_unsupported_reason(float temperature, bool has_grammar,
                                           bool streaming) {
     (void)temperature;
-    std::string r;
-    if (has_grammar) {
-        r = "MTP does not enforce grammar constraints; disable speculative.mtp "
-            "for grammar-constrained tiers";
-    } else if (streaming) {
-        r = "MTP does not support streaming (the thinking-channel strip is a "
-            "post-buffer operation); disable speculative.mtp for streaming calls";
-    }
-    return r;
+    (void)has_grammar;  // gh#108 v2.10.0: grammar propagated via to_common_sampling
+    (void)streaming;    // gh#108 v2.10.0: StreamThinkFilter handles live strip
+    return {};
+}
+
+/**
+ * @brief True when the model's layer count is consistent with an MTP head GGUF.
+ *
+ * A Gemma-4 MTP assistant head has 1–2 transformer layers. A classical
+ * draft model (Llama/Mistral small-variant) has at least 4. Used by
+ * try_speculative_route_streaming (gh#107) to fail loud when such a GGUF
+ * is supplied without setting speculative.mtp: true.
+ *
+ * @param n_layer Layer count from llama_model_n_layer.
+ * @return True for 1–2 layers; false otherwise.
+ * @utility
+ * @version 2.10.0
+ */
+inline bool looks_like_mtp_head(int n_layer) {
+    return n_layer >= 1 && n_layer <= 2;
+}
+
+/**
+ * @brief Actionable error message for gh#107: MTP head on classical path.
+ *
+ * Called by try_speculative_route_streaming when looks_like_mtp_head is true
+ * and speculative.mtp is false. The message names the layer count and the
+ * corrective config knob.
+ *
+ * @param n_layer Layer count from llama_model_n_layer.
+ * @return Actionable INCOMPATIBLE_CONFIG message.
+ * @utility
+ * @version 2.10.0
+ */
+inline std::string mtp_head_classical_path_error(int n_layer) {
+    return "Draft model has " + std::to_string(n_layer)
+           + " layer(s) — this looks like an MTP head GGUF. "
+             "Set speculative.mtp: true in your config to route through "
+             "the target-owned shared-KV MTP path instead of crashing.";
 }
 
 }  // namespace entropic

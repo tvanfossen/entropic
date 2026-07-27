@@ -208,14 +208,13 @@ TEST_CASE("gh#108 per-tier speculative_mtp=false overrides the global flag",
     REQUIRE(r.n_drafted == 0);
 }
 
-TEST_CASE("gh#108 a request-level grammar falls back to plain decode on an "
-          "MTP-effective tier (no loud error)",
+TEST_CASE("gh#108 (v2.10.0) a request-level grammar routes to MTP on an "
+          "MTP-effective tier (grammar enforced via to_common_sampling)",
           "[model][gh108][mtp][route][grammar]") {
-    // v2.9.4: the request-level safety net — a tier with MTP effectively on
-    // (global speculative.mtp=true here, no per-tier override) still
-    // succeeds via plain decode when a SPECIFIC call carries a dynamic
-    // grammar (e.g. the constitutional validator's critique call), instead
-    // of propagating ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG.
+    // v2.9.4: grammar fell back to plain decode (dispatch-level gate).
+    // v2.10.0: to_common_sampling propagates params.grammar to the MTP sampler
+    // chain, so grammar requests now route to MTP and grammar IS enforced.
+    // The plain-decode fallback and config-load static rejection are removed.
     ModelTestContext ctx;
     auto tier_name = configure_mtp_route(ctx);
     if (!init_orchestrator(ctx)) {
@@ -231,7 +230,8 @@ TEST_CASE("gh#108 a request-level grammar falls back to plain decode on an "
 
     std::printf("\n===gh108 grammar-on-mtp-tier===\ncode=%d drafted=%d [%s]\n===\n",
                 r.error_code, r.n_drafted, r.content.c_str());
-    REQUIRE(r.error_code == 0);  // NOT INCOMPATIBLE_CONFIG
+    REQUIRE(r.error_code == 0);
     REQUIRE_FALSE(r.content.empty());
-    REQUIRE(r.n_drafted == 0);   // plain decode ran, not generate_mtp
+    REQUIRE(r.n_drafted > 0);                             // MTP engaged, not plain decode
+    REQUIRE(r.content.find("ok") != std::string::npos);  // grammar enforced
 }

@@ -195,30 +195,51 @@ std::string build_read_result(const std::string& path,
 }
 
 /**
- * @brief Check if a filename matches a glob pattern.
+ * @brief Emit * or ** regex fragment; advances i past consumed chars.
  *
- * Supports '*' (any chars) and '?' (single char) wildcards.
+ * Both single-star and double-star map to .* (this tool matches against
+ * workspace-relative paths, so crossing path separators is expected).
+ * The key difference: ** also consumes the second star and any trailing
+ * slash so the pattern does not generate ".*.*\/" (which requires a
+ * literal slash in the subject and would miss root-level files).
  *
- * Issue #13 (v2.1.4): regex construction is wrapped in try/catch so
- * malformed patterns produce a "no match" result instead of throwing
- * an unhandled exception that kills the session. Brace expansion
- * (handled by expand_braces upstream) means the pattern reaching here
- * is single-alternative and almost always well-formed.
+ * @param pat     Pattern string.
+ * @param i       Current position (the first star); advanced in-place.
+ * @param out     Regex output buffer.
+ * @internal
+ * @version 2.10.0
+ */
+void emit_glob_star(const std::string& pat, size_t& i, std::string& out) {
+    out += ".*";
+    bool dbl = (i + 1 < pat.size()) && (pat[i + 1] == '*');
+    if (!dbl) { return; }
+    ++i;
+    if (i + 1 < pat.size() && pat[i + 1] == '/') { ++i; }
+}
+
+/**
+ * @brief Check if a path matches a glob pattern.
  *
- * @param filename Filename to test.
- * @param pattern Glob pattern (already brace-expanded).
+ * Supports ** (cross-directory), * (single segment), and ? (single char).
+ * Issue #13 (v2.1.4): regex errors are caught and treated as non-match.
+ * gh#126 (v2.10.0): ** and * are now distinguished (see emit_glob_star);
+ * the subject is a workspace-relative path, not a bare filename.
+ *
+ * @param filename Workspace-relative path to test.
+ * @param pattern  Glob pattern (already brace-expanded).
  * @return true if filename matches.
  * @internal
- * @version 2.1.4
+ * @version 2.10.0
  */
 bool glob_match(const std::string& filename,
                 const std::string& pattern) {
     std::string regex_str;
     regex_str.reserve(pattern.size() * 2);
 
-    for (char ch : pattern) {
+    for (size_t i = 0; i < pattern.size(); ++i) {
+        char ch = pattern[i];
         if (ch == '*') {
-            regex_str += ".*";
+            emit_glob_star(pattern, i, regex_str);
         } else if (ch == '?') {
             regex_str += '.';
         } else if (ch == '.') {
@@ -502,7 +523,7 @@ enum class EntryAction {
  * @param ignore Optional ignore matcher.
  * @return One of EntryAction values.
  * @internal
- * @version 2.1.4
+ * @version 2.10.0
  */
 EntryAction classify_glob_entry(
     const fs::directory_entry& entry,
@@ -513,20 +534,17 @@ EntryAction classify_glob_entry(
     EntryAction result = EntryAction::kSkip;
     bool hardcoded_skip = is_dir
         && should_skip_dir(entry.path().filename().string());
-    bool ignore_hit = false;
-    if (!hardcoded_skip && ignore != nullptr) {
-        auto rel = fs::relative(entry.path(), root)
-                     .generic_string();
-        ignore_hit = !rel.empty()
-            && ignore->is_ignored(rel, is_dir);
-    }
+    auto rel = fs::relative(entry.path(), root).generic_string();
+    bool ignore_hit = !hardcoded_skip
+        && ignore != nullptr
+        && !rel.empty()
+        && ignore->is_ignored(rel, is_dir);
     if (hardcoded_skip || (ignore_hit && is_dir)) {
         result = EntryAction::kSkipPrune;
     } else if (ignore_hit) {
         result = EntryAction::kSkip;
     } else if (entry.is_regular_file()
-               && any_glob_match(
-                      entry.path().filename().string(), patterns)) {
+               && any_glob_match(rel, patterns)) {
         result = EntryAction::kTake;
     }
     return result;
@@ -822,7 +840,7 @@ private:
  * ignore matching uses the server's IgnoreMatcher (#15, v2.1.4).
  *
  * @internal
- * @version 2.9.14
+ * @version 2.10.0
  */
 std::string check_read_gates(FilesystemServer& server,
                              const fs::path& resolved,
@@ -830,7 +848,10 @@ std::string check_read_gates(FilesystemServer& server,
     std::string err;
     if (!fs::exists(resolved)) {
         err = make_error("not_found",
-            "File not found: " + path_str);
+            "File not found: " + path_str
+            + ". Use list_directory(\".\") to see available files"
+              " in the working directory, or verify the path is"
+              " relative to the configured root.");
     } else if (fs::is_directory(resolved)) {
         err = make_error("is_directory",
             "Path is a directory, not a file: " + path_str);

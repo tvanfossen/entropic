@@ -85,23 +85,33 @@ TEST_CASE("gh#108 MTP guards: out-of-envelope requests fail loud",
         REQUIRE_FALSE(r.content.empty());
         REQUIRE(r.n_drafted > 0);
     }
-    // grammar active → loud (MTP does not enforce GBNF).
+    // gh#108 (v2.10.0): grammar active → MTP RUNS with grammar enforced.
+    // to_common_sampling now propagates params.grammar to the MTP sampler chain.
     {
         entropic::GenerationParams p;
         p.max_tokens = 16;
         p.temperature = 0.0f;
         p.grammar = "root ::= \"ok\"";
         auto r = backend.generate_mtp(msgs, p, no_stream, cancel, head.string(), 16);
-        REQUIRE(r.error_code == INCOMPAT);
+        std::printf("\n[gh108] grammar → code=%d drafted=%d [%s]\n", r.error_code,
+                    r.n_drafted, r.content.c_str());
+        REQUIRE(r.error_code == 0);
+        REQUIRE(r.n_drafted > 0);
+        REQUIRE(r.content.find("ok") != std::string::npos);
     }
-    // streaming (bound on_token) → loud (thinking-strip is post-buffer).
+    // gh#108 (v2.10.0): streaming (bound on_token) → MTP RUNS.
+    // generate_streaming wraps on_token with StreamThinkFilter at the orchestrator
+    // level for incremental strip; the backend-level guard is removed.
     {
         entropic::GenerationParams p;
         p.max_tokens = 16;
         p.temperature = 0.0f;
         std::function<void(std::string_view)> on_token = [](std::string_view) {};
         auto r = backend.generate_mtp(msgs, p, on_token, cancel, head.string(), 16);
-        REQUIRE(r.error_code == INCOMPAT);
+        std::printf("[gh108] streaming → code=%d drafted=%d [%s]\n", r.error_code,
+                    r.n_drafted, r.content.c_str());
+        REQUIRE(r.error_code == 0);
+        REQUIRE(r.n_drafted > 0);
     }
     // gh#108 (v2.9.2): tools staged → MTP RUNS (no false refusal). MTP is
     // lossless at temp=0 and gemma4 tool-calls are parsed post-hoc (not

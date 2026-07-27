@@ -16,6 +16,8 @@
 #include <entropic/types/logging.h>
 
 #include "llama_cpp_backend.h"
+#include "mtp_envelope.h"
+#include <entropic/core/stream_think_filter.h>
 #include "adapters/adapter_registry.h"
 #include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
@@ -346,6 +348,32 @@ bool ModelOrchestrator::try_mtp_route(
 }
 
 /**
+ * @brief gh#107: return true (and populate result) when draft looks like
+ *        an MTP head GGUF routed to the classical separate-draft path.
+ *
+ * An MTP head GGUF (1-2 layers) crashes in fattn.cu when the classical
+ * `generate_speculative_with_draft` path creates a separate KV context.
+ * Fail loud with INCOMPATIBLE_CONFIG instead of crashing.
+ *
+ * @param draft  Draft LlamaCppBackend (model must be loaded for the check).
+ * @param result [out] Populated on true return.
+ * @return True when the guard fires and result is populated; false otherwise.
+ * @internal
+ * @version 2.10.0
+ */
+static bool mtp_head_guard_fires(LlamaCppBackend* draft,
+                                 GenerationResult& result) {
+    auto* dm = draft->llama_model_ptr();
+    if (dm == nullptr) { return false; }
+    int n = llama_model_n_layer(dm);
+    if (!looks_like_mtp_head(n)) { return false; }
+    result.error_code = ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG;
+    result.error_message = mtp_head_classical_path_error(n);
+    result.finish_reason = "error";
+    return true;
+}
+
+/**
  * @brief Common implementation: returns true if the speculative
  *        kernel ran (result populated), false to fall back to plain.
  *
@@ -353,21 +381,18 @@ bool ModelOrchestrator::try_mtp_route(
  * generate and generate_streaming (v2.1.11, gh#36). gh#106 (v2.9.0):
  * MTP routes out to try_mtp_route before the gh#36 compat path.
  *
- * gh#108 (v2.9.4): MTP-attempt is gated on two things before routing to
- * try_mtp_route — (1) `resolve_mtp_effective(tier_name)`, the per-tier
- * override (a tier can opt out of MTP even when the global flag is on,
- * e.g. a grammar-heavy identity), and (2) `params.grammar.empty()`, a
- * request-level safety net: even on an MTP-effective tier, a call that
- * carries a dynamic grammar (e.g. the constitutional validator's critique,
- * which is not a static tier property) falls through to plain decode
- * instead of hitting generate_mtp's loud INCOMPATIBLE_CONFIG refusal. This
- * is not a violation of the "fail loud, no silent fallback" principle
- * (decision #43): both checks are known request/tier properties available
- * before any MTP-specific work starts, the same way the global on/off flag
- * already silently selects plain decode — see docs/architecture-cpp.md.
+ * gh#108 (v2.9.4): MTP-attempt was gated on `params.grammar.empty()` as a
+ * request-level safety net. gh#108 (v2.10.0): that gate is removed —
+ * `to_common_sampling` now propagates params.grammar to the MTP sampler
+ * chain so grammar constraints are correctly enforced under speculative.mtp.
+ * The per-tier `resolve_mtp_effective(tier_name)` override remains.
+ *
+ * gh#107 (v2.10.0): before entering the classical gh#36 draft path, check
+ * whether the loaded draft GGUF looks like an MTP head (≤2 layers). If so,
+ * fail loud with INCOMPATIBLE_CONFIG instead of crashing in fattn.cu.
  *
  * @internal
- * @version 2.9.4
+ * @version 2.10.0 [reviewed]
  */
 bool ModelOrchestrator::try_speculative_route_streaming(
     InferenceBackend* model,
@@ -381,7 +406,7 @@ bool ModelOrchestrator::try_speculative_route_streaming(
     // gh#106 (v2.9.0): MTP routes BEFORE the gh#36 compat/pair path — the
     // target owns the head (no separate draft backend), and MTP tolerates
     // shared-KV gemma4 archs the gh#36 compat gate rejects.
-    if (resolve_mtp_effective(tier_name) && params.grammar.empty()) {
+    if (resolve_mtp_effective(tier_name)) {  // gh#108 v2.10.0: grammar no longer blocks MTP
         return try_mtp_route(model, messages, params, on_token, cancel,
                              result);
     }
@@ -398,6 +423,11 @@ bool ModelOrchestrator::try_speculative_route_streaming(
             logger->info("Speculative compat passed but target/draft "
                          "is not llama.cpp; using plain decode");
         } else {
+            // gh#107 (v2.10.0): guard against MTP head GGUFs on classical path.
+            if (mtp_head_guard_fires(llama_draft, result)) {
+                logger->error("{}", result.error_message);
+                return true;
+            }
             auto spec = llama_target->generate_speculative_with_draft(
                 messages, params, on_token, cancel, *llama_draft,
                 config_.inference.speculative.n_draft,
@@ -699,17 +729,37 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
 }
 
 /**
+ * @brief Trampoline: bridges TokenCallback C signature to std::function.
+ * @param data Token bytes.
+ * @param len Byte count.
+ * @param ud Pointer to `std::function<void(std::string_view)>`.
+ * @utility
+ * @version 2.10.0
+ */
+static void stream_token_trampoline(const char* data, std::size_t len,
+                                    void* ud) {
+    (*static_cast<std::function<void(std::string_view)>*>(ud))(
+        std::string_view(data, len));
+}
+
+/**
  * @brief Streaming generation with speculative dispatch.
  *
  * Speculative routing added in v2.1.11 (gh#36): when the kernel is
  * configured and the target/draft pair is compatible, dispatches to
  * `LlamaCppBackend::generate_speculative_with_draft` via
- * `try_speculative_route_streaming` with the draft resolved from
- * `secondary_loader_.get("draft")`. Falls back to plain streaming on
+ * `try_speculative_route_streaming`. Falls back to plain streaming on
  * NOT_SUPPORTED or compatibility failure, with a diagnostic logged.
  *
+ * gh#108 (v2.10.0): `on_token` is wrapped with StreamThinkFilter so
+ * thinking-channel tokens are stripped from the live stream. The
+ * buffered `result.content` is post-processed via `apply_adapter_parse`
+ * on return, mirroring the non-streaming generate() path. This also
+ * enables MTP streaming (the streaming guard in mtp_unsupported_reason
+ * is removed in the same gh#108 v2.10.0 change).
+ *
  * @internal
- * @version 2.9.4
+ * @version 2.10.0
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -732,21 +782,24 @@ GenerationResult ModelOrchestrator::generate_streaming(
     GenerationParams resolved_params =
         resolve_and_stage(model, params, selected);  // gh#87 3b
 
-    // Speculative routing (v2.1.11, gh#36): when speculative is
-    // enabled in config AND target/draft pair is compatible, attempt
-    // the speculative kernel. On NOT_SUPPORTED (kernel staged), fall
-    // back to plain streaming. This keeps the v2.1.11 ship-without-
-    // kernel state observable as "plain decode, speculative
-    // requested but deferred."
-    GenerationResult spec_streaming;
-    if (config_.inference.speculative.enabled
-        && try_speculative_route_streaming(
-               model, messages, resolved_params, selected, on_token, cancel,
-               spec_streaming)) {
-        return spec_streaming;
-    }
+    // gh#108 (v2.10.0): strip thinking-channel tokens from the live stream.
+    StreamThinkFilter filter(stream_token_trampoline, &on_token);
+    auto filtered = [&filter](std::string_view sv) {
+        filter.on_token(sv.data(), sv.size());
+    };
 
-    return model->generate_streaming(messages, resolved_params, on_token, cancel);
+    GenerationResult result;
+    bool routed = config_.inference.speculative.enabled
+        && try_speculative_route_streaming(
+               model, messages, resolved_params, selected, filtered, cancel,
+               result);
+    if (!routed) {
+        result = model->generate_streaming(
+            messages, resolved_params, filtered, cancel);
+    }
+    filter.flush();
+    apply_adapter_parse(model, get_adapter(selected), result);
+    return result;
 }
 
 // ── Routing ────────────────────────────────────────────────

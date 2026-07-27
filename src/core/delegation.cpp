@@ -541,14 +541,16 @@ static std::string pipeline_context(
  * @param parent_ctx Parent loop context.
  * @param stages Ordered list of tier names.
  * @param task Task description.
+ * @param stage_log [out] Per-stage results appended in order.
  * @return DelegationResult from the final stage.
  * @internal
- * @version 2.1.6
+ * @version 2.10.0
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
     const std::vector<std::string>& stages,
-    const std::string& task) {
+    const std::string& task,
+    std::vector<DelegationResult>& stage_log) {
 
     logger->info("Pipeline: {} stages, task='{}'", stages.size(), task);
 
@@ -582,7 +584,7 @@ DelegationResult DelegationManager::execute_pipeline(
 
     for (size_t i = 0; i < stages.size(); ++i) {
         if (!run_pipeline_stage(parent_ctx, stages, i, task,
-                                shared_sb, last_result)) {
+                                shared_sb, stage_log, last_result)) {
             break;
         }
     }
@@ -603,11 +605,12 @@ DelegationResult DelegationManager::execute_pipeline(
  * @param stage_idx   Index of the stage to run.
  * @param task        Original task text.
  * @param shared_sb   Shared pipeline sandbox (may be empty).
+ * @param stage_log   [out] Accumulator — completed stage result appended.
  * @param last_result In/out: previous-stage result on entry,
  *                    this stage's result on return.
  * @return true to continue to the next stage, false to break.
  * @internal
- * @version 2.1.5
+ * @version 2.10.0
  */
 bool DelegationManager::run_pipeline_stage(
     LoopContext& parent_ctx,
@@ -615,6 +618,7 @@ bool DelegationManager::run_pipeline_stage(
     size_t stage_idx,
     const std::string& task,
     const std::optional<SandboxInfo>& shared_sb,
+    std::vector<DelegationResult>& stage_log,
     DelegationResult& last_result) {
 
     const auto& tier_name = stages[stage_idx];
@@ -647,6 +651,7 @@ bool DelegationManager::run_pipeline_stage(
                                 std::nullopt);
     }
 
+    stage_log.push_back(last_result);
     logger->info("Pipeline stage {} ({}): {}", stage_idx, tier_name,
                  last_result.success ? "complete" : "failed");
     return last_result.success;

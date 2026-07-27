@@ -17,6 +17,7 @@
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/mcp/tool_base.h>
 #include <entropic/mcp/server_base.h>
+#include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/core/directives.h>
 #include <entropic/types/logging.h>
 
@@ -302,6 +303,9 @@ public:
      * @version 1.8.5
      */
     ServerResponse execute(const std::string& args_json) override;
+
+private:
+    std::vector<std::string> tier_names_;  ///< Known tiers for runtime validation.
 };
 
 /**
@@ -309,12 +313,12 @@ public:
  * @param def Tool definition.
  * @param tier_names Tier names for stages enum.
  * @internal
- * @version 1.8.5
+ * @version 2.10.0
  */
 PipelineTool::PipelineTool(
     ToolDefinition def,
     const std::vector<std::string>& tier_names)
-    : ToolBase(std::move(def)) {
+    : ToolBase(std::move(def)), tier_names_(tier_names) {
 
     auto schema = nlohmann::json::parse(definition_.input_schema);
     schema["properties"]["stages"]["items"]["enum"] = tier_names;
@@ -326,10 +330,15 @@ PipelineTool::PipelineTool(
 
 /**
  * @brief Parse pipeline args, validate stages, emit directives.
+ *
+ * gh#129 (v2.10.0): each stage is validated against tier_names_ before
+ * any directive is emitted. Unknown tier names are rejected with a plain
+ * error string naming the offending stage and the valid options.
+ *
  * @param args_json JSON with "stages" and "task".
  * @return ServerResponse with result text and directives.
  * @internal
- * @version 1.8.5
+ * @version 2.10.0
  */
 ServerResponse PipelineTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -339,6 +348,16 @@ ServerResponse PipelineTool::execute(const std::string& args_json) {
     if (stages.size() < 2) {
         logger->warn("[pipeline] rejected: fewer than 2 stages");
         return {"Error: pipeline requires at least 2 stages", {}};
+    }
+
+    for (const auto& s : stages) {
+        auto it = std::find(tier_names_.begin(), tier_names_.end(), s);
+        if (it == tier_names_.end()) {
+            logger->warn("[pipeline] invalid stage: '{}'", s);
+            auto valid = nlohmann::json(tier_names_).dump();
+            return {"Error: unknown stage \"" + s
+                    + "\". Valid stages: " + valid, {}};
+        }
     }
 
     logger->info("[pipeline] stages={} task='{}'",
@@ -400,7 +419,7 @@ public:
  *                  "suggested_files".
  * @return ServerResponse with summary and directives.
  * @internal
- * @version 2.1.4
+ * @version 2.10.0
  */
 ServerResponse CompleteTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -436,9 +455,9 @@ ServerResponse CompleteTool::execute(const std::string& args_json) {
 
     nlohmann::json result;
     result["action"] = "complete";
-    result["summary"] = summary;
+    result["summary"] = entropic::mcp::sanitize_utf8(summary);
     result["coverage_gap"] = coverage_gap;
-    result["gap_description"] = gap_description;
+    result["gap_description"] = entropic::mcp::sanitize_utf8(gap_description);
     result["suggested_files"] = suggested;
 
     Directive complete_d;

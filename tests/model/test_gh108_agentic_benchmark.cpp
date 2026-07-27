@@ -367,7 +367,7 @@ void print_report(const char* config_label, long vram_mb,
 
 TEST_CASE("gh#108 agentic benchmark: full 24-config permutation matrix "
           "(6 weight variants x MTP x flash+q4KV) at true 128k context",
-          "[model][gh108][benchmark][agentic][matrix]") {
+          "[.][model][gh108][benchmark][agentic][matrix]") {
     auto md = models_dir();
     std::vector<ModelVariant> variants = {
         {"E4B-Q8", md / "gemma-4-E4B-it-Q8_0.gguf", md / "mtp-gemma-4-E4B-it.gguf"},

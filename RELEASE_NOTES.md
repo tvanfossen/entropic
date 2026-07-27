@@ -2,6 +2,61 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.10.2
+
+Patch release — **the bridge no longer answers `"(no response)"` when the
+answer is already in the conversation (gh#130).**
+
+## The bug
+
+A turn that ends without `entropic.complete` leaves a trailing **empty**
+assistant message — e.g. anti-spiral rejects the lead's tool call and the next
+generation returns `finish=stop`, 0 tool calls, 0 chars.
+`extract_final_text` scanned backwards, found that empty message first, and
+returned it, never looking further back. Operators got the literal string
+`"(no response)"` while the real answer sat one or two messages earlier.
+Reported at ~4 of 16 runs in a live consumer acceptance matrix.
+
+The worst case involved a completed sub-tier delegation. `fold_delegation_summary`
+(gh#119, v2.9.17) already folds a child's summary into the lead's empty
+assistant turn precisely so this function can find it — but a *later* terminal
+empty assistant turn shadowed it, so an answer the engine had correctly
+produced was thrown away at the last step.
+
+**Fix:** skip empty assistant messages and keep scanning backwards.
+
+## Better diagnostics on a genuinely empty turn
+
+`"(no response)"` could not distinguish an engine failure from a model that
+simply stalled. It now says which:
+
+- `(no response: the turn produced no assistant message at all)`
+- `(no response: the turn ended with every assistant message empty — the tier
+  most likely stopped without calling entropic.complete)`
+- `(no response: the engine returned no readable conversation)`
+
+`"(no response"` remains the leading substring, so prefix/substring matching on
+the old sentinel still fires. **Exact-equality matching on `"(no response)"`
+will not** — adjust if you match that string exactly.
+
+## Async ask had it worse
+
+`derive_async_final_state` had no fallback at all: a stalled async
+`entropic.ask` returned `status: "done"` with empty text — less diagnosable
+than the sync path's sentinel. All three ask paths (plain, streaming, async)
+now share one selection rule.
+
+## A note on scope
+
+The report suggested also falling back to "the most recent delegation/pipeline
+result text." That is **not** implemented, deliberately. Tool and delegation
+results are injected as `role: "user"`, and the serialized conversation carries
+only `{role, content}` — so at that layer a delegation summary is
+indistinguishable from the operator's own prompt, and using it would echo the
+user's question back as the answer. Delegation summaries reach the extractor
+through the assistant-turn fold instead. A regression test pins that a user
+message is never returned as the answer.
+
 # entropic v2.10.1
 
 Patch release — **the MCP server plugin loader `i_mcp_server.h` has documented

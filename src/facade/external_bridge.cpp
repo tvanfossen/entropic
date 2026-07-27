@@ -14,6 +14,7 @@
 #include <entropic/types/logging.h>
 
 #include "engine_handle.h"
+#include "final_text.h"  // gh#130 (v2.10.2)
 
 #include <nlohmann/json.hpp>
 
@@ -150,28 +151,11 @@ static json tool_definitions() {
 
 // ── Tool handlers ────────────────────────────────────────
 
-/**
- * @brief Extract the last assistant message from a run result JSON.
- *
- * entropic_run returns a JSON array of messages. This extracts the
- * content of the last assistant-role message — the final synthesized
- * answer after all tool calls, delegation, and validation.
- *
- * @param result_json JSON array string from entropic_run.
- * @return Last assistant message content, or empty on parse failure.
- * @utility
- * @version 2.0.10
- */
-static std::string extract_final_text(const char* result_json) {
-    auto arr = json::parse(result_json, nullptr, false);
-    if (!arr.is_array()) { return {}; }
-    for (auto it = arr.rbegin(); it != arr.rend(); ++it) {
-        if (it->value("role", "") == "assistant") {
-            return it->value("content", "");
-        }
-    }
-    return {};
-}
+// gh#130 (v2.10.2): extract_final_text moved to the private facade header
+// final_text.h so its selection rule is unit-testable — this was a `static`
+// helper with no reachable test, and it shipped a scanning bug that returned
+// "(no response)" to operators while the answer sat earlier in the same
+// conversation. See facade_text::extract_final_text for the rule.
 
 /**
  * @brief Write a JSON-RPC line to a socket fd.
@@ -207,6 +191,25 @@ static void send_progress(int fd, const std::string& token_text,
 }
 
 /**
+ * @brief Read the live conversation and render the operator-visible answer.
+ *
+ * gh#130 (v2.10.2): shared by both ask paths so the answer-vs-diagnostic rule
+ * cannot drift between them.
+ *
+ * @param handle Engine handle.
+ * @return MCP tool result JSON.
+ * @utility
+ * @version 2.10.2
+ */
+static json final_answer_from_context(entropic_handle_t handle) {
+    char* msgs_json = nullptr;
+    entropic_context_get(handle, &msgs_json);
+    auto answer = facade_text::final_text_or_reason(msgs_json);
+    entropic_free(msgs_json);
+    return tool_text(answer);
+}
+
+/**
  * @brief Handle entropic.ask — non-streaming path (gh#115, v2.9.12).
  *
  * Routes through entropic_run (no on_token callback) so that MTP can
@@ -218,7 +221,7 @@ static void send_progress(int fd, const std::string& token_text,
  * @param args Tool arguments (must contain "prompt" string).
  * @return MCP tool result JSON (final clean text from entropic_run).
  * @internal
- * @version 2.9.12
+ * @version 2.10.2
  */
 static json handle_ask_plain(entropic_handle_t handle, const json& args) {
     auto it = args.find("prompt");
@@ -233,9 +236,10 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args) {
         entropic_free(result_json);
         return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
     }
-    auto text = result_json ? extract_final_text(result_json) : std::string{};
+    // Resolve before the free — final_text_or_reason reads that buffer.
+    auto answer = facade_text::final_text_or_reason(result_json);
     entropic_free(result_json);
-    return tool_text(text.empty() ? "(no response)" : text);
+    return tool_text(answer);
 }
 
 /**
@@ -252,7 +256,7 @@ static json handle_ask_plain(entropic_handle_t handle, const json& args) {
  * @param call_id JSON-RPC request id (for progress token correlation).
  * @return MCP tool result JSON (final clean text).
  * @internal
- * @version 2.9.12
+ * @version 2.10.2
  */
 static json handle_ask(entropic_handle_t handle, const json& args,
                        int client_fd, const std::string& call_id) {
@@ -276,13 +280,7 @@ static json handle_ask(entropic_handle_t handle, const json& args,
         return tool_text(std::string("error: ") + (msg ? msg : "unknown"));
     }
 
-    // Extract clean final text from conversation
-    char* msgs_json = nullptr;
-    entropic_context_get(handle, &msgs_json);
-    auto text = (msgs_json != nullptr)
-        ? extract_final_text(msgs_json) : std::string{};
-    entropic_free(msgs_json);
-    return tool_text(text.empty() ? "(no response)" : text);
+    return final_answer_from_context(handle);
 }
 
 /**
@@ -355,7 +353,7 @@ struct AsyncFinalState {
  * @param result_json JSON result (owned; freed on success, else NULL).
  * @return AsyncFinalState ready to be stored on the task.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.10.2
  */
 static AsyncFinalState derive_async_final_state(
     entropic_handle_t handle,
@@ -374,7 +372,11 @@ static AsyncFinalState derive_async_final_state(
         s.status = "error";
         s.phase = "failed";
     } else {
-        s.text = extract_final_text(result_json);
+        // gh#130 (v2.10.2): same selection rule as the sync paths. This one
+        // had no fallback at all, so a stalled async ask reported
+        // status="done" with empty text — even less diagnosable than the
+        // sync path's "(no response)".
+        s.text = facade_text::final_text_or_reason(result_json);
         entropic_free(result_json);
         s.status = "done";
         s.phase = "done";

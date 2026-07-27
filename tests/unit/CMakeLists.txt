@@ -439,6 +439,9 @@ add_executable(entropic-api-tests
     api/entropic_capi_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
+    # gh#130 (v2.10.2): bridge final-text selection — includes the private
+    # src/facade/final_text.h (same pattern as serialize_messages_utf8_test).
+    api/final_text_test.cpp
     # v2.1.7 (gh#34): mcp-bridge CLI relay round-trip tests.
     mcp/mcp_bridge_relay_test.cpp
 )

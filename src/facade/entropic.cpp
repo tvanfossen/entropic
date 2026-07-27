@@ -781,7 +781,7 @@ static std::vector<std::string> collect_delegatable_tiers(
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
  * @internal
- * @version 2.0.4
+ * @version 2.10.1
  */
 static void init_mcp_servers(entropic_handle_t h,
                              const std::filesystem::path& data_dir) {
@@ -793,6 +793,13 @@ static void init_mcp_servers(entropic_handle_t h,
     auto tier_names = collect_delegatable_tiers(h->config);
     h->server_manager->init_builtins(
         h->config.mcp, tier_names, data_dir.string());
+
+    // gh#133 (v2.10.1): load dlopen plugins after the builtins so a plugin
+    // colliding with a built-in server name is rejected rather than shadowing
+    // it. Failures are already logged per-path with a typed code; startup
+    // continues so the rest of the engine stays usable and the operator sees
+    // the whole diagnosis at once.
+    h->server_manager->load_plugins(h->config.mcp);
 }
 
 /**

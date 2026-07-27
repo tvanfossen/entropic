@@ -995,3 +995,67 @@ SCENARIO("A tier selects a bundled model by family/size/quant",
         }
     }
 }
+
+SCENARIO("gh#133 mcp.plugins parses into MCPConfig::plugins",
+         "[config][loader][gh133][mcp][plugin]")
+{
+    auto registry = load_test_registry();
+
+    GIVEN("a config listing two plugin .so paths, one of them under ~") {
+        auto project_dir = std::filesystem::temp_directory_path()
+            / "gh133-plugins-project";
+        std::filesystem::remove_all(project_dir);
+        std::filesystem::create_directories(project_dir);
+
+        std::ofstream out(project_dir / "config.local.yaml");
+        out << "mcp:\n"
+            << "  plugins:\n"
+            << "    - /opt/entropic/libfoo_server.so\n"
+            << "    - ~/plugins/libbar_server.so\n";
+        out.close();
+
+        WHEN("the layered config is loaded") {
+            entropic::ParsedConfig config;
+            auto err = entropic::config::load_layered(
+                project_dir, std::filesystem::path{}, registry, config);
+
+            THEN("both paths land in mcp.plugins in order") {
+                REQUIRE(err.empty());
+                REQUIRE(config.mcp.plugins.size() == 2);
+                CHECK(config.mcp.plugins[0]
+                      == std::filesystem::path("/opt/entropic/libfoo_server.so"));
+            }
+
+            THEN("a leading ~ is expanded like every other path key") {
+                REQUIRE(config.mcp.plugins.size() == 2);
+                auto expanded = config.mcp.plugins[1].string();
+                CHECK(expanded.find('~') == std::string::npos);
+                CHECK(expanded.find("plugins/libbar_server.so")
+                      != std::string::npos);
+            }
+        }
+    }
+
+    GIVEN("a config with no mcp.plugins key at all") {
+        auto project_dir = std::filesystem::temp_directory_path()
+            / "gh133-plugins-absent";
+        std::filesystem::remove_all(project_dir);
+        std::filesystem::create_directories(project_dir);
+
+        std::ofstream out(project_dir / "config.local.yaml");
+        out << "mcp:\n  enable_bash: false\n";
+        out.close();
+
+        WHEN("the layered config is loaded") {
+            entropic::ParsedConfig config;
+            auto err = entropic::config::load_layered(
+                project_dir, std::filesystem::path{}, registry, config);
+
+            THEN("plugins defaults to empty — absence is not an error") {
+                REQUIRE(err.empty());
+                CHECK(config.mcp.plugins.empty());
+                CHECK_FALSE(config.mcp.enable_bash);
+            }
+        }
+    }
+}

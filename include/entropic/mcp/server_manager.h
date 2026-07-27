@@ -16,8 +16,11 @@
 #include <entropic/mcp/health_monitor.h>
 #include <entropic/mcp/mcp_json_discovery.h>
 #include <entropic/mcp/permission_manager.h>
+#include <entropic/mcp/plugin_server.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/types/config.h>
+
+#include <nlohmann/json_fwd.hpp>
 
 #include <chrono>
 #include <filesystem>
@@ -86,6 +89,27 @@ public:
     void init_builtins(const MCPConfig& mcp_config,
                        const std::vector<std::string>& tier_names,
                        const std::string& data_dir);
+
+    /**
+     * @brief Load the dlopen plugins listed in `mcp.plugins` (gh#133).
+     *
+     * Each path is opened, version-checked against
+     * ENTROPIC_MCP_PLUGIN_API_VERSION, and registered under the name its
+     * entropic_mcp_server_name() reports; the plugin's tools then route as
+     * `<name>.<tool>` like any other server's.
+     *
+     * Every path is attempted so one bad plugin does not hide the diagnosis
+     * of the rest, and each failure is logged with its path. The FIRST
+     * failure's code is returned — a configured plugin that fails to load is
+     * never skipped silently, because that would leave the operator's stated
+     * intent unmet with no signal.
+     *
+     * @param mcp_config MCP config carrying the plugin path list.
+     * @return ENTROPIC_OK when every plugin loaded (including the vacuous
+     *         empty-list case), otherwise the first failure's typed code.
+     * @version 2.10.1
+     */
+    entropic_error_t load_plugins(const MCPConfig& mcp_config);
 
     /**
      * @brief Initialize all registered servers.
@@ -301,6 +325,68 @@ private:
     PermissionManager permissions_;                                 ///< Permission manager
     std::filesystem::path project_dir_;                             ///< Project root
     std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
+
+    /**
+     * @brief Route a tool call to a loaded plugin (gh#133).
+     * @param plugin Target plugin.
+     * @param local_name Local tool name.
+     * @param args_json JSON arguments.
+     * @return ServerResponse JSON envelope.
+     * @utility
+     * @version 2.10.1
+     */
+    static std::string route_plugin_call(PluginServer& plugin,
+                                         const std::string& local_name,
+                                         const std::string& args_json);
+
+    /**
+     * @brief Look up a plugin tool's inputSchema from its descriptor list.
+     * @param prefix Plugin server name.
+     * @param local_name Local tool name.
+     * @return inputSchema JSON string, or empty when absent/unparseable.
+     * @utility
+     * @version 2.10.1
+     */
+    std::string plugin_tool_schema(const std::string& prefix,
+                                   const std::string& local_name) const;
+
+    /**
+     * @brief Route to an external client, or report an unknown prefix.
+     *
+     * Split out of route_tool_call when gh#133 added the plugin branch —
+     * the combined form exceeded the 3-return gate.
+     *
+     * @param prefix Server prefix.
+     * @param tool_name Fully-qualified name.
+     * @param local_name Local tool name.
+     * @param args_json JSON arguments.
+     * @return ServerResponse JSON envelope.
+     * @utility
+     * @version 2.10.1
+     */
+    std::string route_external_or_unknown(const std::string& prefix,
+                                          const std::string& tool_name,
+                                          const std::string& local_name,
+                                          const std::string& args_json);
+
+    /**
+     * @brief Collect tools from the dlopen plugins into an array (gh#133).
+     * @param[in,out] all Destination JSON array.
+     * @utility
+     * @version 2.10.1
+     */
+    void append_plugin_tools(nlohmann::json& all) const;
+
+    /**
+     * @brief Collect tools from connected external clients into an array.
+     * @param[in,out] all Destination JSON array.
+     * @utility
+     * @version 2.10.1
+     */
+    void append_external_tools(nlohmann::json& all) const;
+
+    /* ── gh#133 (v2.10.1): dlopen plugin state ─────────── */
+    std::map<std::string, std::unique_ptr<PluginServer>> plugin_servers_; ///< Name → loaded plugin
 
     /* ── v1.8.7: External server state ─────────────────── */
     std::map<std::string, std::unique_ptr<ExternalMCPClient>> external_clients_; ///< Name → external client

@@ -331,6 +331,45 @@ add_executable(entropic-mcp-tests
     mcp/tool_result_classify_test.cpp
     # v2.1.5 gh#19: StdioTransport display_name sanitization
     mcp/stdio_transport_test.cpp
+    # gh#133 (v2.10.1): dlopen-based MCP server plugin loader
+    mcp/plugin_loader_test.cpp
+)
+
+# gh#133 (v2.10.1): fixture plugins for the loader tests.
+#
+# Built as MODULE libraries (dlopen targets, never linked against) from the
+# public interface header alone — a faithful stand-in for a third-party
+# plugin. -fvisibility=hidden is deliberate: it makes these fixtures the
+# control that keeps the ENTROPIC_EXPORT declarations in i_mcp_server.h
+# load-bearing, since GCC silently drops a visibility attribute applied to a
+# definition whose declaration lacked one.
+add_library(entropic-test-plugin MODULE mcp/fixtures/test_plugin.cpp)
+target_link_libraries(entropic-test-plugin PRIVATE entropic-types)
+set_target_properties(entropic-test-plugin PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    PREFIX "lib"
+    SUFFIX ".so"
+)
+
+# Same source, incompatible API version — gives the loader's version-mismatch
+# rejection a real .so to reject rather than a mocked return code.
+add_library(entropic-test-plugin-badversion MODULE mcp/fixtures/test_plugin.cpp)
+target_link_libraries(entropic-test-plugin-badversion PRIVATE entropic-types)
+target_compile_definitions(entropic-test-plugin-badversion PRIVATE
+    TEST_PLUGIN_API_VERSION=99
+    TEST_PLUGIN_SERVER_NAME="badversion"
+)
+set_target_properties(entropic-test-plugin-badversion PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    PREFIX "lib"
+    SUFFIX ".so"
+)
+
+add_dependencies(entropic-mcp-tests
+    entropic-test-plugin
+    entropic-test-plugin-badversion
 )
 
 target_include_directories(entropic-mcp-tests PRIVATE
@@ -340,6 +379,7 @@ target_include_directories(entropic-mcp-tests PRIVATE
 # Pass source-tree data dir for tool JSON resolution in tests
 target_compile_definitions(entropic-mcp-tests PRIVATE
     TEST_DATA_DIR="${PROJECT_SOURCE_DIR}/data"
+    TEST_PLUGIN_DIR="${CMAKE_CURRENT_BINARY_DIR}"
 )
 
 target_link_libraries(entropic-mcp-tests PRIVATE

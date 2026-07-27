@@ -8,6 +8,8 @@ target_sources(entropic-mcp PRIVATE
     server_base.cpp
     permission_manager.cpp
     server_manager.cpp
+    # gh#133 (v2.10.1): dlopen-loaded in-process server plugins
+    plugin_server.cpp
     tool_executor.cpp
     mcp_c_api.cpp
     # v1.9.4: MCP authorization
@@ -53,6 +55,8 @@ target_link_libraries(entropic-mcp PUBLIC
     nlohmann_json::nlohmann_json
     spdlog::spdlog
     httplib::httplib
+    # gh#133 (v2.10.1): dlopen/dlsym/dlclose for plugin_server.cpp
+    ${CMAKE_DL_LIBS}
 )
 
 target_compile_definitions(entropic-mcp PRIVATE ENTROPIC_BUILDING_DLL)

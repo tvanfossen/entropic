@@ -420,7 +420,7 @@ static std::string parse_external_mcp_config(
  * @param[out] config Output MCP config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.0.4
+ * @version 2.10.1
  */
 static std::string parse_mcp_config(
     ryml::ConstNodeRef node,
@@ -434,6 +434,16 @@ static std::string parse_mcp_config(
     extract(node, "enable_web", config.enable_web);
     extract(node, "server_timeout_seconds", config.server_timeout_seconds);
     extract(node, "working_dir", config.working_dir);
+
+    // gh#133 (v2.10.1): mcp.plugins — dlopen-loaded in-process server .so
+    // paths. expand_home so `~/...` works like every other path key.
+    std::vector<std::string> plugin_paths;
+    if (extract_string_list(node, "plugins", plugin_paths)) {
+        config.plugins.clear();
+        for (const auto& p : plugin_paths) {
+            config.plugins.push_back(expand_home(std::filesystem::path(p)));
+        }
+    }
 
     if (node.has_child("filesystem")) {
         parse_filesystem_config(node["filesystem"], config.filesystem);

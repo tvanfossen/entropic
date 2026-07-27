@@ -66,6 +66,11 @@ add_executable(entropic-inference-tests
     inference/qwen36_adapter_test.cpp
     inference/nemotron3_adapter_test.cpp
     inference/xml_parameter_parser_test.cpp
+    # gh#108 (v2.10.3): per-family thinking-marker removal. gemma4 has no
+    # adapter, so it resolves to GenericAdapter, which strips <think> and
+    # leaves <|channel> intact — a toolless gemma4 generate leaks raw
+    # reasoning on every path.
+    inference/thinking_markers_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp

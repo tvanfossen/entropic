@@ -47,6 +47,23 @@ struct ParseResult {
 };
 
 /**
+ * @brief The reasoning-block delimiters a model family emits (gh#108).
+ *
+ * Thinking format is a property of the chat template, not of the transport:
+ * Qwen/Nemotron wrap reasoning in `<think>…</think>`, Gemma-4 QAT uses
+ * `<|channel>…<channel|>`. Declaring the pair once per adapter keeps the
+ * buffered strip (ChatAdapter::strip_think_blocks) and the live stream filter
+ * (StreamThinkFilter) from drifting apart — before v2.10.3 they were two
+ * independent hardcoded literals and gemma4 matched neither.
+ *
+ * @version 2.10.3
+ */
+struct ThinkMarkers {
+    std::string open  = "<think>";   ///< Opening delimiter
+    std::string close = "</think>";  ///< Closing delimiter
+};
+
+/**
  * @brief gh#88: recover tool calls a gemma model parroted as bare-JSON.
  *
  * common_chat (PEG_GEMMA4) parses only the native call-prefix form. When a
@@ -122,16 +139,6 @@ public:
 
     /* ── System prompt assembly ──────────────────────────── */
 
-    /**
-     * @brief Assemble system prompt: identity + context + tools.
-     * @param base_prompt Application context.
-     * @param tool_jsons Tool definitions as JSON strings.
-     * @return Assembled system prompt.
-     * @version 1.8.2
-     */
-    std::string format_system_prompt(
-        const std::string& base_prompt,
-        const std::vector<std::string>& tool_jsons) const;
 
     /* ── Tool call parsing (subclass overrides) ──────────── */
 
@@ -141,6 +148,41 @@ public:
      * @return ParseResult with cleaned content and tool calls.
      * @version 1.8.2
      */
+    /**
+     * @brief This family's reasoning-block delimiters (gh#108).
+     *
+     * Default is the `<think>` pair used by Qwen and Nemotron. Override in a
+     * family that wraps reasoning differently — Gemma-4 QAT does.
+     *
+     * @return Marker pair.
+     * @utility
+     * @version 2.10.3
+     */
+    virtual ThinkMarkers thinking_markers() const { return {}; }
+
+    /**
+     * @brief Strip this family's reasoning blocks from content (gh#108).
+     *
+     * Uses thinking_markers(), so an adapter declares its markers once and
+     * both the buffered strip and the live StreamThinkFilter agree. Matching
+     * is plain substring, not regex — `<|channel>` contains a regex
+     * metacharacter and would need escaping.
+     *
+     * An unclosed opening marker (generation hit its token budget
+     * mid-reasoning) erases to end of content and WARNs: no answer was ever
+     * produced, so returning the reasoning would be worse than nothing.
+     *
+     * PUBLIC since v2.10.3 — was protected. The shared parse rule
+     * (response_parse.h) runs it on both the template and adapter branches,
+     * so it is an inference-layer concern now, not a subclass helper.
+     * Widening only; non-virtual, so no ABI change for existing consumers.
+     *
+     * @param content Model output.
+     * @return Content with reasoning blocks removed and trimmed.
+     * @version 2.10.3
+     */
+    std::string strip_think_blocks(const std::string& content) const;
+
     virtual ParseResult parse_tool_calls(
         const std::string& content) const = 0;
 
@@ -198,24 +240,8 @@ protected:
     std::vector<ToolCall> parse_tagged_tool_calls(
         const std::string& content) const;
 
-    /**
-     * @brief Parse bare JSON lines containing "name" key.
-     * @version 1.8.2
-     */
-    std::vector<ToolCall> parse_bare_json_tool_calls(
-        const std::string& content) const;
 
-    /**
-     * @brief Extract <think>...</think> content.
-     * @version 1.8.2
-     */
-    std::string extract_thinking(const std::string& content) const;
 
-    /**
-     * @brief Strip all <think>...</think> blocks from content.
-     * @version 1.8.2
-     */
-    std::string strip_think_blocks(const std::string& content) const;
 
     /**
      * @brief Attempt JSON recovery on malformed tool call string.

@@ -17,6 +17,7 @@
  */
 
 #include "adapter_registry.h"
+#include "gemma4_adapter.h"
 #include "generic_adapter.h"
 #include "nemotron3_adapter.h"
 #include "qwen35_adapter.h"
@@ -52,16 +53,25 @@ struct AdapterEntry {
 /**
  * @brief Build the static adapter dispatch table (gh#87 Phase D).
  *
- * Only the autoparser families that need a multi-parameter parser are
- * listed. gemma4 is intentionally absent — it parses via common_chat's
- * dedicated PEG_GEMMA4 grammar and uses GenericAdapter for identity.
+ * The autoparser families that need a multi-parameter parser, plus gemma4.
+ *
+ * gh#108 (v2.10.3): gemma4 WAS intentionally absent — it parses tool calls
+ * via common_chat's PEG_GEMMA4 grammar, so it fell through to
+ * GenericAdapter. But that grammar is only reachable when
+ * common_chat_parse_reliable() is true, which needs a TOOLED render to have
+ * captured a parser arena. A toolless generate fell to Generic, which strips
+ * `<think>` — a marker gemma4 never emits — leaving `<|channel>` reasoning
+ * in content on every path. Gemma4Adapter is the fallback that closes it;
+ * PEG_GEMMA4 remains primary whenever an arena exists.
  *
  * @return Registered factories, in lookup order.
  * @internal
- * @version 2.7.0
+ * @version 2.10.3
  */
-const std::array<AdapterEntry, 3>& adapter_table() {
-    static const std::array<AdapterEntry, 3> table{{
+const std::array<AdapterEntry, 4>& adapter_table() {
+    static const std::array<AdapterEntry, 4> table{{
+        {"gemma4",    [](auto& t, auto& p) {
+            return std::make_unique<Gemma4Adapter>(t, p); }},
         {"qwen35",    [](auto& t, auto& p) {
             return std::make_unique<Qwen35Adapter>(t, p); }},
         {"qwen36",    [](auto& t, auto& p) {

@@ -7,6 +7,9 @@
 
 #include <entropic/core/stream_think_filter.h>
 
+#include <algorithm>
+#include <utility>
+
 namespace entropic {
 
 /**
@@ -18,6 +21,23 @@ namespace entropic {
  */
 StreamThinkFilter::StreamThinkFilter(TokenCallback cb, void* ud)
     : cb_(cb), ud_(ud) {}
+
+/**
+ * @brief Construct with family-specific reasoning delimiters (gh#108).
+ * @param cb Consumer callback.
+ * @param ud Consumer user_data.
+ * @param open_marker Opening delimiter.
+ * @param close_marker Closing delimiter.
+ * @internal
+ * @version 2.10.3
+ */
+StreamThinkFilter::StreamThinkFilter(TokenCallback cb, void* ud,
+                                     std::string open_marker,
+                                     std::string close_marker)
+    : cb_(cb), ud_(ud),
+      open_marker_(std::move(open_marker)),
+      close_marker_(std::move(close_marker)),
+      max_marker_len_(std::max(open_marker_.size(), close_marker_.size())) {}
 
 /**
  * @brief Set raw (unfiltered) callback.
@@ -32,16 +52,16 @@ void StreamThinkFilter::set_raw_callback(TokenCallback cb, void* ud) {
 }
 
 /**
- * @brief Check if accumulated buffer matches a think tag.
+ * @brief Check whether the buffer matches this family's delimiters (gh#108).
  * @param buf Buffer to check.
- * @param is_open Output: true if <think>, false if </think>.
- * @return true if a complete tag was matched.
- * @utility
- * @version 2.0.1
+ * @param is_open Output: true for the opening delimiter, false for closing.
+ * @return true if a complete delimiter was matched.
+ * @internal
+ * @version 2.10.3
  */
-static bool match_tag(const std::string& buf, bool& is_open) {
-    if (buf == "<think>") { is_open = true; return true; }
-    if (buf == "</think>") { is_open = false; return true; }
+bool StreamThinkFilter::match_tag(const std::string& buf, bool& is_open) const {
+    if (buf == open_marker_)  { is_open = true;  return true; }
+    if (buf == close_marker_) { is_open = false; return true; }
     return false;
 }
 
@@ -114,10 +134,11 @@ void StreamThinkFilter::emit_utf8_safe(const char* data, size_t len) {
  * @brief Process one byte through the tag-buffering state machine.
  * @param c Byte to process.
  * @internal
- * @version 2.0.2
+ * @version 2.10.3
  */
 void StreamThinkFilter::process_byte(char c) {
-    if (tag_buf_.empty() && c != '<') {
+    // Only start buffering on a byte that could begin either delimiter.
+    if (tag_buf_.empty() && c != open_marker_[0] && c != close_marker_[0]) {
         if (!in_think_) { emit_utf8_safe(&c, 1); }
         return;
     }
@@ -128,7 +149,8 @@ void StreamThinkFilter::process_byte(char c) {
         tag_buf_.clear();
         return;
     }
-    if (tag_buf_.size() > 8) {
+    // Past the longest delimiter this family uses, it cannot be one.
+    if (tag_buf_.size() > max_marker_len_) {
         if (!in_think_) {
             emit_utf8_safe(tag_buf_.data(), tag_buf_.size());
         }

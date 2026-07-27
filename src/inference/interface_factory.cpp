@@ -11,7 +11,8 @@
 #include <entropic/types/message.h>
 #include <entropic/inference/adapters/adapter_base.h>  // gh#88 recovery
 
-#include "llama_cpp_backend.h"  // gh#87 3b: common_chat parse routing
+#include "llama_cpp_backend.h"
+#include "response_parse.h"  // gh#87 3b: common_chat parse routing
 #include "tool_call_serialize.h"  // gh#93: shared (typed) tool-call serialization
 
 #include <nlohmann/json.hpp>
@@ -526,7 +527,7 @@ static void parse_via_adapter(ModelOrchestrator* orch,
  * synthesise the call when exactly one tool's required params are all present.
  *
  * @callback
- * @version 2.10.0
+ * @version 2.10.3
  */
 static int iface_parse_tool_calls(const char* raw,
                                   char** cleaned,
@@ -539,16 +540,13 @@ static int iface_parse_tool_calls(const char* raw,
     auto* llama = dynamic_cast<LlamaCppBackend*>(
         ctx->orchestrator->get_backend(tier));
 
-    std::string cleaned_str;
-    std::vector<ToolCall> calls;
-    if (llama != nullptr && llama->common_chat_parse_reliable()) {
-        auto parsed = llama->parse_response(raw_str);
-        apply_action_envelope_recovery(parsed.tool_calls, raw_str);  // gh#88
-        cleaned_str = std::move(parsed.content);
-        calls = std::move(parsed.tool_calls);
-    } else {
-        parse_via_adapter(ctx->orchestrator, raw_str, tier, cleaned_str, calls);
-    }
+    // gh#108 (v2.10.3): same rule as the orchestrator's buffered parse —
+    // this used to be a byte-for-byte duplicate of that branch, which is how
+    // a fix could land on one path and miss the other.
+    auto parsed = parse_model_response(
+        llama, ctx->orchestrator->get_adapter(tier), raw_str);
+    std::string cleaned_str = std::move(parsed.content);
+    std::vector<ToolCall> calls = std::move(parsed.tool_calls);
 
     apply_fenced_fallbacks(raw_str, llama, calls);  // gh#122, gh#127
 

@@ -1105,7 +1105,7 @@ static char* sp_get_validation(void* ud) {
  * @param iface Inference interface (passed to validator for critique generation).
  * @param constitution_text Constitution text (may be empty).
  * @internal
- * @version 2.0.6-rc19
+ * @version 2.10.3
  */
 static void wire_hooks_and_validator(
     entropic_handle_t h,
@@ -1141,6 +1141,22 @@ static void wire_hooks_and_validator(
         h->validator = std::make_unique<entropic::ConstitutionalValidator>(
             h->config.constitutional_validation, constitution_text);
         h->validator->attach(&hook_iface, &iface);
+        // gh#108 (v2.10.3): resolve reasoning delimiters PER TIER. One
+        // validator serves every tier, but thinking format is a per-family
+        // property — before this, the validator hardcoded `<think>` and so
+        // handed the critique model raw `<|channel>` reasoning on a Gemma-4
+        // tier, exactly the failure it exists to prevent. The facade is the
+        // lowest layer that can see both, so it owns the lambda; core takes
+        // plain strings and keeps no dependency on inference.
+        h->validator->set_marker_resolver(
+            [h](const std::string& tier)
+                -> std::pair<std::string, std::string> {
+                auto* adapter = (h->orchestrator != nullptr)
+                    ? h->orchestrator->get_adapter(tier) : nullptr;
+                if (adapter == nullptr) { return {"<think>", "</think>"}; }
+                auto m = adapter->thinking_markers();
+                return {m.open, m.close};
+            });
         // E3 (2.0.6-rc17): expose validator verdict via ON_COMPLETE
         // hook context.
         h->engine->set_validation_provider(sp_get_validation, h);

@@ -2,6 +2,68 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.10.1
+
+Patch release — **the MCP server plugin loader `i_mcp_server.h` has documented
+since v1.8.5 now actually exists (gh#133).**
+
+## The gap
+
+`include/entropic/interfaces/i_mcp_server.h` stated "ServerManager discovers
+plugins via dlopen and calls these functions through the opaque handle." No
+such loader existed. A consumer who implemented the documented nine-entry-point
+contract produced a `.so` that nothing in the engine could load — reachable
+only by disassembling the shipped binary, since the headers said the opposite.
+
+Reported by the sassafras-class consumer, who had a conformant implementation
+written and tested against the contract before establishing it was unloadable.
+
+## Loading a plugin
+
+```yaml
+mcp:
+  plugins:
+    - /path/to/libmy_mcp_server.so
+    - ~/plugins/libother_server.so
+```
+
+Each entry is dlopened at startup, version-checked against
+`ENTROPIC_MCP_PLUGIN_API_VERSION`, and registered under the name its
+`entropic_mcp_server_name()` reports. Its tools are then addressable as
+`<name>.<tool>` exactly like a built-in server's, including argument
+validation against the plugin's declared `inputSchema`.
+
+Failures are loud, never silent: a `.so` that will not open, is missing an
+entry point, reports a different API version, or collides with an existing
+server name is rejected with `ENTROPIC_ERROR_PLUGIN_LOAD_FAILED` /
+`ENTROPIC_ERROR_PLUGIN_VERSION_MISMATCH`. Every configured path is attempted
+so one broken entry does not hide the diagnosis of the rest.
+
+## Header corrections
+
+- **`ENTROPIC_EXPORT` on all nine entry points.** Previously absent, so a
+  plugin defining them the obvious way — plain `extern "C"`, inheriting
+  visibility from the header — exported *nothing* under `-fvisibility=hidden`,
+  the way most plugin projects build. Verified on GCC 11.4: 0 symbols exported
+  before, all 9 after. Visibility only; no signature or ABI change, so no
+  plugin-API version bump, and plugins that exported by other means still load
+  unchanged.
+- **`entropic_plugin_api_version()` and `entropic_create_server()` are now real
+  declarations** rather than prose in a comment block.
+- **Threading contract documented**: the engine serialises calls into a given
+  server instance, so a plugin needs no internal locking for its own state.
+  `PluginServer` takes its own mutex, making that guarantee hold by
+  construction rather than by assumption about callers.
+- **`inputSchema` camelCase** stated explicitly.
+
+## Notes for plugin authors
+
+Plugins are loaded `RTLD_LOCAL`, so two plugins exporting the same entry-point
+names cannot collide. Strings returned by `list_tools`/`execute` are freed
+through *that plugin's* `entropic_free`, not the engine's allocator. A plugin
+returning a malformed tool list or response is contained to itself — it does
+not throw through the agent loop or empty the tool list for other servers.
+
 # entropic v2.10.0
 
 Minor release — **MTP grammar + streaming support, tool-call robustness, and

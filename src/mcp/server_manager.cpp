@@ -73,6 +73,46 @@ void ServerManager::init_builtins(
 }
 
 /**
+ * @brief Load the dlopen plugins listed in mcp.plugins (gh#133).
+ * @param mcp MCP config carrying the plugin path list.
+ * @return ENTROPIC_OK, or the first failure's typed code.
+ * @internal
+ * @version 2.10.1
+ */
+entropic_error_t ServerManager::load_plugins(const MCPConfig& mcp) {
+    auto first_error = ENTROPIC_OK;
+
+    for (const auto& path : mcp.plugins) {
+        std::unique_ptr<PluginServer> plugin;
+        auto rc = PluginServer::load(path, plugin);
+        if (rc != ENTROPIC_OK) {
+            // Keep going: attempting every path diagnoses a whole broken
+            // config in one run instead of one entry per restart.
+            first_error = (first_error == ENTROPIC_OK) ? rc : first_error;
+            continue;
+        }
+
+        auto name = plugin->name();
+        if (servers_.count(name) > 0 || external_clients_.count(name) > 0 ||
+            plugin_servers_.count(name) > 0) {
+            logger->error("Plugin '{}' from {} collides with an already "
+                          "registered server of the same name — refusing to "
+                          "shadow it", name, path.string());
+            first_error = (first_error == ENTROPIC_OK)
+                              ? ENTROPIC_ERROR_PLUGIN_LOAD_FAILED
+                              : first_error;
+            continue;
+        }
+
+        plugin->set_working_dir(project_dir_.string());
+        plugin_servers_[name] = std::move(plugin);
+        logger->info("Registered plugin server: {}", name);
+    }
+
+    return first_error;
+}
+
+/**
  * @brief Register a built-in server.
  * @param server Server instance (ownership transferred).
  * @internal
@@ -105,40 +145,86 @@ void ServerManager::initialize() {
 }
 
 /**
- * @brief List tools from all servers (in-process + external).
+ * @brief Append a server's tools to an array, prefixing each name.
+ * @param tools_json Server's raw tool-descriptor JSON array.
+ * @param prefix Server name to prepend as `<prefix>.<tool>`.
+ * @param[in,out] all Destination array.
+ * @utility
+ * @version 2.10.1
+ */
+static void append_prefixed_tools(const std::string& tools_json,
+                                  const std::string& prefix,
+                                  nlohmann::json& all) {
+    auto tools = nlohmann::json::parse(tools_json);
+    for (auto& tool : tools) {
+        std::string orig_name = tool.at("name");
+        tool["name"] = prefix + "." + orig_name;
+        all.push_back(std::move(tool));
+    }
+}
+
+/**
+ * @brief Collect tools from the dlopen plugins (gh#133).
+ *
+ * Plugins report bare tool names exactly as an MCPServerBase does, so they
+ * get the same prefixing. Their output is third-party, so a malformed
+ * descriptor list is contained to its own plugin rather than emptying the
+ * tool list for every server.
+ *
+ * @param[in,out] all Destination array.
+ * @utility
+ * @version 2.10.1
+ */
+void ServerManager::append_plugin_tools(nlohmann::json& all) const {
+    for (const auto& [name, plugin] : plugin_servers_) {
+        try {
+            append_prefixed_tools(plugin->list_tools(), name, all);
+        } catch (const std::exception& e) {
+            logger->error("Plugin '{}' returned an unusable tool list: {} — "
+                          "its tools are unavailable this session", name,
+                          e.what());
+        }
+    }
+}
+
+/**
+ * @brief Collect tools from connected external clients.
+ * @param[in,out] all Destination array (external tools arrive pre-prefixed).
+ * @utility
+ * @version 2.10.1
+ */
+void ServerManager::append_external_tools(nlohmann::json& all) const {
+    for (const auto& [name, client] : external_clients_) {
+        if (!client->is_connected()) {
+            continue;
+        }
+        auto tools = nlohmann::json::parse(client->list_tools());
+        for (auto& tool : tools) {
+            all.push_back(std::move(tool));
+        }
+    }
+}
+
+/**
+ * @brief List tools from all servers (in-process + plugin + external).
  * @return JSON array string.
  * @internal
- * @version 2.0.0
+ * @version 2.10.1
  */
 std::string ServerManager::list_tools() const {
     auto all = nlohmann::json::array();
 
     // In-process servers
     for (const auto& [name, server] : servers_) {
-        auto tools_json = server->list_tools();
-        auto tools = nlohmann::json::parse(tools_json);
-        for (auto& tool : tools) {
-            std::string orig_name = tool["name"];
-            tool["name"] = name + "." + orig_name;
-            all.push_back(std::move(tool));
-        }
+        append_prefixed_tools(server->list_tools(), name, all);
     }
 
-    // External servers (tools already prefixed by ExternalMCPClient)
-    for (const auto& [name, client] : external_clients_) {
-        if (!client->is_connected()) {
-            continue;
-        }
-        auto tools_json = client->list_tools();
-        auto tools = nlohmann::json::parse(tools_json);
-        for (auto& tool : tools) {
-            all.push_back(std::move(tool));
-        }
-    }
+    append_plugin_tools(all);     // gh#133 (v2.10.1)
+    append_external_tools(all);
 
-    logger->info("Tool list: {} tools from {} server(s) + {} external",
-                 all.size(), servers_.size(),
-                 external_clients_.size());
+    logger->info("Tool list: {} tools from {} server(s) + {} plugin(s) + "
+                 "{} external", all.size(), servers_.size(),
+                 plugin_servers_.size(), external_clients_.size());
     return all.dump();
 }
 
@@ -183,11 +269,14 @@ MCPServerBase* ServerManager::get_server(const std::string& name) const {
  * @brief List all registered server names.
  * @return Server names (in-process + external).
  * @internal
- * @version 2.0.6
+ * @version 2.10.1
  */
 std::vector<std::string> ServerManager::server_names() const {
     std::vector<std::string> names;
     for (const auto& [name, _] : servers_) {
+        names.push_back(name);
+    }
+    for (const auto& [name, _] : plugin_servers_) {  // gh#133 (v2.10.1)
         names.push_back(name);
     }
     for (const auto& [name, _] : external_clients_) {
@@ -201,7 +290,7 @@ std::vector<std::string> ServerManager::server_names() const {
  * @param tool_name Fully-qualified tool name.
  * @return input_schema JSON string, or empty if tool not found.
  * @internal
- * @version 2.0.6
+ * @version 2.10.1
  */
 std::string ServerManager::get_tool_schema(
     const std::string& tool_name) const {
@@ -210,9 +299,43 @@ std::string ServerManager::get_tool_schema(
     auto it = servers_.find(prefix);
     if (it != servers_.end()) {
         auto* tool = it->second->registry().get_tool(local_name);
-        if (tool != nullptr) {
-            return tool->definition().input_schema;
+        return (tool != nullptr) ? tool->definition().input_schema
+                                 : std::string{};
+    }
+    // gh#133 (v2.10.1): without this a plugin's declared inputSchema would be
+    // invisible to ToolExecutor::check_schema, which skips validation on an
+    // empty schema — plugin tools would silently forgo the argument checking
+    // every built-in server's tools get.
+    return plugin_tool_schema(prefix, local_name);
+}
+
+/**
+ * @brief Look up a plugin tool's inputSchema from its descriptor list.
+ * @param prefix Plugin server name.
+ * @param local_name Local tool name.
+ * @return inputSchema JSON string, or empty when absent/unparseable.
+ * @utility
+ * @version 2.10.1
+ */
+std::string ServerManager::plugin_tool_schema(
+    const std::string& prefix,
+    const std::string& local_name) const {
+
+    auto it = plugin_servers_.find(prefix);
+    if (it == plugin_servers_.end()) {
+        return "";
+    }
+    try {
+        auto tools = nlohmann::json::parse(it->second->list_tools());
+        for (const auto& tool : tools) {
+            if (tool.value("name", std::string{}) == local_name) {
+                return tool.value("inputSchema",
+                                  nlohmann::json::object()).dump();
+            }
         }
+    } catch (const std::exception& e) {
+        logger->error("Plugin '{}': cannot read schema for tool '{}': {}",
+                      prefix, local_name, e.what());
     }
     return "";
 }
@@ -223,7 +346,7 @@ std::string ServerManager::get_tool_schema(
  * @param args_json JSON arguments.
  * @return ServerResponse JSON envelope.
  * @utility
- * @version 1.8.7
+ * @version 2.10.1
  */
 std::string ServerManager::route_tool_call(
     const std::string& tool_name,
@@ -238,7 +361,35 @@ std::string ServerManager::route_tool_call(
         return it->second->execute(local_name, args_json);
     }
 
-    // Try external client
+    // gh#133 (v2.10.1): try a loaded plugin
+    auto plug_it = plugin_servers_.find(prefix);
+    if (plug_it != plugin_servers_.end()) {
+        return route_plugin_call(*plug_it->second, local_name, args_json);
+    }
+
+    return route_external_or_unknown(prefix, tool_name, local_name, args_json);
+}
+
+/**
+ * @brief Route to an external client, or report an unknown server prefix.
+ *
+ * Split out of route_tool_call when gh#133 added the plugin branch — the
+ * combined form exceeded the 3-return gate.
+ *
+ * @param prefix Server prefix.
+ * @param tool_name Fully-qualified name.
+ * @param local_name Local tool name.
+ * @param args_json JSON arguments.
+ * @return ServerResponse JSON envelope.
+ * @utility
+ * @version 2.10.1
+ */
+std::string ServerManager::route_external_or_unknown(
+    const std::string& prefix,
+    const std::string& tool_name,
+    const std::string& local_name,
+    const std::string& args_json) {
+
     auto ext_it = external_clients_.find(prefix);
     if (ext_it != external_clients_.end()) {
         return route_external_call(
@@ -273,6 +424,46 @@ std::string ServerManager::route_external_call(
         return disconnected_error(tool_name, prefix);
     }
     return client->execute(local_name, args_json);
+}
+
+/**
+ * @brief Route a tool call to a loaded plugin (gh#133).
+ *
+ * A plugin is third-party code returning a string the engine did not
+ * produce, so its envelope is validated before it reaches the agent loop —
+ * a malformed response becomes a normal tool error rather than an exception
+ * unwinding through the loop.
+ *
+ * @param plugin Target plugin.
+ * @param local_name Local tool name.
+ * @param args_json JSON arguments.
+ * @return ServerResponse JSON envelope.
+ * @utility
+ * @version 2.10.1
+ */
+std::string ServerManager::route_plugin_call(
+    PluginServer& plugin,
+    const std::string& local_name,
+    const std::string& args_json) {
+
+    std::string raw;
+    try {
+        raw = plugin.execute(local_name, args_json);
+        auto parsed = nlohmann::json::parse(raw);
+        if (!parsed.is_object() || !parsed.contains("result")) {
+            throw std::runtime_error("missing 'result' field");
+        }
+        return raw;
+    } catch (const std::exception& e) {
+        logger->error("Plugin '{}' returned an invalid response for tool "
+                      "'{}': {} — raw response: {}",
+                      plugin.name(), local_name, e.what(), raw);
+        nlohmann::json resp;
+        resp["result"] = "Error: plugin '" + plugin.name() +
+                         "' returned an invalid response: " + e.what();
+        resp["directives"] = nlohmann::json::array();
+        return resp.dump();
+    }
 }
 
 /**
@@ -364,7 +555,7 @@ void ServerManager::add_permission(
 /**
  * @brief Shutdown all servers (in-process + external).
  * @internal
- * @version 1.8.7
+ * @version 2.10.1
  */
 void ServerManager::shutdown() {
     // Stop health monitor first
@@ -377,6 +568,11 @@ void ServerManager::shutdown() {
         client->disconnect();
     }
     external_clients_.clear();
+
+    // gh#133 (v2.10.1): destroy plugin instances and dlclose their libraries
+    // before the in-process servers, so nothing can call into an unmapped .so.
+    logger->info("Unloading {} MCP plugin(s)", plugin_servers_.size());
+    plugin_servers_.clear();
 
     // Destroy in-process servers
     logger->info("Shutting down {} MCP servers", servers_.size());
@@ -680,7 +876,7 @@ void ServerManager::disconnect_external_server(
  * @brief Get snapshot of all servers with current status.
  * @return Map of name to ServerInfo.
  * @internal
- * @version 1.8.7
+ * @version 2.10.1
  */
 std::map<std::string, ServerInfo>
 ServerManager::list_server_info() const {
@@ -694,6 +890,20 @@ ServerManager::list_server_info() const {
             info.transport = "in_process";
             info.status = "connected";
             info.source = "builtin";
+            result[name] = info;
+        }
+    }
+
+    // gh#133 (v2.10.1): plugins report their own transport so `entropic
+    // inspect` distinguishes them from builtins and external processes.
+    for (const auto& [name, plugin] : plugin_servers_) {
+        if (result.count(name) == 0) {
+            ServerInfo info;
+            info.name = name;
+            info.transport = "plugin";
+            info.status = "connected";
+            info.source = "plugin";
+            info.command = plugin->path().string();
             result[name] = info;
         }
     }

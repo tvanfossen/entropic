@@ -657,6 +657,17 @@ struct MCPConfig {
     int server_timeout_seconds = 30; ///< Server timeout (5–300)
     std::string working_dir;         ///< Server working directory (empty = CWD) (v2.0.4)
 
+    /**
+     * @brief In-process MCP server plugin `.so` paths (gh#133, v2.10.1).
+     *
+     * Each entry is dlopened at startup and must implement the contract in
+     * `entropic/interfaces/i_mcp_server.h`. Distinct from external_servers,
+     * which spawn a separate process and speak MCP over stdio/SSE — these
+     * load into the engine's address space and are called directly through
+     * the C ABI. A path that fails to load is a loud error, not a skip.
+     */
+    std::vector<std::filesystem::path> plugins;
+
     /* ── v1.8.7: External MCP client settings ──────────── */
     std::unordered_map<std::string, ExternalServerEntry> external_servers; ///< Named external servers
     ReconnectConfig reconnect;                   ///< Reconnection backoff policy

@@ -24,8 +24,10 @@ auto logger = entropic::log::get("core.constitutional_validator");
 } // anonymous namespace
 
 // Forward declarations for static helpers used in validate()
-static std::string strip_think_blocks(const std::string& content);
 static bool is_pure_tool_call(const std::string& content);
+static std::string strip_reasoning(const std::string& content,
+                                   const std::string& open,
+                                   const std::string& close);
 
 /**
  * @brief Construct validator with config and constitution text.
@@ -119,6 +121,19 @@ bool ConstitutionalValidator::should_validate(
 void ConstitutionalValidator::set_global_enabled(bool enabled) {
     std::lock_guard<std::mutex> lock(overrides_mutex_);
     global_enabled_ = enabled;
+}
+
+/**
+ * @brief Register a per-tier reasoning-delimiter resolver (gh#108).
+ * @param resolver Maps tier name → {open, close}.
+ * @internal
+ * @version 2.10.3
+ */
+void ConstitutionalValidator::set_marker_resolver(
+    std::function<std::pair<std::string, std::string>(const std::string&)>
+        resolver) {
+    std::lock_guard<std::mutex> lock(marker_mutex_);
+    marker_resolver_ = std::move(resolver);
 }
 
 // ── gh#30 (v2.1.5): consumer-driven retry controls ───────
@@ -280,7 +295,7 @@ void ConstitutionalValidator::set_tier_rules(
  * @param messages_json Original conversation context.
  * @return ValidationResult with final content and critique metadata.
  * @internal
- * @version 2.0.6-rc18
+ * @version 2.10.3
  */
 ValidationResult ConstitutionalValidator::validate(
     const std::string& content,
@@ -296,8 +311,15 @@ ValidationResult ConstitutionalValidator::validate(
         return result;
     }
 
-    // Strip think blocks and skip pure tool-call outputs
-    auto cleaned = strip_think_blocks(content);
+    // gh#108 (v2.10.3): resolve this TIER's delimiters — one validator serves
+    // every tier, and thinking format is per-family.
+    std::string open = "<think>";
+    std::string close = "</think>";
+    {
+        std::lock_guard<std::mutex> lock(marker_mutex_);
+        if (marker_resolver_) { std::tie(open, close) = marker_resolver_(tier); }
+    }
+    auto cleaned = strip_reasoning(content, open, close);
     if (cleaned.empty() || is_pure_tool_call(cleaned)) {
         logger->info("Validation skipped: pure tool-call or empty");
         result.verdict = ValidationVerdict::skipped;
@@ -920,31 +942,43 @@ std::string ConstitutionalValidator::inject_feedback_into_messages(
 }
 
 /**
- * @brief Strip `<think>...</think>` blocks from content.
+ * @brief Strip reasoning blocks from content before critique (gh#108).
  *
- * The model's internal reasoning is not subject to constitutional
- * review. Passing think blocks to the critique model causes it to
- * evaluate planning text as if it were claims about the codebase.
+ * The model's internal reasoning is not subject to constitutional review —
+ * passing it to the critique model makes it evaluate planning text as if it
+ * were claims about the codebase.
+ *
+ * v2.10.3: the markers were hardcoded to `<think>`, so on a Gemma-4 tier this
+ * stripped nothing and the critique model saw raw `<|channel>` reasoning —
+ * precisely the failure this function exists to prevent. They are now supplied
+ * by the facade via set_thinking_markers(), sourced from the tier's adapter.
+ * Passed as plain strings because core cannot depend on inference.
+ *
+ * Kept rather than deleted: validate() takes content as a parameter, so its
+ * contract must tolerate unstripped input from a direct caller — it cannot
+ * assume the engine's parse path ran first.
  *
  * @param content Raw model output.
- * @return Content with think blocks removed.
+ * @param open Opening delimiter.
+ * @param close Closing delimiter.
+ * @return Content with reasoning blocks removed.
  * @utility
- * @version 2.0.6
+ * @version 2.10.3
  */
-static std::string strip_think_blocks(const std::string& content) {
+static std::string strip_reasoning(const std::string& content,
+                                   const std::string& open,
+                                   const std::string& close) {
     std::string result;
     size_t pos = 0;
     while (pos < content.size()) {
-        auto open = content.find("<think>", pos);
-        if (open == std::string::npos) {
+        auto o = content.find(open, pos);
+        if (o == std::string::npos) {
             result.append(content, pos);
             break;
         }
-        result.append(content, pos, open - pos);
-        auto close = content.find("</think>", open);
-        pos = (close == std::string::npos)
-            ? content.size()
-            : close + 8;
+        result.append(content, pos, o - pos);
+        auto c = content.find(close, o + open.size());
+        pos = (c == std::string::npos) ? content.size() : c + close.size();
     }
     return result;
 }

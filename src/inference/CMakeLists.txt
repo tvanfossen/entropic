@@ -23,6 +23,11 @@ set(INFERENCE_SOURCES
     image_preprocessor.cpp
     adapters/adapter_base.cpp
     adapters/generic_adapter.cpp
+    # gh#108 (v2.10.3): gemma4 fallback parse path — owns the
+    # <|channel> reasoning markers.
+    adapters/gemma4_adapter.cpp
+    # gh#108 (v2.10.3): shared template-first/adapter-second parse rule.
+    response_parse.cpp
     adapters/adapter_registry.cpp
     # gh#87 Phase D: autoparser families (Qwen, nemotron3) keep their
     # hand-rolled multi-parameter parser — common_chat's PEG_NATIVE

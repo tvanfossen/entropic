@@ -29,8 +29,6 @@ public:
 
     // Expose protected methods for testing
     using ChatAdapter::parse_tagged_tool_calls;
-    using ChatAdapter::parse_bare_json_tool_calls;
-    using ChatAdapter::extract_thinking;
     using ChatAdapter::strip_think_blocks;
     using ChatAdapter::try_recover_json;
 };
@@ -87,12 +85,11 @@ SCENARIO("Think block handling", "[adapter][think]") {
             }
         }
 
-        WHEN("extract_thinking is called") {
-            auto thinking = adapter.extract_thinking(content);
-            THEN("thinking content is extracted") {
-                REQUIRE(thinking == "reasoning here");
-            }
-        }
+        // gh#108 (v2.10.3): the extract_thinking case was removed with the
+        // method. It had no production caller anywhere in src/ — the engine
+        // only ever strips reasoning, never extracts it (GenerationResult has
+        // no field to carry it). A test over an unreachable method was the
+        // only thing keeping it alive.
     }
 
     GIVEN("content with only think block") {
@@ -190,7 +187,10 @@ SCENARIO("Malformed JSON recovery", "[adapter][recovery]") {
 }
 
 // ── v2.3.10 [adapter_base_topup] ──────────────────────────
-// Targets: parse_bare_json_tool_calls (140-167), try_recover_json
+// gh#108 (v2.10.3): the parse_bare_json_tool_calls and format_system_prompt
+// cases were removed with those methods — both had ZERO callers in src/ and
+// existed only here, i.e. false coverage over unreachable code.
+// Targets: try_recover_json
 // regex/full-miss (379-390, 413-417), format_tools default + malformed
 // (422-446), format_content_parts image branches (497-517),
 // format_system_prompt prefix extraction + malformed catch (130-141),
@@ -209,41 +209,15 @@ public:
         r.cleaned_content = strip_think_blocks(content);
         return r;
     }
-    using ChatAdapter::parse_bare_json_tool_calls;
     using ChatAdapter::parse_tagged_tool_calls;
     using ChatAdapter::try_recover_json;
     using ChatAdapter::format_tools;
     using ChatAdapter::format_system_with_vision;
     using ChatAdapter::format_content_parts;
-    using ChatAdapter::format_system_prompt;
     using ChatAdapter::format_tool_result;
 };
 
 }  // namespace
-
-TEST_CASE("parse_bare_json_tool_calls handles skip/valid/alias-key lines",
-          "[v2.3.10][inference][adapter_base_topup]")
-{
-    FormatTestAdapter adapter;
-    // Lines: whitespace, non-brace, brace-no-name, valid, unparseable,
-    // alias key — only the two well-formed name-bearing lines yield calls.
-    std::string content =
-        "   \n"
-        "hello world\n"
-        R"({"foo":1})" "\n"
-        R"({"name":"fs.read","arguments":{"k":"v"}})" "\n"
-        R"({"name":)" "\n"
-        R"({"tool_name":"echo"})" "\n";
-
-    auto calls = adapter.parse_bare_json_tool_calls(content);
-    REQUIRE(calls.size() == 2);
-    REQUIRE(calls[0].name == "fs.read");
-    REQUIRE(calls[0].arguments.count("k") == 1);
-    REQUIRE(calls[1].name == "echo");
-
-    // Empty input → empty result.
-    REQUIRE(adapter.parse_bare_json_tool_calls("").empty());
-}
 
 TEST_CASE("try_recover_json regex fallback + full-miss",
           "[v2.3.10][inference][adapter_base_topup]")
@@ -281,25 +255,6 @@ TEST_CASE("format_tools default formatter shape + malformed catch",
     auto out2 = adapter.format_tools({});
     REQUIRE(out2.find("## Tools") != std::string::npos);
     REQUIRE(out2.find("###") == std::string::npos);
-}
-
-TEST_CASE("format_system_prompt assembly + dotted-name prefix extraction",
-          "[v2.3.10][inference][adapter_base_topup]")
-{
-    FormatTestAdapter adapter;
-    std::vector<std::string> tools = {
-        R"({"name":"fs.read","description":"r","inputSchema":{}})",
-        R"({"name":"git.status","description":"g","inputSchema":{}})",
-        R"({"name":"undotted","description":"u","inputSchema":{}})",
-        "not valid json"  // exercises catch at line 138
-    };
-    auto prompt = adapter.format_system_prompt("base context", tools);
-    REQUIRE(prompt.find("id") != std::string::npos);
-    REQUIRE(prompt.find("base context") != std::string::npos);
-    REQUIRE(prompt.find("fs.read") != std::string::npos);
-
-    // No base + no tools → identity passes through unchanged.
-    REQUIRE(adapter.format_system_prompt("", {}) == "id");
 }
 
 TEST_CASE("format_tool_result default user-message + content_parts shapes",

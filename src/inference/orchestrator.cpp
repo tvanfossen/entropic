@@ -16,6 +16,7 @@
 #include <entropic/types/logging.h>
 
 #include "llama_cpp_backend.h"
+#include "response_parse.h"
 #include "mtp_envelope.h"
 #include <entropic/core/stream_think_filter.h>
 #include "adapters/adapter_registry.h"
@@ -504,25 +505,20 @@ static void stage_active_tools(InferenceBackend* model,
  * @param adapter Tier adapter for the autoparser/fallback path (may be null).
  * @param[in,out] result Generation result (content split, tools set).
  * @utility
- * @version 2.7.1 (gh#88 recovery)
+ * @version 2.10.3
  */
 static void apply_adapter_parse(InferenceBackend* model,
                                 ChatAdapter* adapter,
                                 GenerationResult& result) {
     if (result.content.empty()) { return; }
-    auto* llama = dynamic_cast<LlamaCppBackend*>(model);
     result.raw_content = result.content;
-    if (llama != nullptr && llama->common_chat_parse_reliable()) {
-        auto parsed = llama->parse_response(result.content);
-        apply_action_envelope_recovery(  // gh#88
-            parsed.tool_calls, result.raw_content);
-        result.content = parsed.content;
-        result.tool_calls = std::move(parsed.tool_calls);
-    } else if (adapter != nullptr) {
-        auto parsed = adapter->parse_tool_calls(result.content);
-        result.content = parsed.cleaned_content;
-        result.tool_calls = std::move(parsed.tool_calls);
-    }
+    // gh#108 (v2.10.3): one template-first/adapter-second rule, shared with
+    // interface_factory. See response_parse.h for why content composes and
+    // tool calls do not.
+    auto parsed = parse_model_response(
+        dynamic_cast<LlamaCppBackend*>(model), adapter, result.content);
+    result.content = std::move(parsed.content);
+    result.tool_calls = std::move(parsed.tool_calls);
 }
 
 /**
@@ -759,7 +755,7 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  * is removed in the same gh#108 v2.10.0 change).
  *
  * @internal
- * @version 2.10.0
+ * @version 2.10.3
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -782,8 +778,21 @@ GenerationResult ModelOrchestrator::generate_streaming(
     GenerationParams resolved_params =
         resolve_and_stage(model, params, selected);  // gh#87 3b
 
-    // gh#108 (v2.10.0): strip thinking-channel tokens from the live stream.
-    StreamThinkFilter filter(stream_token_trampoline, &on_token);
+    // gh#108 (v2.10.3): strip this family's reasoning blocks from the live
+    // stream. v2.10.0 added the filter but left it on its hardcoded `<think>`
+    // pair, so gemma4's `<|channel>` passed straight through. Markers now come
+    // from the resolved adapter, the same source the buffered strip uses.
+    //
+    // This is not cosmetic: ResponseGenerator::generate_streaming builds
+    // result.content from its OWN token accumulator and discards what
+    // apply_adapter_parse produced, so on the agent-loop streaming path this
+    // filter is the only thing standing between raw reasoning and the
+    // conversation history.
+    auto* stream_adapter = get_adapter(selected);
+    const auto markers = (stream_adapter != nullptr)
+        ? stream_adapter->thinking_markers() : ThinkMarkers{};
+    StreamThinkFilter filter(stream_token_trampoline, &on_token,
+                             markers.open, markers.close);
     auto filtered = [&filter](std::string_view sv) {
         filter.on_token(sv.data(), sv.size());
     };

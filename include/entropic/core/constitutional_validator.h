@@ -41,7 +41,9 @@
 #include <entropic/types/validation.h>
 
 #include <atomic>
+#include <functional>
 #include <mutex>
+#include <utility>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -152,6 +154,26 @@ public:
      * @version 2.0.2
      */
     void set_global_enabled(bool enabled);
+
+    /**
+     * @brief Register a per-tier reasoning-delimiter resolver (gh#108).
+     *
+     * One validator serves every tier, but thinking format is per-family:
+     * Qwen/Nemotron use `<think>…</think>`, Gemma-4 QAT uses
+     * `<|channel>…<channel|>`. A single fixed pair would be wrong for any
+     * config mixing families, so the delimiters are resolved per call from the
+     * tier name validate() already receives.
+     *
+     * The facade supplies the lambda (it can see ChatAdapter); the callback
+     * trades in plain strings so core keeps no dependency on inference.
+     * Unset, the `<think>` default applies.
+     *
+     * @param resolver Maps tier name → {open, close}.
+     * @version 2.10.3
+     */
+    void set_marker_resolver(
+        std::function<std::pair<std::string, std::string>(
+            const std::string&)> resolver);
 
     /**
      * @brief Run the validation pipeline on generated content.
@@ -554,6 +576,10 @@ private:
 
     /// @brief Runtime global enable toggle (decoupled from frozen config_).
     bool global_enabled_;
+    /// gh#108: per-tier reasoning delimiters; unset = the `<think>` default.
+    std::function<std::pair<std::string, std::string>(const std::string&)>
+        marker_resolver_;
+    mutable std::mutex marker_mutex_;  ///< Guards marker_resolver_
     /// @brief Per-identity validation overrides.
     std::unordered_map<std::string, bool> identity_overrides_;
     /// @brief Per-identity validation rules from frontmatter (v2.0.6).

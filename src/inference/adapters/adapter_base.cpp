@@ -108,44 +108,6 @@ ChatAdapter::ChatAdapter(std::string tier_name, std::string identity_prompt)
 
 // ── System prompt assembly ─────────────────────────────────
 
-/**
- * @brief Assemble system prompt: identity + context + tools.
- * @param base_prompt Application context.
- * @param tool_jsons Tool definitions as JSON strings.
- * @return Assembled system prompt string.
- * @internal
- * @version 1.8.2
- */
-std::string ChatAdapter::format_system_prompt(
-    const std::string& base_prompt,
-    const std::vector<std::string>& tool_jsons) const
-{
-    std::string prompt = identity_prompt_;
-
-    if (!base_prompt.empty()) {
-        prompt += "\n\n" + base_prompt;
-    }
-
-    if (!tool_jsons.empty()) {
-        // Extract tool prefixes for later parsing
-        for (const auto& json_str : tool_jsons) {
-            try {
-                auto j = nlohmann::json::parse(json_str);
-                std::string name = j.value("name", "");
-                auto dot = name.find('.');
-                if (dot != std::string::npos) {
-                    tool_prefixes_.insert(name.substr(0, dot));
-                }
-            } catch (...) {
-                // Skip malformed tool JSON
-            }
-        }
-        prompt += "\n\n" + format_tools(tool_jsons);
-    }
-
-    return prompt;
-}
-
 // ── Tool result formatting ─────────────────────────────────
 
 /**
@@ -274,45 +236,6 @@ std::vector<ToolCall> ChatAdapter::parse_tagged_tool_calls(
 }
 
 // ── Bare JSON parsing ──────────────────────────────────────
-
-/**
- * @brief Parse bare JSON tool calls from lines.
- * @param content Model output.
- * @return Vector of tool calls from bare JSON lines.
- * @internal
- * @version 2.3.8
- */
-std::vector<ToolCall> ChatAdapter::parse_bare_json_tool_calls(
-    const std::string& content) const
-{
-    std::vector<ToolCall> calls;
-    std::istringstream stream(content);
-    std::string line;
-
-    while (std::getline(stream, line)) {
-        // Trim
-        size_t start = line.find_first_not_of(" \t");
-        if (start == std::string::npos) continue;
-        std::string_view stripped(line.data() + start, line.size() - start);
-
-        // Gate on a name key under any accepted alias (gh#71-phase-2):
-        // a bare `{"name":...}` or `{"tool_name":...}` line is a call.
-        if (stripped.front() != '{'
-            || (stripped.find("name") == std::string_view::npos)) {
-            continue;
-        }
-
-        try {
-            auto j = nlohmann::json::parse(stripped);
-            if (auto tc = tool_call_from_json(j)) {
-                calls.push_back(*tc);
-            }
-        } catch (...) {
-            // Skip unparseable lines
-        }
-    }
-    return calls;
-}
 
 // ── gh#88 action-envelope recovery (free functions) ─────────
 
@@ -476,40 +399,50 @@ void coerce_string_typed_args(std::vector<ToolCall>& calls,
 // ── Think block handling ───────────────────────────────────
 
 /**
- * @brief Extract content from <think>...</think> blocks.
+ * @brief Strip this family's reasoning blocks from content (gh#108).
+ *
+ * Driven by thinking_markers() so an adapter declares its delimiters once.
+ * Plain substring matching, not regex: gemma4's `<|channel>` contains a
+ * regex metacharacter and the previous std::regex form would have needed
+ * escaping to stay correct.
+ *
  * @param content Model output.
- * @return Concatenated thinking content, or empty string.
+ * @return Content with reasoning blocks removed and trimmed.
  * @internal
- * @version 1.8.2
- */
-std::string ChatAdapter::extract_thinking(const std::string& content) const {
-    std::string result;
-    std::regex pattern(R"(<think>([\s\S]*?)</think>)");
-
-    auto begin = std::sregex_iterator(content.begin(), content.end(), pattern);
-    auto end = std::sregex_iterator();
-
-    for (auto it = begin; it != end; ++it) {
-        if (!result.empty()) result += "\n";
-        result += (*it)[1].str();
-    }
-    return result;
-}
-
-/**
- * @brief Strip all <think>...</think> blocks from content.
- * @param content Model output.
- * @return Content with think blocks removed.
- * @internal
- * @version 1.8.2
+ * @version 2.10.3
  */
 std::string ChatAdapter::strip_think_blocks(const std::string& content) const {
-    std::regex pattern(R"(<think>[\s\S]*?</think>)");
-    std::string result = std::regex_replace(content, pattern, "");
+    const auto markers = thinking_markers();
+    std::string result = content;
 
-    // Trim
+    bool truncated_unclosed = false;
+    std::size_t pos;
+    while ((pos = result.find(markers.open)) != std::string::npos) {
+        auto close = result.find(markers.close, pos + markers.open.size());
+        // Unclosed: generation stopped mid-reasoning, so no answer was ever
+        // produced. Erasing to the end beats surfacing raw reasoning.
+        if (close == std::string::npos) { truncated_unclosed = true; }
+        auto span_end = (close == std::string::npos)
+            ? result.size() : close + markers.close.size();
+        result.erase(pos, span_end - pos);
+    }
+
+    // gh#108 (v2.10.3): without this the caller sees empty content and cannot
+    // tell a stalled generation from a parse failure or an engine bug — the
+    // same diagnostic dead end gh#130 fixed on the bridge. Carried over from
+    // strip_thinking_channels, whose behaviour this consolidates.
+    if (truncated_unclosed && result.find_first_not_of(" \t\r\n")
+            == std::string::npos) {
+        logger->warn(
+            "Generation hit its token budget while still inside a reasoning "
+            "block ('{}' never closed with '{}'), so no answer was produced "
+            "and content is empty — this is a budget/convergence issue, not a "
+            "parse error. Raise max_tokens.",
+            markers.open, markers.close);
+    }
+
     size_t start = result.find_first_not_of(" \t\n\r");
-    if (start == std::string::npos) return "";
+    if (start == std::string::npos) { return ""; }
     size_t end_pos = result.find_last_not_of(" \t\n\r");
     return result.substr(start, end_pos - start + 1);
 }

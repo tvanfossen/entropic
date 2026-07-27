@@ -739,11 +739,24 @@ void LlamaCppBackend::inject_sampler_factory_for_test(
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 2.9.1
+ * @version 2.10.3
  */
 void LlamaCppBackend::do_unload() {
     // gh#108 (v2.9.1): serialise vs in-flight generate_mtp (see do_deactivate).
     std::lock_guard<std::mutex> lk(mtp_mutex_);
+
+    // gh#108 (v2.10.3): invalidate the sticky parse snapshot. parse_params_valid_
+    // was set once by a tooled render (gh#105) and never cleared by anything —
+    // not render_prompt (which clears only have_chat_params_), not unload. If a
+    // backend instance were reused across a load of a different GGUF, the stale
+    // PEG arena would survive AND parse_chat_format_ would still report the old
+    // family, so common_chat_parse_reliable() would answer true and parse the
+    // new model's output with the previous model's parser. Clearing here makes
+    // that unreachable by construction rather than by luck of instance reuse.
+    parse_params_valid_ = false;
+    parse_chat_format_ = 0;
+    parse_generation_prompt_.clear();
+    parse_parser_.clear();
     if (prompt_cache_) {
         prompt_cache_->clear();
     }

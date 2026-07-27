@@ -184,6 +184,17 @@ add_model_test(test-gh106-mtp-route        test_gh106_mtp_route.cpp)
 add_model_test(test-gh108-mtp-guards       test_gh108_mtp_guards.cpp)
 set_tests_properties(model/test-gh108-mtp-guards PROPERTIES TIMEOUT 360)
 
+# gh#108 (v2.10.3): MTP x grammar x streaming through the REAL
+# orchestrator->generate_streaming path. v2.10.0 dropped the grammar and
+# streaming guards and claimed streaming compatibility on the strength of the
+# guard no longer firing — StreamThinkFilter and apply_adapter_parse (the two
+# things it actually added) had never run under MTP, and grammar+streaming
+# were never combined. Asserts MTP engaged, grammar enforced, and that the
+# streamed view agrees with the buffered result.content.
+add_model_test(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_grammar.cpp)
+set_tests_properties(model/test-gh108-mtp-stream-grammar
+                     PROPERTIES TIMEOUT 360)
+
 # gh#108 (v2.9.3): side-by-side benchmark, E4B Q8 baseline vs the target
 # optimized config (E4B Q2-mobile + MTP + flash + q4 KV). Functional-only
 # assertions; prints both full responses + timing for human quality judgment.

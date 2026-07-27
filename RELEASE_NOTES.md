@@ -2,6 +2,70 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.10.3
+
+Patch release — **Gemma-4 reasoning (`<|channel>`) leaked into content and the
+live token stream on every generate path (gh#108).**
+
+## The bug
+
+A toolless generate on a Gemma-4 tier returned raw
+`<|channel>thought…<channel|>` in `result.content` **and** streamed it live to
+consumers. Plain decode, streaming, MTP, batch — all four. Anything rendering a
+stream showed the model's private reasoning; conversation history kept it.
+
+If you run a Gemma-4 tier and have seen thinking text in output, this is why.
+
+## Root cause — not what it looked like
+
+Every model family has an adapter that strips its own reasoning markers.
+**Gemma-4 had none.** `adapter_registry` deliberately omitted it because its
+tool calls are parsed by llama.cpp's `PEG_GEMMA4` grammar — so
+`adapter: gemma4` silently resolved to `GenericAdapter`, which strips `<think>`
+(a marker Gemma-4 never emits) and left `<|channel>` untouched.
+
+The one `<|channel>` handler lived inside `parse_response`, reachable only when
+`common_chat_parse_reliable()` is true — which requires **both** a tooled render
+**and** `PEG_GEMMA4`. A toolless call fell through to the adapter branch with no
+channel handling at all. Reasoning stripping had been attached to a gate that
+exists to answer an unrelated question: *is this captured format
+multi-parameter safe?*
+
+MTP, streaming, and grammar were red herrings — a plain-decode non-streaming
+control leaks identically. The v2.9.1 MTP-streaming guard was gating one feature
+over a defect belonging to a different layer, and never protected anyone.
+
+## What changed
+
+- **`Gemma4Adapter`** — the missing fallback, owning the `<|channel>` pair.
+  `PEG_GEMMA4` remains primary whenever a parser arena exists.
+- **`ChatAdapter::thinking_markers()`** — each family declares its delimiters
+  once, consumed by both the buffered strip and the live stream filter so they
+  cannot drift apart again.
+- **One shared parse rule** (`response_parse.h`) — template first, adapter
+  second — replacing a duplicated branch in the orchestrator and the interface
+  factory. Content cleanup always runs the adapter strip (idempotent); tool-call
+  extraction falls back to the adapter when the template result fails validation
+  against the staged tool schema, which catches `common_chat`'s *silent*
+  first-parameter-only extraction.
+- **`StreamThinkFilter`** takes adapter-resolved markers. This is load-bearing:
+  the agent-loop streaming path builds content from its own token accumulator
+  and discards the parsed result, so the filter is the only defense there.
+- **Constitutional validator** resolves markers per tier, so critique calls on a
+  Gemma-4 tier no longer hand raw reasoning to the critique model as claims.
+
+## Also
+
+Three dead methods removed from `adapter_base.h` (`extract_thinking`,
+`parse_bare_json_tool_calls`, `format_system_prompt`) — zero callers in `src/`,
+kept alive only by their own tests. `do_unload` now invalidates the sticky
+parse snapshot, which nothing previously cleared.
+
+## Known gaps
+
+Model tests for qwen36 and gemma4-a4b remain skipped on the release box for
+lack of disk for those GGUFs; both families retain full CPU unit coverage.
+
 # entropic v2.10.2
 
 Patch release — **the bridge no longer answers `"(no response)"` when the

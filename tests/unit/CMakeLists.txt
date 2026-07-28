@@ -71,6 +71,14 @@ add_executable(entropic-inference-tests
     # leaves <|channel> intact — a toolless gemma4 generate leaks raw
     # reasoning on every path.
     inference/thinking_markers_test.cpp
+    # gh#134 (v2.10.4): every grammar source must reach the sampler. The
+    # tool-derived source (common_chat_templates_apply) is discarded today.
+    inference/grammar_source_invariant_test.cpp
+    # gh#136 (v2.10.4): 316 sanitized at INGRESS, not per-egress-site.
+    inference/utf8_ingress_invariant_test.cpp
+    # gh#134/gh#58 (v2.10.4): the new per-turn staged backend state must be
+    # per-instance — sassafras-class runs concurrent handles.
+    inference/multi_handle_state_test.cpp
     inference/orchestrator_test.cpp
     inference/generation_params_test.cpp
     inference/prompt_cache_test.cpp

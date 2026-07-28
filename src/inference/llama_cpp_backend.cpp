@@ -14,6 +14,8 @@
  */
 
 #include "llama_cpp_backend.h"
+#include <entropic/mcp/utf8_sanitize.h>
+#include "grammar_source.h"
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
@@ -146,7 +148,7 @@ void finalize_result(GenerationResult& result,
  * @param params      Generation params (max_tokens for the length check).
  * @param t0          Loop start time, passed through to finalize_result.
  * @utility
- * @version 2.8.3
+ * @version 2.10.4
  */
 void finalize_generation(GenerationResult& result,
     const std::string& generated, int n_generated,
@@ -157,7 +159,24 @@ void finalize_generation(GenerationResult& result,
             && result.finish_reason.empty()) {
         result.finish_reason = "length";
     }
-    result.content = generated;
+    // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
+    // bytes first become a std::string, rather than at each of the ~18 .dump()
+    // sites downstream. gh#112/113 were closed as "permanent closure of the
+    // 316 family", then gh#114, gh#118, gh#132 and gh#136 each patched one more
+    // egress. The exits keep multiplying; the entries do not. Guarding here
+    // makes every downstream dump safe by construction, and a NEW .dump()
+    // anywhere cannot reintroduce the bug.
+    //
+    // Once at finalization, never per-token: a multi-byte codepoint can split
+    // across token boundaries and per-token sanitize would corrupt valid
+    // output (see the same reasoning at response_generator.cpp:360, which has
+    // guarded the streaming accumulator this way since v2.1.1).
+    //
+    // Safe for raw_content consumers: raw_content is a COPY of content
+    // (orchestrator.cpp:514), and sanitize only replaces bytes that are
+    // ALREADY invalid UTF-8 — which cannot form part of any valid JSON token,
+    // so the gh#88 envelope recovery and fenced-JSON fallbacks are unaffected.
+    result.content = entropic::mcp::sanitize_utf8(generated);
     result.token_count = n_generated;
     finalize_result(result, t0);
 }
@@ -739,7 +758,7 @@ void LlamaCppBackend::inject_sampler_factory_for_test(
 /**
  * @brief Full unload — free all resources, clear prompt cache.
  * @internal
- * @version 2.10.3
+ * @version 2.10.4
  */
 void LlamaCppBackend::do_unload() {
     // gh#108 (v2.9.1): serialise vs in-flight generate_mtp (see do_deactivate).
@@ -757,6 +776,10 @@ void LlamaCppBackend::do_unload() {
     parse_chat_format_ = 0;
     parse_generation_prompt_.clear();
     parse_parser_.clear();
+    // gh#134 (v2.10.4): same reasoning — a reused backend must not apply the
+    // previous model's tool-call grammar to a new model's decode.
+    tool_grammar_.clear();
+    tool_grammar_lazy_ = false;
     if (prompt_cache_) {
         prompt_cache_->clear();
     }
@@ -1098,13 +1121,14 @@ static ToolCall to_entropic_tool_call(const common_chat_tool_call& cc) {
  * @param tools Tool defs for `inputs.tools` (empty for the legacy path).
  * @return Rendered params, or nullopt on any failure.
  * @utility
- * @version 2.7.0
+ * @version 2.10.4
  */
 static std::optional<common_chat_params> render_common_chat(
     llama_model* model,
     const std::vector<Message>& messages,
     const GenerationParams& params,
-    const std::vector<common_chat_tool>& tools) {
+    const std::vector<common_chat_tool>& tools,
+    bool require_tool_call) {
     if (model == nullptr) { return std::nullopt; }
     auto tmpls = common_chat_templates_init(model, "");
     std::optional<common_chat_params> out;
@@ -1116,7 +1140,13 @@ static std::optional<common_chat_params> render_common_chat(
         inputs.enable_thinking = params.enable_thinking;  // gh#86
         inputs.tools = tools;
         if (!tools.empty()) {
-            inputs.tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+            // gh#134 (v2.10.4): was hardcoded AUTO, so a mandatory-tool tier
+            // could always answer in prose. REQUIRED makes upstream build the
+            // tool-call grammar eagerly (grammar_lazy=false), which the
+            // sampler now actually applies — see to_common_sampling.
+            inputs.tool_choice = require_tool_call
+                ? COMMON_CHAT_TOOL_CHOICE_REQUIRED
+                : COMMON_CHAT_TOOL_CHOICE_AUTO;
         }
         try {
             out = common_chat_templates_apply(tmpls.get(), inputs);
@@ -1162,13 +1192,14 @@ static std::string concat_messages_fallback(
  * @param params Generation parameters (enable_thinking honored).
  * @return Formatted prompt string.
  * @internal
- * @version 2.7.0
+ * @version 2.10.4
  */
 std::string LlamaCppBackend::apply_chat_template(
     const std::vector<Message>& messages,
     const GenerationParams& params) const
 {
-    auto rendered = render_common_chat(model_, messages, params, {});
+    // No tools staged, so tool_choice is moot — pass false.
+    auto rendered = render_common_chat(model_, messages, params, {}, false);
     return rendered ? rendered->prompt
                     : apply_chat_template_lowlevel(messages);
 }
@@ -1218,7 +1249,7 @@ void LlamaCppBackend::set_active_tools(const std::string& tools_json) {
  * @param params Generation parameters.
  * @return Formatted prompt string.
  * @internal
- * @version 2.8.3
+ * @version 2.10.4
  */
 std::string LlamaCppBackend::render_with_tools(
     const std::vector<Message>& messages,
@@ -1226,7 +1257,8 @@ std::string LlamaCppBackend::render_with_tools(
 {
     have_chat_params_ = false;
     auto tools = mcp_tools_to_common_chat(active_tools_json_);
-    auto rendered = render_common_chat(model_, messages, params, tools);
+    auto rendered = render_common_chat(model_, messages, params, tools,
+                                       require_tool_call_);
     std::string prompt;
     if (rendered) {
         last_chat_format_ = static_cast<int>(rendered->format);
@@ -1240,6 +1272,11 @@ std::string LlamaCppBackend::render_with_tools(
         parse_generation_prompt_ = last_generation_prompt_;
         parse_parser_ = last_parser_;
         parse_params_valid_ = true;
+        // gh#134 (v2.10.4): keep the tool-call grammar the render derived from
+        // the staged schemas. Discarding it is why tools-staged tiers decode
+        // unconstrained today.
+        tool_grammar_ = rendered->grammar;
+        tool_grammar_lazy_ = rendered->grammar_lazy;
         prompt = rendered->prompt;
         logger->info("render_with_tools: format={}, {} tool(s), captured "
                      "parser ({} bytes)", last_chat_format_, tools.size(),
@@ -1612,7 +1649,7 @@ GenerationResult LlamaCppBackend::decode_loop(
  * @param cancel Cancel flag (nullptr for batch).
  * @return GenerationResult with content/finish_reason/token_count.
  * @internal
- * @version 2.8.3
+ * @version 2.10.4
  */
 GenerationResult LlamaCppBackend::generate_after_prefill(
     Sampler& sampler,
@@ -1649,7 +1686,24 @@ GenerationResult LlamaCppBackend::generate_after_prefill(
         result.finish_reason = "length";
     }
 
-    result.content = generated;
+    // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
+    // bytes first become a std::string, rather than at each of the ~18 .dump()
+    // sites downstream. gh#112/113 were closed as "permanent closure of the
+    // 316 family", then gh#114, gh#118, gh#132 and gh#136 each patched one more
+    // egress. The exits keep multiplying; the entries do not. Guarding here
+    // makes every downstream dump safe by construction, and a NEW .dump()
+    // anywhere cannot reintroduce the bug.
+    //
+    // Once at finalization, never per-token: a multi-byte codepoint can split
+    // across token boundaries and per-token sanitize would corrupt valid
+    // output (see the same reasoning at response_generator.cpp:360, which has
+    // guarded the streaming accumulator this way since v2.1.1).
+    //
+    // Safe for raw_content consumers: raw_content is a COPY of content
+    // (orchestrator.cpp:514), and sanitize only replaces bytes that are
+    // ALREADY invalid UTF-8 — which cannot form part of any valid JSON token,
+    // so the gh#88 envelope recovery and fenced-JSON fallbacks are unaffected.
+    result.content = entropic::mcp::sanitize_utf8(generated);
     result.token_count = n_generated;
     return result;
 }
@@ -2816,16 +2870,52 @@ namespace {
  * @param params Entropic generation params.
  * @return Populated common_params_sampling.
  * @internal
- * @version 2.10.0
+ * @version 2.10.4
  */
 common_params_sampling to_common_sampling(
-    const GenerationParams& params) {
+    const GenerationParams& params,
+    const std::string& tool_grammar,
+    bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
     common_params_sampling cps;
     cps.temp = params.temperature;
     // gh#108 (v2.10.0): propagate GBNF grammar to the MTP sampler chain so
     // grammar-constrained tiers are correctly enforced under speculative.mtp.
-    if (!params.grammar.empty()) {
+    //
+    // gh#134 (v2.10.4): a SECOND grammar source now reaches here — the
+    // tool-call GBNF common_chat_templates_apply derives from the staged tool
+    // schemas, which was previously discarded at the render. Precedence is
+    // fail-loud rather than a silent pick: an explicit request grammar
+    // alongside a tool-derived one is a config error, because the two
+    // constrain the output to different languages and quietly honouring one
+    // would make the other's absence undiagnosable.
+    if (grammar_sources_collide(params.grammar, tool_grammar)) {
+        logger->error(
+            "Both a request grammar and a tool-call grammar are active. These "
+            "constrain decoding to different languages and cannot compose; the "
+            "request grammar is being used and the staged tools will NOT be "
+            "structurally enforced. Drop one: clear params.grammar to let the "
+            "tool schemas constrain, or unstage tools to use your grammar.");
+    }
+    const auto source = resolve_grammar_source(params.grammar, tool_grammar);
+    if (source == GrammarSource::request) {
         cps.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, params.grammar);
+    } else if (source == GrammarSource::tool_call) {
+        // TOOL_CALLS, not USER: common_grammar_needs_prefill() is true for this
+        // type, so the sampler prefills generation_prompt into the grammar —
+        // required because the model's output starts mid-template. The USER
+        // type skips prefill and the grammar would reject from token one.
+        cps.grammar = common_grammar(COMMON_GRAMMAR_TYPE_TOOL_CALLS,
+                                     tool_grammar);
+        cps.grammar_lazy = tool_grammar_lazy;
+        // REQUIRED, not optional: common_sampler_init only prefills when
+        // generation_prompt is non-empty (sampling.cpp:268, :285). Without it
+        // the grammar sampler never accepts the tokens the chat template
+        // already placed in the prompt, so it starts mid-rule and rejects the
+        // very first sampled token — surfacing as GENERATE_FAILED with empty
+        // content rather than as a grammar error. Measured exactly that on
+        // gemma4 before this line existed.
+        cps.generation_prompt = generation_prompt;
     }
     cps.top_k = params.top_k;
     cps.top_p = params.top_p;
@@ -3382,13 +3472,18 @@ static std::string spec_check_preconditions(
  * @param draft_path Draft model path (gates DRAFT_SIMPLE upstream).
  * @return Empty on success, diagnostic on failure.
  * @utility
- * @version 2.3.7
+ * @version 2.10.4
  */
 static std::string spec_init_sampler_and_decoder(
     SpeculativeRunState& state, llama_model* model_tgt,
     const GenerationParams& params, int n_draft_max,
-    const std::string& draft_path) {
-    auto common_sampling = to_common_sampling(params);
+    const std::string& draft_path,
+    const std::string& tool_grammar,   // gh#134 (v2.10.4)
+    bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
+    auto common_sampling =
+        to_common_sampling(params, tool_grammar, tool_grammar_lazy,
+                           generation_prompt);
     state.smpl = common_sampler_init(model_tgt, common_sampling);
     if (!state.smpl) { return "common_sampler_init failed"; }
 
@@ -3424,13 +3519,15 @@ static std::string spec_init_sampler_and_decoder(
 /**
  * @brief Initialize speculative run state (prefill + sampler + decoder).
  * @internal
- * @version 2.3.7
+ * @version 2.10.4
  */
 static std::string spec_init_run(
     SpeculativeRunState& state, llama_model* model_tgt,
     const std::vector<llama_token>& tokens,
     const GenerationParams& params, int n_draft_max,
-    const std::string& draft_path) {
+    const std::string& draft_path,
+    const std::string& tool_grammar, bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
     state.id_last = tokens.back();
     state.prompt_tgt.assign(tokens.begin(), tokens.end() - 1);
     state.n_past = static_cast<int>(tokens.size()) - 1;
@@ -3443,7 +3540,8 @@ static std::string spec_init_run(
         return "speculative prefill failed";
     }
     return spec_init_sampler_and_decoder(
-        state, model_tgt, params, n_draft_max, draft_path);
+        state, model_tgt, params, n_draft_max, draft_path,
+        tool_grammar, tool_grammar_lazy, generation_prompt);
 }
 
 /**
@@ -3482,13 +3580,30 @@ static void spec_run_loop(
  * @brief Assemble final GenerationResult + log metrics. Helper to
  *        keep the public entry under SLOC ≤ 50.
  * @internal
- * @version 2.9.1
+ * @version 2.10.4
  */
 static GenerationResult spec_finalize(
     SpeculativeRunState& state,
     std::chrono::steady_clock::time_point t0) {
     GenerationResult result;
-    result.content = state.generated;
+    // gh#136 (4th type_error.316 recurrence): sanitize at INGRESS, where model
+    // bytes first become a std::string, rather than at each of the ~18 .dump()
+    // sites downstream. gh#112/113 were closed as "permanent closure of the
+    // 316 family", then gh#114, gh#118, gh#132 and gh#136 each patched one more
+    // egress. The exits keep multiplying; the entries do not. Guarding here
+    // makes every downstream dump safe by construction, and a NEW .dump()
+    // anywhere cannot reintroduce the bug.
+    //
+    // Once at finalization, never per-token: a multi-byte codepoint can split
+    // across token boundaries and per-token sanitize would corrupt valid
+    // output (see the same reasoning at response_generator.cpp:360, which has
+    // guarded the streaming accumulator this way since v2.1.1).
+    //
+    // Safe for raw_content consumers: raw_content is a COPY of content
+    // (orchestrator.cpp:514), and sanitize only replaces bytes that are
+    // ALREADY invalid UTF-8 — which cannot form part of any valid JSON token,
+    // so the gh#88 envelope recovery and fenced-JSON fallbacks are unaffected.
+    result.content = entropic::mcp::sanitize_utf8(state.generated);
     result.token_count = state.n_generated;
     result.finish_reason = state.finish_reason;
     result.error_code = state.error_code;
@@ -3557,7 +3672,7 @@ static GenerationResult spec_finalize(
  * @param t0 Start timestamp for timing.
  * @return GenerationResult.
  * @utility
- * @version 2.3.7
+ * @version 2.10.4
  */
 static GenerationResult spec_run_from_tokens(
     llama_context* ctx_tgt, llama_context* ctx_dft, llama_model* model_tgt,
@@ -3565,12 +3680,16 @@ static GenerationResult spec_run_from_tokens(
     std::function<void(std::string_view)>& on_token,
     std::atomic<bool>& cancel, int n_draft_max,
     const std::string& draft_path,
-    std::chrono::steady_clock::time_point t0) {
+    std::chrono::steady_clock::time_point t0,
+    const std::string& tool_grammar, bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
     SpeculativeRunState state;
     state.ctx_tgt = ctx_tgt;
     state.ctx_dft = ctx_dft;
     auto init_err = spec_init_run(state, model_tgt, tokens, params,
-                                  n_draft_max, draft_path);
+                                  n_draft_max, draft_path,
+                                  tool_grammar, tool_grammar_lazy,
+                                  generation_prompt);
     if (!init_err.empty()) {
         spec_cleanup(state);
         return spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
@@ -3584,7 +3703,7 @@ static GenerationResult spec_run_from_tokens(
 /**
  * @brief Speculative generation against a draft model (gh#36).
  * @internal
- * @version 2.7.5
+ * @version 2.10.4
  */
 GenerationResult LlamaCppBackend::generate_speculative_with_draft(
     const std::vector<Message>& messages,
@@ -3618,7 +3737,8 @@ GenerationResult LlamaCppBackend::generate_speculative_with_draft(
                          tokens.size(), params.max_tokens, n_draft_max);
             result = spec_run_from_tokens(
                 ctx_, draft.ctx_, model_, tokens, params, on_token,
-                cancel, n_draft_max, draft_path, t0);
+                cancel, n_draft_max, draft_path, t0,
+                tool_grammar_, tool_grammar_lazy_, parse_generation_prompt_);
         }
     }
     return result;
@@ -3768,12 +3888,17 @@ bool mtp_prefill_and_seed(SpeculativeRunState& state) {
  * here, so no mparams.path (unlike gh#36's DRAFT_SIMPLE gate).
  * @return Empty on success, diagnostic on failure.
  * @internal
- * @version 2.9.0
+ * @version 2.10.4
  */
 std::string mtp_init_decoder(
     SpeculativeRunState& state, llama_model* model_tgt,
-    const GenerationParams& params, int n_max) {
-    auto common_sampling = to_common_sampling(params);
+    const GenerationParams& params, int n_max,
+    const std::string& tool_grammar,   // gh#134 (v2.10.4)
+    bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
+    auto common_sampling =
+        to_common_sampling(params, tool_grammar, tool_grammar_lazy,
+                           generation_prompt);
     state.smpl = common_sampler_init(model_tgt, common_sampling);
     if (!state.smpl) { return "common_sampler_init failed"; }
     common_params_speculative sp;
@@ -3799,17 +3924,21 @@ std::string mtp_init_decoder(
  * verified in round 1). Clears only ctx_tgt's memory — ctx_dft shares it.
  * @return Empty on success, diagnostic on failure.
  * @internal
- * @version 2.9.0
+ * @version 2.10.4
  */
 std::string mtp_init_run(
     SpeculativeRunState& state, llama_model* model_tgt,
     const std::vector<llama_token>& tokens,
-    const GenerationParams& params, int n_max) {
+    const GenerationParams& params, int n_max,
+    const std::string& tool_grammar, bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
     state.id_last = tokens.back();
     state.prompt_tgt.assign(tokens.begin(), tokens.end() - 1);
     state.n_past = static_cast<int>(tokens.size()) - 1;
     llama_memory_clear(llama_get_memory(state.ctx_tgt), true);
-    auto err = mtp_init_decoder(state, model_tgt, params, n_max);
+    auto err = mtp_init_decoder(state, model_tgt, params, n_max,
+                                tool_grammar, tool_grammar_lazy,
+                                generation_prompt);
     if (!err.empty()) { return err; }
     if (!mtp_prefill_and_seed(state)) { return "MTP prefill/process failed"; }
     common_speculative_begin(state.spec, state.seq_id, state.prompt_tgt);
@@ -3845,7 +3974,7 @@ void mtp_run_loop(
 /**
  * @brief MTP kernel over already-tokenized input.
  * @internal
- * @version 2.9.2
+ * @version 2.10.4
  */
 GenerationResult mtp_run_from_tokens(
     llama_context* ctx_tgt, llama_context* ctx_dft, llama_model* model_tgt,
@@ -3853,12 +3982,16 @@ GenerationResult mtp_run_from_tokens(
     std::function<void(std::string_view)>& on_token,
     std::atomic<bool>& cancel, int n_max,
     const std::vector<std::string>& stop,
-    std::chrono::steady_clock::time_point t0) {
+    std::chrono::steady_clock::time_point t0,
+    const std::string& tool_grammar, bool tool_grammar_lazy,
+    const std::string& generation_prompt) {
     SpeculativeRunState state;
     state.ctx_tgt = ctx_tgt;
     state.ctx_dft = ctx_dft;
     state.stop = stop;  // gh#108: MTP honors stop sequences (effective_stop)
-    auto init_err = mtp_init_run(state, model_tgt, tokens, params, n_max);
+    auto init_err = mtp_init_run(state, model_tgt, tokens, params, n_max,
+                                 tool_grammar, tool_grammar_lazy,
+                                 generation_prompt);
     if (!init_err.empty()) {
         spec_cleanup(state);
         return spec_error(ENTROPIC_ERROR_GENERATE_FAILED,
@@ -3919,7 +4052,7 @@ GenerationResult LlamaCppBackend::mtp_guard(
  * Fails loudly (no plain-decode fallback) when the request is outside the MTP
  * envelope — see mtp_guard / mtp_unsupported_reason.
  * @internal
- * @version 2.9.2
+ * @version 2.10.4
  */
 GenerationResult LlamaCppBackend::generate_mtp(
     const std::vector<Message>& messages,
@@ -3945,7 +4078,9 @@ GenerationResult LlamaCppBackend::generate_mtp(
                  tokens.size(), params.max_tokens, mtp_n_max_);
     return mtp_run_from_tokens(ctx_, mtp_draft_ctx_, model_, tokens, params,
                                on_token, cancel, mtp_n_max_,
-                               effective_stop(params), t0);  // gh#108: honor stops
+                               effective_stop(params), t0,  // gh#108: honor stops
+                               tool_grammar_, tool_grammar_lazy_,   // gh#134
+                               parse_generation_prompt_);
 }
 
 /**

@@ -501,6 +501,19 @@ struct TierConfig : ModelConfig {
     /// @version 2.9.4
     std::optional<bool> speculative_mtp;
 
+    /// gh#134 (v2.10.4): require this tier to end every turn with a tool call.
+    /// nullopt/false = llama.cpp's COMMON_CHAT_TOOL_CHOICE_AUTO (the model may
+    /// answer in prose); true = COMMON_CHAT_TOOL_CHOICE_REQUIRED, under which
+    /// upstream sets grammar_lazy=false so the tool-call grammar binds from the
+    /// FIRST sampled token — narrate-then-stop becomes structurally
+    /// unrepresentable rather than corrected after the fact by the empty-turn
+    /// nudge (which measured 0/12 recovery past the third nudge, gh#134).
+    ///
+    /// Opt-in per tier: front-office tiers legitimately answer in prose, so
+    /// this must never be global. Inert unless the tier stages tools.
+    /// @version 2.10.4
+    std::optional<bool> require_tool_call;
+
     /**
      * @brief Return true if this tier declares the named capability.
      * @param name Lowercase capability name (e.g., "vision").

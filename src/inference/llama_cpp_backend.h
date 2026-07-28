@@ -53,6 +53,7 @@ struct mtmd_bitmap;
 
 namespace entropic {
 
+
 /**
  * @brief LlamaCppBackend — common llama.cpp patterns (15% layer).
  *
@@ -322,6 +323,28 @@ public:
      * @version 2.7.0
      */
     void set_active_tools(const std::string& tools_json);
+
+    /**
+     * @brief Require the next render's decode to emit a tool call (gh#134).
+     * @param require true to request COMMON_CHAT_TOOL_CHOICE_REQUIRED.
+     * @utility
+     * @version 2.10.4
+     */
+    void set_require_tool_call(bool require) { require_tool_call_ = require; }
+
+    /**
+     * @brief Whether this backend will request REQUIRED on its next render.
+     *
+     * Exposed for the multi-handle isolation test (gh#134/gh#58): the state
+     * added in v2.10.4 is per-instance, and that must be asserted rather than
+     * assumed — this codebase has five recorded instances of per-instance
+     * assumptions turning out to be process-global under concurrent handles.
+     *
+     * @return Current staged value.
+     * @utility
+     * @version 2.10.4
+     */
+    bool require_tool_call() const { return require_tool_call_; }
 
     /**
      * @brief Return the tool definitions staged for the current turn.
@@ -701,6 +724,37 @@ protected:
     std::string parse_generation_prompt_;      ///< Last TOOLED render's gen prompt
     std::string parse_parser_;                 ///< Last TOOLED render's PEG arena
     bool parse_params_valid_ = false;          ///< True once a tooled render snapshotted
+
+    /* ── gh#134 (v2.10.4): the render's tool-call grammar ──────────────
+     * common_chat_templates_apply derives a GBNF from the staged tool
+     * schemas and returns it alongside the prompt. Before v2.10.4 the
+     * render result was harvested for prompt/format/generation_prompt/parser
+     * and the grammar was DISCARDED, so a tools-staged tier decoded
+     * completely unconstrained — and tool_choice REQUIRED (upstream's
+     * "must emit a tool call", which sets grammar_lazy=false so the grammar
+     * binds from the first token) would have been inert.
+     *
+     * Applied as COMMON_GRAMMAR_TYPE_TOOL_CALLS, NOT _USER: upstream's
+     * common_grammar_needs_prefill() is true for tool-call grammars, which
+     * must have generation_prompt prefilled into the grammar sampler because
+     * the model's output begins mid-template. The USER type skips prefill and
+     * would reject from token one.
+     */
+    /// gh#134 (v2.10.4): when true the render asks llama.cpp for
+    /// COMMON_CHAT_TOOL_CHOICE_REQUIRED, which sets grammar_lazy=false so the
+    /// tool-call grammar binds from the first token. Staged per turn beside
+    /// the tools, since it is a per-tier property.
+    bool require_tool_call_ = false;
+
+    std::string tool_grammar_;                 ///< Render-derived tool-call GBNF
+    bool tool_grammar_lazy_ = false;           ///< Arm on trigger vs bind eagerly
+    /* Triggers (rendered->grammar_triggers) are NOT stored here: the type
+     * common_grammar_trigger lives in llama.cpp's common.h, and this header
+     * deliberately keeps vendor types out — note parse_parser_ holds the PEG
+     * arena as a serialized std::string for the same reason. Triggers only
+     * matter when grammar_lazy is true; the gh#134 target (tool_choice
+     * REQUIRED) sets lazy=false, so eager binding needs none. Lazy support
+     * must carry them across this boundary in serialized form. */
 
     /* ── Internal helpers ────────────────────────────────── */
 

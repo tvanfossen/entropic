@@ -199,7 +199,7 @@ static std::string parse_model_config(
  * @param[out] config Output tier config.
  * @return Empty string on success, error message on failure.
  * @internal
- * @version 2.10.0
+ * @version 2.10.4
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -223,6 +223,13 @@ static std::string parse_tier_config(
     std::string grammar_str;
     if (extract(node, "grammar", grammar_str)) {
         config.grammar = expand_home(std::filesystem::path(grammar_str));
+    }
+
+    // gh#134 (v2.10.4): opt a mandatory-tool tier into eager tool-call
+    // grammar enforcement. Optional so an unset tier inherits AUTO.
+    bool require_tc = false;
+    if (extract(node, "require_tool_call", require_tc)) {
+        config.require_tool_call = require_tc;
     }
 
     std::string auto_chain_str;

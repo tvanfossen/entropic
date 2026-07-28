@@ -2,6 +2,75 @@ _Last 10 releases. Older history: [OLD_NOTES.md](OLD_NOTES.md). Kept short
 because `gh release create --notes-file` hits GitHub's 125,000-char release
 body limit once this file accumulates full project history — see v2.9.3._
 
+# entropic v2.10.4
+
+Patch release — **tools-staged tiers were decoding unconstrained (gh#134), and
+`type_error.316` is closed at its source rather than per-call-site (gh#136).**
+
+## gh#134 — the tool-call grammar was built and discarded
+
+llama.cpp derives a GBNF from your staged tool schemas during prompt rendering.
+entropic harvested the prompt, format, generation prompt and parser from that
+render — and **threw the grammar away**. So every tier with tools staged has
+been decoding completely unconstrained, and llama.cpp's own
+`tool_choice: REQUIRED` mechanism would have had no effect even once exposed.
+
+**New: `require_tool_call` per tier** (opt-in, off by default):
+
+```yaml
+models:
+  researcher:
+    require_tool_call: true
+```
+
+The turn then *cannot* end with prose — narrate-then-stop becomes
+unrepresentable rather than corrected after the fact.
+
+Measured on Gemma-4 E4B QAT, 10 turns, only the flag varying:
+
+```
+off: C C C C C [stop]p C C [stop]p C    2 prose-only turns
+on : C C C C C C C C C C               10 tool calls, 0 prose-only
+```
+
+The off arm still stalls with a larger budget, so **raising `max_tokens` alone
+does not fix this** — the grammar does.
+
+### Budget matters, and the engine now says so
+
+Under `REQUIRED` the grammar allows unbounded text *before* the mandated call,
+so the call still has to fit inside `max_tokens`. Too tight a budget produces a
+turn that ends on `length` with no call. That case is now logged explicitly,
+naming both levers — raise `max_tokens`, or disable `enable_thinking` on the
+tier, since the thinking channel is what consumes the preamble.
+
+## gh#136 — `type_error.316`, closed at the source
+
+This crash has been fixed four times (gh#112/113, gh#114, gh#118, gh#132), each
+time by sanitizing one more `.dump()` site. There are ~18 in the facade alone,
+so the next occurrence always landed somewhere nobody had reached.
+
+Model bytes now get sanitized **where they enter** — the three points where
+generated output first becomes a string. Every downstream serialization is safe
+by construction, and a newly added `.dump()` anywhere cannot bring it back.
+
+If you were seeing `invalid UTF-8 byte at index N` kill an `entropic.ask`
+response, that is closed.
+
+## Standing invariants
+
+Both bugs recurred because every previous fix was per-instance. This release
+adds tests that pin the *property*: a fifth grammar source cannot be declared
+without being wired to the sampler, sanitized output is always serializable
+(with a control proving the test can fail), and the new per-turn backend state
+is per-instance — verified, not assumed, for consumers running concurrent
+handles.
+
+## Upgrade notes
+
+Nothing is required. `require_tool_call` is opt-in and off by default; tiers
+that do not set it behave exactly as before.
+
 # entropic v2.10.3
 
 Patch release — **Gemma-4 reasoning (`<|channel>`) leaked into content and the

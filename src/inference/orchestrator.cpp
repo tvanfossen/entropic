@@ -482,12 +482,14 @@ bool ModelOrchestrator::try_speculative_route(
  * @param model Active backend (may be null / non-LlamaCpp).
  * @param params Resolved generation params (carries `tools`).
  * @utility
- * @version 2.7.0
+ * @version 2.10.4
  */
 static void stage_active_tools(InferenceBackend* model,
-                               const GenerationParams& params) {
+                               const GenerationParams& params,
+                               bool require_tool_call) {
     if (auto* llama = dynamic_cast<LlamaCppBackend*>(model)) {
         llama->set_active_tools(params.tools);
+        llama->set_require_tool_call(require_tool_call);  // gh#134 (v2.10.4)
     }
 }
 
@@ -521,6 +523,48 @@ static void apply_adapter_parse(InferenceBackend* model,
     result.tool_calls = std::move(parsed.tool_calls);
 }
 
+
+/**
+ * @brief Diagnose a mandatory-tool turn that ran out of budget (gh#134).
+ *
+ * Under `tool_choice: REQUIRED` the gemma4 grammar is
+ * `zero_or_more(any) + tool_call`: unbounded preamble, then a MANDATORY call.
+ * So the grammar guarantees a call comes EVENTUALLY, not that it arrives
+ * within max_tokens. Measured on E4B QAT: at 600 tokens the model could no
+ * longer quit with prose (correct) but burned the budget narrating and was cut
+ * off (`finish_reason == "length"`, zero calls); at 2000 it emitted a call on
+ * all 10 turns.
+ *
+ * That failure is a budget misconfiguration, not a model or grammar fault, and
+ * it is indistinguishable from a stall unless the engine says so — the same
+ * diagnostic dead end gh#130 fixed on the bridge. `enable_thinking` is the
+ * usual culprit because the thinking channel is what consumes the preamble.
+ *
+ * @param result Completed generation result.
+ * @param tier_name Tier that produced it.
+ * @param tiers Tier table, for the per-tier require_tool_call lookup.
+ * @utility
+ * @version 2.10.4
+ */
+static void warn_if_budget_starved_required_turn(
+    const GenerationResult& result,
+    const std::string& tier_name,
+    const std::unordered_map<std::string, TierConfig>& tiers) {
+    if (!result.tool_calls.empty()) { return; }
+    auto it = tiers.find(tier_name);
+    if (it == tiers.end()
+        || !it->second.require_tool_call.value_or(false)) { return; }
+    if (result.finish_reason != "length") { return; }
+    logger->error(
+        "Tier '{}' requires a tool call but hit its token budget before "
+        "emitting one (finish_reason=length, 0 tool calls). The tool-call "
+        "grammar permits unbounded text BEFORE the mandated call, so the call "
+        "must fit inside max_tokens. Raise max_tokens, or disable "
+        "enable_thinking on this tier — the thinking channel is what consumes "
+        "the preamble. This is a budget misconfiguration, not a model failure.",
+        tier_name);
+}
+
 /**
  * @brief Resolve params + stage tools for a generate dispatch (gh#87).
  *
@@ -535,7 +579,7 @@ static void apply_adapter_parse(InferenceBackend* model,
  * @param tier_name Selected tier.
  * @return Resolved params.
  * @internal
- * @version 2.8.3
+ * @version 2.10.4
  */
 GenerationParams ModelOrchestrator::resolve_and_stage(
     InferenceBackend* model,
@@ -544,7 +588,14 @@ GenerationParams ModelOrchestrator::resolve_and_stage(
     GenerationParams resolved = params;
     resolve_grammar_key(resolved, tier_name);          // v1.9.3
     apply_tier_sampler_defaults(resolved, tier_name);  // gh#82
-    stage_active_tools(model, resolved);               // gh#87 3b
+    // gh#134 (v2.10.4): per-tier, never global — front-office tiers
+    // legitimately answer in prose.
+    bool require_tc = false;
+    if (auto it = config_.models.tiers.find(tier_name);
+        it != config_.models.tiers.end()) {
+        require_tc = it->second.require_tool_call.value_or(false);
+    }
+    stage_active_tools(model, resolved, require_tc);   // gh#87 3b, gh#134
     return resolved;
 }
 
@@ -591,7 +642,7 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @internal
- * @version 2.9.4
+ * @version 2.10.4
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -624,6 +675,9 @@ GenerationResult ModelOrchestrator::generate(
         model, messages, resolved_params, selected);
 
     apply_adapter_parse(model, get_adapter(selected), result);
+    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
+    warn_if_budget_starved_required_turn(result, selected,
+                                         config_.models.tiers);
 
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
@@ -642,7 +696,7 @@ GenerationResult ModelOrchestrator::generate(
  * cancel)` which polls cancel per token.
  *
  * @internal
- * @version 2.7.0
+ * @version 2.10.4
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -673,6 +727,9 @@ GenerationResult ModelOrchestrator::generate(
         messages, resolved_params, cancel);
 
     apply_adapter_parse(model, get_adapter(selected), result);
+    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
+    warn_if_budget_starved_required_turn(result, selected,
+                                         config_.models.tiers);
 
     result.routing_ms = routing_ms;
     result.swap_ms = swap_ms;
@@ -755,7 +812,7 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  * is removed in the same gh#108 v2.10.0 change).
  *
  * @internal
- * @version 2.10.3
+ * @version 2.10.4
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -808,6 +865,9 @@ GenerationResult ModelOrchestrator::generate_streaming(
     }
     filter.flush();
     apply_adapter_parse(model, get_adapter(selected), result);
+    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
+    warn_if_budget_starved_required_turn(result, selected,
+                                         config_.models.tiers);
     return result;
 }
 

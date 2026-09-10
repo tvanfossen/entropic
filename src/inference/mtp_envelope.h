@@ -57,7 +57,36 @@
  * incremental stripping is correct; apply_adapter_parse handles the buffered
  * result.content on return. MTP streaming is now fully supported.
  *
- * @version 2.10.0
+ * WHAT "LOSSLESS" DOES NOT MEAN (v2.12.2). Everything above is a claim about
+ * the DISTRIBUTION: the accept step emits a token drawn through the target's
+ * own full filter chain, so MTP output is distributed exactly as plain decode
+ * output is. It is NOT a claim that a given MTP run reproduces a given plain
+ * run token-for-token, and reading it that way produces a false bug report.
+ *
+ * A consumer measured 18 turns against 17 for the same workload at
+ * temperature 0, took it for a losslessness violation, and came within one
+ * step of filing it. Two reasons it is not:
+ *
+ *   1. Speculation verifies a BATCH of n_draft+1 positions where plain decode
+ *      takes one at a time. Batched GPU matmuls reduce in a different order,
+ *      so the two paths are not bitwise identical even when algebraically
+ *      equivalent, and one near-tie argmax resolving the other way diverges
+ *      every token after it.
+ *
+ *   2. More decisively, plain decode on this hardware is not reproducible
+ *      against ITSELF — two identical cold prefills diverge run-to-run (see
+ *      tests/model/gh87_verify_helpers.h, and the reason model tests here
+ *      never assert exact output equality). So a divergence between an MTP
+ *      arm and a plain arm is not evidence about MTP at all; it is the
+ *      baseline.
+ *
+ * A genuine bitwise losslessness test would need deterministic kernels, which
+ * is not something a consumer — or this suite — can arrange. The empirical
+ * distribution test in test_gh108_mtp_guards.cpp is the statistical stand-in,
+ * and it is what would actually catch a pin bump breaking the point-mass
+ * assumption above.
+ *
+ * @version 2.12.2
  */
 
 #pragma once

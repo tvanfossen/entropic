@@ -48,8 +48,7 @@ struct VocabOnlyModel {
         llama_model_params mp = llama_model_default_params();
         mp.n_gpu_layers = 0;
         mp.vocab_only   = true;
-        mp.use_mmap     = true;
-        mp.use_mlock    = false;
+        mp.load_mode    = LLAMA_LOAD_MODE_MMAP;  // b11009: was use_mmap/use_mlock
         model = llama_model_load_from_file(path.c_str(), mp);
         if (model != nullptr) { vocab = llama_model_get_vocab(model); }
     }

@@ -274,6 +274,32 @@ llama_split_mode parse_split_mode(const std::string& s) {
 }
 
 /**
+ * @brief Map entropic's mmap+mlock intent onto llama.cpp's `load_mode` enum.
+ *
+ * The b11009 pin replaced the two independent booleans
+ * `llama_model_params::use_mmap` / `::use_mlock` with a single
+ * `llama_load_mode` enum. Entropic always wanted mmap on (the WARM→ACTIVE
+ * reload of design decision #19 depends on the file staying in page
+ * cache), with mlock driven by `ModelConfig::use_mlock` — so the faithful
+ * mapping is `MMAP_MLOCK` / `MMAP`, never `AUTO`.
+ *
+ * `AUTO` is deliberately NOT used: it additionally probes every backend
+ * device for `caps.mmap_support` and silently downgrades to a full read
+ * when one says no (`llama-model.cpp:1444`). That probe did not exist at
+ * the b9886 pin, so `AUTO` would be a behaviour change; explicit `MMAP`
+ * reproduces the old unconditional `use_mmap = true` exactly.
+ *
+ * @param use_mlock Whether to lock the model's pages in RAM.
+ * @return `LLAMA_LOAD_MODE_MMAP_MLOCK` when locking, else
+ *         `LLAMA_LOAD_MODE_MMAP`.
+ * @utility
+ * @version 2.13.0
+ */
+llama_load_mode mmap_load_mode(bool use_mlock) {
+    return use_mlock ? LLAMA_LOAD_MODE_MMAP_MLOCK : LLAMA_LOAD_MODE_MMAP;
+}
+
+/**
  * @brief Build llama_model_params for GPU model load.
  *
  * Extracted (gh#23 v2.3.18) to keep `load_gpu_model` under the knots
@@ -281,13 +307,12 @@ llama_split_mode parse_split_mode(const std::string& s) {
  * `main_gpu`, `offload_kqv`, `rope_freq_*`).
  *
  * @utility
- * @version 2.3.18
+ * @version 2.13.0
  */
 llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
     llama_model_params m = llama_model_default_params();
     m.n_gpu_layers = cfg.gpu_layers;
-    m.use_mmap = true;
-    m.use_mlock = cfg.use_mlock;
+    m.load_mode = mmap_load_mode(cfg.use_mlock);
     m.split_mode = parse_split_mode(cfg.split_mode);
     // gh#23 MVP item 7 (v2.3.19): main_gpu. Effective when split_mode
     // is "none" (pin) or "row" (small-tensor placement). 0 keeps
@@ -309,13 +334,12 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
  * @param config Validated model config.
  * @return true on success.
  * @dg_internal
- * @version 2.7.6
+ * @version 2.13.0
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config.use_mlock;
+    mparams.load_mode = mmap_load_mode(config.use_mlock);
 
     model_ = llama_model_load_from_file(config.path.c_str(), mparams);
     if (!model_) {
@@ -628,7 +652,7 @@ bool LlamaCppBackend::setup_mtp_draft(const std::string& head_path, int n_max) {
 /**
  * @brief Load the MTP head GGUF + create its shared-KV context (gh#106).
  * @dg_internal
- * @version 2.9.1
+ * @version 2.13.0
  */
 bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
     if (ctx_ == nullptr) {
@@ -644,7 +668,7 @@ bool LlamaCppBackend::build_mtp_head(const std::string& head_path) {
     }
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = config().gpu_layers;  // head is tiny — follow target
-    mparams.use_mmap = true;
+    mparams.load_mode = LLAMA_LOAD_MODE_MMAP;    // mmap, never mlock (was use_mmap=true)
     mtp_draft_model_ = llama_model_load_from_file(head_path.c_str(), mparams);
     if (mtp_draft_model_ != nullptr) {
         llama_context_params cparams = build_cparams(config());
@@ -723,13 +747,12 @@ void LlamaCppBackend::do_deactivate() {
  * success rebinds model_/vocab_/tokenizer_; on failure leaves model_ null
  * (recoverable — the next activate reloads from scratch).
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0
  */
 void LlamaCppBackend::reload_model_cpu_only() {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
-    mparams.use_mmap = true;
-    mparams.use_mlock = config().use_mlock;
+    mparams.load_mode = mmap_load_mode(config().use_mlock);
 
     model_ = llama_model_load_from_file(config().path.c_str(), mparams);
     if (model_ != nullptr) {
@@ -2646,7 +2669,7 @@ std::vector<Message> strip_image_parts(
  * @return Messages with content flattened to marker-substituted text,
  *         or empty vector if any image fails to load.
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0
  */
 std::vector<Message> substitute_image_markers(
     const std::vector<Message>& messages,
@@ -2671,8 +2694,14 @@ std::vector<Message> substitute_image_markers(
             }
             ::mtmd_bitmap* bm = nullptr;
             if (!p.image_path.empty()) {
+                // b11009 added a trailing `mtmd_helper_init_opt` carrying
+                // video decode params. `_default()` is the behaviour-
+                // preserving value for a still image; the returned
+                // wrapper's `video_ctx` is null on that path, so only
+                // `.bitmap` needs owning.
                 bm = mtmd_helper_bitmap_init_from_file(
-                    ctx, p.image_path.c_str(), /*placeholder=*/false).bitmap;
+                    ctx, p.image_path.c_str(), /*placeholder=*/false,
+                    mtmd_helper_init_opt_default()).bitmap;
             }
             if (bm == nullptr) { return {}; }
             bitmaps_out.push_back(bm);
@@ -3503,14 +3532,14 @@ static bool spec_decode_both(SpeculativeRunState& state) {
  * @brief Trigger draft generation via common_speculative_draft.
  * @return Number of draft tokens proposed.
  * @dg_internal
- * @version 2.1.11
+ * @version 2.13.0
  */
 static int spec_run_draft(SpeculativeRunState& state) {
     auto& dp = common_speculative_get_draft_params(
         state.spec, state.seq_id);
     dp.drafting = true;
     dp.n_max = -1;
-    dp.n_past = state.n_past;
+    dp.pos0 = state.n_past;   // b11009 renamed n_past -> pos0 (same meaning)
     dp.id_last = state.id_last;
     dp.prompt = &state.prompt_tgt;
     dp.result = &state.draft;
@@ -4171,13 +4200,13 @@ namespace {
  * tokens land in state.draft.
  * @return Number of draft tokens proposed.
  * @dg_internal
- * @version 2.9.0
+ * @version 2.13.0
  */
 int mtp_run_draft(SpeculativeRunState& state, int n_max) {
     auto& dp = common_speculative_get_draft_params(state.spec, state.seq_id);
     dp.drafting = true;
     dp.n_max = n_max;
-    dp.n_past = state.n_past;
+    dp.pos0 = state.n_past;   // b11009 renamed n_past -> pos0 (same meaning)
     dp.id_last = state.id_last;
     dp.prompt = &state.prompt_tgt;
     dp.result = &state.draft;

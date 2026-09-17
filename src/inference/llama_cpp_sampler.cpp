@@ -96,6 +96,45 @@ void add_logit_bias_sampler(llama_sampler* chain,
 }
 
 /**
+ * @brief Add the repeat / frequency / presence penalties stage.
+ *
+ * gh#23 MVP items 2 + 3 (v2.3.14 + v2.3.15): the penalties sampler
+ * carries presence_penalty and frequency_penalty alongside the repeat
+ * penalty. The gate fires when ANY of repeat / presence / frequency is
+ * non-default, so a single knob is sufficient to activate the stage —
+ * and an all-default call leaves the chain bit-for-bit as it was.
+ *
+ * Extracted from `LlamaCppSamplerFactory::create` in v2.13.0: the
+ * b11009 pin added a leading `n_vocab` argument to
+ * `llama_sampler_init_penalties` (upstream fills it with
+ * `llama_vocab_n_tokens(vocab)` in `common/sampling.cpp`), and that one
+ * extra call put `create` over the knots ABC gate. Same shape as its
+ * sibling `add_logit_bias_sampler`, which already needed the vocab for
+ * the same reason.
+ *
+ * @param chain Sampler chain to append to.
+ * @param vocab Vocab the penalties sampler sizes its history against.
+ * @param params Generation parameters supplying the three penalties.
+ * @utility
+ * @dg_internal
+ * @version 2.13.0
+ */
+void add_penalties_sampler(llama_sampler* chain,
+                           const llama_vocab* vocab,
+                           const GenerationParams& params) {
+    const bool any_penalty = params.repeat_penalty != 1.0f
+        || params.presence_penalty > 0.0f
+        || params.frequency_penalty > 0.0f;
+    if (!any_penalty) { return; }
+    llama_sampler_chain_add(chain,
+        llama_sampler_init_penalties(
+            llama_vocab_n_tokens(vocab),
+            64, params.repeat_penalty,
+            params.frequency_penalty,
+            params.presence_penalty));
+}
+
+/**
  * @brief Resolve caller-supplied seed to a llama-compatible uint32.
  *
  * P2-14: negative seed maps to LLAMA_DEFAULT_SEED (random). Lifted
@@ -179,7 +218,7 @@ LlamaCppSamplerFactory::LlamaCppSamplerFactory(
  *         independent instance on every call.
  * @req REQ-INFER-006
  * @req REQ-INFER-008
- * @version 2.3.10
+ * @version 2.13.0
  */
 std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
     const GenerationParams& params)
@@ -191,20 +230,7 @@ std::unique_ptr<Sampler> LlamaCppSamplerFactory::create(
     add_grammar_sampler(chain, vocab_, params.grammar);
     add_logit_bias_sampler(chain, vocab_, params.logit_bias);
 
-    // gh#23 MVP items 2 + 3 (v2.3.14 + v2.3.15): the penalties sampler
-    // now also carries presence_penalty (4th arg) and frequency_penalty
-    // (3rd arg). Gate fires when ANY of repeat / presence / frequency
-    // is non-default, so any single knob is sufficient to activate
-    // the stage.
-    if (params.repeat_penalty != 1.0f
-        || params.presence_penalty > 0.0f
-        || params.frequency_penalty > 0.0f) {
-        llama_sampler_chain_add(chain,
-            llama_sampler_init_penalties(
-                64, params.repeat_penalty,
-                params.frequency_penalty,
-                params.presence_penalty));
-    }
+    add_penalties_sampler(chain, vocab_, params);
     if (params.temperature > 0.0f) {
         llama_sampler_chain_add(chain,
             llama_sampler_init_temp(params.temperature));

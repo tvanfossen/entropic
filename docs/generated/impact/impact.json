@@ -1,1 +1,24 @@
-[]
+[
+  {
+    "req_id": "REQ-INFER-006",
+    "req_name": "Sampler chain construction has a fixed order and default-preserving gating",
+    "functions": [
+      {
+        "name": "create",
+        "file": "src/inference/llama_cpp_sampler.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-008",
+    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+    "functions": [
+      {
+        "name": "create",
+        "file": "src/inference/llama_cpp_sampler.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  }
+]

@@ -53,8 +53,7 @@ struct VocabOnlyModel {
         llama_model_params mparams = llama_model_default_params();
         mparams.n_gpu_layers = 0;
         mparams.vocab_only = true;   // ← the crux — skip weight tensors
-        mparams.use_mmap = true;
-        mparams.use_mlock = false;
+        mparams.load_mode = LLAMA_LOAD_MODE_MMAP;  // b11009: was use_mmap/use_mlock
         model = llama_model_load_from_file(path.c_str(), mparams);
         if (model != nullptr) {
             vocab = llama_model_get_vocab(model);

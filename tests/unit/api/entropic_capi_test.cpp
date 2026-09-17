@@ -3744,3 +3744,161 @@ TEST_CASE("ExternalBridge dispatch handles numeric JSON-RPC id",
     CHECK(resp["id"].is_number());
     ::close(c);
 }
+
+// ── gh#156 (v2.13.0): a configured prompt file that cannot be loaded ──
+//
+// The reporter pointed `app_context` at a plain markdown file — a
+// repository's CLAUDE.md, which they do not own and cannot add
+// frontmatter to. `parse_prompt_file` rejected it for a missing `type`
+// field, `load_app_context` returned that error, and all three callers
+// DISCARDED the return value. The only observable symptom was
+// `app_context=false` in the assembly line, one line under a
+// `Read file: ..., 19883 bytes` that actively suggested success.
+//
+// The decision recorded on the issue is that this is a CONFIG error, not
+// a warning: a consumer who named a path wanted the document, and a
+// review judged without its standards is not the review that was asked
+// for. It is raised BEFORE the orchestrator is constructed, so a 13 GB
+// model does not load ahead of a diagnosis that costs a stat and a
+// parse.
+//
+// The ordering claim is what these cases are built to prove. Each config
+// names a tier whose GGUF does not exist, so reaching `init_orchestrator`
+// is observable as ENTROPIC_ERROR_LOAD_FAILED. INVALID_CONFIG therefore
+// means the prompt check ran FIRST; LOAD_FAILED means it did not run, or
+// ran and passed.
+
+namespace {
+
+/// @brief Write `body` to <tmp>/entropic-gh156-<tag>/<name> and return it.
+std::filesystem::path gh156_write(const std::string& tag,
+                                  const std::string& name,
+                                  const std::string& body) {
+    auto dir = std::filesystem::temp_directory_path()
+        / ("entropic-gh156-" + tag);
+    std::filesystem::create_directories(dir);
+    auto path = dir / name;
+    std::ofstream out(path);
+    out << body;
+    out.close();
+    return path;
+}
+
+/// @brief A models block naming a tier whose GGUF cannot exist.
+///
+/// Reaching model load is then observable at the C ABI: `initialize()`
+/// returns false and `configure` answers LOAD_FAILED.
+std::string gh156_absent_model() {
+    return R"("models":{"default":"lead","lead":)"
+           R"({"path":"/nonexistent/entropic-gh156-never-here.gguf"}})";
+}
+
+}  // namespace
+
+TEST_CASE("gh#156 a frontmatter-less app_context fails configure "
+          "before the model loads",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    auto ctx = gh156_write("plain-appctx", "CLAUDE.md",
+                           "# Project guidelines\n\nNo frontmatter here.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":")" + ctx.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    // RED before the fix: LOAD_FAILED — the absent GGUF was reached
+    // first and the unreadable app_context was never diagnosed at all.
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+
+    const char* msg = entropic_last_error(h);
+    REQUIRE(msg != nullptr);
+    std::string err(msg);
+    INFO("last_error: " << err);
+    CHECK(err.find("app_context") != std::string::npos);
+    CHECK(err.find(ctx.string()) != std::string::npos);
+    // The message must name the gh#141 inline form, which is the
+    // supported route for a document the consumer does not own.
+    CHECK(err.find("content:") != std::string::npos);
+}
+
+TEST_CASE("gh#156 a frontmatter-less constitution fails configure too",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    // The issue comment widened the report: `assemble` discards the
+    // constitution error identically, so a misconfigured constitution
+    // vanishes into `constitution=false` the same way.
+    auto con = gh156_write("plain-constitution", "house-rules.md",
+                           "Be brief.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"constitution":")" + con.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+    std::string err(entropic_last_error(h));
+    INFO("last_error: " << err);
+    CHECK(err.find("constitution") != std::string::npos);
+    CHECK(err.find(con.string()) != std::string::npos);
+}
+
+TEST_CASE("gh#156 a missing app_context path fails configure",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":"/nonexistent/entropic-gh156/absent.md"})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+    std::string err(entropic_last_error(h));
+    INFO("last_error: " << err);
+    CHECK(err.find("absent.md") != std::string::npos);
+}
+
+// ── Controls: the two working spellings must reach model load ────────
+//
+// Without these, "reject everything" would pass the cases above. Each
+// control asserts the run got PAST the new check — LOAD_FAILED is the
+// absent GGUF being reached, which is exactly what must still happen.
+
+TEST_CASE("gh#156 inline app_context content still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":{"content":"Inline, owned by the caller."}})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#156 app_context false still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":false})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#156 a well-formed app_context file still configures",
+          "[v2.13.0][entropic_capi][configure][gh156]") {
+    auto ctx = gh156_write("good-appctx", "context.md",
+                           "---\ntype: app_context\nversion: 1\n---\n"
+                           "Body the engine can use.\n");
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto cfg = std::string("{") + gh156_absent_model()
+        + R"(,"app_context":")" + ctx.string() + R"("})";
+    auto rc = entropic_configure(h, cfg.c_str());
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}

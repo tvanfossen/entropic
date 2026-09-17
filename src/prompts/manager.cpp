@@ -517,6 +517,121 @@ std::string load_app_context(
 }
 
 /**
+ * @brief Load both shared prompt sources, logging rather than discarding.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @param[out] constitution Constitution body (empty when it failed).
+ * @param[out] app_context App context body (empty when it failed).
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+void load_shared_prompt_sources(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir,
+    std::string& constitution,
+    std::string& app_context)
+{
+    // gh#156: these two return values were dropped at all three call
+    // sites. A working load announced itself ("App context loaded
+    // from ..."), a failing one said nothing — the asymmetry WAS the
+    // bug, and it cost a consumer twenty minutes.
+    auto con_err = load_constitution(
+        config.constitution, config.constitution_disabled,
+        data_dir, constitution);
+    if (!con_err.empty()) {
+        s_log->error("constitution ignored: {}", con_err);
+    }
+    auto ctx_err = load_app_context(
+        config.app_context, config.app_context_content,
+        config.app_context_disabled, data_dir, app_context);
+    if (!ctx_err.empty()) {
+        s_log->error("app_context ignored: {}", ctx_err);
+    }
+}
+
+/**
+ * @brief Check a configured constitution path loads.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when unconfigured, disabled, or loadable.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string check_constitution_source(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::string err;
+    if (config.constitution.has_value() && !config.constitution_disabled) {
+        std::string body;
+        err = load_constitution(config.constitution, false, data_dir, body);
+        if (!err.empty()) {
+            err = "constitution: " + err
+                + ". A constitution file is one of entropic's own prompt "
+                  "documents: it needs YAML frontmatter with "
+                  "`type: constitution` between `---` lines.";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Check a configured app_context path loads.
+ *
+ * Inline content (gh#141) and `app_context: false` are never checked —
+ * neither touches the filesystem, and both must keep working untouched.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when unconfigured, disabled, inline, or loadable.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string check_app_context_source(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    const bool configured_as_path = config.app_context.has_value()
+        && !config.app_context_disabled
+        && !config.app_context_content.has_value();
+    std::string err;
+    if (configured_as_path) {
+        std::string body;
+        err = load_app_context(config.app_context, std::nullopt, false,
+                               data_dir, body);
+        if (!err.empty()) {
+            err = "app_context: " + err
+                + ". app_context is read as one of entropic's own prompt "
+                  "documents, so the file needs YAML frontmatter with "
+                  "`type: app_context` between `---` lines. To supply a "
+                  "document you do not own — a repository's CLAUDE.md, for "
+                  "example — pass the text inline instead of a path: "
+                  "`app_context: {content: \"...\"}` (gh#141).";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Check every configured prompt source can be loaded.
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string on success, an actionable message otherwise.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+std::string validate_configured_prompts(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::string err = check_constitution_source(config, data_dir);
+    if (err.empty()) {
+        err = check_app_context_source(config, data_dir);
+    }
+    return err;
+}
+
+/**
  * @brief Resolve a full parsed identity (body + frontmatter) for a tier.
  *
  * Path convention:
@@ -586,17 +701,14 @@ std::string resolve_tier_identity(
  * @param data_dir Bundled data directory.
  * @return Assembled system prompt string.
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 std::string assemble(
     const entropic::ParsedConfig& config,
     const std::filesystem::path& data_dir) {
     std::string constitution, app_ctx;
 
-    load_constitution(config.constitution, config.constitution_disabled,
-                      data_dir, constitution);
-    load_app_context(config.app_context, config.app_context_content,
-                     config.app_context_disabled, data_dir, app_ctx);
+    load_shared_prompt_sources(config, data_dir, constitution, app_ctx);
 
     std::string identity_body;
     auto tier_it = config.models.tiers.find(config.models.default_tier);

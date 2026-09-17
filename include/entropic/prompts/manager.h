@@ -193,6 +193,51 @@ ENTROPIC_EXPORT std::string load_app_context(
     std::string& body);
 
 /**
+ * @brief Load constitution + app_context, logging any failure.
+ *
+ * gh#156: every one of the three callers that needed both bodies called
+ * the two loaders and DISCARDED their error strings, so a prompt file
+ * the engine could not parse showed up only as a `false` in the
+ * assembly line. This is the shared entry point those callers use, so
+ * there is one place the errors can be dropped and it does not.
+ *
+ * Failures are LOGGED here and the corresponding body is left empty;
+ * the fatal decision belongs to validate_configured_prompts(), which
+ * runs at configure time before anything expensive happens.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @param[out] constitution Receives the constitution body (empty on failure).
+ * @param[out] app_context Receives the app_context body (empty on failure).
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT void load_shared_prompt_sources(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir,
+    std::string& constitution,
+    std::string& app_context);
+
+/**
+ * @brief Check that every CONFIGURED prompt source can actually be loaded.
+ *
+ * gh#156: a consumer who names a path wanted that document. Silently
+ * running with a 17 KB smaller system prompt is not an acceptable
+ * outcome, so an unreadable / unparseable constitution or app_context
+ * path is a config error. Only explicitly configured sources are
+ * checked — the bundled constitution fallback, `app_context: false`,
+ * inline `app_context: {content: ...}` and an absent key all pass.
+ *
+ * @param config Parsed engine config.
+ * @param data_dir Bundled data directory.
+ * @return Empty string when every configured source loads, else an
+ *         actionable message naming the path and the supported form.
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT std::string validate_configured_prompts(
+    const entropic::ParsedConfig& config,
+    const std::filesystem::path& data_dir);
+
+/**
  * @brief Resolve the system prompt body for a named tier.
  *
  * Looks up the tier in config, resolves the identity file path

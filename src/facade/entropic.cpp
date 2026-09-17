@@ -824,18 +824,15 @@ static void init_mcp_servers(entropic_handle_t h,
  * @param data_dir Bundled data directory.
  * @return Concatenated prefix string.
  * @utility
- * @version 2.11.0
+ * @version 2.13.0
  */
 static std::string build_shared_prompt_prefix(
     entropic_handle_t h,
     const std::filesystem::path& data_dir) {
     std::string constitution, app_ctx;
-    entropic::prompts::load_constitution(
-        h->config.constitution, h->config.constitution_disabled,
-        data_dir, constitution);
-    entropic::prompts::load_app_context(
-        h->config.app_context, h->config.app_context_content,
-        h->config.app_context_disabled, data_dir, app_ctx);
+    // gh#156: was two discarded error strings; the shared loader logs them.
+    entropic::prompts::load_shared_prompt_sources(
+        h->config, data_dir, constitution, app_ctx);
     std::string prefix;
     if (!constitution.empty()) { prefix += constitution + "\n\n"; }
     if (!app_ctx.empty()) { prefix += app_ctx + "\n\n"; }
@@ -1210,18 +1207,15 @@ static char* sp_get_config(void* ud) {
  * ResponseGenerator::inject_engine_state_reminder.
  *
  * @utility
- * @version 2.11.0
+ * @version 2.13.0
  */
 static std::string build_assembled_prompt_for_tier(
     entropic_engine* h, const std::string& tier_name) {
     auto data_dir = entropic::config::resolve_data_dir(h->config);
     std::string constitution, app_ctx;
-    entropic::prompts::load_constitution(
-        h->config.constitution, h->config.constitution_disabled,
-        data_dir, constitution);
-    entropic::prompts::load_app_context(
-        h->config.app_context, h->config.app_context_content,
-        h->config.app_context_disabled, data_dir, app_ctx);
+    // gh#156: was two discarded error strings; the shared loader logs them.
+    entropic::prompts::load_shared_prompt_sources(
+        h->config, data_dir, constitution, app_ctx);
     std::string identity_body;
     auto it = h->config.models.tiers.find(tier_name);
     if (it != h->config.models.tiers.end()) {
@@ -1725,14 +1719,45 @@ static void wire_prompts_and_persistence(
 }
 
 /**
+ * @brief Reject a configured prompt path that cannot be loaded (gh#156).
+ *
+ * Runs between `resolve_data_dir` and `init_orchestrator` on purpose:
+ * the diagnosis costs a stat and a parse, and the step it precedes
+ * loads a multi-gigabyte model. Failing after that would make the
+ * consumer pay for the load before being told the prompt they
+ * configured is not in it.
+ *
+ * @param h Engine handle carrying the parsed config.
+ * @param data_dir Resolved data directory.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_CONFIG with
+ *        `last_error` set to an actionable message.
+ * @req REQ-API-004
+ * @dg_internal
+ * @version 2.13.0
+ */
+static entropic_error_t validate_prompt_sources(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
+    auto err = entropic::prompts::validate_configured_prompts(
+        h->config, data_dir);
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!err.empty()) {
+        h->last_error = err;
+        s_log->error("configure: {}", err);
+        rc = ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    return rc;
+}
+
+/**
  * @brief Shared body of all entropic_configure* entry points.
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.7.3
+ * @version 2.13.0
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
-    if (auto rc = reject_if_configured(h); rc != ENTROPIC_OK) { return rc; }
+    auto rc = reject_if_configured(h);
+    if (rc != ENTROPIC_OK) { return rc; }
     // gh#59 follow-up (v2.3.7): honor console_logging before any init
     // logging fires. When false, strip the stderr console sink so the
     // file sink (already installed by setup_session) is the only route
@@ -1740,13 +1765,19 @@ static entropic_error_t configure_common(entropic_handle_t h) {
     // there. Default (true) is a no-op; operators keep stderr logs.
     entropic::log::set_console_enabled(h->config.console_logging);
     auto data_dir = entropic::config::resolve_data_dir(h->config);
-    // gh#94 (v2.7.3): thread per-tier frontmatter samplers into the config
-    // BEFORE the orchestrator snapshots it by value. The engine-bound
-    // frontmatter wiring stays in wire_prompts_and_persistence (post-engine).
-    thread_frontmatter_samplers(h, data_dir);
-    if (auto rc = init_orchestrator(h, data_dir); rc != ENTROPIC_OK) {
-        return rc;
+    // gh#156 (v2.13.0): a configured constitution / app_context path that
+    // cannot be loaded is a config error, and it is raised HERE — before
+    // init_orchestrator loads the model.
+    rc = validate_prompt_sources(h, data_dir);
+    if (rc == ENTROPIC_OK) {
+        // gh#94 (v2.7.3): thread per-tier frontmatter samplers into the
+        // config BEFORE the orchestrator snapshots it by value. The
+        // engine-bound frontmatter wiring stays in
+        // wire_prompts_and_persistence (post-engine).
+        thread_frontmatter_samplers(h, data_dir);
+        rc = init_orchestrator(h, data_dir);
     }
+    if (rc != ENTROPIC_OK) { return rc; }
 
     init_engine_and_interfaces(h, data_dir);
     wire_prompts_and_persistence(h, data_dir);

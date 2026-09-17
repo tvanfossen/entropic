@@ -241,10 +241,56 @@ def _model_ctest_tests(build_dir, name_filter=""):
     return tests
 
 
+## @brief De-wrap the indented message Catch2 prints under a "SKIPPED:" line.
+## @utility
+## @return Single-line message, or "" when the skip carried no message.
+## @version 2.13.0
+def _catch2_skip_message(tail):
+    """Join the word-wrapped message body following a Catch2 SKIPPED: line.
+
+    Catch2 prints the skip message indented by two spaces and wrapped to the
+    console width, so the text has to be re-joined to land in results.json as
+    one readable string.
+    """
+    words = []
+    for line in tail:
+        if line.startswith("explicitly with message:"):
+            continue
+        if not line.startswith("  "):
+            if words:
+                break
+            continue
+        words.extend(line.split())
+    return " ".join(words)
+
+
+## @brief Extract the reason a model test skipped from its captured output.
+## @utility
+## @return Reason text, or "" when none was found.
+## @version 2.13.0
+def _skip_reason_from_log(log_path):
+    """First Catch2 skip message in a model test's captured stdout.
+
+    gh#149: results.json recorded only ``status: "skipped"``, so the release
+    audit record said a test was skipped and never why. The reason existed —
+    Catch2 printed it, and the runner already captures stdout per attempt —
+    it just never reached the artifact. Model binaries have 1-2 scenarios and
+    a whole binary skips for one reason, so the first message is the reason.
+    """
+    try:
+        lines = Path(log_path).read_text(errors="replace").splitlines()
+    except OSError:
+        return ""
+    for idx, line in enumerate(lines):
+        if line.endswith("SKIPPED:"):
+            return _catch2_skip_message(lines[idx + 1 :])
+    return ""
+
+
 ## @brief Run one model test's ctest argv with retries + a per-attempt timeout.
 ## @utility
-## @return Tuple of (status, retries, duration_ms). status: pass|skipped|fail.
-## @version 2.12.0-rc1
+## @return Tuple of (status, retries, duration_ms, skip_reason).
+## @version 2.13.0
 def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="model-test"):
     """Run one model test's argv (retries + a per-attempt timeout).
 
@@ -293,17 +339,68 @@ def _run_one_model_test(command, timeout_s=DEFAULT_MODEL_TEST_TIMEOUT_S, name="m
         except subprocess.TimeoutExpired:
             rc = 124
         if rc == 0:
-            return "pass", attempt, int((time.monotonic() - t0) * 1000)
+            return "pass", attempt, int((time.monotonic() - t0) * 1000), ""
         if rc in (2, 4):
-            return "skipped", attempt, int((time.monotonic() - t0) * 1000)
+            # gh#149: carry the reason out of the captured output so the audit
+            # record states it. rc==2 has no Catch2 message to carry — the
+            # binary collected nothing — so name that condition explicitly
+            # rather than leaving the reader to guess at a bare SKIP.
+            reason = (
+                _skip_reason_from_log(log_path)
+                if rc == 4
+                else (
+                    "binary collected no tests — every case is [.]-hidden "
+                    "(opt-in suite), so nothing ran"
+                )
+            )
+            return "skipped", attempt, int((time.monotonic() - t0) * 1000), reason
         retries = attempt + 1
-    return "fail", retries, int((time.monotonic() - t0) * 1000)
+    return "fail", retries, int((time.monotonic() - t0) * 1000), ""
+
+
+## @brief Print one roster line for a finished model test.
+## @utility
+## @version 2.13.0
+def _print_model_test_line(name, status, retries, skip_reason):
+    """One roster line. gh#149: a SKIP states its reason here, not just in
+    the artifact — the roster is what a reader looks at first."""
+    if status == "pass" and retries > 0:
+        print(f"  FLAKY  {name} (retry {retries})")
+    elif status == "pass":
+        print(f"  PASS   {name}")
+    elif status == "skipped":
+        print(f"  SKIP   {name}" + (f" — {skip_reason}" if skip_reason else ""))
+    else:
+        print(f"  FAIL   {name} (after {MAX_MODEL_RETRIES} retries)")
+
+
+## @brief Build one results.json entry for a finished model test.
+## @utility
+## @return Dict for the results.json `tests` array.
+## @version 2.13.0
+def _model_result_entry(name, status, retries, duration_ms, skip_reason):
+    """One results.json row.
+
+    gh#149: `skip_reason` is present only when a reason was actually
+    recovered. An empty field would assert "no reason", where the truth is
+    "not recovered" — stating something nothing verified is the whole defect
+    this issue is about.
+    """
+    entry = {
+        "name": name,
+        "status": status,
+        "retries": retries,
+        "duration_ms": duration_ms,
+    }
+    if skip_reason:
+        entry["skip_reason"] = skip_reason
+    return entry
 
 
 ## @brief Run model tests 1:1; a Catch2 SKIP (rc=4) is reported, not failed.
 ## @utility
 ## @return Tuple of (results list, failed count). Skips do NOT count as failures.
-## @version 2.12.0-rc1
+## @version 2.13.0
 def _run_model_tests(build_dir, name_filter="", resume=False):
     """Run model tests 1:1. Returns (results, failed_count). gh#89: a Catch2
     SKIP (GGUF/VRAM-gated or a disabled gate) reports SKIP, not PASS/FAIL.
@@ -342,9 +439,6 @@ def _run_model_tests(build_dir, name_filter="", resume=False):
 
     results = list(carried)
     t_suite = time.monotonic()
-    passed = len(carried)
-    failed = skipped = 0
-    flaky = sum(1 for t in carried if t["retries"] > 0)
 
     for idx, test in enumerate(pending):
         name = test["name"]
@@ -366,31 +460,11 @@ def _run_model_tests(build_dir, name_filter="", resume=False):
         # argv comes from ctest, so a per-case entry carries its own case
         # filter and runs in its own process — the isolation that
         # add_model_test_per_case exists to provide.
-        status, retries, duration_ms = _run_one_model_test(
+        status, retries, duration_ms, skip_reason = _run_one_model_test(
             test["command"], test["timeout"], test["name"]
         )
-        if status == "pass":
-            passed += 1
-            if retries > 0:
-                flaky += 1
-                print(f"  FLAKY  {name} (retry {retries})")
-            else:
-                print(f"  PASS   {name}")
-        elif status == "skipped":
-            skipped += 1
-            print(f"  SKIP   {name}")
-        else:
-            failed += 1
-            print(f"  FAIL   {name} (after {MAX_MODEL_RETRIES} retries)")
-
-        results.append(
-            {
-                "name": name,
-                "status": status,
-                "retries": retries,
-                "duration_ms": duration_ms,
-            }
-        )
+        _print_model_test_line(name, status, retries, skip_reason)
+        results.append(_model_result_entry(name, status, retries, duration_ms, skip_reason))
         # gh#144 (v2.12.0): persist after EVERY test, not only at the end.
         # results.json used to be written once the whole suite finished, so a
         # run killed part-way through lost every completed result — 19 passes
@@ -399,6 +473,12 @@ def _run_model_tests(build_dir, name_filter="", resume=False):
         # write per model test, against minutes of GPU time each.
         _write_results_json(results, int((time.monotonic() - t_suite) * 1000))
 
+    # Counted from `results` (which includes any carried-forward passes)
+    # rather than incremented in the loop — same numbers, one source.
+    passed = sum(1 for t in results if t["status"] == "pass")
+    skipped = sum(1 for t in results if t["status"] == "skipped")
+    failed = sum(1 for t in results if t["status"] == "fail")
+    flaky = sum(1 for t in results if t["retries"] > 0)
     print(f"\n{passed}/{len(tests)} passed, " f"{skipped} skipped, {flaky} flaky, {failed} failed")
     return results, failed
 

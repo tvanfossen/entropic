@@ -72,7 +72,7 @@ SCENARIO("gh#103 gemma severe case: sequential mode stops at <tool_call|> AND "
          "[model][gh103][gemma]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("gemma4_e4b, read_file staged, a tool-demanding prompt") {
         start_test_log("gh103_gemma_sequential");

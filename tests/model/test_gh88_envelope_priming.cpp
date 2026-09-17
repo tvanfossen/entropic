@@ -112,7 +112,7 @@ SCENARIO("gh#88: a gemma multi-turn session never accumulates a parrotable "
          "[model][gh88][gemma4][emergent]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("a gemma engine loop whose tool results are meta {action} envelopes") {
         start_test_log("gh88_envelope_priming");
@@ -189,7 +189,7 @@ SCENARIO("gh#88: a parroted {action:...} emission dispatches via the gemma "
          "[model][gh88][gemma4][recovery]")
 {
     if (!g_ctx.initialized) {
-        SKIP("gemma4_e4b GGUF not present — run `entropic download gemma4_e4b`");
+        SKIP(skip_reason_or_default("gemma4_e4b"));
     }
     GIVEN("the gemma backend warmed onto its common_chat-reliable parse path") {
         start_test_log("gh88_recovery");

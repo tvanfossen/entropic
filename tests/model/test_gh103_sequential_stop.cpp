@@ -81,7 +81,7 @@ SCENARIO("gh#103: sequential tool_call_mode hard-stops at the first tool call "
          "[model][gh103][sequential]")
 {
     if (!g_ctx.initialized) {
-        SKIP("qwen3_6_a3b GGUF not present — run `entropic download qwen3_6_a3b`");
+        SKIP(skip_reason_or_default("qwen3_6_a3b"));
     }
     GIVEN("a sequential tier with two tools over a persistent session") {
         start_test_log("gh103_sequential_stop");
@@ -162,7 +162,7 @@ SCENARIO("gh#103: sequential tool_call_mode hard-stops at the first tool call "
 SCENARIO("gh#103 contrast: batch mode may generate past the tool call",
          "[model][gh103][sequential]")
 {
-    if (!g_ctx.initialized) { SKIP("qwen3_6_a3b GGUF not present"); }
+    if (!g_ctx.initialized) { SKIP(skip_reason_or_default("qwen3_6_a3b")); }
     GIVEN("the same prompt in batch (default) tool_call_mode") {
         auto params = test_gen_params();
         params.tools = kTwoTools;

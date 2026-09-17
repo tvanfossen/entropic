@@ -92,6 +92,11 @@ add_executable(entropic-inference-tests
     inference/session_residency_test.cpp
     # v2.12.0: oversized-model GPU/CPU split from actual free VRAM.
     inference/partial_offload_test.cpp
+    # gh#149 (v2.13.0): the REPORTING side of that same policy — a model
+    # test's SKIP text must name the rule that actually fired. Pure string
+    # mapping over tests/model/model_skip_reason.h, so it runs on CPU with
+    # no GGUF; the model-suite sites it feeds cannot be exercised here.
+    inference/model_skip_reason_test.cpp
     inference/generation_summary_test.cpp
     # gh#103 (v2.8.2): CPU pin for the family-aware tool-call close-marker map
     # (sequential tool_call_mode). Vendor-coupled to the common_chat PEG

@@ -7,6 +7,12 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/config/validate.h>
+#include <entropic/prompts/manager.h>
+
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
 
 using namespace entropic;
 using namespace entropic::config;
@@ -392,6 +398,216 @@ SCENARIO("ModelsConfig validation — default tier must exist",
             THEN("it passes (no tiers means no default-tier check)") {
                 REQUIRE(err.empty());
             }
+        }
+    }
+}
+
+// ── gh#154 (v2.13.0): an unresolvable tier grammar stem is a config error ──
+//
+// `GrammarRegistry::get()` returns "" on a miss and the decode proceeds
+// UNCONSTRAINED — documented fail-open. From outside it is undetectable:
+// constrained and unconstrained output have the same SHAPE whenever the
+// prompt also describes the shape, so the only signal was the ABSENCE of a
+// `Registered grammar '<key>'` line. A consumer measured speculative decode
+// for three days believing a grammar was active; their harness wrote each
+// arm's config where no matching `.gbnf` sat. Two accept-rate figures and
+// one throughput figure were withdrawn.
+//
+// A tier's stem is STATIC config, knowable the moment the config is read,
+// so it becomes an error there. A runtime `params.grammar_key` is NOT
+// checked — it may name a grammar registered after configure — and its miss
+// is now reported through `generations[].grammar.resolved` instead.
+
+namespace {
+
+/// @brief A temp directory holding `<stem>.gbnf` for each stem given.
+std::filesystem::path gh154_grammar_dir(
+    const std::string& tag, const std::vector<std::string>& stems) {
+    auto dir = std::filesystem::temp_directory_path()
+        / ("entropic-gh154-" + tag) / "grammars";
+    std::filesystem::remove_all(dir.parent_path());
+    std::filesystem::create_directories(dir);
+    for (const auto& stem : stems) {
+        std::ofstream out(dir / (stem + ".gbnf"));
+        out << "root ::= \"x\"\n";
+    }
+    return dir;
+}
+
+/// @brief A config with one tier naming `grammar`.
+ParsedConfig gh154_config(const std::string& grammar) {
+    ParsedConfig config;
+    config.models.default_tier = "lead";
+    TierConfig lead;
+    lead.adapter = "qwen35";
+    if (!grammar.empty()) {
+        lead.grammar = std::filesystem::path(grammar);
+    }
+    config.models.tiers["lead"] = lead;
+    return config;
+}
+
+}  // namespace
+
+SCENARIO("gh#154 a tier grammar stem must resolve to a file",
+         "[config][validate][gh154][cpu]") {
+    GIVEN("a tier naming a stem that is present") {
+        auto dir = gh154_grammar_dir("present", {"compactor"});
+        auto err = validate_tier_grammars(gh154_config("compactor"), {dir});
+
+        THEN("it passes") {
+            INFO(err);
+            CHECK(err.empty());
+        }
+    }
+
+    GIVEN("a tier naming the same grammar WITH the .gbnf extension") {
+        // normalize_grammar_key strips it, so both spellings name one
+        // grammar and the check has to agree with the registry.
+        auto dir = gh154_grammar_dir("extension", {"compactor"});
+        auto err = validate_tier_grammars(
+            gh154_config("compactor.gbnf"), {dir});
+
+        THEN("it passes too") {
+            INFO(err);
+            CHECK(err.empty());
+        }
+    }
+
+    GIVEN("a tier naming a stem that is absent") {
+        auto dir = gh154_grammar_dir("absent", {"something-else"});
+        auto err = validate_tier_grammars(gh154_config("compactor"), {dir});
+
+        THEN("it fails, naming the tier, the stem and where it looked") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("lead") != std::string::npos);
+            CHECK(err.find("compactor") != std::string::npos);
+            // "not found" without saying WHERE it looked is the
+            // diagnostic that cost three days.
+            CHECK(err.find(dir.string()) != std::string::npos);
+        }
+    }
+
+    GIVEN("a tier with no grammar at all") {
+        auto err = validate_tier_grammars(gh154_config(""), {});
+
+        THEN("it passes — the check is opt-in with the key") {
+            CHECK(err.empty());
+        }
+    }
+
+    GIVEN("a tier naming a stem and NO search path configured") {
+        auto err = validate_tier_grammars(gh154_config("compactor"), {});
+
+        THEN("it fails and says no search path exists") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("search path") != std::string::npos);
+        }
+    }
+
+    GIVEN("two search paths, the stem in the second") {
+        auto first = gh154_grammar_dir("two-a", {});
+        auto second = gh154_grammar_dir("two-b", {"compactor"});
+        auto err = validate_tier_grammars(
+            gh154_config("compactor"), {first, second});
+
+        THEN("either path resolving is enough") {
+            INFO(err);
+            CHECK(err.empty());
+        }
+    }
+}
+
+SCENARIO("gh#154 grammar search paths mirror the runtime lookup",
+         "[config][validate][gh154][cpu]") {
+    GIVEN("a config_dir whose grammars/ holds a .gbnf") {
+        auto dir = gh154_grammar_dir("paths-populated", {"compactor"});
+        auto config = gh154_config("compactor");
+        config.config_dir = dir.parent_path();
+        auto paths = grammar_search_paths(config, "/data");
+
+        THEN("only config_dir is searched — the facade fallback never runs") {
+            // load_grammars_from(data_dir/grammars) is called ONLY when
+            // the config_dir load registered nothing. Listing data_dir
+            // anyway would accept a stem the registry will not hold.
+            REQUIRE(paths.size() == 1);
+            CHECK(paths.front() == dir);
+        }
+    }
+
+    GIVEN("a config_dir whose grammars/ holds nothing") {
+        auto dir = gh154_grammar_dir("paths-empty", {});
+        auto config = gh154_config("compactor");
+        config.config_dir = dir.parent_path();
+        auto paths = grammar_search_paths(config, "/data");
+
+        THEN("the data_dir fallback is searched too, exactly as at runtime") {
+            REQUIRE(paths.size() == 2);
+            CHECK(paths.front() == dir);
+            CHECK(paths.back() == std::filesystem::path("/data/grammars"));
+        }
+    }
+
+    GIVEN("no config_dir") {
+        auto paths = grammar_search_paths(gh154_config("compactor"), "/data");
+
+        THEN("the bundled data directory is the only search path") {
+            REQUIRE(paths.size() == 1);
+            CHECK(paths.front() == std::filesystem::path("/data/grammars"));
+        }
+    }
+}
+
+// ── gh#154: entropic's OWN bundled identities must name real grammars ──
+//
+// Found while gating unresolvable tier stems: three shipped identities
+// (`scribe`, `compactor`, `benchmark_judge`) declared
+// `grammar: grammars/<name>.gbnf` and `data/grammars/` has only ever
+// contained `constitutional_critique.gbnf` — git history shows the other
+// three files never existed. Those keys had been inert since they were
+// written, and gh#95 (v2.7.4) "fixed" the threading of exactly this field so
+// it would reach `resolve_grammar_key`, where it silently missed.
+//
+// So the fail-open gh#154 reports was not only reachable by consumers: the
+// engine's own default config had been running three tiers unconstrained
+// while declaring otherwise. This walks the shipped data directory so the
+// next dead key fails here instead of in a consumer's measurements.
+
+SCENARIO("gh#154 every bundled identity grammar stem resolves",
+         "[config][validate][gh154][cpu]") {
+    // TEST_DATA_DIR arrives unnormalized ("<repo>/tests/unit/../data"), so
+    // walking up from it verbatim lands inside tests/ instead of the repo.
+    const auto data_dir =
+        std::filesystem::weakly_canonical(std::filesystem::path(TEST_DATA_DIR))
+            .parent_path().parent_path() / "data";
+    const auto prompts = data_dir / "prompts";
+
+    GIVEN("the shipped identity prompts") {
+        REQUIRE(std::filesystem::is_directory(prompts));
+
+        std::vector<std::string> unresolved;
+        for (const auto& entry : std::filesystem::directory_iterator(prompts)) {
+            if (entry.path().extension() != ".md") { continue; }
+            entropic::prompts::ParsedIdentity identity;
+            if (!entropic::prompts::load_identity(
+                    entry.path(), identity).empty()) {
+                continue;  // not an identity file; parse_prompt_file owns that
+            }
+            if (!identity.frontmatter.grammar.has_value()) { continue; }
+            const auto stem =
+                std::filesystem::path(*identity.frontmatter.grammar)
+                    .stem().string();
+            if (!std::filesystem::exists(
+                    data_dir / "grammars" / (stem + ".gbnf"))) {
+                unresolved.push_back(
+                    entry.path().filename().string() + " → " + stem);
+            }
+        }
+
+        THEN("none of them names a grammar that does not ship") {
+            INFO("unresolved: " << unresolved.size());
+            for (const auto& u : unresolved) { UNSCOPED_INFO(u); }
+            CHECK(unresolved.empty());
         }
     }
 }

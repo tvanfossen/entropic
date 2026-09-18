@@ -2577,9 +2577,26 @@
 
     is looked up; otherwise the tier''s identity frontmatter `grammar:` field
 
-    (with .gbnf extension normalised away). An unresolvable key logs a
+    (with .gbnf extension normalised away).
 
-    warning and leaves the decode unconstrained rather than failing the turn.
+
+    An unresolvable TIER stem is rejected at configure time with
+
+    ENTROPIC_ERROR_INVALID_CONFIG (config::validate_tier_grammars, gh#154):
+
+    it is static config, knowable when the config is read, and the previous
+
+    fail-open was undetectable from outside because constrained and
+
+    unconstrained output have the same shape whenever the prompt also
+
+    describes the shape. An unresolvable RUNTIME key (params.grammar_key)
+
+    still logs a warning and leaves the decode unconstrained — it may name a
+
+    grammar registered after configure — and the miss is reported on the
+
+    result as grammar.resolved == false with the named key carried.
 
     '
   acceptance_criteria: 'Given a registry, When grammars are registered from string/file/directory
@@ -2592,7 +2609,15 @@
 
     grammar, a grammar_key, and a tier frontmatter grammar, Then resolution
 
-    picks them in that order; an unknown key leaves the params unconstrained.
+    picks them in that order; an unknown runtime key leaves the params
+
+    unconstrained and is recorded with resolved == false. Given a tier naming
+
+    a grammar stem with no matching .gbnf in any search path, Then configure
+
+    returns ENTROPIC_ERROR_INVALID_CONFIG naming the tier, the stem and every
+
+    directory searched.
 
     '
   verified_by: 'SCENARIO "Register grammar from in-memory string", "Duplicate key
@@ -2619,10 +2644,22 @@
 
     SCENARIO "gh#95: identity grammar: field constrains that tier''s output" —
 
-    tests/model/test_gh95_identity_grammar.cpp
+    tests/model/test_gh95_identity_grammar.cpp;
+
+    SCENARIO "gh#154 a tier grammar stem must resolve to a file" /
+
+    "gh#154 grammar search paths mirror the runtime lookup" —
+
+    tests/unit/config/validate_test.cpp;
+
+    TEST_CASE "gh#154 a tier grammar stem that cannot resolve fails configure"
+
+    / "gh#154 a tier grammar stem that resolves still configures" —
+
+    tests/unit/api/entropic_capi_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-008
   name: Every declared grammar source reaches the sampler and exactly one wins
   module: Inference Backends
@@ -2664,6 +2701,23 @@
 
     reached the sampler, and each got only a bespoke regression test.
 
+
+    gh#154 names a fourth source, `tier`: the identity frontmatter `grammar:`
+
+    stem reaches the sampler through GenerationParams::grammar exactly as a
+
+    caller-supplied grammar does, so it is APPLIED identically (application
+
+    sites ask is_request_grammar, never `== request`) and differs only in
+
+    reporting. GenerationResult::grammar carries {source, key, resolved,
+
+    conflict_winner} so a consumer can read which source won, which key was
+
+    named, and whether anything constrained the decode at all — previously
+
+    observable only as the ABSENCE of a log line.
+
     '
   acceptance_criteria: 'Given the declared source set, Then grammar_source_count() equals
     the
@@ -2674,9 +2728,17 @@
 
     Then request wins; given only a tool grammar, Then tool_call wins; given
 
-    neither, Then none. Given both, Then request wins and
+    neither, Then none; given a request-side grammar that came from the tier,
 
-    grammar_sources_collide reports true so the collision is loggable.
+    Then tier. Given both, Then request wins and grammar_sources_collide
+
+    reports true so the collision is loggable and lands in
+
+    GenerationResult::grammar.conflict_winner. Given a named key that
+
+    resolved to nothing, Then the naming source is reported with
+
+    resolved == false.
 
     '
   verified_by: 'SCENARIO "gh#134 every declared grammar source is wired to the sampler"
@@ -2689,10 +2751,18 @@
 
     MTP" / "A/B: the knob, not the model, produces the call" —
 
-    tests/model/test_gh108_mtp_stream_grammar.cpp
+    tests/model/test_gh108_mtp_stream_grammar.cpp;
+
+    SCENARIO "gh#154 the result says what constrained the decode" —
+
+    tests/unit/inference/grammar_source_invariant_test.cpp;
+
+    TEST_CASE "ModelOrchestrator real-model generate (one load, CPU)" —
+
+    tests/unit/inference/orchestrator_real_model_smoke_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-009
   name: Tool staging drives a native render whose parse context is captured
   module: Inference Backends
@@ -6813,7 +6883,7 @@
     \ a\n  hook at ENTROPIC_HOOK_COUNT_ THEN ENTROPIC_ERROR_INVALID_CONFIG is\n  returned\
     \ and no callback is stored.\n- GIVEN the BackendCapability enum THEN _COUNT == 13 and\
     \ the last real\n  capability (AUDIO) sits at _COUNT - 1.\n- GIVEN the declared set of\
-    \ grammar sources THEN grammar_source_count()\n  == 3 AND every non-`none` source is producible\
+    \ grammar sources THEN grammar_source_count()\n  == 4 AND every non-`none` source is producible\
     \ from\n  resolve_grammar_source — an enum value no input can yield is a source\n  declared\
     \ but not wired.\n"
   verified_by: "SCENARIO(\"Hook count sentinel value\") / SCENARIO(\"Invalid hook point\n\

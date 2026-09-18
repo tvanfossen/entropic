@@ -3902,3 +3902,102 @@ TEST_CASE("gh#156 a well-formed app_context file still configures",
 
     CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
 }
+
+// ── gh#154 (v2.13.0): grammar provenance + unresolvable tier stems ────
+//
+// A consumer spent three days measuring speculative decode under what
+// they believed was a grammar-constrained configuration. Their tier
+// named its grammar by bare stem, their harness wrote each arm's config
+// where no matching `.gbnf` sat, and `GrammarRegistry::get()` returned
+// "" — so the engine logged a warning and decoded UNCONSTRAINED, as
+// documented. Two accept-rate figures and one throughput figure were
+// withdrawn because of it.
+//
+// Two gaps, both closed here. (a) The engine knew and the consumer could
+// not ask: no GenerationResult field reaches any consumer, so "did this
+// run decode under a grammar" was answerable only by the ABSENCE of a
+// log line. (b) The stem was unresolvable from the moment the config was
+// read, and the engine waited until decode to not-mention it.
+
+namespace {
+
+/// @brief A models block naming a tier with a `grammar:` stem.
+std::string gh154_config(const std::string& grammar_stem) {
+    return std::string("{\"models\":{\"default\":\"lead\",\"lead\":{")
+        + R"("path":"/nonexistent/entropic-gh154.gguf","grammar":")"
+        + grammar_stem + R"("}}})";
+}
+
+}  // namespace
+
+TEST_CASE("gh#154 a tier grammar stem that cannot resolve fails configure",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(h, gh154_config("no-such-grammar").c_str());
+
+    // RED before the fix: the stem was accepted, the model load was
+    // attempted (LOAD_FAILED), and the first and only word about the
+    // grammar would have been a decode-time warning nobody can assert on.
+    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
+
+    std::string err(entropic_last_error(h));
+    INFO("last_error: " << err);
+    CHECK(err.find("no-such-grammar") != std::string::npos);
+    CHECK(err.find("lead") != std::string::npos);
+    // The search paths must be named — "not found" without saying where
+    // it looked is the diagnostic that cost three days.
+    CHECK(err.find("grammars") != std::string::npos);
+}
+
+TEST_CASE("gh#154 a tier grammar stem that resolves still configures",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    // The control. Without it "reject every tier grammar" would pass the
+    // case above. constitutional_critique.gbnf is the bundled grammar, so
+    // this stem resolves from the data dir exactly as production does.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(
+        h, gh154_config("constitutional_critique").c_str());
+
+    INFO("last_error: " << entropic_last_error(h));
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#154 a tier with no grammar is unaffected",
+          "[v2.13.0][entropic_capi][configure][gh154]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+
+    auto rc = entropic_configure(
+        h, R"({"models":{"default":"lead","lead":)"
+           R"({"path":"/nonexistent/entropic-gh154.gguf"}}})");
+
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
+}
+
+TEST_CASE("gh#154 entropic_metrics_json carries a generations array",
+          "[v2.13.0][entropic_capi][metrics][gh154]") {
+    // The consumer's actual ask: a field on the result saying what
+    // constrained the decode. It has to arrive somewhere a C consumer can
+    // read, and entropic_metrics_json is the only metrics surface that
+    // crosses the ABI. RED before the fix: the key does not exist.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    char* out = nullptr;
+    REQUIRE(entropic_metrics_json(h, &out) == ENTROPIC_OK);
+    REQUIRE(out != nullptr);
+    std::string json(out);
+    entropic_free(out);
+
+    INFO("metrics: " << json);
+    // Present and an array even before any generation has run — a
+    // consumer must be able to read it without guessing whether the key
+    // appears only sometimes.
+    CHECK(json.find("\"generations\"") != std::string::npos);
+    CHECK(json.find("\"generations\":[]") != std::string::npos);
+}

@@ -4,6 +4,15 @@
 # Repo knowledge assistant with 8 identities and 4 pipeline flows.
 # Constitutional validation enforces architectural rules on all output.
 
+# gh#154 (v2.13.0): a tier `grammar:` stem must resolve at CONFIGURE time —
+# an unresolvable one is now ENTROPIC_ERROR_INVALID_CONFIG instead of a
+# warning followed by an unconstrained decode. config_dir names the root the
+# engine searches for `grammars/`, so `data/grammars/quiz.gbnf` is registered
+# during configure and the quizzer tier's `grammar: quiz` resolves. This
+# replaces the post-configure entropic_grammar_register_file() call in
+# main.cpp, which could only ever run AFTER the tier had been validated.
+config_dir: data
+
 app_context: prompts/app_context.md
 constitution: prompts/constitution.md
 

@@ -360,6 +360,24 @@ public:
      */
     BackendInfo info() const;
 
+    /**
+     * @brief The tool-call GBNF the last render derived, if any (gh#154).
+     *
+     * The second grammar source (the first being
+     * `GenerationParams::grammar`). It never appears on the params, so a
+     * caller holding only the params cannot tell whether the decode was
+     * constrained — the orchestrator asks the backend instead, and builds
+     * `GenerationResult::grammar` from both.
+     *
+     * Base returns "" — a backend that stages no tools has no such
+     * grammar, which is the honest answer rather than a stub.
+     *
+     * @return Render-derived tool-call GBNF, or "" when none is staged.
+     * @req REQ-INFER-008
+     * @version 2.13.0
+     */
+    virtual std::string active_tool_grammar() const { return {}; }
+
     /* ── Model state management (v1.9.13) ────────────────── */
 
     /**

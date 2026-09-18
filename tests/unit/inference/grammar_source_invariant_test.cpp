@@ -39,7 +39,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <string>
+
 using entropic::GrammarSource;
+using entropic::grammar_source_name;
 using entropic::grammar_sources_collide;
 using entropic::resolve_grammar_source;
 
@@ -61,15 +64,141 @@ SCENARIO("gh#134 every declared grammar source is wired to the sampler",
         THEN("it is exactly the set this test knows how to exercise") {
             // Bump ONLY together with a new case below. If this fires, a
             // source was added without proving it constrains decoding.
-            CHECK(entropic::grammar_source_count() == 3);
+            //
+            // gh#154 (v2.13.0): 3 -> 4. A tier's frontmatter `grammar:` stem
+            // was folded into `request` because it arrives as
+            // GenerationParams::grammar like any other — which is exactly
+            // why a consumer could not tell a tier-configured grammar from
+            // one they passed themselves, or from none at all.
+            CHECK(entropic::grammar_source_count() == 4);
         }
 
         THEN("every non-none source is reachable from resolve_grammar_source") {
             // Each source must be producible — an enum value no input can
             // yield is a source that is declared but not wired.
             CHECK(resolve_grammar_source("g", "") == GrammarSource::request);
+            CHECK(resolve_grammar_source("g", "", /*from_tier=*/true)
+                  == GrammarSource::tier);
             CHECK(resolve_grammar_source("", "g") == GrammarSource::tool_call);
             CHECK(resolve_grammar_source("", "") == GrammarSource::none);
+        }
+
+        THEN("every source has its own wire name") {
+            // The names are serialized into entropic_metrics_json, so two
+            // sources sharing one would make the field unreadable — the
+            // same defect shape as gh#163's one-line-three-states.
+            CHECK(std::string(grammar_source_name(GrammarSource::none))
+                  == "none");
+            CHECK(std::string(grammar_source_name(GrammarSource::request))
+                  == "request");
+            CHECK(std::string(grammar_source_name(GrammarSource::tier))
+                  == "tier");
+            CHECK(std::string(grammar_source_name(GrammarSource::tool_call))
+                  == "tool_call");
+        }
+
+        THEN("tier and request are both APPLIED as request-side grammars") {
+            // They differ in reporting only. An application site that
+            // compared against `request` alone would silently stop
+            // applying a tier grammar — gh#95 all over again.
+            CHECK(entropic::is_request_grammar(GrammarSource::request));
+            CHECK(entropic::is_request_grammar(GrammarSource::tier));
+            CHECK_FALSE(entropic::is_request_grammar(GrammarSource::tool_call));
+            CHECK_FALSE(entropic::is_request_grammar(GrammarSource::none));
+        }
+    }
+}
+
+// ── gh#154: the provenance a consumer reads off the result ──────────
+
+SCENARIO("gh#154 the result says what constrained the decode",
+         "[gh154][grammar][inference][cpu][invariant]")
+{
+    entropic::GenerationParams params;
+
+    GIVEN("nothing configured") {
+        auto p = entropic::describe_grammar(params, "");
+        THEN("the record says unconstrained, with no key invented") {
+            CHECK(p.source == "none");
+            CHECK(p.key.empty());
+            CHECK_FALSE(p.resolved);
+            CHECK(p.conflict_winner.empty());
+        }
+    }
+
+    GIVEN("a caller-supplied grammar") {
+        params.grammar = "root ::= \"x\"";
+        auto p = entropic::describe_grammar(params, "");
+        THEN("the request source is named and marked resolved") {
+            CHECK(p.source == "request");
+            CHECK(p.resolved);
+        }
+    }
+
+    GIVEN("a tier stem that resolved") {
+        params.grammar = "root ::= \"x\"";
+        params.resolved_grammar_key = "compactor";
+        params.grammar_from_tier = true;
+        auto p = entropic::describe_grammar(params, "");
+        THEN("the TIER is named, not the caller, and the key is carried") {
+            // Before gh#154 all three request-side spellings were
+            // indistinguishable on the result: a consumer could not tell
+            // their own grammar from the tier's from none at all.
+            CHECK(p.source == "tier");
+            CHECK(p.key == "compactor");
+            CHECK(p.resolved);
+        }
+    }
+
+    GIVEN("a tier stem that resolved to NOTHING — the gh#154 case") {
+        // The registry returned "" and the decode proceeded
+        // unconstrained. Constrained and unconstrained output have the
+        // same SHAPE when the prompt describes the shape, so the only
+        // former signal was a missing log line. Three days of
+        // measurements were published against this state.
+        params.grammar.clear();
+        params.resolved_grammar_key = "was-never-there";
+        params.grammar_from_tier = true;
+        auto p = entropic::describe_grammar(params, "");
+
+        THEN("the key that asked is named AND resolved is false") {
+            CHECK(p.source == "tier");
+            CHECK(p.key == "was-never-there");
+            CHECK_FALSE(p.resolved);
+        }
+    }
+
+    GIVEN("a runtime grammar_key that resolved to nothing") {
+        params.grammar.clear();
+        params.resolved_grammar_key = "missing";
+        params.grammar_from_tier = false;
+        auto p = entropic::describe_grammar(params, "");
+        THEN("it reports as a request-side miss") {
+            CHECK(p.source == "request");
+            CHECK(p.key == "missing");
+            CHECK_FALSE(p.resolved);
+        }
+    }
+
+    GIVEN("only staged tools") {
+        auto p = entropic::describe_grammar(params, "root ::= \"call\"");
+        THEN("the tool-call source is named") {
+            CHECK(p.source == "tool_call");
+            CHECK(p.resolved);
+            CHECK(p.conflict_winner.empty());
+        }
+    }
+
+    GIVEN("a request grammar displacing a tool-call grammar") {
+        params.grammar = "root ::= \"x\"";
+        auto p = entropic::describe_grammar(params, "root ::= \"call\"");
+        THEN("the record names the winner, so the loss is not silent") {
+            // The consumer sees tools staged and assumes they are
+            // structurally enforced. They are not, and this is the field
+            // that says so without parsing an ERROR log line.
+            CHECK(p.source == "request");
+            CHECK(p.conflict_winner == "request");
+            CHECK(p.resolved);
         }
     }
 }

@@ -20,6 +20,7 @@
 #include "device_memory.h"
 #include "vram_footprint.h"
 #include "response_parse.h"
+#include "grammar_source.h"    // gh#154: provenance for the result record
 #include "mtp_envelope.h"
 #include <entropic/core/stream_think_filter.h>
 #include "adapters/adapter_registry.h"
@@ -722,7 +723,7 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -754,16 +755,8 @@ GenerationResult ModelOrchestrator::generate(
     GenerationResult result = run_generate_dispatch(
         model, messages, resolved_params, selected);
 
-    apply_adapter_parse(model, get_adapter(selected), result);
-    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
-    warn_turn_diagnostics(result, selected,
-                                         config_.models.tiers);
-
-    result.routing_ms = routing_ms;
-    result.swap_ms = swap_ms;
-    result.total_ms = elapsed_ms(t_start, now());
-    log_orchestration(result, selected, last_routing_result_.adapter_name,
-                      resolved_params, routing_ms, swap_ms);
+    finish_generation(result, model, resolved_params, selected,
+                      routing_ms, swap_ms, t_start);
     return result;
 }
 
@@ -776,7 +769,7 @@ GenerationResult ModelOrchestrator::generate(
  * cancel)` which polls cancel per token.
  *
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -806,16 +799,8 @@ GenerationResult ModelOrchestrator::generate(
     GenerationResult result = model->generate(
         messages, resolved_params, cancel);
 
-    apply_adapter_parse(model, get_adapter(selected), result);
-    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
-    warn_turn_diagnostics(result, selected,
-                                         config_.models.tiers);
-
-    result.routing_ms = routing_ms;
-    result.swap_ms = swap_ms;
-    result.total_ms = elapsed_ms(t_start, now());
-    log_orchestration(result, selected, last_routing_result_.adapter_name,
-                      resolved_params, routing_ms, swap_ms);
+    finish_generation(result, model, resolved_params, selected,
+                      routing_ms, swap_ms, t_start);
     return result;
 }
 
@@ -830,7 +815,7 @@ GenerationResult ModelOrchestrator::generate(
  * injection.
  *
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     const std::vector<std::vector<Message>>& messages_list,
@@ -857,6 +842,10 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     for (std::size_t i = 0; i < results.size() && i < tiers.size(); ++i) {
         const std::string& t = tiers[i].empty() ? lead : tiers[i];
         apply_adapter_parse(model, get_adapter(t), results[i]);
+        // gh#154: a batch request is a generation. Each arm carries its
+        // OWN resolved params, so each gets its own provenance — a
+        // per-batch record would hide a tier whose grammar missed.
+        record_generation(results[i], resolved[i], model);
     }
     return results;
 }
@@ -905,7 +894,8 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  *         the tier.
  * @req REQ-INFER-011
  * @req REQ-INFER-005
- * @version 2.11.0
+ * @req REQ-INFER-008
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -961,6 +951,10 @@ GenerationResult ModelOrchestrator::generate_streaming(
     // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
     warn_turn_diagnostics(result, selected,
                                          config_.models.tiers);
+    // gh#154: the streaming path runs the speculative/MTP kernels, so
+    // leaving it unrecorded would omit exactly the decodes whose
+    // drafted/accepted counts the record exists to carry.
+    record_generation(result, resolved_params, model);
     return result;
 }
 
@@ -1802,6 +1796,77 @@ ModelOrchestrator::check_speculative_compat() const {
 }
 
 /**
+ * @brief Shared tail of both non-streaming generate() overloads.
+ * @param result Completed result (mutated throughout).
+ * @param model Backend that ran the decode.
+ * @param resolved_params Params as the backend saw them.
+ * @param selected Tier that ran.
+ * @param routing_ms Router classification time.
+ * @param swap_ms Model-swap time.
+ * @param t_start Start of the whole orchestration.
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+void ModelOrchestrator::finish_generation(
+    GenerationResult& result,
+    InferenceBackend* model,
+    const GenerationParams& resolved_params,
+    const std::string& selected,
+    double routing_ms,
+    double swap_ms,
+    std::chrono::steady_clock::time_point t_start)
+{
+    apply_adapter_parse(model, get_adapter(selected), result);
+    // gh#134 (v2.10.4): name a budget-starved mandatory-tool turn.
+    warn_turn_diagnostics(result, selected, config_.models.tiers);
+
+    result.routing_ms = routing_ms;
+    result.swap_ms = swap_ms;
+    result.total_ms = elapsed_ms(t_start, now());
+    // gh#154: one record per generation, at the tail every orchestrated
+    // path already shares — so a new decode path cannot ship unrecorded.
+    record_generation(result, resolved_params, model);
+    log_orchestration(result, selected, last_routing_result_.adapter_name,
+                      resolved_params, routing_ms, swap_ms);
+}
+
+/**
+ * @brief Attach grammar provenance and append a metric record (gh#154).
+ * @param result Completed result (mutated: `grammar` populated).
+ * @param resolved_params Params as the backend saw them.
+ * @param model Backend that ran the decode (may be null).
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+void ModelOrchestrator::record_generation(
+    GenerationResult& result,
+    const GenerationParams& resolved_params,
+    const InferenceBackend* model)
+{
+    const std::string tool_grammar =
+        model != nullptr ? model->active_tool_grammar() : std::string{};
+    result.grammar = describe_grammar(resolved_params, tool_grammar);
+
+    std::lock_guard<std::mutex> lock(records_mutex_);
+    if (generation_records_.size() >= kMaxGenerationRecords) {
+        generation_records_.erase(generation_records_.begin());
+    }
+    generation_records_.push_back(make_generation_record(result));
+}
+
+/**
+ * @brief Per-generation metric records, oldest first (gh#154).
+ * @return A copy of the ring, so the caller never holds the lock.
+ * @req REQ-INFER-008
+ * @version 2.13.0
+ */
+std::vector<GenerationRecord> ModelOrchestrator::generation_records() const
+{
+    std::lock_guard<std::mutex> lock(records_mutex_);
+    return generation_records_;
+}
+
+/**
  * @brief Normalize a frontmatter grammar value to a registry key.
  *
  * Strips .gbnf extension if present: "compactor.gbnf" → "compactor".
@@ -1829,13 +1894,20 @@ static std::string normalize_grammar_key(const std::string& grammar_value) {
  * 3. Identity frontmatter grammar: field — normalize and lookup
  * 4. None — unconstrained generation
  *
- * An unresolvable key logs a warning and leaves the decode unconstrained
- * rather than failing the turn.
+ * An unresolvable RUNTIME key (`params.grammar_key`) logs a warning and
+ * leaves the decode unconstrained rather than failing the turn — it may
+ * name a grammar registered after configure. A TIER's `grammar:` stem is
+ * different: it is static config, so gh#154 rejects an unresolvable one at
+ * configure time (config::validate_tier_grammars) and it cannot reach here.
  *
- * @param params Generation parameters (mutated: grammar field may be set).
+ * gh#154: the key and its origin are recorded on `params` whether or not
+ * the lookup succeeds, so `GenerationResult::grammar` can report a named
+ * key that constrained nothing.
+ *
+ * @param params Generation parameters (mutated: grammar + provenance).
  * @param tier_name Active tier for frontmatter grammar resolution.
  * @req REQ-INFER-007
- * @version 2.0.0
+ * @version 2.13.0
  */
 void ModelOrchestrator::resolve_grammar_key(
     GenerationParams& params, const std::string& tier_name)
@@ -1852,6 +1924,11 @@ void ModelOrchestrator::resolve_grammar_key(
         auto it = config_.models.tiers.find(tier_name);
         if (it != config_.models.tiers.end() && it->second.grammar) {
             key = normalize_grammar_key(it->second.grammar->string());
+            // gh#154: remember WHERE the key came from. All three
+            // request-side sources arrive as params.grammar, so without
+            // this the result cannot say whether the tier asked or the
+            // caller did.
+            params.grammar_from_tier = true;
         }
     }
 
@@ -1859,9 +1936,17 @@ void ModelOrchestrator::resolve_grammar_key(
         return;
     }
 
+    // Recorded BEFORE the lookup, so a key that resolves to nothing is
+    // still named on the result. A missing grammar leaves the decode
+    // unconstrained (REQ-INFER-007) and the absence of a log line was,
+    // until gh#154, the only signal that it had happened.
+    params.resolved_grammar_key = key;
+
     std::string content = grammar_registry_.get(key);
     if (content.empty()) {
-        logger->warn("Grammar key '{}' not found in registry", key);
+        logger->warn("Grammar key '{}' not found in registry — this decode "
+                     "is UNCONSTRAINED; read generations[].grammar.resolved "
+                     "from entropic_metrics_json to detect it", key);
         return;
     }
 

@@ -399,6 +399,26 @@ struct GenerationParams {
     /// grammar (raw string) takes precedence.
     /// @version 1.9.3
     std::string grammar_key;
+
+    /// @brief The key or frontmatter stem that was NAMED for this call,
+    ///        set by ModelOrchestrator::resolve_grammar_key (gh#154).
+    ///
+    /// Carries the name even when the lookup MISSED, because a named key
+    /// that resolved to nothing is the state gh#154 exists to make
+    /// visible — `GrammarProvenance::resolved` is what says whether a
+    /// grammar text actually reached the sampler.
+    /// @version 2.13.0
+    std::string resolved_grammar_key;
+
+    /// @brief true when `resolved_grammar_key` came from the TIER's
+    ///        frontmatter `grammar:` rather than the caller (gh#154).
+    ///
+    /// All three request-side sources arrive as `grammar`, so without
+    /// this a consumer cannot tell a tier-configured grammar from one
+    /// they passed themselves.
+    /// @version 2.13.0
+    bool grammar_from_tier = false;
+
     std::vector<std::string> stop;           ///< Stop sequences
     /// @brief Per-call tool-call generation mode (gh#103). Empty = defer to
     /// tier/default ("batch"). "sequential" → the orchestrator appends the

@@ -13,6 +13,7 @@
 #include "engine_handle.h"
 
 #include <entropic/config/loader.h>
+#include <entropic/config/validate.h>  // gh#154: configure-time grammar check
 #include <entropic/mcp/servers/entropic_server.h>
 #include <entropic/entropic.h>
 #include <entropic/prompts/manager.h>
@@ -1366,6 +1367,43 @@ static char* sp_get_state(void* ud) {
 }
 
 /**
+ * @brief Serialize the orchestrator's per-generation records (gh#154).
+ *
+ * One object per generation, oldest first. Until v2.13.0 NO
+ * `GenerationResult` field reached any consumer: `prefill_tokens` was
+ * serialized nowhere, `tok/s` and the speculative draft/accept counts
+ * went to the log and died there, and whether a grammar constrained the
+ * decode was observable only as a MISSING log line. Three days of
+ * measurements were published against that and withdrawn.
+ *
+ * @param h Engine handle (orchestrator may be null before configure).
+ * @return JSON array; `[]` when nothing has generated yet.
+ * @utility
+ * @version 2.13.0
+ */
+static nlohmann::json generations_json(entropic_engine* h) {
+    nlohmann::json arr = nlohmann::json::array();
+    if (h == nullptr || !h->orchestrator) { return arr; }
+    for (const auto& rec : h->orchestrator->generation_records()) {
+        arr.push_back({
+            {"finish_reason",    rec.finish_reason},
+            {"token_count",      rec.token_count},
+            {"prefill_tokens",   rec.prefill_tokens},
+            {"throughput_tok_s", rec.throughput_tok_s},
+            {"n_drafted",        rec.n_drafted},
+            {"n_accepted",       rec.n_accepted},
+            {"grammar", {
+                {"source",          rec.grammar.source},
+                {"key",             rec.grammar.key},
+                {"resolved",        rec.grammar.resolved},
+                {"conflict_winner", rec.grammar.conflict_winner},
+            }},
+        });
+    }
+    return arr;
+}
+
+/**
  * @brief State provider: get_metrics.
  *
  * Returns LoopMetrics from the most recent run plus a per-tier
@@ -1374,14 +1412,20 @@ static char* sp_get_state(void* ud) {
  * The `per_tier` object maps tier name → metrics since engine start.
  * (P2-15 + follow-up)
  *
+ * gh#154 (v2.13.0): `generations` carries one record per generation —
+ * the only route by which a GenerationResult field has ever crossed the
+ * C ABI. Always present, even before a run, so a consumer never has to
+ * guess whether the key appears.
+ *
  * @callback
- * @version 2.0.6-rc16.2
+ * @version 2.13.0
  */
 static char* sp_get_metrics(void* ud) {
     auto* h = static_cast<entropic_engine*>(ud);
     if (!h || !h->engine) { return strdup("{}"); }
     auto m = h->engine->last_loop_metrics();
     nlohmann::json j;
+    j["generations"] = generations_json(h);
     j["iterations"]  = m.iterations;
     j["tool_calls"]  = m.tool_calls;
     j["tokens_used"] = m.tokens_used;
@@ -1749,11 +1793,41 @@ static entropic_error_t validate_prompt_sources(
 }
 
 /**
+ * @brief Reject a tier grammar stem that resolves to nothing (gh#154).
+ *
+ * Runs AFTER thread_frontmatter_samplers — the common spelling of a tier
+ * grammar is an identity frontmatter `grammar:` key, which is not on the
+ * TierConfig until that step threads it — and still before the model
+ * loads.
+ *
+ * @param h Engine handle carrying the parsed config.
+ * @param data_dir Resolved data directory.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_CONFIG with
+ *        `last_error` naming the stem and every directory searched.
+ * @req REQ-INFER-007
+ * @dg_internal
+ * @version 2.13.0
+ */
+static entropic_error_t validate_tier_grammars_step(
+    entropic_handle_t h, const std::filesystem::path& data_dir) {
+    auto err = entropic::config::validate_tier_grammars(
+        h->config,
+        entropic::config::grammar_search_paths(h->config, data_dir));
+    entropic_error_t rc = ENTROPIC_OK;
+    if (!err.empty()) {
+        h->last_error = err;
+        s_log->error("configure: {}", err);
+        rc = ENTROPIC_ERROR_INVALID_CONFIG;
+    }
+    return rc;
+}
+
+/**
  * @brief Shared body of all entropic_configure* entry points.
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.13.0
+ * @version 2.13.0-gh154
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     auto rc = reject_if_configured(h);
@@ -1775,6 +1849,12 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         // engine-bound frontmatter wiring stays in
         // wire_prompts_and_persistence (post-engine).
         thread_frontmatter_samplers(h, data_dir);
+        // gh#154 (v2.13.0): an unresolvable tier grammar stem is a config
+        // error, not a decode-time warning. Checked here so it is raised
+        // after the frontmatter stems land and before the model loads.
+        rc = validate_tier_grammars_step(h, data_dir);
+    }
+    if (rc == ENTROPIC_OK) {
         rc = init_orchestrator(h, data_dir);
     }
     if (rc != ENTROPIC_OK) { return rc; }

@@ -531,6 +531,14 @@ protected:
 
 public:
     /**
+     * @brief The tool-call GBNF captured by the last render (gh#154).
+     * @return `tool_grammar_`, or "" when no tools were staged.
+     * @req REQ-INFER-008
+     * @version 2.13.0
+     */
+    std::string active_tool_grammar() const override { return tool_grammar_; }
+
+    /**
      * @brief Speculative-decoding kernel with explicit draft backend.
      *
      * Adapts the upstream `speculative-simple` reference loop at pin

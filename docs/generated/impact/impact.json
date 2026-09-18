@@ -1,27 +1,148 @@
 [
   {
-    "req_id": "REQ-TYPE-005",
-    "req_name": "Config types declare their own defaults; optional means absent, not default",
+    "req_id": "REQ-API-004",
+    "req_name": "Three configure entry points, one shared body, one-shot per handle",
     "functions": [
       {
-        "name": "classify_app_context",
-        "file": "src/prompts/manager.cpp",
+        "name": "validate_prompt_sources",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "app_context_state_message",
-        "file": "src/prompts/manager.cpp",
+        "name": "configure_common",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0-gh154"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-006",
+    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
+    "functions": [
+      {
+        "name": "validate_tier_grammars",
+        "file": "src/config/validate.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-005",
+    "req_name": "Every decode path honours cooperative cancellation within one token",
+    "functions": [
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-007",
+    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
+    "functions": [
+      {
+        "name": "grammar_search_paths",
+        "file": "src/config/validate.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "load_app_context",
-        "file": "src/prompts/manager.cpp",
+        "name": "validate_tier_grammars",
+        "file": "src/config/validate.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "load_shared_prompt_sources",
-        "file": "src/prompts/manager.cpp",
-        "version": "2.13.0-gh163"
+        "name": "validate_tier_grammars_step",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_grammar_key",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-008",
+    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+    "functions": [
+      {
+        "name": "active_tool_grammar",
+        "file": "include/entropic/inference/backend.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_grammar_source",
+        "file": "src/inference/grammar_source.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "is_request_grammar",
+        "file": "src/inference/grammar_source.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "grammar_source_name",
+        "file": "src/inference/grammar_source.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "describe_grammar",
+        "file": "src/inference/grammar_source.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "apply_grammar_source",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "active_tool_grammar",
+        "file": "src/inference/llama_cpp_backend.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "finish_generation",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "record_generation",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "generation_records",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-011",
+    "req_name": "Reasoning-block markers are declared once per model family",
+    "functions": [
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-TYPE-004",
+    "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
+    "functions": [
+      {
+        "name": "resolve_grammar_source",
+        "file": "src/inference/grammar_source.h",
+        "version": "2.13.0"
       }
     ]
   }

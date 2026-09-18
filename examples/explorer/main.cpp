@@ -87,7 +87,7 @@ static bool read_input(char* buf, size_t size)
  * @return Configured engine handle, or nullptr on failure.
  *
  * @dg_internal
- * @version 1
+ * @version 2
  */
 static entropic_handle_t setup_engine(const char* project_dir)
 {
@@ -99,10 +99,12 @@ static entropic_handle_t setup_engine(const char* project_dir)
     }
 
     std::string docs_server = R"({"command":"python3","args":["servers/docs_server.py"]})";
+    // gh#154 (v2.13.0): the quiz grammar is registered during configure,
+    // from `config_dir/grammars` — it has to be, because the quizzer tier
+    // NAMES it and an unresolvable tier stem now fails configure. A
+    // post-configure register_file could only ever run too late, and
+    // re-registering the key here would now fail as a duplicate.
     bool ok = (entropic_configure_dir(handle, project_dir) == ENTROPIC_OK)
-           && (entropic_grammar_register_file(
-                   handle, "quiz",
-                   "data/grammars/quiz.gbnf") == ENTROPIC_OK)
            && (entropic_register_mcp_server(
                    handle, "docs", docs_server.c_str()) == ENTROPIC_OK);
 

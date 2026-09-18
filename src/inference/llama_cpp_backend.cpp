@@ -3209,7 +3209,7 @@ namespace {
  * @param tool_grammar_lazy Whether that grammar arms on a trigger.
  * @param generation_prompt Render prefill, required by the TOOL_CALLS type.
  * @req REQ-INFER-008
- * @version 2.10.5
+ * @version 2.13.0
  * @dg_internal
  */
 static void apply_grammar_source(
@@ -3237,7 +3237,10 @@ static void apply_grammar_source(
             "tool schemas constrain, or unstage tools to use your grammar.");
     }
     const auto source = resolve_grammar_source(params.grammar, tool_grammar);
-    if (source == GrammarSource::request) {
+    // gh#154: ask the predicate, not the enum value. `tier` is a
+    // request-side source that differs only in REPORTING, and comparing
+    // against `request` alone would silently stop applying it.
+    if (is_request_grammar(source)) {
         cps.grammar = common_grammar(COMMON_GRAMMAR_TYPE_USER, params.grammar);
     } else if (source == GrammarSource::tool_call) {
         // TOOL_CALLS, not USER: common_grammar_needs_prefill() is true for this

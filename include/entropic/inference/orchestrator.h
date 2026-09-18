@@ -286,6 +286,25 @@ public:
     GrammarRegistry& grammar_registry() { return grammar_registry_; }
 
     /**
+     * @brief Per-generation metric records, oldest first (gh#154).
+     *
+     * A bounded ring — the last `kMaxGenerationRecords` generations this
+     * orchestrator ran. Serialized into `entropic_metrics_json` as
+     * `generations[]`, which is the only route by which any
+     * `GenerationResult` field has ever reached a C consumer: `tok/s`,
+     * `prefill_tokens`, the speculative draft/accept counts and the
+     * grammar provenance were all computed, logged and then dropped.
+     *
+     * @return A copy, so the caller never holds the lock.
+     * @version 2.13.0
+     */
+    std::vector<GenerationRecord> generation_records() const;
+
+    /// @brief Ring capacity for generation_records().
+    /// @version 2.13.0
+    static constexpr size_t kMaxGenerationRecords = 64;
+
+    /**
      * @brief Access the GPU resource profile registry.
      * @return Reference to ProfileRegistry.
      * @utility
@@ -526,6 +545,55 @@ public:
     }
 
 private:
+    /**
+     * @brief Attach grammar provenance and append a metric record (gh#154).
+     *
+     * One call at the tail of every orchestrated generation, so "one
+     * record per generation" is structural rather than a convention each
+     * path has to remember. Provenance is computed from the resolved
+     * params plus the backend's staged tool grammar — the same two inputs
+     * the sampler's application site reads.
+     *
+     * @param result Completed result (mutated: `grammar` populated).
+     * @param resolved_params Params as the backend saw them.
+     * @param model Backend that ran the decode (may be null).
+     * @version 2.13.0
+     */
+    void record_generation(GenerationResult& result,
+                           const GenerationParams& resolved_params,
+                           const InferenceBackend* model);
+
+    /**
+     * @brief Shared tail of both non-streaming generate() overloads.
+     *
+     * Adapter parse, turn diagnostics, timing, the gh#154 metric record
+     * and the orchestration log line — byte-identical in both overloads
+     * before v2.13.0, and the ABC budget said so once the record was
+     * added. One tail also means a new step cannot land on one overload
+     * and not the other, which is how the batch path came to bypass
+     * speculative dispatch (#49).
+     *
+     * @param result Completed result (mutated throughout).
+     * @param model Backend that ran the decode.
+     * @param resolved_params Params as the backend saw them.
+     * @param selected Tier that ran.
+     * @param routing_ms Router classification time.
+     * @param swap_ms Model-swap time.
+     * @param t_start Start of the whole orchestration.
+     * @version 2.13.0
+     */
+    void finish_generation(GenerationResult& result,
+                           InferenceBackend* model,
+                           const GenerationParams& resolved_params,
+                           const std::string& selected,
+                           double routing_ms,
+                           double swap_ms,
+                           std::chrono::steady_clock::time_point t_start);
+
+    /* ── gh#154: bounded per-generation metric ring ──────── */
+    mutable std::mutex records_mutex_;
+    std::vector<GenerationRecord> generation_records_;
+
     /* ── Model pool (one backend per unique path) ────────── */
     std::unordered_map<std::string, std::shared_ptr<InferenceBackend>> model_pool_;
 

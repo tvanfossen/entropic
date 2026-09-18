@@ -328,6 +328,130 @@ static std::string validate_model_tiers(const ModelsConfig& models)
 }
 
 /**
+ * @brief Whether a directory holds at least one .gbnf file.
+ * @param dir Directory to scan.
+ * @return true when the directory exists and contains a .gbnf.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool holds_grammars(const std::filesystem::path& dir)
+{
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) { return false; }
+    bool found = false;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (entry.path().extension() == ".gbnf") {
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief The directories a bare grammar stem is looked up in (gh#154).
+ * @param config Parsed engine config (supplies config_dir).
+ * @param data_dir Resolved bundled data directory.
+ * @return Search directories, most specific first.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+std::vector<std::filesystem::path> grammar_search_paths(
+    const ParsedConfig& config,
+    const std::filesystem::path& data_dir)
+{
+    std::vector<std::filesystem::path> dirs;
+    if (!config.config_dir.empty()) {
+        dirs.push_back(config.config_dir / "grammars");
+    }
+    // The facade's data_dir fallback runs only when the config_dir load
+    // registered nothing, so include it on exactly that condition —
+    // otherwise this would accept a stem the registry will not hold.
+    if (!data_dir.empty() && (dirs.empty() || !holds_grammars(dirs.front()))) {
+        dirs.push_back(data_dir / "grammars");
+    }
+    return dirs;
+}
+
+/**
+ * @brief Whether `<stem>.gbnf` exists in any search directory.
+ * @param stem Normalized grammar stem.
+ * @param search_dirs Directories to look in.
+ * @return true when the file is present in at least one.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static bool grammar_stem_resolves(
+    const std::string& stem,
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    bool found = false;
+    for (const auto& dir : search_dirs) {
+        std::error_code ec;
+        if (std::filesystem::exists(dir / (stem + ".gbnf"), ec)) {
+            found = true;
+            break;
+        }
+    }
+    return found;
+}
+
+/**
+ * @brief Render the search-path list for an error message.
+ * @param search_dirs Directories searched.
+ * @return Comma-separated list, or a note that none were searched.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string describe_search_dirs(
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    if (search_dirs.empty()) {
+        return "no grammar search path is configured "
+               "(set config_dir, or install the bundled data directory)";
+    }
+    std::string list;
+    for (const auto& dir : search_dirs) {
+        if (!list.empty()) { list += ", "; }
+        list += dir.string();
+    }
+    return list;
+}
+
+/**
+ * @brief Reject a tier whose `grammar:` stem resolves to no .gbnf (gh#154).
+ * @param config Parsed engine config.
+ * @param search_dirs Directories from grammar_search_paths().
+ * @return Empty string on success, else an actionable message.
+ * @req REQ-INFER-007
+ * @req REQ-CFG-006
+ * @version 2.13.0
+ */
+std::string validate_tier_grammars(
+    const ParsedConfig& config,
+    const std::vector<std::filesystem::path>& search_dirs)
+{
+    std::string err;
+    for (const auto& [name, tier] : config.models.tiers) {
+        if (!tier.grammar.has_value()) { continue; }
+        // The registry keys on the file stem: "compactor.gbnf" and
+        // "compactor" name the same grammar (normalize_grammar_key).
+        const auto stem = tier.grammar->stem().string();
+        if (stem.empty() || grammar_stem_resolves(stem, search_dirs)) {
+            continue;
+        }
+        err = "models." + name + ": grammar '" + stem
+            + "' does not resolve — no " + stem + ".gbnf in any grammar "
+              "search path (" + describe_search_dirs(search_dirs)
+            + "). Before v2.13.0 this decoded UNCONSTRAINED with only a "
+              "warning, which is indistinguishable from a constrained run "
+              "in the output. Add the file, or drop the tier's grammar key.";
+        break;
+    }
+    return err;
+}
+
+/**
  * @brief Validate the full ParsedConfig.
  * @param config Full config to validate.
  * @param[out] warnings Non-fatal warnings.

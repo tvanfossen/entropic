@@ -388,7 +388,7 @@ std::string load_identity(
  * @param data_dir Bundled data directory.
  * @param[out] body Output constitution text.
  * @return Empty string on success, error on failure.
- * @version 1.8.2
+ * @version 2.13.0
  * @utility
  */
 std::string load_constitution(
@@ -419,6 +419,12 @@ std::string load_constitution(
         if (err.empty()) {
             body = std::move(result.body);
             s_log->info("Constitution loaded from {}", path.string());
+        } else {
+            // gh#163: report the failure where the state is known. Every
+            // caller used to drop this string, so a rejected constitution
+            // was indistinguishable from one that was never configured.
+            body.clear();
+            s_log->warn("Constitution not loaded: {}", err);
         }
     }
 
@@ -471,19 +477,70 @@ static std::string load_app_context_file(
 }
 
 /**
+ * @brief Classify the app_context configuration.
+ * @param app_context_path Configured path (nullopt = none).
+ * @param app_context_content Inline text (nullopt = none).
+ * @param disabled true when `app_context: false`.
+ * @return The state this configuration is in.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+AppContextState classify_app_context(
+    const std::optional<std::filesystem::path>& app_context_path,
+    const std::optional<std::string>& app_context_content,
+    bool disabled)
+{
+    // gh#141: inline content wins over a path, but NOT over an explicit
+    // opt-out — `app_context: false` still means off, whatever else is set.
+    AppContextState state = AppContextState::NOT_CONFIGURED;
+    if (disabled) {
+        state = AppContextState::DISABLED;
+    } else if (app_context_content.has_value()) {
+        state = AppContextState::INLINE;
+    } else if (app_context_path.has_value()) {
+        state = AppContextState::FROM_PATH;
+    }
+    return state;
+}
+
+/**
+ * @brief The log message describing one app_context state.
+ * @param state State to describe.
+ * @return A static message, distinct per state.
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+const char* app_context_state_message(AppContextState state)
+{
+    // gh#163: three of these four states used to share one line,
+    // "App context disabled (not configured)" — which told a consumer
+    // whose path had been REJECTED that they had never configured one.
+    const char* msg = "App context not configured (no `app_context` key)";
+    if (state == AppContextState::DISABLED) {
+        msg = "App context explicitly disabled (`app_context: false`)";
+    } else if (state == AppContextState::INLINE) {
+        msg = "App context supplied inline (`app_context: {content: ...}`)";
+    } else if (state == AppContextState::FROM_PATH) {
+        msg = "App context configured but rejected";
+    }
+    return msg;
+}
+
+/**
  * @brief Load app_context from inline content or a path, with tri-state resolution.
  *
  * Resolution order (gh#141): an explicit opt-out wins over everything; then
  * inline content, which is used without touching the filesystem; then a path.
+ * The state that produced no body is named in the log (gh#163).
  *
  * @param app_context_path Custom path (nullopt = none configured).
  * @param app_context_content Inline text (nullopt = none supplied).
  * @param disabled true if app_context explicitly disabled.
  * @param data_dir Bundled data directory.
- * @param[out] body Output app_context text.
+ * @param[out] body Output app_context text; cleared whenever no body loads.
  * @return Empty string on success, error on failure.
  * @req REQ-TYPE-005
- * @version 2.11.0
+ * @version 2.13.0
  * @utility
  */
 std::string load_app_context(
@@ -494,23 +551,24 @@ std::string load_app_context(
     std::string& body)
 {
     std::string err;
+    const auto state = classify_app_context(
+        app_context_path, app_context_content, disabled);
 
-    // gh#141: inline content wins over a path, but NOT over an explicit
-    // opt-out — `app_context: false` still means off, whatever else is set.
-    // Checked before the path branch so the filesystem is never touched when
-    // the caller already holds the text; that is the whole point of the
-    // feature for a consumer that cannot write the file.
-    if (!disabled && app_context_content.has_value()) {
+    if (state == AppContextState::INLINE) {
         body = *app_context_content;
-        s_log->info("App context supplied inline ({} bytes)", body.size());
-        return err;
-    }
-
-    if (disabled || !app_context_path.has_value()) {
-        s_log->info("App context disabled (not configured)");
-        body.clear();
-    } else {
+        s_log->info("{} — {} bytes",
+                    app_context_state_message(state), body.size());
+    } else if (state == AppContextState::FROM_PATH) {
         err = load_app_context_file(*app_context_path, data_dir, body);
+        if (!err.empty()) {
+            // The path was named and could not be used. Say so — this is
+            // the state the reporter was in, described as "not configured".
+            body.clear();
+            s_log->warn("{}: {}", app_context_state_message(state), err);
+        }
+    } else {
+        body.clear();
+        s_log->info("{}", app_context_state_message(state));
     }
 
     return err;
@@ -523,7 +581,7 @@ std::string load_app_context(
  * @param[out] constitution Constitution body (empty when it failed).
  * @param[out] app_context App context body (empty when it failed).
  * @req REQ-TYPE-005
- * @version 2.13.0
+ * @version 2.13.0-gh163
  */
 void load_shared_prompt_sources(
     const entropic::ParsedConfig& config,
@@ -535,18 +593,15 @@ void load_shared_prompt_sources(
     // sites. A working load announced itself ("App context loaded
     // from ..."), a failing one said nothing — the asymmetry WAS the
     // bug, and it cost a consumer twenty minutes.
-    auto con_err = load_constitution(
-        config.constitution, config.constitution_disabled,
-        data_dir, constitution);
-    if (!con_err.empty()) {
-        s_log->error("constitution ignored: {}", con_err);
-    }
-    auto ctx_err = load_app_context(
-        config.app_context, config.app_context_content,
-        config.app_context_disabled, data_dir, app_context);
-    if (!ctx_err.empty()) {
-        s_log->error("app_context ignored: {}", ctx_err);
-    }
+    //
+    // gh#163: the report now lives inside each loader, which is the only
+    // layer that knows WHICH state produced no body. Collapsing the two
+    // calls here still matters — it is one call site to keep honest
+    // instead of three.
+    load_constitution(config.constitution, config.constitution_disabled,
+                      data_dir, constitution);
+    load_app_context(config.app_context, config.app_context_content,
+                     config.app_context_disabled, data_dir, app_context);
 }
 
 /**

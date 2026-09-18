@@ -154,6 +154,54 @@ ENTROPIC_EXPORT std::string load_identity(
     ParsedIdentity& identity);
 
 /**
+ * @brief Which app_context spelling a config is using (gh#163).
+ *
+ * Four spellings, and until v2.13.0 three of them produced the SAME log
+ * line — `App context disabled (not configured)` — so a consumer whose
+ * path was rejected was told it had never been configured. The state is
+ * named here so the message can differ per state and a test can pin
+ * that it does.
+ *
+ * @version 2.13.0
+ */
+enum class AppContextState {
+    NOT_CONFIGURED,  ///< No `app_context` key at all.
+    DISABLED,        ///< `app_context: false` — an explicit opt-out.
+    INLINE,          ///< `app_context: {content: ...}` (gh#141).
+    FROM_PATH,       ///< `app_context: <path>`.
+};
+
+/**
+ * @brief Classify the app_context configuration.
+ *
+ * An explicit opt-out wins over everything, then inline content, then a
+ * path — the same precedence load_app_context() applies.
+ *
+ * @param app_context_path Configured path (nullopt = none).
+ * @param app_context_content Inline text (nullopt = none).
+ * @param disabled true when `app_context: false`.
+ * @return The state this configuration is in.
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT AppContextState classify_app_context(
+    const std::optional<std::filesystem::path>& app_context_path,
+    const std::optional<std::string>& app_context_content,
+    bool disabled);
+
+/**
+ * @brief The log message describing one app_context state.
+ *
+ * For every state but INLINE this is why app_context contributed no
+ * body; for FROM_PATH it is the prefix used when the named path was
+ * rejected, since a path that loads needs no explanation.
+ *
+ * @param state State to describe.
+ * @return A static, null-terminated message. Distinct per state.
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT const char* app_context_state_message(AppContextState state);
+
+/**
  * @brief Load constitution prompt with tri-state resolution.
  *
  * @param constitution_path Custom path (nullopt = bundled).
@@ -198,12 +246,13 @@ ENTROPIC_EXPORT std::string load_app_context(
  * gh#156: every one of the three callers that needed both bodies called
  * the two loaders and DISCARDED their error strings, so a prompt file
  * the engine could not parse showed up only as a `false` in the
- * assembly line. This is the shared entry point those callers use, so
- * there is one place the errors can be dropped and it does not.
+ * assembly line. This is the shared entry point those callers use.
  *
- * Failures are LOGGED here and the corresponding body is left empty;
- * the fatal decision belongs to validate_configured_prompts(), which
- * runs at configure time before anything expensive happens.
+ * gh#163 moved the logging INTO each loader, which is the only layer
+ * that knows which state the config was in; a failure is therefore
+ * reported whoever calls, and the corresponding body is left empty. The
+ * fatal decision belongs to validate_configured_prompts(), which runs
+ * at configure time before anything expensive happens.
  *
  * @param config Parsed engine config.
  * @param data_dir Bundled data directory.

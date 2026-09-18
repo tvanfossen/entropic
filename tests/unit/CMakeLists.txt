@@ -26,6 +26,10 @@ add_executable(entropic-config-tests
     config/validate_test.cpp
     config/loader_test.cpp
     config/app_context_content_test.cpp
+    # gh#163 (v2.13.0): does a top-level app_context path survive the layered
+    # merge, and can a consumer tell "not configured" from "turned off" from
+    # "rejected"? One log line served all three.
+    config/app_context_layering_test.cpp
     config/yaml_util_test.cpp
     config/env_overrides_test.cpp
     prompts/prompt_parse_test.cpp
@@ -469,6 +473,9 @@ add_executable(entropic-api-tests
     # v2.3.10: facade coverage gap — entropic.cpp NULL/unconfigured-handle
     # branches across the full C API surface.
     api/entropic_capi_test.cpp
+    # gh#163 (v2.13.0): app_context must arrive through all three configure
+    # doors, not just the one the loader tests open.
+    api/app_context_roundtrip_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private

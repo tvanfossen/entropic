@@ -569,15 +569,29 @@ static void apply_adapter_parse(InferenceBackend* model,
  * reporter looking in the wrong place. This is the only site that can tell the
  * difference, because it is the only one holding finish_reason.
  *
+ * gh#159: it is also the only site holding the PARSED TOOL CALLS, and it was
+ * not passing them. `apply_adapter_parse` runs before this, moving tool calls
+ * out of `content` — so a turn whose whole output was one tool call (the
+ * normal shape under `tool_call_mode: sequential`) arrived here as content
+ * empty / raw non-empty / finish "stop" and got gh#137's diagnosis verbatim,
+ * telling operators of `enable_thinking: false` tiers that an unterminated
+ * reasoning block was not converging. That fired on every tool-call turn of a
+ * session. A parsed call is not a fault, so it is reported at INFO.
+ *
  * @param result Completed generation result.
  * @req REQ-INFER-010
- * @version 2.11.0
+ * @version 2.13.0
  */
 static void warn_if_content_vanished(const GenerationResult& result) {
     const auto cause = diagnose_empty_content(
         result.content.empty(), !result.raw_content.empty(),
-        result.finish_reason);
+        result.finish_reason, !result.tool_calls.empty());
     if (cause == EmptyContentCause::not_empty) { return; }
+    if (cause == EmptyContentCause::tool_call_only) {
+        logger->info("Turn delivered {} tool call(s) and no prose. {}",
+                     result.tool_calls.size(), explain_empty_content(cause));
+        return;
+    }
     logger->warn("Turn produced {} raw chars but delivered no content. {}",
                  result.raw_content.size(), explain_empty_content(cause));
 }

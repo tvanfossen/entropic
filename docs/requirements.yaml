@@ -2866,6 +2866,27 @@
 
     adapter''s hand-rolled parser. A call naming an unknown tool is left alone.
 
+
+    Because that parse MOVES tool calls out of `content`, the post-parse
+
+    empty-content diagnosis must be told whether any were found
+
+    (diagnose_empty_content, gh#159): a turn whose whole output was a tool
+
+    call — the normal shape under `tool_call_mode: sequential` — is content
+
+    empty / raw non-empty / finish "stop", which is byte-for-byte gh#137''s
+
+    failure shape. Without that input the engine reported a well-behaved turn
+
+    as an unterminated reasoning block that was "not converging", on tiers
+
+    with `enable_thinking: false`. The parameter has no default so no caller
+
+    can omit what it knows, and a parsed call is reported at INFO, never as a
+
+    fault.
+
     '
   acceptance_criteria: 'Given a reliable (dedicated-grammar) format and a complete parse,
     Then the
@@ -2878,7 +2899,13 @@
 
     parses. Given any branch, Then the adapter''s reasoning strip runs over the
 
-    resulting content.
+    resulting content. Given empty content with at least one parsed tool call,
+
+    Then the diagnosis is tool_call_only and its message names neither a
+
+    reasoning block nor max_tokens; given the same shape with zero tool calls,
+
+    Then the gh#137 reasoning-block diagnosis is unchanged.
 
     '
   verified_by: 'TEST_CASE "gh#87 diag: multi-parameter tool call — gemma4 (dedicated
@@ -2895,10 +2922,16 @@
 
     (calls_satisfy_schema / parse_model_response have no direct CPU unit
 
-    test — see GAPS)
+    test — see GAPS);
+
+    SCENARIO "gh#159 a turn whose whole output was a tool call is not a
+
+    fault" / "gh#137 an empty turn is attributed to its real cause" —
+
+    tests/unit/inference/empty_content_diagnosis_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-011
   name: Reasoning-block markers are declared once per model family
   module: Inference Backends

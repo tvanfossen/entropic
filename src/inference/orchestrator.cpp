@@ -2731,9 +2731,33 @@ static nlohmann::json make_residency_entry(
 }
 
 /**
+ * @brief Drop one session's resident KV on every loaded tier (gh#165).
+ *
+ * Tiers may share a backend, so the same pointer is visited once.
+ *
+ * @param session_key Session whose KV to drop.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+void ModelOrchestrator::forget_session_kv(const std::string& session_key) {
+    // Outermost lock: this mutates the live llama_context's KV cells, which
+    // is precisely what a concurrent decode is reading. See the declaration
+    // for why api_mutex -> generation_mutex_ closes no cycle.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
+    std::unordered_set<const InferenceBackend*> seen;
+    for (const auto& [name, backend] : tiers_) {
+        (void)name;
+        if (!backend || !backend->is_loaded()) { continue; }
+        if (!seen.insert(backend.get()).second) { continue; }
+        backend->forget_session_kv(session_key);
+    }
+}
+
+/**
  * @brief Serialize the current VRAM residency snapshot to JSON.
+ * @return JSON object describing budget, tiers and footprints.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 std::string ModelOrchestrator::residency_snapshot_json() const {
     std::lock_guard<std::mutex> lock(swap_mutex_);

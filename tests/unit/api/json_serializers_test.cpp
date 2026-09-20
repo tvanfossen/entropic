@@ -21,7 +21,9 @@
 #include <nlohmann/json.hpp>
 
 #include <entropic/types/config.h>
+#include <entropic/types/content.h>
 #include <entropic/types/message.h>
+#include <entropic/types/messages_json.h>
 
 #include <string>
 #include <vector>
@@ -317,6 +319,99 @@ SCENARIO("serialize_adapter_list summarizes each adapter into the array",
                 REQUIRE(j[0].at("tier_name").get<std::string>() == "lead");
                 REQUIRE(j[1].at("name").get<std::string>() == "two");
                 REQUIRE(j[1].at("scale").get<float>() == 0.5f);
+            }
+        }
+    }
+}
+
+// ── gh#165: serialize_messages must be LOSSLESS (v2.13.0) ─────────────
+
+/**
+ * @brief A message carrying every field a restore has to preserve.
+ * @return Message with metadata AND multimodal content_parts.
+ * @internal
+ * @version 2.13.0
+ */
+static Message rich_message() {
+    Message m;
+    m.role = "tool";
+    m.content = "describe this";
+    m.metadata["tool_name"] = "filesystem.read";
+    m.metadata["is_context_anchor"] = "true";
+    entropic::ContentPart text;
+    text.type = entropic::ContentPartType::TEXT;
+    text.text = "describe this";
+    entropic::ContentPart image;
+    image.type = entropic::ContentPartType::IMAGE;
+    image.image_path = "/tmp/foo.png";
+    image.image_url = "https://example.invalid/foo.png";
+    image.width = 512;
+    image.height = 384;
+    m.content_parts = {text, image};
+    return m;
+}
+
+SCENARIO("gh#165: get -> set -> get is byte-identical, metadata included",
+         "[json_serializers][facade][gh165][2.13.0]") {
+    GIVEN("a conversation carrying metadata and content_parts") {
+        // gh#144 gave consumers entropic_session_context_get but no write
+        // counterpart, so a session could not survive a restart. The write
+        // is only worth having if the read is lossless: serialize_messages
+        // emitted ONLY role + content, so a restored session silently lost
+        // every tool_name (context_manager, compaction and the engine's
+        // tool-result folding all key off it) and every image part.
+        std::vector<Message> original{
+            make_msg("system", "You are terse."),
+            rich_message(),
+        };
+
+        WHEN("the conversation is serialized, parsed back and re-serialized") {
+            const std::string first =
+                facade_json::serialize_messages(original);
+            const auto restored = entropic::parse_messages_json(first.c_str());
+            const std::string second =
+                facade_json::serialize_messages(restored);
+
+            THEN("the two serializations are byte-identical") {
+                // The whole contract in one assertion: whatever a consumer
+                // stores, feeding it back reproduces it exactly.
+                CHECK(second == first);
+            }
+            AND_THEN("metadata survived the round trip") {
+                REQUIRE(restored.size() == 2);
+                CHECK(restored[1].metadata.at("tool_name")
+                      == "filesystem.read");
+                CHECK(restored[1].metadata.at("is_context_anchor") == "true");
+            }
+            AND_THEN("content_parts survived, including image geometry") {
+                REQUIRE(restored[1].content_parts.size() == 2);
+                CHECK(restored[1].content_parts[0].type
+                      == entropic::ContentPartType::TEXT);
+                CHECK(restored[1].content_parts[0].text == "describe this");
+                const auto& img = restored[1].content_parts[1];
+                CHECK(img.type == entropic::ContentPartType::IMAGE);
+                CHECK(img.image_path == "/tmp/foo.png");
+                CHECK(img.image_url == "https://example.invalid/foo.png");
+                CHECK(img.width == 512);
+                CHECK(img.height == 384);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#165: the addition is additive — plain messages are unchanged",
+         "[json_serializers][facade][gh165][2.13.0]") {
+    GIVEN("a message with no metadata and no content parts") {
+        std::vector<Message> plain{make_msg("user", "Hi")};
+
+        WHEN("it is serialized") {
+            const auto out = facade_json::serialize_messages(plain);
+
+            THEN("the emitted object is exactly role + content") {
+                // A consumer reading role/content must see no new keys for
+                // the messages it has always seen — the new fields appear
+                // only when there is something to carry.
+                CHECK(out == R"([{"content":"Hi","role":"user"}])");
             }
         }
     }

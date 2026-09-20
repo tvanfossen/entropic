@@ -19,6 +19,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <string>
+#include <vector>
 
 using namespace entropic;
 using namespace entropic::test;
@@ -190,6 +191,94 @@ SCENARIO("gh#144: a tier switch seeds the new session's own system prompt",
                 auto first = engine.messages_for("");
                 REQUIRE_FALSE(first.empty());
                 CHECK(first.front().content == "PROMPT-ONE");
+            }
+        }
+    }
+}
+
+// ── gh#165: restoring a session's conversation (v2.13.0) ──────────────
+
+SCENARIO("gh#165: a conversation can be replaced wholesale",
+         "[engine][gh165][session][2.13.0]") {
+    GIVEN("a session with history") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_active_session("repo-a");
+        engine.run_turn("alpha one");
+        REQUIRE(engine.message_count_for("repo-a") > 0);
+
+        WHEN("a stored conversation is restored over it") {
+            std::vector<Message> restored;
+            Message sys;
+            sys.role = "system";
+            sys.content = "restored prompt";
+            Message user;
+            user.role = "user";
+            user.content = "restored turn";
+            user.metadata["tool_name"] = "filesystem.read";
+            restored = {sys, user};
+
+            REQUIRE(engine.set_session_messages("repo-a", restored));
+
+            THEN("the session holds exactly what was restored") {
+                auto msgs = engine.messages_for("repo-a");
+                REQUIRE(msgs.size() == 2);
+                CHECK(msgs[0].content == "restored prompt");
+                CHECK(msgs[1].content == "restored turn");
+            }
+            AND_THEN("metadata came with it") {
+                auto msgs = engine.messages_for("repo-a");
+                REQUIRE(msgs.size() == 2);
+                CHECK(msgs[1].metadata.at("tool_name") == "filesystem.read");
+            }
+        }
+    }
+}
+
+SCENARIO("gh#165: the RUNNING session refuses replacement, others do not",
+         "[engine][gh165][session][2.13.0]") {
+    GIVEN("a run in flight on session A, with concurrency enabled") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_concurrent_sessions(true);
+
+        // The session APIs take api_mutex but NOT the run guard, so
+        // clear/drop could already mutate conversations_ mid-turn — a latent
+        // race since v2.12.0 that a write counterpart would turn into a
+        // likely one.
+        REQUIRE(engine.try_begin_turn("repo-a"));
+
+        WHEN("A's conversation is replaced") {
+            std::vector<Message> m(1);
+            m[0].role = "user";
+            m[0].content = "replacement";
+
+            THEN("it is refused — a turn is appending to that vector") {
+                CHECK_FALSE(engine.set_session_messages("repo-a", m));
+            }
+            AND_THEN("a DIFFERENT session is still replaceable mid-run") {
+                // Busy HANDLE is not the rule; busy CONVERSATION is.
+                CHECK(engine.set_session_messages("repo-b", m));
+                CHECK(engine.message_count_for("repo-b") == 1);
+            }
+        }
+
+        engine.end_turn("repo-a");
+
+        WHEN("the run finishes") {
+            std::vector<Message> m(1);
+            m[0].role = "user";
+            m[0].content = "replacement";
+
+            THEN("A is replaceable again") {
+                CHECK(engine.set_session_messages("repo-a", m));
             }
         }
     }

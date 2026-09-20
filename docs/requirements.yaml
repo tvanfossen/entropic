@@ -4934,6 +4934,106 @@
 
     '
   version: 2.13.0
+- id: REQ-LOOP-010
+  name: Session conversations are readable, writable, and losslessly round-trippable
+  module: Agent Loop
+  description: '`entropic_session_context_set(handle, session_key, messages_json)`
+
+    replaces one session''s conversation, runs NO turn and touches no model. It
+
+    accepts exactly what `entropic_session_context_get` emits, so a host can
+
+    snapshot on shutdown and restore on start — which is what gives weights
+
+    and conversations independent lifetimes alongside
+
+    `entropic_release_model` (gh#164). The only prior way to get messages in
+
+    was `entropic_run_session`, which appends and then RUNS, re-executing the
+
+    agentic loop per message including tool calls.
+
+
+    The read must therefore be LOSSLESS. `serialize_messages` emitted only
+
+    role + content, dropping `metadata` (every `tool_name` that
+
+    context_manager, compaction and the engine''s tool-result folding key
+
+    off, and every `is_context_anchor`) and `content_parts` including image
+
+    geometry. The emission is now total and ADDITIVE: the new keys appear
+
+    only when there is something to carry, and `content` stays a STRING on
+
+    every message, so a consumer reading role/content sees byte-identical
+
+    output for every message it has ever seen. Parts ride in their own
+
+    `content_parts` key rather than turning `content` into an array.
+
+
+    Replacement is refused with ENTROPIC_ERROR_ALREADY_RUNNING for the
+
+    session that is CURRENTLY RUNNING, and only that one — what must not move
+
+    under a turn is the conversation it appends to, not the handle. Readers
+
+    copy under `conversations_mutex_`; mutators hold it.
+
+
+    A restore INVALIDATES what was derived from the conversation it replaced:
+
+    the session''s resident KV tokens and its sequence slot are dropped, so
+
+    the restored history cannot decode against a prefix that history never
+
+    produced. Its next turn costs a cold prefill, which is what an
+
+    LRU-evicted session already costs.'
+  acceptance_criteria: 'Given a conversation carrying metadata and content_parts, When it is
+
+    serialized, parsed back and re-serialized, Then the two serializations
+
+    are byte-identical and metadata, image path, url, width and height all
+
+    survived.
+
+    Given a message with no metadata and no content parts, When serialized,
+
+    Then the object is exactly role + content.
+
+    Given a run in flight on session A, When A''s conversation is replaced,
+
+    Then it is refused; When a different session''s is replaced, Then it
+
+    succeeds.
+
+    Given a NULL messages_json or unparseable JSON, When set is called, Then
+
+    ENTROPIC_ERROR_INVALID_ARGUMENT and the conversation is untouched.'
+  verified_by: 'SCENARIO "gh#165: get -> set -> get is byte-identical, metadata included";
+
+    "gh#165: the addition is additive — plain messages are unchanged" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/json_serializers_test.cpp;
+
+    SCENARIO "gh#165: a conversation can be replaced wholesale";
+
+    "gh#165: the RUNNING session refuses replacement, others do not" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/session_conversation_test.cpp;
+
+    TEST_CASE "gh#165 entropic_session_context_set round-trips through the C ABI";
+
+    "gh#165 entropic_session_context_set guards its preconditions";
+
+    "gh#165 entropic_session_context_set refuses the running session" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/entropic_capi_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-MCP-001
   name: MCPServerBase holds the shared logic; concrete servers override only deltas
   module: MCP Servers and Tool Dispatch

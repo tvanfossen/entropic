@@ -287,6 +287,7 @@ entropic_run_session = _bind("entropic_run_session", ctypes.c_int, entropic_hand
 entropic_run_session_as = _bind("entropic_run_session_as", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session_streaming = _bind("entropic_run_session_streaming", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ENTROPIC_RUN_SESSION_STREAMING_ARG3_CB, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int))
 entropic_session_context_get = _bind("entropic_session_context_get", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))
+entropic_session_context_set = _bind("entropic_session_context_set", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p)
 entropic_session_context_count = _bind("entropic_session_context_count", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.POINTER(ctypes.c_size_t))
 entropic_session_context_clear = _bind("entropic_session_context_clear", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_session_drop = _bind("entropic_session_drop", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)

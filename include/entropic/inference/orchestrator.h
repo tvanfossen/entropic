@@ -534,6 +534,26 @@ public:
     std::string residency_snapshot_json() const;
 
     /**
+     * @brief Drop one session's resident KV on every loaded tier (gh#165).
+     *
+     * Called after `entropic_session_context_set` replaces a conversation, so
+     * the restored history cannot decode against the prefix the conversation
+     * it replaced left in the cache.
+     *
+     * Takes `generation_mutex_` — it touches the live `llama_context`, which
+     * a concurrent decode is using. The resulting order from the facade is
+     * `api_mutex` -> `generation_mutex_` -> `swap_mutex_`, and it does not
+     * close a cycle: gh#109 removed `api_mutex` from every run entry point,
+     * so nothing holds it while taking `generation_mutex_` from the other
+     * side.
+     *
+     * @param session_key Session whose KV to drop; `""` is the default.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    void forget_session_kv(const std::string& session_key);
+
+    /**
      * @brief Engine-tracked VRAM budget in bytes (0 = unknown).
      *
      * Sources, in priority order: `ENTROPIC_VRAM_BUDGET_BYTES`

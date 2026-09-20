@@ -829,7 +829,7 @@ public:
      * @param messages Replacement conversation.
      * @return true when the session was replaced; false when a run on that
      *         key is in flight and the conversation was left untouched.
-     * @req REQ-LOOP-001
+     * @req REQ-LOOP-010
      * @version 2.13.0
      */
     bool set_session_messages(const std::string& key,

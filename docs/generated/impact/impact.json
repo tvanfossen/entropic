@@ -17,11 +17,6 @@
         "name": "entropic_state_load",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "entropic_free_logprob_result",
-        "file": "src/facade/entropic.cpp",
-        "version": "1.9.10"
       }
     ]
   },
@@ -45,9 +40,14 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_adapter_load",
+        "name": "entropic_update_identity",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_get_identity_config",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.2"
       },
       {
         "name": "entropic_list_identities",
@@ -107,9 +107,19 @@
         "version": "2.0.6-rc16.2"
       },
       {
-        "name": "entropic_adapter_load",
+        "name": "entropic_update_identity",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_destroy_identity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_get_identity_config",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.2"
       },
       {
         "name": "entropic_list_identities",
@@ -127,9 +137,14 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_set_residency_observer",
+        "name": "entropic_get_diagnostic_prompt",
         "file": "src/facade/entropic.cpp",
-        "version": "2.2.4"
+        "version": "2.0.2"
+      },
+      {
+        "name": "entropic_speculative_compat",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.11"
       }
     ]
   },
@@ -148,6 +163,11 @@
         "version": "2.0.6-rc16.2"
       },
       {
+        "name": "entropic_get_identity_config",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.2"
+      },
+      {
         "name": "entropic_list_identities",
         "file": "src/facade/entropic.cpp",
         "version": "2.0.2"
@@ -158,9 +178,14 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_free_logprob_result",
+        "name": "entropic_get_diagnostic_prompt",
         "file": "src/facade/entropic.cpp",
-        "version": "1.9.10"
+        "version": "2.0.2"
+      },
+      {
+        "name": "entropic_speculative_compat",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.11"
       }
     ]
   },
@@ -171,11 +196,6 @@
       {
         "name": "try_begin_turn",
         "file": "include/entropic/core/engine.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "claim",
-        "file": "src/facade/engine_handle.h",
         "version": "2.13.0"
       },
       {
@@ -206,66 +226,6 @@
     ]
   },
   {
-    "req_id": "REQ-API-010",
-    "req_name": "Observer and callback slots survive configure and fire uniformly",
-    "functions": [
-      {
-        "name": "entropic_set_residency_observer",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.2.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-001",
-    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
-    "functions": [
-      {
-        "name": "parse_models_config",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-002",
-    "req_name": "Whole-block replace semantics for models and routing across layers",
-    "functions": [
-      {
-        "name": "parse_models_config",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-003",
-    "req_name": "Bundled model registry resolution \u2014 keys, selectors, and search order",
-    "functions": [
-      {
-        "name": "parse_model_config",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-CFG-005",
-    "req_name": "Per-tier knobs override global defaults without an all-or-nothing switch",
-    "functions": [
-      {
-        "name": "parse_gpu_layers",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "parse_model_config",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-COMPACT-002",
     "req_name": "Fill-gated tool-result pruning and persistent context anchors",
     "functions": [
@@ -277,22 +237,6 @@
       {
         "name": "run",
         "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-002",
-    "req_name": "Delegation lifecycle from preconditions to result fold-back",
-    "functions": [
-      {
-        "name": "build_resumed_child_context",
-        "file": "src/core/delegation.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "build_child_context",
-        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       }
     ]
@@ -324,6 +268,21 @@
     "req_name": "Identity lifecycle separates immutable static from dynamic identities",
     "functions": [
       {
+        "name": "entropic_update_identity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_destroy_identity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.0"
+      },
+      {
+        "name": "entropic_get_identity_config",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.0.2"
+      },
+      {
         "name": "entropic_list_identities",
         "file": "src/facade/entropic.cpp",
         "version": "2.0.2"
@@ -339,6 +298,11 @@
     "req_id": "REQ-INFER-002",
     "req_name": "Teardown releases every model, context and adapter handle",
     "functions": [
+      {
+        "name": "do_load_active",
+        "file": "include/entropic/inference/backend.h",
+        "version": "2.13.0"
+      },
       {
         "name": "do_load_active",
         "file": "src/inference/llama_cpp_backend.cpp",
@@ -393,6 +357,11 @@
     "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
     "functions": [
       {
+        "name": "active_tool_grammar",
+        "file": "include/entropic/inference/backend.h",
+        "version": "2.13.0"
+      },
+      {
         "name": "apply_grammar_source",
         "file": "src/inference/llama_cpp_backend.cpp",
         "version": "2.13.0"
@@ -409,6 +378,11 @@
       },
       {
         "name": "record_generation",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "generation_records",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
@@ -448,17 +422,23 @@
     ]
   },
   {
+    "req_id": "REQ-INFER-016",
+    "req_name": "Speculative decoding is gated on compatibility and must not change the output",
+    "functions": [
+      {
+        "name": "entropic_speculative_compat",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.1.11"
+      }
+    ]
+  },
+  {
     "req_id": "REQ-INFER-018",
     "req_name": "Same-prefix batch generation is gated, per-request-constrained and seq-safe",
     "functions": [
       {
         "name": "entropic_run_batch",
         "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "plan_batch_kv",
-        "file": "src/inference/batch_kv_util.h",
         "version": "2.13.0"
       }
     ]
@@ -473,19 +453,9 @@
         "version": "2.13.0"
       },
       {
-        "name": "entropic_set_residency_observer",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.2.4"
-      },
-      {
         "name": "activate_default_tier",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "log_fit_recommendation",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.11.0"
       },
       {
         "name": "resolve_auto_gpu_layers",
@@ -521,6 +491,11 @@
         "name": "announce_eviction",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
+      },
+      {
+        "name": "forget_session",
+        "file": "src/inference/session_residency.h",
+        "version": "2.13.0"
       }
     ]
   },
@@ -545,11 +520,6 @@
     "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
     "functions": [
       {
-        "name": "entropic_adapter_load",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
         "name": "preload_adapters_for_model",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
@@ -563,6 +533,17 @@
       {
         "name": "entropic_get_logprobs",
         "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-025",
+    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
+    "functions": [
+      {
+        "name": "tier_declares_vision",
+        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
     ]
@@ -585,6 +566,16 @@
         "name": "entropic_run_session",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
+      },
+      {
+        "name": "entropic_session_drop",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
+      },
+      {
+        "name": "entropic_session_list",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.12.0"
       }
     ]
   },
@@ -620,11 +611,6 @@
     "req_name": "Interrupt and pause semantics across nested loops",
     "functions": [
       {
-        "name": "RunCancelScope",
-        "file": "include/entropic/types/run_scope.h",
-        "version": "2.13.0"
-      },
-      {
         "name": "run_loop",
         "file": "src/core/engine.cpp",
         "version": "2.13.0"
@@ -648,68 +634,67 @@
         "name": "entropic_interrupt_session",
         "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
-      },
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-010",
+    "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
+    "functions": [
       {
-        "name": "current_run_cancel",
-        "file": "src/types/run_scope.cpp",
+        "name": "forget_session_kv",
+        "file": "include/entropic/inference/backend.h",
         "version": "2.13.0"
       },
       {
-        "name": "current_run_cancelled",
-        "file": "src/types/run_scope.cpp",
+        "name": "set_session_messages",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "RunCancelScope",
-        "file": "src/types/run_scope.cpp",
+        "name": "entropic_session_context_set",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "~RunCancelScope",
-        "file": "src/types/run_scope.cpp",
+        "name": "serialize_message",
+        "file": "src/facade/json_serializers.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "serialize_messages",
+        "file": "src/facade/json_serializers.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "forget_session_kv",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "forget_session_kv",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "forget_session",
+        "file": "src/inference/session_residency.h",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-LOOP-009",
-    "req_name": "Per-session-key run concurrency, opt-in, with one lock on the generation path",
+    "req_id": "REQ-SAFE-001",
+    "req_name": "Untrusted bytes are sanitized at ingress, never at egress",
     "functions": [
       {
-        "name": "plan_batch_kv",
-        "file": "src/inference/batch_kv_util.h",
+        "name": "serialize_message",
+        "file": "src/facade/json_serializers.h",
         "version": "2.13.0"
       },
       {
-        "name": "plan_disturbs_sessions",
-        "file": "src/inference/batch_kv_util.h",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-MCP-025",
-    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
-    "functions": [
-      {
-        "name": "send_request",
-        "file": "src/mcp/transport_stdio.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-TYPE-005",
-    "req_name": "Config types declare their own defaults; optional means absent, not default",
-    "functions": [
-      {
-        "name": "parse_gpu_layers",
-        "file": "src/config/loader.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "parse_model_config",
-        "file": "src/config/loader.cpp",
+        "name": "serialize_messages",
+        "file": "src/facade/json_serializers.h",
         "version": "2.13.0"
       }
     ]

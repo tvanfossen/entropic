@@ -2693,6 +2693,24 @@ void LlamaCppBackend::invalidate_resident_kv() {
 }
 
 /**
+ * @brief Drop one session's resident KV and release its slot (gh#165).
+ *
+ * @param session_key Session whose KV to drop.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+void LlamaCppBackend::forget_session_kv(const std::string& session_key) {
+    const int slot = residency_.forget_session(session_key);
+    if (slot == kNoSessionSlot) { return; }
+    if (ctx_ != nullptr) {
+        llama_memory_seq_rm(llama_get_memory(ctx_),
+                            static_cast<llama_seq_id>(slot), -1, -1);
+    }
+    logger->info("Session '{}' KV dropped from slot {} (context restored)",
+                 session_key, slot);
+}
+
+/**
  * @brief Drop EVERY slot's warm-keep record (gh#144, v2.12.0).
  *
  * For the paths that still clear the whole context unconditionally
@@ -2700,7 +2718,7 @@ void LlamaCppBackend::invalidate_resident_kv() {
  * bookkeeping thinks it does.
  * @utility
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 void LlamaCppBackend::invalidate_all_resident_kv() {
     residency_.invalidate_all();

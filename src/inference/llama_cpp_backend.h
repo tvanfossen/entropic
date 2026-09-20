@@ -166,6 +166,19 @@ public:
     }
 
     /**
+     * @brief Drop one session's resident KV and release its slot (gh#165).
+     *
+     * Removes the session's sequence cells and forgets its residency, so a
+     * restored conversation starts from a cold prefill instead of matching a
+     * prefix the conversation it replaced left behind.
+     *
+     * @param session_key Session whose KV to drop.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    void forget_session_kv(const std::string& session_key) override;
+
+    /**
      * @brief How many times the WHOLE KV cache has been cleared (gh#158).
      *
      * A deterministic counter, in the instrumentation shape #62/gh#161 and

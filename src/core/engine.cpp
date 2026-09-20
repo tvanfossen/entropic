@@ -3612,6 +3612,7 @@ std::vector<std::string> AgentEngine::session_keys() const {
  * @param key Session key.
  * @param messages Replacement conversation.
  * @return true when replaced; false when a run on that key is in flight.
+ * @req REQ-LOOP-010
  * @dg_internal
  * @version 2.13.0
  */

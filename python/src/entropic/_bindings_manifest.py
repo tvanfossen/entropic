@@ -116,6 +116,7 @@ EXPORTS = frozenset(
         "entropic_session_context_clear",
         "entropic_session_context_count",
         "entropic_session_context_get",
+        "entropic_session_context_set",
         "entropic_session_drop",
         "entropic_session_list",
         "entropic_set_attempt_boundary_cb",

@@ -520,6 +520,31 @@ protected:
         return do_load(config) && do_activate();
     }
 
+public:
+    /**
+     * @brief Drop one session's resident KV and release its slot (gh#165).
+     *
+     * Called when a session's conversation is REPLACED wholesale
+     * (`entropic_session_context_set`), so the restored history cannot decode
+     * against a prefix the conversation it replaced left in the cache. The
+     * session's next turn costs a cold prefill, which is exactly what an
+     * LRU-evicted session already costs.
+     *
+     * Default is a no-op: a backend with no per-session KV has nothing to
+     * forget, and every mock therefore needs no override (decision #32 —
+     * new methods carry a default implementation).
+     *
+     * @param session_key Session whose KV to drop; `""` is the default
+     *        session.
+     * @req REQ-LOOP-010
+     * @version 2.13.0
+     */
+    virtual void forget_session_kv(const std::string& session_key) {
+        (void)session_key;
+    }
+
+protected:
+
     /**
      * @brief Release GPU, keep CPU. Called under transition_mutex_.
      * @version 1.8.2

@@ -1178,6 +1178,51 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_context_get(
     char** messages_json);
 
 /**
+ * @brief Replace one session's conversation (gh#165, v2.13.0).
+ *
+ * The write counterpart `entropic_session_context_get` never had. Accepts
+ * exactly what that call emits, so a host can snapshot on shutdown and
+ * restore on start — which is what makes a session survive a process
+ * restart, and what makes `entropic_release_model` (gh#164) usable: weights
+ * and conversations get independent lifetimes.
+ *
+ * Replaces that session's conversation, runs NO turn and touches no model.
+ * The only way to get messages in before this was `entropic_run_session`,
+ * which appends and then RUNS — replaying a stored conversation that way
+ * re-executes the whole agentic loop per message, tool calls included.
+ *
+ * @par What is refused, and what is not
+ * Refuses `ENTROPIC_ERROR_ALREADY_RUNNING` when a run on THAT session is in
+ * flight — the conversation a turn is appending to must not be swapped under
+ * it. Every OTHER session stays mutable mid-run: a busy handle is not a
+ * reason to refuse, only a busy conversation is.
+ *
+ * @par What restoring invalidates
+ * The session's resident KV and its sequence slot are dropped, so the
+ * restored history cannot decode against a prefix the old conversation left
+ * behind. Its next turn costs a cold prefill, which is exactly what an
+ * evicted session already costs.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to replace; NULL or "" = default session.
+ * @param messages_json JSON array of message objects, in the shape
+ *        `entropic_session_context_get` emits.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL or unconfigured.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — messages_json is NULL or is
+ *           not a parseable JSON array.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — a run on that session is in
+ *           flight; the conversation was left untouched.
+ * @threadsafety Serialized per-handle.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_session_context_set(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* messages_json);
+
+/**
  * @brief Message count for one session (gh#144).
  * @param handle Engine handle.
  * @param session_key Session to count; NULL or "" = default session.

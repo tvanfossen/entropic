@@ -3245,6 +3245,103 @@ entropic_error_t entropic_session_context_get(
 }
 
 /**
+ * @brief Parse a restore payload into messages (gh#165, v2.13.0).
+ *
+ * Split out so `entropic_session_context_set` stays inside the knots
+ * returns gate, and so the parse failure has exactly one spelling.
+ *
+ * @param handle Engine handle (for last_error).
+ * @param messages_json Payload in the shape session_context_get emits.
+ * @param[out] out Parsed messages.
+ * @return true on success; false with handle->last_error set.
+ * @utility
+ * @version 2.13.0
+ */
+static bool parse_restore_payload(entropic_handle_t handle,
+                                  const char* messages_json,
+                                  std::vector<entropic::Message>& out) {
+    try {
+        out = entropic::parse_messages_json(messages_json);
+        return true;
+    } catch (const std::exception& e) {
+        handle->last_error =
+            std::string("session_context_set: malformed messages JSON: ")
+            + e.what();
+        s_log->error("{}", handle->last_error);
+        return false;
+    }
+}
+
+/**
+ * @brief Parse, replace and invalidate for entropic_session_context_set.
+ *
+ * Runs no turn and touches no model. Refuses only the session that is
+ * RUNNING; every other session stays mutable mid-run, because what must not
+ * move under a turn is the conversation it appends to, not the handle.
+ *
+ * On success the session's resident KV is dropped, so the restored history
+ * cannot decode against a prefix the conversation it replaced left behind.
+ *
+ * @param handle Engine handle (validated by the caller).
+ * @param key Session to replace; "" = default.
+ * @param messages_json JSON array of message objects.
+ * @return ENTROPIC_OK, INVALID_ARGUMENT, or ALREADY_RUNNING.
+ * @utility
+ * @version 2.13.0
+ */
+static entropic_error_t session_context_set_inner(
+    entropic_handle_t handle,
+    const std::string& key,
+    const char* messages_json) {
+    std::vector<entropic::Message> msgs;
+    if (!parse_restore_payload(handle, messages_json, msgs)) {
+        return ENTROPIC_ERROR_INVALID_ARGUMENT;
+    }
+    if (!handle->engine->set_session_messages(key, std::move(msgs))) {
+        handle->last_error =
+            "session_context_set: a run on session '" + key
+            + "' is in flight";
+        return ENTROPIC_ERROR_ALREADY_RUNNING;
+    }
+    // Whatever the old conversation left resident is now a prefix of a
+    // history that no longer exists. Warm-keep would still be correct (it
+    // matches TOKENS, and re-decodes the divergent tail), but the gate is
+    // token equality rather than conversation identity — so the restore is
+    // made correct by construction instead of by that argument.
+    if (handle->orchestrator) {
+        handle->orchestrator->forget_session_kv(key);
+    }
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Replace one session's conversation — see entropic.h (gh#165).
+ *
+ * Front validation only; the work is in session_context_set_inner, split
+ * out for the knots returns gate.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session to replace; NULL = default.
+ * @param messages_json JSON array of message objects.
+ * @return ENTROPIC_OK, INVALID_ARGUMENT, or ALREADY_RUNNING.
+ * @req REQ-LOOP-010
+ * @version 2.13.0
+ */
+entropic_error_t entropic_session_context_set(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* messages_json) {
+    if (!handle || !handle->engine || !messages_json) {
+        return (handle != nullptr && handle->engine != nullptr)
+            ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_INVALID_HANDLE;
+    }
+    entropic::HandleApiLock lock(handle);
+    return session_context_set_inner(
+        handle, session_key != nullptr ? session_key : "", messages_json);
+}
+
+/**
  * @brief Message count for one session (gh#144, v2.12.0).
  * @param handle Engine handle.
  * @param session_key Session to count; NULL or "" = default session.

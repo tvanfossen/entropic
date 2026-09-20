@@ -365,6 +365,13 @@ set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
 add_model_test(test-gh158-concurrent test_gh158_concurrent_sessions.cpp)
 set_tests_properties(model/test-gh158-concurrent PROPERTIES TIMEOUT 1200)
 
+# gh#165 (v2.13.0): a restored conversation must actually drive the next
+# turn — over a real prefill, and with what the replaced conversation left
+# resident invalidated. Also the gh#164 pairing: release the weights, keep
+# the conversation.
+add_model_test(test-gh165-restore test_gh165_session_restore.cpp)
+set_tests_properties(model/test-gh165-restore PROPERTIES TIMEOUT 900)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)

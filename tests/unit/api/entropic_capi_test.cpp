@@ -4098,3 +4098,73 @@ TEST_CASE("gh#158 interrupt_session on a NULL handle is rejected",
     CHECK(entropic_interrupt_session(nullptr, "x")
           == ENTROPIC_ERROR_INVALID_HANDLE);
 }
+
+TEST_CASE("gh#165 entropic_session_context_set round-trips through the C ABI",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    // The whole point of the pair: snapshot on shutdown, restore on start.
+    // Before v2.13.0 there was no write counterpart at all, so a host that
+    // stopped the engine to free VRAM (gh#164) lost every conversation.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    const char* stored =
+        R"([{"content":"You are terse.","role":"system"},)"
+        R"({"content":"ls","metadata":{"tool_name":"bash.run"},"role":"tool"}])";
+
+    REQUIRE(entropic_session_context_set(h, "repo-a", stored) == ENTROPIC_OK);
+
+    char* out = nullptr;
+    REQUIRE(entropic_session_context_get(h, "repo-a", &out) == ENTROPIC_OK);
+    REQUIRE(out != nullptr);
+    const std::string read_back = out;
+    entropic_free(out);
+
+    // Byte-identical: what the host stored is what it gets back, metadata
+    // included. A lossy serializer would drop tool_name here — the key
+    // context_manager, compaction and tool-result folding all read.
+    CHECK(read_back == stored);
+
+    // Another session is untouched by the restore.
+    size_t other = 99;
+    REQUIRE(entropic_session_context_count(h, "repo-b", &other)
+            == ENTROPIC_OK);
+    CHECK(other == 0);
+}
+
+TEST_CASE("gh#165 entropic_session_context_set guards its preconditions",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    CHECK(entropic_session_context_set(nullptr, "k", "[]")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    CHECK(entropic_session_context_set(h, "k", nullptr)
+          == ENTROPIC_ERROR_INVALID_ARGUMENT);
+    // Malformed JSON is an argument error, not a crash and not a silent
+    // "restored nothing".
+    CHECK(entropic_session_context_set(h, "k", "{not json")
+          == ENTROPIC_ERROR_INVALID_ARGUMENT);
+    // A NULL key means the default session, matching every sibling.
+    CHECK(entropic_session_context_set(h, nullptr, "[]") == ENTROPIC_OK);
+}
+
+TEST_CASE("gh#165 entropic_session_context_set refuses the running session",
+          "[v2.13.0][entropic_capi][session][gh165]") {
+    // The session APIs take api_mutex but not the run guard, so clear/drop
+    // could already mutate conversations_ mid-turn. A write counterpart
+    // makes that latent race a likely one, so the running key is refused —
+    // and only the running key.
+    CreatedOnlyHandle h;
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+    h.h->engine->set_concurrent_sessions(true);
+    REQUIRE(h.h->engine->try_begin_turn("busy"));
+
+    CHECK(entropic_session_context_set(h, "busy", "[]")
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+    CHECK(entropic_session_context_set(h, "idle", "[]") == ENTROPIC_OK);
+
+    h.h->engine->end_turn("busy");
+    CHECK(entropic_session_context_set(h, "busy", "[]") == ENTROPIC_OK);
+}

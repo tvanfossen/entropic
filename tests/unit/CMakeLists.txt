@@ -97,6 +97,8 @@ add_executable(entropic-inference-tests
     inference/warm_keep_util_test.cpp
     # gh#144 (v2.12.0): pure session-pool geometry derivation.
     inference/session_pool_util_test.cpp
+    # gh#158 (v2.13.0): a batch must not wipe another session's KV.
+    inference/batch_kv_util_test.cpp
     # gh#144 (v2.12.0): per-session KV residency.
     inference/session_residency_test.cpp
     # v2.12.0: oversized-model GPU/CPU split from actual free VRAM.

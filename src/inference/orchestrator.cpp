@@ -783,13 +783,16 @@ static void log_orchestration(const GenerationResult& result,
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
     const GenerationParams& params,
     const std::string& tier_name)
 {
+    // gh#158 (v2.13.0): one lock, outermost on the generation path.
+    // See `generation_mutex_` in orchestrator.h for the full order.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
     auto t_start = now();
 
     // Route if no explicit tier
@@ -838,7 +841,7 @@ GenerationResult ModelOrchestrator::generate(
  * other overload — one rule, every entry point.
  *
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -846,6 +849,9 @@ GenerationResult ModelOrchestrator::generate(
     std::atomic<bool>& cancel,
     const std::string& tier_name)
 {
+    // gh#158 (v2.13.0): one lock, outermost on the generation path.
+    // See `generation_mutex_` in orchestrator.h for the full order.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
     auto t_start = now();
 
     std::string selected = tier_name;
@@ -917,7 +923,7 @@ const std::string& batch_arm_tier(const std::vector<std::string>& tiers,
  * half-constrained.
  *
  * @dg_internal
- * @version 2.13.0 [reviewed]
+ * @version 2.13.0
  */
 std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     const std::vector<std::vector<Message>>& messages_list,
@@ -925,6 +931,9 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     const std::vector<std::string>& tiers,
     std::atomic<bool>& cancel)
 {
+    // gh#158 (v2.13.0): one lock, outermost on the generation path.
+    // See `generation_mutex_` in orchestrator.h for the full order.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
     const std::size_t n = messages_list.size();
     const std::string lead =
         (tiers.empty() || tiers[0].empty()) ? "default" : tiers[0];
@@ -1033,7 +1042,7 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  * @req REQ-INFER-005
  * @req REQ-INFER-008
  * @req REQ-INFER-007
- * @version 2.13.0 [reviewed]
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -1042,6 +1051,9 @@ GenerationResult ModelOrchestrator::generate_streaming(
     std::atomic<bool>& cancel,
     const std::string& tier_name)
 {
+    // gh#158 (v2.13.0): one lock, outermost on the generation path.
+    // See `generation_mutex_` in orchestrator.h for the full order.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
     std::string selected = tier_name.empty() ? route(messages) : tier_name;
 
     // gh#154: refuse an unregistered tier grammar before the model is
@@ -1165,11 +1177,16 @@ std::string ModelOrchestrator::route(const std::vector<Message>& messages) {
  *         selected it; ("","") when the router slot is not loaded; and
  *         (default_tier_, "") when the router emitted no mapped digit.
  * @req REQ-INFER-020
- * @version 2.8.1
+ * @version 2.13.0
  */
 std::pair<std::string, std::string> ModelOrchestrator::classify_task(
     const std::vector<Message>& messages)
 {
+    // gh#158 (v2.13.0): the router decodes, so this is a generation entry
+    // point and takes the same outermost lock. Reached from `route()` inside
+    // an already-locked `generate*`, which is exactly why the lock is
+    // recursive — see `generation_mutex_` in orchestrator.h.
+    std::lock_guard<std::recursive_mutex> gen_lock(generation_mutex_);
     std::string user_msg = extract_latest_user_message(messages);
 
     GenerationParams router_params;

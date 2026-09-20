@@ -4823,6 +4823,117 @@
 
     '
   version: 2.10.4
+- id: REQ-LOOP-009
+  name: Per-session-key run concurrency, opt-in, with one lock on the generation path
+  module: Agent Loop
+  description: 'The run guard is scoped to a SESSION KEY, not to the handle. A second
+
+    run on the SAME key is always ENTROPIC_ERROR_ALREADY_RUNNING — the two
+
+    would share one conversation. A run on a DIFFERENT key proceeds
+
+    concurrently only when `concurrent_sessions: true`; off (the shipped
+
+    default) any second run is refused and v2.12.0 semantics hold exactly.
+
+
+    Concurrency is opt-in because per-key runs are safe only once every piece
+
+    of per-handle mutable state a turn touches is per-run or locked. Per-run:
+
+    the interrupt token, the session binding, the loop context, the cancel
+
+    token published to the run''s own thread. Locked: `conversations_` (its
+
+    own mutex), the run registry (`runs_mutex_`, held for O(1) map operations
+
+    and NEVER across a decode, which is what keeps gh#109''s property true),
+
+    and the whole generation path.
+
+
+    ONE lock serializes generation: `ModelOrchestrator::generation_mutex_`,
+
+    recursive, taken at the five generate entry points and nowhere else.
+
+    Order: generation_mutex_ -> swap_mutex_ / records_mutex_ -> the backend''s
+
+    transition_mutex_ / mtp_mutex_. It cannot be inverted because no holder of
+
+    an inner lock calls a generate entry point; `get_model` releases
+
+    `swap_mutex_` before returning.
+
+
+    `entropic_interrupt` means every run; `entropic_interrupt_session` means
+
+    one, and deliberately does not trip the handle-wide external-transport
+
+    latch — that would abort another session''s in-flight MCP call (gh#150''s
+
+    failure mode). The interrupted run''s own tool call still aborts, because
+
+    the run publishes its cancel token to its own thread (`RunCancelScope`)
+
+    and the transport polls it per request.
+
+
+    A same-prefix batch owns only its own temporary sequences and clears only
+
+    those: it may not clear the whole KV cache, and no arm may land on a
+
+    sequence a session holds. Delegated children inherit the parent''s session
+
+    key.'
+  acceptance_criteria: 'Given per-session concurrency enabled and a run in flight on key A,
+
+    When a second run claims A, Then it is refused; When a run claims B,
+
+    Then it proceeds and both are counted active.
+
+    Given the shipped default, When a run is in flight on any key, Then a
+
+    run on any other key is refused.
+
+    Given two concurrent runs, When one session is interrupted by key, Then
+
+    only that run carries the interrupt; When the handle-wide interrupt
+
+    fires, Then both do.
+
+    Given a session pool, When a same-prefix batch is planned, Then no arm
+
+    uses a sequence below the session range and the plan does not clear the
+
+    whole cache.'
+  verified_by: 'SCENARIO "gh#158: the run guard is scoped to the session key";
+
+    "gh#158: concurrency is opt-in — off, the handle still serializes";
+
+    "gh#158: eight threads racing two keys yield exactly two winners";
+
+    "gh#158: interrupt_session stops exactly one run" —
+
+    /home/tvanfossen/Projects/entropic/tests/concurrency/test_thread_safety.cpp;
+
+    SCENARIO "gh#158: a batch never writes a sequence a session owns";
+
+    "gh#158: a batch never clears the whole KV cache";
+
+    "gh#158: the single-session default is unchanged" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/inference/batch_kv_util_test.cpp;
+
+    TEST_CASE "gh#158 entropic_interrupt_session targets exactly one run" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/entropic_capi_test.cpp;
+
+    SCENARIO "gh#158: two concurrent sessions do not bleed into each other" —
+
+    /home/tvanfossen/Projects/entropic/tests/model/test_gh158_concurrent_sessions.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-MCP-001
   name: MCPServerBase holds the shared logic; concrete servers override only deltas
   module: MCP Servers and Tool Dispatch

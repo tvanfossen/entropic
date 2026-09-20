@@ -4062,3 +4062,39 @@ TEST_CASE("gh#164 entropic_release_model refuses to unload mid-turn",
     h.h->engine->end_turn();
     CHECK(entropic_release_model(h, nullptr) == ENTROPIC_OK);
 }
+
+TEST_CASE("gh#158 entropic_interrupt_session targets exactly one run",
+          "[v2.13.0][entropic_capi][concurrency][gh158]") {
+    // `entropic_interrupt` means every run on the handle; this means that
+    // one. Against v2.12.0 the call did not exist and a host serving two
+    // clients could only cancel both or neither.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+    h.h->engine->set_concurrent_sessions(true);
+
+    REQUIRE(h.h->engine->try_begin_turn("alpha"));
+    REQUIRE(h.h->engine->try_begin_turn("bravo"));
+
+    CHECK(entropic_interrupt_session(h, "alpha") == ENTROPIC_OK);
+    CHECK(h.h->engine->session_interrupted("alpha"));
+    CHECK_FALSE(h.h->engine->session_interrupted("bravo"));
+
+    // A session with no run in flight is told so rather than silently OK'd.
+    CHECK(entropic_interrupt_session(h, "nobody")
+          == ENTROPIC_ERROR_NOT_RUNNING);
+
+    // The handle-wide call still means ALL runs.
+    CHECK(entropic_interrupt(h) == ENTROPIC_OK);
+    CHECK(h.h->engine->session_interrupted("bravo"));
+
+    h.h->engine->end_turn("alpha");
+    h.h->engine->end_turn("bravo");
+}
+
+TEST_CASE("gh#158 interrupt_session on a NULL handle is rejected",
+          "[v2.13.0][entropic_capi][concurrency][gh158]") {
+    CHECK(entropic_interrupt_session(nullptr, "x")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+}

@@ -358,6 +358,13 @@ set_tests_properties(model/test-gh96-warmkeep-oracle PROPERTIES TIMEOUT 600)
 add_model_test(test-gh97-hybrid-cache test_gh97_hybrid_cache.cpp)
 set_tests_properties(model/test-gh97-hybrid-cache PROPERTIES TIMEOUT 300)
 
+# gh#158 (v2.13.0): the EMERGENT multi-turn test for per-session concurrency.
+# Two sessions on two threads through the real C ABI, plus the batch KV
+# counter and a hybrid-arch (qwen35moe) desync gate. Interleaving cannot
+# catch what this is for — see the file header.
+add_model_test(test-gh158-concurrent test_gh158_concurrent_sessions.cpp)
+set_tests_properties(model/test-gh158-concurrent PROPERTIES TIMEOUT 1200)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)

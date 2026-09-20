@@ -16,6 +16,8 @@
 #include <entropic/inference/throughput_tracker.h>
 #include <entropic/mcp/mcp_key_set.h>
 #include <entropic/core/hook_registry.h>
+#include <entropic/core/engine.h>
+#include "mock_inference.h"
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
@@ -385,5 +387,133 @@ SCENARIO("HookRegistry fire_info from multiple threads",
                         kThreads * kIterations);
             }
         }
+    }
+}
+
+// ── gh#158: per-session-key run concurrency (v2.13.0) ───
+
+/**
+ * @brief Build an engine over a mock inference interface.
+ * @param iface Mock interface.
+ * @return Engine bound to it.
+ * @utility
+ * @version 2.13.0
+ */
+static entropic::AgentEngine make_session_engine(
+    entropic::InferenceInterface& iface) {
+    static entropic::LoopConfig lc;
+    static entropic::CompactionConfig cc;
+    return entropic::AgentEngine(iface, lc, cc);
+}
+
+SCENARIO("gh#158: the run guard is scoped to the session key",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine with per-session concurrency enabled") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        WHEN("session A claims a turn") {
+            REQUIRE(engine.try_begin_turn("A"));
+
+            THEN("a second claim on A is refused") {
+                CHECK_FALSE(engine.try_begin_turn("A"));
+            }
+            AND_THEN("a claim on B proceeds concurrently") {
+                CHECK(engine.try_begin_turn("B"));
+                CHECK(engine.active_run_count() == 2);
+                engine.end_turn("B");
+            }
+            engine.end_turn("A");
+            AND_THEN("releasing A leaves nothing running") {
+                CHECK(engine.active_run_count() == 0);
+                CHECK_FALSE(engine.is_running());
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: concurrency is opt-in — off, the handle still serializes",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine left at the shipped default") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+
+        WHEN("session A claims a turn") {
+            REQUIRE(engine.try_begin_turn("A"));
+
+            THEN("a DIFFERENT key is refused too — v2.12.0 semantics") {
+                CHECK_FALSE(engine.try_begin_turn("B"));
+            }
+            engine.end_turn("A");
+        }
+    }
+}
+
+SCENARIO("gh#158: eight threads racing two keys yield exactly two winners",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("an engine with per-session concurrency enabled") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        std::atomic<int> winners{0};
+        std::atomic<bool> go{false};
+
+        WHEN("four threads claim 'A' and four claim 'B' simultaneously") {
+            std::vector<std::thread> threads;
+            for (int i = 0; i < 8; ++i) {
+                threads.emplace_back([&, i] {
+                    while (!go.load()) { /* tighten the race */ }
+                    if (engine.try_begin_turn(i < 4 ? "A" : "B")) {
+                        winners.fetch_add(1);
+                    }
+                });
+            }
+            go.store(true);
+            for (auto& t : threads) { t.join(); }
+
+            THEN("exactly one per key wins") {
+                CHECK(winners.load() == 2);
+                CHECK(engine.active_run_count() == 2);
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: interrupt_session stops exactly one run",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("two concurrent runs, A and B") {
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        REQUIRE(engine.try_begin_turn("A"));
+        REQUIRE(engine.try_begin_turn("B"));
+
+        WHEN("A is interrupted by key") {
+            engine.interrupt_session("A");
+
+            THEN("only A's run carries the interrupt") {
+                CHECK(engine.session_interrupted("A"));
+                CHECK_FALSE(engine.session_interrupted("B"));
+            }
+        }
+
+        WHEN("the handle-wide interrupt fires") {
+            engine.interrupt();
+
+            THEN("both runs carry it") {
+                CHECK(engine.session_interrupted("A"));
+                CHECK(engine.session_interrupted("B"));
+            }
+        }
+
+        engine.end_turn("A");
+        engine.end_turn("B");
     }
 }

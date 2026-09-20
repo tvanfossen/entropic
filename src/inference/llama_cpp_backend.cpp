@@ -20,6 +20,7 @@
 #include "llama_cpp_sampler.h"
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
+#include "batch_kv_util.h"   // gh#158: batch sequence plan
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 #include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
@@ -1779,7 +1780,7 @@ std::unique_ptr<Sampler> LlamaCppBackend::create_sampler(
  * @param tokens Input token sequence.
  * @return true on success.
  * @dg_internal
- * @version 2.12.0-rc1
+ * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
     // gh#144 (v2.12.0): clear only this session's sequence when a pool is
@@ -1791,6 +1792,8 @@ bool LlamaCppBackend::run_prefill(const std::vector<llama_token>& tokens) {
         llama_memory_seq_rm(llama_get_memory(ctx_),
                             static_cast<llama_seq_id>(active_slot_), -1, -1);
     } else {
+        // gh#158: instrumented, see kv_full_clear_count().
+        ++kv_full_clear_count_;
         llama_memory_clear(llama_get_memory(ctx_), true);
     }
 
@@ -2009,18 +2012,30 @@ static void fill_batch_cell(llama_batch& b, int k, llama_token tok,
  * @brief Build per-request sampler chains + KV sequence ids (gh#98).
  * @return false if any sampler chain could not be built.
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::prepare_batch_seqs(
     std::vector<BatchSeq>& seqs,
     const std::vector<GenerationParams>& params) {
+    // gh#158 (v2.13.0): EVERY arm gets a temp sequence, arm 0 included. It
+    // used to take sequence 0 — which is a SESSION slot — so a batch wrote
+    // over whatever session slot 0 held before it had cleared anything at
+    // all. The plan below then refuses any id that would still land inside
+    // the session range.
+    std::vector<int> minted;
+    minted.reserve(seqs.size());
     for (std::size_t i = 0; i < seqs.size(); ++i) {
         seqs[i].sampler = create_sampler(params[i]);
         auto* ls = dynamic_cast<LlamaCppSampler*>(seqs[i].sampler.get());
         if (ls == nullptr) { return false; }
         seqs[i].chain = ls->native_chain();
-        seqs[i].seq_id = (i == 0) ? 0 : allocate_temp_seq_id();
         seqs[i].max_tokens = params[i].max_tokens;
+        minted.push_back(static_cast<int>(allocate_temp_seq_id()));
+    }
+    const auto plan = plan_batch_kv(
+        seqs.size(), derive_pool_geometry(config()).temp_seq_base, minted);
+    for (std::size_t i = 0; i < seqs.size() && i < plan.seq_ids.size(); ++i) {
+        seqs[i].seq_id = static_cast<llama_seq_id>(plan.seq_ids[i]);
     }
     return true;
 }
@@ -2028,17 +2043,22 @@ bool LlamaCppBackend::prepare_batch_seqs(
 /**
  * @brief Prefill the shared prefix into seq 0 and seq_cp it to the others.
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::prefill_shared_and_fanout(
     std::vector<BatchSeq>& seqs, const std::vector<llama_token>& seq0,
     std::size_t shared) {
     std::vector<llama_token> prefix(
         seq0.begin(), seq0.begin() + static_cast<long>(shared));
-    if (!decode_tokens_from(prefix, 0)) { return false; }  // into seq 0
+    // gh#158: into the batch's OWN lead sequence, never into `active_slot_`
+    // (which decode_tokens_from targets) and never into sequence 0.
+    const llama_seq_id lead = seqs[0].seq_id;
+    if (!decode_tokens_into_slot(prefix, 0, static_cast<int>(lead))) {
+        return false;
+    }
     auto* mem = llama_get_memory(ctx_);
     for (std::size_t i = 1; i < seqs.size(); ++i) {
-        llama_memory_seq_cp(mem, 0, seqs[i].seq_id, 0,
+        llama_memory_seq_cp(mem, lead, seqs[i].seq_id, 0,
                             static_cast<llama_pos>(shared));
     }
     for (auto& s : seqs) { s.pos = static_cast<int>(shared); }
@@ -2162,11 +2182,17 @@ std::vector<GenerationResult> LlamaCppBackend::build_batch_results(
 /**
  * @brief Release every batch sequence's temp seq_id (seq 0 excluded, gh#98).
  * @dg_internal
- * @version 2.8.0
+ * @version 2.13.0
  */
 void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
-    for (std::size_t i = 1; i < seqs.size(); ++i) {
-        if (seqs[i].seq_id != 0) { release_temp_seq_id(seqs[i].seq_id); }
+    // gh#158 (v2.13.0): arm 0 now holds a temp id too (it used to be hard
+    // sequence 0, a session slot), so every arm is released — and each one's
+    // cells are dropped, which is what replaces the whole-cache clear.
+    auto* mem = ctx_ != nullptr ? llama_get_memory(ctx_) : nullptr;
+    for (auto& s : seqs) {
+        if (s.seq_id == 0) { continue; }
+        if (mem != nullptr) { llama_memory_seq_rm(mem, s.seq_id, -1, -1); }
+        release_temp_seq_id(s.seq_id);
     }
 }
 
@@ -2179,7 +2205,7 @@ void LlamaCppBackend::release_temp_seqs(std::vector<BatchSeq>& seqs) {
  * prefilled once); `last_gen_decode_calls_` holds the batched step count.
  *
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
     const std::vector<std::vector<llama_token>>& toks,
@@ -2197,8 +2223,12 @@ std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
     int max_steps = 0;
     for (const auto& p : params) { max_steps = std::max(max_steps, p.max_tokens); }
 
-    llama_memory_clear(llama_get_memory(ctx_), true);
-    invalidate_all_resident_kv();
+    // gh#158 (v2.13.0): this used to open with
+    // `llama_memory_clear(mem, true)` + `invalidate_all_resident_kv()` — the
+    // WHOLE cache, so a batch on session A wiped session B's resident prefix
+    // and B's next turn paid a silent cold prefill. The batch now owns only
+    // its own temp sequences and drops exactly those in release_temp_seqs,
+    // so no session slot is touched at either end.
     last_prefill_tokens_ = 0;
     last_gen_decode_calls_ = 0;
 
@@ -2210,7 +2240,6 @@ std::vector<GenerationResult> LlamaCppBackend::run_batched_decode(
                   : std::vector<GenerationResult>(
                         n, batch_error_result("batch prefill"));
     release_temp_seqs(seqs);
-    invalidate_all_resident_kv();
     logger->info("gh#98 batch: requests={} prefix.tokens_shared={} "
                  "prefix.tokens_saved={} total_prefill_tokens={} gen_decodes={}",
                  n, shared, shared * (n - 1), last_prefill_tokens_,
@@ -2836,13 +2865,14 @@ std::vector<Message> substitute_image_markers(
  * stays with the caller (mtmd_tokenize borrows for the call).
  *
  * @dg_internal
- * @version 2.1.8
+ * @version 2.13.0
  */
 entropic_error_t LlamaCppBackend::mtmd_prefill(
     const std::string& prompt,
     const std::vector<::mtmd_bitmap*>& bitmaps,
     std::string& err_msg)
 {
+    ++kv_full_clear_count_;  // gh#158: see kv_full_clear_count()
     llama_memory_clear(llama_get_memory(ctx_), true);
     ::mtmd_input_text mt{prompt.c_str(), true, true};
     auto* chunks = mtmd_input_chunks_init();

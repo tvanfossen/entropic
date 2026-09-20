@@ -84,6 +84,7 @@ EXPORTS = frozenset(
         "entropic_handle_t",
         "entropic_identity_count",
         "entropic_interrupt",
+        "entropic_interrupt_session",
         "entropic_list_identities",
         "entropic_list_mcp_keys",
         "entropic_list_mcp_servers",

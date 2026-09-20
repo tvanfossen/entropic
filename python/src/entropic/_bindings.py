@@ -272,6 +272,7 @@ entropic_set_stream_observer = _bind("entropic_set_stream_observer", ctypes.c_in
 entropic_set_state_observer = _bind("entropic_set_state_observer", ctypes.c_int, entropic_handle_t, STATE_OBSERVER_CB, ctypes.c_void_p)
 entropic_set_critique_callbacks = _bind("entropic_set_critique_callbacks", ctypes.c_int, entropic_handle_t, CRITIQUE_START_CB, CRITIQUE_END_CB, ctypes.c_void_p)
 entropic_interrupt = _bind("entropic_interrupt", ctypes.c_int, entropic_handle_t)
+entropic_interrupt_session = _bind("entropic_interrupt_session", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_queue_user_message = _bind("entropic_queue_user_message", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_user_message_queue_depth = _bind("entropic_user_message_queue_depth", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_size_t))
 entropic_clear_user_message_queue = _bind("entropic_clear_user_message_queue", ctypes.c_int, entropic_handle_t)

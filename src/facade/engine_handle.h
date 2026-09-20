@@ -198,9 +198,16 @@ private:
  *
  * Usage at every run entry point:
  * @code
- *   HandleTurnGuard turn(handle);
- *   if (!turn.claimed()) { return ENTROPIC_ERROR_ALREADY_RUNNING; }
+ *   HandleTurnGuard turn(handle, session_key);  // key optional; "" = default
+ *   if (!turn.claim()) { return ENTROPIC_ERROR_ALREADY_RUNNING; }
  * @endcode
+ *
+ * gh#158 (v2.13.0): the claim is scoped to a SESSION KEY. The keyed run
+ * entry points pass theirs; the unkeyed ones claim the default session,
+ * which is what they have always effectively done. Whether a second key may
+ * proceed concurrently is the engine's decision (`concurrent_sessions`), not
+ * the guard's — the guard only makes sure the key it claims is the key it
+ * releases.
  *
  * Holding the claim across the WHOLE entry point — not just the engine call —
  * is the point: the facade serialises results out of the same conversation
@@ -226,16 +233,18 @@ public:
      * @param h Engine handle, possibly null.
      * @version 2.12.0
      */
-    explicit HandleTurnGuard(entropic_handle_t h)
+    explicit HandleTurnGuard(entropic_handle_t h,
+                             const char* session_key = nullptr)
         : engine_(h != nullptr ? h->engine.get() : nullptr),
-          log_scope_(h != nullptr ? h->log_id : 0) {}
+          log_scope_(h != nullptr ? h->log_id : 0),
+          key_(session_key != nullptr ? session_key : "") {}
 
     /**
      * @brief Release the turn if this guard claimed it.
-     * @version 2.12.0
+     * @version 2.13.0
      */
     ~HandleTurnGuard() {
-        if (claimed_) { engine_->end_turn(); }
+        if (claimed_) { engine_->end_turn(key_); }
     }
 
     HandleTurnGuard(const HandleTurnGuard&) = delete;
@@ -246,14 +255,22 @@ public:
      * @return true when this guard now owns the turn; false when another
      *         turn is already in flight on this handle.
      * @req REQ-API-009
-     * @version 2.12.0
+     * @version 2.13.0
      */
     bool claim() {
         if (!claimed_ && engine_ != nullptr) {
-            claimed_ = engine_->try_begin_turn();
+            claimed_ = engine_->try_begin_turn(key_);
         }
         return claimed_;
     }
+
+    /**
+     * @brief The session this guard claims for.
+     * @return Session key; `""` for the default session.
+     * @utility
+     * @version 2.13.0
+     */
+    const std::string& key() const { return key_; }
 
     /**
      * @brief Whether this guard owns the turn.
@@ -265,6 +282,10 @@ public:
 private:
     entropic::AgentEngine* engine_;
     entropic::log::HandleLogScope log_scope_;
+    /// @brief gh#158 (v2.13.0): the session this guard claims and releases.
+    /// Claim and release MUST name the same key, which is why the guard
+    /// carries it rather than each call site remembering to pass it twice.
+    std::string key_;
     bool claimed_ = false;
 };
 

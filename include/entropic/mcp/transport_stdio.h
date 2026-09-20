@@ -140,6 +140,19 @@ public:
     void clear_interrupt() override;
 
     /**
+     * @brief Whether THIS request must abort (gh#158, v2.13.0).
+     *
+     * The handle-wide latch OR the cancel token of the run that issued this
+     * call. See the definition for why a per-session interrupt must not use
+     * the latch.
+     *
+     * @return true when the in-flight request should stop.
+     * @utility
+     * @version 2.13.0
+     */
+    bool request_cancelled() const;
+
+    /**
      * @brief Whether an interrupt is currently short-circuiting calls.
      * @return true while cancel_flag_ is set.
      * @req REQ-MCP-025

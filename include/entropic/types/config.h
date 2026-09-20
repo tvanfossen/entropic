@@ -1154,6 +1154,24 @@ struct ParsedConfig {
      */
     std::optional<std::string> app_context_content;
 
+    /**
+     * @brief gh#158 (v2.13.0): may DIFFERENT session keys run together?
+     *
+     * Off by default, and deliberately so. Per-key runs are safe only once
+     * every piece of per-handle mutable state a turn touches is per-run or
+     * locked — the audit is decision #66 in `docs/architecture-cpp.md`.
+     * Turning it on by default would make every existing consumer concurrent
+     * without their asking, which is the mistake gh#157 refused to make with
+     * `keep_warm`, and a racy default is worse than honest serialization.
+     *
+     * With it off, a second run on ANY key returns
+     * `ENTROPIC_ERROR_ALREADY_RUNNING` — v2.12.0 semantics, unchanged. With
+     * it on, only a second run on the SAME key is refused.
+     *
+     * YAML: `concurrent_sessions: true`.
+     */
+    bool concurrent_sessions = false;
+
     bool inject_model_context = true;  ///< Auto-inject model context into system prompt
     int vram_reserve_mb = 512;         ///< Reserved VRAM headroom (MB, 0–65536)
 

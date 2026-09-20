@@ -7,6 +7,7 @@
 
 #include <entropic/mcp/transport_stdio.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <cerrno>
 #include <cstring>
@@ -240,13 +241,13 @@ void StdioTransport::close() {
  *         what the client turns into a typed error envelope rather than
  *         a hang.
  * @req REQ-MCP-025
- * @version 2.0.6-rc16
+ * @version 2.13.0
  */
 std::string StdioTransport::send_request(
     const std::string& request_json,
     uint32_t timeout_ms) {
 
-    if (!connected_ || cancel_flag_.load(std::memory_order_acquire)) {
+    if (!connected_ || request_cancelled()) {
         return "";
     }
 
@@ -330,6 +331,35 @@ void StdioTransport::clear_interrupt() {
  */
 bool StdioTransport::is_interrupted() const {
     return cancel_flag_.load(std::memory_order_acquire);
+}
+
+/**
+ * @brief Whether THIS request should abort (gh#158, v2.13.0).
+ *
+ * Two independent reasons, and they mean different things.
+ *
+ * `cancel_flag_` is the HANDLE-WIDE latch gh#150 built: set by
+ * `ServerManager::interrupt_external_tools()` on every transport at once,
+ * which is what `entropic_interrupt()` ("stop everything") wants.
+ *
+ * `current_run_cancelled()` is the token of the run that issued THIS call,
+ * published to this thread by the engine (`RunCancelScope`). Once runs are
+ * keyed per session, `entropic_interrupt_session("A")` must abort A's
+ * in-flight tool call and leave B's alone — so it sets only A's token and
+ * never touches the latch. Reaching for the latch there would abort B and
+ * hand it an empty result indistinguishable from a real one, which is the
+ * gh#150 defect arriving through a different door.
+ *
+ * A transport used outside any run (discovery, the initialize handshake)
+ * sees no token and is governed by the latch alone, exactly as before.
+ *
+ * @return true when this request must stop.
+ * @utility
+ * @version 2.13.0
+ */
+bool StdioTransport::request_cancelled() const {
+    return cancel_flag_.load(std::memory_order_acquire)
+        || entropic::current_run_cancelled();
 }
 
 /**
@@ -511,7 +541,7 @@ int StdioTransport::poll_until_ready(
  * @param timeout_ms Timeout.
  * @return Line without newline, or empty on error/timeout/cancel.
  * @utility
- * @version 2.0.6-rc16
+ * @version 2.13.0
  */
 std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
     std::string line;
@@ -520,7 +550,7 @@ std::string StdioTransport::read_line(int fd, uint32_t timeout_ms) {
 
     while (true) {
         // P1-10: short-circuit if the engine interrupted this request.
-        if (cancel_flag_.load(std::memory_order_acquire)) {
+        if (request_cancelled()) {
             logger->info("Transport read cancelled by interrupt");
             break;
         }

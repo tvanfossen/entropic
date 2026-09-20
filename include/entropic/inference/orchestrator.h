@@ -701,6 +701,48 @@ private:
 
     mutable std::mutex swap_mutex_;  ///< Guards tier swap + residency mutations
 
+    /**
+     * @brief gh#158 (v2.13.0): the ONE lock on the generation path.
+     *
+     * @par What it protects
+     * Everything a generation touches that is one-per-backend: the shared
+     * `llama_context` and its KV cache, `LlamaCppBackend::active_slot_` and
+     * `residency_`, the staged tool arena, the sampler chain, and
+     * `last_routing_result_` / `loaded_main_tier_` / `tier_history_` here.
+     * Nothing but the (then per-handle) run guard serialized `llama_decode`
+     * before gh#158; keying runs per session removes that accidental
+     * serialization, so it has to become a deliberate one.
+     *
+     * @par Scope: one GENERATION, not one decode
+     * Held across a whole `generate*` call, which is what makes concurrent
+     * runs interleave at GENERATION boundaries — a side request waits for
+     * the current generation, not for the whole multi-iteration turn. That
+     * is the property gh#158 asks for; a finer lock around `llama_decode`
+     * alone would leave `active_slot_` and the staged arena racing.
+     *
+     * @par Lock ORDER — the whole rule, in one line
+     * `generation_mutex_` → `swap_mutex_` / `records_mutex_` → the backend's
+     * `transition_mutex_` / `mtp_mutex_`.
+     *
+     * It is IMPOSSIBLE TO INVERT by construction, not by discipline: this
+     * lock is acquired at exactly five sites, all of them entry points of
+     * this class (`generate` x2, `generate_batch`, `generate_streaming`,
+     * `classify_task`), and no holder of any inner lock calls any of them.
+     * `get_model` takes `swap_mutex_` and RELEASES it before returning, so
+     * no caller ever holds an inner lock across a generation. If a future
+     * change makes a `swap_mutex_` holder generate, THAT is the inversion —
+     * and it is a compile-visible call from inside a `lock_guard` scope.
+     *
+     * @par Why recursive
+     * `generate()` routes, and `route()` → `classify_task()` decodes on the
+     * router. Both are generation entry points, so the outer one re-enters
+     * the lock on the SAME thread. A plain mutex would self-deadlock the
+     * first time a run routed; a recursive one makes re-entry a non-event
+     * rather than a rule someone has to remember. It does not weaken the
+     * exclusion: a different thread still waits.
+     */
+    mutable std::recursive_mutex generation_mutex_;
+
     ParsedConfig config_;
 
     /* ── Residency tracking (v2.2.4, gh#57) ──────────────── */

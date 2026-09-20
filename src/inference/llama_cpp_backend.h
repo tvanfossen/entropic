@@ -166,6 +166,26 @@ public:
     }
 
     /**
+     * @brief How many times the WHOLE KV cache has been cleared (gh#158).
+     *
+     * A deterministic counter, in the instrumentation shape #62/gh#161 and
+     * #65/gh#148 established: RSS and wall-clock both depend on state a test
+     * cannot pin, so the observable is the CALL, not its effect.
+     *
+     * `entropic_run_batch` used to bump this once per batch, destroying
+     * every OTHER session's resident prefix on the way past. The gh#158
+     * model test asserts it does not move across a batch while a second
+     * session's KV survives — a correctness test alone passes either way,
+     * because a wiped session still produces correct output after a silent
+     * cold re-prefill.
+     *
+     * @return Whole-cache clear count since activation.
+     * @utility
+     * @version 2.13.0
+     */
+    int kv_full_clear_count() const { return kv_full_clear_count_; }
+
+    /**
      * @brief Set prompt cache configuration.
      *
      * Must be called before activate(). The config is consumed when
@@ -740,7 +760,16 @@ protected:
 
     /// @brief Sequence slot the current generation is bound to (gh#144).
     /// 0 unless a session pool is configured and a session_key resolved.
+    ///
+    /// Written by `bind_session_slot` and read for the rest of the
+    /// generation. It is ONE field for a value that is per-generation, which
+    /// is safe only because `ModelOrchestrator::generation_mutex_` holds a
+    /// whole generation — see its declaration for the lock order (gh#158).
     int active_slot_ = 0;
+
+    /// @brief gh#158: whole-KV-cache clears since activation. See
+    /// `kv_full_clear_count()`.
+    int kv_full_clear_count_ = 0;
 
     /* ── gh#106 (v2.9.0): MTP draft head (target-owned, shared-KV) ── */
     llama_model* mtp_draft_model_ = nullptr;   ///< MTP head GGUF (separate, trunk-sharing)

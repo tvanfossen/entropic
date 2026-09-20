@@ -11,6 +11,7 @@
 #include <entropic/core/sandbox.h>
 #include <entropic/mcp/utf8_sanitize.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 #include <entropic/types/tool_result.h>
 
 #include <nlohmann/json.hpp>
@@ -349,9 +350,15 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-006
  * @req REQ-COMPACT-002
- * @version 2.4.3
+ * @version 2.13.0
  */
 void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
+    // gh#158 (v2.13.0): publish THIS run's cancel token to THIS thread, so
+    // an external MCP tool call made from inside the loop aborts when its
+    // own session is interrupted and not when some other session is. The
+    // scope restores the previous token, so a child delegation loop nested
+    // inside a parent turn cannot orphan the parent's.
+    RunCancelScope cancel_scope(&run_cancel_flag());
     // gh#81 (v2.4.3): child delegation loops inherit the parent's
     // interrupt state — clearing it here would swallow a parent
     // interrupt raised just before the child was dispatched. Only a
@@ -387,7 +394,7 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-002
  * @req REQ-COMPACT-002
- * @version 2.12.0
+ * @version 2.13.0
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages,
                                       const std::string& tier_override) {
@@ -398,12 +405,16 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages,
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
 
+    // gh#158 (v2.13.0): see run_loop — this run's cancel token, published
+    // to this run's thread for the duration of the loop.
+    RunCancelScope cancel_scope(&run_cancel_flag());
+
     LoopContext ctx;
     ctx.messages = std::move(messages);
     ctx.locked_tier = tier_override;  // gh#99: "" routes; non-empty locks
     // gh#144 (v2.12.0): carry the caller-scoped session down to the backend,
     // which maps it to a KV sequence. "" is the default session.
-    ctx.session_key = active_session_key_;
+    ctx.session_key = active_session_key();
     ctx.metrics.start_time = now_seconds();
 
     init_session_conversation(ctx);
@@ -471,7 +482,7 @@ void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
  * @param ctx Loop context.
  * @req REQ-LOOP-002
  * @req REQ-HOOK-002
- * @version 2.3.28
+ * @version 2.13.0
  */
 void AgentEngine::loop(LoopContext& ctx) {
     fire_loop_start_hook(hooks_, ctx);  // ON_LOOP_START (v1.9.1)
@@ -479,7 +490,7 @@ void AgentEngine::loop(LoopContext& ctx) {
     while (!should_stop(ctx)) {
         ctx.metrics.iterations++;
 
-        if (interrupt_flag_.load()) {
+        if (run_interrupted()) {
             set_state(ctx, AgentState::INTERRUPTED);
             break;
         }
@@ -696,10 +707,10 @@ void AgentEngine::hard_cut_budget(LoopContext& ctx) {
  * @param ctx Loop context.
  * @req REQ-LOOP-003
  * @req REQ-LOOP-006
- * @version 2.4.3
+ * @version 2.13.0
  */
 void AgentEngine::dispatch_pending_or_halt(LoopContext& ctx) {
-    if (interrupt_flag_.load() && !is_terminal_state(ctx)) {
+    if (run_interrupted() && !is_terminal_state(ctx)) {
         logger->info("[ITER] interrupt observed during tool processing — "
                      "halting before pending dispatch");
         set_state(ctx, AgentState::INTERRUPTED);
@@ -1014,18 +1025,46 @@ void AgentEngine::set_state(LoopContext& ctx, AgentState state) {
  * (P1-4, 2.0.6-rc16)
  *
  * @req REQ-LOOP-006
- * @version 2.0.6-rc16.1
+ * @version 2.13.0
  */
 void AgentEngine::interrupt() {
+    // gh#158 (v2.13.0): `interrupt()` means EVERY run on this handle and
+    // keeps that meaning. Each in-flight run carries its own token now, so
+    // the handle-wide flag alone would not reach a run that started before
+    // it was set and polls its own. Fan out explicitly.
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        for (auto& [key, run] : active_runs_) {
+            (void)key;
+            run->interrupt.store(true, std::memory_order_release);
+        }
+    }
     if (!interrupt_flag_.exchange(true)) {
         logger->info("Engine interrupted");
         // P1-10: propagate to external MCP transports so in-flight
-        // tool calls abort alongside the generation loop.
+        // tool calls abort alongside the generation loop. This is the
+        // handle-wide latch and stays handle-wide: `interrupt_session`
+        // deliberately does NOT fire it (see its declaration).
         if (external_interrupt_cb_ != nullptr) {
             external_interrupt_cb_(external_interrupt_data_);
         }
     }
     pause_flag_.store(false);
+}
+
+/**
+ * @brief Whether the run on THIS thread should stop (gh#158).
+ *
+ * The handle-wide flag ("all runs") OR this run's own token ("that one").
+ * Pre-gh#158 every poll site read the handle flag directly, which was
+ * correct only because a handle ran one turn at a time.
+ *
+ * @return true when the current run is interrupted.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::run_interrupted() const {
+    return interrupt_flag_.load() || current_run_cancelled();
 }
 
 /**
@@ -1067,10 +1106,16 @@ void AgentEngine::set_external_reset(void (*cb)(void*),
 /**
  * @brief Reset interrupt flag.
  * @req REQ-LOOP-006
- * @version 2.12.1
+ * @version 2.13.0
  */
 void AgentEngine::reset_interrupt() {
     interrupt_flag_.store(false);
+    // gh#158: a run's own token is what its decode and its MCP transport
+    // poll, so clearing only the handle flag would leave a re-used run
+    // state latched — the same shape of bug gh#150 fixed one layer up.
+    if (auto run = this_thread_run()) {
+        run->interrupt.store(false, std::memory_order_release);
+    }
     // gh#150: an interrupt is scoped to a RUN, not to the process. This
     // used to clear the engine's flag and stop, leaving every external
     // MCP transport latched shut with no path in the tree that could
@@ -2892,10 +2937,223 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
  *
  * @return The active session's state.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 ConversationState& AgentEngine::active_conversation() {
-    return conversations_[active_session_key_];
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    return conversations_[active_session_key()];
+}
+
+// ── Per-session run registry (gh#158, v2.13.0) ─────────────────
+
+namespace {
+
+/// @brief Session bound to THIS thread by set_active_session (gh#158).
+///
+/// Empty means "this thread never bound one", which is distinct from binding
+/// the DEFAULT session — hence the companion flag rather than a sentinel
+/// string, since `""` is a legitimate key a caller may name explicitly.
+thread_local std::string t_active_session_key;
+thread_local bool t_active_session_bound = false;
+
+/// @brief Session key this thread's `try_begin_turn` claimed (gh#158).
+thread_local std::string t_claimed_key;
+thread_local bool t_holds_claim = false;
+
+}  // namespace
+
+/**
+ * @brief Session bound to this thread, else to the handle (gh#158).
+ *
+ * A thread that bound a session gets its own answer — two concurrent runs
+ * each need one, and a single member field can hold only the last writer's.
+ * A thread that never bound one (an API call reading context, a direct
+ * engine driver in a test) falls back to the handle field, which is what
+ * keeps the legacy unkeyed accessors reading what they read in v2.12.0.
+ *
+ * @return The session key in force on this thread.
+ * @dg_internal
+ * @version 2.13.0
+ */
+const std::string& AgentEngine::active_session_key() const {
+    return t_active_session_bound ? t_active_session_key
+                                  : active_session_key_;
+}
+
+/**
+ * @brief Bind this turn to a caller-scoped session — see header.
+ * @param key Session key for the turn about to run.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_active_session(const std::string& key) {
+    t_active_session_key = key;
+    t_active_session_bound = true;
+    active_session_key_ = key;
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    conversations_[key];  // default-construct on first use
+}
+
+/**
+ * @brief Claim one turn for a named session — see header (gh#158).
+ * @param key Session key to claim.
+ * @return true when this caller now owns the turn.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::try_begin_turn(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        // Same key twice is a genuine conflict whatever the configuration:
+        // the two runs share one conversation. A DIFFERENT key is refused
+        // only while per-session concurrency is off, which is the shipped
+        // default and reproduces v2.12.0 exactly.
+        const bool blocked = active_runs_.count(key) > 0
+            || (!concurrent_sessions_ && !active_runs_.empty());
+        if (blocked) { return false; }
+        auto claimed = std::make_shared<RunState>();
+        claimed->key = key;
+        active_runs_[key] = claimed;
+        running_flag_.store(true);
+    }
+    // The claim IS the session binding. Keeping them separate was a defect:
+    // the binding is thread-local, so a binding that outlived its run stayed
+    // on that thread and silently captured the NEXT unkeyed run — including
+    // one on a different handle entirely.
+    t_claimed_key = key;
+    t_holds_claim = true;
+    t_active_session_key = key;
+    t_active_session_bound = true;
+    return true;
+}
+
+/**
+ * @brief Release a turn claimed for a named session — see header.
+ * @param key Session key that was claimed.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::end_turn(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        active_runs_.erase(key);
+        running_flag_.store(!active_runs_.empty());
+    }
+    // Releasing the claim releases the binding with it — see try_begin_turn.
+    // Guarded on the key so a nested release cannot unbind an outer run.
+    if (t_holds_claim && t_claimed_key == key) {
+        t_holds_claim = false;
+        t_active_session_bound = false;
+        t_active_session_key.clear();
+    }
+}
+
+/**
+ * @brief Release the turn this thread claimed — see header (gh#158).
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::end_turn() {
+    // Release by the key claimed on THIS thread. An unkeyed release that
+    // assumed `""` would free the wrong session for every pre-gh#158 call
+    // site the moment a consumer started naming sessions.
+    end_turn(t_holds_claim ? t_claimed_key : active_session_key());
+}
+
+/**
+ * @brief Runs currently in flight on this handle (gh#158).
+ * @return Active run count.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::size_t AgentEngine::active_run_count() const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    return active_runs_.size();
+}
+
+/**
+ * @brief Allow distinct session keys to run together — see header.
+ * @param enabled true to allow concurrent distinct-key runs.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_concurrent_sessions(bool enabled) {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    concurrent_sessions_ = enabled;
+    logger->info("Per-session run concurrency {} (gh#158)",
+                 enabled ? "ENABLED" : "disabled");
+}
+
+/**
+ * @brief Whether per-session concurrency is enabled (gh#158).
+ * @return true when distinct keys may run together.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::concurrent_sessions() const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    return concurrent_sessions_;
+}
+
+/**
+ * @brief The run this thread owns, if any (gh#158).
+ * @return This thread's run state, or nullptr outside a claimed run.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::shared_ptr<AgentEngine::RunState> AgentEngine::this_thread_run() const {
+    if (!t_holds_claim) { return nullptr; }
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    auto it = active_runs_.find(t_claimed_key);
+    return it == active_runs_.end() ? nullptr : it->second;
+}
+
+/**
+ * @brief Interrupt exactly one session's run — see header (gh#158).
+ * @param key Session whose run to interrupt.
+ * @return true when a run was found and flagged.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::interrupt_session(const std::string& key) {
+    std::shared_ptr<RunState> run;
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        auto it = active_runs_.find(key);
+        if (it != active_runs_.end()) { run = it->second; }
+    }
+    if (!run) {
+        logger->info("interrupt_session('{}'): no run in flight", key);
+        return false;
+    }
+    run->interrupt.store(true, std::memory_order_release);
+    logger->info("Session '{}' interrupted", key);
+    return true;
+}
+
+/**
+ * @brief Whether a session's in-flight run carries an interrupt (gh#158).
+ * @param key Session key.
+ * @return true when that run exists and is flagged.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::session_interrupted(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(runs_mutex_);
+    auto it = active_runs_.find(key);
+    return it != active_runs_.end()
+        && it->second->interrupt.load(std::memory_order_acquire);
+}
+
+/**
+ * @brief The cancel flag of this thread's run — see header (gh#158).
+ * @return Reference to this run's cancel flag.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::atomic<bool>& AgentEngine::run_cancel_flag() {
+    auto run = this_thread_run();
+    return run ? run->interrupt : interrupt_flag_;
 }
 
 /**
@@ -3265,20 +3523,129 @@ void AgentEngine::clear_conversation() {
  * @brief Get conversation message count.
  * @return Number of messages.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 size_t AgentEngine::message_count() const {
-    return conversations_.at(active_session_key_).count();
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    return conversations_.at(active_session_key()).count();
+}
+
+// ── Keyed conversation accessors (gh#144; locked for gh#165) ───
+
+/**
+ * @brief Messages held by a named session — see header.
+ * @param key Session key.
+ * @return That session's messages; empty when the key is unknown.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::vector<Message> AgentEngine::messages_for(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? std::vector<Message>{}
+                                      : it->second.messages;
+}
+
+/**
+ * @brief Message count for a named session — see header.
+ * @param key Session key.
+ * @return Count, or 0 when the key is unknown.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::size_t AgentEngine::message_count_for(const std::string& key) const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? 0 : it->second.count();
+}
+
+/**
+ * @brief Clear one session's history, keeping the session — see header.
+ * @param key Session key.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::clear_conversation_for(const std::string& key) {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    if (it != conversations_.end()) { it->second.clear(); }
+}
+
+/**
+ * @brief Forget a session entirely — see header.
+ * @param key Session key.
+ * @return true when a session was dropped or cleared.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::drop_session(const std::string& key) {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    if (key.empty()) {
+        conversations_[key].clear();
+        return true;
+    }
+    return conversations_.erase(key) > 0;
+}
+
+/**
+ * @brief Keys of every session the engine holds — see header.
+ * @return Session keys, unordered.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::vector<std::string> AgentEngine::session_keys() const {
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    std::vector<std::string> keys;
+    keys.reserve(conversations_.size());
+    for (const auto& [k, v] : conversations_) { keys.push_back(k); }
+    return keys;
+}
+
+/**
+ * @brief Replace one session's conversation wholesale (gh#165) — see header.
+ *
+ * Refuses the RUNNING session and only that one. "Busy handle" would be the
+ * wrong rule: the conversation a turn appends to is the one that must not be
+ * swapped under it, and every other session is inert from that turn's point
+ * of view.
+ *
+ * @param key Session key.
+ * @param messages Replacement conversation.
+ * @return true when replaced; false when a run on that key is in flight.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool AgentEngine::set_session_messages(const std::string& key,
+                                       std::vector<Message> messages) {
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        if (active_runs_.count(key) > 0) {
+            logger->warn("session_context_set('{}') refused: a run on that "
+                         "session is in flight", key);
+            return false;
+        }
+    }
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto& convo = conversations_[key];
+    convo.messages = std::move(messages);
+    logger->info("Session '{}' conversation restored: {} messages", key,
+                 convo.messages.size());
+    return true;
 }
 
 /**
  * @brief Get conversation messages.
  * @return Const reference to messages.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
-    return conversations_.at(active_session_key_).messages;
+    // Deliberately NOT locked: this returns a REFERENCE into the mapped
+    // value, so a lock released on return would guard nothing the caller
+    // then reads. The keyed sibling `messages_for` returns by value and IS
+    // locked; that is the one gh#165's restore path and the facade use.
+    // This overload survives for pre-v2.12.0 callers only.
+    return conversations_.at(active_session_key()).messages;
 }
 
 // ── Mid-generation user-message queue (gh#40, v2.1.10) ─────────

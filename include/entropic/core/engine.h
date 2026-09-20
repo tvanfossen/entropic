@@ -39,6 +39,7 @@
 #include <atomic>
 #include <deque>
 #include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -616,39 +617,151 @@ public:
     bool is_running() const { return running_flag_.load(); }
 
     /**
-     * @brief Try to claim the engine for one turn (gh#144, v2.12.0).
+     * @brief Try to claim one turn for a named session (gh#144 / gh#158).
      *
-     * A single compare-exchange on `running_flag_` — deliberately NOT a
-     * mutex. gh#109 removed `api_mutex` from every run entry point so a
-     * long turn could not block `entropic_interrupt()` called from another
-     * thread, and that property must survive: a second thread interrupting
-     * a 40-second turn must touch only atomics. Reintroducing a lock on
-     * this path would silently re-break gh#109.
+     * @par What the claim costs
+     * gh#144 made it a compare-exchange on `running_flag_` — deliberately NOT
+     * a mutex, because gh#109 removed `api_mutex` from every run entry point
+     * so a long turn could not block `entropic_interrupt()` from another
+     * thread. gh#158 keys the claim, which needs a map, which needs a lock —
+     * but `runs_mutex_` is held only for the O(1) insert and is NEVER held
+     * across a decode, a prefill or a tool call. That is the property gh#109
+     * actually protects; a lock held for nanoseconds does not violate it,
+     * whereas `api_mutex` (held for the whole turn) did.
      *
-     * Until v2.12.0 nothing claimed at all. `ENTROPIC_ERROR_ALREADY_RUNNING`
-     * was declared, documented on two run entry points, and returned from
-     * nowhere; two concurrent runs raced into the shared conversation
-     * vector and decoded on one llama_context (gh#144).
+     * @par What the key changes
+     * Two runs on the SAME key are always a genuine conflict — they share one
+     * conversation — so the second is refused whatever the configuration.
+     * Two runs on DIFFERENT keys proceed together only when
+     * `set_concurrent_sessions(true)` has been called; off (the shipped
+     * default) the guard stays handle-exclusive and v2.12.0 semantics hold
+     * byte for byte.
      *
+     * @param key Session key to claim; `""` is the default session.
      * @return true when this caller now owns the turn and MUST call
-     *         end_turn(); false when a turn is already in flight, in which
-     *         case the caller owns nothing and must not release.
+     *         `end_turn(key)`; false when the claim is refused, in which case
+     *         the caller owns nothing and must not release.
      * @req REQ-API-009
-     * @version 2.12.0
+     * @req REQ-LOOP-009
+     * @version 2.13.0
      */
-    bool try_begin_turn() {
-        bool expected = false;
-        return running_flag_.compare_exchange_strong(expected, true);
-    }
+    bool try_begin_turn(const std::string& key);
 
     /**
-     * @brief Release a turn claimed by try_begin_turn (gh#144, v2.12.0).
+     * @brief Claim a turn for the session bound to THIS thread (gh#158).
      *
-     * Only the caller whose try_begin_turn() returned true may call this.
+     * The no-argument form every pre-gh#158 call site already uses. It
+     * resolves to whatever `set_active_session` published on this thread, so
+     * `run_turn`'s internal "claim only if the caller has not already" probe
+     * asks about the right session rather than always about `""`.
+     *
+     * @return As `try_begin_turn(key)`.
      * @req REQ-API-009
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    void end_turn() { running_flag_.store(false); }
+    bool try_begin_turn() { return try_begin_turn(active_session_key()); }
+
+    /**
+     * @brief Release a turn claimed by try_begin_turn (gh#144 / gh#158).
+     *
+     * Only the caller whose `try_begin_turn` returned true may call this.
+     * @param key Session key that was claimed.
+     * @req REQ-API-009
+     * @version 2.13.0
+     */
+    void end_turn(const std::string& key);
+
+    /**
+     * @brief Release the turn this thread claimed (gh#158).
+     *
+     * Releases by the key recorded at claim time, so a caller that claimed
+     * `"A"` cannot accidentally release `""` — which is what an unkeyed
+     * release would have done for every pre-gh#158 call site.
+     *
+     * @req REQ-API-009
+     * @version 2.13.0
+     */
+    void end_turn();
+
+    /**
+     * @brief Number of runs currently in flight on this handle (gh#158).
+     * @return Active run count; 0 when idle.
+     * @utility
+     * @version 2.13.0
+     */
+    std::size_t active_run_count() const;
+
+    /**
+     * @brief Allow runs on DIFFERENT session keys to proceed together.
+     *
+     * @par Why this is opt-in and defaults off
+     * Per-key runs are only safe once every piece of per-handle mutable state
+     * a turn touches is either per-run or locked. That audit is recorded in
+     * decision #66 of `docs/architecture-cpp.md`. Shipping the concurrency ON
+     * by default would make every existing consumer concurrent without their
+     * asking — the mistake gh#157 explicitly refused to repeat with
+     * `keep_warm` — and a racy default is strictly worse than today's honest
+     * serialization.
+     *
+     * Config key: `concurrent_sessions: true`.
+     *
+     * @param enabled true to allow concurrent distinct-key runs.
+     * @req REQ-LOOP-009
+     * @version 2.13.0
+     */
+    void set_concurrent_sessions(bool enabled);
+
+    /**
+     * @brief Whether per-session concurrency is enabled (gh#158).
+     * @return true when distinct keys may run together.
+     * @utility
+     * @version 2.13.0
+     */
+    bool concurrent_sessions() const;
+
+    /**
+     * @brief Interrupt exactly one session's run (gh#158).
+     *
+     * `interrupt()` means "every run on this handle" and keeps that meaning.
+     * This means "that one", and deliberately does NOT fire the external
+     * transport latch: `ServerManager::interrupt_external_tools()` trips
+     * EVERY transport at once, so using it here would abort another session's
+     * in-flight MCP call — the gh#150 failure mode, re-introduced through a
+     * different door. The interrupted run's own tool call still aborts,
+     * because the run publishes its cancel token to its own thread
+     * (`RunCancelScope`) and the transport polls it.
+     *
+     * @param key Session whose run to interrupt. No-op when it is not running.
+     * @return true when a run was found and flagged.
+     * @req REQ-LOOP-006
+     * @version 2.13.0
+     */
+    bool interrupt_session(const std::string& key);
+
+    /**
+     * @brief Whether a named session's in-flight run carries an interrupt.
+     * @param key Session key.
+     * @return true when that run exists and is flagged.
+     * @utility
+     * @version 2.13.0
+     */
+    bool session_interrupted(const std::string& key) const;
+
+    /**
+     * @brief The cancel flag of the run executing on THIS thread (gh#158).
+     *
+     * Handed to paths that take a `std::atomic<bool>&` cancel token —
+     * `entropic_run_batch` is the one that had a LOCAL flag nobody could
+     * ever set, which is why it was uninterruptible.
+     *
+     * Falls back to the handle-wide interrupt flag when no run is claimed on
+     * this thread, so the reference is always valid.
+     *
+     * @return Reference to this run's cancel flag.
+     * @req REQ-LOOP-006
+     * @version 2.13.0
+     */
+    std::atomic<bool>& run_cancel_flag();
 
     /**
      * @brief Bind this turn to a caller-scoped session (gh#144, v2.12.0).
@@ -663,14 +776,17 @@ public:
      * minted fresh per run() and is neither caller-supplied nor stable, and
      * from the per-handle log scope. One word, one meaning.
      *
+     * gh#158 (v2.13.0): the binding is published to the CALLING THREAD as
+     * well as to the handle. Two concurrent runs each need their own answer
+     * to "which session am I", and a single member field can only hold one.
+     * The member remains the answer for a thread that never bound a session,
+     * which is what keeps the legacy unkeyed accessors behaving as they did.
+     *
      * @param key Session key for the turn about to run.
      * @req REQ-LOOP-001
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    void set_active_session(const std::string& key) {
-        active_session_key_ = key;
-        conversations_[key];  // default-construct on first use
-    }
+    void set_active_session(const std::string& key);
 
     /**
      * @brief Session whose turn is currently running.
@@ -678,9 +794,7 @@ public:
      * @utility
      * @version 2.12.0
      */
-    const std::string& active_session_key() const {
-        return active_session_key_;
-    }
+    const std::string& active_session_key() const;
 
     /**
      * @brief Messages held by a named session.
@@ -696,11 +810,30 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    std::vector<Message> messages_for(const std::string& key) const {
-        auto it = conversations_.find(key);
-        return it == conversations_.end() ? std::vector<Message>{}
-                                          : it->second.messages;
-    }
+    std::vector<Message> messages_for(const std::string& key) const;
+
+    /**
+     * @brief Replace one session's conversation wholesale (gh#165, v2.13.0).
+     *
+     * The write counterpart `entropic_session_context_get` never had, so a
+     * session could be read out but not restored: a host that stopped the
+     * engine to free VRAM lost every conversation, and the only way to put
+     * messages back — `entropic_run_session` — RUNS a turn per message,
+     * re-executing the whole agentic loop including tool calls.
+     *
+     * Refuses the session that is CURRENTLY RUNNING. Every other session
+     * stays mutable mid-run: the restriction is about the conversation this
+     * turn is appending to, not about the handle being busy.
+     *
+     * @param key Session key; `""` is the default session.
+     * @param messages Replacement conversation.
+     * @return true when the session was replaced; false when a run on that
+     *         key is in flight and the conversation was left untouched.
+     * @req REQ-LOOP-001
+     * @version 2.13.0
+     */
+    bool set_session_messages(const std::string& key,
+                              std::vector<Message> messages);
 
     /**
      * @brief Message count for a named session.
@@ -709,10 +842,7 @@ public:
      * @utility
      * @version 2.12.0
      */
-    std::size_t message_count_for(const std::string& key) const {
-        auto it = conversations_.find(key);
-        return it == conversations_.end() ? 0 : it->second.count();
-    }
+    std::size_t message_count_for(const std::string& key) const;
 
     /**
      * @brief Clear one session's history, keeping the session itself.
@@ -720,10 +850,7 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    void clear_conversation_for(const std::string& key) {
-        auto it = conversations_.find(key);
-        if (it != conversations_.end()) { it->second.clear(); }
-    }
+    void clear_conversation_for(const std::string& key);
 
     /**
      * @brief Forget a session entirely.
@@ -736,13 +863,7 @@ public:
      * @req REQ-LOOP-001
      * @version 2.12.0
      */
-    bool drop_session(const std::string& key) {
-        if (key.empty()) {
-            conversations_[key].clear();
-            return true;
-        }
-        return conversations_.erase(key) > 0;
-    }
+    bool drop_session(const std::string& key);
 
     /**
      * @brief Keys of every session the engine currently holds.
@@ -750,12 +871,7 @@ public:
      * @utility
      * @version 2.12.0
      */
-    std::vector<std::string> session_keys() const {
-        std::vector<std::string> keys;
-        keys.reserve(conversations_.size());
-        for (const auto& [k, v] : conversations_) { keys.push_back(k); }
-        return keys;
-    }
+    std::vector<std::string> session_keys() const;
 
     /**
      * @brief Register an observer that fires when a queued user
@@ -1656,6 +1772,67 @@ private:
     /// The `""` entry is constructed once and never erased, so the legacy
     /// accessors are total — they never have to invent an empty vector.
     std::unordered_map<std::string, ConversationState> conversations_;
+
+    /// @brief gh#165 (v2.13.0): guards `conversations_` as a CONTAINER.
+    ///
+    /// The session APIs take `api_mutex` but not the run guard, so
+    /// `entropic_session_context_clear` / `_drop` could already mutate this
+    /// map while a turn appended to it — a latent race since v2.12.0 that
+    /// keying runs per session turns into a likely one. Readers copy under
+    /// it; `set_session_messages` / `drop_session` mutate under it.
+    ///
+    /// Held for map operations ONLY, never across a decode: `run_turn` takes
+    /// a reference to one mapped value and works outside the lock, which is
+    /// safe because `unordered_map` guarantees reference stability and the
+    /// running key cannot be erased or replaced (both refuse it).
+    mutable std::mutex conversations_mutex_;
+
+    /**
+     * @brief State private to ONE in-flight run (gh#158, v2.13.0).
+     *
+     * Every field here used to be one per HANDLE, which is exactly why a
+     * handle could only run one turn: `interrupt()` clearing a shared flag at
+     * the start of run B would have cleared run A's interrupt.
+     *
+     * Held by `shared_ptr` so a poller that captured the run (the cancel
+     * reference handed to `entropic_run_batch`, the token published to the
+     * run's thread) cannot outlive its storage when the run ends.
+     *
+     * @version 2.13.0
+     */
+    struct RunState {
+        std::atomic<bool> interrupt{false};  ///< This run's cancel token
+        std::string key;                     ///< Session this run owns
+    };
+
+    /// @brief gh#158: guards `active_runs_` and `concurrent_sessions_`.
+    ///
+    /// Held for O(1) map operations only — NEVER across a decode, a prefill
+    /// or a tool call. That distinction is what keeps gh#109's property
+    /// (a long turn must not block `entropic_interrupt()`) true.
+    mutable std::mutex runs_mutex_;
+
+    /// @brief gh#158: the runs currently in flight, keyed by session.
+    std::unordered_map<std::string, std::shared_ptr<RunState>> active_runs_;
+
+    /// @brief gh#158: opt-in — may DIFFERENT keys run together? Default no.
+    bool concurrent_sessions_ = false;
+
+    /**
+     * @brief Resolve the run this thread owns, if any (gh#158).
+     * @return This thread's run state, or nullptr outside a claimed run.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::shared_ptr<RunState> this_thread_run() const;
+
+    /**
+     * @brief Whether the run on THIS thread should stop (gh#158).
+     * @return true when the handle-wide flag or this run's token is set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool run_interrupted() const;
 
     /// @brief Session whose turn is currently running (gh#144).
     ///

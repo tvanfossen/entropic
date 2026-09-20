@@ -668,6 +668,42 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_critique_callbacks(
  */
 ENTROPIC_EXPORT entropic_error_t entropic_interrupt(entropic_handle_t handle);
 
+/**
+ * @brief Interrupt the run belonging to ONE session (gh#158, v2.13.0).
+ *
+ * `entropic_interrupt()` means "every run on this handle" and keeps that
+ * meaning. This means "that one": with `concurrent_sessions: true` a handle
+ * may have several turns in flight, and a host that cancels one client's
+ * request must not abort the others.
+ *
+ * Deliberately does NOT trip the external-transport interrupt latch, which
+ * `ServerManager::interrupt_external_tools()` applies to EVERY transport at
+ * once — using it here would abort another session's in-flight MCP call and
+ * hand that session an empty result it cannot tell from a real one, which is
+ * the defect gh#150 was filed for. The interrupted run's own tool call still
+ * aborts, because the run publishes its cancel token to its own thread and
+ * the transport polls it per request.
+ *
+ * Added as a NEW NAMED FUNCTION rather than by changing
+ * `entropic_interrupt`'s signature, per REQ-ABI-001. Additive, so
+ * ENTROPIC_API_VERSION does NOT move.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session whose run to interrupt; NULL or "" = default.
+ * @return ENTROPIC_OK when a run was found and flagged.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle is not configured.
+ *         - ENTROPIC_ERROR_NOT_RUNNING — that session has no run in flight.
+ *
+ * @threadsafety Thread-safe. Designed for cross-thread cancellation.
+ * @req REQ-API-009
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_interrupt_session(
+    entropic_handle_t handle,
+    const char* session_key);
+
 /* ── Mid-generation message queue (v2.1.10, gh#40) ────── */
 
 /**

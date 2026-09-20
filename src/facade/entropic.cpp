@@ -1704,7 +1704,7 @@ static entropic_error_t init_orchestrator(
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
  * @dg_internal
- * @version 2.3.8
+ * @version 2.13.0
  */
 static void init_engine_and_interfaces(
     entropic_handle_t h, const std::filesystem::path& data_dir) {
@@ -1741,6 +1741,8 @@ static void init_engine_and_interfaces(
             h->engine->compaction_manager());
     rewire_observers(h);  // gh#40 + fallout (v2.1.10)
     wire_external_interrupt(h);  // P1-10
+    // gh#158 (v2.13.0): opt-in per-session-key run concurrency, default off.
+    h->engine->set_concurrent_sessions(h->config.concurrent_sessions);
     wire_tool_executor(h);
 }
 
@@ -2396,7 +2398,7 @@ static std::vector<std::vector<entropic::Message>> build_batch_messages(
  * @req REQ-API-008
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_batch(
     entropic_handle_t handle,
@@ -2424,7 +2426,13 @@ entropic_error_t entropic_run_batch(
         std::vector<std::string> tiers_vec;
         auto msgs = build_batch_messages(handle, tiers, prompts, n, tiers_vec);
         std::vector<entropic::GenerationParams> params(n);
-        std::atomic<bool> cancel{false};
+        // gh#158 (v2.13.0): this was a LOCAL `std::atomic<bool> cancel{false}`
+        // that nothing in the tree could ever set, so a batch was
+        // uninterruptible — `entropic_interrupt()` returned OK and the batch
+        // ran to completion. The run's own cancel token is the flag the
+        // handle-wide interrupt and `entropic_interrupt_session` both set,
+        // and `run_batch_gen_loop` already polls its argument per step.
+        std::atomic<bool>& cancel = handle->engine->run_cancel_flag();
         auto results = handle->orchestrator->generate_batch(
             msgs, params, tiers_vec, cancel);
         *result_json = alloc_cstr(serialize_batch_results(results));
@@ -2905,6 +2913,31 @@ entropic_error_t entropic_interrupt(entropic_handle_t handle) {
     return ENTROPIC_OK;
 }
 
+/**
+ * @brief Interrupt one session's run — see entropic.h (gh#158, v2.13.0).
+ *
+ * No `api_mutex`: gh#109's property applies here for the same reason it
+ * applies to `entropic_interrupt` — a cancellation must not queue behind the
+ * turn it is cancelling. The engine's `runs_mutex_` is held for one map
+ * lookup.
+ *
+ * @param handle Engine handle.
+ * @param session_key Session whose run to interrupt; NULL = default.
+ * @return ENTROPIC_OK, or NOT_RUNNING when that session has no run.
+ * @req REQ-API-009
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+entropic_error_t entropic_interrupt_session(
+    entropic_handle_t handle,
+    const char* session_key) {
+    if (!handle) { return ENTROPIC_ERROR_INVALID_HANDLE; }
+    if (!handle->engine) { return ENTROPIC_ERROR_INVALID_STATE; }
+    const bool found = handle->engine->interrupt_session(
+        session_key != nullptr ? session_key : "");
+    return found ? ENTROPIC_OK : ENTROPIC_ERROR_NOT_RUNNING;
+}
+
 // ── Mid-generation user-message queue (gh#40, v2.1.10) ────────
 
 /**
@@ -3073,14 +3106,14 @@ entropic_error_t entropic_context_get(
  *         already in flight on this handle.
  * @req REQ-API-009
  * @req REQ-LOOP-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session(
     entropic_handle_t handle,
     const char* session_key,
     const char* input,
     char** result_json) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !input || !result_json || !handle->engine
         || !turn.claim()) {
@@ -3117,7 +3150,7 @@ entropic_error_t entropic_run_session(
  *         tier, or ENTROPIC_ERROR_ALREADY_RUNNING.
  * @req REQ-API-009
  * @req REQ-IDEN-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session_as(
     entropic_handle_t handle,
@@ -3125,7 +3158,7 @@ entropic_error_t entropic_run_session_as(
     const char* tier_or_identity,
     const char* input,
     char** result_json) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !tier_or_identity || !input || !result_json
         || !handle->engine || !turn.claim()) {
@@ -3154,7 +3187,7 @@ entropic_error_t entropic_run_session_as(
  * @param cancel_flag Optional cancel flag.
  * @return ENTROPIC_OK or ENTROPIC_ERROR_ALREADY_RUNNING.
  * @req REQ-API-009
- * @version 2.12.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_run_session_streaming(
     entropic_handle_t handle,
@@ -3163,7 +3196,7 @@ entropic_error_t entropic_run_session_streaming(
     void (*on_token)(const char* token, size_t len, void* user_data),
     void* user_data,
     int* cancel_flag) {
-    entropic::HandleTurnGuard turn(handle);
+    entropic::HandleTurnGuard turn(handle, session_key);
     auto rc = check_orchestrator(handle);
     if (rc != ENTROPIC_OK || !input || !on_token || !handle->engine
         || !turn.claim()) {

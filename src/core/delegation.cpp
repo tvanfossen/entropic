@@ -413,7 +413,7 @@ DelegationResult DelegationManager::execute_delegation(
  * @return Child LoopContext carrying the seed history, the tier system
  *         prompt, and the new task as a trailing user message.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 LoopContext DelegationManager::build_resumed_child_context(
         const LoopContext& parent_ctx,
@@ -427,6 +427,9 @@ LoopContext DelegationManager::build_resumed_child_context(
         parent_ctx.delegation_ancestor_tiers;
     child_ctx.delegation_ancestor_tiers.push_back(target_tier);
     child_ctx.parent_conversation_id = parent_ctx.conversation_id;
+    // gh#158: see build_child_context — both builders inherit the key, or
+    // the resumed path reintroduces the shared-bucket collision on its own.
+    child_ctx.session_key = parent_ctx.session_key;
     child_ctx.all_tools = info.tools;
     child_ctx.active_phase = "default";
     child_ctx.locked_tier = target_tier;
@@ -673,7 +676,7 @@ bool DelegationManager::run_pipeline_stage(
  * @param task Task description.
  * @return Fresh child context.
  * @req REQ-DELEG-002
- * @version 2.7.4
+ * @version 2.13.0
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
@@ -689,6 +692,12 @@ LoopContext DelegationManager::build_child_context(
     // sentinel. (Present in build_resumed_child_context; lost here when the
     // child-context builders were extracted.)
     child.parent_conversation_id = parent_ctx.conversation_id;
+    // gh#158 (v2.13.0, also gh#162): children inherit the parent's session
+    // key. It was left "" here, so every delegated child of every parent ran
+    // under the DEFAULT session — one shared KV slot and one shared bucket.
+    // Harmless while a handle ran one turn at a time; with concurrent runs
+    // two parents' children would collide in that single bucket.
+    child.session_key = parent_ctx.session_key;
     // P1-9: propagate ancestor chain + append parent tier so the
     // child can reject cycles (A→B→A) before executing.
     child.delegation_ancestor_tiers = parent_ctx.delegation_ancestor_tiers;

@@ -724,13 +724,15 @@ static void parse_optional_subsections(
  * @param root YAML root node.
  * @param config Config to populate.
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 static void extract_scalar_fields(ryml::ConstNodeRef root,
                                   ParsedConfig& config)
 {
     extract(root, "log_level", config.log_level);
     extract(root, "inject_model_context", config.inject_model_context);
+    // gh#158 (v2.13.0): opt-in per-session-key run concurrency.
+    extract(root, "concurrent_sessions", config.concurrent_sessions);
     extract(root, "vram_reserve_mb", config.vram_reserve_mb);
     extract_path(root, "config_dir", config.config_dir);
     extract_path(root, "log_dir", config.log_dir);

@@ -284,6 +284,9 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
                 CHECK(config.mcp.filesystem.max_read_context_pct
                       == Catch::Approx(0.5f));
                 CHECK(config.mcp.filesystem.max_read_bytes == 65536);
+                // gh#161 (v2.13.0): bounded glob/grep walk
+                CHECK(config.mcp.filesystem.max_walk_entries
+                      == 1000);
                 CHECK(config.mcp.external.enabled == true);
                 CHECK(config.mcp.external.rate_limit == 100);
                 REQUIRE(config.mcp.external.socket_path.has_value());

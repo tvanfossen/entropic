@@ -679,6 +679,27 @@ struct FilesystemConfig {
     bool allow_outside_root = false;   ///< Allow file ops outside workspace root
     std::optional<int> max_read_bytes; ///< Max file read size (nullopt = derive from context)
     float max_read_context_pct = 0.25f; ///< Max context % for single file read
+
+    /// @brief Hard cap on directory entries visited by ONE glob or grep
+    ///        walk; <= 0 disables the cap (gh#161).
+    ///
+    /// The pre-2.13.0 caps were on MATCHES only (500 for glob, 100 for
+    /// grep), so a pattern that matched almost nothing still walked the
+    /// whole tree — 187,855 entries on the repository that reported
+    /// gh#161, where a single `glob **/*.hpp` took 87 seconds. A tool
+    /// call that blocks the agent loop for a minute and a half is a
+    /// hang from the model's point of view: it cannot see that it is
+    /// waiting, and a consumer with a request timeout drops the turn.
+    ///
+    /// 250,000 is deliberately generous — larger than any first-party
+    /// checkout, so it never fires on a normal workspace and is not a
+    /// silent result filter. It is a CEILING that converts an
+    /// open-ended stall into a bounded, ANNOUNCED result: hitting it
+    /// appends an explicit truncation notice to the tool result (and a
+    /// warning to the log), because a silently short answer would be
+    /// worse than the hang it replaces.
+    /// @version 2.13.0
+    int max_walk_entries = 250000;
 };
 
 /**

@@ -5749,7 +5749,19 @@
 
     let build artifacts, generated XML, and vendor blobs drown real grep/glob
 
-    matches in the model''s context.
+    matches in the model''s context. Since v2.13.0 (gh#161) the work is bounded
+
+    as well as correct: discovery prunes the skip-list directories and any
+
+    directory the rules loaded so far exclude, a query consults only the rules
+
+    anchored on the path''s own ancestry and stops at the first match walking
+
+    that subset backwards, and the glob/grep walk itself is capped by
+
+    `filesystem.max_walk_entries` with an explicit truncation notice appended
+
+    to the tool result when the cap fires.
 
     '
   acceptance_criteria: 'Given a rule set, When paths are tested, Then filename globs match
@@ -5763,7 +5775,21 @@
 
     sensitive, comments and blanks are skipped, and re-loading clears prior
 
-    rules; a malformed character class does not throw.
+    rules; a malformed character class does not throw. Given a deep tree of
+
+    nested `.gitignore` files, When a path is tested, Then the number of regex
+
+    evaluations is bounded by the rules on that path''s own ancestry, a
+
+    `.gitignore` inside `.git`/`node_modules`/`__pycache__`/`.venv` or inside an
+
+    already-excluded directory is never loaded, and a later rule at a shallower
+
+    base still overrides an earlier one at a deeper base; Given a walk that
+
+    exceeds `filesystem.max_walk_entries`, Then glob and grep both append a
+
+    truncation notice naming the entry count to the tool result.
 
     '
   verified_by: 'All TEST_CASEs in tests/unit/mcp/servers/ignore_matcher_test.cpp,
@@ -5782,12 +5808,26 @@
 
     "test_glob_respects_explorerignore_supplementary",
 
-    "test_explorerignore_negation_re_includes_path"
+    "test_explorerignore_negation_re_includes_path",
 
-    — tests/unit/mcp/servers/filesystem_test.cpp
+    "test_glob_announces_a_truncated_walk",
+
+    "test_grep_announces_a_truncated_walk",
+
+    "test_glob_and_grep_are_silent_when_the_walk_completes"
+
+    — tests/unit/mcp/servers/filesystem_test.cpp; plus the gh#161 trio
+
+    "IgnoreMatcher evaluates only the rules on a path''s own ancestry",
+
+    "IgnoreMatcher discovery prunes skip-list and ignored directories",
+
+    "IgnoreMatcher preserves last-match-wins ACROSS anchor bases"
+
+    — tests/unit/mcp/servers/ignore_matcher_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-MCP-023
   name: Bash and git servers gate on operator approval, not command pattern matching
   module: MCP Servers and Tool Dispatch

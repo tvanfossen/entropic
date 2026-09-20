@@ -382,7 +382,7 @@ static std::string parse_permissions_config(
  * @param[out] config Output filesystem config.
  * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 1.8.2
+ * @version 2.13.0
  */
 static std::string parse_filesystem_config(
     ryml::ConstNodeRef node,
@@ -393,6 +393,7 @@ static std::string parse_filesystem_config(
     extract(node, "diagnostics_timeout", config.diagnostics_timeout);
     extract(node, "allow_outside_root", config.allow_outside_root);
     extract(node, "max_read_context_pct", config.max_read_context_pct);
+    extract(node, "max_walk_entries", config.max_walk_entries);
 
     int max_read = 0;
     if (extract(node, "max_read_bytes", max_read)) {

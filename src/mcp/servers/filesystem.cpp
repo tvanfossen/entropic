@@ -69,28 +69,96 @@ bool FileAccessTracker::was_read(const std::string& path) const {
 namespace {
 
 /**
- * @brief Directories to skip during recursive traversal.
- * @dg_internal
- * @version 1.8.5
- */
-const std::vector<std::string> SKIP_DIRS = {
-    ".git", "node_modules", "__pycache__", ".venv"
-};
-
-/**
  * @brief Check if a directory name should be skipped.
+ *
+ * gh#161: the list itself now lives on IgnoreMatcher, because the
+ * `.gitignore` DISCOVERY walk has to honour exactly the same names.
+ * Two private copies were how discovery came to walk `.git` while
+ * glob/grep pruned it.
+ *
  * @param name Directory name to check.
  * @return true if name is in the skip list.
  * @dg_internal
- * @version 1.8.5
+ * @version 2.13.0
  */
 bool should_skip_dir(const std::string& name) {
-    for (const auto& skip : SKIP_DIRS) {
-        if (name == skip) {
-            return true;
-        }
-    }
-    return false;
+    return IgnoreMatcher::is_skipped_dir_name(name);
+}
+
+/**
+ * @brief Entry budget for one glob/grep tree walk (gh#161).
+ *
+ * The pre-2.13.0 caps bounded MATCHES, not work: a pattern matching
+ * nothing still visited every entry in the tree. This bounds the walk
+ * itself and records that it was cut short, so the result can say so.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+struct WalkBudget {
+    int max_entries = 0;   ///< <= 0 means unbounded
+    long visited = 0;      ///< Entries visited so far
+    bool truncated = false; ///< Walk stopped on the cap
+};
+
+/**
+ * @brief Charge one visited entry to the budget.
+ * @param[in,out] budget Walk budget.
+ * @return true when the cap is now spent and the walk must stop.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool walk_budget_spent(WalkBudget& budget) {
+    ++budget.visited;
+    bool spent = budget.max_entries > 0
+        && budget.visited >= static_cast<long>(budget.max_entries);
+    if (spent) { budget.truncated = true; }
+    return spent;
+}
+
+/**
+ * @brief The truncation sentinel appended to a cut-short result.
+ *
+ * Appended as a trailing element rather than wrapping the array,
+ * because glob and grep results are arrays of paths and match objects
+ * respectively and both shapes are already contracted. A truncation
+ * the model cannot see would be worse than the 87 s hang it replaces —
+ * it would look like a complete, empty answer.
+ *
+ * @param budget Spent walk budget.
+ * @return JSON object carrying the human-readable notice.
+ * @dg_internal
+ * @version 2.13.0
+ */
+json walk_truncation_notice(const WalkBudget& budget) {
+    json note;
+    note["truncated"] = true;
+    note["note"] = "walk truncated at " + std::to_string(budget.visited)
+        + " entries — narrow the pattern";
+    return note;
+}
+
+/**
+ * @brief Append the truncation sentinel when the walk was cut short.
+ *
+ * Shared by glob and grep so the two can never disagree about how a
+ * bounded walk is reported (gh#161).
+ *
+ * @param[in,out] result Result array to annotate.
+ * @param budget Walk budget after the walk.
+ * @param tool Tool name, for the log line.
+ * @param pattern Requested pattern, for the log line.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void note_truncated_walk(json& result, const WalkBudget& budget,
+                         const std::string& tool,
+                         const std::string& pattern) {
+    if (!budget.truncated) { return; }
+    auto note = walk_truncation_notice(budget);
+    logger->warn("{} '{}': {}", tool, pattern,
+                 note.at("note").get<std::string>());
+    result.push_back(note);
 }
 
 /**
@@ -566,19 +634,22 @@ EntryAction classify_glob_entry(
  * @param pattern Glob pattern (may contain `{a,b,c}`).
  * @param max_results Maximum number of results.
  * @param ignore Optional ignore matcher (nullptr disables filtering).
+ * @param[in,out] budget Entry budget; the walk stops when it is spent
+ *                and the budget records that it was (gh#161).
  * @return Absolute paths of matching regular files, capped at
  *         `max_results`, with ignored files omitted and ignored
  *         directories never descended into. `**` matches files at the
  *         root as well as in subdirectories (gh#126).
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.1.4
+ * @version 2.13.0
  */
 std::vector<std::string> collect_glob_matches(
     const fs::path& root,
     const std::string& pattern,
     int max_results,
-    const IgnoreMatcher* ignore = nullptr) {
+    const IgnoreMatcher* ignore,
+    WalkBudget& budget) {
 
     auto patterns = expand_braces(pattern);
     std::vector<std::string> matches;
@@ -596,6 +667,7 @@ std::vector<std::string> collect_glob_matches(
         } else if (action == EntryAction::kTake) {
             matches.push_back(entry.path().string());
         }
+        if (walk_budget_spent(budget)) { break; }
     }
     return matches;
 }
@@ -1145,7 +1217,7 @@ private:
  * @param args_json JSON arguments.
  * @return ServerResponse with matched paths.
  * @dg_internal
- * @version 2.1.4
+ * @version 2.13.0
  */
 ServerResponse GlobTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -1156,13 +1228,16 @@ ServerResponse GlobTool::execute(const std::string& args_json) {
     // doxygen/, and anything else listed in .gitignore + .explorerignore
     // is filtered out. Pre-2.1.4 only the hardcoded SKIP_DIRS were honored.
     // Issue #13 (v2.1.4): brace expansion handled inside.
+    WalkBudget budget{server_.config().max_walk_entries, 0, false};
     auto matches = collect_glob_matches(
         server_.root_dir(), pattern, MAX_GLOB_RESULTS,
-        &server_.ignore());
+        &server_.ignore(), budget);
 
-    logger->info("Glob '{}': {} matches (after ignore filtering)",
-                 pattern, matches.size());
+    logger->info("Glob '{}': {} matches, {} entries walked "
+                 "(after ignore filtering)",
+                 pattern, matches.size(), budget.visited);
     json result = matches;
+    note_truncated_walk(result, budget, "Glob", pattern);
     return {result.dump(), {}};
 }
 
@@ -1249,16 +1324,21 @@ std::regex compile_grep_or_error(const std::string& pattern,
  * @param file_patterns Brace-expanded glob patterns.
  * @param re Compiled content regex.
  * @param ignore Ignore matcher.
+ * @param[in,out] budget Entry budget; the walk stops when it is spent
+ *                and the budget records that it was (gh#161). grep
+ *                needs this MORE than glob does — it also opens and
+ *                reads every matching file.
  * @return Up to MAX_GREP_RESULTS match objects. Uses exactly the same
  *         classify_glob_entry filter glob does, so grep and glob honour
  *         .gitignore/.explorerignore identically and ignored
  *         directories are pruned rather than walked.
  * @req REQ-MCP-022
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::vector<json> grep_search(
     const fs::path& root, const std::vector<std::string>& file_patterns,
-    const std::regex& re, const IgnoreMatcher& ignore) {
+    const std::regex& re, const IgnoreMatcher& ignore,
+    WalkBudget& budget) {
     constexpr int MAX_GREP_RESULTS = 100;
     std::vector<json> matches;
     auto it = fs::recursive_directory_iterator(
@@ -1274,6 +1354,7 @@ static std::vector<json> grep_search(
         } else if (action == EntryAction::kTake) {
             grep_file(entry.path(), re, matches, MAX_GREP_RESULTS);
         }
+        if (walk_budget_spent(budget)) { break; }
     }
     return matches;
 }
@@ -1287,7 +1368,7 @@ static std::vector<json> grep_search(
  *         when the pattern would not compile.
  * @req REQ-MCP-022
  * @req REQ-MCP-021
- * @version 2.3.7
+ * @version 2.13.0
  */
 ServerResponse GrepTool::execute(const std::string& args_json) {
     auto args = json::parse(args_json);
@@ -1299,12 +1380,15 @@ ServerResponse GrepTool::execute(const std::string& args_json) {
     if (!err.empty()) { return {err, {}}; }
 
     auto file_patterns = expand_braces(file_glob);
+    WalkBudget budget{server_.config().max_walk_entries, 0, false};
     auto matches = grep_search(server_.root_dir(), file_patterns, re,
-                               server_.ignore());
+                               server_.ignore(), budget);
 
-    logger->info("Grep '{}': {} matches (after ignore filtering)",
-                 pattern, matches.size());
+    logger->info("Grep '{}': {} matches, {} entries walked "
+                 "(after ignore filtering)",
+                 pattern, matches.size(), budget.visited);
     json result = matches;
+    note_truncated_walk(result, budget, "Grep", pattern);
     return {result.dump(), {}};
 }
 

@@ -655,6 +655,118 @@ TEST_CASE("test_explorerignore_negation_re_includes_path",
     REQUIRE(only.find("keep.log") != std::string::npos);
 }
 
+// ── gh#161: the walk is bounded, and says so ─────────────
+
+/**
+ * @brief Build a tree with one file per directory.
+ * @param root Tree root.
+ * @param dirs Number of directories to create.
+ * @internal
+ * @version 2.13.0
+ */
+static void write_wide_tree(const fs::path& root, int dirs) {
+    for (int i = 0; i < dirs; ++i) {
+        write_test_file(root, "d" + std::to_string(i) + "/f.txt",
+                        "needle\n");
+    }
+}
+
+TEST_CASE("test_glob_announces_a_truncated_walk",
+          "[filesystem][2.13.0][gh-161]") {
+    /**
+     * @brief gh#161: a walk that hits `max_walk_entries` stops AND
+     *        says so in the tool result. A silently short answer
+     *        would be worse than the 87 s hang it replaces — the
+     *        model would read it as a complete, empty result.
+     * @internal
+     * @version 2.13.0
+     */
+    TempDir tmp;
+    write_wide_tree(tmp.path(), 40);
+
+    FilesystemConfig cfg;
+    cfg.max_walk_entries = 5;
+    auto server = make_server(tmp.path(), cfg);
+
+    json args;
+    args["pattern"] = "*.txt";
+    auto result = json::parse(
+        raw_result(server.execute("glob", args.dump())));
+
+    REQUIRE(result.is_array());
+    REQUIRE_FALSE(result.empty());
+    const auto& last = result.back();
+    REQUIRE(last.is_object());
+    CHECK(last.at("truncated").get<bool>());
+    auto note = last.at("note").get<std::string>();
+    CHECK(note.find("walk truncated at 5 entries") != std::string::npos);
+    CHECK(note.find("narrow the pattern") != std::string::npos);
+}
+
+TEST_CASE("test_grep_announces_a_truncated_walk",
+          "[filesystem][2.13.0][gh-161]") {
+    /**
+     * @brief gh#161: grep carries the same bound as glob — it needs
+     *        it more, since it also opens and reads every file the
+     *        glob filter admits.
+     * @internal
+     * @version 2.13.0
+     */
+    TempDir tmp;
+    write_wide_tree(tmp.path(), 40);
+
+    FilesystemConfig cfg;
+    cfg.max_walk_entries = 4;
+    auto server = make_server(tmp.path(), cfg);
+
+    json args;
+    args["pattern"] = "needle";
+    auto result = json::parse(
+        raw_result(server.execute("grep", args.dump())));
+
+    REQUIRE(result.is_array());
+    REQUIRE_FALSE(result.empty());
+    const auto& last = result.back();
+    REQUIRE(last.is_object());
+    REQUIRE(last.contains("truncated"));
+    auto note = last.at("note").get<std::string>();
+    CHECK(note.find("walk truncated at 4 entries") != std::string::npos);
+}
+
+TEST_CASE("test_glob_and_grep_are_silent_when_the_walk_completes",
+          "[filesystem][2.13.0][gh-161]") {
+    /**
+     * @brief gh#161: the notice is a CEILING, not a decoration. With
+     *        the shipped default (250k entries) a normal workspace
+     *        never sees it, and the result shape is unchanged.
+     * @internal
+     * @version 2.13.0
+     */
+    TempDir tmp;
+    write_wide_tree(tmp.path(), 10);
+
+    auto server = make_server(tmp.path());   // default max_walk_entries
+
+    json glob_args;
+    glob_args["pattern"] = "*.txt";
+    auto globbed = json::parse(
+        raw_result(server.execute("glob", glob_args.dump())));
+    REQUIRE(globbed.size() == 10);
+    for (const auto& entry : globbed) {
+        CHECK(entry.is_string());
+    }
+
+    json grep_args;
+    grep_args["pattern"] = "needle";
+    auto grepped = json::parse(
+        raw_result(server.execute("grep", grep_args.dump())));
+    REQUIRE(grepped.size() == 10);
+    for (const auto& match : grepped) {
+        CHECK(match.contains("path"));
+        CHECK_FALSE(match.contains("truncated"));
+    }
+}
+
 TEST_CASE("test_read_file_refuses_ignored_path",
           "[filesystem][2.1.4][issue-15]") {
     /**

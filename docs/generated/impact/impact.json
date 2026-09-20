@@ -1,185 +1,87 @@
 [
   {
-    "req_id": "REQ-API-004",
-    "req_name": "Three configure entry points, one shared body, one-shot per handle",
+    "req_id": "REQ-MCP-021",
+    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
     "functions": [
       {
-        "name": "validate_prompt_sources",
-        "file": "src/facade/entropic.cpp",
+        "name": "collect_glob_matches",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "configure_common",
-        "file": "src/facade/entropic.cpp",
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-CFG-006",
-    "req_name": "Fail-loud validation \u2014 reject bad or inert configuration at load time",
+    "req_id": "REQ-MCP-022",
+    "req_name": "Glob, grep, and read honour .gitignore plus .explorerignore semantics",
     "functions": [
       {
-        "name": "warn_unresolved_tier_grammars",
-        "file": "src/config/validate.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-005",
-    "req_name": "Every decode path honours cooperative cancellation within one token",
-    "functions": [
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-007",
-    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
-    "functions": [
-      {
-        "name": "grammar_search_paths",
-        "file": "src/config/validate.cpp",
+        "name": "collect_glob_matches",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "warn_unresolved_tier_grammars",
-        "file": "src/config/validate.cpp",
+        "name": "grep_search",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "warn_tier_grammars_step",
-        "file": "src/facade/entropic.cpp",
+        "name": "execute",
+        "file": "src/mcp/servers/filesystem.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "tier_grammar_unresolved",
-        "file": "src/inference/grammar_source.h",
+        "name": "is_skipped_dir_name",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "resolve_grammar_key",
-        "file": "src/inference/orchestrator.cpp",
+        "name": "compile_pattern",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "refuse_unresolved_tier_grammar",
-        "file": "src/inference/orchestrator.cpp",
+        "name": "push_rule",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "refuse_unresolved_batch_grammars",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-008",
-    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
-    "functions": [
-      {
-        "name": "resolve_grammar_source",
-        "file": "src/inference/grammar_source.h",
+        "name": "add_pattern",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "is_request_grammar",
-        "file": "src/inference/grammar_source.h",
+        "name": "load_file",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "grammar_source_name",
-        "file": "src/inference/grammar_source.h",
+        "name": "load",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "grammar_sources_collide",
-        "file": "src/inference/grammar_source.h",
-        "version": "2.10.4"
-      },
-      {
-        "name": "describe_grammar",
-        "file": "src/inference/grammar_source.h",
+        "name": "load_nested_gitignores",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "finish_generation",
-        "file": "src/inference/orchestrator.cpp",
+        "name": "visit_discovery_entry",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "record_generation",
-        "file": "src/inference/orchestrator.cpp",
+        "name": "prunes_discovery",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-009",
-    "req_name": "Tool staging drives a native render whose parse context is captured",
-    "functions": [
+      },
       {
-        "name": "resolve_and_stage",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-010",
-    "req_name": "One template-first / adapter-second rule parses every raw emission",
-    "functions": [
-      {
-        "name": "warn_if_content_vanished",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-011",
-    "req_name": "Reasoning-block markers are declared once per model family",
-    "functions": [
-      {
-        "name": "generate_streaming",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-025",
-    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
-    "functions": [
-      {
-        "name": "select_vision_tier",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.1.8"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-TYPE-004",
-    "req_name": "Sentinel count members bound enum validity and force exhaustive wiring",
-    "functions": [
-      {
-        "name": "resolve_grammar_source",
-        "file": "src/inference/grammar_source.h",
+        "name": "is_ignored",
+        "file": "src/mcp/servers/ignore_matcher.cpp",
         "version": "2.13.0"
       }
     ]

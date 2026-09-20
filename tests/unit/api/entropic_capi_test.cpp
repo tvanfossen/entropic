@@ -3930,25 +3930,29 @@ std::string gh154_config(const std::string& grammar_stem) {
 
 }  // namespace
 
-TEST_CASE("gh#154 a tier grammar stem that cannot resolve fails configure",
+TEST_CASE("gh#154 a tier grammar stem that cannot resolve YET still "
+          "configures",
           "[v2.13.0][entropic_capi][configure][gh154]") {
+    // gh#154 follow-up: the configure-time REFUSAL is withdrawn, because
+    // it made a documented C API workflow impossible.
+    // `entropic_grammar_register` and `entropic_grammar_register_file`
+    // both require an orchestrator (`check_orchestrator`), which exists
+    // only AFTER configure — so "configure, then register the tier's
+    // grammar" is the only sequence available to a consumer whose grammar
+    // lives in memory or at a path the engine cannot discover, and
+    // refusing at configure locked them out of it.
+    // tests/model/test_gh95_identity_grammar.cpp is that sequence.
+    //
+    // Configure now WARNS. The refusal moves to first use: a run that
+    // selects the tier while its grammar is still unregistered fails with
+    // ENTROPIC_ERROR_GRAMMAR_NOT_FOUND (tier_grammar_gate_test.cpp).
     CreatedOnlyHandle h;
     REQUIRE(h.h != nullptr);
 
     auto rc = entropic_configure(h, gh154_config("no-such-grammar").c_str());
 
-    // RED before the fix: the stem was accepted, the model load was
-    // attempted (LOAD_FAILED), and the first and only word about the
-    // grammar would have been a decode-time warning nobody can assert on.
-    REQUIRE(rc == ENTROPIC_ERROR_INVALID_CONFIG);
-
-    std::string err(entropic_last_error(h));
-    INFO("last_error: " << err);
-    CHECK(err.find("no-such-grammar") != std::string::npos);
-    CHECK(err.find("lead") != std::string::npos);
-    // The search paths must be named — "not found" without saying where
-    // it looked is the diagnostic that cost three days.
-    CHECK(err.find("grammars") != std::string::npos);
+    INFO("last_error: " << entropic_last_error(h));
+    CHECK(rc != ENTROPIC_ERROR_INVALID_CONFIG);
 }
 
 TEST_CASE("gh#154 a tier grammar stem that resolves still configures",

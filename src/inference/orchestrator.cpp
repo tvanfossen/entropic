@@ -667,21 +667,26 @@ static void warn_turn_diagnostics(
  * call). The backend now injects the marker POST-render
  * (LlamaCppBackend::effective_stop), using THIS call's resolved format.
  *
+ * gh#154 (v2.13.0): grammar resolution moved to
+ * `refuse_unresolved_tier_grammar`, called by every entry point BEFORE
+ * `get_model`. An unregistered tier grammar has to refuse the run before a
+ * model is resolved, and this function runs after one, so `params` reaches
+ * here already grammar-resolved.
+ *
  * @param model Active backend (tools staged here).
- * @param params Incoming generation params.
+ * @param params Grammar-resolved generation params.
  * @param tier_name Selected tier.
- * @return Resolved params — grammar_key resolved, per-tier sampler defaults
- *         applied — with the turn's tools and require_tool_call flag already
- *         staged on the backend.
+ * @return Resolved params — per-tier sampler defaults applied — with the
+ *         turn's tools and require_tool_call flag already staged on the
+ *         backend.
  * @req REQ-INFER-009
- * @version 2.10.4
+ * @version 2.13.0
  */
 GenerationParams ModelOrchestrator::resolve_and_stage(
     InferenceBackend* model,
     const GenerationParams& params,
     const std::string& tier_name) {
     GenerationParams resolved = params;
-    resolve_grammar_key(resolved, tier_name);          // v1.9.3
     apply_tier_sampler_defaults(resolved, tier_name);  // gh#82
     // gh#134 (v2.10.4): per-tier, never global — front-office tiers
     // legitimately answer in prose.
@@ -732,12 +737,16 @@ static void log_orchestration(const GenerationResult& result,
  * `ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE` via `build_no_model_error`
  * instead of the generic `GENERATE_FAILED`.
  *
+ * gh#154 (v2.13.0): the tier's grammar is resolved BEFORE the model is, so
+ * a tier naming a grammar nobody registered returns
+ * `ENTROPIC_ERROR_GRAMMAR_NOT_FOUND` without a swap, a prefill or a token.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @param tier_name Explicit tier or empty for routing.
  * @return GenerationResult.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -755,6 +764,12 @@ GenerationResult ModelOrchestrator::generate(
         routing_ms = elapsed_ms(t_route, now());
     }
 
+    // gh#154: an unregistered tier grammar refuses the run — before the
+    // model is resolved, so a doomed run costs no swap and decodes nothing.
+    GenerationParams resolved_params = params;
+    auto refusal = refuse_unresolved_tier_grammar(resolved_params, selected);
+    if (refusal.has_value()) { return *refusal; }
+
     // Get model (may trigger swap)
     auto t_swap = now();
     InferenceBackend* model = get_model(selected);
@@ -762,8 +777,8 @@ GenerationResult ModelOrchestrator::generate(
 
     if (!model) { return build_no_model_error(selected); }
 
-    GenerationParams resolved_params =
-        resolve_and_stage(model, params, selected);  // gh#87 3b
+    resolved_params =
+        resolve_and_stage(model, resolved_params, selected);  // gh#87 3b
 
     // Generate — speculative routing applies here too (v2.1.11, gh#36)
     GenerationResult result = run_generate_dispatch(
@@ -782,8 +797,11 @@ GenerationResult ModelOrchestrator::generate(
  * calls plain decode. Calls `model->generate(messages, params,
  * cancel)` which polls cancel per token.
  *
+ * gh#154 (v2.13.0): carries the same pre-model tier-grammar gate as the
+ * other overload — one rule, every entry point.
+ *
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 GenerationResult ModelOrchestrator::generate(
     const std::vector<Message>& messages,
@@ -801,14 +819,20 @@ GenerationResult ModelOrchestrator::generate(
         routing_ms = elapsed_ms(t_route, now());
     }
 
+    // gh#154: same gate as the non-cancellable overload — one rule, every
+    // entry point, always before a model is resolved.
+    GenerationParams resolved_params = params;
+    auto refusal = refuse_unresolved_tier_grammar(resolved_params, selected);
+    if (refusal.has_value()) { return *refusal; }
+
     auto t_swap = now();
     InferenceBackend* model = get_model(selected);
     double swap_ms = elapsed_ms(t_swap, now());
 
     if (!model) { return build_no_model_error(selected); }
 
-    GenerationParams resolved_params =
-        resolve_and_stage(model, params, selected);  // gh#87 3b
+    resolved_params =
+        resolve_and_stage(model, resolved_params, selected);  // gh#87 3b
 
     GenerationResult result = model->generate(
         messages, resolved_params, cancel);
@@ -817,6 +841,28 @@ GenerationResult ModelOrchestrator::generate(
                       routing_ms, swap_ms, t_start);
     return result;
 }
+
+namespace {
+/**
+ * @brief The tier a batch arm runs under — `lead` when it names none.
+ *
+ * One spelling for a rule three loops in `generate_batch`'s neighbourhood
+ * each used to inline, two of them indexing `tiers[i]` without checking
+ * that `tiers` is as long as the request list.
+ *
+ * @param tiers Per-request tier names.
+ * @param i Arm index.
+ * @param lead Lead tier, used when the arm names none.
+ * @return The arm's tier name.
+ * @utility
+ * @version 2.13.0
+ */
+const std::string& batch_arm_tier(const std::vector<std::string>& tiers,
+                                  std::size_t i,
+                                  const std::string& lead) {
+    return (i < tiers.size() && !tiers[i].empty()) ? tiers[i] : lead;
+}
+}  // namespace
 
 /**
  * @brief Same-prefix batch generation on a shared model — see header (gh#98).
@@ -828,8 +874,13 @@ GenerationResult ModelOrchestrator::generate(
  * grammar-constrained requests (params.grammar), not common_chat tool
  * injection.
  *
+ * gh#154 (v2.13.0): every arm's grammar resolves before the shared model
+ * is touched, and one arm naming an unregistered grammar refuses the whole
+ * batch — a single decode over a shared prefill cannot run
+ * half-constrained.
+ *
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     const std::vector<std::vector<Message>>& messages_list,
@@ -840,28 +891,59 @@ std::vector<GenerationResult> ModelOrchestrator::generate_batch(
     const std::size_t n = messages_list.size();
     const std::string lead =
         (tiers.empty() || tiers[0].empty()) ? "default" : tiers[0];
+
+    // gh#154: every arm's grammar resolves before any model is touched. A
+    // shared prefill cannot run half-constrained, so one unresolved arm
+    // refuses the whole batch.
+    std::vector<GenerationParams> resolved;
+    auto refusal = refuse_unresolved_batch_grammars(
+        params_list, tiers, lead, resolved);
+    if (refusal.has_value()) {
+        return std::vector<GenerationResult>(n, *refusal);
+    }
+
     InferenceBackend* model = get_model(lead);
     if (model == nullptr) {
         return std::vector<GenerationResult>(n, build_no_model_error(lead));
     }
-
-    std::vector<GenerationParams> resolved;
-    resolved.reserve(n);
-    for (std::size_t i = 0; i < n; ++i) {
-        const std::string& t = tiers[i].empty() ? lead : tiers[i];
-        resolved.push_back(resolve_and_stage(model, params_list[i], t));
-    }
+    stage_batch_arms(model, tiers, lead, resolved);
 
     auto results = model->generate_batch(messages_list, resolved, cancel);
-    for (std::size_t i = 0; i < results.size() && i < tiers.size(); ++i) {
-        const std::string& t = tiers[i].empty() ? lead : tiers[i];
-        apply_adapter_parse(model, get_adapter(t), results[i]);
+    for (std::size_t i = 0; i < results.size(); ++i) {
+        apply_adapter_parse(
+            model, get_adapter(batch_arm_tier(tiers, i, lead)), results[i]);
         // gh#154: a batch request is a generation. Each arm carries its
         // OWN resolved params, so each gets its own provenance — a
         // per-batch record would hide a tier whose grammar missed.
         record_generation(results[i], resolved[i], model);
     }
     return results;
+}
+
+/**
+ * @brief Apply tier sampler defaults + stage tools for every batch arm.
+ *
+ * Split out of `generate_batch` when the gh#154 grammar gate pushed it
+ * over the ABC gate. Runs AFTER the model is resolved, which is exactly
+ * why the grammar refusal could not live in here.
+ *
+ * @param model Backend all arms share.
+ * @param tiers Per-request tier names ("" = `lead`).
+ * @param lead Lead tier name.
+ * @param resolved Grammar-resolved params, staged in place.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void ModelOrchestrator::stage_batch_arms(
+    InferenceBackend* model,
+    const std::vector<std::string>& tiers,
+    const std::string& lead,
+    std::vector<GenerationParams>& resolved)
+{
+    for (std::size_t i = 0; i < resolved.size(); ++i) {
+        resolved[i] = resolve_and_stage(
+            model, resolved[i], batch_arm_tier(tiers, i, lead));
+    }
 }
 
 /**
@@ -898,6 +980,9 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  * same source the buffered strip uses — v2.10.0 left it on a hardcoded
  * `<think>` pair that gemma4 never emits.
  *
+ * gh#154 (v2.13.0): the tier-grammar gate runs before `get_model`, so an
+ * unregistered tier grammar refuses the stream without emitting a token.
+ *
  * @param messages Conversation history.
  * @param params Generation parameters.
  * @param on_token Per-token callback, wrapped by the reasoning filter.
@@ -905,11 +990,13 @@ static void stream_token_trampoline(const char* data, std::size_t len,
  * @param tier_name Explicit tier, or empty to route.
  * @return GenerationResult with content parsed by the shared rule; an
  *         ENTROPIC_ERROR_GENERATE_FAILED result when no model resolves for
- *         the tier.
+ *         the tier, or ENTROPIC_ERROR_GRAMMAR_NOT_FOUND when its grammar
+ *         is unregistered.
  * @req REQ-INFER-011
  * @req REQ-INFER-005
  * @req REQ-INFER-008
- * @version 2.13.0
+ * @req REQ-INFER-007
+ * @version 2.13.0 [reviewed]
  */
 GenerationResult ModelOrchestrator::generate_streaming(
     const std::vector<Message>& messages,
@@ -919,6 +1006,13 @@ GenerationResult ModelOrchestrator::generate_streaming(
     const std::string& tier_name)
 {
     std::string selected = tier_name.empty() ? route(messages) : tier_name;
+
+    // gh#154: refuse an unregistered tier grammar before the model is
+    // resolved — no swap, no prefill, and not one token streamed.
+    GenerationParams resolved_params = params;
+    auto refusal = refuse_unresolved_tier_grammar(resolved_params, selected);
+    if (refusal.has_value()) { return *refusal; }
+
     InferenceBackend* model = get_model(selected);
 
     if (!model) {
@@ -929,8 +1023,8 @@ GenerationResult ModelOrchestrator::generate_streaming(
         return err;
     }
 
-    GenerationParams resolved_params =
-        resolve_and_stage(model, params, selected);  // gh#87 3b
+    resolved_params =
+        resolve_and_stage(model, resolved_params, selected);  // gh#87 3b
 
     // gh#108 (v2.10.3): strip this family's reasoning blocks from the live
     // stream. v2.10.0 added the filter but left it on its hardcoded `<think>`
@@ -1911,8 +2005,13 @@ static std::string normalize_grammar_key(const std::string& grammar_value) {
  * An unresolvable RUNTIME key (`params.grammar_key`) logs a warning and
  * leaves the decode unconstrained rather than failing the turn — it may
  * name a grammar registered after configure. A TIER's `grammar:` stem is
- * different: it is static config, so gh#154 rejects an unresolvable one at
- * configure time (config::validate_tier_grammars) and it cannot reach here.
+ * different: the ENGINE selects the tier, so a caller cannot see the miss,
+ * and the resulting unconstrained decode looks exactly like a constrained
+ * one. `refuse_unresolved_tier_grammar` — which calls this and then reads
+ * what it recorded — turns that case into
+ * `ENTROPIC_ERROR_GRAMMAR_NOT_FOUND` before anything decodes. Configure
+ * only WARNS about it, because `entropic_grammar_register*` requires an
+ * orchestrator and therefore cannot run until configure has returned.
  *
  * gh#154: the key and its origin are recorded on `params` whether or not
  * the lookup succeeds, so `GenerationResult::grammar` can report a named
@@ -1967,6 +2066,88 @@ void ModelOrchestrator::resolve_grammar_key(
     logger->info("Grammar resolved: key='{}', {} bytes",
                  key, content.size());
     params.grammar = std::move(content);
+}
+
+/**
+ * @brief Refuse a dispatch whose TIER grammar is not registered (gh#154).
+ *
+ * See the header for why the refusal lives here rather than at configure.
+ * The short version: `entropic_grammar_register*` needs an orchestrator,
+ * which only exists after `entropic_configure*`, so refusing at configure
+ * made "configure, then register this tier's grammar" — a documented
+ * sequence, and the one `tests/model/test_gh95_identity_grammar.cpp`
+ * exercises — impossible to perform.
+ *
+ * Loud, not silent, and not fatal to the process: the caller gets a typed
+ * error naming the tier, the stem and the call that fixes it, and nothing
+ * decodes. The alternative this replaces is the decode running
+ * UNCONSTRAINED, which produces output of the same shape as a constrained
+ * run whenever the prompt also describes the shape.
+ *
+ * @param params Dispatch params (mutated: grammar resolved).
+ * @param tier_name Selected tier.
+ * @return Refusal result, or std::nullopt when the dispatch may proceed.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+std::optional<GenerationResult>
+ModelOrchestrator::refuse_unresolved_tier_grammar(
+    GenerationParams& params, const std::string& tier_name)
+{
+    resolve_grammar_key(params, tier_name);          // v1.9.3
+    if (!tier_grammar_unresolved(params)) {
+        return std::nullopt;
+    }
+
+    GenerationResult err;
+    err.finish_reason = "error";
+    err.error_code = ENTROPIC_ERROR_GRAMMAR_NOT_FOUND;
+    err.error_message =
+        "Tier '" + tier_name + "' declares grammar '"
+        + params.resolved_grammar_key + "' and no grammar is registered "
+        "under that key. Register it with entropic_grammar_register_file() "
+        "or entropic_grammar_register() before running this tier, or place "
+        + params.resolved_grammar_key + ".gbnf in a grammar search path. "
+        "Refused rather than decoded unconstrained (gh#154): an "
+        "unconstrained decode is indistinguishable from a constrained one "
+        "in the output.";
+    logger->error("{}", err.error_message);
+    return err;
+}
+
+/**
+ * @brief Resolve every batch arm's grammar, refusing the batch on a miss.
+ *
+ * A batch is one decode over a shared prefill, so it cannot run
+ * half-constrained — one unresolved arm refuses all of them.
+ *
+ * @param params_list Per-request base params.
+ * @param tiers Per-request tier names ("" = `lead`).
+ * @param lead Lead tier name.
+ * @param[out] out Grammar-resolved params, one per request.
+ * @return Refusal result, or std::nullopt when every arm resolves.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+std::optional<GenerationResult>
+ModelOrchestrator::refuse_unresolved_batch_grammars(
+    const std::vector<GenerationParams>& params_list,
+    const std::vector<std::string>& tiers,
+    const std::string& lead,
+    std::vector<GenerationParams>& out)
+{
+    out.clear();
+    out.reserve(params_list.size());
+    for (std::size_t i = 0; i < params_list.size(); ++i) {
+        GenerationParams resolved = params_list[i];
+        auto refusal = refuse_unresolved_tier_grammar(
+            resolved, batch_arm_tier(tiers, i, lead));
+        if (refusal.has_value()) {
+            return refusal;
+        }
+        out.push_back(std::move(resolved));
+    }
+    return std::nullopt;
 }
 
 namespace {

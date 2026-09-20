@@ -419,19 +419,21 @@ static std::string describe_search_dirs(
 }
 
 /**
- * @brief Reject a tier whose `grammar:` stem resolves to no .gbnf (gh#154).
+ * @brief Warn about every tier whose `grammar:` stem resolves to no .gbnf
+ *        (gh#154).
  * @param config Parsed engine config.
  * @param search_dirs Directories from grammar_search_paths().
- * @return Empty string on success, else an actionable message.
+ * @return Empty string when every stem resolves, else one message naming
+ *         each unresolved tier and stem.
  * @req REQ-INFER-007
  * @req REQ-CFG-006
  * @version 2.13.0
  */
-std::string validate_tier_grammars(
+std::string warn_unresolved_tier_grammars(
     const ParsedConfig& config,
     const std::vector<std::filesystem::path>& search_dirs)
 {
-    std::string err;
+    std::vector<std::string> unresolved;
     for (const auto& [name, tier] : config.models.tiers) {
         if (!tier.grammar.has_value()) { continue; }
         // The registry keys on the file stem: "compactor.gbnf" and
@@ -440,15 +442,22 @@ std::string validate_tier_grammars(
         if (stem.empty() || grammar_stem_resolves(stem, search_dirs)) {
             continue;
         }
-        err = "models." + name + ": grammar '" + stem
-            + "' does not resolve — no " + stem + ".gbnf in any grammar "
-              "search path (" + describe_search_dirs(search_dirs)
-            + "). Before v2.13.0 this decoded UNCONSTRAINED with only a "
-              "warning, which is indistinguishable from a constrained run "
-              "in the output. Add the file, or drop the tier's grammar key.";
-        break;
+        unresolved.push_back("models." + name + " -> '" + stem + "'");
     }
-    return err;
+    if (unresolved.empty()) { return ""; }
+
+    std::string list;
+    for (const auto& entry : unresolved) {
+        if (!list.empty()) { list += ", "; }
+        list += entry;
+    }
+    return "grammar not resolvable yet for " + list
+         + " — searched " + describe_search_dirs(search_dirs)
+         + ". Register each key with entropic_grammar_register_file() or "
+           "entropic_grammar_register() before the first run on that tier, "
+           "or place <stem>.gbnf in a grammar search path. A run on such a "
+           "tier before then fails with ENTROPIC_ERROR_GRAMMAR_NOT_FOUND "
+           "rather than decoding unconstrained (gh#154).";
 }
 
 /**

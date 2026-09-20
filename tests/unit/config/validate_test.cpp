@@ -402,7 +402,7 @@ SCENARIO("ModelsConfig validation — default tier must exist",
     }
 }
 
-// ── gh#154 (v2.13.0): an unresolvable tier grammar stem is a config error ──
+// ── gh#154 (v2.13.0): an unresolved tier grammar stem is a WARNING here ──
 //
 // `GrammarRegistry::get()` returns "" on a miss and the decode proceeds
 // UNCONSTRAINED — documented fail-open. From outside it is undetectable:
@@ -413,10 +413,19 @@ SCENARIO("ModelsConfig validation — default tier must exist",
 // arm's config where no matching `.gbnf` sat. Two accept-rate figures and
 // one throughput figure were withdrawn.
 //
-// A tier's stem is STATIC config, knowable the moment the config is read,
-// so it becomes an error there. A runtime `params.grammar_key` is NOT
-// checked — it may name a grammar registered after configure — and its miss
-// is now reported through `generations[].grammar.resolved` instead.
+// gh#154 first made this a configure-time ERROR. That was wrong, and the
+// GPU gate proved it: `entropic_grammar_register` and
+// `entropic_grammar_register_file` both require an orchestrator, which
+// exists only AFTER `entropic_configure*`, so refusing at configure made
+// "configure, then register this tier's grammar" — the only sequence open
+// to a consumer holding its grammar in memory — impossible to perform.
+// Configure therefore WARNS, naming every unresolved tier; the refusal
+// lands at first use as ENTROPIC_ERROR_GRAMMAR_NOT_FOUND
+// (tests/unit/inference/tier_grammar_gate_test.cpp).
+//
+// A runtime `params.grammar_key` is NOT checked at either point — it may
+// name a grammar registered later — and its miss is reported through
+// `generations[].grammar.resolved` instead.
 
 namespace {
 
@@ -449,15 +458,17 @@ ParsedConfig gh154_config(const std::string& grammar) {
 
 }  // namespace
 
-SCENARIO("gh#154 a tier grammar stem must resolve to a file",
+SCENARIO("gh#154 an unresolved tier grammar stem is warned about, not "
+         "refused",
          "[config][validate][gh154][cpu]") {
     GIVEN("a tier naming a stem that is present") {
         auto dir = gh154_grammar_dir("present", {"compactor"});
-        auto err = validate_tier_grammars(gh154_config("compactor"), {dir});
+        auto warning =
+            warn_unresolved_tier_grammars(gh154_config("compactor"), {dir});
 
-        THEN("it passes") {
-            INFO(err);
-            CHECK(err.empty());
+        THEN("there is nothing to say") {
+            INFO(warning);
+            CHECK(warning.empty());
         }
     }
 
@@ -465,55 +476,81 @@ SCENARIO("gh#154 a tier grammar stem must resolve to a file",
         // normalize_grammar_key strips it, so both spellings name one
         // grammar and the check has to agree with the registry.
         auto dir = gh154_grammar_dir("extension", {"compactor"});
-        auto err = validate_tier_grammars(
+        auto warning = warn_unresolved_tier_grammars(
             gh154_config("compactor.gbnf"), {dir});
 
-        THEN("it passes too") {
-            INFO(err);
-            CHECK(err.empty());
+        THEN("still nothing to say") {
+            INFO(warning);
+            CHECK(warning.empty());
         }
     }
 
     GIVEN("a tier naming a stem that is absent") {
         auto dir = gh154_grammar_dir("absent", {"something-else"});
-        auto err = validate_tier_grammars(gh154_config("compactor"), {dir});
+        auto warning =
+            warn_unresolved_tier_grammars(gh154_config("compactor"), {dir});
 
-        THEN("it fails, naming the tier, the stem and where it looked") {
-            REQUIRE_FALSE(err.empty());
-            CHECK(err.find("lead") != std::string::npos);
-            CHECK(err.find("compactor") != std::string::npos);
+        THEN("it warns, naming the tier, the stem and where it looked") {
+            REQUIRE_FALSE(warning.empty());
+            CHECK(warning.find("lead") != std::string::npos);
+            CHECK(warning.find("compactor") != std::string::npos);
             // "not found" without saying WHERE it looked is the
             // diagnostic that cost three days.
-            CHECK(err.find(dir.string()) != std::string::npos);
+            CHECK(warning.find(dir.string()) != std::string::npos);
+        }
+        AND_THEN("it names the call that resolves it — the whole reason "
+                 "this is a warning and not a refusal") {
+            CHECK(warning.find("entropic_grammar_register")
+                  != std::string::npos);
+        }
+    }
+
+    GIVEN("TWO tiers naming absent stems") {
+        // A warning is advisory, so it has to be complete: stopping at
+        // the first would hide the second until a later run.
+        auto dir = gh154_grammar_dir("absent-two", {});
+        auto config = gh154_config("compactor");
+        TierConfig second;
+        second.adapter = "qwen35";
+        second.grammar = std::filesystem::path("scribe");
+        config.models.tiers["editor"] = second;
+        auto warning = warn_unresolved_tier_grammars(config, {dir});
+
+        THEN("BOTH are named in one message") {
+            REQUIRE_FALSE(warning.empty());
+            CHECK(warning.find("compactor") != std::string::npos);
+            CHECK(warning.find("scribe") != std::string::npos);
+            CHECK(warning.find("editor") != std::string::npos);
         }
     }
 
     GIVEN("a tier with no grammar at all") {
-        auto err = validate_tier_grammars(gh154_config(""), {});
+        auto warning = warn_unresolved_tier_grammars(gh154_config(""), {});
 
-        THEN("it passes — the check is opt-in with the key") {
-            CHECK(err.empty());
+        THEN("nothing to say — the check is opt-in with the key") {
+            CHECK(warning.empty());
         }
     }
 
     GIVEN("a tier naming a stem and NO search path configured") {
-        auto err = validate_tier_grammars(gh154_config("compactor"), {});
+        auto warning =
+            warn_unresolved_tier_grammars(gh154_config("compactor"), {});
 
-        THEN("it fails and says no search path exists") {
-            REQUIRE_FALSE(err.empty());
-            CHECK(err.find("search path") != std::string::npos);
+        THEN("it warns and says no search path exists") {
+            REQUIRE_FALSE(warning.empty());
+            CHECK(warning.find("search path") != std::string::npos);
         }
     }
 
     GIVEN("two search paths, the stem in the second") {
         auto first = gh154_grammar_dir("two-a", {});
         auto second = gh154_grammar_dir("two-b", {"compactor"});
-        auto err = validate_tier_grammars(
+        auto warning = warn_unresolved_tier_grammars(
             gh154_config("compactor"), {first, second});
 
         THEN("either path resolving is enough") {
-            INFO(err);
-            CHECK(err.empty());
+            INFO(warning);
+            CHECK(warning.empty());
         }
     }
 }

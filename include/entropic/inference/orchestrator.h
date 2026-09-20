@@ -36,6 +36,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -944,6 +945,78 @@ private:
                              const std::string& tier_name);
 
     /**
+     * @brief Resolve this dispatch's grammar, refusing an unregistered
+     *        TIER grammar before anything decodes (gh#154).
+     *
+     * gh#154 first refused an unresolvable tier stem at CONFIGURE. That
+     * broke the documented register-after-configure workflow:
+     * `entropic_grammar_register` and `entropic_grammar_register_file`
+     * both require an orchestrator, which exists only after configure, so
+     * a consumer holding its grammar in memory (or at a path the engine
+     * cannot discover) had no legal order of calls left. Configure now
+     * warns; the refusal lands HERE, at first use, where "not registered
+     * yet" and "never going to be" are finally distinguishable.
+     *
+     * Runs BEFORE `get_model`, so a doomed run costs no model swap and
+     * cannot decode. The rule itself is not re-implemented: this calls
+     * `resolve_grammar_key` and asks `tier_grammar_unresolved` about the
+     * result.
+     *
+     * @param params Params for this dispatch (mutated: grammar resolved).
+     * @param tier_name Selected tier.
+     * @return A refusal result carrying `ENTROPIC_ERROR_GRAMMAR_NOT_FOUND`
+     *         when the tier named a grammar the registry does not hold;
+     *         `std::nullopt` otherwise.
+     * @req REQ-INFER-007
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::optional<GenerationResult> refuse_unresolved_tier_grammar(
+        GenerationParams& params, const std::string& tier_name);
+
+    /**
+     * @brief Resolve each batch arm's grammar, refusing the whole batch
+     *        if any arm's tier grammar is unregistered (gh#154).
+     *
+     * A batch is ONE decode over a shared prefill, so it cannot run
+     * half-constrained: one unresolved arm refuses all of them, with the
+     * offending tier named.
+     *
+     * @param params_list Per-request base params.
+     * @param tiers Per-request tier names ("" = `lead`).
+     * @param lead Lead tier name, used for empty entries.
+     * @param[out] out Grammar-resolved params, one per request.
+     * @return The refusal result, or `std::nullopt` when every arm resolves.
+     * @req REQ-INFER-007
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::optional<GenerationResult> refuse_unresolved_batch_grammars(
+        const std::vector<GenerationParams>& params_list,
+        const std::vector<std::string>& tiers,
+        const std::string& lead,
+        std::vector<GenerationParams>& out);
+
+    /**
+     * @brief Apply tier sampler defaults + stage tools for every batch arm.
+     *
+     * Split out of `generate_batch` when the gh#154 grammar gate pushed it
+     * past the ABC gate. Runs after the shared model is resolved — which
+     * is precisely why the grammar refusal cannot live here.
+     *
+     * @param model Backend all arms share.
+     * @param tiers Per-request tier names ("" = `lead`).
+     * @param lead Lead tier name.
+     * @param resolved Grammar-resolved params, staged in place.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void stage_batch_arms(InferenceBackend* model,
+                          const std::vector<std::string>& tiers,
+                          const std::string& lead,
+                          std::vector<GenerationParams>& resolved);
+
+    /**
      * @brief Apply per-tier sampler config to params. (gh#82, v2.4.4)
      *
      * Sets `params.temperature` / `params.max_tokens` from the tier's
@@ -959,19 +1032,26 @@ private:
                                      const std::string& tier_name);
 
     /**
-     * @brief Resolve params + stage tools for a generate dispatch (gh#87).
+     * @brief Apply tier sampler defaults + stage tools for a generate
+     *        dispatch (gh#87).
      *
-     * Copies params, applies grammar_key resolution + per-tier sampler
-     * defaults, and stages the turn's tool defs on the backend for
-     * common_chat rendering. Single call so the generate entry points stay
-     * under the knots ABC/SLOC gates.
+     * Copies params, applies per-tier sampler defaults, and stages the
+     * turn's tool defs on the backend for common_chat rendering. Single
+     * call so the generate entry points stay under the knots ABC/SLOC
+     * gates.
+     *
+     * gh#154 (v2.13.0): grammar resolution moved OUT of here to
+     * `refuse_unresolved_tier_grammar`, which every entry point calls
+     * before `get_model` — the refusal has to happen before a model is
+     * resolved, and this runs after one. `params` therefore arrives with
+     * its grammar already resolved.
      *
      * @param model Active backend (tools staged here).
-     * @param params Incoming generation params.
+     * @param params Grammar-resolved generation params.
      * @param tier_name Selected tier.
      * @return Resolved params (tools staged as a side effect on `model`).
      * @dg_internal
-     * @version 2.7.0
+     * @version 2.13.0
      */
     GenerationParams resolve_and_stage(InferenceBackend* model,
                                        const GenerationParams& params,

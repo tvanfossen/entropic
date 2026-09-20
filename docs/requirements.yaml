@@ -2580,23 +2580,41 @@
     (with .gbnf extension normalised away).
 
 
-    An unresolvable TIER stem is rejected at configure time with
+    A TIER stem that does not resolve fails LOUD at FIRST USE, never
 
-    ENTROPIC_ERROR_INVALID_CONFIG (config::validate_tier_grammars, gh#154):
+    silently (gh#154). Configure WARNS, naming every unresolved tier, its
 
-    it is static config, knowable when the config is read, and the previous
+    stem, every directory searched and how to register it; a run that then
 
-    fail-open was undetectable from outside because constrained and
+    SELECTS such a tier returns ENTROPIC_ERROR_GRAMMAR_NOT_FOUND
 
-    unconstrained output have the same shape whenever the prompt also
+    (ModelOrchestrator::refuse_unresolved_tier_grammar) with nothing
 
-    describes the shape. An unresolvable RUNTIME key (params.grammar_key)
+    decoded — the check runs before get_model, so no model swap and no
 
-    still logs a warning and leaves the decode unconstrained — it may name a
+    prefill happen either. Configure does not refuse, because
 
-    grammar registered after configure — and the miss is reported on the
+    entropic_grammar_register / entropic_grammar_register_file both require
 
-    result as grammar.resolved == false with the named key carried.
+    an orchestrator and therefore cannot be called until configure has
+
+    returned: refusing there would make the documented
+
+    configure-then-register sequence impossible to perform.
+
+    The fail-open it replaces was undetectable from outside, because
+
+    constrained and unconstrained output have the same shape whenever the
+
+    prompt also describes the shape. An unresolvable RUNTIME key
+
+    (params.grammar_key) is per-call and still logs a warning and leaves the
+
+    decode unconstrained — it may name a grammar registered later — and the
+
+    miss is reported on the result as grammar.resolved == false with the
+
+    named key carried.
 
     '
   acceptance_criteria: 'Given a registry, When grammars are registered from string/file/directory
@@ -2615,9 +2633,13 @@
 
     a grammar stem with no matching .gbnf in any search path, Then configure
 
-    returns ENTROPIC_ERROR_INVALID_CONFIG naming the tier, the stem and every
+    SUCCEEDS with a warning naming the tier, the stem and every directory
 
-    directory searched.
+    searched, And a run selecting that tier returns
+
+    ENTROPIC_ERROR_GRAMMAR_NOT_FOUND with no content and no tokens, And
+
+    registering that key afterwards lets the same tier run normally.
 
     '
   verified_by: 'SCENARIO "Register grammar from in-memory string", "Duplicate key
@@ -2646,17 +2668,27 @@
 
     tests/model/test_gh95_identity_grammar.cpp;
 
-    SCENARIO "gh#154 a tier grammar stem must resolve to a file" /
+    SCENARIO "gh#154 an unresolved tier grammar stem is warned about, not
 
-    "gh#154 grammar search paths mirror the runtime lookup" —
+    refused" / "gh#154 grammar search paths mirror the runtime lookup" /
+
+    "gh#154 every bundled identity grammar stem resolves" —
 
     tests/unit/config/validate_test.cpp;
 
-    TEST_CASE "gh#154 a tier grammar stem that cannot resolve fails configure"
+    SCENARIO "gh#154 a tier grammar that is not registered refuses the run" /
 
-    / "gh#154 a tier grammar stem that resolves still configures" —
+    "gh#154 registering the tier''s grammar after configure opens the gate" /
 
-    tests/unit/api/entropic_capi_test.cpp
+    "gh#154 a REQUEST-level grammar_key miss still fails open" —
+
+    tests/unit/inference/tier_grammar_gate_test.cpp;
+
+    TEST_CASE "gh#154 a tier grammar stem that cannot resolve YET still
+
+    configures" / "gh#154 a tier grammar stem that resolves still configures"
+
+    — tests/unit/api/entropic_capi_test.cpp
 
     '
   version: 2.13.0

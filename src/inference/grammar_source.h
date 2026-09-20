@@ -123,6 +123,34 @@ inline bool is_request_grammar(GrammarSource source) {
 }
 
 /**
+ * @brief A TIER named a grammar and nothing resolved it (gh#154).
+ *
+ * Reads only what `ModelOrchestrator::resolve_grammar_key` already wrote,
+ * so there is no second copy of the precedence rule to keep in sync: the
+ * key is recorded BEFORE the registry lookup and `grammar` stays empty
+ * when the lookup misses, so the three fields together say "the tier
+ * asked, and nothing answered".
+ *
+ * Deliberately narrow. A per-call `params.grammar_key` miss is NOT this:
+ * it may name a grammar the caller registers later, so it keeps the
+ * documented fail-open and reports itself through
+ * `generations[].grammar.resolved == false`. A tier stem is static
+ * config and the ENGINE selects the tier, so a miss there is a broken
+ * deployment the caller cannot see from the output — the decode would be
+ * unconstrained and shaped exactly like a constrained one.
+ *
+ * @param params Params after `resolve_grammar_key` has run.
+ * @return true when a tier-derived key was named and resolved to nothing.
+ * @req REQ-INFER-007
+ * @version 2.13.0
+ */
+inline bool tier_grammar_unresolved(const GenerationParams& params) {
+    return params.grammar.empty()
+        && params.grammar_from_tier
+        && !params.resolved_grammar_key.empty();
+}
+
+/**
  * @brief Stable wire name for a grammar source.
  * @param source Resolved source.
  * @return "none" | "request" | "tier" | "tool_call". Serialized into

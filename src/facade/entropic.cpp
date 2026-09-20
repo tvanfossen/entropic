@@ -1793,41 +1793,51 @@ static entropic_error_t validate_prompt_sources(
 }
 
 /**
- * @brief Reject a tier grammar stem that resolves to nothing (gh#154).
+ * @brief Warn about a tier grammar stem that resolves to nothing (gh#154).
  *
  * Runs AFTER thread_frontmatter_samplers — the common spelling of a tier
  * grammar is an identity frontmatter `grammar:` key, which is not on the
- * TierConfig until that step threads it — and still before the model
- * loads.
+ * TierConfig until that step threads it.
+ *
+ * A WARNING, not a refusal. `entropic_grammar_register` and
+ * `entropic_grammar_register_file` both go through `check_orchestrator`,
+ * so they cannot be called until configure has returned — meaning
+ * "configure, then register this tier's grammar" is the ONLY sequence
+ * available to a consumer whose grammar lives in memory or at a path the
+ * engine cannot discover. gh#154 shipped this as
+ * ENTROPIC_ERROR_INVALID_CONFIG and locked that sequence out;
+ * `tests/model/test_gh95_identity_grammar.cpp` is a copy of it. The
+ * refusal now happens at FIRST USE
+ * (`ModelOrchestrator::refuse_unresolved_tier_grammar`), where the tier
+ * being selected proves nobody is going to register it.
  *
  * @param h Engine handle carrying the parsed config.
  * @param data_dir Resolved data directory.
- * @return ENTROPIC_OK, or ENTROPIC_ERROR_INVALID_CONFIG with
- *        `last_error` naming the stem and every directory searched.
  * @req REQ-INFER-007
  * @dg_internal
  * @version 2.13.0
  */
-static entropic_error_t validate_tier_grammars_step(
+static void warn_tier_grammars_step(
     entropic_handle_t h, const std::filesystem::path& data_dir) {
-    auto err = entropic::config::validate_tier_grammars(
+    auto warning = entropic::config::warn_unresolved_tier_grammars(
         h->config,
         entropic::config::grammar_search_paths(h->config, data_dir));
-    entropic_error_t rc = ENTROPIC_OK;
-    if (!err.empty()) {
-        h->last_error = err;
-        s_log->error("configure: {}", err);
-        rc = ENTROPIC_ERROR_INVALID_CONFIG;
+    if (!warning.empty()) {
+        s_log->warn("configure: {}", warning);
     }
-    return rc;
 }
 
 /**
  * @brief Shared body of all entropic_configure* entry points.
+ *
+ * gh#154 (v2.13.0): an unresolved tier grammar is WARNED about here and
+ * refused at first use instead — the calls that register one need the
+ * orchestrator this function is about to build.
+ *
  * @return ENTROPIC_OK on success, else the first failing step's
  *        error code.
  * @req REQ-API-004
- * @version 2.13.0-gh154
+ * @version 2.13.0
  */
 static entropic_error_t configure_common(entropic_handle_t h) {
     auto rc = reject_if_configured(h);
@@ -1849,10 +1859,12 @@ static entropic_error_t configure_common(entropic_handle_t h) {
         // engine-bound frontmatter wiring stays in
         // wire_prompts_and_persistence (post-engine).
         thread_frontmatter_samplers(h, data_dir);
-        // gh#154 (v2.13.0): an unresolvable tier grammar stem is a config
-        // error, not a decode-time warning. Checked here so it is raised
-        // after the frontmatter stems land and before the model loads.
-        rc = validate_tier_grammars_step(h, data_dir);
+        // gh#154 (v2.13.0): name a tier grammar stem that does not resolve
+        // YET. Not a refusal — entropic_grammar_register* needs the
+        // orchestrator this call is about to build, so a consumer's only
+        // legal order is configure-then-register. The run that selects the
+        // tier is what fails, loudly and typed, if nobody ever did.
+        warn_tier_grammars_step(h, data_dir);
     }
     if (rc == ENTROPIC_OK) {
         rc = init_orchestrator(h, data_dir);

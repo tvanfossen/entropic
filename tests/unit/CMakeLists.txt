@@ -79,6 +79,11 @@ add_executable(entropic-inference-tests
     # gh#134 (v2.10.4): every grammar source must reach the sampler. The
     # tool-derived source (common_chat_templates_apply) is discarded today.
     inference/grammar_source_invariant_test.cpp
+    # gh#154 follow-up (v2.13.0): an unregistered tier grammar refuses the
+    # RUN, not configure — `entropic_grammar_register*` needs an
+    # orchestrator, so a configure-time refusal made register-after-
+    # configure impossible. No GGUF needed: the gate runs before get_model.
+    inference/tier_grammar_gate_test.cpp
     inference/empty_content_diagnosis_test.cpp
     inference/vram_footprint_test.cpp
     # gh#136 (v2.10.4): 316 sanitized at INGRESS, not per-egress-site.

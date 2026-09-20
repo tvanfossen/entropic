@@ -2908,3 +2908,129 @@ TEST_CASE("gh#123 part 4: ChildContextInfo.max_consecutive_empty_turns_override 
     // GREEN: ceiling=5 surfaced → max_iterations exits normally, not ERROR.
     CHECK(ctx.state != AgentState::ERROR);
 }
+
+// ── gh#160 (v2.13.0): the isolation wiring the engine owns ──────────────
+
+namespace gh160_engine {
+namespace fs = std::filesystem;
+
+/**
+ * @brief Point $HOME at a temp dir so sandbox sessions land there.
+ * @internal
+ * @version 2.13.0
+ */
+struct ScopedHomeEng {
+    std::string original;                 ///< Prior $HOME
+    fs::path tmp_home;                    ///< Replacement $HOME
+    ScopedHomeEng() {
+        const char* h = std::getenv("HOME");
+        original = (h != nullptr) ? h : "";
+        tmp_home = fs::temp_directory_path() /
+                   ("entropic_eng160_" + std::to_string(::getpid()));
+        fs::create_directories(tmp_home);
+        ::setenv("HOME", tmp_home.string().c_str(), 1);
+    }
+    ~ScopedHomeEng() {
+        if (!original.empty()) { ::setenv("HOME", original.c_str(), 1); }
+        std::error_code ec;
+        fs::remove_all(tmp_home, ec);
+    }
+};
+
+/// @brief Facade stand-in: the root the session's tools resolve against.
+struct RootStub {
+    fs::path root;                        ///< Answer for resolve_root
+    std::vector<std::string> unsafe;      ///< Answer for unsafe_external_tools
+    std::string last_key;                 ///< Session key the engine asked about
+};
+
+static fs::path stub_root(const std::string& key, void* ud) {
+    auto* s = static_cast<RootStub*>(ud);
+    s->last_key = key;
+    return s->root;
+}
+
+static std::vector<std::string> stub_unsafe(
+    const std::string& /*key*/,
+    const std::vector<std::string>& /*allowed*/, void* ud) {
+    return static_cast<RootStub*>(ud)->unsafe;
+}
+
+static entropic::SessionRootInterface make_stub(RootStub& s) {
+    entropic::SessionRootInterface iface;
+    iface.resolve_root = stub_root;
+    iface.unsafe_external_tools = stub_unsafe;
+    iface.user_data = &s;
+    return iface;
+}
+
+} // namespace gh160_engine
+
+SCENARIO("gh#160: delegation isolation is opt-in and rooted at the "
+         "session's tool root", "[engine][gh160][v2.13.0]") {
+    using namespace gh160_engine;
+    ScopedHomeEng home;
+    auto tools_root = fs::temp_directory_path() /
+                      ("entropic_tools_" + std::to_string(::getpid()));
+    auto engine_repo = fs::temp_directory_path() /
+                       ("entropic_repo_" + std::to_string(::getpid()));
+    fs::create_directories(tools_root);
+    fs::create_directories(engine_repo);
+
+    RootStub stub;
+    stub.root = tools_root;
+
+    GIVEN("the shipped default (delegation.isolation: none)") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(engine_repo);
+        engine.set_session_root_interface(make_stub(stub));
+
+        THEN("no sandbox is created, so no snapshot cost is paid") {
+            CHECK(engine.sandbox_for_session("") == nullptr);
+        }
+        THEN("nothing is claimed, so nothing is refused") {
+            LoopContext ctx;
+            stub.unsafe = {"clew.refresh"};
+            CHECK(engine.isolation_unsafe_tools(ctx, "eng").empty());
+        }
+    }
+
+    GIVEN("delegation.isolation: sandbox") {
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.delegation_isolation = true;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_project_dir(engine_repo);
+        engine.set_session_root_interface(make_stub(stub));
+
+        THEN("the sandbox snapshots the TOOL root, not the engine repo") {
+            auto* mgr = engine.sandbox_for_session("s1");
+            REQUIRE(mgr != nullptr);
+            // gh#160's actual report: these two were different paths and
+            // the engine snapshotted its own, so the patch diffed a tree
+            // no tool had written to.
+            CHECK(mgr->project_dir() == fs::absolute(tools_root));
+            CHECK(stub.last_key == "s1");
+        }
+        THEN("the same session reuses one manager") {
+            CHECK(engine.sandbox_for_session("s1")
+                  == engine.sandbox_for_session("s1"));
+        }
+        THEN("a writable external tool makes the delegation refusable") {
+            LoopContext ctx;
+            stub.unsafe = {"clew.refresh"};
+            auto unsafe = engine.isolation_unsafe_tools(ctx, "eng");
+            REQUIRE(unsafe.size() == 1);
+            CHECK(unsafe[0] == "clew.refresh");
+        }
+    }
+
+    fs::remove_all(tools_root);
+    fs::remove_all(engine_repo);
+}

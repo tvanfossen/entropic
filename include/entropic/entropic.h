@@ -583,8 +583,11 @@ ENTROPIC_EXPORT entropic_error_t entropic_set_stream_observer(
  * WAITING_TOOL, VERIFYING, DELEGATING — onto user-visible task status.
  * Pass observer=NULL to clear.
  *
- * @threadsafety Callback may fire from the engine thread or a
- *        child-loop delegation thread. Must be thread-safe.
+ * @threadsafety Callback fires on whichever thread is running the turn
+ *        — a delegated child loop runs INLINE on its parent's thread,
+ *        there is no separate delegation thread — and with
+ *        `concurrent_sessions` on (the v2.13.0 default) several run
+ *        threads can fire it at once. Must be thread-safe.
  *
  * @param handle Engine handle.
  * @param observer State-change callback (state_int, user_data).
@@ -1527,9 +1530,25 @@ typedef ent_decision_t (*ent_delegation_complete_cb)(
  * run.
  *
  * Replaces the pre-2.1.5 silent auto-merge-to-`develop` behavior that
- * caused gh#29 (engine corrupting the user's repo state). The engine
- * never writes to the user's project directory; the consumer applies
- * patches with user consent.
+ * caused gh#29 (engine corrupting the user's repo state): the engine
+ * never runs `git checkout`, creates branches, commits or merges in the
+ * user's repository, on any path.
+ *
+ * @par What "isolation" does and does not mean (gh#160, v2.13.0)
+ * These callbacks fire only when `delegation.isolation: sandbox` is
+ * configured. The default is `none`, and under `none` a delegated child
+ * uses the SAME working directory as its parent — its edits land in the
+ * project directly and NO patch is produced. Every release from v2.1.5
+ * to v2.12.2 behaved that way regardless of configuration, because the
+ * directory-swap callback had no production caller; the claim that the
+ * engine "never writes to the user's project directory" described an
+ * intention, not the shipped wiring. With `sandbox` it is true again:
+ * the child's tools are pointed at
+ * `~/.entropic/sandbox/<session>/<delegation-id>/`, and the diff comes
+ * back here for the consumer to apply with the user's consent.
+ * External (stdio/SSE) MCP servers cannot be moved into the sandbox, so
+ * a delegation whose child can reach one that does not declare
+ * `readOnlyHint: true` is refused rather than run uncontained.
  *
  * @param handle Engine handle.
  * @param on_start Pre-delegation gate callback (NULL to clear).
@@ -1538,10 +1557,14 @@ typedef ent_decision_t (*ent_delegation_complete_cb)(
  * @return ENTROPIC_OK on success.
  *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
  *
- * @threadsafety Serialized per-handle. Callbacks may fire from the
- *        engine thread or a child-loop delegation thread.
+ * @threadsafety Serialized per-handle. Callbacks fire on the thread
+ *        that is running the parent turn — a child loop runs inline on
+ *        it, not on a thread of its own — so with `concurrent_sessions`
+ *        on (the v2.13.0 default) they may fire from several run
+ *        threads at once and must be thread-safe.
  * @req REQ-API-010
  * @req REQ-DELEG-002
+ * @req REQ-DELEG-005
  * @req REQ-API-005
  * @version 2.1.5
  */

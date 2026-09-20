@@ -893,6 +893,42 @@ struct CompactionConfig {
 };
 
 /**
+ * @brief How a delegation's filesystem writes are contained (gh#160).
+ * @version 2.13.0
+ */
+enum class DelegationIsolation {
+    none,     ///< Child tools share the session's working dir (default)
+    sandbox,  ///< Child tools run in a copy; output is a patch
+};
+
+/**
+ * @brief Delegation behaviour knobs (gh#160, v2.13.0).
+ *
+ * `isolation` defaults to `none`, which is what every release through
+ * v2.12.2 actually did: `DelegationManager::set_dir_swap` had no
+ * production caller, so the sandbox snapshot was taken, never entered,
+ * and diffed to nothing. Turning isolation ON by default would instead
+ * park every delegated edit in `pending/<id>.patch` for the many
+ * consumers that register no `on_complete` callback — a silent loss of
+ * work. So the fix wires the machinery and leaves the switch off.
+ *
+ * With `sandbox`:
+ *  - each delegation gets `~/.entropic/sandbox/<session>/d<...>/`,
+ *  - the session's MCP servers are pointed at it for the child's turns,
+ *  - the diff is delivered through `ent_delegation_complete_cb`,
+ *  - a delegation whose child can reach a NON-read-only external MCP
+ *    tool is refused, because an external server cannot be moved into
+ *    the sandbox and the containment claim would be false.
+ *
+ * YAML: `delegation: { isolation: sandbox }`.
+ *
+ * @version 2.13.0
+ */
+struct DelegationConfig {
+    DelegationIsolation isolation = DelegationIsolation::none; ///< Default: none
+};
+
+/**
  * @brief Generation parameters configuration (top-level defaults).
  * @version 1.8.1
  */
@@ -1131,6 +1167,7 @@ struct ParsedConfig {
     PermissionsConfig permissions;    ///< Tool permissions
     MCPConfig mcp;                    ///< MCP server settings
     CompactionConfig compaction;      ///< Auto-compaction settings
+    DelegationConfig delegation;      ///< Delegation isolation (gh#160)
     LSPConfig lsp;                    ///< LSP integration
     PromptCacheConfig prompt_cache;   ///< Prompt KV cache settings
     StorageConfig storage;            ///< Storage backend settings (v1.8.8)

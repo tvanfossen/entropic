@@ -1240,3 +1240,57 @@ SCENARIO("gh#133 fallout: the bundled default must not clobber explicit layers",
         }
     }
 }
+
+// ── gh#160 (v2.13.0): delegation.isolation ─────────────────────────────
+
+SCENARIO("gh#160 delegation.isolation parses, and a bad mode is refused",
+         "[config][gh160][v2.13.0]")
+{
+    auto registry = load_test_registry();
+    auto dir = std::filesystem::temp_directory_path()
+        / "entropic-gh160-isolation";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    GIVEN("a config with no delegation section at all") {
+        auto path = dir / "none.yaml";
+        std::ofstream(path) << "log_level: INFO\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("it loads and isolation stays off — today's shipped behaviour") {
+            REQUIRE(err.empty());
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::none);
+        }
+    }
+
+    GIVEN("delegation: {isolation: sandbox}") {
+        auto path = dir / "sandbox.yaml";
+        std::ofstream(path) << "delegation:\n  isolation: sandbox\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("the mode is carried through") {
+            REQUIRE(err.empty());
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::sandbox);
+        }
+    }
+
+    GIVEN("an unrecognized isolation mode") {
+        auto path = dir / "bogus.yaml";
+        std::ofstream(path) << "delegation:\n  isolation: worktree\n";
+        entropic::ParsedConfig config;
+        auto err = entropic::config::parse_config_file(
+            path, registry, config);
+        THEN("the load fails loudly rather than silently not isolating") {
+            REQUIRE_FALSE(err.empty());
+            CHECK(err.find("worktree") != std::string::npos);
+            CHECK(config.delegation.isolation
+                  == entropic::DelegationIsolation::none);
+        }
+    }
+
+    std::filesystem::remove_all(dir);
+}

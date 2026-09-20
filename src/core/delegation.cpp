@@ -85,6 +85,48 @@ void DelegationManager::set_storage(const StorageInterface* storage) {
 }
 
 /**
+ * @brief Mint a sandbox/delegation id unique across siblings (gh#160).
+ *
+ * Falls back to the bare prefix when no sandbox manager is configured —
+ * with isolation off there is no sandbox directory and no pending patch
+ * to collide, so the id stays exactly what it has always been and the
+ * logs a consumer greps for do not move.
+ *
+ * @param prefix Depth-derived stem ("d1", "d1r", "pipeline").
+ * @return Unique id when sandboxed, `prefix` verbatim otherwise.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::string DelegationManager::mint_delegation_id(
+    const std::string& prefix) {
+    if (sandbox_mgr_ == nullptr) {
+        return prefix;
+    }
+    return sandbox_mgr_->next_delegation_id(prefix);
+}
+
+/**
+ * @brief The directory a finishing delegation must restore (gh#160).
+ *
+ * The parent's ACTIVE root, not the project root: a delegation nested
+ * inside another one must hand the tools back to the OUTER sandbox, or
+ * the outer child's remaining turns write into the user's working tree
+ * — precisely the guarantee gh#29 states and gh#160 found unwired.
+ *
+ * @param parent_ctx Context of the loop that issued this delegation.
+ * @return Parent's active root, or `repo_dir_` at the top level.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::filesystem::path DelegationManager::restore_root_for(
+    const LoopContext& parent_ctx) const {
+    if (!parent_ctx.active_root.empty()) {
+        return std::filesystem::path(parent_ctx.active_root);
+    }
+    return repo_dir_;
+}
+
+/**
  * @brief Set delegation start/complete callbacks.
  * @param on_start Pre-delegation gate (nullable).
  * @param on_complete Post-delegation result (nullable).
@@ -301,7 +343,7 @@ void DelegationManager::persist_pending_patch(
  * @return Populated DelegationResult when a check fails and the caller
  *         must early-return; nullopt when all checks pass.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 std::optional<DelegationResult>
 DelegationManager::check_delegation_preconditions(
@@ -324,6 +366,9 @@ DelegationManager::check_delegation_preconditions(
             "Delegation rejected by consumer", false, target_tier, task};
     } else if (sandbox_mgr_ != nullptr) {
         sb_info = sandbox_mgr_->create_sandbox(del_id);
+        // gh#160: `del_id` is already unique per sibling (see
+        // `mint_delegation_id`); the sandbox dir and the pending patch
+        // therefore no longer collide between two delegations at one depth.
         if (!sb_info.has_value()) {
             // gh#33 bug 2 (v2.1.6): pre-2.1.6 a failed create_sandbox
             // silently fell through to running the child against the
@@ -349,7 +394,7 @@ DelegationManager::check_delegation_preconditions(
  * @param max_turns Optional iteration limit.
  * @return DelegationResult.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
@@ -364,8 +409,8 @@ DelegationResult DelegationManager::execute_delegation(
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};
 
-    std::string del_id =
-        "d" + std::to_string(parent_ctx.delegation_depth + 1);
+    std::string del_id = mint_delegation_id(
+        "d" + std::to_string(parent_ctx.delegation_depth + 1));
     std::optional<SandboxInfo> sb_info;
     if (auto early = check_delegation_preconditions(
             info, target_tier, task, del_id,
@@ -379,8 +424,10 @@ DelegationResult DelegationManager::execute_delegation(
     DelegationResult result;
 
     if (sb_info && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = sb_info->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            sb_info->path, repo_dir_);
+                            parent_ctx.session_key, sb_info->path,
+                            restore_root_for(parent_ctx));
         result = run_child(child_ctx, target_tier, task, max_turns);
     } else {
         result = run_child(child_ctx, target_tier, task, max_turns);
@@ -458,7 +505,7 @@ LoopContext DelegationManager::build_resumed_child_context(
  * @return DelegationResult for the resumed child run, or the early
  *         result produced when a precondition check fails.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_resume_delegation(
     LoopContext& parent_ctx,
@@ -474,8 +521,8 @@ DelegationResult DelegationManager::execute_resume_delegation(
         ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
         : ChildContextInfo{};
 
-    std::string del_id =
-        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r";
+    std::string del_id = mint_delegation_id(
+        "d" + std::to_string(parent_ctx.delegation_depth + 1) + "r");
     std::optional<SandboxInfo> sb_info;
     if (auto early = check_delegation_preconditions(
             info, target_tier, task, del_id,
@@ -488,8 +535,10 @@ DelegationResult DelegationManager::execute_resume_delegation(
 
     DelegationResult result;
     if (sb_info && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = sb_info->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            sb_info->path, repo_dir_);
+                            parent_ctx.session_key, sb_info->path,
+                            restore_root_for(parent_ctx));
         result = run_child(child_ctx, target_tier, task, max_turns);
     } else {
         result = run_child(child_ctx, target_tier, task, max_turns);
@@ -554,7 +603,7 @@ static std::string pipeline_context(
  * @param stage_log [out] Per-stage results appended in order.
  * @return DelegationResult from the final stage.
  * @req REQ-DELEG-004
- * @version 2.10.0
+ * @version 2.13.0
  */
 DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
@@ -578,7 +627,8 @@ DelegationResult DelegationManager::execute_pipeline(
     // file edits — preserving the v2.1.4 forward-carry behavior.
     std::optional<SandboxInfo> shared_sb;
     if (sandbox_mgr_ != nullptr) {
-        shared_sb = sandbox_mgr_->create_sandbox("pipeline");
+        shared_sb = sandbox_mgr_->create_sandbox(
+            mint_delegation_id("pipeline"));
         if (!shared_sb.has_value()) {
             // gh#33 bug 2 (v2.1.6): see execute_delegation comment.
             logger->error(
@@ -620,7 +670,7 @@ DelegationResult DelegationManager::execute_pipeline(
  *                    this stage's result on return.
  * @return true to continue to the next stage, false to break.
  * @req REQ-DELEG-004
- * @version 2.10.0
+ * @version 2.13.0
  */
 bool DelegationManager::run_pipeline_stage(
     LoopContext& parent_ctx,
@@ -652,8 +702,10 @@ bool DelegationManager::run_pipeline_stage(
     child_ctx.locked_tier = tier_name;
 
     if (shared_sb && swap_dir_fn_ != nullptr) {
+        child_ctx.active_root = shared_sb->path.string();
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
-                            shared_sb->path, repo_dir_);
+                            parent_ctx.session_key, shared_sb->path,
+                            restore_root_for(parent_ctx));
         last_result = run_child(child_ctx, tier_name, stage_task,
                                 std::nullopt);
     } else {

@@ -1551,13 +1551,23 @@
 
     last_failed_delegation_target and consecutive_failed_delegations has
 
-    reached max_consecutive_failed_delegations (default 2, configurable).
+    reached max_consecutive_failed_delegations (default 2, configurable);
+
+    (4) gh#160 — `delegation.isolation: sandbox` is configured but the
+
+    child could reach an EXTERNAL MCP tool that does not declare
+
+    `readOnlyHint: true`, which the engine cannot move into a sandbox.
 
     Failure counting resets on success or a target switch, deliberately
 
     NOT on an intervening non-delegation tool call. Pipelines enforce
 
-    the same depth cap with a [PIPELINE REJECTED] message.
+    the same depth cap with a [PIPELINE REJECTED] message, and the same
+
+    isolation-reach check across every stage — one pipeline shares one
+
+    sandbox, so one unsafe stage breaks containment for all of them.
 
     WHY the repeat cap (gh#64): pre-fix, a lead retrying a specialist
 
@@ -1607,7 +1617,9 @@
 
     valid ChildContextInfo, the consumer start callback does not return
 
-    REJECT, and (when a sandbox manager is configured) sandbox creation
+    REJECT, and (when `delegation.isolation: sandbox` is configured and a
+
+    sandbox manager therefore exists) sandbox creation
 
     succeeds — each failing case returning a typed DelegationResult
 
@@ -1847,6 +1859,116 @@
 
     '
   version: 2.10.4
+- id: REQ-DELEG-005
+  name: Opt-in delegation sandbox isolation, wired end to end
+  module: Delegation and Pipelines
+  description: '`delegation.isolation` selects how a delegated child''s filesystem
+
+    writes are contained: `none` (the default) shares the parent''s
+
+    working directory, `sandbox` runs the child in a copy and returns a
+
+    patch. An unrecognized mode is a config ERROR, never a silent
+
+    downgrade to `none`. Under `sandbox` the engine (1) snapshots the
+
+    SESSION''S TOOL ROOT — AgentEngine::resolve_session_root, the same
+
+    directory the MCP servers resolve against — rather than its own repo
+
+    dir; (2) points every in-process and plugin server at the sandbox for
+
+    the child''s turns via ServerManager::set_working_dir_all and points
+
+    them back on the way out, restoring the PARENT''S active root so a
+
+    nested delegation does not hand the outer child the project tree;
+
+    (3) mints a unique sandbox id per delegation so siblings at one depth
+
+    neither share a directory nor overwrite each other''s
+
+    pending/<id>.patch; (4) refuses the delegation when the child can
+
+    reach an external MCP tool that does not declare `readOnlyHint: true`,
+
+    since an external server is a separate process that cannot be moved.
+
+    Under `none` nothing here runs: no snapshot, no swap, no patch, and
+
+    delegation ids keep their pre-2.13.0 spelling.
+
+    WHY (gh#160): DelegationManager::set_dir_swap had NO production
+
+    caller from v2.1.5 to v2.12.2, so every ScopedSandbox took the
+
+    non-sandboxed branch — children wrote into the real repository while
+
+    the engine snapshotted the host process''s cwd and delivered 0-byte
+
+    patches.
+
+    '
+  acceptance_criteria: 'Given delegation.isolation unset, When a delegation runs, Then no
+    sandbox
+
+    manager is created and the child uses the parent''s working directory.
+
+    Given delegation.isolation: sandbox and a session root that differs
+
+    from the engine repo dir, When a delegation runs, Then the sandbox is
+
+    rooted at the session root.
+
+    Given two sibling delegations at the same depth, When both complete,
+
+    Then they produce two distinct ids and two distinct patches.
+
+    Given a delegation nested inside another, When the inner one
+
+    finishes, Then the tools are restored to the OUTER sandbox.
+
+    Given a child-visible external tool without readOnlyHint: true, When
+
+    the delegation is dispatched, Then it is rejected with a typed
+
+    message naming the offending tool and no child loop runs.
+
+    Given an unknown delegation.isolation value, When config is parsed,
+
+    Then the load fails with an error naming the value.
+
+    '
+  verified_by: 'SCENARIO "gh#160: delegation isolation is opt-in and rooted at the
+
+    session''s tool root" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp;
+
+    TEST_CASE "gh#160: sibling delegations get distinct sandbox ids";
+
+    "gh#160: a nested delegation restores its parent''s sandbox" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
+
+    TEST_CASE "gh#160: next_delegation_id never repeats" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/sandbox_test.cpp;
+
+    TEST_CASE "gh#160: set_working_dir_all moves every in-process server";
+
+    "gh#160: only an explicit readOnlyHint counts as read-only" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/server_manager_test.cpp;
+
+    SCENARIO "gh#160 delegation.isolation parses, and a bad mode is
+
+    refused" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/config/loader_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-HOOK-001
   name: Thread-safe hook dispatch with priority, chaining and isolation
   module: Hook Points

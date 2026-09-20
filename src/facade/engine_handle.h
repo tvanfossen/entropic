@@ -100,6 +100,18 @@ struct entropic_engine {
     std::unique_ptr<entropic::IdentityManager> identity_manager;       ///< Identity lifecycle
     std::unique_ptr<entropic::MCPAuthorizationManager> mcp_auth;       ///< Per-identity tool auth
 
+    // ── Phase 3b: Delegation isolation (gh#160, v2.13.0) ──────
+    /// @brief Serializes sandboxed delegations against the shared servers.
+    ///
+    /// `set_working_dir` is a single field on each in-process server, so a
+    /// sandboxed delegation OWNS the registry for its duration. Recursive
+    /// because a nested delegation re-enters on the same thread; held from
+    /// `ScopedSandbox` construction to destruction. With
+    /// `delegation.isolation: none` (the default) it is never taken.
+    /// gh#166 moves this to the workspace, which is what restores
+    /// concurrency between sessions working on different repositories.
+    std::recursive_mutex sandbox_swap_mutex;
+
     // ── Phase 4: Engine Loop + Storage + Audit ─────────────────
     std::unique_ptr<entropic::AgentEngine> engine;                     ///< Agentic loop (owns conversation state)
     std::unique_ptr<entropic::SqliteStorageBackend> storage;           ///< SQLite persistence

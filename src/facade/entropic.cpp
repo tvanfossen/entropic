@@ -1562,12 +1562,103 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
     }
 }
 
+// ── gh#160: delegation isolation wiring ────────────────────
+
+/**
+ * @brief Root a session's MCP tools resolve against (gh#160).
+ *
+ * Today every session shares the ServerManager root — `mcp.working_dir`
+ * else the process cwd — which is the value gh#160 says the sandbox
+ * should have been using all along instead of the engine's own
+ * `repo_dir`. gh#166 re-points THIS function at the session's named
+ * workspace; nothing else in the delegation path has to move.
+ *
+ * @param session_key Caller-scoped session key (unused until gh#166).
+ * @param ud Engine handle.
+ * @return The session's tool root.
+ * @req REQ-DELEG-005
+ * @callback
+ * @version 2.13.0
+ */
+static std::filesystem::path facade_session_root(
+    const std::string& /*session_key*/, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    if (h == nullptr || !h->server_manager) { return {}; }
+    return h->server_manager->project_dir();
+}
+
+/**
+ * @brief Move a session's servers into (or back out of) a sandbox.
+ *
+ * The implementation `sandbox.h` has described since v2.1.5 and nobody
+ * ever installed. `entering` drives a lock as well as the move: the
+ * in-process servers hold ONE working directory each, so two sandboxed
+ * delegations running at once (the default since gh#158) would
+ * otherwise interleave their swaps and write into each other's
+ * sandbox — or into the user's tree, once the first one restored.
+ * Sandboxed delegations therefore serialize per handle; gh#166 makes
+ * the lock per workspace, which is where the parallelism comes back.
+ *
+ * @param session_key Session whose tools are being moved.
+ * @param path Directory to point the servers at.
+ * @param entering True on sandbox entry, false on restore.
+ * @param ud Engine handle.
+ * @req REQ-DELEG-005
+ * @callback
+ * @version 2.13.0
+ */
+static void facade_swap_tool_dir(
+    const std::string& session_key,
+    const std::filesystem::path& path,
+    bool entering, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    if (h == nullptr || !h->server_manager) { return; }
+    if (entering) { h->sandbox_swap_mutex.lock(); }
+    h->server_manager->set_working_dir_all(path);
+    s_log->info("delegation dir swap: session='{}' -> {} ({})",
+                session_key, path.string(),
+                entering ? "enter" : "restore");
+    if (!entering) { h->sandbox_swap_mutex.unlock(); }
+}
+
+/**
+ * @brief External tools a sandboxed child could write through (gh#160).
+ * @param session_key Session the delegation runs under (gh#166 routes on it).
+ * @param allowed Child's tool allow-list (empty = everything).
+ * @param ud Engine handle.
+ * @return Fully-qualified names lacking `readOnlyHint: true`.
+ * @callback
+ * @version 2.13.0
+ */
+static std::vector<std::string> facade_unsafe_external_tools(
+    const std::string& /*session_key*/,
+    const std::vector<std::string>& allowed, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    if (h == nullptr || !h->server_manager) { return {}; }
+    return h->server_manager->external_tools_without_readonly_hint(allowed);
+}
+
+/**
+ * @brief Install the gh#160 session-root + dir-swap seams on the engine.
+ * @param h Engine handle with engine + server_manager constructed.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void wire_session_roots(entropic_handle_t h) {
+    entropic::SessionRootInterface iface;
+    iface.resolve_root = facade_session_root;
+    iface.unsafe_external_tools = facade_unsafe_external_tools;
+    iface.user_data = h;
+    h->engine->set_session_root_interface(iface);
+    h->engine->set_dir_swap(facade_swap_tool_dir, h);
+}
+
 /**
  * @brief Build LoopConfig from parsed config.
  * @param h Engine handle with config populated.
  * @return Populated LoopConfig.
  * @utility
- * @version 2.9.6
+ * @version 2.13.0
  */
 static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     entropic::LoopConfig lc;
@@ -1576,6 +1667,12 @@ static entropic::LoopConfig build_loop_config(entropic_handle_t h) {
     // rejects a bound on_token callback — see mtp_envelope.h).
     lc.stream_output = h->config.generation.stream_output;
     lc.speculative_enabled = h->config.inference.speculative.enabled;
+    // gh#160 (v2.13.0): opt-in delegation sandboxing. OFF means no
+    // snapshot is taken at all — the wasted copy the issue reported
+    // disappears with the feature it was never serving.
+    lc.delegation_isolation =
+        h->config.delegation.isolation
+        == entropic::DelegationIsolation::sandbox;
     lc.auto_approve_tools = h->config.permissions.auto_approve;
     auto it = h->config.models.tiers.find(h->config.models.default_tier);
     if (it != h->config.models.tiers.end()) {
@@ -1704,7 +1801,7 @@ static entropic_error_t init_orchestrator(
  * @param h Engine handle.
  * @param data_dir Resolved data directory.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static void init_engine_and_interfaces(
     entropic_handle_t h, const std::filesystem::path& data_dir) {
@@ -1743,6 +1840,7 @@ static void init_engine_and_interfaces(
     wire_external_interrupt(h);  // P1-10
     // gh#158 (v2.13.0): opt-in per-session-key run concurrency, default off.
     h->engine->set_concurrent_sessions(h->config.concurrent_sessions);
+    wire_session_roots(h);  // gh#160
     wire_tool_executor(h);
 }
 

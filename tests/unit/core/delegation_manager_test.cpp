@@ -701,7 +701,8 @@ TEST_CASE("complete_cb receives patch and files_touched",
     DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
     // Need a dir-swap that actually chdirs (so edit_loop writes in
     // the sandbox, not the project).
-    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+    auto chdir_fn = +[](const std::string& /*key*/, const fs::path& p,
+                        bool /*entering*/, void* /*ud*/) {
         std::error_code ec;
         fs::current_path(p, ec);
     };
@@ -714,7 +715,10 @@ TEST_CASE("complete_cb receives patch and files_touched",
     fs::current_path(saved_cwd);  // restore before assertions
 
     CHECK(cap.success == 1);
-    CHECK(cap.id == "d1");
+    // gh#160 (v2.13.0): ids are minted per delegation ("d<depth>_<n>")
+    // so siblings cannot share a sandbox dir or a pending patch file.
+    CHECK(cap.id.rfind("d1", 0) == 0);
+    CHECK(cap.id != "d1");
     CHECK(cap.tier == "eng");
     CHECK(cap.files.size() == 1);
     CHECK(cap.files[0] == "a.txt");
@@ -740,7 +744,8 @@ TEST_CASE("null complete_cb writes patch to pending/<id>.patch",
 
     SandboxManager sandbox(project);  // gh#33 (v2.1.6)
     DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
-    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+    auto chdir_fn = +[](const std::string& /*key*/, const fs::path& p,
+                        bool /*entering*/, void* /*ud*/) {
         std::error_code ec;
         fs::current_path(p, ec);
     };
@@ -758,8 +763,10 @@ TEST_CASE("null complete_cb writes patch to pending/<id>.patch",
     if (fs::exists(sb_root)) {
         for (auto& sess : fs::directory_iterator(sb_root)) {
             auto pending = sess.path() / "pending";
-            if (fs::exists(pending / "d1.patch")) {
-                std::ifstream in(pending / "d1.patch");
+            if (!fs::exists(pending)) { continue; }
+            // gh#160: the basename is now "d1_<n>.patch".
+            for (const auto& entry : fs::directory_iterator(pending)) {
+                std::ifstream in(entry.path());
                 std::string content((std::istreambuf_iterator<char>(in)),
                                     std::istreambuf_iterator<char>());
                 if (content.find("hello") != std::string::npos &&
@@ -788,7 +795,8 @@ TEST_CASE("complete_cb REJECT writes patch to pending/<id>.patch",
 
     SandboxManager sandbox(project);  // gh#33 (v2.1.6)
     DelegationManager mgr(edit_loop, nullptr, tier_res, project, &sandbox);
-    auto chdir_fn = +[](const fs::path& p, void* /*ud*/) {
+    auto chdir_fn = +[](const std::string& /*key*/, const fs::path& p,
+                        bool /*entering*/, void* /*ud*/) {
         std::error_code ec;
         fs::current_path(p, ec);
     };
@@ -804,7 +812,10 @@ TEST_CASE("complete_cb REJECT writes patch to pending/<id>.patch",
     auto sb_root = home.tmp_home / ".entropic" / "sandbox";
     if (fs::exists(sb_root)) {
         for (auto& sess : fs::directory_iterator(sb_root)) {
-            if (fs::exists(sess.path() / "pending" / "d1.patch")) {
+            auto pending = sess.path() / "pending";
+            // gh#160: "d1_<n>.patch" — any pending patch proves delivery.
+            if (fs::exists(pending)
+                && fs::directory_iterator(pending) != fs::directory_iterator{}) {
                 found = true;
             }
         }
@@ -1067,7 +1078,8 @@ TEST_CASE("Exception shields treat throwing callbacks as REJECT",
         SandboxManager sandbox(project);
         DelegationManager mgr(edit_loop, nullptr, tier_res, project,
                               &sandbox);
-        auto chdir_fn = +[](const std::filesystem::path& p, void*) {
+        auto chdir_fn = +[](const std::string&,
+                            const std::filesystem::path& p, bool, void*) {
             std::error_code ec;
             std::filesystem::current_path(p, ec);
         };
@@ -1083,8 +1095,10 @@ TEST_CASE("Exception shields treat throwing callbacks as REJECT",
         if (std::filesystem::exists(sb_root)) {
             for (auto& sess :
                      std::filesystem::directory_iterator(sb_root)) {
-                if (std::filesystem::exists(
-                        sess.path() / "pending" / "d1.patch")) {
+                auto pending = sess.path() / "pending";
+                if (std::filesystem::exists(pending)
+                    && std::filesystem::directory_iterator(pending)
+                       != std::filesystem::directory_iterator{}) {
                     found = true;
                 }
             }
@@ -1173,4 +1187,136 @@ TEST_CASE("gh#125: execute_pipeline populates stage_log with per-stage results",
     REQUIRE(stage_log.size() == 2);
     CHECK(stage_log[0].target_tier == "eng");
     CHECK(stage_log[1].target_tier == "qa");
+}
+
+// ── gh#160 (v2.13.0): opt-in sandbox isolation, wired ────────────────────────
+
+namespace gh160_tests {
+namespace fs = std::filesystem;
+using gh29_cb_tests::ScopedHomeDeleg;
+using gh29_cb_tests::make_project;
+
+/**
+ * @brief Child loop that writes one file named after its task.
+ * @internal
+ * @version 2.13.0
+ */
+static void write_task_file_loop(LoopContext& ctx, void* /*ud*/) {
+    std::string name = "unnamed";
+    for (auto rit = ctx.messages.rbegin(); rit != ctx.messages.rend(); ++rit) {
+        if (rit->role == "user") { name = rit->content.substr(0, 6); break; }
+    }
+    std::ofstream(fs::current_path() / (name + ".txt")) << name << "\n";
+    Message m;
+    m.role = "assistant";
+    m.content = "wrote " + name;
+    ctx.messages.push_back(std::move(m));
+    ctx.state = AgentState::COMPLETE;
+}
+
+/**
+ * @brief Records every dir-swap the manager performs, in order.
+ * @internal
+ * @version 2.13.0
+ */
+struct SwapLog {
+    std::vector<std::string> paths;   ///< Each path the swap was asked for
+    std::vector<std::string> keys;    ///< Session key seen on each swap
+};
+
+} // namespace gh160_tests
+
+TEST_CASE("gh#160: sibling delegations get distinct sandbox ids",
+          "[delegation][gh160][v2.13.0]") {
+    using namespace gh160_tests;
+    ScopedHomeDeleg home;
+    auto project = make_project();
+
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    SandboxManager sandbox(project);
+    DelegationManager mgr(write_task_file_loop, nullptr, tier_res,
+                          project, &sandbox);
+    auto chdir_fn = +[](const std::string& /*session_key*/,
+                        const fs::path& p, bool /*entering*/, void* /*ud*/) {
+        std::error_code ec;
+        fs::current_path(p, ec);
+    };
+    mgr.set_dir_swap(chdir_fn, nullptr);
+
+    // No complete callback → every patch lands in pending/<id>.patch.
+    // Two siblings sharing an id means the second overwrites the first.
+    LoopContext parent;
+    auto saved_cwd = fs::current_path();
+    mgr.execute_delegation(parent, "eng", "alpha");
+    mgr.execute_delegation(parent, "eng", "bravo");
+    fs::current_path(saved_cwd);
+
+    auto pending = sandbox.session_base() / "pending";
+    std::vector<std::string> patches;
+    for (const auto& e : fs::directory_iterator(pending)) {
+        patches.push_back(e.path().filename().string());
+    }
+    // RED before gh#160: both delegations mint "d1", so pending/ holds
+    // exactly one file and alpha's patch is gone.
+    CHECK(patches.size() == 2);
+    fs::remove_all(project);
+}
+
+TEST_CASE("gh#160: a nested delegation restores its parent's sandbox",
+          "[delegation][gh160][v2.13.0]") {
+    using namespace gh160_tests;
+    ScopedHomeDeleg home;
+    auto project = make_project();
+
+    MockTierResolution tier_mock;
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    SwapLog log;
+    SandboxManager sandbox(project);
+
+    // The child delegates once more, so two ScopedSandbox scopes nest.
+    struct Nested {
+        DelegationManager* mgr = nullptr;
+        int depth_seen = 0;
+    } nested;
+
+    auto child_loop = +[](LoopContext& ctx, void* ud) {
+        auto* n = static_cast<Nested*>(ud);
+        if (ctx.delegation_depth == 1) {
+            n->depth_seen = 1;
+            n->mgr->execute_delegation(ctx, "eng", "inner");
+        }
+        Message m;
+        m.role = "assistant";
+        m.content = "done";
+        ctx.messages.push_back(std::move(m));
+        ctx.state = AgentState::COMPLETE;
+    };
+
+    DelegationManager mgr(child_loop, &nested, tier_res, project, &sandbox);
+    nested.mgr = &mgr;
+
+    auto swap_fn = +[](const std::string& key, const fs::path& p,
+                       bool /*entering*/, void* ud) {
+        auto* l = static_cast<SwapLog*>(ud);
+        l->paths.push_back(p.string());
+        l->keys.push_back(key);
+    };
+    mgr.set_dir_swap(swap_fn, &log);
+
+    LoopContext parent;
+    parent.session_key = "ws-a";
+    mgr.execute_delegation(parent, "eng", "outer");
+
+    REQUIRE(nested.depth_seen == 1);
+    REQUIRE(log.paths.size() == 4);          // in(d1) in(d2) out(d2) out(d1)
+    // RED before gh#160: the inner scope restores to the repo root, so the
+    // outer delegation's remaining turns write into the user's project.
+    CHECK(log.paths[2] == log.paths[0]);
+    CHECK(log.paths[3] == project.string());
+    // RED before gh#160: the swap carries no session key at all.
+    CHECK(log.keys[0] == "ws-a");
+    fs::remove_all(project);
 }

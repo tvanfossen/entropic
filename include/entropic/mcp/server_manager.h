@@ -161,6 +161,58 @@ public:
     const std::filesystem::path& project_dir() const { return project_dir_; }
 
     /**
+     * @brief Point every in-process and plugin server at `dir` (gh#160).
+     *
+     * The facade's `ScopedSandbox` swap callback: this is what actually
+     * moves `filesystem`, `bash`, `git`, `diagnostics` and every dlopen
+     * plugin into a delegation sandbox and back out again. External
+     * (stdio/SSE) servers are NOT moved — they are separate processes
+     * with their own cwd, which is why a sandboxed delegation refuses to
+     * run when the child can reach a writable one
+     * (`external_tools_without_readonly_hint`).
+     *
+     * @param dir New working directory for the registry.
+     * @return Number of servers that accepted the change.
+     * @threadsafety Callers must not run two sandboxed delegations
+     *        against ONE manager concurrently — the facade serializes
+     *        them per workspace, because these are single fields on
+     *        shared server objects.
+     * @version 2.13.0
+     */
+    size_t set_working_dir_all(const std::filesystem::path& dir);
+
+    /**
+     * @brief External tools that do not declare `readOnlyHint: true`.
+     *
+     * MCP tool annotations ride along in `tools/list` and are already
+     * cached verbatim by `ExternalMCPClient`; this reads them back.
+     * A tool with no annotations at all counts as UNSAFE — the hint is
+     * an opt-in assertion, and absence is not a promise.
+     *
+     * @param allowed Tool allow-list to restrict the check to (empty =
+     *        every external tool the manager knows about).
+     * @return Fully-qualified names (`<server>.<tool>`) of the offenders.
+     * @version 2.13.0
+     */
+    std::vector<std::string> external_tools_without_readonly_hint(
+        const std::vector<std::string>& allowed) const;
+
+    /**
+     * @brief The `readOnlyHint` filter itself, over one descriptor list.
+     *
+     * Split out so the rule — absence of the annotation is NOT a
+     * promise — is testable without standing up a real external server.
+     *
+     * @param tools_json A `tools/list` array with prefixed names.
+     * @param allowed Allow-list to restrict the check to (empty = all).
+     * @return Names of the tools that do not assert read-only.
+     * @version 2.13.0
+     */
+    static std::vector<std::string> tools_without_readonly_hint(
+        const std::string& tools_json,
+        const std::vector<std::string>& allowed);
+
+    /**
      * @brief Get the JSON Schema for a tool's input parameters.
      * @param tool_name Fully-qualified tool name.
      * @return input_schema JSON string, or empty if tool not found.

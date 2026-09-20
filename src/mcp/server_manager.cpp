@@ -18,6 +18,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 static auto logger = entropic::log::get("mcp.server_manager");
 
 namespace entropic {
@@ -233,6 +235,92 @@ void ServerManager::append_external_tools(nlohmann::json& all) const {
             all.push_back(std::move(tool));
         }
     }
+}
+
+/**
+ * @brief Point every in-process and plugin server at `dir` (gh#160).
+ * @param dir New working directory.
+ * @return Number of servers that accepted the change.
+ * @req REQ-MCP-001
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+size_t ServerManager::set_working_dir_all(
+        const std::filesystem::path& dir) {
+    size_t moved = 0;
+    for (const auto& [name, server] : servers_) {
+        if (server->set_working_dir(dir.string())) { ++moved; }
+    }
+    for (const auto& [name, plugin] : plugin_servers_) {
+        if (plugin->set_working_dir(dir.string()) == ENTROPIC_OK) {
+            ++moved;
+        }
+    }
+    logger->info("Tool working dir → {} ({} servers moved)",
+                 dir.string(), moved);
+    return moved;
+}
+
+/**
+ * @brief Whether one tool descriptor asserts `readOnlyHint: true` (gh#160).
+ * @param tool Tool descriptor from an MCP `tools/list` reply.
+ * @return true only when the annotation is present AND true.
+ * @utility
+ * @version 2.13.0
+ */
+static bool tool_is_read_only(const nlohmann::json& tool) {
+    if (!tool.is_object() || !tool.contains("annotations")) {
+        return false;
+    }
+    const auto& ann = tool["annotations"];
+    return ann.is_object() && ann.value("readOnlyHint", false);
+}
+
+/**
+ * @brief Tools in one descriptor list lacking a read-only assertion.
+ * @param tools_json A `tools/list` array (names already prefixed).
+ * @param allowed Allow-list to restrict the check to (empty = all).
+ * @return Fully-qualified names of the offending tools.
+ * @req REQ-MCP-007
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::vector<std::string> ServerManager::tools_without_readonly_hint(
+        const std::string& tools_json,
+        const std::vector<std::string>& allowed) {
+    std::vector<std::string> unsafe;
+    auto tools = nlohmann::json::parse(tools_json, nullptr, false);
+    if (!tools.is_array()) { return unsafe; }
+    for (const auto& tool : tools) {
+        auto full = tool.value("name", std::string{});
+        bool visible = allowed.empty()
+            || std::find(allowed.begin(), allowed.end(), full)
+                   != allowed.end();
+        if (visible && !full.empty() && !tool_is_read_only(tool)) {
+            unsafe.push_back(full);
+        }
+    }
+    return unsafe;
+}
+
+/**
+ * @brief External tools lacking a read-only assertion (gh#160).
+ * @param allowed Allow-list to restrict the check to (empty = all).
+ * @return Fully-qualified names of the offending tools.
+ * @req REQ-MCP-007
+ * @version 2.13.0
+ */
+std::vector<std::string>
+ServerManager::external_tools_without_readonly_hint(
+        const std::vector<std::string>& allowed) const {
+    std::vector<std::string> unsafe;
+    for (const auto& [name, client] : external_clients_) {
+        if (!client->is_connected()) { continue; }
+        auto found = tools_without_readonly_hint(
+            client->list_tools(), allowed);
+        unsafe.insert(unsafe.end(), found.begin(), found.end());
+    }
+    return unsafe;
 }
 
 /**

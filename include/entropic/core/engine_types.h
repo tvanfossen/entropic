@@ -106,6 +106,13 @@ struct LoopConfig {
     /// routing entirely (see orchestrator.cpp `generate(...cancel...)`
     /// doc comment).
     bool speculative_enabled = false;
+    /// @brief gh#160 (v2.13.0): mirrors `delegation.isolation == sandbox`.
+    ///
+    /// Plumbed like `speculative_enabled` above — core.so has no
+    /// dependency on config.so. OFF (the default and every shipped
+    /// release's real behaviour) means no sandbox is created at all, so
+    /// the snapshot cost gh#160 reported disappears with it.
+    bool delegation_isolation = false;
     bool auto_approve_tools = false;    ///< Skip tool approval (v1.8.5)
     /// @brief Anti-spiral SOFT threshold: after N consecutive calls of
     /// the SAME tool (regardless of arg similarity, since exact-arg
@@ -258,6 +265,49 @@ struct TierResolutionInterface {
 };
 
 /**
+ * @brief Where a session's tools live, and what it can reach (gh#160).
+ *
+ * Injected by the facade, like `TierResolutionInterface` (decision #23):
+ * core.so cannot see the `ServerManager` — it lives on the facade handle —
+ * yet the sandbox root has to BE the root the tools actually resolve
+ * against, or the snapshot diffs a tree nobody wrote to. That mismatch is
+ * gh#160: the engine snapshotted its own `repo_dir`, the filesystem/bash/
+ * git servers used `mcp.working_dir`, and the resulting patch was 0 bytes.
+ *
+ * This is deliberately ONE seam. gh#166 re-points `resolve_root` at the
+ * session's named workspace without any other part of the delegation
+ * wiring changing.
+ *
+ * @version 2.13.0
+ */
+struct SessionRootInterface {
+    /// @brief Root directory this session's MCP tools resolve against.
+    /// @param session_key Caller-scoped session key ("" = default session).
+    /// @param user_data Opaque pointer (facade handle).
+    /// @return Absolute root, or empty when none is configured.
+    std::filesystem::path (*resolve_root)(
+        const std::string& session_key, void* user_data) = nullptr;
+
+    /// @brief Child-visible EXTERNAL tools that are not declared read-only.
+    ///
+    /// An external (stdio/SSE) MCP server is a separate process with its
+    /// own cwd; nothing the engine does can move it into a sandbox. If the
+    /// child can call one that may write, the isolation guarantee is false,
+    /// so the delegation is refused rather than silently downgraded.
+    ///
+    /// @param session_key Session the delegation runs under.
+    /// @param allowed_tools Child's tool allow-list (empty = everything).
+    /// @param user_data Opaque pointer (facade handle).
+    /// @return Fully-qualified names of tools lacking `readOnlyHint: true`.
+    std::vector<std::string> (*unsafe_external_tools)(
+        const std::string& session_key,
+        const std::vector<std::string>& allowed_tools,
+        void* user_data) = nullptr;
+
+    void* user_data = nullptr; ///< Opaque pointer (facade context)
+};
+
+/**
  * @brief Mutable state carried through the agentic loop.
  *
  * All mutable loop state lives here. The engine itself is stateless
@@ -282,6 +332,15 @@ struct LoopContext {
     /// is opaque, caller-supplied and stable — the backend maps it to a KV
     /// sequence.
     std::string session_key;
+    /// @brief Directory this loop's tools are currently pointed at (gh#160).
+    ///
+    /// Empty for a loop running against the session's own root. Set by
+    /// `DelegationManager` on a child context when that child runs inside a
+    /// sandbox, so a NESTED delegation restores its parent's sandbox rather
+    /// than the project root when it finishes. Pre-gh#160 the restore target
+    /// was always the repo root, which handed the outer delegation's
+    /// remaining turns straight back to the user's working tree.
+    std::string active_root;
     std::string conversation_id;                             ///< Conversation ID for storage (v1.8.8)
     std::string source = "human";                          ///< Message source
     std::vector<std::string> all_tools;                    ///< Full tool list as raw JSON strings

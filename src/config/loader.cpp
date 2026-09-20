@@ -386,6 +386,37 @@ static std::string parse_compaction_config(
 }
 
 /**
+ * @brief Parse the delegation section from a YAML node (gh#160).
+ *
+ * An unrecognized `isolation` value is refused rather than silently
+ * treated as `none`: a consumer who asks for containment and gets the
+ * shipped default back would believe a guarantee that is not in force.
+ *
+ * @param node YAML node for the "delegation" section.
+ * @param[out] config Output delegation config.
+ * @return Empty string on success, error message on an unknown mode.
+ * @req REQ-DELEG-005
+ * @dg_internal
+ * @version 2.13.0
+ */
+static std::string parse_delegation_config(
+    ryml::ConstNodeRef node,
+    DelegationConfig& config)
+{
+    std::string mode;
+    extract(node, "isolation", mode);
+    if (mode.empty() || mode == "none") {
+        config.isolation = DelegationIsolation::none;
+    } else if (mode == "sandbox") {
+        config.isolation = DelegationIsolation::sandbox;
+    } else {
+        return "delegation.isolation: unknown mode '" + mode +
+               "' (expected 'none' or 'sandbox')";
+    }
+    return "";
+}
+
+/**
  * @brief Parse the permissions section from a YAML node.
  * @param node YAML node for "permissions" section.
  * @param[out] config Output permissions config.
@@ -754,19 +785,31 @@ static void extract_scalar_fields(ryml::ConstNodeRef root,
 }
 
 /**
- * @brief Parse optional config sections that don't return errors.
+ * @brief Parse the optional config sections.
+ *
+ * gh#160 (v2.13.0): no longer infallible — `delegation.isolation` names a
+ * safety posture, so an unrecognized value is refused instead of being
+ * quietly read as the shipped default.
+ *
  * @param root YAML root node.
+ * @param registry Bundled models for path resolution.
  * @param config Config to populate.
+ * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
-static void parse_optional_sections(
+static std::string parse_optional_sections(
     ryml::ConstNodeRef root,
     const BundledModels& registry,
     ParsedConfig& config)
 {
     parse_optional_subsections(root, registry, config);
     extract_scalar_fields(root, config);
+    if (root.has_child("delegation")) {
+        return parse_delegation_config(root["delegation"],
+                                       config.delegation);
+    }
+    return "";
 }
 
 /**
@@ -776,7 +819,7 @@ static void parse_optional_sections(
  * @param[in,out] config Config to overlay onto.
  * @return Empty string on success, error message on failure.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::string parse_top_sections(
     ryml::ConstNodeRef root,
@@ -791,7 +834,7 @@ static std::string parse_top_sections(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, registry, config);
+        err = parse_optional_sections(root, registry, config);
     }
     return err;
 }
@@ -1340,7 +1383,7 @@ std::string load_layered(
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
  * @req REQ-CFG-006
- * @version 2.1.11
+ * @version 2.13.0
  */
 static std::string parse_config_string(
     const std::string& content,
@@ -1367,7 +1410,7 @@ static std::string parse_config_string(
         err = parse_routing_config(root["routing"], config.routing);
     }
     if (err.empty()) {
-        parse_optional_sections(root, registry, config);
+        err = parse_optional_sections(root, registry, config);
     }
     return err;
 }

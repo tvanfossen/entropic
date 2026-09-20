@@ -231,6 +231,25 @@ public:
 
 private:
     /**
+     * @brief Mint a delegation id no sibling can collide with (gh#160).
+     * @param prefix Depth-derived stem ("d1", "d1r", "pipeline").
+     * @return Unique id when a sandbox manager is configured, `prefix`
+     *         verbatim when it is not (isolation off = ids unchanged).
+     * @version 2.13.0
+     */
+    std::string mint_delegation_id(const std::string& prefix);
+
+    /**
+     * @brief Directory a finishing delegation restores the tools to.
+     * @param parent_ctx Context of the loop that issued the delegation.
+     * @return The parent's active root (its own sandbox, when nested),
+     *         else the project root.
+     * @version 2.13.0
+     */
+    std::filesystem::path restore_root_for(
+        const LoopContext& parent_ctx) const;
+
+    /**
      * @brief Build a fresh LoopContext for the child delegation.
      * @param parent_ctx Parent context.
      * @param info Resolved tier info.

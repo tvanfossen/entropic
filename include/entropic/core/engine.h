@@ -39,6 +39,7 @@
 #include <atomic>
 #include <deque>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -163,6 +164,83 @@ public:
      * @version 2.1.6
      */
     void set_project_dir(const std::filesystem::path& project_dir);
+
+    /**
+     * @brief Inject the session-root / tool-reach seam (gh#160, v2.13.0).
+     *
+     * The facade owns the `ServerManager` and therefore the only truthful
+     * answer to "which directory do this session's tools resolve against".
+     * Without this the engine snapshotted its own `repo_dir` while the
+     * servers worked somewhere else, and delegation patches came out
+     * empty — the gh#160 report.
+     *
+     * @param iface Resolver callbacks (a default-constructed value clears
+     *        the wiring and restores the `get_repo_dir()` fallback).
+     * @version 2.13.0
+     */
+    void set_session_root_interface(const SessionRootInterface& iface);
+
+    /**
+     * @brief Install the directory-swap callback used by sandboxing.
+     *
+     * gh#160: `DelegationManager::set_dir_swap` existed from v2.1.5 and
+     * had NO production caller, so every `ScopedSandbox` took the
+     * non-sandboxed branch and children wrote straight into the user's
+     * tree. The engine now holds the callback and hands it to every
+     * `DelegationManager` it builds.
+     *
+     * @param swap_fn Swap callback (nullptr disables sandbox entry).
+     * @param user_data Forwarded to the callback.
+     * @version 2.13.0
+     */
+    void set_dir_swap(ScopedSandbox::SwapDirFn swap_fn, void* user_data);
+
+    /**
+     * @brief Resolve the root a session's tools operate in (gh#160).
+     *
+     * THE seam: sandbox roots, sandbox restore targets and (gh#166)
+     * workspace roots all come from here. Falls back to `get_repo_dir()`
+     * when the facade has not injected a resolver — which is what every
+     * unit test that builds a bare `AgentEngine` gets.
+     *
+     * @param session_key Caller-scoped session key ("" = default).
+     * @return Root directory, or empty when none resolves.
+     * @version 2.13.0
+     */
+    std::filesystem::path resolve_session_root(
+        const std::string& session_key);
+
+    /**
+     * @brief Sandbox manager for a session, or nullptr when isolation
+     *        is off (gh#160).
+     *
+     * Public for the same reason `is_delegation_cycle` is: it is the
+     * observable decision point of the isolation wiring, and a test that
+     * cannot see it can only assert on a real model run.
+     *
+     * @param session_key Session the delegation belongs to.
+     * @return Manager rooted at the session's root, or nullptr when
+     *         `delegation.isolation` is `none` or no root resolves.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    SandboxManager* sandbox_for_session(const std::string& session_key);
+
+    /**
+     * @brief Child-visible external tools that break the isolation claim.
+     *
+     * Empty when isolation is off (nothing is being claimed), when no
+     * resolver is wired, or when every reachable external tool declares
+     * `readOnlyHint: true`.
+     *
+     * @param ctx Parent loop context (supplies the session key).
+     * @param target_tier Tier the delegation targets.
+     * @return Offending fully-qualified tool names.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::vector<std::string> isolation_unsafe_tools(
+        const LoopContext& ctx, const std::string& target_tier);
 
     /**
      * @brief Set the global stream observer.
@@ -1389,6 +1467,22 @@ private:
                                       const PendingDelegation& pending);
 
     /**
+     * @brief Apply the pre-run pipeline guards (depth, isolation reach).
+     *
+     * gh#160 (v2.13.0): the depth check moved here from
+     * `execute_pending_pipeline` so the isolation refusal could join it
+     * without adding a return to that function.
+     *
+     * @param ctx Loop context.
+     * @param pending The pipeline about to run.
+     * @return true if the pipeline was rejected (already handled).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool reject_pipeline_if_guarded(LoopContext& ctx,
+                                    const PendingPipeline& pending);
+
+    /**
      * @brief Execute a pending pipeline after tool processing.
      * @param ctx Loop context with pending_pipeline set.
      * @version 1.8.6
@@ -1661,9 +1755,27 @@ private:
      *         pre-2.13.0 note claimed the facade's `api_mutex` did it; that
      *         was never true for a delegation, which reaches here from a run
      *         thread holding nothing (gh#109).
+     * gh#160 (v2.13.0): keyed by ROOT, because a root is no longer a
+     * per-handle constant — `resolve_session_root` answers per session and
+     * gh#166 gives two sessions two different roots. `std::map` nodes are
+     * stable, so a pointer handed out here stays valid for the life of the
+     * engine even as other roots are added.
+     *
+     * @param root Directory to snapshot from.
+     * @return Pointer to the engine-owned manager for `root`, or nullptr
+     *         when `root` is empty.
      * @version 2.13.0
      */
-    SandboxManager* ensure_sandbox_manager();                   ///< @dg_internal
+    SandboxManager* ensure_sandbox_manager(
+        const std::filesystem::path& root);                     ///< @dg_internal
+
+    /**
+     * @brief Read the gh#160 dir-swap callback pair under the mutex.
+     * @return The installed (callback, user_data) pair.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::pair<ScopedSandbox::SwapDirFn, void*> dir_swap_snapshot() const;
 
     /**
      * @brief Resolve a resume_delegation pending request against storage.
@@ -1798,7 +1910,12 @@ private:
     std::optional<std::filesystem::path> cached_repo_dir_; ///< Cached repo path (v1.8.6)
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
     std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
-    std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
+    /// @brief gh#33 (v2.1.6) engine-scoped sandbox managers, keyed by root
+    /// (gh#160, v2.13.0 — one root per workspace once gh#166 lands).
+    std::map<std::filesystem::path, SandboxManager> sandbox_mgrs_;
+    SessionRootInterface session_root_;                    ///< gh#160: facade seam
+    ScopedSandbox::SwapDirFn swap_dir_fn_ = nullptr;       ///< gh#160: tool dir swap
+    void* swap_dir_data_ = nullptr;                        ///< gh#160: swap user data
     /// @brief gh#158: guards the lazily-built sandbox state as ONE unit —
     /// `sandbox_mgr_`, `cached_repo_dir_`, `repo_dir_checked_` and
     /// `project_dir_override_`. The manager is constructed FROM the cached

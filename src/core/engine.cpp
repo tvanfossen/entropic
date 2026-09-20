@@ -2324,12 +2324,52 @@ static void push_delegation_repeat_blocked(
 }
 
 /**
- * @brief Apply the pre-run delegation guards (depth/cycle/repeat).
+ * @brief Append the "isolation cannot be honoured" reject message (gh#160).
+ *
+ * An external MCP server is a separate process with its own cwd; the
+ * engine cannot move it into the sandbox. If the child can call one that
+ * does not declare `readOnlyHint: true`, the containment the consumer
+ * asked for is not in force — so the delegation is refused LOUDLY rather
+ * than run with a guarantee that is quietly false (the fail-fast rule
+ * decision #66's audit settled on).
+ *
+ * @param ctx Loop context (message + failure metadata land here).
+ * @param target Target tier name.
+ * @param tools Offending fully-qualified tool names.
+ * @req REQ-DELEG-001
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+static void push_delegation_isolation_unsafe(
+    LoopContext& ctx, const std::string& target,
+    const std::vector<std::string>& tools) {
+    std::string names;
+    for (const auto& t : tools) {
+        if (!names.empty()) { names += ", "; }
+        names += t;
+    }
+    Message reject;
+    reject.role = "user";
+    reject.content =
+        "[DELEGATION REJECTED] delegation.isolation is 'sandbox', but '"
+        + target + "' can reach external MCP tools that are not declared "
+          "read-only (" + names + "). An external server runs in its own "
+          "process and cannot be moved into the sandbox, so its writes "
+          "would escape it. Either restrict the tier's allowed_tools to "
+          "read-only tools, have the server declare readOnlyHint, or set "
+          "delegation.isolation: none.";
+    ctx.metadata["failure_reason"] = "delegation_isolation_unsafe";
+    ctx.metadata["failure_target"] = target;
+    ctx.messages.push_back(std::move(reject));
+}
+
+/**
+ * @brief Apply the pre-run delegation guards (depth/cycle/repeat/isolation).
  * @param ctx Loop context.
  * @param pending The delegation about to run.
  * @return true if rejected (rejection message already pushed).
  * @req REQ-DELEG-001
- * @version 2.3.7
+ * @version 2.13.0
  */
 bool AgentEngine::reject_delegation_if_guarded(
     LoopContext& ctx, const PendingDelegation& pending) {
@@ -2343,6 +2383,13 @@ bool AgentEngine::reject_delegation_if_guarded(
         logger->warn("Delegation rejected: cycle on target tier '{}'",
                      pending.target);
         push_delegation_cycle_rejected(ctx, pending.target);
+    } else if (auto unsafe = isolation_unsafe_tools(ctx, pending.target);
+               !unsafe.empty()) {
+        // gh#160: refuse rather than silently run uncontained.
+        logger->error("Delegation rejected: isolation is on but '{}' can "
+                      "reach {} non-read-only external tool(s)",
+                      pending.target, unsafe.size());
+        push_delegation_isolation_unsafe(ctx, pending.target, unsafe);
     } else if (is_delegation_repeat_blocked(ctx, pending.target)) {
         // gh#64: refuse re-delegation to a target that has just failed
         // N times in a row. Pre-fix, a lead retrying a Q4 specialist
@@ -2612,16 +2659,21 @@ void AgentEngine::log_relay_status(LoopContext& ctx,
 }
 
 /**
- * @brief Execute a pending pipeline after tool processing.
- * @param ctx Loop context with pending_pipeline set.
- * @req REQ-DELEG-004
+ * @brief Apply the pre-run pipeline guards (depth, isolation reach).
+ *
+ * gh#160 (v2.13.0): a pipeline shares ONE sandbox across its stages, so a
+ * single stage able to reach a writable external tool breaks containment
+ * for the whole run — every stage is checked before any of them starts.
+ *
+ * @param ctx Loop context (rejection message lands here).
+ * @param pending The pipeline about to run.
+ * @return true if rejected (message already pushed).
  * @req REQ-DELEG-001
- * @version 2.10.0
+ * @req REQ-DELEG-004
+ * @version 2.13.0
  */
-void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
-    auto pending = std::move(*ctx.pending_pipeline);
-    ctx.pending_pipeline.reset();
-
+bool AgentEngine::reject_pipeline_if_guarded(
+    LoopContext& ctx, const PendingPipeline& pending) {
     if (ctx.delegation_depth >= MAX_DELEGATION_DEPTH) {
         logger->warn("Pipeline rejected: depth {} >= max {}",
                      ctx.delegation_depth, MAX_DELEGATION_DEPTH);
@@ -2630,16 +2682,46 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
         reject.content = "[PIPELINE REJECTED] Maximum delegation "
                          "depth reached.";
         ctx.messages.push_back(std::move(reject));
-        return;
+        return true;
     }
+    for (const auto& stage : pending.stages) {
+        auto unsafe = isolation_unsafe_tools(ctx, stage);
+        if (!unsafe.empty()) {
+            logger->error("Pipeline rejected: isolation is on but stage "
+                          "'{}' can reach {} non-read-only external "
+                          "tool(s)", stage, unsafe.size());
+            push_delegation_isolation_unsafe(ctx, stage, unsafe);
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * @brief Execute a pending pipeline after tool processing.
+ * @param ctx Loop context with pending_pipeline set.
+ * @req REQ-DELEG-004
+ * @req REQ-DELEG-001
+ * @version 2.13.0
+ */
+void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
+    auto pending = std::move(*ctx.pending_pipeline);
+    ctx.pending_pipeline.reset();
+
+    if (reject_pipeline_if_guarded(ctx, pending)) { return; }
 
     set_state(ctx, AgentState::DELEGATING);
 
     // gh#33 (v2.1.6): engine-scoped sandbox; non-owning pointer.
-    auto repo_dir = get_repo_dir();
+    // gh#160 (v2.13.0): both the root and the sandbox are per SESSION now,
+    // and the dir-swap callback is finally passed on — without it every
+    // ScopedSandbox took the non-sandboxed branch.
+    auto root = resolve_session_root(ctx.session_key);
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, repo_dir,
-                          ensure_sandbox_manager());
+                          tier_res_, root,
+                          sandbox_for_session(ctx.session_key));
+    auto swap = dir_swap_snapshot();
+    mgr.set_dir_swap(swap.first, swap.second);
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -2967,7 +3049,7 @@ bool AgentEngine::resolve_resume_delegation(
  * @param resume_history  Pre-loaded history (empty for cold delegations).
  * @return DelegationResult from the child loop.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 DelegationResult AgentEngine::run_pending_delegation(
         LoopContext& ctx,
@@ -2976,8 +3058,10 @@ DelegationResult AgentEngine::run_pending_delegation(
     std::optional<int> max_turns;
     if (pending.max_turns > 0) { max_turns = pending.max_turns; }
     DelegationManager mgr(run_child_loop_trampoline, this,
-                          tier_res_, get_repo_dir(),
-                          ensure_sandbox_manager());
+                          tier_res_, resolve_session_root(ctx.session_key),
+                          sandbox_for_session(ctx.session_key));
+    auto swap = dir_swap_snapshot();  // gh#160
+    mgr.set_dir_swap(swap.first, swap.second);
     if (storage_.create_delegation != nullptr) {
         mgr.set_storage(&storage_);
     }
@@ -3010,17 +3094,131 @@ DelegationResult AgentEngine::run_pending_delegation(
  * @req REQ-DELEG-002
  * @version 2.13.0
  */
-SandboxManager* AgentEngine::ensure_sandbox_manager() {
-    std::lock_guard<std::mutex> guard(sandbox_mutex_);
-    if (sandbox_mgr_) {
-        return &*sandbox_mgr_;
-    }
-    auto repo_dir = get_repo_dir_locked();
-    if (repo_dir.empty()) {
+SandboxManager* AgentEngine::ensure_sandbox_manager(
+        const std::filesystem::path& root) {
+    if (root.empty()) {
         return nullptr;
     }
-    sandbox_mgr_.emplace(repo_dir);
-    return &*sandbox_mgr_;
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    auto it = sandbox_mgrs_.find(root);
+    if (it != sandbox_mgrs_.end()) {
+        return &it->second;
+    }
+    // piecewise_construct: SandboxManager holds a mutex and an atomic, so it
+    // is neither copyable nor movable — the map node must build it in place.
+    auto [pos, inserted] = sandbox_mgrs_.emplace(
+        std::piecewise_construct,
+        std::forward_as_tuple(root),
+        std::forward_as_tuple(root));
+    (void)inserted;
+    return &pos->second;
+}
+
+/**
+ * @brief Install the facade's session-root seam (gh#160).
+ * @param iface Resolver callbacks.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_session_root_interface(
+        const SessionRootInterface& iface) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    session_root_ = iface;
+}
+
+/**
+ * @brief Install the tool-directory swap callback (gh#160).
+ * @param swap_fn Swap callback (nullptr disables sandbox entry).
+ * @param user_data Forwarded to the callback.
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::set_dir_swap(ScopedSandbox::SwapDirFn swap_fn,
+                               void* user_data) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    swap_dir_fn_ = swap_fn;
+    swap_dir_data_ = user_data;
+}
+
+/**
+ * @brief Read the swap callback pair under `sandbox_mutex_` (gh#160).
+ *
+ * Wired once at configure and read from every run thread, so the read is
+ * locked for the same reason the delegation callbacks are snapshotted:
+ * a torn (fn, user_data) pair would call the right function with the
+ * wrong handle.
+ *
+ * @return The installed (callback, user_data) pair.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::pair<ScopedSandbox::SwapDirFn, void*>
+AgentEngine::dir_swap_snapshot() const {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    return {swap_dir_fn_, swap_dir_data_};
+}
+
+/**
+ * @brief Resolve the root a session's tools operate in (gh#160).
+ * @param session_key Caller-scoped session key.
+ * @return The facade's answer, else the configured/CWD project dir.
+ * @req REQ-DELEG-002
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::filesystem::path AgentEngine::resolve_session_root(
+        const std::string& session_key) {
+    SessionRootInterface iface;
+    {
+        std::lock_guard<std::mutex> guard(sandbox_mutex_);
+        iface = session_root_;
+    }
+    if (iface.resolve_root == nullptr) {
+        return get_repo_dir();
+    }
+    auto root = iface.resolve_root(session_key, iface.user_data);
+    return root.empty() ? get_repo_dir() : root;
+}
+
+/**
+ * @brief Sandbox manager for a session, or nullptr when isolation is off.
+ * @param session_key Session the delegation belongs to.
+ * @return Manager rooted at the session's root, else nullptr.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+SandboxManager* AgentEngine::sandbox_for_session(
+        const std::string& session_key) {
+    if (!loop_config_.delegation_isolation) {
+        return nullptr;
+    }
+    return ensure_sandbox_manager(resolve_session_root(session_key));
+}
+
+/**
+ * @brief External tools a sandboxed child could write through (gh#160).
+ * @param ctx Parent loop context (session key).
+ * @param target_tier Tier the delegation targets.
+ * @return Offending fully-qualified tool names; empty when safe.
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+std::vector<std::string> AgentEngine::isolation_unsafe_tools(
+        const LoopContext& ctx, const std::string& target_tier) {
+    SessionRootInterface iface;
+    {
+        std::lock_guard<std::mutex> guard(sandbox_mutex_);
+        iface = session_root_;
+    }
+    if (!loop_config_.delegation_isolation
+        || iface.unsafe_external_tools == nullptr) {
+        return {};
+    }
+    auto info = tier_res_.resolve_tier
+        ? tier_res_.resolve_tier(target_tier, tier_res_.user_data)
+        : ChildContextInfo{};
+    return iface.unsafe_external_tools(
+        ctx.session_key, info.allowed_tools, iface.user_data);
 }
 
 // ── Conversation state (v2.0.2) ─────────────────────────────

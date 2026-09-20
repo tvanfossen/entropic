@@ -430,3 +430,18 @@ set_tests_properties(
 # with finish=stop, which no budget increase can fix.
 add_model_test(test-gh137-thinking-strip test_gh137_thinking_strip.cpp)
 set_tests_properties(model/test-gh137-thinking-strip PROPERTIES TIMEOUT 360)
+
+# gh#164 (v2.13.0): explicit release + lazy reload, on BOTH a plain-KV and a
+# hybrid/recurrent architecture, plus the public C ABI through configure_dir.
+# Per-case so each load/release/reload cycle gets a fresh process — this test
+# deliberately loads the same model twice, which is exactly the accumulation
+# the per-case split exists for.
+add_model_test_per_case(test-gh164-release-reload test_gh164_release_reload.cpp
+    "gh#164: release then reload decodes correctly on gemma4 (plain KV)"
+    "gh#164: release then reload decodes correctly on a hybrid arch"
+    "gh#164: entropic_release_model frees VRAM through the C ABI")
+set_tests_properties(
+    model/test-gh164-release-reload-c1
+    model/test-gh164-release-reload-c2
+    model/test-gh164-release-reload-c3
+    PROPERTIES TIMEOUT 600)

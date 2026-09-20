@@ -212,6 +212,17 @@ void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
 }
 
 /**
+ * @brief Re-ensure router + draft after a release-all (gh#164). See header.
+ * @dg_internal
+ * @req REQ-INFER-020
+ * @version 2.13.0
+ */
+void ModelOrchestrator::ensure_secondary_roles() {
+    activate_router(config_);
+    activate_draft(config_);
+}
+
+/**
  * @brief Initialize orchestrator: backends, routing, adapters, grammars.
  *
  * Adds speculative-draft activation alongside router activation in
@@ -1413,7 +1424,7 @@ InferenceBackend* ModelOrchestrator::activate_and_track(
  * @param tier_name Requested tier name.
  * @return Backend pointer, or nullptr.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
     std::lock_guard<std::mutex> lock(swap_mutex_);
@@ -1440,6 +1451,10 @@ InferenceBackend* ModelOrchestrator::get_model(const std::string& tier_name) {
     // Ensure correct LoRA adapter for this tier (v1.9.2)
     if (result) {
         ensure_tier_lora(tier_name, result);
+        // gh#164: `entropic_release_model(NULL)` drops the router and draft
+        // too, and neither reloads itself — routing would degrade to the
+        // default tier silently and permanently. No-op when they are loaded.
+        ensure_secondary_roles();
     }
 
     return result;
@@ -1612,6 +1627,98 @@ InferenceBackend* ModelOrchestrator::get_backend(
 InferenceBackend* ModelOrchestrator::ensure_model(
     const std::string& tier_name) {
     return get_model(tier_name);
+}
+
+/**
+ * @brief Release resident model(s) (gh#164). See header.
+ * @param tier_name Tier to release, or empty for all.
+ * @return ENTROPIC_OK, or MODEL_NOT_FOUND for an unknown tier.
+ * @utility
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+entropic_error_t ModelOrchestrator::release_models(
+    const std::string& tier_name) {
+    std::lock_guard<std::mutex> lock(swap_mutex_);
+
+    if (!tier_name.empty()) {
+        auto it = tiers_.find(tier_name);
+        if (it == tiers_.end()) {
+            logger->error("[residency] release: unknown tier '{}'",
+                          tier_name);
+            return ENTROPIC_ERROR_MODEL_NOT_FOUND;
+        }
+        release_backend(it->second.get());
+        return ENTROPIC_OK;
+    }
+
+    std::unordered_set<const InferenceBackend*> seen;
+    for (const auto& [name, backend] : tiers_) {
+        (void)name;
+        if (backend && seen.insert(backend.get()).second) {
+            release_backend(backend.get());
+        }
+    }
+    // Secondary roles (router, speculative draft). They re-ensure on the
+    // next cold activation — see `activate_and_track`.
+    secondary_loader_.shutdown();
+    return ENTROPIC_OK;
+}
+
+/**
+ * @brief Unload one backend, keeping its adapter registrations (gh#164).
+ *
+ * Adapter handles are freed BEFORE the model they were initialised
+ * against — the reverse order is a use-after-free, the same ordering
+ * `~ModelOrchestrator` documents.
+ *
+ * @param backend Backend to release. Null or already-COLD is a no-op.
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+void ModelOrchestrator::release_backend(InferenceBackend* backend) {
+    if (backend == nullptr || !backend->is_loaded()) { return; }
+
+    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(backend);
+    if (llama_backend != nullptr) {
+        // KEEPS the registrations, unlike the swap path's
+        // `unload_all_for_model` — see AdapterManager (gh#164).
+        lora_manager_.release_handles_for_model(
+            llama_backend->llama_model_ptr(),
+            llama_backend->llama_context_ptr());
+    }
+    backend->unload();
+    announce_eviction(backend);
+}
+
+/**
+ * @brief Fire Evicted for every tier that was backed by `backend` (gh#164).
+ *
+ * Every one of them was reported resident by `residency_snapshot_json`
+ * (which keys on the backend's loaded state), so every one of them has
+ * just stopped being resident and the observer is told about each.
+ *
+ * @param backend Backend that was just unloaded.
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+void ModelOrchestrator::announce_eviction(const InferenceBackend* backend) {
+    for (const auto& [name, bound] : tiers_) {
+        if (bound.get() != backend) { continue; }
+        auto cfg_it = config_.models.tiers.find(name);
+        std::string path = cfg_it != config_.models.tiers.end()
+            ? cfg_it->second.path.string() : "";
+        auto fp_it = tier_footprint_bytes_.find(name);
+        size_t footprint = fp_it != tier_footprint_bytes_.end()
+            ? fp_it->second : 0;
+        // Leave no stale incumbent: the next activation reads this to
+        // decide whether a swap-out is needed.
+        if (loaded_main_tier_ == name) { loaded_main_tier_.clear(); }
+        fire_residency_observer(ResidencyEvent::Evicted, name, path,
+                                footprint);
+    }
 }
 
 /**

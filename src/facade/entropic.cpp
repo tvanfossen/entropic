@@ -4844,6 +4844,38 @@ entropic_error_t entropic_set_residency_observer(
 }
 
 /**
+ * @brief Release a resident model, keeping conversations and registrations.
+ *
+ * Schema and contract are documented on the declaration in entropic.h.
+ * Claims the handle's turn first: unloading frees the llama context a
+ * decode would be running on, and `swap_mutex_` does not serialize
+ * generation, so "refuse while running" is the only safe answer.
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier to release, or NULL/"" for every resident model.
+ * @return ENTROPIC_OK, INVALID_HANDLE, INVALID_STATE, MODEL_NOT_FOUND or
+ *         ALREADY_RUNNING.
+ * @req REQ-INFER-019
+ * @req REQ-API-005
+ * @version 2.13.0
+ */
+entropic_error_t entropic_release_model(
+    entropic_handle_t handle,
+    const char* tier_name) {
+    auto rc = check_orchestrator(handle);
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_ALREADY_RUNNING;
+    }
+    entropic::HandleApiLock lock(handle);
+    return c_api_try(handle, [&]() {
+        return handle->orchestrator->release_models(
+            tier_name != nullptr ? tier_name : "");
+    });
+}
+
+/**
  * @brief Return the engine's current residency-set snapshot as JSON.
  *
  * Delegates to `ModelOrchestrator::residency_snapshot_json` which

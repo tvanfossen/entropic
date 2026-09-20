@@ -25,6 +25,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <entropic/entropic.h>
+// gh#164 (v2.13.0): the mid-turn refusal is only observable from the
+// private handle struct — same private-facade-header pattern as
+// final_text_test.cpp and serialize_messages_utf8_test.cpp.
+#include "engine_handle.h"
 
 #include <cstring>
 #include <cstdint>
@@ -4004,4 +4008,57 @@ TEST_CASE("gh#154 entropic_metrics_json carries a generations array",
     // appears only sometimes.
     CHECK(json.find("\"generations\"") != std::string::npos);
     CHECK(json.find("\"generations\":[]") != std::string::npos);
+}
+
+// ── gh#164 (v2.13.0): entropic_release_model ────────────────────────
+
+TEST_CASE("gh#164 entropic_release_model rejects a NULL handle",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CHECK(entropic_release_model(nullptr, nullptr)
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+    CHECK(entropic_release_model(nullptr, "lead")
+          == ENTROPIC_ERROR_INVALID_HANDLE);
+}
+
+TEST_CASE("gh#164 entropic_release_model needs a configured engine",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_ERROR_INVALID_STATE);
+}
+
+TEST_CASE("gh#164 entropic_release_model names an unknown tier",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+
+    // A typo must not read as "released successfully" — the consumer's
+    // whole reason for calling is to know the VRAM came back.
+    CHECK(entropic_release_model(h, "no-such-tier")
+          == ENTROPIC_ERROR_MODEL_NOT_FOUND);
+    // Releasing everything when nothing is resident is a no-op.
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_OK);
+    CHECK(entropic_release_model(h, "") == ENTROPIC_OK);
+}
+
+TEST_CASE("gh#164 entropic_release_model refuses to unload mid-turn",
+          "[v2.13.0][entropic_capi][residency][gh164]") {
+    // swap_mutex_ does not serialize generation (orchestrator.h), so an
+    // unload during a decode frees the llama_context out from under it.
+    // The claim is the same one the six run entry points take, so the
+    // refusal is structural rather than a timing hope.
+    CreatedOnlyHandle h;
+    REQUIRE(h.h != nullptr);
+    REQUIRE(entropic_configure(h, R"({"log_level":"WARN"})") == ENTROPIC_OK);
+    REQUIRE(h.h->engine != nullptr);
+
+    REQUIRE(h.h->engine->try_begin_turn());
+    CHECK(entropic_release_model(h, nullptr)
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+    CHECK(entropic_release_model(h, "lead")
+          == ENTROPIC_ERROR_ALREADY_RUNNING);
+
+    h.h->engine->end_turn();
+    CHECK(entropic_release_model(h, nullptr) == ENTROPIC_OK);
 }

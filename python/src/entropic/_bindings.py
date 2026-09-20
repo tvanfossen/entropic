@@ -278,6 +278,7 @@ entropic_set_queue_observer = _bind("entropic_set_queue_observer", ctypes.c_int,
 entropic_speculative_compat = _bind("entropic_speculative_compat", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_char_p))
 entropic_set_residency_observer = _bind("entropic_set_residency_observer", ctypes.c_int, entropic_handle_t, RESIDENCY_OBSERVER_CB, ctypes.c_void_p)
 entropic_residency_snapshot = _bind("entropic_residency_snapshot", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
+entropic_release_model = _bind("entropic_release_model", ctypes.c_int, entropic_handle_t, ctypes.c_char_p)
 entropic_context_clear = _bind("entropic_context_clear", ctypes.c_int, entropic_handle_t)
 entropic_context_get = _bind("entropic_context_get", ctypes.c_int, entropic_handle_t, ctypes.POINTER(ctypes.c_char_p))
 entropic_run_session = _bind("entropic_run_session", ctypes.c_int, entropic_handle_t, ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_char_p))

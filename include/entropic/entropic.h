@@ -941,6 +941,52 @@ ENTROPIC_EXPORT entropic_error_t entropic_residency_snapshot(
     entropic_handle_t handle,
     char** out_json);
 
+/**
+ * @brief Release a resident model, keeping everything else on the handle.
+ *
+ * A loaded model otherwise stays in VRAM for the life of the handle: the
+ * engine evicts only when a DIFFERENT tier needs the space, so a host that
+ * wants the GPU back had to destroy the handle — which also destroys every
+ * session's conversation, re-runs configure and re-registers MCP servers.
+ * Weights and conversation state have very different lifetimes; this
+ * separates them.
+ *
+ * Unloads the tier's backend and fires `ENTROPIC_RESIDENCY_EVICTED` for
+ * every tier that was backed by it. KEPT: the handle, its config, its
+ * registered MCP servers, all session conversations, and the tier's LoRA
+ * adapter REGISTRATIONS — their llama handles are freed with the model and
+ * re-bound at the next activation, so a release does not silently
+ * deregister an adapter the consumer loaded.
+ *
+ * The next use reloads lazily through the residency gate, exactly as a
+ * `models.defer_load` first use does (gh#157). There is no idle timer:
+ * only the host knows what idle means for its users.
+ *
+ * @param handle Engine handle.
+ * @param tier_name Tier to release, or NULL/"" for EVERY resident model —
+ *        every tier plus the secondary roles (router, speculative draft)
+ *        and any MTP head, which the target backend owns and tears down
+ *        with itself.
+ * @return ENTROPIC_OK on success — including when the tier was already
+ *         unloaded, which is a no-op rather than an error.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — engine not configured.
+ *         - ENTROPIC_ERROR_MODEL_NOT_FOUND — no such tier.
+ *         - ENTROPIC_ERROR_ALREADY_RUNNING — a turn is in flight on this
+ *           handle. Unloading a model mid-generation frees the context the
+ *           decode is running on, so the call is refused rather than
+ *           serialized behind the turn.
+ *
+ * @threadsafety Claims the handle's turn; concurrent with nothing.
+ * @req REQ-INFER-019
+ * @req REQ-API-005
+ * @req REQ-ABI-001
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_release_model(
+    entropic_handle_t handle,
+    const char* tier_name);
+
 /* ── Conversation Context (v2.0.1) ───────────────────── */
 
 /**

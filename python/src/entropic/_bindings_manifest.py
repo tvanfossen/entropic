@@ -98,6 +98,7 @@ EXPORTS = frozenset(
         "entropic_register_compactor",
         "entropic_register_hook",
         "entropic_register_mcp_server",
+        "entropic_release_model",
         "entropic_residency_snapshot",
         "entropic_revoke_mcp_key",
         "entropic_run",

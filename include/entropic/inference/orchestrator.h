@@ -297,6 +297,36 @@ public:
     InferenceBackend* ensure_model(const std::string& tier_name);
 
     /**
+     * @brief Release resident model(s), keeping every registration (gh#164).
+     *
+     * Unloads the backend(s), fires `ResidencyEvent::Evicted` for every tier
+     * that was backed by one, and clears the active-tier record so the next
+     * `get_model` / `ensure_model` reloads through the residency gate.
+     *
+     * What is DELIBERATELY kept: the tier configs, the grammar registry, the
+     * footprint estimates, and the LoRA adapter REGISTRATIONS. The swap path
+     * (`deactivate_current_if_needed`) calls `unload_all_for_model`, which
+     * ERASES adapter entries — correct for a tier that is being replaced,
+     * wrong for one the consumer intends to bring back. Release frees the
+     * llama adapter handles and leaves the registrations COLD, to be re-bound
+     * by `preload_adapters_for_model` at the next activation.
+     *
+     * Takes the swap mutex. It does NOT serialize generation — the caller
+     * (the facade) holds the handle's turn claim, which is what makes
+     * unloading a live context safe.
+     *
+     * @param tier_name Tier to release, or empty for every resident model
+     *        including the secondary roles (router, draft). An MTP head is
+     *        owned by its target backend and is torn down with it.
+     * @return ENTROPIC_OK, or ENTROPIC_ERROR_MODEL_NOT_FOUND for an unknown
+     *         tier name. Releasing an already-unloaded tier is a no-op.
+     * @utility
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    entropic_error_t release_models(const std::string& tier_name);
+
+    /**
      * @brief Whether a tier is configured for vision, per CONFIG (gh#157).
      *
      * True when the tier declares the `"vision"` capability or carries an
@@ -915,6 +945,41 @@ private:
      */
     double ensure_adapter_for_tier(
         const std::string& tier_name, llama_context* ctx);
+
+    /**
+     * @brief Unload one backend, keeping its adapter registrations (gh#164).
+     * @param backend Backend to release. Null or already-COLD is a no-op.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void release_backend(InferenceBackend* backend);
+
+    /**
+     * @brief Fire Evicted for every tier backed by `backend` (gh#164), and
+     *        clear the active-tier record when it names one of them.
+     * @param backend Backend that was just unloaded.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void announce_eviction(const InferenceBackend* backend);
+
+    /**
+     * @brief Re-ensure the secondary roles (router, draft) after a release
+     *        (gh#164).
+     *
+     * `entropic_release_model(NULL)` drops them along with the tiers, and
+     * neither `classify_task` nor the speculative path reloads a role on
+     * its own — routing would have degraded to the default tier, silently
+     * and permanently, for the rest of the handle's life. Both calls are
+     * no-ops when the role is already loaded.
+     *
+     * @dg_internal
+     * @req REQ-INFER-020
+     * @version 2.13.0
+     */
+    void ensure_secondary_roles();
 
     /**
      * @brief Preload the LoRA adapters of every tier sharing one backend,

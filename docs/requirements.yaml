@@ -3591,6 +3591,31 @@
     when nothing fits at any size.
 
 
+    A resident model can also be released ON DEMAND, without destroying the
+
+    handle: entropic_release_model unloads one named tier or every resident
+
+    model (tiers plus the router/draft roles, and any MTP head its target
+
+    owns), fires EVICTED for each affected tier, and clears the active-tier
+
+    record so the next use reloads through the gate. The handle, its config,
+
+    its MCP registrations, every session conversation AND the tier''s LoRA
+
+    adapter REGISTRATIONS survive — only the adapters'' llama handles are
+
+    freed, to be re-bound at the next activation. The call claims the handle''s
+
+    turn and refuses with ALREADY_RUNNING while one is in flight, because the
+
+    swap mutex does not serialise generation and unloading frees the context a
+
+    decode is running on. An unknown tier name is MODEL_NOT_FOUND; releasing
+
+    an already-unloaded tier is a no-op.
+
+
     WHEN the default tier is loaded is a config choice, not a fixed
 
     lifecycle. models.defer_load == false (the default) loads and activates it
@@ -3664,6 +3689,20 @@
 
     is loaded at init.
 
+    Given a resident tier, When it is released, Then EVICTED fires for it, it
+
+    is no longer in the residency set, the active-tier record is cleared, and
+
+    the next use reloads it; When it is released twice, Then the second is a
+
+    no-op. Given an unknown tier name, Then release returns MODEL_NOT_FOUND.
+
+    Given a turn in flight, Then release returns ALREADY_RUNNING. Given a
+
+    released model whose adapters were registered, Then the registrations
+
+    survive the release and are re-bound at the next activation.
+
     '
   verified_by: 'TEST_CASE "Residency snapshot on a default-constructed orchestrator",
 
@@ -3705,7 +3744,31 @@
 
     "gh#157: the first use loads exactly once, through the gate" —
 
-    tests/unit/inference/deferred_load_test.cpp
+    tests/unit/inference/deferred_load_test.cpp;
+
+    SCENARIO "gh#164: releasing an unknown tier is refused, not silently
+
+    ignored", "gh#164: release evicts the model and the next use brings it
+
+    back" — tests/unit/inference/release_model_test.cpp;
+
+    TEST_CASE "gh#164 entropic_release_model rejects a NULL handle", "gh#164
+
+    entropic_release_model needs a configured engine", "gh#164
+
+    entropic_release_model names an unknown tier", "gh#164
+
+    entropic_release_model refuses to unload mid-turn" —
+
+    tests/unit/api/entropic_capi_test.cpp;
+
+    TEST_CASE "gh#164: release then reload decodes correctly on gemma4 (plain
+
+    KV)", "gh#164: release then reload decodes correctly on a hybrid arch",
+
+    "gh#164: entropic_release_model frees VRAM through the C ABI" —
+
+    tests/model/test_gh164_release_reload.cpp
 
     '
   version: 2.13.0
@@ -3885,6 +3948,27 @@
 
     safe under concurrent access.
 
+
+    Adapters are preloaded at the ACTIVATION of their base model, not at
+
+    engine init — the init-time preload required a loaded model, which is true
+
+    of one tier only, so every other tier''s adapter silently never loaded.
+
+    Two ways of losing a model are therefore distinguished: a tier being
+
+    REPLACED erases its adapter entries (unload_all_for_model), while a tier
+
+    being RELEASED for later reuse (gh#164) frees only the llama handles and
+
+    keeps the name → path/scale registration, COLD, to be re-bound at the next
+
+    activation. Loading a name whose registration was released re-initialises
+
+    it in place; loading a name that still holds a handle is still a duplicate
+
+    and still fails.
+
     '
   acceptance_criteria: 'Given the documented transitions, Then load/activate/deactivate/unload
     and
@@ -3922,10 +4006,16 @@
 
     SCENARIO "LoRA adapter load failure is handled gracefully" —
 
-    tests/model/test_adapter_lifecycle.cpp
+    tests/model/test_adapter_lifecycle.cpp;
+
+    SCENARIO "gh#164: releasing a model''s handles keeps its registrations",
+
+    "gh#164: a WARM duplicate is still refused" —
+
+    tests/unit/inference/adapter_manager_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-INFER-024
   name: Backends declare capabilities and expose state and log-probability introspection
   module: Inference Backends

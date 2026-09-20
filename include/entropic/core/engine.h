@@ -1794,6 +1794,17 @@ private:
      * @dg_internal
      * @version 2.1.6
      */
+    /**
+     * @brief Resolve a resume-by-tier request to a storage id (gh#162).
+     * @param ctx Parent loop context (typed failure lands here).
+     * @param[in,out] pending Resume request; id filled on success.
+     * @return true when the tier has a prior delegation in storage.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool resolve_latest_for_target(LoopContext& ctx,
+                                   PendingDelegation& pending);
+
     bool resolve_resume_delegation(
         LoopContext& ctx,
         PendingDelegation& pending,

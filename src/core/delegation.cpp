@@ -400,7 +400,8 @@ DelegationResult DelegationManager::execute_delegation(
     LoopContext& parent_ctx,
     const std::string& target_tier,
     const std::string& task,
-    std::optional<int> max_turns) {
+    std::optional<int> max_turns,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Delegation: target_tier='{}', task='{}', depth={}",
                  target_tier, task,
@@ -418,9 +419,12 @@ DelegationResult DelegationManager::execute_delegation(
         return *early;
     }
 
-    auto child_ctx = build_child_context(parent_ctx, info, task);
+    auto child_ctx = build_child_context(parent_ctx, info, task, context);
     child_ctx.locked_tier = target_tier;
 
+    // gh#162: the storage record keeps what the child was actually given,
+    // so "what did this child know" is answerable after the fact.
+    const std::string recorded = format_context_block(context) + task;
     DelegationResult result;
 
     if (sb_info && swap_dir_fn_ != nullptr) {
@@ -428,9 +432,9 @@ DelegationResult DelegationManager::execute_delegation(
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
                             parent_ctx.session_key, sb_info->path,
                             restore_root_for(parent_ctx));
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     } else {
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     }
 
     finalize_sandbox_for(sb_info, result);
@@ -512,7 +516,8 @@ DelegationResult DelegationManager::execute_resume_delegation(
     const std::string& target_tier,
     const std::string& task,
     std::vector<Message> seed_history,
-    std::optional<int> max_turns) {
+    std::optional<int> max_turns,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Resume delegation: target_tier='{}' task='{}' "
                  "history_messages={}",
@@ -530,8 +535,10 @@ DelegationResult DelegationManager::execute_resume_delegation(
         return *early;
     }
 
+    const std::string recorded = format_context_block(context) + task;
     auto child_ctx = build_resumed_child_context(
-        parent_ctx, info, target_tier, task, std::move(seed_history));
+        parent_ctx, info, target_tier, recorded,  // gh#162
+        std::move(seed_history));
 
     DelegationResult result;
     if (sb_info && swap_dir_fn_ != nullptr) {
@@ -539,9 +546,9 @@ DelegationResult DelegationManager::execute_resume_delegation(
         ScopedSandbox scope(swap_dir_fn_, swap_dir_data_,
                             parent_ctx.session_key, sb_info->path,
                             restore_root_for(parent_ctx));
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     } else {
-        result = run_child(child_ctx, target_tier, task, max_turns);
+        result = run_child(child_ctx, target_tier, recorded, max_turns);
     }
     finalize_sandbox_for(sb_info, result);
     return result;
@@ -609,7 +616,8 @@ DelegationResult DelegationManager::execute_pipeline(
     LoopContext& parent_ctx,
     const std::vector<std::string>& stages,
     const std::string& task,
-    std::vector<DelegationResult>& stage_log) {
+    std::vector<DelegationResult>& stage_log,
+    const std::vector<ContextRef>& context) {
 
     logger->info("Pipeline: {} stages, task='{}'", stages.size(), task);
 
@@ -643,7 +651,9 @@ DelegationResult DelegationManager::execute_pipeline(
     last_result.task = task;
 
     for (size_t i = 0; i < stages.size(); ++i) {
-        if (!run_pipeline_stage(parent_ctx, stages, i, task,
+        // gh#162: every stage opens with the same seeded references.
+        if (!run_pipeline_stage(parent_ctx, stages, i,
+                                format_context_block(context) + task,
                                 shared_sb, stage_log, last_result)) {
             break;
         }
@@ -733,7 +743,8 @@ bool DelegationManager::run_pipeline_stage(
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
     const ChildContextInfo& info,
-    const std::string& task) {
+    const std::string& task,
+    const std::vector<ContextRef>& context) {
 
     LoopContext child;
     child.delegation_depth = parent_ctx.delegation_depth + 1;
@@ -767,8 +778,11 @@ LoopContext DelegationManager::build_child_context(
     sys.content = info.system_prompt;
     child.messages.push_back(std::move(sys));
 
-    // Task as user message (with completion instructions)
-    std::string user_content = task;
+    // Task as user message (context references, then task, then any
+    // completion instructions). gh#162: the block comes FIRST because a
+    // small model that reads the task and starts searching has already
+    // spent the turn the references were meant to save.
+    std::string user_content = format_context_block(context) + task;
     if (!info.completion_instructions.empty()) {
         user_content += "\n\n" + info.completion_instructions;
     }
@@ -778,6 +792,31 @@ LoopContext DelegationManager::build_child_context(
     child.messages.push_back(std::move(user));
 
     return child;
+}
+
+/**
+ * @brief Render seeded references as a `[CONTEXT]` block (gh#162).
+ * @param context Seeded references (may be empty).
+ * @return Block text ending in a blank line, or "" when empty.
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+std::string DelegationManager::format_context_block(
+    const std::vector<ContextRef>& context) {
+    if (context.empty()) {
+        return "";
+    }
+    std::string block =
+        "[CONTEXT] The lead already located these files. Read them "
+        "directly instead of searching:\n";
+    for (const auto& ref : context) {
+        block += "- " + ref.path;
+        if (!ref.lines.empty()) { block += " (lines " + ref.lines + ")"; }
+        if (!ref.note.empty()) { block += " — " + ref.note; }
+        block += "\n";
+    }
+    block += "\n";
+    return block;
 }
 
 /**

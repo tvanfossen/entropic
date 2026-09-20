@@ -1,6 +1,6 @@
 {
   "name": "pipeline",
-  "description": "Execute a multi-stage delegation pipeline.\n\nDelegates a task through a sequence of identity tiers in order. The output of each stage is forwarded to the next stage as a `[PRIOR STAGE OUTPUT]` block in its task message.\n\nSemantics:\n- Each stage runs in a FRESH child context loaded with that stage's tier system prompt (identity + constitution + tools).\n- Stage 0 sees the ORIGINAL task only (no prior output).\n- Stage N (N > 0) sees the original task + a `[PRIOR STAGE OUTPUT]` block containing stage N-1's summary.\n- Filesystem state IS shared across all stages — useful for `generate → review` flows where stage 2 needs to read what stage 1 wrote. By default that shared state is the project directory itself; with `delegation.isolation: sandbox` it is ONE sandbox copy shared by every stage, and the whole pipeline returns a single patch.\n- Only the final stage's result is returned to the caller.\n\nIssue #11 (v2.1.4): forward-carry of prior stage output is the documented intent and was the design from inception. Pre-2.1.4 each stage saw only the original task (isolation bug). If you authored prompts that relied on isolation, the new behavior is the correct one — surface the prior-stage block explicitly in your stage prompt.\n\nExample: stages=[\"researcher\", \"reader\"] — researcher surfaces relevant file paths via its summary, reader receives those paths in `[PRIOR STAGE OUTPUT]` and inspects each.",
+  "description": "Execute a multi-stage delegation pipeline.\n\nDelegates a task through a sequence of identity tiers in order. The output of each stage is forwarded to the next stage as a `[PRIOR STAGE OUTPUT]` block in its task message.\n\nSemantics:\n- Each stage runs in a FRESH child context loaded with that stage's tier system prompt (identity + constitution + tools).\n- Stage 0 sees the ORIGINAL task only (no prior output).\n- Stage N (N > 0) sees the original task + a `[PRIOR STAGE OUTPUT]` block containing stage N-1's summary.\n- Filesystem state IS shared across all stages — useful for `generate → review` flows where stage 2 needs to read what stage 1 wrote. By default that shared state is the project directory itself; with `delegation.isolation: sandbox` it is ONE sandbox copy shared by every stage, and the whole pipeline returns a single patch.\n- Only the final stage's result is returned to the caller.\n\nIssue #11 (v2.1.4): forward-carry of prior stage output is the documented intent and was the design from inception. Pre-2.1.4 each stage saw only the original task (isolation bug). If you authored prompts that relied on isolation, the new behavior is the correct one — surface the prior-stage block explicitly in your stage prompt.\n\nExample: stages=[\"researcher\", \"reader\"] — researcher surfaces relevant file paths via its summary, reader receives those paths in `[PRIOR STAGE OUTPUT]` and inspects each.\n\nContext seeding (gh#162, v2.13.0): `context` file references are passed to EVERY stage's opening message, so a later stage does not have to rediscover what the lead already knew.",
   "inputSchema": {
     "type": "object",
     "properties": {
@@ -16,6 +16,30 @@
       "task": {
         "type": "string",
         "description": "Natural language description of the task for the pipeline"
+      },
+      "context": {
+        "type": "array",
+        "description": "Files you ALREADY know are relevant, passed to the child as references it can open directly. Use this whenever you have a path from earlier work — a child that has to re-find it may not, and may answer from guesswork instead.",
+        "items": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "description": "File path the child should read"
+            },
+            "lines": {
+              "type": "string",
+              "description": "Optional line range, e.g. \"40-95\""
+            },
+            "note": {
+              "type": "string",
+              "description": "Optional one-line reason this file matters"
+            }
+          },
+          "required": [
+            "path"
+          ]
+        }
       }
     },
     "required": [

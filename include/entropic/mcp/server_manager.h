@@ -84,11 +84,16 @@ public:
      * @param mcp_config MCP config with enable flags.
      * @param tier_names Tier names for entropic server schemas.
      * @param data_dir Bundled data directory path.
-     * @version 2.0.1
+     * @param require_context_tiers gh#162 (v2.13.0): tiers that refuse a
+     *        delegation carrying no context references. Defaulted, so
+     *        existing callers are unaffected.
+     * @version 2.13.0
      */
     void init_builtins(const MCPConfig& mcp_config,
                        const std::vector<std::string>& tier_names,
-                       const std::string& data_dir);
+                       const std::string& data_dir,
+                       const std::vector<std::string>&
+                           require_context_tiers = {});
 
     /**
      * @brief Load the dlopen plugins listed in `mcp.plugins` (gh#133).

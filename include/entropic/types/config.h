@@ -518,6 +518,18 @@ struct TierConfig : ModelConfig {
     std::optional<std::string> auto_chain;           ///< Target tier name (nullopt = defer to identity)
     std::optional<bool> routable;                   ///< None = defer to identity frontmatter
 
+    /// @brief gh#162 (v2.13.0): refuse a delegation to this tier that
+    /// carries no `context` file references.
+    ///
+    /// For a tier whose tool set cannot SEARCH — a reader with read_file
+    /// and nothing else — a contextless task is structurally unanswerable,
+    /// and the observed failure is the child inventing a path. The tool
+    /// boundary refuses instead, so the lead gets an error it can fix in
+    /// the same turn rather than a confident answer about a file that does
+    /// not exist. YAML: `models.tiers.<name>.requires_context: true`.
+    /// @version 2.13.0
+    bool requires_context = false;
+
     /// @brief Optional path to LoRA adapter .gguf file.
     /// If set, orchestrator loads and activates on tier transition.
     /// @version 1.9.2

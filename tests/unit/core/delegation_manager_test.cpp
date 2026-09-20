@@ -1320,3 +1320,78 @@ TEST_CASE("gh#160: a nested delegation restores its parent's sandbox",
     CHECK(log.keys[0] == "ws-a");
     fs::remove_all(project);
 }
+
+// ── gh#162 (v2.13.0): explicit context seeds ───────────────────────────
+
+TEST_CASE("gh#162: seeded context reaches the child's opening message",
+          "[delegation][gh162][v2.13.0]") {
+    MockTierResolution tier_mock;
+    tier_mock.completion_instructions = "Call entropic.complete when done.";
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    struct Seen {
+        std::string opening;   ///< Child's first user message
+        std::string system;    ///< Child's system message
+    } seen;
+
+    auto capture_loop = +[](LoopContext& ctx, void* ud) {
+        auto* s = static_cast<Seen*>(ud);
+        for (const auto& m : ctx.messages) {
+            if (m.role == "system") { s->system = m.content; }
+            if (m.role == "user") { s->opening = m.content; }
+        }
+        Message m;
+        m.role = "assistant";
+        m.content = "ok";
+        ctx.messages.push_back(std::move(m));
+        ctx.state = AgentState::COMPLETE;
+    };
+
+    DelegationManager mgr(capture_loop, &seen, tier_res);
+    LoopContext parent;
+
+    std::vector<ContextRef> context = {
+        {"app/include/slam/SlamConfig.hpp", "40-95", "fusion weights"},
+        {"src/slam/FusedPoseEstimator.cpp", "", ""},
+    };
+    auto result = mgr.execute_delegation(
+        parent, "reader", "Explain the latency compensation math",
+        std::nullopt, context);
+
+    REQUIRE(result.success);
+    // RED before gh#162: nothing carried the lead's paths, so the child's
+    // opening message was the prose task alone and it searched blind.
+    CHECK(seen.opening.find("app/include/slam/SlamConfig.hpp")
+          != std::string::npos);
+    CHECK(seen.opening.find("lines 40-95") != std::string::npos);
+    CHECK(seen.opening.find("fusion weights") != std::string::npos);
+    CHECK(seen.opening.find("src/slam/FusedPoseEstimator.cpp")
+          != std::string::npos);
+    // References, never excerpts — the child opens the files itself.
+    CHECK(seen.opening.find("Read them directly") != std::string::npos);
+    // The task itself still arrives, after the block.
+    CHECK(seen.opening.find("latency compensation") != std::string::npos);
+    // ...and the record keeps what the child was given.
+    CHECK(result.task.find("SlamConfig.hpp") != std::string::npos);
+}
+
+TEST_CASE("gh#162: no context means a byte-identical opening message",
+          "[delegation][gh162][v2.13.0]") {
+    MockTierResolution tier_mock;
+    tier_mock.completion_instructions = "";
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    std::string opening;
+    auto capture_loop = +[](LoopContext& ctx, void* ud) {
+        auto* s = static_cast<std::string*>(ud);
+        for (const auto& m : ctx.messages) {
+            if (m.role == "user") { *s = m.content; }
+        }
+        ctx.state = AgentState::COMPLETE;
+    };
+
+    DelegationManager mgr(capture_loop, &opening, tier_res);
+    LoopContext parent;
+    mgr.execute_delegation(parent, "eng", "do the thing");
+    CHECK(opening == "do the thing");
+}

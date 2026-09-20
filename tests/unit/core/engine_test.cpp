@@ -3034,3 +3034,69 @@ SCENARIO("gh#160: delegation isolation is opt-in and rooted at the "
     fs::remove_all(tools_root);
     fs::remove_all(engine_repo);
 }
+
+// ── gh#162 (v2.13.0): resume a tier without knowing its storage id ──────
+
+SCENARIO("gh#162: resume by target picks that tier's latest delegation",
+         "[engine][gh162][v2.13.0][delegation][resume]") {
+    auto run_resume = [](StorageInterface& si, const std::string& target,
+                         LoopContext& ctx) {
+        MockInference mock;
+        mock.tool_calls_queue.push_back(R"([{"name":"x","arguments":{}}])");
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 1;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+        engine.set_storage(si);
+        PendingDelegation pd;
+        pd.target = target;
+        pd.task = "follow up on the same subsystem";
+        pd.resume_by_target = true;  // no delegation_id known
+        v2310::DelegInjector st{v2310::DelegInjector::RESUME, pd, {}, false};
+        engine.set_tool_executor(v2310::deleg_executor(&st));
+        ctx.messages = make_messages();
+        engine.run_loop(ctx);
+    };
+
+    GIVEN("storage holding a completed delegation to 'reader'") {
+        StorageInterface si{};
+        si.latest_delegation_for_target =
+            [](const char* tier, std::string& id, void*) {
+                if (std::string(tier) != "reader") { return false; }
+                id = "del-latest";
+                return true;
+            };
+        si.load_delegation_with_messages =
+            [](const char* id, std::string& out, void*) {
+                if (std::string(id) != "del-latest") { return false; }
+                out = R"({"target_tier":"reader","messages":[
+                          {"role":"user","content":"prior turn"}]})";
+                return true;
+            };
+
+        WHEN("the lead resumes by naming the tier") {
+            LoopContext ctx;
+            run_resume(si, "reader", ctx);
+            THEN("the latest delegation to that tier is loaded and run") {
+                // RED before gh#162: resume_by_target did not exist, so the
+                // lead needed a followup round trip to learn "del-latest"
+                // before it could ask for anything.
+                CHECK(v2310::msg_contains(ctx, "[DELEGATION"));
+                CHECK_FALSE(v2310::msg_contains(
+                    ctx, "no prior delegation to this tier"));
+            }
+        }
+
+        WHEN("the named tier has no prior delegation") {
+            LoopContext ctx;
+            run_resume(si, "nobody", ctx);
+            THEN("the lead is told, rather than silently getting a cold run") {
+                CHECK(v2310::msg_contains(
+                    ctx, "[DELEGATION FAILED: resume_delegation]"));
+                CHECK(v2310::msg_contains(
+                    ctx, "no prior delegation to this tier"));
+            }
+        }
+    }
+}

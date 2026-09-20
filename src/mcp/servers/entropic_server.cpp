@@ -216,16 +216,23 @@ public:
      * @version 1.8.5
      */
     DelegateTool(ToolDefinition def,
-                 const std::vector<std::string>& tier_names);
+                 const std::vector<std::string>& tier_names,
+                 std::vector<std::string> require_context_tiers = {});
 
     /**
      * @brief Execute delegation.
-     * @param args_json JSON with "target", "task", "max_turns".
-     * @return ServerResponse with delegate + stop directives.
+     * @param args_json JSON with "target", "task", "max_turns", "context".
+     * @return ServerResponse with delegate + stop directives, or a typed
+     *         error with NO directives when the target tier declares
+     *         `requires_context` and none was supplied (gh#162).
      * @dg_internal
-     * @version 1.8.5
+     * @version 2.13.0
      */
     ServerResponse execute(const std::string& args_json) override;
+
+private:
+    /// @brief gh#162: tiers that refuse a delegation carrying no context.
+    std::vector<std::string> require_context_tiers_;
 };
 
 /**
@@ -237,32 +244,74 @@ public:
  *
  * @param def Tool definition.
  * @param tier_names Tier names for target enum.
+ * @param require_context_tiers Tiers that refuse a contextless
+ *        delegation (gh#162).
  * @req REQ-MCP-024
  * @req REQ-MCP-013
- * @version 1.8.5
+ * @req REQ-DELEG-006
+ * @version 2.13.0
  */
 DelegateTool::DelegateTool(
     ToolDefinition def,
-    const std::vector<std::string>& tier_names)
-    : ToolBase(std::move(def)) {
+    const std::vector<std::string>& tier_names,
+    std::vector<std::string> require_context_tiers)
+    : ToolBase(std::move(def)),
+      require_context_tiers_(std::move(require_context_tiers)) {
 
     auto schema = nlohmann::json::parse(definition_.input_schema);
     schema["properties"]["target"]["enum"] = tier_names;
     definition_.input_schema = schema.dump();
 
-    logger->info("[delegate] patched enum with {} tiers",
-                 tier_names.size());
+    logger->info("[delegate] patched enum with {} tiers ({} require context)",
+                 tier_names.size(), require_context_tiers_.size());
+}
+
+/**
+ * @brief Copy a `context` argument into the result, dropping junk (gh#162).
+ *
+ * Entries without a `path` are dropped rather than forwarded: a context
+ * reference with nothing to open is noise in the child's opening message,
+ * and small models treat noise as instruction.
+ *
+ * @param args Parsed tool arguments.
+ * @param[out] result Result JSON to populate with a "context" array.
+ * @return Number of usable references carried through.
+ * @utility
+ * @version 2.13.0
+ */
+static size_t carry_context(const nlohmann::json& args,
+                            nlohmann::json& result) {
+    auto out = nlohmann::json::array();
+    if (args.contains("context") && args["context"].is_array()) {
+        for (const auto& ref : args["context"]) {
+            if (!ref.is_object()) { continue; }
+            auto path = ref.value("path", std::string{});
+            if (path.empty()) { continue; }
+            nlohmann::json entry;
+            entry["path"] = path;
+            entry["lines"] = ref.value("lines", std::string{});
+            entry["note"] = ref.value("note", std::string{});
+            out.push_back(std::move(entry));
+        }
+    }
+    size_t n = out.size();
+    result["context"] = std::move(out);
+    return n;
 }
 
 /**
  * @brief Parse delegation args and emit directives.
  * @param args_json JSON with "target", "task", optional "max_turns"
- *                  (defaulting to -1 for "engine decides").
+ *                  (defaulting to -1 for "engine decides") and optional
+ *                  "context" file references (gh#162).
  * @return A ServerResponse whose result echoes the delegation and whose
  *         directives are delegate + stop_processing — the pair that
- *         hands the turn to the child loop.
+ *         hands the turn to the child loop; or, when the target tier
+ *         declares `requires_context` and none was supplied, an error
+ *         string with NO directives (gh#162).
  * @req REQ-MCP-024
- * @version 1.8.5
+ * @req REQ-DELEG-006
+ * @version 2.13.0
  */
 ServerResponse DelegateTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
@@ -270,14 +319,30 @@ ServerResponse DelegateTool::execute(const std::string& args_json) {
     std::string task = args.at("task").get<std::string>();
     int max_turns = args.value("max_turns", -1);
 
-    logger->info("[delegate] target='{}' task='{}' max_turns={}",
-                 target, task, max_turns);
-
     nlohmann::json result;
     result["action"] = "delegate";
     result["target"] = target;
     result["task"] = task;
     result["max_turns"] = max_turns;
+    auto refs = carry_context(args, result);
+
+    // gh#162: a tier that declares requires_context cannot succeed on a
+    // contextless task, so refuse HERE — a tool error the lead can act on
+    // in the same turn, rather than a burned child loop whose transcript
+    // nobody reads.
+    if (refs == 0
+        && std::find(require_context_tiers_.begin(),
+                     require_context_tiers_.end(), target)
+           != require_context_tiers_.end()) {
+        logger->warn("[delegate] refused: tier '{}' requires context", target);
+        return {"Error: tier \"" + target + "\" requires context. Re-issue "
+                "entropic.delegate with a `context` array naming at least one "
+                "file path (optionally lines/note) the delegate should read.",
+                {}};
+    }
+
+    logger->info("[delegate] target='{}' task='{}' max_turns={} context={}",
+                 target, task, max_turns, refs);
 
     Directive delegate_d;
     delegate_d.type = ENTROPIC_DIRECTIVE_DELEGATE;
@@ -305,7 +370,8 @@ public:
      * @version 1.8.5
      */
     PipelineTool(ToolDefinition def,
-                 const std::vector<std::string>& tier_names);
+                 const std::vector<std::string>& tier_names,
+                 std::vector<std::string> require_context_tiers = {});
 
     /**
      * @brief Execute pipeline setup.
@@ -318,6 +384,8 @@ public:
 
 private:
     std::vector<std::string> tier_names_;  ///< Known tiers for runtime validation.
+    /// @brief gh#162: stages that refuse a contextless pipeline.
+    std::vector<std::string> require_context_tiers_;
 };
 
 /**
@@ -335,8 +403,10 @@ private:
  */
 PipelineTool::PipelineTool(
     ToolDefinition def,
-    const std::vector<std::string>& tier_names)
-    : ToolBase(std::move(def)), tier_names_(tier_names) {
+    const std::vector<std::string>& tier_names,
+    std::vector<std::string> require_context_tiers)
+    : ToolBase(std::move(def)), tier_names_(tier_names),
+      require_context_tiers_(std::move(require_context_tiers)) {
 
     auto schema = nlohmann::json::parse(definition_.input_schema);
     schema["properties"]["stages"]["items"]["enum"] = tier_names;
@@ -353,42 +423,101 @@ PipelineTool::PipelineTool(
  * any directive is emitted. Unknown tier names are rejected with a plain
  * error string naming the offending stage and the valid options.
  *
- * @param args_json JSON with "stages" and "task".
+ * @param args_json JSON with "stages", "task" and optional "context"
+ *                  file references (gh#162).
  * @return On success, a ServerResponse echoing the stages with
  *         pipeline + stop_processing directives. On fewer than two
- *         stages, or a stage naming a tier not in tier_names, an error
- *         string quoting the offending stage and the valid options —
- *         with NO directives, so nothing is dispatched.
+ *         stages, a stage naming a tier not in tier_names, or a stage
+ *         that declares `requires_context` with none supplied (gh#162),
+ *         an error string quoting the offending stage — with NO
+ *         directives, so nothing is dispatched.
  * @req REQ-MCP-024
- * @version 2.10.0
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+/**
+ * @brief Why this pipeline cannot run, or "" when it can (gh#129, gh#162).
+ *
+ * Extracted from `PipelineTool::execute` to keep it under the knots
+ * ABC + returns gates when the context check joined the stage check.
+ *
+ * @param stages Requested stage tiers.
+ * @param tier_names Configured tiers.
+ * @param require_context_tiers Tiers that refuse a contextless run.
+ * @param refs Number of context references supplied.
+ * @return Error text for the model, or "" when the pipeline is valid.
+ * @utility
+ * @req REQ-MCP-024
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+static std::string pipeline_rejection(
+    const std::vector<std::string>& stages,
+    const std::vector<std::string>& tier_names,
+    const std::vector<std::string>& require_context_tiers,
+    size_t refs) {
+    std::string err;
+    if (stages.size() < 2) {
+        logger->warn("[pipeline] rejected: fewer than 2 stages");
+        err = "Error: pipeline requires at least 2 stages";
+    }
+    for (const auto& s : stages) {
+        if (!err.empty()) { break; }
+        if (std::find(tier_names.begin(), tier_names.end(), s)
+            == tier_names.end()) {
+            logger->warn("[pipeline] invalid stage: '{}'", s);
+            err = "Error: unknown stage \"" + s + "\". Valid stages: "
+                  + nlohmann::json(tier_names).dump();
+        } else if (refs == 0
+                   && std::find(require_context_tiers.begin(),
+                                require_context_tiers.end(), s)
+                      != require_context_tiers.end()) {
+            // gh#162: one context list seeds every stage, so a stage that
+            // requires context refuses the whole pipeline — before any
+            // stage runs, not after the first has burned its turns.
+            logger->warn("[pipeline] refused: stage '{}' requires context", s);
+            err = "Error: stage \"" + s + "\" requires context. Re-issue "
+                  "entropic.pipeline with a `context` array naming at least "
+                  "one file path the stages should read.";
+        }
+    }
+    return err;
+}
+
+/**
+ * @brief Parse pipeline args, validate stages, emit directives.
+ *
+ * gh#129 (v2.10.0): every stage is validated against tier_names_ before
+ * any directive is emitted. gh#162 (v2.13.0): the context list is carried
+ * through and a stage declaring `requires_context` refuses the run.
+ *
+ * @param args_json JSON with "stages", "task" and optional "context".
+ * @return On success, a ServerResponse echoing the stages with
+ *         pipeline + stop_processing directives; otherwise an error
+ *         string with NO directives, so nothing is dispatched.
+ * @req REQ-MCP-024
+ * @req REQ-DELEG-006
+ * @version 2.13.0
  */
 ServerResponse PipelineTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json);
     auto stages = args.at("stages").get<std::vector<std::string>>();
     std::string task = args.at("task").get<std::string>();
 
-    if (stages.size() < 2) {
-        logger->warn("[pipeline] rejected: fewer than 2 stages");
-        return {"Error: pipeline requires at least 2 stages", {}};
-    }
-
-    for (const auto& s : stages) {
-        auto it = std::find(tier_names_.begin(), tier_names_.end(), s);
-        if (it == tier_names_.end()) {
-            logger->warn("[pipeline] invalid stage: '{}'", s);
-            auto valid = nlohmann::json(tier_names_).dump();
-            return {"Error: unknown stage \"" + s
-                    + "\". Valid stages: " + valid, {}};
-        }
-    }
-
-    logger->info("[pipeline] stages={} task='{}'",
-                 stages.size(), task);
-
     nlohmann::json result;
     result["action"] = "pipeline";
     result["stages"] = stages;
     result["task"] = task;
+    auto refs = carry_context(args, result);  // gh#162
+
+    auto rejection = pipeline_rejection(
+        stages, tier_names_, require_context_tiers_, refs);
+    if (!rejection.empty()) {
+        return {rejection, {}};
+    }
+
+    logger->info("[pipeline] stages={} task='{}' context={}",
+                 stages.size(), task, refs);
 
     Directive pipeline_d;
     pipeline_d.type = ENTROPIC_DIRECTIVE_PIPELINE;
@@ -1329,8 +1458,20 @@ public:
      * @dg_internal
      * @version 2.1.6
      */
-    explicit ResumeDelegationTool(ToolDefinition def)
-        : ToolBase(std::move(def)) {}
+    /**
+     * @brief Construct and patch the `target` enum with the tier names.
+     * @param def Tool definition (entropic/resume_delegation.json).
+     * @param tier_names Tiers a resume may address (gh#162).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    ResumeDelegationTool(ToolDefinition def,
+                         const std::vector<std::string>& tier_names)
+        : ToolBase(std::move(def)) {
+        auto schema = nlohmann::json::parse(definition_.input_schema);
+        schema["properties"]["target"]["enum"] = tier_names;
+        definition_.input_schema = schema.dump();
+    }
 
     /**
      * @brief Emit a resume-flavored delegate directive.
@@ -1344,13 +1485,14 @@ public:
 
 /**
  * @brief Parse resume args and emit a resume-flavored DelegateDirective.
- * @param args_json JSON {delegation_id, task, max_turns?}.
+ * @param args_json JSON {delegation_id?, target?, task, max_turns?}.
  * @return On valid arguments, a ServerResponse with delegate +
- *         stop_processing directives. On non-object args, or a missing
- *         delegation_id or task, a typed error with NO directives —
- *         validation precedes any directive emission.
+ *         stop_processing directives. On non-object args, a missing
+ *         task, or neither delegation_id nor target (gh#162), a typed
+ *         error with NO directives — validation precedes any directive
+ *         emission.
  * @req REQ-MCP-024
- * @version 2.1.6
+ * @version 2.13.0
  */
 ServerResponse ResumeDelegationTool::execute(const std::string& args_json) {
     auto args = nlohmann::json::parse(args_json, nullptr, false);
@@ -1358,18 +1500,25 @@ ServerResponse ResumeDelegationTool::execute(const std::string& args_json) {
         return {R"({"error":"invalid args: object required"})", {}};
     }
     std::string delegation_id = args.value("delegation_id", "");
+    std::string target = args.value("target", "");
     std::string task = args.value("task", "");
     int max_turns = args.value("max_turns", -1);
-    if (delegation_id.empty() || task.empty()) {
-        return {R"({"error":"'delegation_id' and 'task' are required"})",
+    // gh#162: an id OR a tier. Reaching this tool used to cost a followup
+    // round trip on a slow local model before any work started.
+    if (task.empty() || (delegation_id.empty() && target.empty())) {
+        return {R"({"error":"'task' and one of 'delegation_id' or )"
+                R"('target' are required"})",
                 {}};
     }
-    logger->info("[resume_delegation] id='{}' task='{}' max_turns={}",
-                 delegation_id, task, max_turns);
+    bool by_target = delegation_id.empty();
+    logger->info("[resume_delegation] id='{}' target='{}' task='{}' "
+                 "max_turns={}", delegation_id, target, task, max_turns);
 
     nlohmann::json result;
     result["action"] = "resume_delegation";
     result["delegation_id"] = delegation_id;
+    result["target"] = target;
+    result["resume_by_target"] = by_target;
     result["task"] = task;
     result["max_turns"] = max_turns;
 
@@ -1433,20 +1582,21 @@ int EntropicServer::register_core_tools(
  */
 int EntropicServer::register_delegation_tools(
     const std::string& tools_dir,
-    const std::vector<std::string>& tier_names) {
+    const std::vector<std::string>& tier_names,
+    const std::vector<std::string>& require_context_tiers) {
     if (tier_names.size() <= 1) {
         return 0;
     }
     auto delegate_def = load_tool_definition(
         "delegate", "entropic", tools_dir);
     delegate_ = std::make_unique<DelegateTool>(
-        std::move(delegate_def), tier_names);
+        std::move(delegate_def), tier_names, require_context_tiers);
     register_tool(delegate_.get());
 
     auto pipeline_def = load_tool_definition(
         "pipeline", "entropic", tools_dir);
     pipeline_ = std::make_unique<PipelineTool>(
-        std::move(pipeline_def), tier_names);
+        std::move(pipeline_def), tier_names, require_context_tiers);
     register_tool(pipeline_.get());
 
     // gh#32 (v2.1.6): resume_delegation lives alongside delegate
@@ -1454,7 +1604,7 @@ int EntropicServer::register_delegation_tools(
     auto resume_def = load_tool_definition(
         "resume_delegation", "entropic", tools_dir);
     resume_delegation_ = std::make_unique<ResumeDelegationTool>(
-        std::move(resume_def));
+        std::move(resume_def), tier_names);
     register_tool(resume_delegation_.get());
 
     return 3;
@@ -1500,16 +1650,20 @@ int EntropicServer::register_introspection_tools(
  * @brief Construct with tier names and data dir, register tools.
  * @param tier_names Available tier names for delegate/pipeline schemas.
  * @param data_dir Path to bundled data directory.
- * @version 1.9.12
+ * @param require_context_tiers Tiers that refuse a contextless
+ *        delegation (gh#162).
+ * @version 2.13.0
  */
 EntropicServer::EntropicServer(
     const std::vector<std::string>& tier_names,
-    const std::string& data_dir)
+    const std::string& data_dir,
+    const std::vector<std::string>& require_context_tiers)
     : MCPServerBase("entropic") {
 
     std::string tools_dir = data_dir + "/tools";
     int count = register_core_tools(tools_dir);
-    count += register_delegation_tools(tools_dir, tier_names);
+    count += register_delegation_tools(tools_dir, tier_names,
+                                       require_context_tiers);
     count += register_introspection_tools(tools_dir);
 
     logger->info("EntropicServer initialized with {} tools "

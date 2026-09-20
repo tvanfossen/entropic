@@ -1969,6 +1969,106 @@
 
     '
   version: 2.13.0
+- id: REQ-DELEG-006
+  name: Explicit delegation context, required-context tiers, resume by target
+  module: Delegation and Pipelines
+  description: '`delegate` and `pipeline` accept an optional `context` array of
+
+    {path, lines?, note?} entries, distinct from the prose task. Entries
+
+    without a path are dropped at the tool boundary. The surviving
+
+    references are rendered into a `[CONTEXT]` block that PRECEDES the
+
+    task in the child''s opening user message — references only, never
+
+    excerpts: the child opens the files with its own tools, and inlining
+
+    them would copy the parent''s context into the child''s, which is the
+
+    cost delegation exists to avoid. The same block is recorded with the
+
+    delegation''s storage row, so "what did this child know" is
+
+    answerable afterwards. A tier configured `requires_context: true`
+
+    refuses a delegation (or a pipeline naming it as a stage) that
+
+    carries no references, as a TOOL-ERROR result with no directives —
+
+    the lead can fix it in the same turn. `resume_delegation` accepts
+
+    `target` in place of `delegation_id`; the engine resolves the most
+
+    recent COMPLETED delegation to that tier from storage at admission,
+
+    and a tier with no prior delegation is a typed failure, never a
+
+    silent cold start. With no `context` supplied, the child''s opening
+
+    message is byte-identical to pre-2.13.0.
+
+    WHY (gh#162): a lead delegated a follow-up without the path it had
+
+    already cited; the read-only child could not search, guessed, and
+
+    answered from inference about a file that does not exist — 3.8x wall
+
+    time against the no-delegation arm and one question unanswered.
+
+    '
+  acceptance_criteria: 'Given a delegate call carrying context entries, When the child
+    context
+
+    is built, Then its opening user message names each path (with any
+
+    line range and note) ahead of the task text.
+
+    Given a delegate call with no context, When the child context is
+
+    built, Then the opening message is exactly the task.
+
+    Given a tier declaring requires_context and a delegation with no
+
+    context, When the tool executes, Then it returns an error naming the
+
+    tier and emits NO directives.
+
+    Given a resume_delegation naming a target tier, When storage holds a
+
+    completed delegation to it, Then that delegation is resumed; and when
+
+    it holds none, Then a typed [DELEGATION FAILED: resume_delegation]
+
+    message is pushed instead of a cold delegation.
+
+    '
+  verified_by: 'TEST_CASE "gh#162: delegate carries a structured context list";
+
+    "gh#162: resume_delegation accepts a target instead of an id";
+
+    "gh#162: resume_delegation still needs one of id or target";
+
+    "gh#162: a requires_context tier refuses a contextless delegation" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/servers/entropic_test.cpp;
+
+    TEST_CASE "gh#162: seeded context reaches the child''s opening
+
+    message"; "gh#162: no context means a byte-identical opening message"
+
+    —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/delegation_manager_test.cpp;
+
+    SCENARIO "gh#162: resume by target picks that tier''s latest
+
+    delegation" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-HOOK-001
   name: Thread-safe hook dispatch with priority, chaining and isolation
   module: Hook Points

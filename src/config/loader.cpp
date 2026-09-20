@@ -230,7 +230,7 @@ static std::string parse_model_config(
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-005
  * @req REQ-TYPE-005
- * @version 2.10.4
+ * @version 2.13.0
  */
 static std::string parse_tier_config(
     ryml::ConstNodeRef node,
@@ -272,6 +272,10 @@ static std::string parse_tier_config(
     if (extract(node, "routable", routable_val)) {
         config.routable = routable_val;
     }
+
+    // gh#162 (v2.13.0): a tier may declare that a contextless delegation
+    // to it is refused at the tool boundary.
+    extract(node, "requires_context", config.requires_context);
 
     /* gh#41 v2.1.8: tier capabilities. Missing key → ["text"] so
      * every pre-v2.1.8 tier config remains valid. Configs that

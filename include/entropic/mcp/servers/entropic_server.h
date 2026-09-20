@@ -49,10 +49,14 @@ public:
      * @brief Construct with tier names and data dir.
      * @param tier_names Available tier names for delegate/pipeline schemas.
      * @param data_dir Path to bundled data directory.
-     * @version 1.9.12
+     * @param require_context_tiers gh#162 (v2.13.0): tiers that refuse a
+     *        delegation carrying no `context` references. Defaulted so
+     *        every existing caller keeps its behaviour exactly.
+     * @version 2.13.0
      */
     EntropicServer(const std::vector<std::string>& tier_names,
-                   const std::string& data_dir);
+                   const std::string& data_dir,
+                   const std::vector<std::string>& require_context_tiers = {});
 
     ~EntropicServer() override;
 
@@ -93,7 +97,8 @@ private:
      * @dg_internal @version 1.9.12 */
     int register_delegation_tools(
         const std::string& tools_dir,
-        const std::vector<std::string>& tier_names);
+        const std::vector<std::string>& tier_names,
+        const std::vector<std::string>& require_context_tiers = {});
 
     /** @brief Register introspection tools (diagnose, inspect, context_inspect).
      * @dg_internal @version 2.0.6-rc16 */

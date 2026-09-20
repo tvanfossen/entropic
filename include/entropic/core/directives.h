@@ -72,7 +72,29 @@ struct TierChangeDirective : Directive {
 };
 
 /**
+ * @brief One file the lead already paid to find (gh#162, v2.13.0).
+ *
+ * A REFERENCE, never an excerpt: the child reads the file itself with
+ * its own tools. Inlining content here would duplicate the parent's
+ * context into the child's, which is the cost delegation exists to
+ * avoid; what the child cannot do cheaply is FIND the path again.
+ *
+ * @version 2.13.0
+ */
+struct ContextRef {
+    std::string path;   ///< Repo-relative (or absolute) file path
+    std::string lines;  ///< Optional line range, e.g. "40-95" ("" = whole file)
+    std::string note;   ///< Optional one-line reason this file matters
+};
+
+/**
  * @brief Delegate a task to a child inference loop.
+ *
+ * gh#162 (v2.13.0): `context` carries the lead's already-earned file
+ * references into the child's opening message. Measured on the reporting
+ * consumer, a child that had to re-derive a path it was never given cost
+ * 3.8x wall time and still answered from inference about a file that does
+ * not exist.
  *
  * gh#32 (v2.1.6): `resume_from_delegation_id` opts into resume mode —
  * the child context is seeded with the prior delegation's conversation
@@ -86,6 +108,11 @@ struct DelegateDirective : Directive {
     std::string task;                     ///< Task description
     int max_turns = -1;                   ///< Max turns (-1 = default)
     std::string resume_from_delegation_id; ///< gh#32 (v2.1.6): empty = fresh delegate
+    std::vector<ContextRef> context;      ///< gh#162 (v2.13.0): seeded file references
+    /// @brief gh#162 (v2.13.0): resume the most recent delegation to
+    /// `target` instead of naming a storage id. The id is resolved by the
+    /// engine at admission, because the tool cannot see storage.
+    bool resume_by_target = false;
 
     /**
      * @brief Construct a Delegate directive.
@@ -114,6 +141,7 @@ struct DelegateDirective : Directive {
 struct PipelineDirective : Directive {
     std::vector<std::string> stages; ///< Tier names in order
     std::string task;                ///< Task description
+    std::vector<ContextRef> context; ///< gh#162 (v2.13.0): seeded file references
 
     /**
      * @brief Construct a Pipeline directive.

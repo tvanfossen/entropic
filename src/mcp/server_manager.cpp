@@ -49,17 +49,20 @@ ServerManager::ServerManager(
  * @param tier_names Tier names for the entropic server (drives whether
  *                   delegate/pipeline are registered at all).
  * @param data_dir Bundled data directory holding the tool descriptors.
+ * @param require_context_tiers Tiers that refuse a contextless
+ *        delegation (gh#162).
  * @req REQ-MCP-001
  * @req REQ-MCP-007
- * @version 2.0.1
+ * @version 2.13.0
  */
 void ServerManager::init_builtins(
     const MCPConfig& mcp,
     const std::vector<std::string>& tier_names,
-    const std::string& data_dir) {
+    const std::string& data_dir,
+    const std::vector<std::string>& require_context_tiers) {
     if (mcp.enable_entropic) {
         register_server(std::make_unique<EntropicServer>(
-            tier_names, data_dir));
+            tier_names, data_dir, require_context_tiers));
     }
     if (mcp.enable_filesystem) {
         register_server(std::make_unique<FilesystemServer>(

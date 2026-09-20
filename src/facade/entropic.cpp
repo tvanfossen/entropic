@@ -679,12 +679,34 @@ static bool si_save_snapshot(
 }
 
 /**
+ * @brief StorageInterface bridge: latest_delegation_for_target (gh#162).
+ * @param target_tier Tier to search for.
+ * @param[out] delegation_id Resolved id on success.
+ * @param user_data SqliteStorageBackend pointer.
+ * @return true when a completed delegation to that tier exists.
+ * @callback
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+static bool si_latest_delegation_for_target(
+        const char* target_tier, std::string& delegation_id,
+        void* user_data) {
+    auto* sb = static_cast<entropic::SqliteStorageBackend*>(user_data);
+    if (sb == nullptr || target_tier == nullptr) { return false; }
+    return sb->latest_delegation_for_target(target_tier, delegation_id);
+}
+
+/**
  * @brief StorageInterface bridge: load_delegation_with_messages.
  *
  * Resolves delegation id → child_conversation_id → conversation messages,
  * then returns the composed JSON with `target_tier` and `messages` at
  * the top level. Used by `entropic.resume_delegation` (gh#32, v2.1.6).
  *
+ * @param delegation_id Delegation id to load.
+ * @param[out] result_json Composed conversation JSON.
+ * @param user_data SqliteStorageBackend pointer.
+ * @return true when the delegation and its conversation were found.
  * @callback
  * @version 2.1.6
  */
@@ -732,7 +754,7 @@ static bool si_load_delegation_with_messages(
  * @param sb Storage backend (non-owning).
  * @return StorageInterface ready to pass to `AgentEngine::set_storage`.
  * @dg_internal
- * @version 2.1.12
+ * @version 2.13.0
  */
 static entropic::StorageInterface build_storage_iface(
         entropic::SqliteStorageBackend* sb) {
@@ -743,6 +765,7 @@ static entropic::StorageInterface build_storage_iface(
     si.save_conversation = si_save_conversation;
     si.save_snapshot = si_save_snapshot;
     si.load_delegation_with_messages = si_load_delegation_with_messages;
+    si.latest_delegation_for_target = si_latest_delegation_for_target;
     si.user_data = sb;
     return si;
 }
@@ -810,7 +833,7 @@ static std::vector<std::string> collect_delegatable_tiers(
  * @param h Engine handle with config loaded.
  * @param data_dir Bundled data directory path.
  * @dg_internal
- * @version 2.10.1
+ * @version 2.13.0
  */
 static void init_mcp_servers(entropic_handle_t h,
                              const std::filesystem::path& data_dir) {
@@ -820,8 +843,14 @@ static void init_mcp_servers(entropic_handle_t h,
     h->server_manager = std::make_unique<entropic::ServerManager>(
         h->config.permissions, root);
     auto tier_names = collect_delegatable_tiers(h->config);
+    // gh#162 (v2.13.0): tiers that refuse a contextless delegation, so the
+    // delegate/pipeline tools can say no at the boundary.
+    std::vector<std::string> require_context;
+    for (const auto& [name, tier] : h->config.models.tiers) {
+        if (tier.requires_context) { require_context.push_back(name); }
+    }
     h->server_manager->init_builtins(
-        h->config.mcp, tier_names, data_dir.string());
+        h->config.mcp, tier_names, data_dir.string(), require_context);
 
     // gh#133 (v2.10.1): load dlopen plugins after the builtins so a plugin
     // colliding with a built-in server name is rejected rather than shadowing

@@ -471,3 +471,104 @@ TEST_CASE("Entropic tools advertise their required access levels",
     }
     REQUIRE(true);
 }
+
+// ── gh#162 (v2.13.0): explicit context seeds + resume by target ─────────
+
+TEST_CASE("gh#162: delegate carries a structured context list",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "Explain the latency compensation math";
+    args["context"] = json::array({
+        json{{"path", "app/include/b12/control/slam/SlamConfig.hpp"},
+             {"lines", "40-95"},
+             {"note", "fusion weights live here"}},
+        json{{"path", "src/slam/FusedPoseEstimator.cpp"}},
+    });
+
+    auto envelope = server.execute("delegate", args.dump());
+    auto types = extract_directive_types(envelope);
+    REQUIRE(has_directive(types, "delegate"));
+
+    // RED before gh#162: the tool parsed only target/task/max_turns, so
+    // everything the lead already knew was dropped at the boundary.
+    auto result = json::parse(extract_result(envelope));
+    REQUIRE(result.contains("context"));
+    REQUIRE(result["context"].is_array());
+    REQUIRE(result["context"].size() == 2);
+    CHECK(result["context"][0]["path"]
+          == "app/include/b12/control/slam/SlamConfig.hpp");
+    CHECK(result["context"][0]["lines"] == "40-95");
+    CHECK(result["context"][1]["path"] == "src/slam/FusedPoseEstimator.cpp");
+}
+
+TEST_CASE("gh#162: resume_delegation accepts a target instead of an id",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "follow up on the same subsystem";
+
+    // RED before gh#162: reaching resume_delegation required a followup
+    // round trip first, because only a storage id was accepted.
+    auto envelope = server.execute("resume_delegation", args.dump());
+    auto types = extract_directive_types(envelope);
+    REQUIRE(has_directive(types, "delegate"));
+    REQUIRE(has_directive(types, "stop_processing"));
+
+    auto result = json::parse(extract_result(envelope));
+    CHECK(result["target"] == "eng");
+    CHECK(result.value("resume_by_target", false));
+}
+
+TEST_CASE("gh#162: resume_delegation still needs one of id or target",
+          "[entropic][gh162][v2.13.0]") {
+    EntropicServer server({"lead", "eng"}, TEST_DATA_DIR);
+    auto envelope = server.execute(
+        "resume_delegation", R"({"task":"go on"})");
+    auto result = extract_result(envelope);
+    CHECK(result.find("error") != std::string::npos);
+    CHECK(extract_directive_types(envelope).empty());
+}
+
+TEST_CASE("gh#162: a requires_context tier refuses a contextless delegation",
+          "[entropic][gh162][v2.13.0]") {
+    // "reader" can read a path but cannot search for one, so a task with
+    // no path is structurally unanswerable for it.
+    EntropicServer server({"lead", "eng", "reader"}, TEST_DATA_DIR,
+                          {"reader"});
+
+    json bare;
+    bare["target"] = "reader";
+    bare["task"] = "Explain the fusion math";
+    auto refused = server.execute("delegate", bare.dump());
+    CHECK(extract_directive_types(refused).empty());
+    auto msg = extract_result(refused);
+    CHECK(msg.find("requires context") != std::string::npos);
+    CHECK(msg.find("reader") != std::string::npos);
+
+    json seeded = bare;
+    seeded["context"] = json::array({json{{"path", "src/Fused.cpp"}}});
+    auto accepted = server.execute("delegate", seeded.dump());
+    CHECK(has_directive(extract_directive_types(accepted), "delegate"));
+
+    // A tier that does NOT require context is unaffected.
+    json other;
+    other["target"] = "eng";
+    other["task"] = "write a function";
+    CHECK(has_directive(
+        extract_directive_types(server.execute("delegate", other.dump())),
+        "delegate"));
+
+    // One requiring stage refuses the whole pipeline before it starts.
+    json pipe;
+    pipe["stages"] = json::array({"eng", "reader"});
+    pipe["task"] = "generate then review";
+    auto pipe_refused = server.execute("pipeline", pipe.dump());
+    CHECK(extract_directive_types(pipe_refused).empty());
+    CHECK(extract_result(pipe_refused).find("requires context")
+          != std::string::npos);
+}

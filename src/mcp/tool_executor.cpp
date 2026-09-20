@@ -1480,6 +1480,39 @@ static std::unique_ptr<Directive> build_complete_directive(
 }
 
 /**
+ * @brief Parse the `context` array of a delegate/pipeline result (gh#162).
+ *
+ * The MCP layer owns this because core.so takes typed structs, never JSON
+ * (design decision #21). Entries without a `path` are skipped — the tool
+ * boundary already dropped them, and a second reader must not resurrect
+ * what the first refused.
+ *
+ * @param result_json Parsed tool result JSON.
+ * @return Typed references, empty when the key is absent or malformed.
+ * @utility
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+static std::vector<ContextRef> extract_context_refs(
+    const nlohmann::json& result_json) {
+    std::vector<ContextRef> refs;
+    if (!result_json.contains("context")
+        || !result_json["context"].is_array()) {
+        return refs;
+    }
+    for (const auto& entry : result_json["context"]) {
+        if (!entry.is_object()) { continue; }
+        ContextRef ref;
+        ref.path = entry.value("path", std::string{});
+        if (ref.path.empty()) { continue; }
+        ref.lines = entry.value("lines", std::string{});
+        ref.note = entry.value("note", std::string{});
+        refs.push_back(std::move(ref));
+    }
+    return refs;
+}
+
+/**
  * @brief Build a Directive from a parsed directive + result JSON.
  * @param d Directive descriptor JSON carrying the wire "type" name.
  * @param result_json Parsed result JSON, source of the directive's
@@ -1489,7 +1522,7 @@ static std::unique_ptr<Directive> build_complete_directive(
  *         the caller then skips rather than dispatching.
  * @req REQ-MCP-002
  * @req REQ-MCP-024
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::unique_ptr<Directive> build_directive(
     const nlohmann::json& d, const nlohmann::json& result_json) {
@@ -1502,17 +1535,24 @@ static std::unique_ptr<Directive> build_directive(
         // with delegation_id but no target. The directive's target is
         // resolved later by the engine after loading the original
         // delegation's tier from storage.
-        result = std::make_unique<DelegateDirective>(
+        auto dl = std::make_unique<DelegateDirective>(
             result_json.value("target", ""),
             result_json.value("task", ""),
             result_json.value("max_turns", -1),
             result_json.value("delegation_id", ""));
+        // gh#162 (v2.13.0): carry the lead's file references and the
+        // resume-by-tier flag through to the engine.
+        dl->context = extract_context_refs(result_json);
+        dl->resume_by_target = result_json.value("resume_by_target", false);
+        result = std::move(dl);
     } else if (type_str == "complete") {
         result = build_complete_directive(result_json);
     } else if (type_str == "pipeline") {
-        result = std::make_unique<PipelineDirective>(
+        auto pl = std::make_unique<PipelineDirective>(
             extract_pipeline_stages(result_json),
             result_json.value("task", ""));
+        pl->context = extract_context_refs(result_json);  // gh#162
+        result = std::move(pl);
     }
     return result;
 }

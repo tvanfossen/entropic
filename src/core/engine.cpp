@@ -1307,14 +1307,16 @@ void AgentEngine::dir_tier_change(
 /**
  * @brief Handle delegate directive (store pending).
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 void AgentEngine::dir_delegate(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& dl = static_cast<const DelegateDirective&>(d);
     ctx.pending_delegation = PendingDelegation{
         dl.target, dl.task, dl.max_turns,
-        dl.resume_from_delegation_id};
+        dl.resume_from_delegation_id,
+        dl.context,            // gh#162 (v2.13.0)
+        dl.resume_by_target};  // gh#162 (v2.13.0)
     r.stop_processing = true;
     if (dl.resume_from_delegation_id.empty()) {
         logger->info("[DIRECTIVE] delegate: target={} task='{}'",
@@ -1329,12 +1331,12 @@ void AgentEngine::dir_delegate(
 /**
  * @brief Handle pipeline directive (store pending).
  * @req REQ-DELEG-004
- * @version 1.8.6
+ * @version 2.13.0
  */
 void AgentEngine::dir_pipeline(
     LoopContext& ctx, const Directive& d, DirectiveResult& r) {
     const auto& pl = static_cast<const PipelineDirective&>(d);
-    ctx.pending_pipeline = PendingPipeline{pl.stages, pl.task};
+    ctx.pending_pipeline = PendingPipeline{pl.stages, pl.task, pl.context};
     r.stop_processing = true;
     logger->info("[DIRECTIVE] pipeline: {} stages", pl.stages.size());
 }
@@ -2419,7 +2421,7 @@ bool AgentEngine::reject_delegation_if_guarded(
  * @param ctx Loop context with pending delegation.
  * @req REQ-DELEG-002
  * @req REQ-LOOP-003
- * @version 2.1.6-gh32
+ * @version 2.13.0
  */
 void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_delegation);
@@ -2438,7 +2440,11 @@ void AgentEngine::execute_pending_delegation(LoopContext& ctx) {
     // single early-exit (knots returns gate).
     std::vector<Message> resume_history;
     bool blocked = false;
-    if (!pending.resume_from_delegation_id.empty()
+    // gh#162 (v2.13.0): `resume_by_target` is the second way in — the id is
+    // empty precisely because the lead did not have to look it up.
+    const bool is_resume = !pending.resume_from_delegation_id.empty()
+                           || pending.resume_by_target;
+    if (is_resume
         && !resolve_resume_delegation(ctx, pending, resume_history)) {
         blocked = true;
     } else if (fire_delegate_pre_hook(pending, ctx.delegation_depth)) {
@@ -2702,7 +2708,7 @@ bool AgentEngine::reject_pipeline_if_guarded(
  * @param ctx Loop context with pending_pipeline set.
  * @req REQ-DELEG-004
  * @req REQ-DELEG-001
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
     auto pending = std::move(*ctx.pending_pipeline);
@@ -2733,7 +2739,7 @@ void AgentEngine::execute_pending_pipeline(LoopContext& ctx) {
         cb_snap.start, cb_snap.complete, cb_snap.user_data);
     std::vector<DelegationResult> stage_log;
     auto result = mgr.execute_pipeline(
-        ctx, pending.stages, pending.task, stage_log);
+        ctx, pending.stages, pending.task, stage_log, pending.context);
 
     std::string tag = result.success ? "COMPLETE" : "FAILED";
     std::string content = "[PIPELINE " + tag + "]";
@@ -3000,25 +3006,73 @@ bool AgentEngine::fetch_resume_payload(
 }
 
 /**
+ * @brief Resolve `resume_by_target` into a concrete delegation id (gh#162).
+ *
+ * Asks storage for the most recent COMPLETED delegation to that tier. A
+ * miss is a typed failure the lead can act on ("delegate cold instead"),
+ * not a silent cold start — silently converting a resume into a fresh
+ * delegation would hide exactly the cost the lead was trying to avoid.
+ *
+ * @param ctx Parent loop context (failure message lands here).
+ * @param[in,out] pending Resume request; its id is filled on success.
+ * @return true when an id was found.
+ * @req REQ-DELEG-006
+ * @version 2.13.0
+ */
+bool AgentEngine::resolve_latest_for_target(
+        LoopContext& ctx, PendingDelegation& pending) {
+    std::string id;
+    bool found = storage_.latest_delegation_for_target != nullptr
+        && storage_.latest_delegation_for_target(
+               pending.target.c_str(), id, storage_.user_data)
+        && !id.empty();
+    if (!found) {
+        push_resume_failure(
+            ctx, "no prior delegation to this tier in storage — use "
+                 "entropic.delegate instead",
+            pending.target);
+        return false;
+    }
+    logger->info("resume_delegation by target '{}' resolved to id '{}'",
+                 pending.target, id);
+    pending.resume_from_delegation_id = id;
+    return true;
+}
+
+/**
  * @brief Resolve a resume_delegation request via storage (gh#32, v2.1.6).
+ * @param ctx Parent loop context (failure message lands here).
+ * @param[in,out] pending Resume request (target rewritten on success).
+ * @param[out] out_history Loaded conversation messages.
  * @return true when the stored payload yielded a target tier and seed
  *         history; false on failure, with the reason already pushed
  *         into ctx by push_resume_failure.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @req REQ-DELEG-006
+ * @version 2.13.0
  */
 bool AgentEngine::resolve_resume_delegation(
         LoopContext& ctx,
         PendingDelegation& pending,
         std::vector<Message>& out_history) {
-    const auto& id = pending.resume_from_delegation_id;
+    // gh#162 (v2.13.0): a lead that remembers the specialist but not the
+    // storage id addresses the tier directly; the id is resolved here,
+    // because the tool cannot see storage. Two round trips become one.
+    // Single-exit accumulator — the knots returns gate is 3.
     nlohmann::json j;
-    if (!fetch_resume_payload(ctx, id, j)) {
-        return false;
+    bool ok = !pending.resume_by_target
+              || resolve_latest_for_target(ctx, pending);
+    const auto& id = pending.resume_from_delegation_id;
+    if (ok) { ok = fetch_resume_payload(ctx, id, j); }
+    std::string target;
+    if (ok) {
+        target = j.value("target_tier", std::string{});
+        if (target.empty()) {
+            push_resume_failure(ctx, "target_tier missing in storage", id);
+            ok = false;
+        }
     }
-    auto target = j.value("target_tier", std::string{});
-    if (target.empty()) {
-        push_resume_failure(ctx, "target_tier missing in storage", id);
+    if (!ok) {
         return false;
     }
     pending.target = target;
@@ -3049,7 +3103,7 @@ bool AgentEngine::resolve_resume_delegation(
  * @param resume_history  Pre-loaded history (empty for cold delegations).
  * @return DelegationResult from the child loop.
  * @req REQ-DELEG-002
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 DelegationResult AgentEngine::run_pending_delegation(
         LoopContext& ctx,
@@ -3070,11 +3124,11 @@ DelegationResult AgentEngine::run_pending_delegation(
         cb_snap.start, cb_snap.complete, cb_snap.user_data);
     if (resume_history.empty()) {
         return mgr.execute_delegation(
-            ctx, pending.target, pending.task, max_turns);
+            ctx, pending.target, pending.task, max_turns, pending.context);
     }
     return mgr.execute_resume_delegation(
         ctx, pending.target, pending.task,
-        std::move(resume_history), max_turns);
+        std::move(resume_history), max_turns, pending.context);
 }
 
 /**

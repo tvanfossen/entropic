@@ -206,6 +206,12 @@ struct PendingDelegation {
     std::string task;                      ///< Task description
     int max_turns = -1;                    ///< Max turns for child (-1 = default)
     std::string resume_from_delegation_id; ///< gh#32 (v2.1.6): empty = cold start
+    /// @brief gh#162 (v2.13.0): file references the lead already earned,
+    /// seeded into the child's opening message as references (not excerpts).
+    std::vector<ContextRef> context;
+    /// @brief gh#162 (v2.13.0): resume the latest delegation to `target`.
+    /// The engine resolves the storage id at admission.
+    bool resume_by_target = false;
 };
 
 /**
@@ -215,6 +221,7 @@ struct PendingDelegation {
 struct PendingPipeline {
     std::vector<std::string> stages; ///< Tier names in order
     std::string task;                ///< Task description
+    std::vector<ContextRef> context; ///< gh#162 (v2.13.0): seeded file references
 };
 
 /**
@@ -615,6 +622,20 @@ struct StorageInterface {
     bool (*load_delegation_with_messages)(
         const char* delegation_id,
         std::string& result_json,
+        void* user_data) = nullptr;
+
+    /// @brief Most recent COMPLETED delegation to a tier (gh#162, v2.13.0).
+    ///
+    /// Backs `entropic.resume_delegation`'s `target` form: the lead names
+    /// the specialist, not a storage id it would have to fetch first.
+    ///
+    /// @param target_tier Tier to search for.
+    /// @param[out] delegation_id Resolved id on success.
+    /// @param user_data Opaque pointer (storage backend).
+    /// @return true when a completed delegation to that tier exists.
+    bool (*latest_delegation_for_target)(
+        const char* target_tier,
+        std::string& delegation_id,
         void* user_data) = nullptr;
 
     void* user_data = nullptr; ///< Opaque pointer (storage backend)

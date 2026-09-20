@@ -212,21 +212,30 @@ bool StdioTransport::open_child_process() {
 }
 
 /**
- * @brief Send SIGTERM, reap child, close pipes.
+ * @brief Send SIGTERM, reap the child, join the stderr pump, close pipes.
  * @dg_internal
- * @version 2.1.5
+ * @version 2.13.0
  */
 void StdioTransport::close() {
     connected_ = false;
 
     terminate_child();
-    close_fd(stdin_fd_);
-    close_fd(stdout_fd_);
-    close_fd(stderr_fd_);
 
+    // gh#158 (v2.13.0): JOIN BEFORE CLOSING, not after. `close_fd` writes
+    // `stderr_fd_ = -1` while `stderr_reader_loop` is still polling and
+    // reading that same member — a data race on an int and a read from an
+    // fd number that may already have been reused by another thread's
+    // open(). ThreadSanitizer reports it at close_fd's assignment. The loop
+    // exits on `connected_` (false above) or on the child's EOF, so the
+    // join costs at most one 500ms poll slice, which `terminate_child`'s
+    // 3s reap has usually already absorbed.
     if (stderr_thread_.joinable()) {
         stderr_thread_.join();
     }
+
+    close_fd(stdin_fd_);
+    close_fd(stdout_fd_);
+    close_fd(stderr_fd_);
 
     logger->info("Closed stdio transport for '{}'", display_name_);
 }
@@ -239,9 +248,12 @@ void StdioTransport::close() {
  *         when the transport is disconnected, an interrupt is pending,
  *         the write failed, or the read timed out — an empty return is
  *         what the client turns into a typed error envelope rather than
- *         a hang.
+ *         a hang. An abandoned read marks the pipe DESYNCED so the next
+ *         request drains whatever the server eventually answered rather
+ *         than reading it as its own result (gh#158).
  * @req REQ-MCP-025
- * @version 2.13.0
+ * @req REQ-MCP-026
+ * @version 2.13.0 [reviewed]
  */
 std::string StdioTransport::send_request(
     const std::string& request_json,
@@ -256,6 +268,14 @@ std::string StdioTransport::send_request(
 
     std::lock_guard<std::mutex> lock(io_mutex_);
 
+    if (desynced_) {
+        int dropped = drain_orphaned_responses();
+        desynced_ = false;
+        logger->warn("Discarded {} orphaned response line(s) from '{}' "
+                     "before sending the next request", dropped,
+                     display_name_);
+    }
+
     std::string msg = request_json + "\n";
     ssize_t written = ::write(stdin_fd_, msg.data(), msg.size());
     if (written < 0 || static_cast<size_t>(written) != msg.size()) {
@@ -265,7 +285,35 @@ std::string StdioTransport::send_request(
         return "";
     }
 
-    return read_line(stdout_fd_, actual_timeout);
+    // gh#158: the request is on the wire. Anything other than a complete
+    // line back means we walked away from a reply the server will still
+    // send, so mark the pipe desynced and let the next caller drain it.
+    auto response = read_line(stdout_fd_, actual_timeout);
+    desynced_ = response.empty();
+    return response;
+}
+
+/**
+ * @brief Discard replies left over from an abandoned request — see header.
+ * @return Number of orphaned lines discarded.
+ * @req REQ-MCP-026
+ * @utility
+ * @version 2.13.0
+ */
+int StdioTransport::drain_orphaned_responses() {
+    constexpr int kMaxLines = 64;
+    constexpr size_t kMaxBytes = 1u << 20;  // 1 MiB
+    int lines = 0;
+    size_t bytes = 0;
+    while (lines < kMaxLines && bytes < kMaxBytes) {
+        struct pollfd pfd{stdout_fd_, POLLIN, 0};
+        if (::poll(&pfd, 1, 0) <= 0) { break; }
+        char ch = 0;
+        if (::read(stdout_fd_, &ch, 1) <= 0) { break; }
+        ++bytes;
+        if (ch == '\n') { ++lines; }
+    }
+    return lines;
 }
 
 /**

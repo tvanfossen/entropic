@@ -36,6 +36,7 @@
 #pragma once
 
 #include <filesystem>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -270,6 +271,13 @@ private:
     std::filesystem::path session_base_;  ///< `~/.entropic/sandbox/<session_id>/`
     std::filesystem::path base_dir_;      ///< `session_base_/base`
     bool base_ready_ = false;             ///< `base/` snapshot exists
+    /// @brief gh#158: guards `base_ready_` and the snapshot it gates.
+    ///
+    /// The manager is engine-scoped (gh#33), so two concurrent delegating
+    /// runs reach `ensure_base_snapshot()` together: both see `base_ready_`
+    /// false and both copy the whole project tree into the SAME `base_dir_`,
+    /// racing file-by-file. Serialized runs could never produce that.
+    mutable std::mutex base_mutex_;
 };
 
 /**

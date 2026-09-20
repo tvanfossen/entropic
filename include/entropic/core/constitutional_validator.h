@@ -347,6 +347,14 @@ public:
     std::string build_critique_prompt(const std::string& content) const;
 
     /**
+     * @brief Append this turn's tool manifest and evidence to a prompt.
+     * @param prompt Critique prompt under construction (appended in place).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void append_turn_evidence(std::string& prompt) const;
+
+    /**
      * @brief Parse critique JSON into structured result (exposed for testing).
      * @param json_str Raw JSON string from grammar-constrained generation.
      * @return Parsed CritiqueResult.
@@ -605,28 +613,56 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> tier_rules_;
     mutable std::mutex overrides_mutex_;      ///< Guards identity_overrides_ + tier_rules_ + global_enabled_
 
-    /// @brief Current tier being validated (set at handle_hook() entry).
-    std::string current_tier_;
-    /// @brief Tool call manifest for this turn (set at handle_hook() entry).
-    /// Summarises tool names + result sizes from the conversation turn.
-    /// Prepended to the critique prompt so the validator knows which
-    /// tool calls preceded the output being evaluated.
-    std::string current_tool_context_;
-
-    /// @brief Un-pruned tool-result evidence for this turn (v2.1.3 #5).
-    /// Set at handle_hook() entry from the POST_GENERATE hook context's
-    /// optional ``tool_evidence`` field. Carries the actual content of
-    /// recent tool results (truncated per-entry, bounded at 20 results)
-    /// so the critique pass can verify ``file:line`` citations against
-    /// real evidence rather than the stubs that ``ContextManager::
-    /// prune_old_tool_results`` leaves in the message stream. Empty
-    /// when running against pre-2.1.3 engines that don't surface this
-    /// field — critique falls back to manifest-only as before.
-    std::string current_tool_evidence_;
-    /// @brief Identity system prompt for this tier (set at handle_hook() entry).
-    /// Injected into revision context so the model maintains its persona
-    /// rather than reverting to base behaviour (apology, self-flagellation).
-    std::string current_system_prompt_;
+    /// @brief PER-TURN validation context — thread-local since gh#158.
+    ///
+    /// The tier under validation, the tool-call manifest, the un-pruned
+    /// tool evidence (v2.1.3 #5) and the identity system prompt used to keep
+    /// the model in persona during revision. All four are set at
+    /// `handle_hook()` entry and read for the rest of that one call stack.
+    ///
+    /// They WERE members, which made them per-HANDLE state describing a
+    /// per-TURN thing. With one run at a time that reads the same; with
+    /// keyed runs (gh#158) it is two defects at once — a `std::string` data
+    /// race, and, worse, session A's critique prompt built from session B's
+    /// tool evidence and system prompt. A mutex fixes only the first and
+    /// would leave the critique quietly wrong.
+    ///
+    /// They now live as thread-locals in `constitutional_validator.cpp`,
+    /// which is where the accessors below resolve. The one place that
+    /// legitimately crosses threads — `resume_retry()`, driven from the API
+    /// thread after `paused_pending_consumer` — carries the system prompt
+    /// forward in `PendingValidationState` instead.
+    ///
+    /// @return The calling thread's value for that field.
+    /// @dg_internal
+    /// @version 2.13.0
+    static const std::string& current_tier();
+    /// @brief This thread's tool-call manifest (gh#158).
+    /// @return Manifest text for the turn being validated.
+    /// @dg_internal
+    /// @version 2.13.0
+    static const std::string& current_tool_context();
+    /// @brief This thread's un-pruned tool evidence (gh#158).
+    /// @return Evidence text for the turn being validated.
+    /// @dg_internal
+    /// @version 2.13.0
+    static const std::string& current_tool_evidence();
+    /// @brief This thread's identity system prompt (gh#158).
+    /// @return System prompt for the turn being validated.
+    /// @dg_internal
+    /// @version 2.13.0
+    static const std::string& current_system_prompt();
+    /// @brief Publish this thread's per-turn validation context (gh#158).
+    /// @param tier Tier under validation.
+    /// @param tool_context Tool-call manifest.
+    /// @param tool_evidence Un-pruned tool evidence.
+    /// @param system_prompt Identity system prompt.
+    /// @dg_internal
+    /// @version 2.13.0
+    static void set_turn_context(const std::string& tier,
+                                 const std::string& tool_context,
+                                 const std::string& tool_evidence,
+                                 const std::string& system_prompt);
 
     /// @brief Last validation result for C API query.
     ValidationResult last_result_;
@@ -648,6 +684,11 @@ private:
         CritiqueResult critique;       ///< First failing critique
         std::string messages_json;     ///< Conversation context to revise against
         std::string tier;              ///< Originating tier (for log)
+        /// @brief gh#158: the identity system prompt of the turn that
+        /// paused. `resume_retry()` runs on the CONSUMER's thread, which
+        /// never saw that turn's thread-local context, so the one value the
+        /// revision path reads has to travel with the pause.
+        std::string system_prompt;
     };
     /// @brief Set when verdict=paused_pending_consumer; cleared on
     /// resume_retry() or accept_last(). Guarded by `pending_mutex_`.

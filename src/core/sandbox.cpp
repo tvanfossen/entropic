@@ -274,11 +274,19 @@ void SandboxManager::prune_stale_sessions() {
 
 /**
  * @brief Ensure the `base/` snapshot of the project exists.
+ *
+ * gh#158 (v2.13.0): serialized on `base_mutex_`. The check-and-snapshot is
+ * not atomic, and two concurrent delegating runs both copying the project
+ * tree into one `base_dir_` is a file-level race, not a duplicated effort.
+ * The lock is held across the copy because that IS the critical section;
+ * the second caller wants the finished snapshot, not its own.
+ *
  * @return true on success.
  * @dg_internal
- * @version 2.1.5
+ * @version 2.13.0
  */
 bool SandboxManager::ensure_base_snapshot() {
+    std::lock_guard<std::mutex> guard(base_mutex_);
     if (base_ready_) { return true; }
     std::error_code ec;
     std::filesystem::create_directories(base_dir_, ec);

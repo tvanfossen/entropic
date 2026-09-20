@@ -16,7 +16,9 @@
 #include <entropic/interfaces/i_hook_handler.h>
 #include <entropic/interfaces/i_inference_callbacks.h>
 
+#include <atomic>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace entropic {
@@ -123,6 +125,17 @@ private:
         const std::string& msgs_json,
         const std::string& params_json,
         char** result_json);
+
+    /**
+     * @brief Start the poller that mirrors the stop flags into the C int.
+     * @param cancel_int Backend cancel int; borrowed, set to 1 on stop.
+     * @param done Retirement flag; borrowed.
+     * @return The poller thread, non-joinable when nothing to watch.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::thread spawn_cancel_poller(int& cancel_int,
+                                    std::atomic<bool>& done) const;
 
     /**
      * @brief Inject prompts + serialize messages/params for a turn.

@@ -4824,7 +4824,7 @@
     '
   version: 2.10.4
 - id: REQ-LOOP-009
-  name: Per-session-key run concurrency, opt-in, with one lock on the generation path
+  name: Per-session-key run concurrency, on by default, with one lock on the generation path
   module: Agent Loop
   description: 'The run guard is scoped to a SESSION KEY, not to the handle. A second
 
@@ -4832,24 +4832,68 @@
 
     would share one conversation. A run on a DIFFERENT key proceeds
 
-    concurrently only when `concurrent_sessions: true`; off (the shipped
+    concurrently by default; `concurrent_sessions: false` is a KILL SWITCH
 
-    default) any second run is refused and v2.12.0 semantics hold exactly.
+    that refuses any second run and reproduces v2.12.0 semantics exactly.
 
 
-    Concurrency is opt-in because per-key runs are safe only once every piece
+    The default is on because the audit it waited for is complete: every
 
-    of per-handle mutable state a turn touches is per-run or locked. Per-run:
+    piece of per-handle mutable state a turn touches is per-run or locked.
 
-    the interrupt token, the session binding, the loop context, the cancel
+    Per-run: the interrupt token, the session binding, the loop context, the
 
-    token published to the run''s own thread. Locked: `conversations_` (its
+    cancel token published to the run''s own thread, and the validator''s
 
-    own mutex), the run registry (`runs_mutex_`, held for O(1) map operations
+    per-turn context (tier, tool manifest, tool evidence, identity system
 
-    and NEVER across a decode, which is what keeps gh#109''s property true),
+    prompt — thread-local, because a mutex would have left session A''s
 
-    and the whole generation path.
+    critique prompt built from session B''s evidence). Locked:
+
+    `conversations_` (its own mutex), the run registry (`runs_mutex_`, held
+
+    for O(1) map operations and NEVER across a decode, which is what keeps
+
+    gh#109''s property true), `per_tier_metrics_` + `last_metrics_`
+
+    (`metrics_mutex_`), `context_anchors_` (`anchors_mutex_`),
+
+    `system_prompt_` (`prompt_mutex_`), the lazily-built sandbox manager and
+
+    repo-dir cache as one unit (`sandbox_mutex_`), the base project snapshot
+
+    the sandbox manager materializes (`base_mutex_`), the external MCP
+
+    client''s JSON-RPC id counter (atomic, REQ-MCP-026), and the whole
+
+    generation path. Deleted rather than locked: the TokenCounter memo, an
+
+    address-keyed map written from a const method, which was both a data
+
+    race and a correctness bug (a Message address is not an identity).
+
+
+    A per-session interrupt must stop the DECODE, not only the loop and the
+
+    tool call: the per-token poll and the batch cancel poller consult this
+
+    run''s token as well as the handle-wide flag, and the batch poller —
+
+    which runs on its own thread, where the thread-local is not installed —
+
+    captures the token pointer on the run thread before spawning. The pause
+
+    prompt''s "no injection" path cancels THIS run rather than the handle.
+
+
+    `pause_flag_` stays handle-wide by design: `pause()` is raised from a
+
+    thread that owns no run and names no key, so there is nothing to route
+
+    it by. What is scoped is the CLEAR — a fresh turn no longer un-pauses a
+
+    run already in flight.
 
 
     ONE lock serializes generation: `ModelOrchestrator::generation_mutex_`,
@@ -4885,15 +4929,23 @@
     sequence a session holds. Delegated children inherit the parent''s session
 
     key.'
-  acceptance_criteria: 'Given per-session concurrency enabled and a run in flight on key A,
+  acceptance_criteria: 'Given the shipped default and a run in flight on key A,
 
     When a second run claims A, Then it is refused; When a run claims B,
 
     Then it proceeds and both are counted active.
 
-    Given the shipped default, When a run is in flight on any key, Then a
+    Given `concurrent_sessions: false`, When a run is in flight on any key,
 
-    run on any other key is refused.
+    Then a run on any other key is refused.
+
+    Given two concurrent runs, When one counts tokens while the other
+
+    compacts, Then every count agrees and nothing is corrupted; When both
+
+    finish while a third thread reads the metrics, Then the reader sees a
+
+    consistent per-tier map and an untorn last-run snapshot.
 
     Given two concurrent runs, When one session is interrupted by key, Then
 
@@ -4908,11 +4960,17 @@
     whole cache.'
   verified_by: 'SCENARIO "gh#158: the run guard is scoped to the session key";
 
-    "gh#158: concurrency is opt-in — off, the handle still serializes";
+    "gh#158: the kill switch restores handle-wide serialization";
+
+    "gh#158: concurrent sessions are ON by default";
 
     "gh#158: eight threads racing two keys yield exactly two winners";
 
-    "gh#158: interrupt_session stops exactly one run" —
+    "gh#158: interrupt_session stops exactly one run";
+
+    "gh#158: token counting is safe from two concurrent runs";
+
+    "gh#158: two concurrent runs accumulate metrics safely" —
 
     /home/tvanfossen/Projects/entropic/tests/concurrency/test_thread_safety.cpp;
 
@@ -6547,6 +6605,79 @@
 
     '
   version: 2.10.4
+- id: REQ-MCP-026
+  name: A JSON-RPC response is paired with the request that asked for it
+  module: MCP Servers and Tool Dispatch
+  description: 'Every request ExternalMCPClient sends carries a unique JSON-RPC id
+
+    from an ATOMIC counter, and every response is checked against the id of the
+
+    request that was sent. A response whose id does not match is discarded and
+
+    reported as a typed is_error envelope naming the mismatch, never returned as
+
+    that call''s result.
+
+
+    The pairing exists because a request can be ABANDONED — a read timeout, or a
+
+    per-session interrupt tripping `request_cancelled()` mid-poll — while the
+
+    server still answers. `StdioTransport::send_request` holds `io_mutex_`
+
+    across write-then-read so bytes never interleave, but it cannot un-send an
+
+    abandoned request: the late answer sits in the pipe and would be read as the
+
+    result of the NEXT request. With one run per handle that was a stale answer
+
+    to yourself; with per-session runs (gh#158) it is a CROSS-SESSION leak of
+
+    real content, which is the gh#150 failure mode arriving through another
+
+    door. The transport therefore marks the pipe desynced on an abandoned read
+
+    and drains orphaned lines before the next write; the id check is what
+
+    catches whatever the drain missed, rather than trusting it.
+
+
+    The id counter is atomic because ServerManager shares one client per server
+
+    across every run, and the HealthMonitor''s reconnect thread has issued
+
+    initialize/tools/list through the same counter since v1.8.7 — two requests
+
+    sharing an id is exactly what would defeat the check.'
+  acceptance_criteria: 'Given a transport whose reply carries a different id, When a tool is
+
+    executed, Then the other request''s payload is not returned and the envelope
+
+    is is_error.
+
+    Given many threads executing tools through one client, When every request is
+
+    sent, Then no two requests share an id and no call is answered by another''s
+
+    response.
+
+    Given an abandoned request, When the next request is sent, Then the orphaned
+
+    reply is drained before the write rather than read as the new result.'
+  verified_by: 'SCENARIO "gh#158: a response that answers another request is refused";
+
+    "gh#158: concurrent tool calls on one client get distinct ids" —
+
+    /home/tvanfossen/Projects/entropic/tests/concurrency/test_thread_safety.cpp;
+
+    TEST_CASE "gh#158: an abandoned request''s late reply is drained, not
+
+    returned" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/stdio_transport_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-PROD-001
   name: Single `entropic` command with a closed, stable subcommand surface
   module: CLI and Distribution

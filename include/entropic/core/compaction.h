@@ -43,7 +43,7 @@ public:
      * @param msg Message to count.
      * @return Estimated token count.
      * @req REQ-COMPACT-001
-     * @version 1.8.4
+     * @version 2.13.0
      */
     int count_message(const Message& msg) const;
 
@@ -66,8 +66,28 @@ public:
     float usage_percent(const std::vector<Message>& messages) const;
 
     /**
-     * @brief Clear the token count cache.
-     * @version 1.8.4
+     * @brief Clear the token count cache — retained as a no-op (gh#158).
+     *
+     * v1.8.4–v2.12.x memoized per-message counts in an `unordered_map` keyed
+     * by the ADDRESS of the `Message`. Two defects, and the second is what
+     * removed it. (1) A `Message` address is not an identity: the vector
+     * holding it reallocates on append and the allocator reuses freed slots,
+     * so a hit could answer for a message that no longer exists — a silent
+     * wrong count, never a crash. (2) The map was written from
+     * `count_message() const` with NO lock, so two concurrent runs (gh#158)
+     * or one run plus an `entropic_context_usage` call would insert into it
+     * simultaneously — heap corruption, not a wrong number.
+     *
+     * The memo was never worth defending: `count_text` is one `size()` and
+     * one division, strictly cheaper than hashing a pointer and walking a
+     * bucket. So the cache is gone and counting is a pure function.
+     *
+     * The method stays because four call sites in `CompactionManager` and
+     * `ContextManager` invalidate around a compaction, and a no-op keeps
+     * that intent legible rather than deleting the calls and leaving a
+     * future reader to wonder whether invalidation was forgotten.
+     *
+     * @version 2.13.0
      */
     void clear_cache();
 
@@ -82,8 +102,6 @@ private:
      * @version 1.8.4
      */
     static int count_text(const std::string& text);
-
-    mutable std::unordered_map<const void*, int> cache_; ///< Address-keyed cache
 };
 
 /**

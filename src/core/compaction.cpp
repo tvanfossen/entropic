@@ -42,20 +42,19 @@ int TokenCounter::count_text(const std::string& text) {
 
 /**
  * @brief Count tokens in a single message.
+ *
+ * gh#158 (v2.13.0): pure, and unsynchronized ON PURPOSE because there is
+ * nothing left to synchronize. The address-keyed memo this used to write
+ * from a `const` method is gone — see `TokenCounter::clear_cache` for both
+ * reasons it had to be.
+ *
  * @param msg Message to count.
  * @return Estimated token count (content + role overhead).
  * @req REQ-COMPACT-001
- * @version 1.8.4
+ * @version 2.13.0
  */
 int TokenCounter::count_message(const Message& msg) const {
-    const auto* key = static_cast<const void*>(&msg);
-    auto it = cache_.find(key);
-    if (it != cache_.end()) {
-        return it->second;
-    }
-    int count = count_text(msg.content) + 4; // +4 for role tokens
-    cache_[key] = count;
-    return count;
+    return count_text(msg.content) + 4; // +4 for role tokens
 }
 
 /**
@@ -91,13 +90,16 @@ float TokenCounter::usage_percent(
 }
 
 /**
- * @brief Clear the token count cache.
+ * @brief Clear the token count cache — no-op since gh#158 (v2.13.0).
+ *
+ * Kept so the four invalidation call sites still read as "the counts these
+ * messages had are no longer valid". There is no cache to clear; counting is
+ * a pure function of the message content. See the header for why.
+ *
  * @dg_internal
- * @version 1.8.4
+ * @version 2.13.0
  */
-void TokenCounter::clear_cache() {
-    cache_.clear();
-}
+void TokenCounter::clear_cache() {}
 
 // ── CompactionManager ────────────────────────────────────
 

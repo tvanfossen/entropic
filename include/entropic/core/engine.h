@@ -355,13 +355,20 @@ public:
      *
      * Returns a copy of the LoopMetrics snapped at the end of the last
      * call to run() or run_turn(). Zero-initialized before any run has
-     * completed. Thread-safe: read-only copy is returned. (P2-15)
+     * completed. (P2-15)
+     *
+     * gh#158 (v2.13.0): the copy is taken under `metrics_mutex_`. "Returns a
+     * copy" was never sufficient on its own — `LoopMetrics` is a multi-field
+     * struct, so an unlocked copy taken while a finishing run assigns it
+     * reads a TORN snapshot (new `iterations`, old `tokens_used`). Under
+     * per-handle serialization that write could not overlap a read from the
+     * consumer's thread often enough to matter; with keyed runs it can.
      *
      * @return LoopMetrics from last run.
      * @utility
-     * @version 2.0.6-rc16
+     * @version 2.13.0
      */
-    LoopMetrics last_loop_metrics() const { return last_metrics_; }
+    LoopMetrics last_loop_metrics() const;
 
     /**
      * @brief Per-tier aggregated metrics since engine start.
@@ -371,12 +378,17 @@ public:
      * across every run_loop entered with that locked_tier. Empty map
      * before any run. (P2-15 follow-up, 2.0.6-rc16.2)
      *
+     * gh#158 (v2.13.0): copied under `metrics_mutex_`. This one was the
+     * sharper of the two — `entropic_metrics_json` copied the map while a
+     * concurrent run did `per_tier_metrics_[tier]`, and an insert that
+     * rehashes relocates every bucket under the copy's iterators. Not a torn
+     * number: undefined behaviour.
+     *
      * @return Copy of the per-tier metrics map.
      * @utility
-     * @version 2.0.6-rc16.2
+     * @version 2.13.0
      */
-    std::unordered_map<std::string, LoopMetrics>
-        per_tier_metrics() const { return per_tier_metrics_; }
+    std::unordered_map<std::string, LoopMetrics> per_tier_metrics() const;
 
     // ── Conversation state (v2.0.2) ─────────────────────────
 
@@ -632,9 +644,9 @@ public:
      * @par What the key changes
      * Two runs on the SAME key are always a genuine conflict — they share one
      * conversation — so the second is refused whatever the configuration.
-     * Two runs on DIFFERENT keys proceed together only when
-     * `set_concurrent_sessions(true)` has been called; off (the shipped
-     * default) the guard stays handle-exclusive and v2.12.0 semantics hold
+     * Two runs on DIFFERENT keys proceed together unless
+     * `set_concurrent_sessions(false)` has been called; with the kill switch
+     * thrown the guard is handle-exclusive again and v2.12.0 semantics hold
      * byte for byte.
      *
      * @param key Session key to claim; `""` is the default session.
@@ -643,7 +655,7 @@ public:
      *         the caller owns nothing and must not release.
      * @req REQ-API-009
      * @req REQ-LOOP-009
-     * @version 2.13.0
+     * @version 2.13.0 [reviewed]
      */
     bool try_begin_turn(const std::string& key);
 
@@ -694,20 +706,20 @@ public:
     /**
      * @brief Allow runs on DIFFERENT session keys to proceed together.
      *
-     * @par Why this is opt-in and defaults off
+     * @par Why this defaults ON, and what turning it off buys
      * Per-key runs are only safe once every piece of per-handle mutable state
      * a turn touches is either per-run or locked. That audit is recorded in
-     * decision #66 of `docs/architecture-cpp.md`. Shipping the concurrency ON
-     * by default would make every existing consumer concurrent without their
-     * asking — the mistake gh#157 explicitly refused to repeat with
-     * `keep_warm` — and a racy default is strictly worse than today's honest
-     * serialization.
+     * decision #66 of `docs/architecture-cpp.md`, and it is COMPLETE — which
+     * is the only reason the default moved. Passing `false` restores v2.12.0
+     * semantics exactly (a second run on any key is refused), so a consumer
+     * who hits a concurrency defect in the field has a one-line escape hatch
+     * instead of a version pin.
      *
-     * Config key: `concurrent_sessions: true`.
+     * Config key: `concurrent_sessions: false`.
      *
      * @param enabled true to allow concurrent distinct-key runs.
      * @req REQ-LOOP-009
-     * @version 2.13.0
+     * @version 2.13.0 [reviewed]
      */
     void set_concurrent_sessions(bool enabled);
 
@@ -1150,13 +1162,44 @@ private:
      * @brief Fold a finished run's metrics into the per-tier totals.
      *
      * Extracted from run() to keep it knots-clean. Snapshots
-     * last_metrics_ and accumulates into per_tier_metrics_.
+     * last_metrics_ and accumulates into per_tier_metrics_, both under
+     * `metrics_mutex_` (gh#158).
      *
      * @param ctx Loop context (with completed metrics).
      * @dg_internal
-     * @version 2.3.7
+     * @version 2.13.0
      */
     void accumulate_run_metrics(LoopContext& ctx);
+
+    /**
+     * @brief Fold one run's metrics into the per-tier accumulator (gh#158).
+     *
+     * The half of `accumulate_run_metrics` that `run_loop`'s tail also does.
+     * It was copy-pasted at both sites, so adding the lock in one place would
+     * have left the other racing — which is the argument for extracting it
+     * rather than adding a second `lock_guard`.
+     *
+     * @param ctx Loop context (with completed metrics).
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void accumulate_per_tier(const LoopContext& ctx);
+
+    /**
+     * @brief Clear the handle-wide pause at the start of a fresh turn.
+     *
+     * gh#158 (v2.13.0). See the definition for why pause stays handle-wide
+     * and why the clear had to become conditional.
+     *
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void clear_pause_for_fresh_turn();
+
+    /// @brief gh#158: guards `last_metrics_` and `per_tier_metrics_`.
+    ///
+    /// Held for the fold and for the copy-out, never across a generation.
+    mutable std::mutex metrics_mutex_;
 
     /**
      * @brief Main loop implementation.
@@ -1570,13 +1613,35 @@ private:
      * handles non-git projects natively (gh#29, v2.1.5). The engine never
      * mutates the user's project directory.
      *
+     * gh#158 (v2.13.0): the lazy cache is filled under `sandbox_mutex_`.
+     *
      * @return Project directory path.
-     * @version 2.1.6
+     * @version 2.13.0
      */
     std::filesystem::path get_repo_dir();                       ///< @dg_internal
 
     /**
+     * @brief `get_repo_dir` with `sandbox_mutex_` already held (gh#158).
+     * @return Project directory path; empty when none resolves.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::filesystem::path get_repo_dir_locked();
+
+    /**
+     * @brief Read the handle's system prompt under `prompt_mutex_` (gh#158).
+     * @return A copy; empty when no system prompt is set.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    std::string system_prompt_copy() const;
+
+    /**
      * @brief Lazily construct (or return) the session-scoped SandboxManager.
+     *
+     * gh#158 (v2.13.0): serialized on `sandbox_mutex_` — the pre-2.13.0
+     * check-then-emplace let two concurrent delegating runs each construct
+     * one, the second destroying the manager the first had already returned.
      *
      * gh#33 (v2.1.6): pre-2.1.6 each delegation built a fresh
      * `DelegationManager` as a stack local, which owned a fresh
@@ -1592,8 +1657,11 @@ private:
      *
      * @return Pointer to the engine-scoped sandbox manager, or nullptr
      *         when no project_dir is available.
-     * @threadsafety Construction is serialized by the facade's api_mutex.
-     * @version 2.1.6
+     * @threadsafety Construction is serialized by `sandbox_mutex_`. The
+     *         pre-2.13.0 note claimed the facade's `api_mutex` did it; that
+     *         was never true for a delegation, which reaches here from a run
+     *         thread holding nothing (gh#109).
+     * @version 2.13.0
      */
     SandboxManager* ensure_sandbox_manager();                   ///< @dg_internal
 
@@ -1689,7 +1757,17 @@ private:
     LoopConfig loop_config_;                             ///< Loop config
     EngineCallbacks callbacks_;                          ///< Event callbacks
     std::atomic<bool> interrupt_flag_{false};             ///< Hard interrupt
-    std::atomic<bool> pause_flag_{false};                 ///< Pause signal
+    /// @brief Pause signal — handle-wide by design (gh#158, decision #66).
+    ///
+    /// The interrupt went per-run; this did not, and the asymmetry is the
+    /// point. `interrupt_session(key)` can route because the ENGINE owns the
+    /// map from key to run. `pause()` is raised from a thread that owns no
+    /// run and names no key, so there is nothing to route it by; routing it
+    /// would need an `entropic_pause_session` that no consumer has asked
+    /// for. Every consumer of pause today is a single-session TUI holding
+    /// one conversation, for which "pause the handle" is what it means.
+    /// What gh#158 DID fix is the clear — see `clear_pause_for_fresh_turn`.
+    std::atomic<bool> pause_flag_{false};
     void (*external_interrupt_cb_)(void*) = nullptr;      ///< P1-10 transport abort
     void* external_interrupt_data_ = nullptr;             ///< Forwarded to cb
     void (*external_reset_cb_)(void*) = nullptr;          ///< gh#150 transport un-abort
@@ -1704,6 +1782,10 @@ private:
     char* (*validation_provider_)(void*) = nullptr;       ///< E3: ON_COMPLETE validation JSON
     void* validation_provider_data_ = nullptr;            ///< Forwarded to provider
     std::unordered_map<std::string, std::string> context_anchors_; ///< Persistent anchors
+    /// @brief gh#158: guards `context_anchors_` as a container. Anchors are
+    /// handle-wide but written from INSIDE the loop by the `context_anchor`
+    /// directive, so two concurrent runs both anchoring raced on the map.
+    mutable std::mutex anchors_mutex_;
     ToolExecutionInterface tool_exec_;                     ///< Tool execution (v1.8.5)
     TierResolutionInterface tier_res_;                    ///< Tier resolution (v1.8.6)
     StorageInterface storage_;                             ///< Storage persistence (v1.8.8)
@@ -1717,6 +1799,11 @@ private:
     bool repo_dir_checked_ = false;                        ///< Repo discovery done (v1.8.6)
     std::filesystem::path project_dir_override_;           ///< gh#31 (v2.1.6): set by configure_dir
     std::optional<SandboxManager> sandbox_mgr_;            ///< gh#33 (v2.1.6): session-scoped
+    /// @brief gh#158: guards the lazily-built sandbox state as ONE unit —
+    /// `sandbox_mgr_`, `cached_repo_dir_`, `repo_dir_checked_` and
+    /// `project_dir_override_`. The manager is constructed FROM the cached
+    /// path, so a half-resolved pair must never be observable.
+    mutable std::mutex sandbox_mutex_;
 
     // ── Mid-generation user-message queue (gh#40, v2.1.10) ──
     mutable std::mutex queue_mutex_;          ///< Guards user_message_queue_
@@ -1815,8 +1902,9 @@ private:
     /// @brief gh#158: the runs currently in flight, keyed by session.
     std::unordered_map<std::string, std::shared_ptr<RunState>> active_runs_;
 
-    /// @brief gh#158: opt-in — may DIFFERENT keys run together? Default no.
-    bool concurrent_sessions_ = false;
+    /// @brief gh#158: may DIFFERENT keys run together? Default YES since the
+    /// decision-#66 audit completed; `false` is the kill switch.
+    bool concurrent_sessions_ = true;
 
     /**
      * @brief Resolve the run this thread owns, if any (gh#158).
@@ -1842,6 +1930,10 @@ private:
     /// inside a tool call, i.e. inside a turn.
     std::string active_session_key_;
     std::string system_prompt_;                            ///< Cached system prompt
+    /// @brief gh#158: guards `system_prompt_`. Written on the API thread
+    /// under `api_mutex`, read on every run thread — which holds nothing
+    /// since gh#109 — so `api_mutex` never covered the pair.
+    mutable std::mutex prompt_mutex_;
     SessionLogger* session_logger_ = nullptr;              ///< Non-owning model log
 
     // ── Pre-resolved tier data (v2.0.2) ─────────────────────

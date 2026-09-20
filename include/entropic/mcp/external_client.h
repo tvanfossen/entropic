@@ -17,6 +17,7 @@
 
 #include <entropic/mcp/transport.h>
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -136,7 +137,15 @@ private:
     std::string cached_tools_json_;              ///< Cached tools/list result
     std::vector<std::string> cached_tool_names_; ///< Cached prefixed tool names
     mutable std::mutex tools_mutex_;             ///< Guards cached tool state
-    int next_id_{1};                             ///< JSON-RPC request ID counter
+    /// @brief JSON-RPC request ID counter.
+    ///
+    /// gh#158 (v2.13.0): atomic. `build_request` does `next_id_++` and, once
+    /// runs are keyed, two run threads call `execute()` on the SAME client
+    /// concurrently — plus the HealthMonitor's reconnect thread, which has
+    /// issued `initialize`/`tools/list` through this counter since v1.8.7.
+    /// A plain `int++` from several threads is a data race, and two requests
+    /// sharing an id is precisely what defeats the pairing check below.
+    std::atomic<int> next_id_{1};
 
     static constexpr uint32_t DEFAULT_TIMEOUT_MS = 30000; ///< Default tool call timeout
     static constexpr uint32_t INIT_TIMEOUT_MS = 10000;    ///< Initialize handshake timeout
@@ -151,6 +160,50 @@ private:
      */
     std::string build_request(const std::string& method,
                               const std::string& params = "{}");
+
+    /**
+     * @brief Build a request and report the id it carries (gh#158).
+     * @param method JSON-RPC method name.
+     * @param params JSON-RPC params (as string, or empty for {}).
+     * @param[out] id The id stamped into the request.
+     * @return JSON-RPC request string.
+     * @utility
+     * @version 2.13.0
+     */
+    std::string build_request_id(const std::string& method,
+                                 const std::string& params,
+                                 int& id);
+
+    /**
+     * @brief Whether a response belongs to the request that asked (gh#158).
+     *
+     * MCP over a stdio pipe is request/response on ONE stream, and nothing
+     * in this client ever checked that the line it read answered the line it
+     * wrote. `StdioTransport::send_request` holds `io_mutex_` across
+     * write-then-read, so bytes never interleave — but an ABANDONED request
+     * (timeout, or an interrupt tripping `request_cancelled()` mid-read)
+     * returns while the server's reply is still in flight. That reply then
+     * sits in the pipe and is read as the answer to the NEXT request.
+     *
+     * Serialized runs made that a stale answer to yourself. Keyed runs make
+     * it a CROSS-SESSION leak: session A's interrupt hands session B the
+     * content of A's tool call, and B cannot tell. The transport drains
+     * orphaned lines on the next call; this is the check that catches
+     * whatever the drain missed rather than trusting it.
+     *
+     * A response with NO id is rejected: JSON-RPC 2.0 makes it REQUIRED and
+     * MCP is JSON-RPC 2.0, so accepting one would reopen the hole for every
+     * server at once. A string id spelling the same number IS accepted — the
+     * one deviation common enough to be worth tolerating, and unambiguous.
+     *
+     * @param response_json Raw JSON-RPC response line.
+     * @param expected_id The id of the request that was sent.
+     * @return true when the response carries `expected_id`.
+     * @utility
+     * @version 2.13.0
+     */
+    static bool response_matches(const std::string& response_json,
+                                 int expected_id);
 
     /**
      * @brief Send MCP initialize handshake.
@@ -203,6 +256,29 @@ private:
      */
     std::string empty_response_envelope(
         const std::string& tool_name) const;
+
+    /**
+     * @brief Failure envelope for a response that answered another
+     *        request (gh#158).
+     * @param tool_name Local tool name (without server prefix).
+     * @param expected_id The id this call sent.
+     * @return An is_error envelope naming the desynchronization.
+     * @version 2.13.0
+     */
+    std::string mismatched_response_envelope(
+        const std::string& tool_name, int expected_id) const;
+
+    /**
+     * @brief The failure envelope a response warrants, or empty (gh#158).
+     * @param tool_name Local tool name (without server prefix).
+     * @param response Raw response line from the transport.
+     * @param expected_id The id the request carried.
+     * @return An is_error envelope, or "" when the response is usable.
+     * @version 2.13.0
+     */
+    std::string response_problem(const std::string& tool_name,
+                                 const std::string& response,
+                                 int expected_id) const;
 
     static std::string build_response(const std::string& result_text,
                                        bool is_error = false);

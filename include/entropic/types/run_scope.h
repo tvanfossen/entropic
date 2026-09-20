@@ -65,6 +65,23 @@ ENTROPIC_EXPORT const std::atomic<bool>* current_run_cancel();
 ENTROPIC_EXPORT bool current_run_cancelled();
 
 /**
+ * @brief Cancel the run executing on this thread (gh#158).
+ *
+ * The write counterpart of `current_run_cancelled()`, for the one site that
+ * needs to stop a run FROM INSIDE it: the pause prompt, when the consumer
+ * declines to inject anything, means "abandon this turn". Pre-2.13.0 that
+ * site raised `AgentEngine::interrupt_flag_` — the handle-wide flag — which
+ * with keyed runs aborts every other session's turn as well.
+ *
+ * @return true when a run scope was installed on this thread and its token
+ *         was set; false when there is none, in which case the caller must
+ *         fall back to whatever handle-wide flag it owns.
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT bool cancel_current_run();
+
+/**
  * @brief RAII publication of one run's cancel token to its own thread.
  *
  * Restores the previous value on destruction rather than clearing it, so a
@@ -74,18 +91,22 @@ ENTROPIC_EXPORT bool current_run_cancelled();
  * @return An RAII guard binding this thread to `token` until it goes out of
  *         scope, at which point the previous token is restored.
  * @req REQ-LOOP-006
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 class ENTROPIC_EXPORT RunCancelScope {
 public:
     /**
      * @brief Publish `token` as this thread's run cancel token.
+     *
+     * Non-const since gh#158's audit pass: `cancel_current_run()` stops the
+     * run from inside it, which is a write.
+     *
      * @param token Borrowed cancel flag; nullptr installs "no token".
      * @return n/a (constructor).
      * @req REQ-LOOP-006
-     * @version 2.13.0
+     * @version 2.13.0 [reviewed]
      */
-    explicit RunCancelScope(const std::atomic<bool>* token);
+    explicit RunCancelScope(std::atomic<bool>* token);
 
     /**
      * @brief Restore the previously installed token.
@@ -99,7 +120,7 @@ public:
     RunCancelScope& operator=(const RunCancelScope&) = delete;
 
 private:
-    const std::atomic<bool>* previous_;
+    std::atomic<bool>* previous_;
 };
 
 }  // namespace entropic

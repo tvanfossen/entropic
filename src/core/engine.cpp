@@ -350,7 +350,7 @@ int AgentEngine::resolve_max_tool_calls(const LoopContext& ctx) const {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-006
  * @req REQ-COMPACT-002
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
     // gh#158 (v2.13.0): publish THIS run's cancel token to THIS thread, so
@@ -365,7 +365,7 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
     // fresh top-level turn resets.
     if (!inherit_interrupt) {
         reset_interrupt();
-        pause_flag_.store(false);
+        clear_pause_for_fresh_turn();
     }
     apply_identity_overrides(ctx);
     reinject_context_anchors(ctx);
@@ -375,14 +375,37 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
     set_state(ctx, AgentState::PLANNING);
     loop(ctx);
     ctx.metrics.end_time = now_seconds();
-    // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
-    auto& tm = per_tier_metrics_[
-        ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
-    tm.iterations  += ctx.metrics.iterations;
-    tm.tool_calls  += ctx.metrics.tool_calls;
-    tm.tokens_used += ctx.metrics.tokens_used;
-    tm.errors      += ctx.metrics.errors;
-    tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
+    accumulate_per_tier(ctx);
+}
+
+/**
+ * @brief Clear the handle-wide pause only when nothing else is running.
+ *
+ * gh#158 (v2.13.0). `pause_flag_` is handle-wide BY DESIGN — see decision
+ * #66: `pause()` is raised from a thread that owns no run, so unlike the
+ * interrupt it cannot be routed to a session by a thread-local token, and
+ * there is no `entropic_pause_session` because no consumer has asked for
+ * one. What was NOT by design is that a fresh turn cleared it
+ * unconditionally: starting run B silently un-paused run A, the same shape
+ * as the interrupt defect this issue set out to fix.
+ *
+ * So the clear is conditional. With one run in flight (which includes every
+ * `concurrent_sessions: false` configuration) this is exactly the old
+ * `pause_flag_.store(false)`. With another run already in flight, the pause
+ * belongs to that run and a starting turn leaves it alone.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::clear_pause_for_fresh_turn() {
+    std::size_t others = 0;
+    {
+        std::lock_guard<std::mutex> guard(runs_mutex_);
+        others = active_runs_.size();
+    }
+    if (others <= 1) {
+        pause_flag_.store(false);
+    }
 }
 
 /**
@@ -394,7 +417,7 @@ void AgentEngine::run_loop(LoopContext& ctx, bool inherit_interrupt) {
  * @req REQ-LOOP-001
  * @req REQ-LOOP-002
  * @req REQ-COMPACT-002
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 std::vector<Message> AgentEngine::run(std::vector<Message> messages,
                                       const std::string& tier_override) {
@@ -420,7 +443,7 @@ std::vector<Message> AgentEngine::run(std::vector<Message> messages,
     init_session_conversation(ctx);
 
     reset_interrupt();
-    pause_flag_.store(false);
+    clear_pause_for_fresh_turn();
 
     reinject_context_anchors(ctx);
     set_state(ctx, AgentState::PLANNING);
@@ -461,12 +484,29 @@ void AgentEngine::init_session_conversation(LoopContext& ctx) {
 
 /**
  * @brief Fold a finished run's metrics into the per-tier totals.
+ *
+ * gh#158 (v2.13.0): both halves under `metrics_mutex_`.
+ *
  * @param ctx Loop context (with completed metrics).
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
-    last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+    {
+        std::lock_guard<std::mutex> guard(metrics_mutex_);
+        last_metrics_ = ctx.metrics;  // P2-15: snapshot for entropic_status
+    }
+    accumulate_per_tier(ctx);
+}
+
+/**
+ * @brief Fold one run's metrics into the per-tier totals (gh#158).
+ * @param ctx Loop context (with completed metrics).
+ * @dg_internal
+ * @version 2.13.0
+ */
+void AgentEngine::accumulate_per_tier(const LoopContext& ctx) {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
     // Per-tier accumulator (P2-15 follow-up, 2.0.6-rc16.2)
     auto& tm = per_tier_metrics_[
         ctx.locked_tier.empty() ? "lead" : ctx.locked_tier];
@@ -475,6 +515,29 @@ void AgentEngine::accumulate_run_metrics(LoopContext& ctx) {
     tm.tokens_used += ctx.metrics.tokens_used;
     tm.errors      += ctx.metrics.errors;
     tm.end_time    += (ctx.metrics.end_time - ctx.metrics.start_time);
+}
+
+/**
+ * @brief Metrics from the most recent completed run — see header (gh#158).
+ * @return A copy of `last_metrics_`, taken under `metrics_mutex_`.
+ * @utility
+ * @version 2.13.0
+ */
+LoopMetrics AgentEngine::last_loop_metrics() const {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    return last_metrics_;
+}
+
+/**
+ * @brief Per-tier aggregated metrics — see header (gh#158).
+ * @return A copy of the per-tier map, taken under `metrics_mutex_`.
+ * @utility
+ * @version 2.13.0
+ */
+std::unordered_map<std::string, LoopMetrics>
+AgentEngine::per_tier_metrics() const {
+    std::lock_guard<std::mutex> guard(metrics_mutex_);
+    return per_tier_metrics_;
 }
 
 /**
@@ -1162,12 +1225,25 @@ std::pair<int, int> AgentEngine::context_usage(
 
 /**
  * @brief Reinject all cached context anchors.
+ *
+ * gh#158 (v2.13.0): iterates a SNAPSHOT taken under `anchors_mutex_`, not
+ * the live map. Two reasons, and both are required. A concurrent run's
+ * `context_anchor` directive inserts into the map, and an insert that
+ * rehashes invalidates the iterators this loop is holding. And `dir_anchor`
+ * — which this calls per entry — takes the same mutex, so holding it across
+ * the loop would self-deadlock on a non-recursive lock.
+ *
  * @param ctx Loop context.
  * @req REQ-COMPACT-002
- * @version 1.8.4
+ * @version 2.13.0
  */
 void AgentEngine::reinject_context_anchors(LoopContext& ctx) {
-    for (const auto& [key, content] : context_anchors_) {
+    std::unordered_map<std::string, std::string> snapshot;
+    {
+        std::lock_guard<std::mutex> guard(anchors_mutex_);
+        snapshot = context_anchors_;
+    }
+    for (const auto& [key, content] : snapshot) {
         ContextAnchorDirective d(key, content);
         DirectiveResult r;
         dir_anchor(ctx, d, r);
@@ -1354,19 +1430,31 @@ void AgentEngine::dir_prune(
 
 /**
  * @brief Handle context_anchor directive.
+ *
+ * gh#158 (v2.13.0): `context_anchors_` is handle-wide and mutated from
+ * inside the loop, so two concurrent runs both emitting an anchor directive
+ * raced on the map. The lock is held for the map operation only — never
+ * across `remove_anchor_messages`, which walks the run's own messages.
+ *
  * @req REQ-COMPACT-002
- * @version 1.8.4
+ * @version 2.13.0
  */
 void AgentEngine::dir_anchor(
     LoopContext& ctx, const Directive& d, DirectiveResult&) {
     const auto& ca = static_cast<const ContextAnchorDirective&>(d);
     if (ca.content.empty()) {
-        context_anchors_.erase(ca.key);
+        {
+            std::lock_guard<std::mutex> guard(anchors_mutex_);
+            context_anchors_.erase(ca.key);
+        }
         remove_anchor_messages(ctx, ca.key);
         logger->info("Removed anchor: {}", ca.key);
         return;
     }
-    context_anchors_[ca.key] = ca.content;
+    {
+        std::lock_guard<std::mutex> guard(anchors_mutex_);
+        context_anchors_[ca.key] = ca.content;
+    }
     remove_anchor_messages(ctx, ca.key);
     Message anchor;
     anchor.role = "user";
@@ -2708,9 +2796,27 @@ bool AgentEngine::try_auto_chain(
  *
  * @return Project directory path.
  * @dg_internal
- * @version 2.1.6
+ * @version 2.13.0
  */
 std::filesystem::path AgentEngine::get_repo_dir() {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
+    return get_repo_dir_locked();
+}
+
+/**
+ * @brief `get_repo_dir` body, with `sandbox_mutex_` already held (gh#158).
+ *
+ * Split out because `ensure_sandbox_manager` needs the resolved dir while
+ * holding the same lock — the lazy manager and the lazy path cache are ONE
+ * piece of state (the manager is constructed FROM the path), so two
+ * concurrent delegating runs must not be able to observe a half-resolved
+ * pair. A recursive mutex would also work and says less.
+ *
+ * @return Project directory path; empty when none resolves.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::filesystem::path AgentEngine::get_repo_dir_locked() {
     if (repo_dir_checked_) {
         return cached_repo_dir_.value_or(std::filesystem::path{});
     }
@@ -2738,9 +2844,10 @@ std::filesystem::path AgentEngine::get_repo_dir() {
  *
  * @param project_dir Project root (empty resets to CWD fallback).
  * @dg_internal
- * @version 2.1.6
+ * @version 2.13.0
  */
 void AgentEngine::set_project_dir(const std::filesystem::path& project_dir) {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
     project_dir_override_ = project_dir;
     cached_repo_dir_.reset();
     repo_dir_checked_ = false;
@@ -2888,16 +2995,27 @@ DelegationResult AgentEngine::run_pending_delegation(
 
 /**
  * @brief Lazy accessor for the engine-scoped SandboxManager (gh#33, v2.1.6).
+ *
+ * gh#158 (v2.13.0): serialized on `sandbox_mutex_`. Two concurrent runs that
+ * both delegate hit this at the same time, and the check-then-emplace is not
+ * atomic: both see an empty `optional`, both call `emplace`, and the second
+ * DESTROYS the manager the first just handed out — a `SandboxManager*` the
+ * caller is about to dereference. That is a use-after-free, not a wasted
+ * snapshot. The lock is held only for the construction; the returned pointer
+ * is then used outside it, which is safe because the optional is never reset
+ * for the life of the engine.
+ *
  * @return The engine-scoped SandboxManager, constructed on first use;
  *         nullptr when no repo dir is configured.
  * @req REQ-DELEG-002
- * @version 2.1.6
+ * @version 2.13.0
  */
 SandboxManager* AgentEngine::ensure_sandbox_manager() {
+    std::lock_guard<std::mutex> guard(sandbox_mutex_);
     if (sandbox_mgr_) {
         return &*sandbox_mgr_;
     }
-    auto repo_dir = get_repo_dir();
+    auto repo_dir = get_repo_dir_locked();
     if (repo_dir.empty()) {
         return nullptr;
     }
@@ -2909,12 +3027,30 @@ SandboxManager* AgentEngine::ensure_sandbox_manager() {
 
 /**
  * @brief Set the system prompt for conversation state.
+ *
+ * gh#158 (v2.13.0): under `prompt_mutex_`. The setter runs on the API
+ * thread (which holds `api_mutex`) and every reader runs on a run thread
+ * (which, since gh#109, holds nothing) — so `api_mutex` never made this
+ * pair safe, and keyed runs add a second concurrent reader.
+ *
  * @param prompt Assembled system prompt.
  * @dg_internal
- * @version 2.0.2
+ * @version 2.13.0
  */
 void AgentEngine::set_system_prompt(const std::string& prompt) {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
     system_prompt_ = prompt;
+}
+
+/**
+ * @brief Read the handle's system prompt (gh#158).
+ * @return A copy taken under `prompt_mutex_`; empty when none is set.
+ * @dg_internal
+ * @version 2.13.0
+ */
+std::string AgentEngine::system_prompt_copy() const {
+    std::lock_guard<std::mutex> guard(prompt_mutex_);
+    return system_prompt_;
 }
 
 /**
@@ -3167,7 +3303,7 @@ std::atomic<bool>& AgentEngine::run_cancel_flag() {
  * @param input User input string.
  * @return Result messages from engine.
  * @req REQ-LOOP-001
- * @version 2.12.0-rc1
+ * @version 2.13.0
  */
 std::vector<Message> AgentEngine::run_turn(const std::string& input) {
     // gh#40 (v2.1.10): the drain loop turns mid-generation queued user
@@ -3184,10 +3320,11 @@ std::vector<Message> AgentEngine::run_turn(const std::string& input) {
     // set for the duration, preserving the gh#40 contract.
     const bool owns_turn = try_begin_turn();
     auto& convo = active_conversation();
-    if (convo.messages.empty() && !system_prompt_.empty()) {
+    auto prompt = system_prompt_copy();
+    if (convo.messages.empty() && !prompt.empty()) {
         Message sys;
         sys.role = "system";
-        sys.content = system_prompt_;
+        sys.content = std::move(prompt);
         convo.messages.push_back(std::move(sys));
     }
     auto result = run_drain_loop(input, /*tier_override=*/"");
@@ -3233,16 +3370,16 @@ std::vector<Message> AgentEngine::run_turn_as(const std::string& tier,
  * grammar/samplers still switch; only the prompt persists). See run_turn_as.
  * @param tier Tier whose system prompt to seed.
  * @req REQ-IDEN-001
- * @version 2.12.0
+ * @version 2.13.0
  */
 void AgentEngine::seed_system_prompt_for_tier(const std::string& tier) {
     auto& convo = active_conversation();
     if (!convo.messages.empty()) { return; }
     auto it = tier_info_.find(tier);
-    const std::string& sp =
+    std::string sp =
         (it != tier_info_.end() && !it->second.system_prompt.empty())
             ? it->second.system_prompt
-            : system_prompt_;
+            : system_prompt_copy();
     if (sp.empty()) { return; }
     Message sys;
     sys.role = "system";
@@ -3302,7 +3439,7 @@ std::vector<Message> AgentEngine::run_drain_loop(
  * @brief Prepend the configured system prompt if this turn needs it.
  * @param new_messages The messages the caller is adding this turn.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 void AgentEngine::seed_system_prompt(
     const std::vector<Message>& new_messages) {
@@ -3311,11 +3448,12 @@ void AgentEngine::seed_system_prompt(
         if (m.role == "system") { caller_has_system = true; break; }
     }
     auto& convo = active_conversation();
-    if (convo.messages.empty() && !system_prompt_.empty()
+    auto prompt = system_prompt_copy();
+    if (convo.messages.empty() && !prompt.empty()
             && !caller_has_system) {
         Message sys;
         sys.role = "system";
-        sys.content = system_prompt_;
+        sys.content = std::move(prompt);
         convo.messages.push_back(std::move(sys));
     }
 }

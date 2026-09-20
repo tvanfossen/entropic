@@ -2016,8 +2016,14 @@ SCENARIO("delegation snapshot + per-tier metrics accumulation",
             ctx.locked_tier = "lead";
             engine.run_loop(ctx);
         }
-        auto it = engine.per_tier_metrics().find("lead");
-        REQUIRE(it != engine.per_tier_metrics().end());
+        // gh#158: hold the copy. `per_tier_metrics()` returns by value (it
+        // always did), so iterating one temporary and comparing against a
+        // DIFFERENT temporary's end() was a dangling-iterator compare that
+        // happened to work. The accessor now takes a lock to produce that
+        // copy, which makes the lifetime question worth getting right.
+        const auto per_tier = engine.per_tier_metrics();
+        auto it = per_tier.find("lead");
+        REQUIRE(it != per_tier.end());
         REQUIRE(it->second.iterations >= 2);
     }
 }

@@ -1157,20 +1157,27 @@ struct ParsedConfig {
     /**
      * @brief gh#158 (v2.13.0): may DIFFERENT session keys run together?
      *
-     * Off by default, and deliberately so. Per-key runs are safe only once
-     * every piece of per-handle mutable state a turn touches is per-run or
-     * locked — the audit is decision #66 in `docs/architecture-cpp.md`.
-     * Turning it on by default would make every existing consumer concurrent
-     * without their asking, which is the mistake gh#157 refused to make with
-     * `keep_warm`, and a racy default is worse than honest serialization.
+     * ON by default since the audit that decision #66 records was completed:
+     * every piece of per-handle mutable state a turn touches is now per-run
+     * or locked. The flag shipped `false` in the first half of gh#158
+     * precisely because that audit was outstanding — a racy default is worse
+     * than honest serialization — so turning it on is the audit's conclusion,
+     * not a change of mind about the risk.
      *
-     * With it off, a second run on ANY key returns
-     * `ENTROPIC_ERROR_ALREADY_RUNNING` — v2.12.0 semantics, unchanged. With
-     * it on, only a second run on the SAME key is refused.
+     * It stays as a KILL SWITCH, not as an opt-in. Set
+     * `concurrent_sessions: false` to restore v2.12.0 semantics exactly: a
+     * second run on ANY key returns `ENTROPIC_ERROR_ALREADY_RUNNING` and the
+     * handle serializes every turn. That is the escape hatch for a consumer
+     * who hits a concurrency defect in the field and needs a one-line
+     * configuration change rather than a version pin.
      *
-     * YAML: `concurrent_sessions: true`.
+     * With it on (the default), only a second run on the SAME key is
+     * refused — that one is a genuine conflict, because the two runs share
+     * one conversation.
+     *
+     * YAML: `concurrent_sessions: false`.
      */
-    bool concurrent_sessions = false;
+    bool concurrent_sessions = true;
 
     bool inject_model_context = true;  ///< Auto-inject model context into system prompt
     int vram_reserve_mb = 512;         ///< Reserved VRAM headroom (MB, 0–65536)

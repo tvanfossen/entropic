@@ -12,7 +12,7 @@
  * every one of those was a single per-backend field before
  * `ModelOrchestrator::generation_mutex_`.
  *
- * Three arms:
+ * Four arms:
  *
  *  1. **Cross-session bleed.** Each session is seeded its own secret across
  *     several turns, then asked to recall it while the other is mid-turn.
@@ -25,7 +25,13 @@
  *     against a naive implementation that reached for the transport latch,
  *     B's in-flight tool call would be aborted too.
  *
- *  3. **Hybrid-arch KV.** Every KV-touching change is retested on a
+ *  3. **Live metrics and context reads.** The audit pass made
+ *     `token_counter_`, `per_tier_metrics_` and `last_metrics_` safe; this
+ *     arm polls `entropic_metrics_json` and `entropic_context_usage` from a
+ *     third thread while two real decodes run, which is what a TUI status
+ *     line does every frame.
+ *
+ *  4. **Hybrid-arch KV.** Every KV-touching change is retested on a
  *     recurrent/hybrid architecture, never on plain-KV gemma alone (the rule
  *     gh#96/gh#97 bought). qwen35moe at gpu_layers=15, asserting the
  *     deterministic desync gate `kv_pos_max < input + max_tokens`.
@@ -49,6 +55,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -229,6 +236,93 @@ SCENARIO("gh#158: interrupting one session leaves the other running",
                       == ENTROPIC_ERROR_NOT_RUNNING);
             }
             (void)rc_a.load();
+        }
+    }
+}
+
+SCENARIO("gh#158: metrics and context reads are safe during live runs",
+         "[model][gh158]")
+{
+    GIVEN("one handle running two sessions at once") {
+        // The audit pass of gh#158 made `token_counter_`, `per_tier_metrics_`
+        // and `last_metrics_` safe — the first by DELETING an address-keyed
+        // memo that a `const` method wrote without a lock, the other two under
+        // `metrics_mutex_`. A CPU unit test proves the containers; this proves
+        // the real path: a host polling `entropic_metrics_json` and
+        // `entropic_context_usage` (which is exactly what a TUI status line
+        // does, every frame) while two real decodes are in flight.
+        auto gguf = entropic::test::facade::model_gguf(
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+        if (gguf.empty() || !fs::is_regular_file(gguf)) {
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
+        }
+
+        entropic::test::facade::FacadeProject project("gh158_metrics");
+        entropic::test::facade::TierSpec lead;
+        lead.name = "lead";
+        lead.gguf_key = "gemma4_e4b";
+        lead.adapter = "gemma4";
+        lead.context_length = 2048;
+        auto* h = project.setup({lead});
+        REQUIRE(h != nullptr);
+
+        WHEN("a poller reads metrics while both sessions decode") {
+            std::atomic<bool> done{false};
+            std::atomic<int> reads{0};
+            std::atomic<int> malformed{0};
+
+            std::thread poller([&] {
+                while (!done.load()) {
+                    char* json = nullptr;
+                    if (entropic_metrics_json(h, &json) == ENTROPIC_OK
+                            && json != nullptr) {
+                        const std::string text = json;
+                        entropic_free(json);
+                        // Both keys are unconditional in the envelope, so a
+                        // read that lost either one saw a torn object rather
+                        // than an empty engine.
+                        if (text.find("\"generations\"") == std::string::npos
+                                || text.find("\"per_tier\"")
+                                    == std::string::npos) {
+                            malformed.fetch_add(1);
+                        }
+                        reads.fetch_add(1);
+                    } else {
+                        malformed.fetch_add(1);
+                    }
+                    size_t used = 0;
+                    size_t capacity = 0;
+                    if (entropic_context_usage(h, &used, &capacity)
+                            != ENTROPIC_OK
+                            || capacity == 0 || used > capacity) {
+                        malformed.fetch_add(1);
+                    }
+                }
+            });
+
+            std::thread ta([&] {
+                char* out = nullptr;
+                entropic_run_session(h, "m-alpha",
+                                     "Name three metals.", &out);
+                if (out != nullptr) { entropic_free(out); }
+            });
+            std::thread tb([&] {
+                char* out = nullptr;
+                entropic_run_session(h, "m-bravo",
+                                     "Name three rivers.", &out);
+                if (out != nullptr) { entropic_free(out); }
+            });
+            ta.join();
+            tb.join();
+            done.store(true);
+            poller.join();
+
+            THEN("every read came back whole") {
+                INFO("reads: " << reads.load()
+                     << " malformed: " << malformed.load());
+                CHECK(reads.load() > 0);
+                CHECK(malformed.load() == 0);
+            }
         }
     }
 }

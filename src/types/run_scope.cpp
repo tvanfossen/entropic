@@ -21,7 +21,7 @@ namespace entropic {
 namespace {
 
 /// @brief Cancel token of the run executing on this thread (gh#158).
-thread_local const std::atomic<bool>* t_run_cancel = nullptr;
+thread_local std::atomic<bool>* t_run_cancel = nullptr;
 
 }  // namespace
 
@@ -49,11 +49,25 @@ bool current_run_cancelled() {
  * @param token Borrowed cancel flag; nullptr installs "no token".
  * @return n/a (constructor).
  * @req REQ-LOOP-006
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
-RunCancelScope::RunCancelScope(const std::atomic<bool>* token)
+RunCancelScope::RunCancelScope(std::atomic<bool>* token)
     : previous_(t_run_cancel) {
     t_run_cancel = token;
+}
+
+/**
+ * @brief gh#158: cancel this thread's run — see header.
+ * @return true when a token was installed and has been set.
+ * @req REQ-LOOP-006
+ * @version 2.13.0
+ */
+bool cancel_current_run() {
+    if (t_run_cancel == nullptr) {
+        return false;
+    }
+    t_run_cancel->store(true, std::memory_order_release);
+    return true;
 }
 
 /**

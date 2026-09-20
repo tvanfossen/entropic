@@ -94,3 +94,26 @@ SCENARIO("Unknown error code returns UNKNOWN", "[api][error]") {
         }
     }
 }
+
+SCENARIO("gh#148: the mlock refusal has a stable name and a fresh slot",
+         "[api][error][gh148][2.13.0]") {
+    GIVEN("the v2.13.0 error table") {
+        THEN("the new code names itself") {
+            // A typed refusal is only useful if the consumer can tell it
+            // apart from LOAD_FAILED; that starts with the name table.
+            REQUIRE(std::string(entropic_error_name(
+                        ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED))
+                    == "ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED");
+        }
+
+        THEN("it was APPENDED — no existing code moved") {
+            // The enum is ABI. Appending is additive; inserting would
+            // silently renumber every code a shipped consumer holds.
+            REQUIRE(static_cast<int>(ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED)
+                    > static_cast<int>(
+                        ENTROPIC_ERROR_SPECULATIVE_INCOMPATIBLE_CONFIG));
+            REQUIRE(static_cast<int>(ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE)
+                    == 53);
+        }
+    }
+}

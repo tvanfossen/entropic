@@ -359,6 +359,58 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
     }
 }
 
+SCENARIO("gh#148: gpu_layers accepts a count or the word auto",
+         "[config][loader][gh148][2.13.0]")
+{
+    GIVEN("a tier asking the engine to derive the split") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: auto\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("the opt-in is recorded and no count is invented") {
+                REQUIRE(err.empty());
+                REQUIRE(config.models.tiers.count("lead") == 1);
+                CHECK(config.models.tiers["lead"].gpu_layers_auto);
+                // Left at the struct default until the admission gate
+                // resolves it — nothing downstream sees a half-resolved
+                // value, and "auto" is not silently 0.
+                CHECK(config.models.tiers["lead"].gpu_layers == -1);
+            }
+        }
+    }
+
+    GIVEN("a tier with an explicit layer count") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 15\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it is taken verbatim and auto stays off") {
+                REQUIRE(err.empty());
+                CHECK(config.models.tiers["lead"].gpu_layers == 15);
+                CHECK_FALSE(config.models.tiers["lead"].gpu_layers_auto);
+            }
+        }
+    }
+}
+
 SCENARIO("gh#157: models.defer_load parses and is not mistaken for a tier",
          "[config][loader][gh157][2.13.0]")
 {

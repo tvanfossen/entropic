@@ -293,6 +293,37 @@ public:
             : -1;
     }
 
+    /**
+     * @brief Whole-file loads of a tier model in this process (gh#148).
+     *
+     * Deterministic instrumentation, in the same spirit as gh#161's
+     * regex-evaluation counter: every `llama_model_load_from_file` of a
+     * TIER model increments it exactly once, so a test can assert WORK
+     * DONE instead of wall-clock time or RSS — both of which are
+     * page-cache and machine-load dependent, which is what made the
+     * original "1.5x the file size" report untestable.
+     *
+     * Process-wide and static because the waste it measures spans a
+     * single backend's own COLD → WARM → ACTIVE sequence, and because a
+     * pooled backend is shared by several tiers.
+     *
+     * The MTP head is deliberately NOT counted: it is a separate ~57 MB
+     * GGUF with its own lifecycle, and folding it in would make the
+     * number mean two different things.
+     *
+     * @return Cumulative whole-file tier-model loads.
+     * @utility
+     * @version 2.13.0
+     */
+    static std::uint64_t model_file_loads();
+
+    /**
+     * @brief Reset the whole-file load counter (gh#148, test surface).
+     * @utility
+     * @version 2.13.0
+     */
+    static void reset_model_file_loads();
+
     /* ── gh#87 (v2.7.0): common_chat tool-call render + parse ── */
 
     /**
@@ -469,6 +500,22 @@ protected:
 
     bool do_load(const ModelConfig& config) override;
     bool do_activate() override;
+
+    /**
+     * @brief COLD → ACTIVE in ONE whole-file read (gh#148).
+     *
+     * Reads the GGUF once with the configured `gpu_layers` and builds the
+     * context on it, instead of the base class's read-for-CPU-then-read-
+     * again-for-the-real-placement. llama.cpp ties offloading to the model
+     * load, so the second read was never avoidable from WARM — but from
+     * COLD the first one is pure waste.
+     *
+     * @param config Validated model config.
+     * @return true on success; sets last_error_ on failure.
+     * @req REQ-INFER-002
+     * @version 2.13.0
+     */
+    bool do_load_active(const ModelConfig& config) override;
     void do_deactivate() override;
     void do_unload() override;
 
@@ -1253,6 +1300,31 @@ protected:
      * @version 2.3.7
      */
     bool load_gpu_model();
+
+    /**
+     * @brief Bind vocab, tokenizer and architecture flags to `model_`.
+     *
+     * Every successful model load ends here, so the recurrent/hybrid flags
+     * cannot go stale on one path and not another — before gh#148
+     * `load_gpu_model` refreshed the vocab and tokenizer but left
+     * `is_recurrent_` / `is_hybrid_` to whatever `do_load` had set.
+     *
+     * @dg_internal
+     * @version 2.13.0
+     */
+    void bind_model_handles();
+
+    /**
+     * @brief Context + sampler + mmproj, shared by both activation paths.
+     *
+     * The tail of `do_activate` after the model is resident, so the gh#148
+     * one-read path and the WARM promotion cannot drift apart.
+     *
+     * @return true on success; sets last_error_ on failure.
+     * @dg_internal
+     * @version 2.13.0
+     */
+    bool finish_activation();
 
     /**
      * @brief Create the llama context + prompt cache (do_activate step 2).

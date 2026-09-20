@@ -1,120 +1,80 @@
 [
   {
-    "req_id": "REQ-ABI-001",
-    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
     "functions": [
       {
-        "name": "entropic_state_save",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_state_load",
-        "file": "src/facade/entropic.cpp",
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-ABI-002",
-    "req_name": "C++ exceptions never cross any .so boundary",
+    "req_id": "REQ-CFG-002",
+    "req_name": "Whole-block replace semantics for models and routing across layers",
     "functions": [
       {
-        "name": "entropic_state_save",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_state_load",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_adapter_load",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_get_logprobs",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_compute_perplexity",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_model_has_vision",
-        "file": "src/facade/entropic.cpp",
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-API-004",
-    "req_name": "Three configure entry points, one shared body, one-shot per handle",
+    "req_id": "REQ-CFG-003",
+    "req_name": "Bundled model registry resolution \u2014 keys, selectors, and search order",
     "functions": [
       {
-        "name": "validate_prompt_sources",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "configure_common",
-        "file": "src/facade/entropic.cpp",
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-API-005",
-    "req_name": "Uniform precondition guard on every exported entry point",
+    "req_id": "REQ-CFG-005",
+    "req_name": "Per-tier knobs override global defaults without an all-or-nothing switch",
     "functions": [
       {
-        "name": "entropic_state_save",
-        "file": "src/facade/entropic.cpp",
+        "name": "parse_gpu_layers",
+        "file": "src/config/loader.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "entropic_state_load",
-        "file": "src/facade/entropic.cpp",
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "entropic_adapter_load",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_get_logprobs",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_compute_perplexity",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_model_has_vision",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_release_model",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
+        "name": "parse_tier_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.10.4"
       }
     ]
   },
   {
-    "req_id": "REQ-API-008",
-    "req_name": "Single cross-boundary allocator pair and explicit ownership transfer",
+    "req_id": "REQ-INFER-002",
+    "req_name": "Teardown releases every model, context and adapter handle",
     "functions": [
       {
-        "name": "entropic_get_logprobs",
-        "file": "src/facade/entropic.cpp",
+        "name": "do_load_active",
+        "file": "include/entropic/inference/backend.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "promote_to_active",
+        "file": "src/inference/backend.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "load_and_activate",
+        "file": "src/inference/backend.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "do_load_active",
+        "file": "src/inference/llama_cpp_backend.cpp",
         "version": "2.13.0"
       }
     ]
@@ -123,6 +83,11 @@
     "req_id": "REQ-INFER-005",
     "req_name": "Every decode path honours cooperative cancellation within one token",
     "functions": [
+      {
+        "name": "do_generate_streaming_text_only",
+        "file": "src/inference/llama_cpp_backend.cpp",
+        "version": "2.8.3"
+      },
       {
         "name": "generate_streaming",
         "file": "src/inference/orchestrator.cpp",
@@ -134,11 +99,6 @@
     "req_id": "REQ-INFER-007",
     "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
     "functions": [
-      {
-        "name": "warn_tier_grammars_step",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "generate_streaming",
         "file": "src/inference/orchestrator.cpp",
@@ -155,6 +115,11 @@
     "req_id": "REQ-INFER-008",
     "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
     "functions": [
+      {
+        "name": "active_tool_grammar",
+        "file": "include/entropic/inference/backend.h",
+        "version": "2.13.0"
+      },
       {
         "name": "generate_streaming",
         "file": "src/inference/orchestrator.cpp",
@@ -196,11 +161,6 @@
         "name": "warn_if_content_vanished",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
-      },
-      {
-        "name": "warn_turn_diagnostics",
-        "file": "src/inference/orchestrator.cpp",
-        "version": "2.11.0"
       }
     ]
   },
@@ -220,13 +180,8 @@
     "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
     "functions": [
       {
-        "name": "require_ready_backend",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_release_model",
-        "file": "src/facade/entropic.cpp",
+        "name": "host_memlock_limit_bytes",
+        "file": "src/inference/device_memory.cpp",
         "version": "2.13.0"
       },
       {
@@ -235,23 +190,33 @@
         "version": "2.13.0"
       },
       {
-        "name": "ensure_model",
+        "name": "resolve_auto_gpu_layers",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "release_models",
+        "name": "config_admits",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "release_backend",
+        "name": "refuse_residency",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       },
       {
         "name": "announce_eviction",
         "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "mlock_refused",
+        "file": "src/inference/partial_offload.h",
+        "version": "2.13.0"
+      },
+      {
+        "name": "gpu_offload_refused",
+        "file": "src/inference/partial_offload.h",
         "version": "2.13.0"
       }
     ]
@@ -266,46 +231,24 @@
         "version": "2.13.0"
       },
       {
+        "name": "last_routing_result",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "1.8.2"
+      },
+      {
+        "name": "loaded_models",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.1.11"
+      },
+      {
         "name": "can_handoff",
         "file": "src/inference/orchestrator.cpp",
         "version": "1.8.2"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-023",
-    "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
-    "functions": [
-      {
-        "name": "entropic_adapter_load",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
       },
       {
-        "name": "load",
-        "file": "src/inference/adapter_manager.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "release_handles_for_model",
-        "file": "src/inference/adapter_manager.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-024",
-    "req_name": "Backends declare capabilities and expose state and log-probability introspection",
-    "functions": [
-      {
-        "name": "entropic_get_logprobs",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_compute_perplexity",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
+        "name": "clear_all_prompt_caches",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.1.11"
       }
     ]
   },
@@ -313,11 +256,6 @@
     "req_id": "REQ-INFER-025",
     "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
     "functions": [
-      {
-        "name": "entropic_model_has_vision",
-        "file": "src/facade/entropic.cpp",
-        "version": "2.13.0"
-      },
       {
         "name": "tier_declares_vision",
         "file": "src/inference/orchestrator.cpp",
@@ -332,6 +270,27 @@
         "name": "select_vision_tier",
         "file": "src/inference/orchestrator.cpp",
         "version": "2.1.8"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-TYPE-005",
+    "req_name": "Config types declare their own defaults; optional means absent, not default",
+    "functions": [
+      {
+        "name": "parse_gpu_layers",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_model_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "parse_tier_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.10.4"
       }
     ]
   }

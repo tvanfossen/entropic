@@ -157,6 +157,22 @@ struct ModelConfig {
     int context_length = 16384;              ///< Context window size (512–131072)
     int gpu_layers = -1;                     ///< GPU offload layers (-1 = all)
 
+    /// @brief Derive `gpu_layers` from free VRAM at admission (gh#148).
+    ///
+    /// Set by `gpu_layers: auto` in YAML. The engine then computes the
+    /// split from the GGUF's size and the VRAM the device reports free,
+    /// and LOGS the number it chose. Opt-in, because a derived split is a
+    /// decision the operator should have asked for: the engine otherwise
+    /// takes `gpu_layers` verbatim, and a clamp it applied on its own
+    /// would be exactly the silent behaviour this codebase refuses.
+    ///
+    /// It derives the LAYER SPLIT and nothing else — in particular it does
+    /// not touch `use_mlock`, which the model-test harness used to flip off
+    /// behind the operator's back for oversized models. That combination is
+    /// refused loudly instead.
+    /// @version 2.13.0
+    bool gpu_layers_auto = false;
+
     /// @brief Keep this model resident in host RAM (WARM) when it leaves the
     /// active slot, instead of unloading it (gh#157).
     ///

@@ -247,6 +247,23 @@ target_link_libraries(entropic-release-model-tests PRIVATE
     Catch2::Catch2WithMain
 )
 
+# gh#148 (v2.13.0): whole-file load counting. SEPARATE binary so the
+# process-wide counter is not perturbed by another test's model load.
+add_executable(entropic-load-count-tests
+    inference/load_count_test.cpp
+)
+target_include_directories(entropic-load-count-tests PRIVATE
+    ${PROJECT_SOURCE_DIR}/src/inference
+)
+target_link_libraries(entropic-load-count-tests PRIVATE
+    entropic::inference
+    entropic-core
+    entropic-types
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    Catch2::Catch2WithMain
+)
+
 # v1.9.2: Adapter manager tests (uses mock llama.cpp adapter symbols)
 add_executable(entropic-adapter-tests
     inference/adapter_manager_test.cpp
@@ -600,6 +617,7 @@ catch_discover_tests(entropic-inference-tests)
 catch_discover_tests(entropic-inference-orch-realmodel-tests)
 catch_discover_tests(entropic-deferred-load-tests)
 catch_discover_tests(entropic-release-model-tests)
+catch_discover_tests(entropic-load-count-tests)
 catch_discover_tests(entropic-adapter-tests)
 catch_discover_tests(entropic-speculative-compat-tests)
 catch_discover_tests(entropic-secondary-loader-tests)

@@ -299,6 +299,31 @@ llama_load_mode mmap_load_mode(bool use_mlock) {
     return use_mlock ? LLAMA_LOAD_MODE_MMAP_MLOCK : LLAMA_LOAD_MODE_MMAP;
 }
 
+/// @brief Whole-file tier-model loads performed in this process (gh#148).
+/// Relaxed atomic: the add costs nothing beside a multi-second file load,
+/// so the counter is compiled in unconditionally rather than behind a test
+/// macro that would let the instrumented and shipped paths diverge.
+std::atomic<std::uint64_t> g_model_file_loads{0};
+
+/**
+ * @brief Load a tier model from file, counting the load (gh#148).
+ *
+ * Every whole-file load of a TIER model goes through here, so the counter
+ * cannot drift from the call sites. The MTP head loads directly — it is a
+ * separate GGUF with its own lifecycle (see `model_file_loads`).
+ *
+ * @param path GGUF path.
+ * @param mparams Load parameters (n_gpu_layers decides the residency).
+ * @return Loaded model, or nullptr.
+ * @utility
+ * @version 2.13.0
+ */
+llama_model* load_tier_model(const char* path,
+                             const llama_model_params& mparams) {
+    g_model_file_loads.fetch_add(1, std::memory_order_relaxed);
+    return llama_model_load_from_file(path, mparams);
+}
+
 /**
  * @brief Build llama_model_params for GPU model load.
  *
@@ -334,29 +359,44 @@ llama_model_params build_load_mparams(const entropic::ModelConfig& cfg) {
  * @param config Validated model config.
  * @return true on success.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 bool LlamaCppBackend::do_load(const ModelConfig& config) {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     mparams.load_mode = mmap_load_mode(config.use_mlock);
 
-    model_ = llama_model_load_from_file(config.path.c_str(), mparams);
+    model_ = load_tier_model(config.path.c_str(), mparams);
     if (!model_) {
         last_error_ = "llama_model_load_from_file failed: " + config.path.string();
         return false;
     }
 
-    vocab_ = llama_model_get_vocab(model_);
-    is_recurrent_ = llama_model_is_recurrent(model_);
-    is_hybrid_ = llama_model_is_hybrid(model_);  // gh#97: attn + recurrent/SSM
-    // v2.3.10: wire the Tokenizer seam now that vocab_ is valid.
-    // Lifetime: tokenizer_ borrows vocab_; do_unload resets
-    // tokenizer_ BEFORE freeing the model so the borrow never dangles.
-    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
+    bind_model_handles();
     logger->info("Model loaded (CPU): {} tokens in vocab, recurrent={}",
               llama_vocab_n_tokens(vocab_), is_recurrent_);
     return true;
+}
+
+/**
+ * @brief Bind vocab, tokenizer and arch flags to the loaded `model_`.
+ *
+ * Every successful tier-model load ends here (gh#148), so no path can
+ * refresh the vocab and leave `is_recurrent_` / `is_hybrid_` stale —
+ * which `load_gpu_model` and `reload_model_cpu_only` both did until
+ * v2.13.0, relying on `do_load` having set them first.
+ *
+ * Lifetime: tokenizer_ borrows vocab_; do_unload resets tokenizer_ BEFORE
+ * freeing the model so the borrow never dangles.
+ *
+ * @dg_internal
+ * @version 2.13.0
+ */
+void LlamaCppBackend::bind_model_handles() {
+    vocab_ = llama_model_get_vocab(model_);
+    is_recurrent_ = llama_model_is_recurrent(model_);
+    is_hybrid_ = llama_model_is_hybrid(model_);  // gh#97: attn + recurrent/SSM
+    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
 }
 
 /**
@@ -444,10 +484,24 @@ llama_context_params build_cparams(const entropic::ModelConfig& cfg) {
  *
  * @return true on success.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 bool LlamaCppBackend::do_activate() {
     if (!load_gpu_model()) { return false; }
+    return finish_activation();
+}
+
+/**
+ * @brief Context + sampler + mmproj — the tail both activation paths share.
+ *
+ * Split out of `do_activate` in v2.13.0 (gh#148) so the one-read cold path
+ * and the WARM promotion cannot drift apart.
+ *
+ * @return true on success.
+ * @dg_internal
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::finish_activation() {
     if (!create_inference_context()) { return false; }
     // v2.3.10: wire the Sampler seam once ctx_ / vocab_ are live.
     // Lifetime: factory borrows ctx_ + vocab_; do_deactivate /
@@ -457,6 +511,48 @@ bool LlamaCppBackend::do_activate() {
         ctx_, vocab_);
     init_mmproj_if_configured();
     return true;
+}
+
+/**
+ * @brief COLD → ACTIVE in ONE whole-file read (gh#148).
+ *
+ * The base class default is `do_load` + `do_activate`: the first reads the
+ * whole GGUF with `n_gpu_layers = 0`, the second frees that model and reads
+ * the whole GGUF again with the configured split. Nothing consumed the CPU
+ * placement in between — it was a full read of a file that can be 13 GB,
+ * for nothing. This reads it once, with the placement the config asked for.
+ *
+ * WARM → ACTIVE still reloads (design decision #19): llama.cpp binds
+ * offloading to the model load, so a model already in host RAM cannot
+ * re-place its layers without being read again. That is what `keep_warm`
+ * pays for, and it is untouched.
+ *
+ * @param config Validated model config.
+ * @return true on success; sets last_error_ on failure.
+ * @req REQ-INFER-002
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::do_load_active(const ModelConfig& config) {
+    llama_model_params mparams = build_load_mparams(config);
+
+    model_ = load_tier_model(config.path.c_str(), mparams);
+    if (model_ == nullptr) {
+        // llama.cpp returns null with no error string — the reason (OOM,
+        // CUDA init failure, GGUF parse error) is only in ggml's log stream.
+        last_error_ = "Failed to load model into target residency "
+                      "(path=" + config.path.string()
+                    + ", gpu_layers=" + std::to_string(config.gpu_layers)
+                    + ") — check llama_ggml.log in the engine's log_dir "
+                      "for the underlying llama.cpp/CUDA error";
+        return false;
+    }
+
+    bind_model_handles();
+    logger->info("Model loaded into target residency: gpu_layers={}, "
+                 "{} tokens in vocab, recurrent={}",
+                 config.gpu_layers, llama_vocab_n_tokens(vocab_),
+                 is_recurrent_);
+    return finish_activation();
 }
 
 /**
@@ -474,7 +570,7 @@ bool LlamaCppBackend::do_activate() {
  * metadata/buffers) without changing the load contract.
  *
  * @dg_internal
- * @version 2.7.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::load_gpu_model() {
     llama_model_params mparams = build_load_mparams(config());
@@ -495,7 +591,7 @@ bool LlamaCppBackend::load_gpu_model() {
         vocab_ = nullptr;
     }
 
-    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    model_ = load_tier_model(config().path.c_str(), mparams);
     if (model_ == nullptr) {
         // llama.cpp returns null with no error string — the actual
         // reason (OOM, CUDA init failure, GGUF parse error, etc.) only
@@ -510,8 +606,7 @@ bool LlamaCppBackend::load_gpu_model() {
         return false;
     }
 
-    vocab_ = llama_model_get_vocab(model_);
-    tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
+    bind_model_handles();
     return true;
 }
 
@@ -747,17 +842,16 @@ void LlamaCppBackend::do_deactivate() {
  * success rebinds model_/vocab_/tokenizer_; on failure leaves model_ null
  * (recoverable — the next activate reloads from scratch).
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 void LlamaCppBackend::reload_model_cpu_only() {
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
     mparams.load_mode = mmap_load_mode(config().use_mlock);
 
-    model_ = llama_model_load_from_file(config().path.c_str(), mparams);
+    model_ = load_tier_model(config().path.c_str(), mparams);
     if (model_ != nullptr) {
-        vocab_ = llama_model_get_vocab(model_);
-        tokenizer_ = std::make_unique<LlamaCppTokenizer>(vocab_);
+        bind_model_handles();
     } else {
         // VRAM is released, but the warm-reload failed: leave the handle
         // null (state stays recoverable — the next activate reloads from
@@ -767,6 +861,25 @@ void LlamaCppBackend::reload_model_cpu_only() {
                       "(path={}); backend left unloaded until next activate",
                       config().path.string());
     }
+}
+
+/**
+ * @brief Whole-file tier-model loads in this process (gh#148). See header.
+ * @return Cumulative count.
+ * @utility
+ * @version 2.13.0
+ */
+std::uint64_t LlamaCppBackend::model_file_loads() {
+    return g_model_file_loads.load(std::memory_order_relaxed);
+}
+
+/**
+ * @brief Reset the whole-file load counter (gh#148, test surface).
+ * @utility
+ * @version 2.13.0
+ */
+void LlamaCppBackend::reset_model_file_loads() {
+    g_model_file_loads.store(0, std::memory_order_relaxed);
 }
 
 /**

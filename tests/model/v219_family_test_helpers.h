@@ -20,7 +20,9 @@
 #include "model_test_context.h"
 
 // v2.12.0: adaptive partial-offload split from actual free VRAM.
-#include "../../src/inference/device_memory.h"
+// gh#148 (v2.13.0): the split itself now comes from the engine via
+// `gpu_layers: auto`; what is still read here is the host-RAM predicate
+// and the large-model waiver.
 #include "../../src/inference/partial_offload.h"
 
 /**
@@ -195,8 +197,12 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
         // moved OFF the GPU adds ~330 MB to system RAM for this model, so
         // "more CPU offload" makes an OOM worse, not better. Fitting more
         // into VRAM is what reduces the host-side footprint.
-        tier.gpu_layers = entropic::partial_gpu_layers_for(
-            file_size, entropic::query_device_free_vram_bytes());
+        // gh#148 (v2.13.0): ask the ENGINE for the split instead of
+        // computing it here. The rule is the same one (partial_gpu_layers_for
+        // against free VRAM) — it now lives behind `gpu_layers: auto`, so the
+        // harness and a consumer's config get the identical derivation
+        // rather than the harness being the only place that knows it.
+        tier.gpu_layers_auto = true;
         // v2.12.0: and UNPIN it. Clamping gpu_layers puts ~6.6 GB of a 13 GB
         // GGUF on the CPU side, but use_mlock defaults to true, so llama.cpp
         // tries to lock that portion into unevictable RAM — locking up to
@@ -212,22 +218,22 @@ inline bool init_orchestrator_for_v219_family(ModelTestContext& ctx,
         // fit; for one that does not, it is precisely wrong.
         tier.use_mlock = false;
         spdlog::warn("v2.1.9 family: '{}' GGUF is {} bytes (>{} GB) — "
-                     "fitting {} layers to {} MiB free VRAM and disabling "
-                     "mlock so the CPU-side portion stays pageable "
+                     "gpu_layers=auto (engine fits the split to free VRAM at "
+                     "admission and logs it) and mlock disabled so the "
+                     "CPU-side portion stays pageable "
                      "(dev-box small-VRAM accommodation)",
                      key, file_size,
-                     LARGE_GGUF_BYTES / (1024ULL * 1024 * 1024),
-                     tier.gpu_layers,
-                     entropic::query_device_free_vram_bytes()
-                         / (1024ULL * 1024));
+                     LARGE_GGUF_BYTES / (1024ULL * 1024 * 1024));
     }
 
     ctx.model_path = path.string();
 
+    const std::string layers_desc = tier.gpu_layers_auto
+        ? std::string("auto") : std::to_string(tier.gpu_layers);
     spdlog::info("v2.1.9 family override: tier={} key={} adapter={} "
                  "context_length={} gpu_layers={} path={}",
                  ctx.config.models.default_tier, key, entry->adapter,
-                 V219_TEST_CTX, tier.gpu_layers, path.string());
+                 V219_TEST_CTX, layers_desc, path.string());
     if (!init_orchestrator(ctx)) {
         // gh#149: init_orchestrator already recorded a load failure, but it
         // only knows the TIER name. Restate it with the registry key the

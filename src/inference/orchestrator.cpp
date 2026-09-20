@@ -18,6 +18,7 @@
 #include "llama_cpp_backend.h"
 #include "empty_content_diagnosis.h"
 #include "device_memory.h"
+#include "partial_offload.h"   // gh#148 refusal predicates
 #include "vram_footprint.h"
 #include "response_parse.h"
 #include "grammar_source.h"    // gh#154: provenance for the result record
@@ -1309,6 +1310,119 @@ void ModelOrchestrator::log_fit_recommendation(
 }
 
 /**
+ * @brief Resolve `gpu_layers: auto` against measured free VRAM (gh#148).
+ *
+ * Writes the derived split into the tier's config so the activation that
+ * follows loads with it, and LOGS the number — a derived value nobody can
+ * see is indistinguishable from a silent clamp. No-op unless the tier
+ * opted in, and no-op when VRAM is unmeasured (a CPU build, or no device),
+ * where the configured default stands.
+ *
+ * The layer count is the documented estimate `partial_gpu_layers_for`
+ * carries: the real one is GGUF metadata the admission gate does not read,
+ * and the estimate errs LOW, which leaves GPU capacity unused rather than
+ * overcommitting the card.
+ *
+ * @param tier_name Tier being admitted.
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+void ModelOrchestrator::resolve_auto_gpu_layers(const std::string& tier_name) {
+    auto it = config_.models.tiers.find(tier_name);
+    if (it == config_.models.tiers.end() || !it->second.gpu_layers_auto) {
+        return;
+    }
+    std::error_code ec;
+    auto file_bytes = std::filesystem::file_size(it->second.path, ec);
+    if (ec || vram_budget_bytes_ == 0) {
+        logger->warn("[residency] tier '{}': gpu_layers=auto cannot be "
+                     "resolved ({}) — keeping gpu_layers={}", tier_name,
+                     ec ? "model file unreadable" : "free VRAM unknown",
+                     it->second.gpu_layers);
+        return;
+    }
+    const int layers = partial_gpu_layers_for(
+        static_cast<uint64_t>(file_bytes), vram_budget_bytes_);
+    logger->info("[residency] tier '{}': gpu_layers=auto -> {} "
+                 "({} MiB model, {} MiB free VRAM)", tier_name, layers,
+                 file_bytes / (1024 * 1024),
+                 vram_budget_bytes_ / (1024 * 1024));
+    it->second.gpu_layers = layers;
+}
+
+/**
+ * @brief Refuse an explicit configuration that cannot work (gh#148).
+ *
+ * Two measurements, each with an exact answer, each previously left to be
+ * discovered as a kill or an abort:
+ *   - `use_mlock` on a model larger than `RLIMIT_MEMLOCK` allows. Pinned
+ *     pages cannot be reclaimed, which is what turned partial offload of a
+ *     13 GB model from slow into OOM-killed. The harness used to flip the
+ *     flag off silently; the operator is told instead.
+ *   - A GPU offload requested on a card with less free VRAM than the
+ *     compute buffers alone need.
+ *
+ * Both predicates are floor-gated to LARGE models (see partial_offload.h):
+ * refusing a configuration that works is a worse failure than missing one
+ * that does not, and neither rule can fire on an ordinary model.
+ *
+ * @param tier_name Tier being admitted.
+ * @return true to proceed; false with `last_residency_error_` set.
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+bool ModelOrchestrator::config_admits(const std::string& tier_name) {
+    auto it = config_.models.tiers.find(tier_name);
+    if (it == config_.models.tiers.end()) { return true; }
+    const auto& cfg = it->second;
+    std::error_code ec;
+    auto file_bytes = std::filesystem::file_size(cfg.path, ec);
+    if (ec) { return true; }
+
+    const uint64_t memlock = host_memlock_limit_bytes();
+    bool refused = true;
+    if (mlock_refused(cfg.use_mlock, file_bytes, cfg.gpu_layers, memlock)) {
+        refuse_residency(tier_name, ENTROPIC_ERROR_MLOCK_LIMIT_EXCEEDED,
+            "use_mlock would pin " + std::to_string(file_bytes)
+            + " bytes against an RLIMIT_MEMLOCK of "
+            + std::to_string(memlock)
+            + " bytes. Pinned pages cannot be reclaimed under pressure, so "
+              "a partially offloaded model of this size is killed rather "
+              "than paged. Set use_mlock: false for this tier.");
+    } else if (gpu_offload_refused(file_bytes, cfg.gpu_layers,
+                                   vram_budget_bytes_)) {
+        refuse_residency(tier_name, ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE,
+            "gpu_layers=" + std::to_string(cfg.gpu_layers) + " cannot fit: "
+            + std::to_string(vram_budget_bytes_ / (1024 * 1024))
+            + " MiB of free VRAM is not enough for the compute buffers "
+              "alone, so no positive layer count can work. Free VRAM, or "
+              "set gpu_layers: 0 to run on the CPU.");
+    } else {
+        refused = false;
+    }
+    return !refused;
+}
+
+/**
+ * @brief Log a refusal and stash its typed code + message (gh#148).
+ * @param tier_name Tier being refused.
+ * @param code Typed error the facade will surface.
+ * @param why Operator-actionable explanation.
+ * @dg_internal
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+void ModelOrchestrator::refuse_residency(const std::string& tier_name,
+                                         entropic_error_t code,
+                                         const std::string& why) {
+    logger->error("[residency] tier '{}' refused: {}", tier_name, why);
+    last_residency_error_ = code;
+    last_residency_message_ = "Tier '" + tier_name + "': " + why;
+}
+
+/**
  * @brief VRAM-budget admission test (gh#57).
  *
  * Estimates the tier's footprint, memoizes it, and rejects with
@@ -1316,9 +1430,15 @@ void ModelOrchestrator::log_fit_recommendation(
  * estimate exceeds a known engine VRAM budget. Returns true to admit.
  *
  * @dg_internal
- * @version 2.11.0
+ * @version 2.13.0
  */
 bool ModelOrchestrator::residency_admits(const std::string& tier_name) {
+    // gh#148: resolve `gpu_layers: auto` and refuse a config that provably
+    // cannot work, BEFORE pricing the footprint — both change what is being
+    // priced, and both are loud rather than silently corrected.
+    resolve_auto_gpu_layers(tier_name);
+    if (!config_admits(tier_name)) { return false; }
+
     size_t footprint = estimate_footprint_bytes(tier_name);
     if (footprint > 0) {
         tier_footprint_bytes_[tier_name] = footprint;
@@ -1356,7 +1476,7 @@ bool ModelOrchestrator::residency_admits(const std::string& tier_name) {
  * generic `GENERATE_FAILED`. Always clears the stash.
  *
  * @dg_internal
- * @version 2.2.4
+ * @version 2.13.0
  */
 GenerationResult ModelOrchestrator::build_no_model_error(
     const std::string& tier_name) {
@@ -1364,9 +1484,14 @@ GenerationResult ModelOrchestrator::build_no_model_error(
     err.finish_reason = "error";
     if (last_residency_error_ != ENTROPIC_OK) {
         err.error_code = last_residency_error_;
-        err.error_message = "Tier '" + tier_name + "' model exceeds the "
-                            "engine's VRAM budget (gh#57)";
+        // gh#148: a typed refusal carries the setting to change. Fall back
+        // to the gh#57 budget wording when nothing was stashed.
+        err.error_message = !last_residency_message_.empty()
+            ? last_residency_message_
+            : "Tier '" + tier_name + "' model exceeds the "
+              "engine's VRAM budget (gh#57)";
         last_residency_error_ = ENTROPIC_OK;
+        last_residency_message_.clear();
     } else {
         err.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
         err.error_message = "No model available for tier: " + tier_name;

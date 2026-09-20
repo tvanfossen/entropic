@@ -153,6 +153,31 @@ static std::string resolve_model_path(
 }
 
 /**
+ * @brief Parse `gpu_layers`, which may be a count or the word `auto` (gh#148).
+ *
+ * `auto` is an explicit opt-in to have the engine derive the offload split
+ * from free VRAM at admission time; anything else is taken verbatim, as
+ * every `gpu_layers` value always has been. A tier that says `auto` keeps
+ * `gpu_layers` at its default until the gate resolves it, so nothing
+ * downstream sees a half-resolved value.
+ *
+ * @param node YAML node for the model/tier.
+ * @param[out] config Output model config.
+ * @dg_internal
+ * @req REQ-CFG-005
+ * @req REQ-TYPE-005
+ * @version 2.13.0
+ */
+static void parse_gpu_layers(ryml::ConstNodeRef node, ModelConfig& config) {
+    std::string raw;
+    if (extract(node, "gpu_layers", raw) && raw == "auto") {
+        config.gpu_layers_auto = true;
+        return;
+    }
+    extract(node, "gpu_layers", config.gpu_layers);
+}
+
+/**
  * @brief Parse a ModelConfig from a YAML node.
  * @param node YAML node containing model fields.
  * @param registry Bundled models for path resolution.
@@ -161,7 +186,7 @@ static std::string resolve_model_path(
  * @req REQ-CFG-003
  * @req REQ-CFG-005
  * @req REQ-TYPE-005
- * @version 2.8.0
+ * @version 2.13.0
  */
 static std::string parse_model_config(
     ryml::ConstNodeRef node,
@@ -173,7 +198,7 @@ static std::string parse_model_config(
 
     extract(node, "adapter", config.adapter);
     extract(node, "context_length", config.context_length);
-    extract(node, "gpu_layers", config.gpu_layers);
+    parse_gpu_layers(node, config);
     extract(node, "keep_warm", config.keep_warm);
     extract(node, "use_mlock", config.use_mlock);
     extract(node, "reasoning_budget", config.reasoning_budget);

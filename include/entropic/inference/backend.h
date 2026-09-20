@@ -100,10 +100,24 @@ public:
     void unload();
 
     /**
-     * @brief Convenience: load() + activate().
-     * @param config Model configuration passed through to load().
-     * @return true on success (both load and activate succeeded).
-     * @version 1.8.2
+     * @brief Bring a model to ACTIVE in as few file reads as possible.
+     *
+     * From COLD this is ONE whole-file read, straight into the residency
+     * the config asks for (gh#148). It used to be `load()` then
+     * `activate()`: the first read placed every layer on the CPU with
+     * `n_gpu_layers = 0`, and the second immediately threw that model away
+     * and read the whole file again with the configured split. One cold
+     * activation, two whole-file reads of a file that can be 13 GB.
+     *
+     * From WARM it promotes, which IS still a reload — llama.cpp ties
+     * offloading to the model load (design decision #19), so a WARM model
+     * cannot re-place its layers without being read again. That path is
+     * what `keep_warm` buys and is deliberately unchanged.
+     *
+     * @param config Model configuration (path, context length, gpu_layers).
+     * @return true when the backend is ACTIVE afterwards.
+     * @req REQ-INFER-002
+     * @version 2.13.0
      */
     bool load_and_activate(const ModelConfig& config);
 
@@ -489,6 +503,24 @@ protected:
     virtual bool do_activate() = 0;
 
     /**
+     * @brief Load COLD → ACTIVE in one step. Called under transition_mutex_.
+     *
+     * The default is the historical behaviour — load, then activate — so a
+     * subclass that has no cheaper route (and every mock) keeps working
+     * unchanged. `LlamaCppBackend` overrides it to read the file ONCE with
+     * the configured `gpu_layers` instead of reading it once for the CPU
+     * placement and again for the real one (gh#148).
+     *
+     * @param config Validated model config.
+     * @return true on success. Set last_error_ on failure.
+     * @req REQ-INFER-002
+     * @version 2.13.0
+     */
+    virtual bool do_load_active(const ModelConfig& config) {
+        return do_load(config) && do_activate();
+    }
+
+    /**
      * @brief Release GPU, keep CPU. Called under transition_mutex_.
      * @version 1.8.2
      */
@@ -751,6 +783,21 @@ protected:
      * @version 1.9.1
      */
     bool fire_model_load_hook(const ModelConfig& config);  ///< @dg_internal
+
+    /**
+     * @brief WARM → ACTIVE promotion. CALLER MUST HOLD transition_mutex_.
+     *
+     * Extracted from `activate()` (gh#148) so `load_and_activate` can pick
+     * between the one-read cold path and this promotion under a SINGLE
+     * acquisition of the non-recursive transition mutex.
+     *
+     * @return true when the backend is ACTIVE afterwards; false when it was
+     *         neither WARM nor ACTIVE, or the activation failed.
+     * @dg_internal
+     * @req REQ-INFER-002
+     * @version 2.13.0
+     */
+    bool promote_to_active();
 
     /**
      * @brief Set the hook dispatch interface.

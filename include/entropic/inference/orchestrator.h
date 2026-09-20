@@ -754,6 +754,16 @@ private:
     entropic_error_t last_residency_error_{ENTROPIC_OK};
 
     /**
+     * @brief Operator-actionable text for `last_residency_error_` (gh#148).
+     *
+     * Empty falls back to the gh#57 VRAM-budget wording. A typed refusal
+     * that cannot say WHICH setting to change is only half a diagnosis,
+     * and the two gh#148 refusals each name a different one.
+     * @version 2.13.0
+     */
+    std::string last_residency_message_;
+
+    /**
      * @brief Compute the cached/estimated footprint for a tier in bytes.
      *
      * Weights priced by their offload placement + context-length × a
@@ -859,11 +869,49 @@ private:
     /**
      * @brief Run the VRAM-budget gate for a tier. Returns true to
      *        proceed with load; false (with `last_residency_error_`
-     *        set to `TIER_MODEL_TOO_LARGE`) means refuse the activation.
+     *        set) means refuse the activation.
+     *
+     * gh#148 (v2.13.0) added two steps ahead of the footprint check:
+     * `gpu_layers: auto` is resolved, and an explicit configuration that
+     * provably cannot work is refused with a typed code.
+     *
      * @dg_internal
-     * @version 2.2.4
+     * @req REQ-INFER-019
+     * @version 2.13.0
      */
     bool residency_admits(const std::string& tier_name);
+
+    /**
+     * @brief Resolve `gpu_layers: auto` from measured free VRAM (gh#148).
+     * @param tier_name Tier being admitted.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void resolve_auto_gpu_layers(const std::string& tier_name);
+
+    /**
+     * @brief Refuse an explicit config that provably cannot work (gh#148).
+     * @param tier_name Tier being admitted.
+     * @return true to proceed; false with `last_residency_error_` set.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    bool config_admits(const std::string& tier_name);
+
+    /**
+     * @brief Log a refusal and stash its typed code + message (gh#148).
+     * @param tier_name Tier being refused.
+     * @param code Typed error the facade will surface.
+     * @param why Operator-actionable explanation.
+     * @dg_internal
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    void refuse_residency(const std::string& tier_name,
+                          entropic_error_t code,
+                          const std::string& why);
 
     /**
      * @brief Load + activate a tier with residency bookkeeping. Returns

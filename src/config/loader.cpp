@@ -267,7 +267,7 @@ static std::string parse_tier_config(
  * @return Empty string on success, error message on failure.
  * @req REQ-CFG-001
  * @req REQ-CFG-002
- * @version 1.8.2
+ * @version 2.13.0
  */
 static std::string parse_models_config(
     ryml::ConstNodeRef node,
@@ -275,6 +275,8 @@ static std::string parse_models_config(
     ModelsConfig& config)
 {
     extract(node, "default", config.default_tier);
+    // gh#157 (v2.13.0): opt-in lazy load of the default tier.
+    extract(node, "defer_load", config.defer_load);
 
     if (node.has_child("router")) {
         config.router.emplace();
@@ -287,7 +289,7 @@ static std::string parse_models_config(
 
     for (auto child : node) {
         std::string key = to_string(child.key());
-        if (key == "default" || key == "router") {
+        if (key == "default" || key == "router" || key == "defer_load") {
             continue;
         }
         if (!child.is_map()) {

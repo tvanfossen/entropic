@@ -156,7 +156,17 @@ struct ModelConfig {
     std::string adapter = "qwen35";          ///< Chat adapter name
     int context_length = 16384;              ///< Context window size (512–131072)
     int gpu_layers = -1;                     ///< GPU offload layers (-1 = all)
-    bool keep_warm = false;                  ///< Pre-warm model at startup
+
+    /// @brief Keep this model resident in host RAM (WARM) when it leaves the
+    /// active slot, instead of unloading it (gh#157).
+    ///
+    /// Read by the swap-out path only. It has never controlled STARTUP
+    /// loading, though it was documented as "pre-warm model at startup"
+    /// from v1.8.0 to v2.12.2 — the default tier loaded at init regardless
+    /// of this flag. Startup behaviour is `ModelsConfig::defer_load`.
+    /// @version 2.13.0
+    bool keep_warm = false;
+
     bool use_mlock = true;                   ///< Lock model in system RAM
 
     /* ── llama.cpp pass-through ────────────────────────── */
@@ -619,6 +629,24 @@ struct ModelsConfig {
     std::unordered_map<std::string, TierConfig> tiers; ///< Tier name → config
     std::optional<ModelConfig> router;                  ///< Router model (separate from tiers)
     std::string default_tier = "lead";                  ///< Default tier name
+
+    /// @brief Defer the default tier's model load to first use (gh#157).
+    ///
+    /// `false` (default) keeps the pre-2.13.0 behaviour exactly: the default
+    /// tier is loaded and activated during `entropic_configure*`. `true`
+    /// leaves it COLD until the first thing that needs it asks — a
+    /// generation, or any of the evaluation / state APIs — at which point it
+    /// loads through the same residency gate and fires the same
+    /// `ENTROPIC_RESIDENCY_LOADED` event as a mid-session tier swap.
+    ///
+    /// This is a NEW key rather than a meaning for `keep_warm`
+    /// (which governs swap-out, not startup, and defaults to false): reusing
+    /// it would have made every existing consumer lazy without their
+    /// asking — a behaviour change disguised as a doc fix.
+    ///
+    /// @par YAML key: models.defer_load
+    /// @version 2.13.0
+    bool defer_load = false;
 
     /**
      * @brief Find tier name by model path.

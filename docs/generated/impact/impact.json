@@ -1,87 +1,301 @@
 [
   {
-    "req_id": "REQ-MCP-021",
-    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
+    "req_id": "REQ-ABI-001",
+    "req_name": "Pure C at every .so boundary \u2014 opaque handles and explicit ownership",
     "functions": [
       {
-        "name": "collect_glob_matches",
-        "file": "src/mcp/servers/filesystem.cpp",
+        "name": "entropic_state_save",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/filesystem.cpp",
+        "name": "entropic_state_load",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-022",
-    "req_name": "Glob, grep, and read honour .gitignore plus .explorerignore semantics",
+    "req_id": "REQ-ABI-002",
+    "req_name": "C++ exceptions never cross any .so boundary",
     "functions": [
       {
-        "name": "collect_glob_matches",
-        "file": "src/mcp/servers/filesystem.cpp",
+        "name": "entropic_state_save",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "grep_search",
-        "file": "src/mcp/servers/filesystem.cpp",
+        "name": "entropic_state_load",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/filesystem.cpp",
+        "name": "entropic_adapter_load",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "is_skipped_dir_name",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_get_logprobs",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "compile_pattern",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_compute_perplexity",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "push_rule",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_model_has_vision",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-004",
+    "req_name": "Three configure entry points, one shared body, one-shot per handle",
+    "functions": [
+      {
+        "name": "validate_prompt_sources",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "add_pattern",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "configure_common",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-005",
+    "req_name": "Uniform precondition guard on every exported entry point",
+    "functions": [
+      {
+        "name": "entropic_state_save",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "load_file",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_state_load",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "load",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_adapter_load",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "load_nested_gitignores",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_get_logprobs",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "visit_discovery_entry",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_compute_perplexity",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "prunes_discovery",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "entropic_model_has_vision",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-API-008",
+    "req_name": "Single cross-boundary allocator pair and explicit ownership transfer",
+    "functions": [
+      {
+        "name": "entropic_get_logprobs",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-001",
+    "req_name": "Layered configuration resolution with most-specific-layer-wins precedence",
+    "functions": [
+      {
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-CFG-002",
+    "req_name": "Whole-block replace semantics for models and routing across layers",
+    "functions": [
+      {
+        "name": "parse_models_config",
+        "file": "src/config/loader.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-005",
+    "req_name": "Every decode path honours cooperative cancellation within one token",
+    "functions": [
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-007",
+    "req_name": "Named grammars are registered, validated, and resolved by a fixed precedence",
+    "functions": [
+      {
+        "name": "warn_tier_grammars_step",
+        "file": "src/facade/entropic.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "is_ignored",
-        "file": "src/mcp/servers/ignore_matcher.cpp",
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "resolve_grammar_key",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "refuse_unresolved_tier_grammar",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-008",
+    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
+    "functions": [
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "finish_generation",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "record_generation",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "generation_records",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-010",
+    "req_name": "One template-first / adapter-second rule parses every raw emission",
+    "functions": [
+      {
+        "name": "apply_adapter_parse",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.10.3"
+      },
+      {
+        "name": "warn_if_content_vanished",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "warn_turn_diagnostics",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.11.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-011",
+    "req_name": "Reasoning-block markers are declared once per model family",
+    "functions": [
+      {
+        "name": "generate_streaming",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-019",
+    "req_name": "Model pool dedup and VRAM residency policy govern which tier is resident",
+    "functions": [
+      {
+        "name": "require_ready_backend",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "activate_default_tier",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "ensure_model",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-023",
+    "req_name": "LoRA adapters hot-swap under a single-HOT-per-context constraint",
+    "functions": [
+      {
+        "name": "entropic_adapter_load",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "preload_adapters_for_model",
+        "file": "src/inference/orchestrator.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-024",
+    "req_name": "Backends declare capabilities and expose state and log-probability introspection",
+    "functions": [
+      {
+        "name": "entropic_get_logprobs",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "entropic_compute_perplexity",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-INFER-025",
+    "req_name": "Multimodal input is bounded, tier-gated and degrades gracefully",
+    "functions": [
+      {
+        "name": "entropic_model_has_vision",
+        "file": "src/facade/entropic.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "tier_declares_vision",
+        "file": "src/inference/orchestrator.cpp",
         "version": "2.13.0"
       }
     ]

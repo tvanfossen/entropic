@@ -359,6 +359,55 @@ SCENARIO("Comprehensive config exercises every parse_* helper",
     }
 }
 
+SCENARIO("gh#157: models.defer_load parses and is not mistaken for a tier",
+         "[config][loader][gh157][2.13.0]")
+{
+    GIVEN("a models block carrying defer_load beside the tiers") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  defer_load: true\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 0\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("defer_load is read and creates no phantom tier") {
+                REQUIRE(err.empty());
+                CHECK(config.models.defer_load);
+                CHECK(config.models.tiers.count("defer_load") == 0);
+                CHECK(config.models.tiers.count("lead") == 1);
+            }
+        }
+    }
+
+    GIVEN("a models block that omits defer_load") {
+        auto registry = load_test_registry();
+        entropic::ParsedConfig config;
+        std::string yaml =
+            "models:\n"
+            "  lead:\n"
+            "    path: primary\n"
+            "    gpu_layers: 0\n"
+            "  default: lead\n";
+
+        WHEN("the config is parsed") {
+            auto err = entropic::config::load_config_from_string(
+                yaml, registry, config);
+
+            THEN("it stays false — the pre-2.13.0 eager startup load") {
+                REQUIRE(err.empty());
+                CHECK_FALSE(config.models.defer_load);
+            }
+        }
+    }
+}
+
 SCENARIO("load_config_from_string drives parse_config_string + validate",
          "[config][loader][v2.3.10][coverage]")
 {

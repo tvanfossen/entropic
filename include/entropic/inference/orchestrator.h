@@ -271,6 +271,50 @@ public:
     InferenceBackend* get_backend(const std::string& tier_name) const;
 
     /**
+     * @brief Get a tier's backend, loading it if it is not resident (gh#157).
+     *
+     * The public face of the residency-gated activation path the generation
+     * entry points already use: admits the tier against the VRAM budget,
+     * swaps out the incumbent, activates, fires
+     * `ResidencyEvent::Loaded` and preloads the model's LoRA adapters.
+     *
+     * This exists because `models.defer_load` makes "no model is loaded yet"
+     * a normal state rather than a startup transient, and the non-generation
+     * consumers of a backend — `entropic_state_save`, `entropic_state_load`,
+     * `entropic_get_logprobs`, `entropic_compute_perplexity`,
+     * `entropic_adapter_load` — used to reach straight for `get_backend` and
+     * throw "model not active". They lazy-load through here instead.
+     *
+     * Takes the swap mutex. Callers that hold it must use `get_model`.
+     *
+     * @param tier_name Tier to make resident.
+     * @return ACTIVE backend, or nullptr when the tier is unknown, refused
+     *         by the residency gate, or fails to load.
+     * @utility
+     * @req REQ-INFER-019
+     * @version 2.13.0
+     */
+    InferenceBackend* ensure_model(const std::string& tier_name);
+
+    /**
+     * @brief Whether a tier is configured for vision, per CONFIG (gh#157).
+     *
+     * True when the tier declares the `"vision"` capability or carries an
+     * `mmproj` path. Deliberately does NOT consult the backend: the
+     * backend's answer comes from `has_vision_`, which is set while the
+     * mmproj context is built during ACTIVATION, so an unloaded tier
+     * reported "no vision" — a wrong answer, not an unknown one, and
+     * `models.defer_load` makes unloaded the normal state.
+     *
+     * @param tier_name Tier name.
+     * @return true when the configured tier is vision-capable.
+     * @utility
+     * @req REQ-INFER-025
+     * @version 2.13.0
+     */
+    bool tier_declares_vision(const std::string& tier_name) const;
+
+    /**
      * @brief Access the LoRA adapter manager.
      * @return Reference to AdapterManager.
      * @utility
@@ -873,10 +917,19 @@ private:
         const std::string& tier_name, llama_context* ctx);
 
     /**
-     * @brief Preload all configured tier adapters to WARM.
-     * @version 1.9.2
+     * @brief Preload the LoRA adapters of every tier sharing one backend,
+     *        at that backend's activation (gh#157).
+     *
+     * Replaces the init-time `preload_adapters()`, which required the base
+     * model to be loaded already and therefore skipped — permanently, with
+     * only a warning — every tier whose GGUF was not the default tier's.
+     *
+     * @param backend Freshly activated backend.
+     * @dg_internal
+     * @req REQ-INFER-023
+     * @version 2.13.0
      */
-    void preload_adapters();
+    void preload_adapters_for_model(InferenceBackend* backend);
 
     /**
      * @brief Build per-tier backends and adapters from config.

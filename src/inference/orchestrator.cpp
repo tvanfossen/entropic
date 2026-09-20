@@ -122,20 +122,40 @@ void ModelOrchestrator::build_routing_tables(const ParsedConfig& config) {
 
 /**
  * @brief Load and activate the default inference tier.
- * @param config Parsed engine config.
- * @return true on success, false on activation failure.
+ *
+ * gh#157 (v2.13.0): routes through `get_model` — the same residency-gated
+ * path a mid-session tier swap and a deferred first use take. Before this
+ * it called `load_and_activate` directly, so the eager startup load skipped
+ * the VRAM budget gate, fired no `Loaded` event and recorded no footprint:
+ * the one load every consumer performs was the one the residency
+ * bookkeeping could not see. Both paths are now identical after the load,
+ * which is what makes `defer_load` a scheduling choice rather than a
+ * different lifecycle.
+ *
+ * @param config Parsed engine config (unused — `config_` is already
+ *        assigned by `initialize`, and `get_model` reads it).
+ * @return true on success, false on a refused or failed activation.
  * @utility
- * @version 2.0.2
+ * @req REQ-INFER-019
+ * @version 2.13.0
  */
 bool ModelOrchestrator::activate_default_tier(const ParsedConfig& config) {
-    if (tiers_.find(default_tier_) == tiers_.end()) { return true; }
-    auto& backend = tiers_[default_tier_];
-    auto& tier_cfg = config.models.tiers.at(default_tier_);
-    if (!backend->load_and_activate(tier_cfg)) {
+    // gh#157: `models.defer_load` leaves the default tier COLD until the
+    // first caller needs it. Two idle hosts previously held two copies of
+    // the same 4.8 GB GGUF in VRAM without ever being sent a run.
+    const bool skip = config.models.defer_load
+        || tiers_.find(default_tier_) == tiers_.end();
+    if (skip) {
+        if (config.models.defer_load) {
+            logger->info("[residency] models.defer_load=true — default tier "
+                         "'{}' loads on first use", default_tier_);
+        }
+        return true;
+    }
+    if (get_model(default_tier_) == nullptr) {
         logger->error("Failed to activate default tier: {}", default_tier_);
         return false;
     }
-    loaded_main_tier_ = default_tier_;
     logger->info("Activated default tier: {}", default_tier_);
     return true;
 }
@@ -203,7 +223,7 @@ void ModelOrchestrator::activate_draft(const ParsedConfig& config) {
  * @param config Parsed engine config.
  * @return true on success.
  * @utility
- * @version 2.2.4
+ * @version 2.13.0
  */
 bool ModelOrchestrator::initialize(const ParsedConfig& config) {
     config_ = config;
@@ -237,11 +257,16 @@ bool ModelOrchestrator::initialize(const ParsedConfig& config) {
 
     if (!create_tier_backends(config)) { return false; }
     build_routing_tables(config);
+    // gh#157 (v2.13.0): a no-op when `models.defer_load` is set.
     if (!activate_default_tier(config)) { return false; }
     activate_router(config);
     activate_draft(config);      // Speculative draft slot (v2.1.11)
 
-    preload_adapters();          // LoRA adapters → WARM (v1.9.2)
+    // LoRA adapter preload moved to first activation of the owning model
+    // (gh#157): preloading here required the base model to already be
+    // loaded, so it silently warned-and-skipped for every tier whose GGUF
+    // was not the default one's — and `ensure_adapter_for_tier` then failed
+    // with "not found or COLD" on the swap that needed it.
     load_bundled_grammars();     // Bundled grammars (v1.9.3)
     return true;
 }
@@ -1349,7 +1374,7 @@ GenerationResult ModelOrchestrator::build_no_model_error(
  * @param backend   Backend shared with the tier_map entry.
  * @return Activated backend, or nullptr.
  * @dg_internal
- * @version 2.2.4
+ * @version 2.13.0
  */
 InferenceBackend* ModelOrchestrator::activate_and_track(
     const std::string& tier_name,
@@ -1368,6 +1393,9 @@ InferenceBackend* ModelOrchestrator::activate_and_track(
     tier_last_activation_ms_[tier_name] = now_ms;
     size_t footprint = tier_footprint_bytes_.count(tier_name)
         ? tier_footprint_bytes_[tier_name] : 0;
+    // gh#157: the model exists now, so its adapters can bind. This is the
+    // only moment at which that is true for a non-default tier.
+    preload_adapters_for_model(backend.get());
     fire_residency_observer(ResidencyEvent::Loaded,
                             tier_name, tier_it->second.path.string(),
                             footprint);
@@ -1574,6 +1602,35 @@ InferenceBackend* ModelOrchestrator::get_backend(
 }
 
 /**
+ * @brief Public residency-gated activation (gh#157). See header.
+ * @param tier_name Tier to make resident.
+ * @return ACTIVE backend, or nullptr.
+ * @utility
+ * @req REQ-INFER-019
+ * @version 2.13.0
+ */
+InferenceBackend* ModelOrchestrator::ensure_model(
+    const std::string& tier_name) {
+    return get_model(tier_name);
+}
+
+/**
+ * @brief Config-only vision capability for a tier (gh#157). See header.
+ * @param tier_name Tier name.
+ * @return true when the tier declares "vision" or carries an mmproj path.
+ * @utility
+ * @req REQ-INFER-025
+ * @version 2.13.0
+ */
+bool ModelOrchestrator::tier_declares_vision(
+    const std::string& tier_name) const {
+    auto it = config_.models.tiers.find(tier_name);
+    if (it == config_.models.tiers.end()) { return false; }
+    return it->second.has_capability("vision")
+        || !it->second.mmproj_path.empty();
+}
+
+/**
  * @brief Check if handoff is permitted.
  * @param from Source tier name.
  * @param to Candidate destination tier name.
@@ -1674,42 +1731,39 @@ double ModelOrchestrator::ensure_adapter_for_tier(
 }
 
 /**
- * @brief Preload all tier-configured LoRA adapters to WARM.
+ * @brief Preload the LoRA adapters of every tier backed by one model.
  *
- * Scans tier configs for adapter_path. For each, loads the adapter
- * against its base model. Requires the base model to be at least WARM.
+ * Runs at ACTIVATION of that model (gh#157), not at engine init. The
+ * init-time version required the base model to already be loaded, which is
+ * true of exactly one tier — the default one — so every tier on a different
+ * GGUF logged "model not loaded", skipped, and was never retried. The swap
+ * that later needed the adapter then failed with "not found or COLD". With
+ * `models.defer_load` the init-time version would have skipped ALL of them.
  *
+ * Adapters already WARM/HOT are left alone, so re-activating a model does
+ * not re-init or duplicate them. A registration whose handle was released
+ * (gh#164) reads COLD and is re-bound here against the reloaded model.
+ *
+ * @param backend Freshly activated backend.
  * @dg_internal
- * @version 1.9.2
+ * @req REQ-INFER-023
+ * @version 2.13.0
  */
-void ModelOrchestrator::preload_adapters() {
+void ModelOrchestrator::preload_adapters_for_model(
+    InferenceBackend* backend) {
+    auto* llama_backend = dynamic_cast<LlamaCppBackend*>(backend);
+    if (!llama_backend || !llama_backend->llama_model_ptr()) { return; }
+
     int loaded = 0;
-
     for (const auto& [name, tier_cfg] : config_.models.tiers) {
-        if (!tier_cfg.adapter_path) {
-            continue;
-        }
-
         auto tier_it = tiers_.find(name);
-        if (tier_it == tiers_.end()) {
-            continue;
-        }
-
-        auto* llama_backend = dynamic_cast<LlamaCppBackend*>(
-            tier_it->second.get());
-        if (!llama_backend || !llama_backend->llama_model_ptr()) {
-            logger->warn("Cannot preload adapter for '{}' — model not loaded",
-                        name);
-            continue;
-        }
-
-        bool ok = lora_manager_.load(
-            name,
-            *tier_cfg.adapter_path,
-            llama_backend->llama_model_ptr(),
-            tier_cfg.adapter_scale);
-
-        if (ok) {
+        bool mine = tier_cfg.adapter_path.has_value()
+            && tier_it != tiers_.end()
+            && tier_it->second.get() == backend
+            && lora_manager_.state(name) == AdapterState::COLD;
+        if (mine && lora_manager_.load(name, *tier_cfg.adapter_path,
+                                       llama_backend->llama_model_ptr(),
+                                       tier_cfg.adapter_scale)) {
             ++loaded;
         }
     }

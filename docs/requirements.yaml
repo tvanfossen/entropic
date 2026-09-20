@@ -3591,6 +3591,25 @@
     when nothing fits at any size.
 
 
+    WHEN the default tier is loaded is a config choice, not a fixed
+
+    lifecycle. models.defer_load == false (the default) loads and activates it
+
+    during configure; true leaves it COLD until the first caller needs it.
+
+    BOTH paths run through the same residency-gated activation, so the budget
+
+    gate, the Loaded event and the footprint record apply to the startup load
+
+    exactly as they do to a mid-session swap — before v2.13.0 the eager path
+
+    bypassed all three. A tier''s LoRA adapters are preloaded at the
+
+    ACTIVATION of their base model rather than at engine init, which is the
+
+    only moment at which a non-default tier''s model exists.
+
+
     Every VRAM state change (Loaded, Evicted, ActivationSwap) fires a
 
     registered residency observer synchronously under the swap mutex, and the
@@ -3633,6 +3652,18 @@
 
     Given an unknown profile name, Then "balanced" is returned with a warning.
 
+    Given models.defer_load true, When the orchestrator initializes, Then no
+
+    model is loaded and no residency event fires; When the first caller asks
+
+    for the tier, Then it loads and fires exactly one Loaded event, and a
+
+    second ask reuses the resident model without a second event. Given
+
+    defer_load false, When the orchestrator initializes, Then the default tier
+
+    is loaded at init.
+
     '
   verified_by: 'TEST_CASE "Residency snapshot on a default-constructed orchestrator",
 
@@ -3666,10 +3697,18 @@
 
     balanced", "load_bundled is idempotent", "Concurrent register and get are
 
-    thread-safe" — tests/unit/inference/profile_registry_test.cpp
+    thread-safe" — tests/unit/inference/profile_registry_test.cpp;
+
+    SCENARIO "gh#157: defer_load decides whether init touches the model at
+
+    all", "gh#157: a deferred tier answers vision from config while unloaded",
+
+    "gh#157: the first use loads exactly once, through the gate" —
+
+    tests/unit/inference/deferred_load_test.cpp
 
     '
-  version: 2.11.0
+  version: 2.13.0
 - id: REQ-INFER-020
   name: Tier routing, handoff rules and secondary model roles
   module: Inference Backends
@@ -3988,6 +4027,19 @@
     gracefully rather than fault.
 
 
+    Whether a NAMED tier is vision-capable is answered from CONFIG — the
+
+    declared capability or a configured mmproj path — not from the backend.
+
+    The backend only knows once its mmproj context has been built during
+
+    activation, so asking it returned a confident 0 for a tier that simply was
+
+    not loaded yet, and models.defer_load (REQ-INFER-019) makes not-loaded the
+
+    normal state.
+
+
     Images are preprocessed before reaching the vision encoder: format
 
     validated, file size bounded (20 MB default), dimensions bounded (1280x1280
@@ -4011,7 +4063,11 @@
     '
   acceptance_criteria: 'Given a config with no vision-capable tier, Then has_vision_capable_tier
 
-    is false and select_vision_tier is empty. Given a text-only model and
+    is false and select_vision_tier is empty. Given a tier that declares
+
+    "vision" and has never been loaded, Then entropic_model_has_vision reports
+
+    it as vision-capable. Given a text-only model and
 
     multimodal input, Then the turn completes gracefully. Given a non-existent
 
@@ -4046,10 +4102,14 @@
 
     SCENARIO "Text-only model handles multimodal input gracefully" —
 
-    tests/model/test_multimodal_fallback.cpp
+    tests/model/test_multimodal_fallback.cpp;
+
+    SCENARIO "gh#157: a deferred tier answers vision from config while
+
+    unloaded" — tests/unit/inference/deferred_load_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-LOOP-001
   name: Agent state machine with observable, dual-channel transitions
   module: Agent Loop

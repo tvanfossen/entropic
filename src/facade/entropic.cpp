@@ -208,25 +208,37 @@ static entropic_error_t check_identity(entropic_handle_t h) {
 /* find_tier_by_model_path moved to ModelsConfig::find_tier_by_path() — v2.0.1 */
 
 /**
- * @brief Resolve tier name to an ACTIVE backend, or throw.
+ * @brief Resolve a tier name to a resident backend, loading it if needed.
+ *
+ * gh#157 (v2.13.0): was `require_active_backend`, which threw
+ * "model not active" whenever the tier's model was not already in VRAM.
+ * That was survivable while the default tier always loaded at configure;
+ * with `models.defer_load` it made the state and evaluation APIs
+ * unreachable until some OTHER call happened to trigger a load. They now
+ * take the same residency-gated path a generation does.
+ *
+ * The caller holds the handle's turn claim, so this cannot race a run.
+ *
  * @param h Engine handle (must have orchestrator).
  * @param tier_name Tier name string.
  * @return Non-null backend pointer in ACTIVE state.
- * @throws std::runtime_error if tier not found or not active.
+ * @throws std::runtime_error if the tier is unknown, or its model cannot
+ *         be made resident (refused by the VRAM gate, or load failure).
  * @dg_internal
- * @version 2.0.0
+ * @req REQ-INFER-019
+ * @version 2.13.0
  */
-static entropic::InferenceBackend* require_active_backend(
+static entropic::InferenceBackend* require_ready_backend(
     entropic_handle_t h, const char* tier_name)
 {
-    auto* backend = h->orchestrator->get_backend(tier_name);
-    if (!backend) {
-        throw std::runtime_error(
-            "no backend for tier: " + std::string(tier_name));
+    const std::string tier(tier_name);
+    if (h->orchestrator->get_backend(tier) == nullptr) {
+        throw std::runtime_error("no backend for tier: " + tier);
     }
-    if (!backend->is_active()) {
+    auto* backend = h->orchestrator->ensure_model(tier);
+    if (backend == nullptr || !backend->is_active()) {
         throw std::runtime_error(
-            "model not active: " + std::string(tier_name));
+            "model could not be made resident for tier: " + tier);
     }
     return backend;
 }
@@ -3351,12 +3363,12 @@ entropic_error_t entropic_context_usage(
 /**
  * @brief Save tier's KV cache to file body (gh#23 v2.3.25).
  * @dg_internal
- * @version 2.3.25
+ * @version 2.13.0
  */
 static entropic_error_t do_state_save(
     entropic_handle_t handle, const char* tier_name, const char* path) {
     if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    auto* backend = require_active_backend(handle, tier_name);
+    auto* backend = require_ready_backend(handle, tier_name);
     std::vector<uint8_t> buf;
     if (!backend->save_state(0, buf)) { return ENTROPIC_ERROR_INTERNAL; }
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -3372,15 +3384,20 @@ static entropic_error_t do_state_save(
  * @req REQ-API-005
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 2.3.25
+ * @version 2.13.0
  */
 entropic_error_t entropic_state_save(
     entropic_handle_t handle,
     const char* tier_name,
     const char* path) {
-    if (!handle || !tier_name || !path) {
+    // gh#157: this may now LOAD the tier's model. Claim the turn so the
+    // load cannot land in the middle of a generation on another thread.
+    entropic::HandleTurnGuard turn(handle);
+    if (!handle || !tier_name || !path
+        || (handle->engine != nullptr && !turn.claim())) {
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
-                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+            : (!tier_name || !path) ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     entropic::HandleApiLock lock(handle);
     return c_api_try(handle,
@@ -3412,12 +3429,12 @@ static bool read_state_file(const char* path, std::vector<uint8_t>& out_buf) {
 /**
  * @brief Load tier's KV cache from file body (gh#23 v2.3.25).
  * @dg_internal
- * @version 2.3.25
+ * @version 2.13.0
  */
 static entropic_error_t do_state_load(
     entropic_handle_t handle, const char* tier_name, const char* path) {
     if (!handle->orchestrator) { return ENTROPIC_ERROR_INVALID_STATE; }
-    auto* backend = require_active_backend(handle, tier_name);
+    auto* backend = require_ready_backend(handle, tier_name);
     std::vector<uint8_t> buf;
     if (!read_state_file(path, buf)) { return ENTROPIC_ERROR_IO; }
     return backend->restore_state(0, buf)
@@ -3430,15 +3447,19 @@ static entropic_error_t do_state_load(
  * @req REQ-API-005
  * @req REQ-ABI-001
  * @req REQ-ABI-002
- * @version 2.3.25
+ * @version 2.13.0
  */
 entropic_error_t entropic_state_load(
     entropic_handle_t handle,
     const char* tier_name,
     const char* path) {
-    if (!handle || !tier_name || !path) {
+    // gh#157: may load the tier's model — see entropic_state_save.
+    entropic::HandleTurnGuard turn(handle);
+    if (!handle || !tier_name || !path
+        || (handle->engine != nullptr && !turn.claim())) {
         return !handle ? ENTROPIC_ERROR_INVALID_HANDLE
-                       : ENTROPIC_ERROR_INVALID_ARGUMENT;
+            : (!tier_name || !path) ? ENTROPIC_ERROR_INVALID_ARGUMENT
+            : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     entropic::HandleApiLock lock(handle);
     return c_api_try(handle,
@@ -3470,18 +3491,62 @@ entropic_error_t entropic_metrics_json(
 // ── LoRA Adapter APIs (v1.9.2 → v2.0.0) ────────────────────
 
 /**
+ * @brief Body of entropic_adapter_load — resolve the tier, make its model
+ *        resident, load the adapter against it (gh#157).
+ * @param handle Engine handle (configured, orchestrator present).
+ * @param adapter_name Unique adapter identifier.
+ * @param adapter_path Path to the adapter GGUF.
+ * @param base_model_path Model path identifying the owning tier.
+ * @param scale LoRA scale.
+ * @return ENTROPIC_OK, or ENTROPIC_ERROR_ADAPTER_LOAD_FAILED.
+ * @throws std::runtime_error when the path names no tier, or its model
+ *         cannot be made resident.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static entropic_error_t do_adapter_load(
+    entropic_handle_t handle, const char* adapter_name,
+    const char* adapter_path, const char* base_model_path, float scale)
+{
+    auto tier = handle->config.models.find_tier_by_path(base_model_path);
+    if (tier.empty()) {
+        throw std::runtime_error("no tier for model: "
+            + std::string(base_model_path));
+    }
+    // gh#157: load the base model if it is not resident, rather than
+    // returning INTERNAL "backend not ready" — which is what a deferred
+    // (or released, gh#164) tier looks like.
+    auto* base = handle->orchestrator->ensure_model(tier);
+    auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(base);
+    if (!llama || !llama->llama_model_ptr()) {
+        throw std::runtime_error("backend not ready for tier: " + tier);
+    }
+    bool ok = handle->orchestrator->adapter_manager().load(
+        adapter_name, adapter_path, llama->llama_model_ptr(), scale);
+    return ok ? ENTROPIC_OK : ENTROPIC_ERROR_ADAPTER_LOAD_FAILED;
+}
+
+/**
  * @brief Load a LoRA adapter into RAM.
  *
  * Requires a configured engine. The adapter_manager needs llama_model*
- * pointers that are only available from a loaded backend, so this
- * delegates through the orchestrator's backend for the given tier.
- * base_model_path is resolved to a tier via model path matching.
+ * pointers that are only available from a loaded backend, so this resolves
+ * `base_model_path` to a tier and — since gh#157 (v2.13.0) — LOADS that
+ * tier's model if it is not resident, instead of failing with
+ * "backend not ready". Claims the handle's turn, so the load cannot land
+ * mid-generation.
  *
- * @return ENTROPIC_OK on success, error code on failure.
+ * @param handle Engine handle.
+ * @param adapter_name Unique adapter identifier.
+ * @param adapter_path Path to the adapter GGUF.
+ * @param base_model_path Model path identifying the owning tier.
+ * @param scale LoRA scale.
+ * @return ENTROPIC_OK on success, ENTROPIC_ERROR_ALREADY_RUNNING when a
+ *         turn is in flight, else an error code.
  * @req REQ-INFER-023
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.2
+ * @version 2.13.0
  */
 entropic_error_t entropic_adapter_load(
     entropic_handle_t handle,
@@ -3491,28 +3556,21 @@ entropic_error_t entropic_adapter_load(
     float scale)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !adapter_name || !adapter_path || !base_model_path) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the base model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !adapter_name || !adapter_path
+        || !base_model_path
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!adapter_name || !adapter_path || !base_model_path)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
-    try {
-        entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto tier = handle->config.models.find_tier_by_path(base_model_path);
-        if (tier.empty()) {
-            throw std::runtime_error("no tier for model: "
-                + std::string(base_model_path));
-        }
-        auto* base = handle->orchestrator->get_backend(tier);
-        auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(base);
-        if (!llama || !llama->llama_model_ptr()) {
-            throw std::runtime_error("backend not ready for tier: " + tier);
-        }
-        bool ok = handle->orchestrator->adapter_manager().load(
-            adapter_name, adapter_path, llama->llama_model_ptr(), scale);
-        return ok ? ENTROPIC_OK : ENTROPIC_ERROR_ADAPTER_LOAD_FAILED;
-    } catch (const std::exception& e) {
-        handle->last_error = e.what();
-        return ENTROPIC_ERROR_INTERNAL;
-    }
+    entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
+    return c_api_try(handle, [&]() {
+        return do_adapter_load(handle, adapter_name, adapter_path,
+                               base_model_path, scale);
+    });
 }
 
 /**
@@ -4419,6 +4477,32 @@ entropic_error_t entropic_identity_count(
 // ── Log-Probability Evaluation APIs (v1.9.10 → v2.0.0) ──────
 
 /**
+ * @brief Copy a LogprobResult into the caller's C struct.
+ *
+ * Extracted in v2.13.0 so `entropic_get_logprobs` stays under the ABC gate
+ * once the gh#157 lazy-load precondition landed. Arrays are malloc'd here
+ * and freed by `entropic_free_logprob_result`.
+ *
+ * @param lr Engine-side result.
+ * @param[out] result Caller-owned struct; its array members are allocated.
+ * @dg_internal
+ * @version 2.13.0
+ */
+static void fill_logprob_result(const entropic::LogprobResult& lr,
+                                entropic_logprob_result_t* result) {
+    result->n_tokens = lr.n_tokens;
+    result->n_logprobs = lr.n_logprobs;
+    result->perplexity = lr.perplexity;
+    result->total_logprob = lr.total_logprob;
+    result->logprobs = static_cast<float*>(
+        malloc(sizeof(float) * lr.logprobs.size()));
+    std::copy(lr.logprobs.begin(), lr.logprobs.end(), result->logprobs);
+    result->tokens = static_cast<int32_t*>(
+        malloc(sizeof(int32_t) * lr.tokens.size()));
+    std::copy(lr.tokens.begin(), lr.tokens.end(), result->tokens);
+}
+
+/**
  * @brief Evaluate per-token log-probabilities for a token sequence.
  *
  * Resolves model_id as a tier name, retrieves the backend, and
@@ -4430,7 +4514,7 @@ entropic_error_t entropic_identity_count(
  * @req REQ-API-008
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_get_logprobs(
     entropic_handle_t handle,
@@ -4440,25 +4524,20 @@ entropic_error_t entropic_get_logprobs(
     entropic_logprob_result_t* result)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !model_id || !tokens || !result || n_tokens < 2) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the tier's model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !model_id || !tokens || !result || n_tokens < 2
+        || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!model_id || !tokens || !result || n_tokens < 2)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     try {
         entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto* backend = require_active_backend(handle, model_id);
-        auto lr = backend->evaluate_logprobs(tokens, n_tokens);
-        result->n_tokens = lr.n_tokens;
-        result->n_logprobs = lr.n_logprobs;
-        result->perplexity = lr.perplexity;
-        result->total_logprob = lr.total_logprob;
-        result->logprobs = static_cast<float*>(
-            malloc(sizeof(float) * lr.logprobs.size()));
-        std::copy(lr.logprobs.begin(), lr.logprobs.end(),
-                  result->logprobs);
-        result->tokens = static_cast<int32_t*>(
-            malloc(sizeof(int32_t) * lr.tokens.size()));
-        std::copy(lr.tokens.begin(), lr.tokens.end(),
-                  result->tokens);
+        auto* backend = require_ready_backend(handle, model_id);
+        fill_logprob_result(backend->evaluate_logprobs(tokens, n_tokens),
+                            result);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
@@ -4477,7 +4556,7 @@ entropic_error_t entropic_get_logprobs(
  * @req REQ-INFER-024
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 entropic_error_t entropic_compute_perplexity(
     entropic_handle_t handle,
@@ -4487,12 +4566,18 @@ entropic_error_t entropic_compute_perplexity(
     float* perplexity)
 {
     auto rc = check_orchestrator(handle);
-    if (rc != ENTROPIC_OK || !model_id || !tokens || !perplexity || n_tokens < 2) {
-        return rc != ENTROPIC_OK ? rc : ENTROPIC_ERROR_INVALID_ARGUMENT;
+    // gh#157: may load the tier's model — claim the turn first.
+    entropic::HandleTurnGuard turn(handle);
+    if (rc != ENTROPIC_OK || !model_id || !tokens || !perplexity
+        || n_tokens < 2 || (handle->engine != nullptr && !turn.claim())) {
+        return rc != ENTROPIC_OK ? rc
+            : (!model_id || !tokens || !perplexity || n_tokens < 2)
+                ? ENTROPIC_ERROR_INVALID_ARGUMENT
+                : ENTROPIC_ERROR_ALREADY_RUNNING;
     }
     try {
         entropic::HandleApiLock lock(handle);  // gh#59 v2.3.1: mutex + log scope
-        auto* backend = require_active_backend(handle, model_id);
+        auto* backend = require_ready_backend(handle, model_id);
         *perplexity = backend->compute_perplexity(tokens, n_tokens);
         return ENTROPIC_OK;
     } catch (const std::exception& e) {
@@ -4536,7 +4621,7 @@ void entropic_free_logprob_result(entropic_logprob_result_t* result)
  * @req REQ-INFER-025
  * @req REQ-API-005
  * @req REQ-ABI-002
- * @version 2.0.0
+ * @version 2.13.0
  */
 int entropic_model_has_vision(
     entropic_handle_t handle,
@@ -4547,9 +4632,11 @@ int entropic_model_has_vision(
         return 0;
     }
     try {
-        auto* backend = handle->orchestrator->get_backend(model_id);
-        return (backend && backend->supports(
-            entropic::BackendCapability::VISION)) ? 1 : 0;
+        // gh#157: answer from CONFIG, not from the backend. The backend's
+        // has_vision_ is set while the mmproj context is built during
+        // ACTIVATION, so an unloaded tier answered 0 — wrong, not unknown —
+        // and with models.defer_load unloaded is the normal state.
+        return handle->orchestrator->tier_declares_vision(model_id) ? 1 : 0;
     } catch (const std::exception& e) {
         handle->last_error = e.what();
         s_log->error("model_has_vision: {}", handle->last_error);

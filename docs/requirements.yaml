@@ -6900,6 +6900,100 @@
 
     '
   version: 2.13.0
+- id: REQ-MCP-027
+  name: Named workspaces bind a session to its own tool root and servers
+  module: MCP Servers and Tool Dispatch
+  description: '`entropic_workspace_create(handle, name, dir)` creates a named
+
+    workspace owning its OWN built-in and plugin MCP server instances
+
+    rooted at `dir`, its own external servers, and its own delegation
+
+    sandbox and swap lock — a server holds ONE working directory, so two
+
+    repositories cannot share one set. `entropic_session_bind_workspace`
+
+    binds a session to it; every tool call that session makes, and every
+
+    delegation sandbox it opens, then resolves against that root. A
+
+    session that already holds messages is REFUSED a rebind, because its
+
+    conversation cites paths relative to the root it was built in. A
+
+    session that is never bound uses the handle''s default servers
+
+    (`mcp.working_dir`, else cwd), so existing consumers are unaffected.
+
+    Routing uses the RUNNING SESSION''s key: explicitly through
+
+    `LoopContext::session_key` for tool dispatch, and through the
+
+    thread-local `current_run_session()` for the tool-prompt callback,
+
+    whose signature lives in an interface header. Weights, tiers and
+
+    identity stay handle-wide — the point is that opening a second
+
+    repository costs no model reload. An external server registered with
+
+    a `"workspace"` field is spawned with cwd = that workspace''s root.
+
+    WHY (gh#166): `mcp.working_dir` was fixed at configure time, so a
+
+    second repository meant a second handle and a second copy of a
+
+    13.27 GiB model — impossible on a 16 GB card, and unnecessary,
+
+    because the model has no reason to care which repository a session
+
+    is about.
+
+    '
+  acceptance_criteria: 'Given two workspaces rooted at different directories, When
+    each of two
+
+    bound sessions reads the same relative path, Then each reads its own
+
+    workspace''s file and neither sees the other''s.
+
+    Given a session bound to a workspace, When the delegation sandbox root
+
+    is resolved for it, Then it is that workspace''s root.
+
+    Given a session holding messages, When it is rebound, Then
+
+    ENTROPIC_ERROR_INVALID_STATE is returned and the existing binding is
+
+    left in place.
+
+    Given a session that was never bound, When its servers are resolved,
+
+    Then they are the handle''s default set.
+
+    Given an unknown workspace name or a dir that is not a directory,
+
+    When the API is called, Then ENTROPIC_ERROR_INVALID_ARGUMENT is
+
+    returned.
+
+    '
+  verified_by: 'SCENARIO "gh#166: two workspaces resolve one relative path to two
+
+    roots"; "gh#166: rebinding a session that already has messages is
+
+    refused"; "gh#166: workspace API guards are typed" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/workspace_test.cpp;
+
+    SCENARIO "gh#166: two workspaces on one handle do not read each
+
+    other''s files, concurrently" —
+
+    /home/tvanfossen/Projects/entropic/tests/model/test_gh166_workspaces.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-PROD-001
   name: Single `entropic` command with a closed, stable subcommand surface
   module: CLI and Distribution

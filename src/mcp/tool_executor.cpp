@@ -41,6 +41,35 @@ ToolExecutor::ToolExecutor(
       hooks_(hooks) {}
 
 /**
+ * @brief Install the workspace server resolver (gh#166).
+ * @param fn Resolver, or nullptr to clear.
+ * @param user_data Forwarded to the resolver.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+void ToolExecutor::set_server_resolver(
+    ServerManager* (*fn)(const std::string&, void*), void* user_data) {
+    server_resolver_ = fn;
+    server_resolver_data_ = user_data;
+}
+
+/**
+ * @brief The servers a session's tool call runs against (gh#166).
+ * @param session_key Session the call belongs to.
+ * @return The bound workspace's manager, else the constructed one.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ServerManager& ToolExecutor::servers_for(
+    const std::string& session_key) const {
+    if (server_resolver_ != nullptr) {
+        auto* resolved = server_resolver_(session_key, server_resolver_data_);
+        if (resolved != nullptr) { return *resolved; }
+    }
+    return server_manager_;
+}
+
+/**
  * @brief Set permission persistence interface.
  * @param persist Permission persist callbacks.
  * @dg_internal
@@ -438,7 +467,8 @@ static std::string parse_tool_result_text(const std::string& result_json) {
  *         extraction later parses.
  * @req REQ-MCP-002
  * @req REQ-MCP-020
- * @version 2.3.7
+ * @req REQ-MCP-027
+ * @version 2.13.0
  */
 std::pair<Message, std::string> ToolExecutor::execute_tool(
     LoopContext& ctx, const ToolCall& call) {
@@ -458,8 +488,14 @@ std::pair<Message, std::string> ToolExecutor::execute_tool(
     // full policy. The earlier "trust downstream" assumption was wrong:
     // bytes also enter via the model token stream and the audit-replay
     // path; both now sanitize at their own boundaries.
+    // gh#166 (v2.13.0): route to the RUNNING SESSION's workspace. This is
+    // the call that touches the filesystem, so it is the one that must
+    // land in the right repository; the metadata lookups above answer
+    // schema/permission questions that are workspace-invariant for the
+    // built-in servers and fail SAFE (unknown → WRITE required, no schema
+    // → no validation skip that grants anything).
     auto result_json = mcp::sanitize_utf8(
-        server_manager_.execute(call.name, args_json));
+        servers_for(ctx.session_key).execute(call.name, args_json));
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<
         std::chrono::milliseconds>(end - start).count();
@@ -860,7 +896,7 @@ PreconditionCheck ToolExecutor::check_approval_pc(
  *         carrying its result_kind in metadata.
  * @req REQ-MCP-017
  * @req REQ-MCP-012
- * @version 2.5.1
+ * @version 2.13.0
  */
 std::vector<Message> ToolExecutor::process_single_call(
     LoopContext& ctx, const ToolCall& call) {

@@ -537,8 +537,9 @@ private:
      *
      * Issue #9 (v2.1.4): consolidates the three pre-existing transport
      * construction sites (runtime API, YAML config-entry, discovery
-     * config). Future fields (timeout, working_dir, headers, ...) added
-     * to ExternalServerConfig flow through here automatically.
+     * config). gh#166 (v2.13.0): no longer static — a stdio child is
+     * spawned with cwd = the spec's `working_dir`, defaulting to THIS
+     * manager's root, so a workspace's servers start in its repository.
      *
      * @param spec Full server config.
      * @return Owned Transport (Stdio for command-set specs, SSE
@@ -546,8 +547,8 @@ private:
      * @utility
      * @version 2.1.4
      */
-    static std::unique_ptr<Transport> make_transport(
-        const ExternalServerConfig& spec);
+    std::unique_ptr<Transport> make_transport(
+        const ExternalServerConfig& spec) const;
 
     /**
      * @brief Build error response JSON for disconnected server.

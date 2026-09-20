@@ -75,6 +75,23 @@ public:
     void set_permission_persist(const PermissionPersistInterface& persist);
 
     /**
+     * @brief Resolve a session's MCP servers (gh#166, v2.13.0).
+     *
+     * Injected by the facade: only it knows which workspace a session is
+     * bound to, and a workspace owns its OWN server instances because a
+     * server holds one working directory. Unset (the default) means every
+     * session uses the manager this executor was constructed with — the
+     * pre-2.13.0 behaviour exactly.
+     *
+     * @param fn Resolver, or nullptr to clear.
+     * @param user_data Forwarded to the resolver.
+     * @version 2.13.0
+     */
+    void set_server_resolver(
+        ServerManager* (*fn)(const std::string& session_key, void* user_data),
+        void* user_data);
+
+    /**
      * @brief Wire the per-tier allowed_tools map for dispatch-time
      *        enforcement. (gh#83, v2.5.2)
      *
@@ -560,7 +577,19 @@ private:
                                      const std::string& result,
                                      long long ms);
 
-    ServerManager& server_manager_;       ///< Server manager reference
+    ServerManager& server_manager_;       ///< Default server manager
+    /// @brief gh#166: resolves the session's workspace servers (nullable).
+    ServerManager* (*server_resolver_)(const std::string&, void*) = nullptr;
+    void* server_resolver_data_ = nullptr;   ///< gh#166: resolver user data
+
+    /**
+     * @brief The servers a session's tool call must run against (gh#166).
+     * @param session_key Session the call belongs to.
+     * @return The bound workspace's manager, else the constructed one.
+     * @version 2.13.0
+     */
+    ServerManager& servers_for(const std::string& session_key) const;
+
     const LoopConfig& loop_config_;       ///< Loop configuration
     EngineCallbacks& callbacks_;          ///< Shared callbacks
     ToolExecutorHooks hooks_;             ///< Engine hooks

@@ -113,6 +113,7 @@ EXPORTS = frozenset(
         "entropic_run_streaming",
         "entropic_seconds_since_last_activity",
         "entropic_serialize_mcp_keys",
+        "entropic_session_bind_workspace",
         "entropic_session_context_clear",
         "entropic_session_context_count",
         "entropic_session_context_get",
@@ -142,5 +143,6 @@ EXPORTS = frozenset(
         "entropic_validation_set_enabled",
         "entropic_validation_set_identity",
         "entropic_version",
+        "entropic_workspace_create",
     }
 )

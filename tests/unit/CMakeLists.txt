@@ -536,6 +536,9 @@ add_executable(entropic-api-tests
     # gh#163 (v2.13.0): app_context must arrive through all three configure
     # doors, not just the one the loader tests open.
     api/app_context_roundtrip_test.cpp
+    # gh#166 (v2.13.0): named workspaces — one resident model, many
+    # repositories. White-box on engine_handle.h for the routing decision.
+    api/workspace_test.cpp
     # v2.0.11: External bridge tests (links facade for ENTROPIC_EXPORT symbols)
     mcp/external_bridge_test.cpp
     # gh#130 (v2.10.2): bridge final-text selection — includes the private

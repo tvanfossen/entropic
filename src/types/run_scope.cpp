@@ -16,6 +16,9 @@
 
 #include <entropic/types/run_scope.h>
 
+#include <string>
+#include <utility>
+
 namespace entropic {
 
 namespace {
@@ -77,5 +80,40 @@ bool cancel_current_run() {
  * @version 2.13.0
  */
 RunCancelScope::~RunCancelScope() { t_run_cancel = previous_; }
+
+/// @brief Session key of the run executing on this thread (gh#166).
+namespace {
+thread_local std::string t_run_session;
+}  // namespace
+
+/**
+ * @brief gh#166: this thread's run session key — see header.
+ * @return The running turn's session key, or "" outside a keyed run.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+std::string current_run_session() { return t_run_session; }
+
+/**
+ * @brief gh#166 RAII enter — see header.
+ * @param key Session key to publish.
+ * @return n/a (constructor).
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+RunSessionScope::RunSessionScope(std::string key)
+    : previous_(t_run_session) {
+    t_run_session = std::move(key);
+}
+
+/**
+ * @brief gh#166 RAII exit — see header.
+ * @return n/a (destructor).
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+RunSessionScope::~RunSessionScope() {
+    t_run_session = std::move(previous_);
+}
 
 }  // namespace entropic

@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: Apache-2.0
+/**
+ * @file test_gh166_workspaces.cpp
+ * @brief gh#166: two repositories, one resident model, no file bleed.
+ *
+ * The mandated emergent multi-turn model test for a change that touches
+ * tools and context. Two workspaces are created on ONE handle, two
+ * sessions are bound one each, and both run CONCURRENTLY (the v2.13.0
+ * default) through the public C ABI. Each repository holds a file at the
+ * SAME relative path with different contents, so the load-bearing
+ * assertion is the NEGATIVE one: neither session may report the other
+ * repository's contents. A handle-wide tool root passes the positive
+ * assertion by accident — both sessions would read the same file and
+ * both would be "right".
+ *
+ * Multi-turn on purpose: the second turn asks about the file again after
+ * unrelated turns, so the answer comes from accumulated context plus a
+ * fresh tool call, not from the last message.
+ *
+ * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
+ * Run: ctest -L model -R gh166
+ *
+ * @version 2.13.0
+ */
+
+#include "facade_model_helpers.h"
+#include "model_test_context.h"
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <thread>
+
+CATCH_REGISTER_LISTENER(ModelTestListener)
+
+namespace {
+
+namespace fs = std::filesystem;
+
+/// @brief Case-insensitive substring test. @utility @version 2.13.0
+bool has_ci(const std::string& hay, const std::string& needle) {
+    auto lower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+                       [](unsigned char c) {
+                           return static_cast<char>(std::tolower(c));
+                       });
+        return s;
+    };
+    return lower(hay).find(lower(needle)) != std::string::npos;
+}
+
+/**
+ * @brief Create a repository holding one marker file.
+ * @param tag Distinctive marker word.
+ * @return Path to the created directory.
+ * @utility
+ * @version 2.13.0
+ */
+fs::path make_repo(const std::string& tag) {
+    auto dir = fs::temp_directory_path() /
+               ("entropic_gh166_" + tag + "_" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    std::ofstream(dir / "PROJECT.md")
+        << "# Project\nThe build system for this project is "
+        << tag << ".\n";
+    return dir;
+}
+
+/**
+ * @brief Drive one bound session's multi-turn conversation.
+ * @param h Engine handle.
+ * @param key Session key (already bound to a workspace).
+ * @return The final answer text.
+ * @utility
+ * @version 2.13.0
+ */
+std::string run_workspace_turns(entropic_handle_t h,
+                                const std::string& key) {
+    char* out = nullptr;
+    if (entropic_run_session(
+            h, key.c_str(),
+            "Read PROJECT.md in this project and tell me, in one short "
+            "sentence, what the build system is.", &out) == ENTROPIC_OK) {
+        entropic_free(out);
+        out = nullptr;
+    }
+    if (entropic_run_session(h, key.c_str(),
+                             "List two colours, nothing else.", &out)
+        == ENTROPIC_OK) {
+        entropic_free(out);
+        out = nullptr;
+    }
+    std::string answer;
+    if (entropic_run_session(
+            h, key.c_str(),
+            "Name this project's build system again, exactly as PROJECT.md "
+            "states it. One word.", &out) == ENTROPIC_OK
+        && out != nullptr) {
+        answer = out;
+        entropic_free(out);
+    }
+    return answer;
+}
+
+}  // namespace
+
+SCENARIO("gh#166: two workspaces on one handle do not read each other's "
+         "files, concurrently", "[model][gh166][workspace]")
+{
+    GIVEN("one resident model and two repositories") {
+        auto gguf = entropic::test::facade::model_gguf(
+            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+        if (gguf.empty() || !fs::is_regular_file(gguf)) {
+            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
+        }
+
+        auto repo_a = make_repo("bazel");
+        auto repo_b = make_repo("meson");
+
+        entropic::test::facade::FacadeProject project("gh166_workspaces");
+        entropic::test::facade::TierSpec lead;
+        lead.name = "lead";
+        lead.gguf_key = "gemma4_e4b";
+        lead.adapter = "gemma4";
+        lead.identity_body =
+            "You are a terse assistant with filesystem tools. Read files "
+            "before answering about them. Answer in one short sentence.";
+        lead.context_length = 4096;
+        auto* h = project.setup({lead});
+        REQUIRE(h != nullptr);
+
+        REQUIRE(entropic_workspace_create(h, "proj-a",
+                                          repo_a.c_str()) == ENTROPIC_OK);
+        REQUIRE(entropic_workspace_create(h, "proj-b",
+                                          repo_b.c_str()) == ENTROPIC_OK);
+        REQUIRE(entropic_session_bind_workspace(h, "sess-a", "proj-a")
+                == ENTROPIC_OK);
+        REQUIRE(entropic_session_bind_workspace(h, "sess-b", "proj-b")
+                == ENTROPIC_OK);
+
+        WHEN("both sessions run their turns at the same time") {
+            std::string answer_a;
+            std::string answer_b;
+            std::thread ta([&] {
+                answer_a = run_workspace_turns(h, "sess-a");
+            });
+            std::thread tb([&] {
+                answer_b = run_workspace_turns(h, "sess-b");
+            });
+            ta.join();
+            tb.join();
+
+            THEN("each answers from ITS OWN repository") {
+                INFO("A: " << answer_a);
+                INFO("B: " << answer_b);
+                CHECK(has_ci(answer_a, "bazel"));
+                CHECK(has_ci(answer_b, "meson"));
+            }
+            THEN("neither leaks the other repository's file") {
+                // The assertion that fails on a handle-wide tool root:
+                // both sessions would have read one PROJECT.md.
+                INFO("A: " << answer_a);
+                INFO("B: " << answer_b);
+                CHECK_FALSE(has_ci(answer_a, "meson"));
+                CHECK_FALSE(has_ci(answer_b, "bazel"));
+            }
+            THEN("neither repository was modified") {
+                // No delegation isolation here; the point is that reads
+                // resolved per workspace, and nothing wrote anywhere.
+                std::ifstream in_a(repo_a / "PROJECT.md");
+                std::string body((std::istreambuf_iterator<char>(in_a)),
+                                 std::istreambuf_iterator<char>());
+                CHECK(body.find("bazel") != std::string::npos);
+            }
+        }
+
+        fs::remove_all(repo_a);
+        fs::remove_all(repo_b);
+    }
+}

@@ -1291,6 +1291,72 @@ ENTROPIC_EXPORT entropic_error_t entropic_session_list(
     entropic_handle_t handle,
     char** sessions_json);
 
+/* ── Named Workspaces (v2.13.0, gh#166) ───────────────── */
+
+/**
+ * @brief Create a named workspace rooted at a directory (gh#166).
+ *
+ * One resident model, many projects. A workspace owns its OWN built-in
+ * and plugin MCP server instances rooted at `dir`, its own external MCP
+ * servers, and its own delegation sandbox — because a server holds one
+ * working directory, and two repositories cannot share one instance.
+ * Weights, tiers and identity stay handle-wide, so opening a second
+ * repository costs no model reload.
+ *
+ * Creating a workspace changes nothing for existing sessions: a session
+ * that is never bound keeps using `mcp.working_dir` (else the process
+ * cwd) exactly as before.
+ *
+ * @param handle Engine handle (must be configured).
+ * @param name Workspace name, unique per handle. Non-empty.
+ * @param dir Existing directory the workspace's tools resolve against.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle not configured.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — NULL/empty name or dir, a
+ *           name already in use, or a dir that is not a directory.
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_workspace_create(
+    entropic_handle_t handle,
+    const char* name,
+    const char* dir);
+
+/**
+ * @brief Bind a session to a workspace (gh#166).
+ *
+ * Every tool call that session makes — and every delegation sandbox it
+ * opens — then resolves against that workspace's root and servers.
+ *
+ * Binding is ONCE per session. A session that already holds messages is
+ * refused: its conversation cites paths relative to the root it was
+ * working in, and silently re-rooting it would make every one of those
+ * citations wrong without a single error.
+ *
+ * @param handle Engine handle (must be configured).
+ * @param session_key Session key; "" (or NULL) is the default session.
+ * @param name Workspace name previously passed to
+ *        `entropic_workspace_create`.
+ * @return ENTROPIC_OK on success.
+ *         - ENTROPIC_ERROR_INVALID_HANDLE — handle is NULL.
+ *         - ENTROPIC_ERROR_INVALID_STATE — handle not configured, or the
+ *           session already holds messages.
+ *         - ENTROPIC_ERROR_INVALID_ARGUMENT — unknown workspace name.
+ *
+ * @threadsafety Serialized per-handle (api_mutex).
+ * @req REQ-API-005
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT entropic_error_t entropic_session_bind_workspace(
+    entropic_handle_t handle,
+    const char* session_key,
+    const char* name);
+
 /**
  * @brief Get the number of messages in the conversation.
  *

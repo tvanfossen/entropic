@@ -38,6 +38,7 @@
 #include <entropic/entropic_export.h>
 
 #include <atomic>
+#include <string>
 
 namespace entropic {
 
@@ -121,6 +122,62 @@ public:
 
 private:
     std::atomic<bool>* previous_;
+};
+
+/**
+ * @brief The session key of the run executing on this thread (gh#166).
+ *
+ * Same mechanism and same justification as the cancel token above: a run
+ * is a blocking call on the caller's thread, and everything it does —
+ * including asking the facade "which tools does this turn see?" — happens
+ * on that thread. gh#166 binds a session to a WORKSPACE, so the tool root
+ * and the tool list are no longer handle-wide constants; the one call
+ * that needs them (`get_tool_prompt`, on the inference callback seam) is
+ * reached through `i_inference_callbacks.h`, an INTERFACE header that
+ * does not change without a proposal. Publishing the key per thread
+ * answers the question without touching that contract.
+ *
+ * @return The running turn's session key, or "" outside a keyed run.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT std::string current_run_session();
+
+/**
+ * @brief RAII publication of one run's session key to its own thread.
+ *
+ * Restores the previous value on destruction rather than clearing it, so
+ * a nested scope cannot orphan an outer turn's key.
+ *
+ * @return An RAII guard binding this thread to `key` until it goes out
+ *         of scope.
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+class ENTROPIC_EXPORT RunSessionScope {
+public:
+    /**
+     * @brief Publish `key` as this thread's run session key.
+     * @param key Session key ("" = the default session).
+     * @return n/a (constructor).
+     * @req REQ-LOOP-009
+     * @version 2.13.0
+     */
+    explicit RunSessionScope(std::string key);
+
+    /**
+     * @brief Restore the previously published key.
+     * @return n/a (destructor).
+     * @req REQ-LOOP-009
+     * @version 2.13.0
+     */
+    ~RunSessionScope();
+
+    RunSessionScope(const RunSessionScope&) = delete;
+    RunSessionScope& operator=(const RunSessionScope&) = delete;
+
+private:
+    std::string previous_;  ///< Key restored on destruction
 };
 
 }  // namespace entropic

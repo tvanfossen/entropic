@@ -372,6 +372,13 @@ set_tests_properties(model/test-gh158-concurrent PROPERTIES TIMEOUT 1200)
 add_model_test(test-gh165-restore test_gh165_session_restore.cpp)
 set_tests_properties(model/test-gh165-restore PROPERTIES TIMEOUT 900)
 
+# gh#166 (v2.13.0): the EMERGENT multi-turn test for named workspaces. Two
+# repositories on ONE resident model, two sessions bound one each, run
+# CONCURRENTLY. The load-bearing assertion is the negative one: a
+# handle-wide tool root passes the positive one by accident.
+add_model_test(test-gh166-workspaces test_gh166_workspaces.cpp)
+set_tests_properties(model/test-gh166-workspaces PROPERTIES TIMEOUT 1200)
+
 # gh#99 (v2.8.0): facade-driven per-call tier grammar switching on one model.
 add_model_test(test-gh99-run-as test_gh99_run_as.cpp)
 set_tests_properties(model/test-gh99-run-as PROPERTIES TIMEOUT 300)

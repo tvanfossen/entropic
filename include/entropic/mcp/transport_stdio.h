@@ -186,6 +186,20 @@ public:
      */
     const std::string& display_name() const { return display_name_; }
 
+    /**
+     * @brief Set the child's working directory, before connect (gh#166).
+     *
+     * An external MCP server is a separate process that has always taken
+     * whatever cwd the HOST happened to have — which makes a repo-scoped
+     * server (`clew-mcp --repo .`) useless once one handle serves several
+     * workspaces. `ServerManager` fills this from its own root.
+     *
+     * @param dir Directory to chdir into on spawn ("" = inherit).
+     * @req REQ-MCP-027
+     * @version 2.13.0
+     */
+    void set_working_dir(std::string dir) { working_dir_ = std::move(dir); }
+
 private:
     std::atomic<bool> cancel_flag_{false};        ///< Set by interrupt() (P1-10)
 
@@ -193,6 +207,7 @@ private:
     std::string command_;                        ///< Executable path
     std::vector<std::string> args_;              ///< Command-line arguments
     std::map<std::string, std::string> env_;     ///< Environment overrides
+    std::string working_dir_;                    ///< gh#166: child cwd ("" = inherit)
     uint32_t default_timeout_ms_;                ///< Default request timeout
 
     pid_t child_pid_{-1};                        ///< Child process PID

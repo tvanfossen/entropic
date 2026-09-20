@@ -34,8 +34,11 @@
 #include <entropic/types/config.h>
 #include <entropic/types/error.h>
 #include <entropic/types/logging.h>
+#include <entropic/types/run_scope.h>
 
 #include <atomic>
+#include <filesystem>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -57,6 +60,29 @@ struct ParsedConfig;
 class BundledModels;
 struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
 } // namespace entropic
+
+/**
+ * @brief A named repository a session's tools operate in (gh#166).
+ *
+ * One resident model, many projects. A workspace owns its own tool root,
+ * its own built-in + plugin server INSTANCES (they hold a working
+ * directory each, so two workspaces cannot share one set), its own
+ * external MCP servers, and its own delegation swap lock. Weights, tiers
+ * and identity stay handle-wide — which is the entire point: switching
+ * repository must not cost a 13 GiB reload.
+ *
+ * Per-workspace `app_context` is deliberately out of scope (follow-up).
+ *
+ * @version 2.13.0
+ */
+struct EntropicWorkspace {
+    std::string name;                    ///< Caller-chosen workspace name
+    std::filesystem::path root;          ///< Tool root for bound sessions
+    std::unique_ptr<entropic::ServerManager> servers; ///< Its own instances
+    /// @brief gh#160's swap lock, now per workspace — which is what lets
+    /// two sessions in DIFFERENT repositories delegate concurrently.
+    std::recursive_mutex swap_mutex;
+};
 
 /**
  * @brief Engine handle struct — owns all subsystems.
@@ -100,17 +126,27 @@ struct entropic_engine {
     std::unique_ptr<entropic::IdentityManager> identity_manager;       ///< Identity lifecycle
     std::unique_ptr<entropic::MCPAuthorizationManager> mcp_auth;       ///< Per-identity tool auth
 
-    // ── Phase 3b: Delegation isolation (gh#160, v2.13.0) ──────
-    /// @brief Serializes sandboxed delegations against the shared servers.
+    // ── Phase 3b: Delegation isolation + workspaces (gh#160/gh#166) ──
+    /// @brief Swap lock for the DEFAULT workspace (gh#160).
     ///
     /// `set_working_dir` is a single field on each in-process server, so a
     /// sandboxed delegation OWNS the registry for its duration. Recursive
     /// because a nested delegation re-enters on the same thread; held from
     /// `ScopedSandbox` construction to destruction. With
-    /// `delegation.isolation: none` (the default) it is never taken.
-    /// gh#166 moves this to the workspace, which is what restores
-    /// concurrency between sessions working on different repositories.
+    /// `delegation.isolation: none` (the default) it is never taken. A
+    /// named workspace has its own (`EntropicWorkspace::swap_mutex`), so
+    /// two repositories delegate in parallel.
     std::recursive_mutex sandbox_swap_mutex;
+
+    /// @brief gh#166: named workspaces, by name. The DEFAULT workspace is
+    /// `server_manager` above and is not in this map.
+    std::map<std::string, std::unique_ptr<EntropicWorkspace>> workspaces;
+    /// @brief gh#166: session key → workspace name. A key that is absent
+    /// resolves to the default workspace, so every existing consumer —
+    /// which binds nothing — is unaffected.
+    std::map<std::string, std::string> session_workspace;
+    /// @brief gh#166: guards both maps above. Held for lookups only.
+    mutable std::mutex workspace_mutex;
 
     // ── Phase 4: Engine Loop + Storage + Audit ─────────────────
     std::unique_ptr<entropic::AgentEngine> engine;                     ///< Agentic loop (owns conversation state)
@@ -164,6 +200,45 @@ struct entropic_engine {
 };
 
 namespace entropic {
+
+/**
+ * @brief The workspace a session is bound to, or nullptr for the default.
+ *
+ * gh#166 (v2.13.0). An unbound session — every session that existed
+ * before this release — resolves to nullptr and therefore to the
+ * handle-wide `server_manager`, which is why binding nothing changes
+ * nothing.
+ *
+ * @param h Engine handle.
+ * @param key Session key ("" = default session).
+ * @return Borrowed workspace, or nullptr when unbound/unknown.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+inline EntropicWorkspace* workspace_for(entropic_handle_t h,
+                                        const std::string& key) {
+    if (h == nullptr) { return nullptr; }
+    std::lock_guard<std::mutex> lock(h->workspace_mutex);
+    auto bound = h->session_workspace.find(key);
+    if (bound == h->session_workspace.end()) { return nullptr; }
+    auto ws = h->workspaces.find(bound->second);
+    return ws == h->workspaces.end() ? nullptr : ws->second.get();
+}
+
+/**
+ * @brief The MCP servers a session's tools must run against (gh#166).
+ * @param h Engine handle.
+ * @param key Session key ("" = default session).
+ * @return The bound workspace's servers, else the handle's default set.
+ * @req REQ-MCP-027
+ * @version 2.13.0
+ */
+inline entropic::ServerManager* workspace_servers(entropic_handle_t h,
+                                                  const std::string& key) {
+    auto* ws = workspace_for(h, key);
+    if (ws != nullptr && ws->servers) { return ws->servers.get(); }
+    return h != nullptr ? h->server_manager.get() : nullptr;
+}
 
 /**
  * @brief gh#59 (v2.3.1): RAII guard combining api_mutex + log scope.
@@ -243,17 +318,24 @@ public:
      * Null-handle safe: log id 0 is the reserved "no handle scope" sentinel.
      *
      * @param h Engine handle, possibly null.
-     * @version 2.12.0
+     * @param session_key Session this guard claims for (gh#158), and
+     *        publishes to this thread for the call's duration (gh#166).
+     * @version 2.13.0
      */
     explicit HandleTurnGuard(entropic_handle_t h,
                              const char* session_key = nullptr)
         : engine_(h != nullptr ? h->engine.get() : nullptr),
           log_scope_(h != nullptr ? h->log_id : 0),
-          key_(session_key != nullptr ? session_key : "") {}
+          key_(session_key != nullptr ? session_key : ""),
+          // gh#166: publish the key to THIS thread for the whole call, so
+          // the tool-prompt callback — which arrives through an interface
+          // header that takes only a tier name — can resolve the
+          // workspace this turn belongs to.
+          session_scope_(session_key != nullptr ? session_key : "") {}
 
     /**
      * @brief Release the turn if this guard claimed it.
-     * @version 2.13.0
+     * @version 2.13.0 [reviewed]
      */
     ~HandleTurnGuard() {
         if (claimed_) { engine_->end_turn(key_); }
@@ -298,6 +380,11 @@ private:
     /// Claim and release MUST name the same key, which is why the guard
     /// carries it rather than each call site remembering to pass it twice.
     std::string key_;
+    /// @brief gh#166 (v2.13.0): publishes `key_` to this thread for the
+    /// duration of the call. Declared AFTER `key_` so it is destroyed
+    /// first — the reverse order would restore a key from a member that
+    /// is already gone.
+    entropic::RunSessionScope session_scope_;
     bool claimed_ = false;
 };
 

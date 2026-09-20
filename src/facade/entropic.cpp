@@ -368,6 +368,23 @@ static std::vector<std::string> filter_tools(
 }
 
 /**
+ * @brief Re-parse filtered tool defs into one JSON array string.
+ * @param tool_jsons Per-tool JSON definition strings.
+ * @return JSON array text; unparseable entries are dropped.
+ * @utility
+ * @version 2.13.0
+ */
+static std::string tool_defs_array(
+    const std::vector<std::string>& tool_jsons) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& tj : tool_jsons) {
+        auto obj = nlohmann::json::parse(tj, nullptr, false);
+        if (!obj.is_discarded()) { arr.push_back(std::move(obj)); }
+    }
+    return arr.dump();
+}
+
+/**
  * @brief Build formatted tool prompt for a tier.
  *
  * gh#87 (v2.7.0): returns the per-tier-filtered tool defs as a structured
@@ -383,31 +400,30 @@ static std::vector<std::string> filter_tools(
  * @param user_data Engine handle.
  * @return 0 on success, non-zero if no tools available.
  * @callback
- * @version 2.7.0
+ * @version 2.13.0
  */
 static int facade_get_tool_prompt(const char* tier, char** result,
                                   void* user_data) {
     auto* h = static_cast<entropic_engine*>(user_data);
     *result = nullptr;
-    if (!h || !h->server_manager) { return 1; }
-
-    std::string tier_name = tier ? tier : "";
-    auto all_json = h->server_manager->list_tools();
-    auto all_tools = nlohmann::json::parse(all_json, nullptr, false);
-    auto allowed = resolve_allowed_tools(h, tier_name);
-    auto tool_jsons = filter_tools(all_tools, allowed);
+    // gh#166: the tools a turn sees belong to the SESSION's workspace. The
+    // key arrives through `entropic::current_run_session()` because this
+    // callback's signature lives in an interface header.
+    auto* servers = (h != nullptr && h->server_manager)
+        ? entropic::workspace_servers(h, entropic::current_run_session())
+        : nullptr;
+    if (servers == nullptr) { return 1; }
+    auto all_tools = nlohmann::json::parse(servers->list_tools(),
+                                           nullptr, false);
+    auto tool_jsons = filter_tools(
+        all_tools, resolve_allowed_tools(h, tier ? tier : ""));
     if (!all_tools.is_array() || all_tools.empty() || tool_jsons.empty()) {
         return 1;
     }
-
-    nlohmann::json arr = nlohmann::json::array();
-    for (const auto& tj : tool_jsons) {
-        auto obj = nlohmann::json::parse(tj, nullptr, false);
-        if (!obj.is_discarded()) { arr.push_back(std::move(obj)); }
-    }
-    *result = strdup(arr.dump().c_str());
+    *result = strdup(tool_defs_array(tool_jsons).c_str());
     return 0;
 }
+
 
 /**
  * @brief Wire engine interrupt propagation into MCP transports (P1-10).
@@ -1071,7 +1087,7 @@ static char* tool_history_json_thunk(size_t count, void* ud) {
  * @param h Engine handle with engine + server_manager constructed.
  * @req REQ-API-013
  * @req REQ-MCP-014
- * @version 2.0.6-rc16
+ * @version 2.13.0
  */
 static void wire_tool_executor(entropic_handle_t h) {
     h->tool_executor = std::make_unique<entropic::ToolExecutor>(
@@ -1089,6 +1105,14 @@ static void wire_tool_executor(entropic_handle_t h) {
     tei.user_data = h->tool_executor.get();
     tei.history_json = tool_history_json_thunk;  // P1-11
     tei.free_fn = [](char* p) { std::free(p); };
+    // gh#166 (v2.13.0): a bound session's tool calls run against its
+    // workspace's own server instances, not the handle's default set.
+    h->tool_executor->set_server_resolver(
+        +[](const std::string& key, void* ud)
+            -> entropic::ServerManager* {
+            return entropic::workspace_servers(
+                static_cast<entropic_handle_t>(ud), key);
+        }, h);
     h->engine->set_tool_executor(tei);
 }
 
@@ -1596,13 +1620,13 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
 /**
  * @brief Root a session's MCP tools resolve against (gh#160).
  *
- * Today every session shares the ServerManager root — `mcp.working_dir`
- * else the process cwd — which is the value gh#160 says the sandbox
- * should have been using all along instead of the engine's own
- * `repo_dir`. gh#166 re-points THIS function at the session's named
- * workspace; nothing else in the delegation path has to move.
+ * An unbound session uses the handle's ServerManager root —
+ * `mcp.working_dir` else the process cwd — which is the value gh#160 says
+ * the sandbox should have been using all along instead of the engine's
+ * own `repo_dir`. gh#166 re-points THIS one function at the session's
+ * named workspace; nothing else in the delegation path moved.
  *
- * @param session_key Caller-scoped session key (unused until gh#166).
+ * @param session_key Caller-scoped session key.
  * @param ud Engine handle.
  * @return The session's tool root.
  * @req REQ-DELEG-005
@@ -1610,10 +1634,11 @@ static void wire_tier_validation_rules(entropic_handle_t h) {
  * @version 2.13.0
  */
 static std::filesystem::path facade_session_root(
-    const std::string& /*session_key*/, void* ud) {
+    const std::string& session_key, void* ud) {
     auto* h = static_cast<entropic_handle_t>(ud);
-    if (h == nullptr || !h->server_manager) { return {}; }
-    return h->server_manager->project_dir();
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return {}; }
+    return servers->project_dir();
 }
 
 /**
@@ -1634,20 +1659,25 @@ static std::filesystem::path facade_session_root(
  * @param ud Engine handle.
  * @req REQ-DELEG-005
  * @callback
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static void facade_swap_tool_dir(
     const std::string& session_key,
     const std::filesystem::path& path,
     bool entering, void* ud) {
     auto* h = static_cast<entropic_handle_t>(ud);
-    if (h == nullptr || !h->server_manager) { return; }
-    if (entering) { h->sandbox_swap_mutex.lock(); }
-    h->server_manager->set_working_dir_all(path);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return; }
+    // gh#166: the lock is the WORKSPACE's, so two sessions delegating in
+    // different repositories no longer serialize against each other.
+    auto* ws = entropic::workspace_for(h, session_key);
+    auto& lock = (ws != nullptr) ? ws->swap_mutex : h->sandbox_swap_mutex;
+    if (entering) { lock.lock(); }
+    servers->set_working_dir_all(path);
     s_log->info("delegation dir swap: session='{}' -> {} ({})",
                 session_key, path.string(),
                 entering ? "enter" : "restore");
-    if (!entering) { h->sandbox_swap_mutex.unlock(); }
+    if (!entering) { lock.unlock(); }
 }
 
 /**
@@ -1660,11 +1690,15 @@ static void facade_swap_tool_dir(
  * @version 2.13.0
  */
 static std::vector<std::string> facade_unsafe_external_tools(
-    const std::string& /*session_key*/,
+    const std::string& session_key,
     const std::vector<std::string>& allowed, void* ud) {
     auto* h = static_cast<entropic_handle_t>(ud);
-    if (h == nullptr || !h->server_manager) { return {}; }
-    return h->server_manager->external_tools_without_readonly_hint(allowed);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return {}; }
+    // gh#166: a workspace's external servers connect when the workspace is
+    // created, so their annotations are already cached by the time a
+    // delegation is admitted — no lazy spawn is needed at the gate.
+    return servers->external_tools_without_readonly_hint(allowed);
 }
 
 /**
@@ -2202,7 +2236,7 @@ entropic_error_t entropic_configure_dir(
  * @req REQ-API-002
  * @req REQ-API-003
  * @req REQ-ABI-001
- * @version 2.0.8
+ * @version 2.13.0
  */
 void entropic_destroy(entropic_handle_t handle) {
     if (handle == nullptr) {
@@ -2223,6 +2257,19 @@ void entropic_destroy(entropic_handle_t handle) {
     // orchestrator pointer used by the iface callbacks.
     entropic::destroy_orchestrator_interface(handle->inference_iface_ctx);
     handle->inference_iface_ctx = nullptr;
+
+    // gh#166 (v2.13.0): named workspaces own server instances with live
+    // child processes. Shut them down explicitly, before the engine that
+    // may still hold a resolver pointing at them goes away — teardown
+    // order is the recurring gh#58 failure shape, not left to chance.
+    {
+        std::lock_guard<std::mutex> guard(handle->workspace_mutex);
+        for (auto& [name, ws] : handle->workspaces) {
+            if (ws && ws->servers) { ws->servers->shutdown(); }
+        }
+        handle->workspaces.clear();
+        handle->session_workspace.clear();
+    }
 
     // gh#59 (v2.3.1): release the per-handle session.log file sink so
     // a subsequent handle that happens to reuse the same log_id can

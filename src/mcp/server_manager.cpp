@@ -1012,10 +1012,10 @@ void ServerManager::connect_and_register_external(
  *         labelled with the registered server name so child stderr and
  *         lifecycle logs identify the server, not the spawn command.
  * @req REQ-MCP-025
- * @version 2.1.5
+ * @version 2.13.0
  */
 std::unique_ptr<Transport> ServerManager::make_transport(
-    const ExternalServerConfig& spec) {
+    const ExternalServerConfig& spec) const {
     bool prefer_sse = (spec.transport == "sse")
         || (!spec.url.empty() && spec.command.empty());
     if (prefer_sse) {
@@ -1025,9 +1025,16 @@ std::unique_ptr<Transport> ServerManager::make_transport(
     // label so child stderr lines and lifecycle logs identify the
     // server, not the resolved spawn command (which collides when
     // multiple servers share an entrypoint like /usr/bin/env python).
-    return std::make_unique<StdioTransport>(
+    auto transport = std::make_unique<StdioTransport>(
         spec.name, spec.command, spec.args, spec.env,
         /*default_timeout_ms=*/30000U);
+    // gh#166 (v2.13.0): spawn the child IN the repository its tools are
+    // supposed to serve. An explicit spec value wins; otherwise the
+    // manager's own root, which for a workspace is the workspace root.
+    transport->set_working_dir(spec.working_dir.empty()
+                                   ? project_dir_.string()
+                                   : spec.working_dir);
+    return transport;
 }
 
 /**
@@ -1221,7 +1228,7 @@ ServerManager::create_external_client(
  * @param config Discovery config.
  * @return Client instance.
  * @utility
- * @version 2.1.4
+ * @version 2.13.0
  */
 std::unique_ptr<ExternalMCPClient>
 ServerManager::create_external_client(

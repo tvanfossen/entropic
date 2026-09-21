@@ -55,7 +55,52 @@ struct TierSpec {
     int gpu_layers = 99;
     int n_parallel = 1;
     bool enable_thinking = false;     ///< Identity enable_thinking frontmatter
+
+    /// @brief Identity `allowed_tools` frontmatter (gh#121). Empty = all.
+    ///
+    /// A configured handle stages EVERY registered tool by default: 27 of
+    /// them, 18.6 KB, ~5000 prompt tokens (see the gh#158 run log). A tier
+    /// with a 2-8 K context therefore overflows on the tool block alone,
+    /// before the model has seen the task — llama.cpp logs "Decode chunk
+    /// failed" and the turn comes back empty. A scenario that needs two
+    /// filesystem calls names them here and pays for two.
+    /// @version 2.13.0
+    std::vector<std::string> allowed_tools;
 };
+
+/**
+ * @brief Human-readable reason a `setup()` returned nullptr.
+ *
+ * `REQUIRE(h != nullptr)` on its own prints `nullptr != nullptr`, which
+ * says nothing about WHICH of the five configure failures happened. The
+ * one that actually bites on the floor hardware (a 1080 Ti, 11 GB) is the
+ * VRAM admission gate, so it is named explicitly.
+ *
+ * @param rc Error code from the failing C-ABI call.
+ * @param step Which call failed.
+ * @param tiers Tier specs, echoed so the model and its sizing are visible.
+ * @return One line suitable for INFO() ahead of the REQUIRE.
+ * @utility
+ * @version 2.13.0
+ */
+inline std::string setup_failure_text(entropic_error_t rc,
+                                      const std::string& step,
+                                      const std::vector<TierSpec>& tiers) {
+    std::string why = step + " failed, rc="
+                    + std::to_string(static_cast<int>(rc));
+    if (rc == ENTROPIC_ERROR_TIER_MODEL_TOO_LARGE) {
+        why += " (TIER_MODEL_TOO_LARGE — the model did NOT FIT the VRAM "
+               "budget; the [residency] log lines carry the footprint and "
+               "the budget. Pick a smaller GGUF or wait for the previous "
+               "model test's VRAM to return)";
+    }
+    for (const auto& t : tiers) {
+        why += "; tier " + t.name + " model=" + t.gguf_key
+             + " ctx=" + std::to_string(t.context_length)
+             + " gpu_layers=" + std::to_string(t.gpu_layers);
+    }
+    return why;
+}
 
 /**
  * @brief RAII temp project configured through the real C-ABI (gh#93).
@@ -79,21 +124,32 @@ public:
     const fs::path& dir() const { return dir_; }
     entropic_handle_t handle() const { return handle_; }
 
+    /// @brief Why the last `setup()` returned nullptr ("" when it did not).
+    /// @version 2.13.0
+    const std::string& setup_failure() const { return setup_failure_; }
+
     /**
      * @brief Build the project files, create + configure a handle, register
      *        per-tier grammars.
      * @param tiers Tier specs (first is the default unless overridden).
      * @param default_tier Default tier name ("" = first).
-     * @return Configured handle, or nullptr on failure.
+     * @return Configured handle, or nullptr on failure (see setup_failure()).
      */
     entropic_handle_t setup(const std::vector<TierSpec>& tiers,
                             const std::string& default_tier = "") {
         write_project_files(tiers, default_tier);
         setenv("ENTROPIC_DATA_DIR",
                (fs::path(MODEL_PATH) / "data").string().c_str(), 1);
-        if (entropic_create(&handle_) != ENTROPIC_OK) { return nullptr; }
-        if (entropic_configure_dir(handle_, dir_.string().c_str())
-            != ENTROPIC_OK) {
+        setup_failure_.clear();
+        auto rc = entropic_create(&handle_);
+        if (rc != ENTROPIC_OK) {
+            setup_failure_ = setup_failure_text(rc, "entropic_create", tiers);
+            return nullptr;
+        }
+        rc = entropic_configure_dir(handle_, dir_.string().c_str());
+        if (rc != ENTROPIC_OK) {
+            setup_failure_ =
+                setup_failure_text(rc, "entropic_configure_dir", tiers);
             return nullptr;
         }
         for (const auto& t : tiers) {
@@ -130,6 +186,12 @@ private:
                        + "enable_thinking: "
                        + (t.enable_thinking ? "true" : "false") + "\n";
         if (!t.grammar_name.empty()) { fm += "grammar: " + t.grammar_name + "\n"; }
+        if (!t.allowed_tools.empty()) {
+            fm += "allowed_tools:\n";
+            for (const auto& tool : t.allowed_tools) {
+                fm += "  - " + tool + "\n";
+            }
+        }
         fm += "---\n" + t.identity_body + "\n";
         write_file(dir_ / ("identity_" + t.name + ".md"), fm);
     }
@@ -147,6 +209,7 @@ private:
 
     fs::path dir_;
     entropic_handle_t handle_ = nullptr;
+    std::string setup_failure_;  ///< Reason the last setup() failed
 };
 
 }  // namespace entropic::test::facade

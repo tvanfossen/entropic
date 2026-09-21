@@ -17,7 +17,19 @@
  * unrelated turns, so the answer comes from accumulated context plus a
  * fresh tool call, not from the last message.
  *
- * Requires: GPU, gemma-4-E4B QAT GGUF on disk.
+ * @par Sizing (v2.13.0 fixture fix)
+ * The scenario proves two workspaces do not read each other's files. That
+ * is a property of tool-root resolution, not of model capability, so it is
+ * run on the SMALLEST bundled GGUF that still tool-calls — gemma-4-E2B QAT
+ * (~2.4 GiB). The first cut asked for gemma4_e4b (Q8_0, ~7.6 GiB of
+ * weights), which the VRAM admission gate refused outright on the floor
+ * hardware (a 1080 Ti, 11 GB) while the preceding model test's VRAM was
+ * still coming back: footprint 8796933248 B vs budget 4520673280 B,
+ * TIER_MODEL_TOO_LARGE, handle nullptr, and not one line of gh#166 ever
+ * ran. The tier also names `allowed_tools`, because the default menu of 27
+ * tools is ~5000 prompt tokens and would overflow the context on its own.
+ *
+ * Requires: GPU, gemma-4-E2B QAT GGUF on disk.
  * Run: ctest -L model -R gh166
  *
  * @version 2.13.0
@@ -112,9 +124,9 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
 {
     GIVEN("one resident model and two repositories") {
         auto gguf = entropic::test::facade::model_gguf(
-            "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf");
+            "gemma-4-E2B-it-qat-UD-Q4_K_XL.gguf");
         if (gguf.empty() || !fs::is_regular_file(gguf)) {
-            SKIP("gemma-4-E4B QAT GGUF not present at " + gguf.string());
+            SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
         }
 
         auto repo_a = make_repo("bazel");
@@ -123,13 +135,19 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
         entropic::test::facade::FacadeProject project("gh166_workspaces");
         entropic::test::facade::TierSpec lead;
         lead.name = "lead";
-        lead.gguf_key = "gemma4_e4b";
+        lead.gguf_key = "gemma4_e2b_qat";
         lead.adapter = "gemma4";
         lead.identity_body =
             "You are a terse assistant with filesystem tools. Read files "
             "before answering about them. Answer in one short sentence.";
         lead.context_length = 4096;
+        // Two reads are all this scenario needs. Without the allowlist the
+        // handle stages every registered tool (~18.6 KB, ~5000 tokens) and
+        // the 4 K context is spent before the task arrives.
+        lead.allowed_tools = {"filesystem.read_file",
+                              "filesystem.list_directory"};
         auto* h = project.setup({lead});
+        INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
 
         REQUIRE(entropic_workspace_create(h, "proj-a",

@@ -166,8 +166,26 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
         // Two reads are all this scenario needs. Without the allowlist the
         // handle stages every registered tool (~18.6 KB, ~5000 tokens) and
         // the 4 K context is spent before the task arrives.
+        //
+        // `entropic.complete` is the third because the tier OWES one. A
+        // FacadeProject tier declares no auto_chain, so `populate_tier_info`
+        // derives `explicit_completion: true`
+        // (`.value_or(!tier.auto_chain.has_value())`,
+        // src/facade/entropic.cpp:576) — the engine then requires every turn
+        // to end in a tool call and nudges when one does not. With only the
+        // two readers on the menu that nudge is unanswerable, and the v2.13.0
+        // gate log shows exactly that: the same
+        // "[SYSTEM] Your previous response contained no tool call. You must
+        // end every turn with exactly one tool call
+        // (filesystem.read_file,filesystem.list_directory). Retry." after
+        // every turn, then "[iteration cap reached after 15 iterations]", and
+        // a final answer of "I will read the `PROJECT.md` file again to
+        // confirm the exact wording" instead of "bazel". Both positive
+        // assertions failed on a model that was never allowed to finish. Same
+        // defect and same one-tool fix as gh#165/gh#164 in 8008065.
         lead.allowed_tools = {"filesystem.read_file",
-                              "filesystem.list_directory"};
+                              "filesystem.list_directory",
+                              "entropic.complete"};
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);

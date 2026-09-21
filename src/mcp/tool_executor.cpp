@@ -957,13 +957,23 @@ static ToolResultKind classify_tool_result(const std::string& content) {
 
 /**
  * @brief Emit the per-tool-call info log line.
+ *
+ * `session` is on this line because it is the ONE field that makes the
+ * log attributable once a handle runs several sessions at a time (the
+ * v2.13.0 default). Two concurrent runs interleave their lines freely —
+ * they are not even grouped per inference sequence — so without the key
+ * printed HERE, at the dispatch that touches the filesystem, "which
+ * session read that file" cannot be answered from the log at all. The
+ * gh#166 gate failure cost a full forensic pass to a question this field
+ * answers outright. `""` is the default session.
+ *
  * @param ctx Loop context.
  * @param call The tool call.
  * @param exec_ms Execution time (ms).
  * @param raw_result Raw server result (for size).
  * @param kind Classified result kind.
  * @dg_internal
- * @version 2.3.7
+ * @version 2.13.0
  */
 void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
                                  double exec_ms,
@@ -971,8 +981,9 @@ void ToolExecutor::log_tool_call(LoopContext& ctx, const ToolCall& call,
                                  ToolResultKind kind) {
     auto args_log = serialize_args(call);
     if (args_log.size() > 512) { args_log.resize(512); }
-    logger->info("[tool_call] iter={} tier={} tool={} args={} "
+    logger->info("[tool_call] session='{}' iter={} tier={} tool={} args={} "
                  "elapsed_ms={:.0f} result_chars={} status={}",
+                 ctx.session_key,
                  ctx.metrics.iterations,
                  ctx.locked_tier.empty() ? "lead" : ctx.locked_tier,
                  call.name, args_log, exec_ms,

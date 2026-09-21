@@ -1,64 +1,76 @@
 [
   {
-    "req_id": "REQ-ABI-002",
-    "req_name": "C++ exceptions never cross any .so boundary",
+    "req_id": "REQ-DELEG-006",
+    "req_name": "Explicit delegation context, required-context tiers, resume by target",
     "functions": [
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_register_mcp_server",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "extract_context_refs",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-API-005",
-    "req_name": "Uniform precondition guard on every exported entry point",
+    "req_id": "REQ-MCP-002",
+    "req_name": "Tool results always cross boundaries as a ServerResponse JSON envelope",
     "functions": [
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_register_mcp_server",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "build_directive",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-021",
-    "req_name": "Filesystem tools are root-confined, read-before-write gated, and size-bounded",
+    "req_id": "REQ-MCP-012",
+    "req_name": "Tool calls pass an ordered precondition pipeline with typed rejection kinds",
     "functions": [
       {
-        "name": "confined_mcp_config",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "process_single_call",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-025",
-    "req_name": "External servers are discovered safely, directive-stripped, and health-monitored",
+    "req_id": "REQ-MCP-017",
+    "req_name": "PRE/POST_TOOL_CALL hooks fire on every exit path and POST may rewrite the result",
     "functions": [
       {
-        "name": "entropic_register_mcp_server",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "process_single_call",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-020",
+    "req_name": "A bounded, thread-safe ring buffer retains recent tool calls for introspection",
+    "functions": [
+      {
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-MCP-024",
+    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
+    "functions": [
+      {
+        "name": "build_complete_directive",
+        "file": "src/mcp/tool_executor.cpp",
+        "version": "2.3.7"
+      },
+      {
+        "name": "build_directive",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]
@@ -68,33 +80,18 @@
     "req_name": "Named workspaces bind a session to its own tool root and servers",
     "functions": [
       {
-        "name": "confined_mcp_config",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "set_server_resolver",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "build_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "validate_workspace_args",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "servers_for",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "entropic_workspace_create",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "entropic_session_bind_workspace",
-        "file": "src/facade/entropic_mcp.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_registration_target",
-        "file": "src/facade/entropic_mcp.cpp",
+        "name": "execute_tool",
+        "file": "src/mcp/tool_executor.cpp",
         "version": "2.13.0"
       }
     ]

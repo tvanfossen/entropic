@@ -186,16 +186,71 @@ SCENARIO("Recall-style prompts do not surface prior-generation content",
 #include <filesystem>
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <unordered_map>
+#include <vector>
 
 namespace gh162_model {
 namespace fs = std::filesystem;
 
-/// @brief Tools the delegate tier may see — read_file and nothing else.
-/// @internal
-/// @version 2.13.0
-struct ReaderTier {
-    std::vector<std::string> tools;  ///< Tool JSON definitions for the child
+/// @brief The one tool the delegate tier is permitted to call.
+/// @version 2.13.0-childtools
+inline const char* kReaderTool = "filesystem.read_file";
+
+/// @brief Per-tier staged menus, as `facade_get_tool_prompt` serves them.
+/// @internal @version 2.13.0-childtools
+struct TierToolsets {
+    std::string lead;    ///< JSON array staged for the routed lead tier
+    std::string reader;  ///< JSON array staged for the 'reader' child
 };
+
+/**
+ * @brief Pick named tools out of a `ServerManager::list_tools()` registry.
+ * @param registry Full tool-list JSON array.
+ * @param want Fully-qualified names to keep, in order.
+ * @return JSON array string of the matching descriptors.
+ * @utility
+ * @version 2.13.0-childtools
+ */
+inline std::string tools_named(const std::string& registry,
+                               const std::vector<std::string>& want) {
+    auto all = nlohmann::json::parse(registry, nullptr, false);
+    nlohmann::json picked = nlohmann::json::array();
+    if (!all.is_array()) { return picked.dump(); }
+    for (const auto& name : want) {
+        for (const auto& tool : all) {
+            if (tool.value("name", std::string{}) == name) {
+                picked.push_back(tool);
+                break;
+            }
+        }
+    }
+    return picked.dump();
+}
+
+/**
+ * @brief Per-tier tool staging — the seam `facade_get_tool_prompt` fills.
+ *
+ * The shared harness provider (`real_get_tool_prompt`) serves ONE fixed
+ * pair, filesystem.read_file + filesystem.write_file, to EVERY tier, which
+ * is the defect e1df323 found in the gh#160 scenario: `entropic.delegate`
+ * was never on the lead's menu, so the lead could not delegate at all.
+ * Here the lead gets delegate plus a reader, and the child gets the reader
+ * alone — so the tier design this scenario rests on is something the
+ * engine actually stages rather than something the comment asserts.
+ *
+ * @param tier Tier being generated for ("reader" is the delegation child).
+ * @param result Output: heap JSON array. Caller frees via free_fn.
+ * @param ud TierToolsets pointer.
+ * @return 0 — both tiers always have tools.
+ * @callback
+ * @version 2.13.0-childtools
+ */
+inline int reader_tool_prompt(const char* tier, char** result, void* ud) {
+    const auto* sets = static_cast<const TierToolsets*>(ud);
+    const bool child = (tier != nullptr) && std::string(tier) == "reader";
+    *result = alloc_cstr(child ? sets->reader : sets->lead);
+    return 0;
+}
 
 /**
  * @brief Resolve the "reader" tier with a search-free tool set.
@@ -204,43 +259,31 @@ struct ReaderTier {
  * no seeded context such a child is structurally unable to succeed, so a
  * pass here cannot come from the child rediscovering the file.
  *
+ * v2.13.0: the restriction is carried by `allowed_tools`, which the engine
+ * ACTUALLY enforces — `AgentEngine::tri_get_tier_param` publishes it and
+ * `ToolExecutor::check_tier_allowed` rejects on it at dispatch, keyed on
+ * the child's `locked_tier`. It used to be carried by `ChildContextInfo::
+ * tools`, a field the facade never populated and nothing in the engine
+ * ever read: the comment claimed "no search tools" while the child was
+ * free to call anything the harness staged. The claim is now enforced
+ * rather than asserted about a dead field.
+ *
  * @param tier_name Requested tier.
- * @param ud ReaderTier pointer.
- * @return ChildContextInfo carrying only the read tool.
+ * @param ud Unused.
+ * @return ChildContextInfo allowing only the read tool.
  * @callback
- * @version 2.13.0
+ * @version 2.13.0-childtools
  */
 inline ChildContextInfo reader_resolve_tier(
-    const std::string& tier_name, void* ud) {
-    auto* r = static_cast<ReaderTier*>(ud);
+    const std::string& tier_name, void* /*ud*/) {
     ChildContextInfo info;
     info.valid = true;
     info.system_prompt =
         "You are " + tier_name + ". You can read files with "
         "filesystem.read_file and you have NO search tools. Read the files "
         "you are given and answer from their contents.";
-    info.tools = r->tools;
+    info.allowed_tools = {kReaderTool};
     return info;
-}
-
-/**
- * @brief Keep only `filesystem.read_file` from a server tool list.
- * @param tools_json Full tool list JSON array.
- * @return Single-element vector of tool JSON, or empty if absent.
- * @utility
- * @version 2.13.0
- */
-inline std::vector<std::string> only_read_file(
-    const std::string& tools_json) {
-    std::vector<std::string> out;
-    auto tools = nlohmann::json::parse(tools_json, nullptr, false);
-    if (!tools.is_array()) { return out; }
-    for (const auto& t : tools) {
-        if (t.value("name", std::string{}) == "filesystem.read_file") {
-            out.push_back(t.dump());
-        }
-    }
-    return out;
 }
 
 } // namespace gh162_model
@@ -277,10 +320,20 @@ SCENARIO("gh#162: a delegate seeded with context answers from the named "
                               (fs::path(MODEL_PATH) / "data").string());
         servers.initialize();
 
-        ReaderTier reader{only_read_file(servers.list_tools())};
-        REQUIRE(reader.tools.size() == 1);
+        // The precondition the whole scenario rests on, checked against the
+        // REAL registry rather than a field the engine never read: the
+        // child can open a named path, and nothing here can find one.
+        const std::string registry = servers.list_tools();
+        TierToolsets toolsets{
+            tools_named(registry,
+                        {"entropic.delegate", kReaderTool}),
+            tools_named(registry, {kReaderTool})};
+        REQUIRE(nlohmann::json::parse(toolsets.reader).size() == 1);
+        REQUIRE(nlohmann::json::parse(toolsets.lead).size() == 2);
 
         auto iface = make_real_interface();
+        iface.get_tool_prompt = reader_tool_prompt;
+        iface.tool_prompt_data = &toolsets;
         LoopConfig lc;
         lc.max_iterations = 12;
         lc.stream_output = false;
@@ -297,12 +350,23 @@ SCENARIO("gh#162: a delegate seeded with context answers from the named "
         TierResolutionInterface tri;
         tri.resolve_tier = reader_resolve_tier;
         tri.tier_exists = mock_tier_exists;
-        tri.user_data = &reader;
+        tri.user_data = nullptr;
         engine.set_tier_resolution(tri);
+
+        // The facade's dispatch-time allowlist (gh#83), wired BY HAND for
+        // the same reason every other seam here is (the v2.7.2 lesson).
+        // This is what makes "the reader has no search tools" a property
+        // the ENGINE enforces, keyed on the child's locked_tier, instead of
+        // a comment above a field nothing read.
+        const std::unordered_map<std::string, std::vector<std::string>>
+            tier_allowed{
+                {g_ctx.default_tier, {"entropic.delegate", kReaderTool}},
+                {"reader", {kReaderTool}}};
 
         entropic::ToolExecutor executor(
             servers, engine.loop_config(), engine.callbacks(),
             engine.build_directive_hooks());
+        executor.set_tier_allowed_tools(&tier_allowed);
         ToolExecutionInterface tei;
         tei.process_tool_calls = [](LoopContext& ctx,
                                     const std::vector<ToolCall>& calls,

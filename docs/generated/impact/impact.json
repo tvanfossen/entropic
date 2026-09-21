@@ -1,126 +1,37 @@
 [
   {
-    "req_id": "REQ-COMPACT-001",
-    "req_name": "Threshold compaction preserving task-bearing messages, snapshot first",
-    "functions": [
-      {
-        "name": "context_usage",
-        "file": "src/core/engine.cpp",
-        "version": "1.8.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-COMPACT-002",
-    "req_name": "Fill-gated tool-result pruning and persistent context anchors",
-    "functions": [
-      {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "reinject_context_anchors",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "dir_prune",
-        "file": "src/core/engine.cpp",
-        "version": "1.8.4"
-      },
-      {
-        "name": "dir_anchor",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-001",
-    "req_name": "Delegation admission guards reject before a child loop runs",
-    "functions": [
-      {
-        "name": "push_delegation_repeat_blocked",
-        "file": "src/core/engine.cpp",
-        "version": "2.3.0"
-      },
-      {
-        "name": "push_delegation_isolation_unsafe",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reject_delegation_if_guarded",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "reject_pipeline_if_guarded",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      }
-    ]
-  },
-  {
     "req_id": "REQ-DELEG-002",
     "req_name": "Delegation lifecycle from preconditions to result fold-back",
     "functions": [
       {
-        "name": "dir_delegate",
-        "file": "src/core/engine.cpp",
+        "name": "check_delegation_preconditions",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
+        "name": "execute_delegation",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "fetch_resume_payload",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.6"
+        "name": "build_resumed_child_context",
+        "file": "src/core/delegation.cpp",
+        "version": "2.13.0-childtools"
       },
       {
-        "name": "resolve_resume_delegation",
-        "file": "src/core/engine.cpp",
+        "name": "execute_resume_delegation",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "run_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "name": "build_child_context",
+        "file": "src/core/delegation.cpp",
+        "version": "2.13.0-childtools"
       },
       {
-        "name": "ensure_sandbox_manager",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_session_root",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-DELEG-003",
-    "req_name": "Relay-single-delegate promotion with coverage-gap suppression",
-    "functions": [
-      {
-        "name": "log_relay_status",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.1-rc1"
+        "name": "extract_summary",
+        "file": "src/core/delegation.cpp",
+        "version": "2.9.10"
       }
     ]
   },
@@ -129,14 +40,14 @@
     "req_name": "Sequential pipeline with forward carry and per-stage reporting",
     "functions": [
       {
-        "name": "reject_pipeline_if_guarded",
-        "file": "src/core/engine.cpp",
+        "name": "execute_pipeline",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute_pending_pipeline",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
+        "name": "run_pipeline_stage",
+        "file": "src/core/delegation.cpp",
+        "version": "2.13.0"
       }
     ]
   },
@@ -145,23 +56,13 @@
     "req_name": "Opt-in delegation sandbox isolation, wired end to end",
     "functions": [
       {
-        "name": "push_delegation_isolation_unsafe",
-        "file": "src/core/engine.cpp",
+        "name": "mint_delegation_id",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "resolve_session_root",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "sandbox_for_session",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "isolation_unsafe_tools",
-        "file": "src/core/engine.cpp",
+        "name": "restore_root_for",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       }
     ]
@@ -171,281 +72,8 @@
     "req_name": "Explicit delegation context, required-context tiers, resume by target",
     "functions": [
       {
-        "name": "resolve_latest_for_target",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "resolve_resume_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-HOOK-002",
-    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
-    "functions": [
-      {
-        "name": "loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "set_state",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.10"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-IDEN-001",
-    "req_name": "Tier resolution contract and per-tier loop overrides",
-    "functions": [
-      {
-        "name": "run_turn_as",
-        "file": "src/core/engine.cpp",
-        "version": "2.12.0"
-      },
-      {
-        "name": "seed_system_prompt_for_tier",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-IDEN-003",
-    "req_name": "Handoff rules and auto-chain continuation",
-    "functions": [
-      {
-        "name": "dir_tier_change",
-        "file": "src/core/engine.cpp",
-        "version": "1.8.4"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-002",
-    "req_name": "Teardown releases every model, context and adapter handle",
-    "functions": [
-      {
-        "name": "do_load_active",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "~LlamaCppBackend",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.2.8"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-005",
-    "req_name": "Every decode path honours cooperative cancellation within one token",
-    "functions": [
-      {
-        "name": "do_generate_streaming_text_only",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.8.3"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-008",
-    "req_name": "Every declared grammar source reaches the sampler and exactly one wins",
-    "functions": [
-      {
-        "name": "active_tool_grammar",
-        "file": "src/inference/llama_cpp_backend.h",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-INFER-026",
-    "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
-    "functions": [
-      {
-        "name": "handle_terminal_finish_reasons",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_batch",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "context_fit_overflows",
-        "file": "src/inference/context_fit.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "context_overflow_message",
-        "file": "src/inference/context_fit.h",
-        "version": "2.13.0"
-      },
-      {
-        "name": "refuse_over_context",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "prefill_error",
-        "file": "src/inference/llama_cpp_backend.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-001",
-    "req_name": "Agent state machine with observable, dual-channel transitions",
-    "functions": [
-      {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "set_state",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.10"
-      },
-      {
-        "name": "run_turn",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.8"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-002",
-    "req_name": "Bounded loop termination with synthetic completion on cap",
-    "functions": [
-      {
-        "name": "run",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-003",
-    "req_name": "Fixed per-iteration pipeline with pre-generate cancellation",
-    "functions": [
-      {
-        "name": "dispatch_pending_or_halt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute_pending_delegation",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_batch",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-006",
-    "req_name": "Interrupt and pause semantics across nested loops",
-    "functions": [
-      {
-        "name": "run_loop",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0 [reviewed]"
-      },
-      {
-        "name": "dispatch_pending_or_halt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "handle_terminal_finish_reasons",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "interrupt",
-        "file": "src/core/engine.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "set_external_reset",
-        "file": "src/core/engine.cpp",
-        "version": "2.12.1"
-      },
-      {
-        "name": "cancel_pause",
-        "file": "src/core/engine.cpp",
-        "version": "1.8.4"
-      },
-      {
-        "name": "generate_streaming",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.3.7"
-      },
-      {
-        "name": "spawn_cancel_poller",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "dispatch_batch_generate",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-008",
-    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
-    "functions": [
-      {
-        "name": "run_streaming",
-        "file": "src/core/engine.cpp",
-        "version": "2.1.8"
-      },
-      {
-        "name": "stream_token_callback",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "generate_streaming",
-        "file": "src/core/response_generator.cpp",
-        "version": "2.3.7"
-      }
-    ]
-  },
-  {
-    "req_id": "REQ-LOOP-010",
-    "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
-    "functions": [
-      {
-        "name": "set_session_messages",
-        "file": "src/core/engine.cpp",
+        "name": "format_context_block",
+        "file": "src/core/delegation.cpp",
         "version": "2.13.0"
       }
     ]

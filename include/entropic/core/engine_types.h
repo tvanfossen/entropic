@@ -226,11 +226,19 @@ struct PendingPipeline {
 
 /**
  * @brief Resolved tier information for building child delegation contexts.
- * @version 2.0.6-rc16
+ *
+ * v2.13.0 removed a `tools` member carrying tool JSON definitions. The
+ * facade never populated it and nothing in `src/` or `include/` ever read
+ * what it fed (`LoopContext::all_tools`). A child's tool menu comes from
+ * tier config — `get_tool_prompt(tier)` → `resolve_allowed_tools(h, tier)`
+ * — and its dispatch gate from `allowed_tools` below, which IS live: it
+ * feeds `AgentEngine::tri_get_tier_param`, `get_tier_allowed_tools` and
+ * gh#160's `isolation_unsafe_tools` readOnlyHint refusal.
+ *
+ * @version 2.13.0
  */
 struct ChildContextInfo {
     std::string system_prompt;              ///< Built for target tier
-    std::vector<std::string> tools;         ///< Tool JSON definitions for tier
     std::vector<std::string> allowed_tools; ///< Allowed tool names (gh#121)
     bool explicit_completion = false;       ///< Requires entropic.complete?
     std::string completion_instructions;    ///< Instructions for explicit completion
@@ -350,7 +358,6 @@ struct LoopContext {
     std::string active_root;
     std::string conversation_id;                             ///< Conversation ID for storage (v1.8.8)
     std::string source = "human";                          ///< Message source
-    std::vector<std::string> all_tools;                    ///< Full tool list as raw JSON strings
     std::string base_system;                               ///< Base system prompt (pre-tier formatting)
     std::unordered_map<std::string, std::string> metadata; ///< Runtime metadata
     int delegation_depth = 0;                              ///< 0 = root, 1+ = child

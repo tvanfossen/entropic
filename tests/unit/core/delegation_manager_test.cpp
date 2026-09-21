@@ -149,6 +149,46 @@ TEST_CASE("child context has correct depth",
     REQUIRE(child_depth == 1);
 }
 
+TEST_CASE("a delegated child is locked to its target tier — the key the "
+          "dispatch allowlist reads",
+          "[delegation][v2.13.0][childtools]") {
+    // v2.13.0 deleted ChildContextInfo::tools and LoopContext::all_tools.
+    // The facade never populated the first and nothing in src/ or include/
+    // ever read the second, so a test asserting on them claimed a
+    // restriction no code enforced. What actually restricts a child is the
+    // tier allowlist: ToolExecutor::check_tier_allowed, keyed on
+    // ctx.locked_tier (the gate itself is covered by the gh#83 cases in
+    // tests/unit/mcp/tool_executor_test.cpp).
+    //
+    // That key is fragile in a way nothing pinned. build_child_context sets
+    // locked_tier to "" whenever the tier supplies a system prompt — the
+    // normal case — and it is execute_delegation's immediate overwrite that
+    // makes it correct. `check_tier_allowed` returns EARLY on an empty
+    // locked_tier, so losing that one line would leave every delegated
+    // child silently unrestricted: green tests, no enforcement. This is the
+    // characterization test that makes that regression loud.
+    MockTierResolution tier_mock;  // supplies a non-empty system_prompt
+    auto tier_res = make_mock_tier_res(tier_mock);
+
+    std::string child_tier = "<unset>";
+    auto capture_loop = [](LoopContext& ctx, void* ud) {
+        *static_cast<std::string*>(ud) = ctx.locked_tier;
+        ctx.state = AgentState::COMPLETE;
+        Message m;
+        m.role = "assistant";
+        m.content = "done";
+        ctx.messages.push_back(std::move(m));
+    };
+
+    DelegationManager mgr(capture_loop, &child_tier, tier_res);
+
+    LoopContext parent;
+    parent.locked_tier = "lead";
+    mgr.execute_delegation(parent, "eng", "build it");
+
+    REQUIRE(child_tier == "eng");
+}
+
 TEST_CASE("child context has fresh messages",
           "[delegation]") {
     MockTierResolution tier_mock;

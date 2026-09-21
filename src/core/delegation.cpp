@@ -464,7 +464,7 @@ DelegationResult DelegationManager::execute_delegation(
  * @return Child LoopContext carrying the seed history, the tier system
  *         prompt, and the new task as a trailing user message.
  * @req REQ-DELEG-002
- * @version 2.13.0
+ * @version 2.13.0-childtools
  */
 LoopContext DelegationManager::build_resumed_child_context(
         const LoopContext& parent_ctx,
@@ -481,7 +481,6 @@ LoopContext DelegationManager::build_resumed_child_context(
     // gh#158: see build_child_context — both builders inherit the key, or
     // the resumed path reintroduces the shared-bucket collision on its own.
     child_ctx.session_key = parent_ctx.session_key;
-    child_ctx.all_tools = info.tools;
     child_ctx.active_phase = "default";
     child_ctx.locked_tier = target_tier;
     child_ctx.messages = std::move(seed_history);
@@ -738,7 +737,7 @@ bool DelegationManager::run_pipeline_stage(
  * @param task Task description.
  * @return Fresh child context.
  * @req REQ-DELEG-002
- * @version 2.13.0
+ * @version 2.13.0-childtools
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,
@@ -769,7 +768,6 @@ LoopContext DelegationManager::build_child_context(
     }
     child.locked_tier = info.system_prompt.empty()
         ? parent_ctx.locked_tier : "";
-    child.all_tools = info.tools;
     child.active_phase = "default";
 
     // System prompt as first message

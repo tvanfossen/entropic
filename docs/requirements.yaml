@@ -1633,11 +1633,27 @@
 
     holds (gh#48), the ancestor tier chain extended with the parent''s
 
-    locked tier, the tier''s tools, and exactly two messages — the tier
+    locked tier, and exactly two messages — the tier
 
     system prompt and the task with any completion instructions
 
-    appended. The ON_DELEGATE hook may cancel; storage records are
+    appended. The child is LOCKED to its target tier before the child
+
+    loop runs, which is the key ToolExecutor::check_tier_allowed reads:
+
+    an empty locked_tier bypasses enforcement entirely, so a child that
+
+    arrived unlocked would be silently unrestricted. The child carries no
+
+    tool list of its own — v2.13.0 removed ChildContextInfo::tools and
+
+    LoopContext::all_tools, which the facade never populated and nothing
+
+    in the engine ever read. A child''s menu comes from tier config via
+
+    get_tool_prompt(tier), and its dispatch gate from the tier''s
+
+    allowed_tools. The ON_DELEGATE hook may cancel; storage records are
 
     opened and completed around the child run; todo state is saved,
 
@@ -1672,6 +1688,10 @@
 
     instructions appended when explicit_completion is set.
 
+    Given a tier that supplies a system prompt, When the child loop
+
+    runs, Then ctx.locked_tier is the delegation target, not empty.
+
     Given a child that emitted an explicit completion summary, When the
 
     summary is extracted, Then it is preferred over the last assistant
@@ -1684,6 +1704,10 @@
 
     '
   verified_by: 'TEST_CASE "execute_delegation returns error for unknown tier";
+
+    "a delegated child is locked to its target tier — the key the
+
+    dispatch allowlist reads";
 
     "child context has correct depth"; "child context has fresh
 
@@ -1714,7 +1738,7 @@
     /home/tvanfossen/Projects/entropic/tests/unit/core/engine_test.cpp
 
     '
-  version: 2.10.4
+  version: 2.13.0
 - id: REQ-DELEG-003
   name: Relay-single-delegate promotion with coverage-gap suppression
   module: Delegation and Pipelines

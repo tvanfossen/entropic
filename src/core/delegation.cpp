@@ -464,7 +464,7 @@ DelegationResult DelegationManager::execute_delegation(
  * @return Child LoopContext carrying the seed history, the tier system
  *         prompt, and the new task as a trailing user message.
  * @req REQ-DELEG-002
- * @version 2.13.0-childtools
+ * @version 2.13.0 [reviewed]
  */
 LoopContext DelegationManager::build_resumed_child_context(
         const LoopContext& parent_ctx,
@@ -737,7 +737,7 @@ bool DelegationManager::run_pipeline_stage(
  * @param task Task description.
  * @return Fresh child context.
  * @req REQ-DELEG-002
- * @version 2.13.0-childtools
+ * @version 2.13.0 [reviewed]
  */
 LoopContext DelegationManager::build_child_context(
     const LoopContext& parent_ctx,

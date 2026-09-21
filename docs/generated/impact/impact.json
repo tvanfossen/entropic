@@ -16,7 +16,7 @@
       {
         "name": "build_resumed_child_context",
         "file": "src/core/delegation.cpp",
-        "version": "2.13.0-childtools"
+        "version": "2.13.0 [reviewed]"
       },
       {
         "name": "execute_resume_delegation",
@@ -26,12 +26,7 @@
       {
         "name": "build_child_context",
         "file": "src/core/delegation.cpp",
-        "version": "2.13.0-childtools"
-      },
-      {
-        "name": "extract_summary",
-        "file": "src/core/delegation.cpp",
-        "version": "2.9.10"
+        "version": "2.13.0 [reviewed]"
       }
     ]
   },
@@ -74,6 +69,37 @@
       {
         "name": "format_context_block",
         "file": "src/core/delegation.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-TYPE-005",
+    "req_name": "Config types declare their own defaults; optional means absent, not default",
+    "functions": [
+      {
+        "name": "classify_app_context",
+        "file": "src/prompts/manager.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "app_context_state_message",
+        "file": "src/prompts/manager.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "load_app_context",
+        "file": "src/prompts/manager.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "load_shared_prompt_sources",
+        "file": "src/prompts/manager.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "validate_configured_prompts",
+        "file": "src/prompts/manager.cpp",
         "version": "2.13.0"
       }
     ]

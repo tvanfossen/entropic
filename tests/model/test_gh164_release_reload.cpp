@@ -199,7 +199,20 @@ TEST_CASE("gh#164: entropic_release_model frees VRAM through the C ABI",
     lead.gguf_key = "gemma4_e2b";
     lead.adapter = "gemma4";
     lead.context_length = 4096;
+    // Guard and tier already name one model; the MENU did not fit. The
+    // v2.13.0 gate log for this very case
+    // (build/test-reports/model/logs/test-gh164-release-reload-c3.log)
+    // reads "Active tools staged ...: 18594 bytes" / "Stream: 5014 input
+    // tokens" against "n_ctx=4096", with "Decode chunk failed" on every
+    // turn — and eleven assertions passed anyway. Since 26884f6 that is a
+    // typed refusal (ENTROPIC_ERROR_EVAL_CONTEXT_FULL, terminal
+    // `context_overflow`), so the REQUIREs below would fail instead. This
+    // case is about VRAM eviction and lazy reload, not tool use, but the
+    // tier contract derives `explicit_completion: true` — so it names
+    // exactly the one tool it owes (1,595 bytes, ~400 tokens).
+    lead.allowed_tools = {"entropic.complete"};
     auto* handle = project.setup({lead});
+    INFO("setup: " << project.setup_failure());
     REQUIRE(handle != nullptr);
 
     static int evicted = 0;

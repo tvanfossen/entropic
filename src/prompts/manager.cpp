@@ -581,7 +581,7 @@ std::string load_app_context(
  * @param[out] constitution Constitution body (empty when it failed).
  * @param[out] app_context App context body (empty when it failed).
  * @req REQ-TYPE-005
- * @version 2.13.0-gh163
+ * @version 2.13.0 [reviewed]
  */
 void load_shared_prompt_sources(
     const entropic::ParsedConfig& config,

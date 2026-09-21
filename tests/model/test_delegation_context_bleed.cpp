@@ -193,11 +193,11 @@ namespace gh162_model {
 namespace fs = std::filesystem;
 
 /// @brief The one tool the delegate tier is permitted to call.
-/// @version 2.13.0-childtools
+/// @version 2.13.0
 inline const char* kReaderTool = "filesystem.read_file";
 
 /// @brief Per-tier staged menus, as `facade_get_tool_prompt` serves them.
-/// @internal @version 2.13.0-childtools
+/// @internal @version 2.13.0
 struct TierToolsets {
     std::string lead;    ///< JSON array staged for the routed lead tier
     std::string reader;  ///< JSON array staged for the 'reader' child
@@ -209,7 +209,7 @@ struct TierToolsets {
  * @param want Fully-qualified names to keep, in order.
  * @return JSON array string of the matching descriptors.
  * @utility
- * @version 2.13.0-childtools
+ * @version 2.13.0
  */
 inline std::string tools_named(const std::string& registry,
                                const std::vector<std::string>& want) {
@@ -243,7 +243,7 @@ inline std::string tools_named(const std::string& registry,
  * @param ud TierToolsets pointer.
  * @return 0 — both tiers always have tools.
  * @callback
- * @version 2.13.0-childtools
+ * @version 2.13.0
  */
 inline int reader_tool_prompt(const char* tier, char** result, void* ud) {
     const auto* sets = static_cast<const TierToolsets*>(ud);
@@ -272,7 +272,7 @@ inline int reader_tool_prompt(const char* tier, char** result, void* ud) {
  * @param ud Unused.
  * @return ChildContextInfo allowing only the read tool.
  * @callback
- * @version 2.13.0-childtools
+ * @version 2.13.0 [reviewed]
  */
 inline ChildContextInfo reader_resolve_tier(
     const std::string& tier_name, void* /*ud*/) {

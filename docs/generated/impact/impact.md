@@ -2,38 +2,26 @@
 
 | REQ | Name | Functions Changed |
 |-----|------|-------------------|
-| REQ-ABI-001 | Pure C at every .so boundary — opaque handles and explicit ownership | entropic_destroy, entropic_context_count, entropic_context_usage, entropic_state_save, entropic_state_load, entropic_free_logprob_result |
-| REQ-ABI-002 | C++ exceptions never cross any .so boundary | entropic_run_batch, entropic_state_save, entropic_state_load, entropic_list_identities, entropic_get_logprobs, entropic_compute_perplexity, entropic_workspace_create, entropic_session_bind_workspace, entropic_register_mcp_server |
-| REQ-API-002 | Handle lifecycle — create, configure, destroy, NULL-safe teardown | entropic_destroy |
-| REQ-API-003 | Multiple handles are fully independent within one process | entropic_destroy |
-| REQ-API-004 | Three configure entry points, one shared body, one-shot per handle | init_orchestrator, validate_prompt_sources, configure_common |
-| REQ-API-005 | Uniform precondition guard on every exported entry point | entropic_run_batch, entropic_set_critique_callbacks, entropic_context_get, entropic_context_count, entropic_context_usage, entropic_state_save, entropic_state_load, entropic_metrics_json, entropic_list_identities, entropic_identity_count, entropic_get_logprobs, entropic_compute_perplexity, entropic_set_residency_observer, entropic_workspace_create, entropic_session_bind_workspace, entropic_register_mcp_server |
-| REQ-API-008 | Single cross-boundary allocator pair and explicit ownership transfer | entropic_run_batch, entropic_context_get, entropic_metrics_json, entropic_list_identities, entropic_get_logprobs, entropic_free_logprob_result |
-| REQ-API-009 | Run entry-point family, result contract, and cross-thread interruptibility | entropic_run_batch, entropic_run_session, entropic_run_session_as, entropic_run_session_streaming |
-| REQ-API-010 | Observer and callback slots survive configure and fire uniformly | entropic_set_critique_callbacks, entropic_set_residency_observer |
-| REQ-API-013 | Identity frontmatter threaded into config before the orchestrator snapshot | wire_tool_executor, init_orchestrator |
-| REQ-DELEG-005 | Opt-in delegation sandbox isolation, wired end to end | facade_session_root, facade_swap_tool_dir, set_working_dir_all, tools_without_readonly_hint |
-| REQ-DELEG-006 | Explicit delegation context, required-context tiers, resume by target | si_latest_delegation_for_target, extract_context_refs |
-| REQ-IDEN-001 | Tier resolution contract and per-tier loop overrides | entropic_run_session_as |
-| REQ-IDEN-002 | Identity lifecycle separates immutable static from dynamic identities | entropic_list_identities, entropic_identity_count |
-| REQ-INFER-007 | Named grammars are registered, validated, and resolved by a fixed precedence | warn_tier_grammars_step |
-| REQ-INFER-018 | Same-prefix batch generation is gated, per-request-constrained and seq-safe | entropic_run_batch |
-| REQ-INFER-019 | Model pool dedup and VRAM residency policy govern which tier is resident | require_ready_backend, entropic_set_residency_observer |
-| REQ-INFER-024 | Backends declare capabilities and expose state and log-probability introspection | entropic_get_logprobs, entropic_compute_perplexity |
-| REQ-LOOP-001 | Agent state machine with observable, dual-channel transitions | entropic_run_session, entropic_session_context_get |
-| REQ-LOOP-006 | Interrupt and pause semantics across nested loops | RunCancelScope, current_run_cancel, current_run_cancelled, RunCancelScope, cancel_current_run, ~RunCancelScope |
-| REQ-LOOP-009 | Per-session-key run concurrency, on by default, with one lock on the generation path | RunSessionScope, current_run_session, RunSessionScope, ~RunSessionScope |
-| REQ-MCP-001 | MCPServerBase holds the shared logic; concrete servers override only deltas | init_builtins, set_working_dir_all |
-| REQ-MCP-002 | Tool results always cross boundaries as a ServerResponse JSON envelope | execute_tool, build_directive |
-| REQ-MCP-007 | Tool calls route by server prefix uniformly across all three server kinds | init_builtins, tools_without_readonly_hint, external_tools_without_readonly_hint |
-| REQ-MCP-012 | Tool calls pass an ordered precondition pipeline with typed rejection kinds | process_single_call |
-| REQ-MCP-014 | A locked tier's allowed_tools list is enforced at dispatch time | wire_tool_executor |
-| REQ-MCP-017 | PRE/POST_TOOL_CALL hooks fire on every exit path and POST may rewrite the result | process_single_call |
-| REQ-MCP-020 | A bounded, thread-safe ring buffer retains recent tool calls for introspection | execute_tool |
-| REQ-MCP-024 | Engine-level entropic.* tools validate their arguments and emit typed directives | build_complete_directive, build_directive |
-| REQ-MCP-025 | External servers are discovered safely, directive-stripped, and health-monitored | entropic_register_mcp_server, make_transport |
-| REQ-MCP-027 | Named workspaces bind a session to its own tool root and servers | set_working_dir, workspace_for, workspace_servers, build_workspace, validate_workspace_args, entropic_workspace_create, entropic_session_bind_workspace, resolve_registration_target, set_server_resolver, servers_for, execute_tool |
-| REQ-SAFE-001 | Untrusted bytes are sanitized at ingress, never at egress | entropic_context_get |
-| REQ-VALID-002 | Critique-and-revise loop with typed verdicts and content safety valve | entropic_set_critique_callbacks |
+| REQ-COMPACT-001 | Threshold compaction preserving task-bearing messages, snapshot first | context_usage |
+| REQ-COMPACT-002 | Fill-gated tool-result pruning and persistent context anchors | run_loop, run, reinject_context_anchors, dir_prune, dir_anchor |
+| REQ-DELEG-001 | Delegation admission guards reject before a child loop runs | push_delegation_repeat_blocked, push_delegation_isolation_unsafe, reject_delegation_if_guarded, reject_pipeline_if_guarded, execute_pending_pipeline |
+| REQ-DELEG-002 | Delegation lifecycle from preconditions to result fold-back | dir_delegate, execute_pending_delegation, fetch_resume_payload, resolve_resume_delegation, run_pending_delegation, ensure_sandbox_manager, resolve_session_root |
+| REQ-DELEG-003 | Relay-single-delegate promotion with coverage-gap suppression | log_relay_status |
+| REQ-DELEG-004 | Sequential pipeline with forward carry and per-stage reporting | reject_pipeline_if_guarded, execute_pending_pipeline |
+| REQ-DELEG-005 | Opt-in delegation sandbox isolation, wired end to end | push_delegation_isolation_unsafe, resolve_session_root, sandbox_for_session, isolation_unsafe_tools |
+| REQ-DELEG-006 | Explicit delegation context, required-context tiers, resume by target | resolve_latest_for_target, resolve_resume_delegation |
+| REQ-HOOK-002 | Engine fires hooks at every lifecycle boundary, including a vetoable completion | loop, set_state |
+| REQ-IDEN-001 | Tier resolution contract and per-tier loop overrides | run_turn_as, seed_system_prompt_for_tier |
+| REQ-IDEN-003 | Handoff rules and auto-chain continuation | dir_tier_change |
+| REQ-INFER-002 | Teardown releases every model, context and adapter handle | do_load_active, ~LlamaCppBackend |
+| REQ-INFER-005 | Every decode path honours cooperative cancellation within one token | do_generate_streaming_text_only |
+| REQ-INFER-008 | Every declared grammar source reaches the sampler and exactly one wins | active_tool_grammar |
+| REQ-INFER-026 | A prompt that cannot fit the tier context is refused, never decoded | handle_terminal_finish_reasons, generate_batch, context_fit_overflows, context_overflow_message, refuse_over_context, prefill_error |
+| REQ-LOOP-001 | Agent state machine with observable, dual-channel transitions | run_loop, run, set_state, run_turn, run_streaming |
+| REQ-LOOP-002 | Bounded loop termination with synthetic completion on cap | run, loop |
+| REQ-LOOP-003 | Fixed per-iteration pipeline with pre-generate cancellation | dispatch_pending_or_halt, execute_pending_delegation, generate_batch |
+| REQ-LOOP-006 | Interrupt and pause semantics across nested loops | run_loop, dispatch_pending_or_halt, handle_terminal_finish_reasons, interrupt, set_external_reset, cancel_pause, generate_streaming, spawn_cancel_poller, dispatch_batch_generate |
+| REQ-LOOP-008 | Family-aware streaming reasoning filter with UTF-8 alignment | run_streaming, stream_token_callback, generate_streaming |
+| REQ-LOOP-010 | Session conversations are readable, writable, and losslessly round-trippable | set_session_messages |
 
-**Total: 33 requirement(s) affected, 105 function(s) changed**
+**Total: 21 requirement(s) affected, 65 function(s) changed**

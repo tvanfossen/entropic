@@ -347,14 +347,19 @@ static void stream_token_callback(
  * @brief Resolve a stream's finish_reason from rc + content size.
  *
  * gh#20 (v2.1.5) resolution order: CANCELLED → "interrupted";
- * error with partial content → "partial"; error with none → "error";
- * clean → "stop".
+ * EVAL_CONTEXT_FULL → "context_overflow"; error with partial content →
+ * "partial"; error with none → "error"; clean → "stop".
+ *
+ * v2.13.0: the overflow refusal is given its OWN reason rather than folded
+ * into "error". "error" is not terminal for the loop — it falls through to
+ * the empty-turn ladder, which appends a correction message and retries a
+ * prompt that was already too big. Retrying it makes it bigger.
  *
  * @param rc Backend return code.
  * @param content_size Accumulated content length.
  * @return finish_reason string.
  * @utility
- * @version 2.3.7
+ * @version 2.13.0
  */
 static std::string resolve_stream_finish_reason(int rc,
                                                 size_t content_size) {
@@ -363,6 +368,11 @@ static std::string resolve_stream_finish_reason(int rc,
         logger->info("Stream cancelled by interrupt after {} chars",
                      content_size);
         reason = "interrupted";
+    } else if (rc == ENTROPIC_ERROR_EVAL_CONTEXT_FULL) {
+        logger->error("Stream refused: the prompt does not fit this tier's "
+                      "context — see the inference log for the token "
+                      "breakdown (rc={})", rc);
+        reason = "context_overflow";
     } else if (rc != 0 && content_size > 0) {
         logger->warn("Stream failed (rc={}) after {} chars — "
                      "preserving partial", rc, content_size);
@@ -556,11 +566,55 @@ int ResponseGenerator::dispatch_batch_generate(
 }
 
 /**
+ * @brief Map a TERMINAL batch return code onto the result, if it is one.
+ *
+ * Terminal means the loop must not treat the turn as a model failure it
+ * can retry. Two codes qualify: a cancellation (gh#81, v2.4.2 — carries
+ * whatever partial content arrived, and maps to "interrupted" so the
+ * engine transitions to INTERRUPTED, mirroring
+ * `resolve_stream_finish_reason`), and a v2.13.0 context refusal (carries
+ * nothing, and no retry can shrink the prompt that caused it).
+ *
+ * Extracted from `generate_batch` so that function stays inside the knots
+ * ABC gate once the second code joined it.
+ *
+ * @param rc Backend return code.
+ * @param result_json Raw backend payload (may be NULL).
+ * @param[out] result Result populated when rc is terminal.
+ * @return true when rc was terminal and `result` is now final.
+ * @utility
+ * @version 2.13.0
+ */
+static bool apply_terminal_batch_rc(int rc, const char* result_json,
+                                    GenerateResult& result) {
+    if (rc == ENTROPIC_ERROR_CANCELLED) {
+        result.finish_reason = "interrupted";
+        if (result_json != nullptr) {
+            result.content = mcp::sanitize_utf8(result_json);
+        }
+        result.tool_calls_json = "[]";
+        logger->info("Generate cancelled (batch) after {} chars",
+                     result.content.size());
+    } else if (rc == ENTROPIC_ERROR_EVAL_CONTEXT_FULL) {
+        result.finish_reason = "context_overflow";
+        result.tool_calls_json = "[]";
+        logger->error("Generate refused (batch): the prompt does not fit "
+                      "this tier's context — see the inference log for the "
+                      "token breakdown (rc={})", rc);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+/**
  * @brief Generate via batch (non-streaming). (gh#81 cancel-aware, v2.4.2)
  * @param ctx Loop context.
- * @return Generation result.
+ * @return Generation result; finish_reason "context_overflow" when the
+ *         backend refused the prompt (v2.13.0).
  * @req REQ-LOOP-003
- * @version 2.4.2
+ * @req REQ-INFER-026
+ * @version 2.13.0
  */
 GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     if (inference_.generate == nullptr
@@ -577,34 +631,26 @@ GenerateResult ResponseGenerator::generate_batch(LoopContext& ctx) {
     int rc = dispatch_batch_generate(msgs_json, params_json, &result_json);
 
     GenerateResult result;
-    // gh#81 (v2.4.2): a cancelled batch is terminal, not an error —
-    // map it to "interrupted" so the engine transitions to INTERRUPTED
-    // and any partial content is preserved (mirrors the streaming
-    // resolve_stream_finish_reason policy).
-    if (rc == ENTROPIC_ERROR_CANCELLED) {
-        result.finish_reason = "interrupted";
-        if (result_json != nullptr) {
+    // Cancellation and the v2.13.0 context refusal are both terminal and
+    // both shaped unlike a retryable failure — see apply_terminal_batch_rc.
+    if (!apply_terminal_batch_rc(rc, result_json, result)) {
+        if (rc == 0 && result_json != nullptr) {
+            // Issue #3 (v2.1.1): inbound boundary, batch path. See the
+            // streaming branch above for rationale; same policy applies.
             result.content = mcp::sanitize_utf8(result_json);
+            result.finish_reason = "stop";
+            result.tool_calls_json = "[]";
+            // Fire observer once with full content so the non-streaming
+            // fallback still reaches registered observers. (2.0.6-rc16)
+            if (stream_observer_ != nullptr && !result.content.empty()) {
+                stream_observer_(result.content.data(),
+                                 result.content.size(),
+                                 stream_observer_data_);
+            }
+        } else {
+            result.finish_reason = "error";
+            logger->error("Generate failed (rc={})", rc);
         }
-        result.tool_calls_json = "[]";
-        logger->info("Generate cancelled (batch) after {} chars",
-                     result.content.size());
-    } else if (rc == 0 && result_json != nullptr) {
-        // Issue #3 (v2.1.1): inbound boundary, batch path. See the
-        // streaming branch above for rationale; same policy applies.
-        result.content = mcp::sanitize_utf8(result_json);
-        result.finish_reason = "stop";
-        result.tool_calls_json = "[]";
-        // Fire observer once with full content so the non-streaming
-        // fallback still reaches registered observers. (2.0.6-rc16)
-        if (stream_observer_ != nullptr && !result.content.empty()) {
-            stream_observer_(result.content.data(),
-                             result.content.size(),
-                             stream_observer_data_);
-        }
-    } else {
-        result.finish_reason = "error";
-        logger->error("Generate failed (rc={})", rc);
     }
     if (result_json != nullptr && inference_.free_fn != nullptr) {
         inference_.free_fn(result_json);

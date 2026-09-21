@@ -21,6 +21,7 @@
 #include "llama_cpp_tokenizer.h"
 #include "session_pool_util.h"
 #include "batch_kv_util.h"   // gh#158: batch sequence plan
+#include "context_fit.h"     // v2.13.0: prompt-vs-context admission gate
 #include "warm_keep_util.h"  // gh#96: common_prefix_len / warm_keep_cut
 #include "tool_call_markers.h"  // gh#103: family-aware tool-call close marker
 #include "batch_util.h"  // gh#98: batch_shared_prefix_len / batch_is_viable
@@ -99,20 +100,6 @@ bool check_stop_sequences(
         }
     }
     return false;
-}
-
-/**
- * @brief Create a prefill-failed GenerationResult.
- * @return GenerationResult with error fields populated.
- * @utility
- * @version 1.10.4
- */
-GenerationResult prefill_error() {
-    GenerationResult r;
-    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
-    r.error_message = "Prefill decode failed";
-    r.finish_reason = "error";
-    return r;
 }
 
 /**
@@ -2545,6 +2532,77 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
 }
 
 /**
+ * @brief Number of definitions in a staged MCP tool-list JSON array.
+ * @param tools_json Staged tool JSON ("" when no tools are staged).
+ * @return Element count; 0 when absent or malformed.
+ * @utility
+ * @version 2.13.0
+ */
+static int staged_tool_count(const std::string& tools_json) {
+    if (tools_json.empty()) { return 0; }
+    auto arr = nlohmann::json::parse(tools_json, nullptr, false);
+    return arr.is_array() ? static_cast<int>(arr.size()) : 0;
+}
+
+/**
+ * @brief Refuse this turn when its prompt cannot fit the tier context.
+ *
+ * See the header. The measurement is only taken on the refusal path — the
+ * common case costs one integer comparison. `tool_tokens` and
+ * `system_tokens` are tokenized from the STAGED JSON and the system
+ * message rather than from the render, so they are attributions for the
+ * operator, not an exact decomposition of `tokens`; the total and the
+ * context_length are exact, and those are the two the decision rests on.
+ *
+ * @param tokens Rendered + tokenized prompt for this turn.
+ * @param system_prompt System prompt text extracted from the messages.
+ * @return true when the turn was refused (no decode may follow).
+ * @req REQ-INFER-026
+ * @version 2.13.0
+ */
+bool LlamaCppBackend::refuse_over_context(
+    const std::vector<llama_token>& tokens,
+    const std::string& system_prompt)
+{
+    ContextFit fit;
+    fit.prompt_tokens = static_cast<int>(tokens.size());
+    fit.context_length = config().context_length;
+    if (!context_fit_overflows(fit)) {
+        prefill_refusal_.clear();
+        return false;
+    }
+    fit.tool_bytes = active_tools_json_.size();
+    fit.tool_count = staged_tool_count(active_tools_json_);
+    fit.tool_tokens =
+        static_cast<int>(tokenize(active_tools_json_, false).size());
+    fit.system_tokens =
+        static_cast<int>(tokenize(system_prompt, false).size());
+    prefill_refusal_ = context_overflow_message(fit);
+    logger->error("{}", prefill_refusal_);
+    return true;
+}
+
+/**
+ * @brief Build the error result for a prefill that did not run.
+ * @return GenerationResult carrying the typed refusal when one was
+ *         recorded, else the generic decode failure.
+ * @req REQ-INFER-026
+ * @version 2.13.0
+ */
+GenerationResult LlamaCppBackend::prefill_error() const {
+    GenerationResult r;
+    r.finish_reason = "error";
+    if (!prefill_refusal_.empty()) {
+        r.error_code = ENTROPIC_ERROR_EVAL_CONTEXT_FULL;
+        r.error_message = prefill_refusal_;
+        return r;
+    }
+    r.error_code = ENTROPIC_ERROR_GENERATE_FAILED;
+    r.error_message = "Prefill decode failed";
+    return r;
+}
+
+/**
  * @brief Run prefill with prompt cache integration (perf-instrumented wrapper).
  *
  * Resets the llama perf counters, dispatches to the cache-aware prefill
@@ -2552,13 +2610,18 @@ bool LlamaCppBackend::prefill_and_cache_prefix(
  * count (gh#96). Thin wrapper so the dispatch body stays under the knots
  * SLOC gate.
  *
+ * v2.13.0: the context-admission gate runs FIRST. Every text decode path
+ * reaches this function directly after tokenizing its render, so this is
+ * the earliest place that holds both the prompt size and the tier's
+ * context_length — and the last place before a token is decoded.
+ *
  * @param tokens Full token sequence.
  * @param system_prompt System prompt text for cache key.
  * @param messages Original messages (for prefix boundary).
  * @param params Generation parameters.
- * @return true on success.
+ * @return true on success; false on refusal or decode failure.
  * @dg_internal
- * @version 2.12.0
+ * @version 2.13.0
  */
 bool LlamaCppBackend::run_prefill_cached(
     const std::vector<llama_token>& tokens,
@@ -2575,6 +2638,24 @@ bool LlamaCppBackend::run_prefill_cached(
     // across the state-restore boundary, so we count the decodes directly.)
     last_prefill_tokens_ = 0;
     last_input_tokens_ = static_cast<int>(tokens.size());  // gh#97
+    // v2.13.0: a prompt that cannot fit is refused HERE, before llama_decode
+    // is called even once. Proceeding is what produced the release-gate
+    // symptom: chunked decode failures every turn, a cache restore that
+    // could not land, and an empty-turn allowance spent on a prompt no
+    // retry could shrink.
+    if (refuse_over_context(tokens, system_prompt)) {
+        return false;
+    }
+    // A prefill without a context cannot succeed, and saying so is cheaper
+    // than dereferencing null inside llama_get_memory further down. Both
+    // branches below reach llama.cpp, so the check belongs here rather than
+    // in either one. Production never arrives un-ACTIVE (the base class
+    // gates generate()); this is what lets the CPU unit tier drive the
+    // decode path at all.
+    if (ctx_ == nullptr) {
+        logger->error("Prefill requested with no context (not ACTIVE)");
+        return false;
+    }
     auto t_pre = entropic::log::now();
     bool ok;
     if (is_hybrid_ || is_recurrent_) {

@@ -784,6 +784,14 @@ protected:
     /// `kv_full_clear_count()`.
     int kv_full_clear_count_ = 0;
 
+    /// @brief v2.13.0: why the last prefill refused to run ("" = it ran).
+    ///
+    /// Set by `refuse_over_context` at the top of `run_prefill_cached` and
+    /// consumed by `prefill_error()`. Written and read inside one
+    /// generation, which `ModelOrchestrator::generation_mutex_` holds whole
+    /// — the same ownership rule as `active_slot_` above.
+    std::string prefill_refusal_;
+
     /* ── gh#106 (v2.9.0): MTP draft head (target-owned, shared-KV) ── */
     llama_model* mtp_draft_model_ = nullptr;   ///< MTP head GGUF (separate, trunk-sharing)
     llama_context* mtp_draft_ctx_ = nullptr;   ///< MTP context (ctx_type=MTP, ctx_other=ctx_)
@@ -1085,18 +1093,60 @@ protected:
 
     /**
      * @brief Run prefill with prompt cache integration.
+     *
+     * v2.13.0: also the context-admission gate. Every text decode path
+     * funnels through here immediately after tokenizing its render, which
+     * makes it the earliest point that holds BOTH the rendered prompt size
+     * and the tier's context_length — so the refusal lands here, before a
+     * single token is decoded.
+     *
      * @param tokens Full token sequence.
      * @param system_prompt System prompt text for cache key.
      * @param messages Original messages (for prefix boundary).
      * @param params Generation parameters.
-     * @return true on success.
-     * @version 1.8.3
+     * @return true on success; false on refusal (see `prefill_error()`) or
+     *         decode failure.
+     * @req REQ-INFER-026
+     * @version 2.13.0
      */
     bool run_prefill_cached(
         const std::vector<llama_token>& tokens,
         const std::string& system_prompt,
         const std::vector<Message>& messages,
         const GenerationParams& params);
+
+    /**
+     * @brief Refuse this turn when its prompt cannot fit the tier context.
+     *
+     * Measures the staged tool block and the system prompt against the
+     * rendered prompt, then asks `context_fit_overflows`. On a refusal it
+     * records the operator-facing diagnosis in `prefill_refusal_` and logs
+     * it at ERROR; the caller then returns without decoding.
+     *
+     * @param tokens Rendered + tokenized prompt for this turn.
+     * @param system_prompt System prompt text extracted from the messages.
+     * @return true when the turn was refused.
+     * @req REQ-INFER-026
+     * @version 2.13.0
+     */
+    bool refuse_over_context(const std::vector<llama_token>& tokens,
+                             const std::string& system_prompt);
+
+    /**
+     * @brief Build the error result for a prefill that did not run.
+     *
+     * Two distinct outcomes share one call site in each decode path: a
+     * context REFUSAL (typed ENTROPIC_ERROR_EVAL_CONTEXT_FULL, carrying the
+     * token breakdown) and a genuine decode failure. Reporting the first as
+     * the second is what let the v2.13.0 gate read a structural
+     * misconfiguration as a flaky model.
+     *
+     * @return GenerationResult with finish_reason "error" and the code that
+     *         matches what actually happened.
+     * @req REQ-INFER-026
+     * @version 2.13.0
+     */
+    GenerationResult prefill_error() const;
 
     /**
      * @brief Cache-aware prefill dispatch (gh#96 v2.7.5: extracted body of

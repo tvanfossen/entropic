@@ -142,6 +142,10 @@ add_executable(entropic-inference-tests
     inference/tokenizer_seam_test.cpp
     # v2.3.10: LlamaCppBackend ↔ Sampler seam coverage via MockSamplerFactory
     inference/sampler_seam_test.cpp
+    # v2.13.0: prompt-vs-context admission gate. Pure arithmetic + the real
+    # generate path driven headless through the v2.3.10 Tokenizer/Sampler
+    # seams, so the refusal and the "zero decode" half are both CPU-testable.
+    inference/context_fit_test.cpp
     # gh#95 (audit Pattern C): CPU-tier proof that a non-empty
     # GenerationParams.grammar actually ENGAGES a grammar constraint in the
     # REAL LlamaCppSamplerFactory chain (vocab-only GGUF, no llama_context).

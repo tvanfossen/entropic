@@ -47,6 +47,14 @@ struct MockInference {
     // — so a split multi-byte UTF-8 codepoint from MTP survives into *cleaned.
     std::string parse_cleaned_override;
 
+    /// @brief v2.13.0: return code the generate callbacks report.
+    ///
+    /// The inference ABI reports failure as the callback's int return, and
+    /// nothing in the harness could produce a non-zero one — so the engine's
+    /// handling of a typed backend refusal (ENTROPIC_ERROR_EVAL_CONTEXT_FULL,
+    /// "this prompt cannot fit the tier context") had no CPU coverage at all.
+    int generate_rc = 0;
+
     /// @brief gh#158 (v2.13.0): guards the mutable fields above.
     ///
     /// One AgentEngine now serves several concurrent runs, so the
@@ -107,7 +115,7 @@ inline int mock_generate(
     } else {
         *result_json = mock_strdup(mock->response);
     }
-    return 0;
+    return mock->generate_rc;
 }
 
 /**
@@ -136,9 +144,11 @@ inline int mock_generate_stream(
     // overlap the concurrency scenario exists to produce.
     std::string resp;
     bool token_by_token = false;
+    int rc = 0;
     {
         std::lock_guard<std::mutex> lock(mock->mutex);
         mock->generate_call_count++;
+        rc = mock->generate_rc;
         resp = mock->response_queue.empty()
             ? mock->response
             : mock->response_queue.front();
@@ -147,6 +157,11 @@ inline int mock_generate_stream(
         }
         token_by_token = mock->stream_token_by_token;
     }
+
+    // v2.13.0: a refused turn emits nothing. Streaming tokens first and
+    // THEN reporting the failure would give the engine partial content to
+    // work with, which is not what a pre-decode refusal looks like.
+    if (rc != 0) { return rc; }
 
     if (token_by_token) {
         for (size_t i = 0; i < resp.size(); ++i) {

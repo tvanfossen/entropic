@@ -466,6 +466,64 @@ SCENARIO("zero-tool-call with explicit_completion halts within retry cap",
     }
 }
 
+SCENARIO("a context-overflow refusal fails the turn instead of retrying it",
+         "[engine][v2.13.0][context_fit]")
+{
+    // The v2.13.0 release gate's second failure: the backend could not fit
+    // the prompt, so every turn came back empty, and the engine read those
+    // empty turns as a MODEL problem — appending "you must end every turn
+    // with exactly one tool call, retry", which makes the prompt LARGER,
+    // three times, and then reported
+    // "zero_tool_calls_with_explicit_completion". A refusal is structural:
+    // no retry can change it, and the failure the operator is shown must
+    // say so.
+    GIVEN("a backend that refuses the prompt as too large for the tier") {
+        MockInference mock;
+        mock.tier = "lead";
+        mock.is_complete = false;
+        mock.generate_rc = ENTROPIC_ERROR_EVAL_CONTEXT_FULL;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        lc.max_iterations = 15;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        TierResolutionInterface tri{};
+        tri.get_tier_param = [](const std::string& tier,
+                                const std::string& param,
+                                void* /*ud*/) -> std::string {
+            if (tier == "lead" && param == "explicit_completion") {
+                return "true";
+            }
+            return "";
+        };
+        engine.set_tier_resolution(tri);
+
+        std::vector<int> states;
+        EngineCallbacks cb;
+        cb.on_state_change = [](int s, void* ud) {
+            static_cast<std::vector<int>*>(ud)->push_back(s);
+        };
+        cb.user_data = &states;
+        engine.set_callbacks(cb);
+
+        WHEN("the loop runs") {
+            engine.run(make_messages());
+
+            THEN("the model is asked exactly once") {
+                // Not 4. The empty-turn ladder must not engage: retrying
+                // appends a correction message, which makes the prompt
+                // that already did not fit bigger.
+                REQUIRE(mock.generate_call_count == 1);
+            }
+            AND_THEN("the run ends in ERROR, not COMPLETE") {
+                REQUIRE_FALSE(states.empty());
+                REQUIRE(states.back() == static_cast<int>(AgentState::ERROR));
+            }
+        }
+    }
+}
+
 // ── P1-9: circular delegation detection ──────────────────
 
 SCENARIO("is_delegation_cycle flags ancestor reuse",

@@ -4511,6 +4511,95 @@
 
     '
   version: 2.13.0
+- id: REQ-INFER-026
+  name: A prompt that cannot fit the tier context is refused, never decoded
+  module: Inference Backends
+  description: 'Before any decode, the backend compares the rendered, tokenized prompt
+
+    for the turn against the tier''s context_length. A prompt at or beyond
+
+    that window leaves the model zero positions to emit into, so the turn is
+
+    refused with ENTROPIC_ERROR_EVAL_CONTEXT_FULL and llama_decode is never
+
+    called. The check lives in run_prefill_cached — the single point every
+
+    text decode path reaches immediately after tokenizing its render, and the
+
+    last point before a token is decoded.
+
+
+    The prompt measured here is IRREDUCIBLE: the engine''s compaction and
+
+    tool-result pruning have already run, and the staged tool block is rebuilt
+
+    from tier config on every render, so compaction provably cannot shrink it.
+
+
+    The error message names the token count, the tier''s context_length, the
+
+    overshoot, the largest contributor (staged tool block vs system prompt vs
+
+    message history) and the per-part breakdown, because those three have
+
+    different fixes and an operator told only the total has to guess. Nothing
+
+    is trimmed, truncated or auto-raised: the two knobs named in the message
+
+    (context_length, allowed_tools) are the caller''s to turn.
+
+
+    The refusal is terminal for the agent loop. It surfaces as finish_reason
+
+    "context_overflow" rather than "error" because "error" falls through to
+
+    the empty-turn ladder, which appends a correction message — making a
+
+    prompt that already did not fit larger — and after three such turns
+
+    reports zero_tool_calls_with_explicit_completion, which is not what
+
+    happened.
+
+
+    Recorded against the v2.13.0 release gate, where a handle staged 27 tools
+
+    (18,594 bytes) into a tier configured context_length 2048, rendered 5,026
+
+    tokens, and failed the chunked decode on every turn while forty test
+
+    assertions passed. Same fail-open class as gh#95 and gh#154.
+
+    '
+  acceptance_criteria: 'Given a prompt at or beyond context_length, When a turn is generated,
+
+    Then the result carries ENTROPIC_ERROR_EVAL_CONTEXT_FULL, zero prefill
+
+    tokens are decoded and no KV cache is cleared. Given a prompt one token
+
+    short of the window, Then it is admitted. Given context_length unset (0),
+
+    Then nothing is refused. Given the refusal reaches the agent loop, Then
+
+    the run ends in AgentState::ERROR after exactly one generate call.
+
+    '
+  verified_by: 'SCENARIO "context_fit_overflows refuses only what genuinely cannot fit",
+
+    "the refusal names every number an operator needs", "the largest
+
+    contributor is attributed to the right part", "a tier whose staged tools
+
+    overflow its context refuses the turn before any decode", "a prompt that
+
+    fits is not refused" — tests/unit/inference/context_fit_test.cpp;
+
+    SCENARIO "a context-overflow refusal fails the turn instead of retrying
+
+    it" — tests/unit/core/engine_test.cpp
+
+    '
+  version: 2.13.0
 - id: REQ-LOOP-001
   name: Agent state machine with observable, dual-channel transitions
   module: Agent Loop

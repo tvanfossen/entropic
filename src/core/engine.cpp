@@ -827,28 +827,45 @@ void AgentEngine::evaluate_no_tool_decision(
 /**
  * @brief Short-circuit evaluation for terminal finish reasons.
  *
- * Handles "interrupted" and "length" before the tier-specific logic
- * runs. Keeps evaluate_no_tool_decision under the 3-return cap.
- * (P1-6, 2.0.6-rc16)
+ * Handles "interrupted", "context_overflow" and "length" before the
+ * tier-specific logic runs. Keeps evaluate_no_tool_decision under the
+ * 3-return cap. (P1-6, 2.0.6-rc16)
+ *
+ * v2.13.0 adds "context_overflow": the backend refused the turn because
+ * its prompt could not fit the tier's context. That is terminal by
+ * construction — the empty-turn ladder below would append a correction
+ * message and retry, which makes the prompt LARGER, and after three such
+ * turns reports "zero_tool_calls_with_explicit_completion", sending the
+ * operator after a model that was never given a chance to answer. The
+ * single-exit shape is what keeps this at one return.
  *
  * @param ctx Loop context.
  * @param finish_reason Generation finish reason.
  * @return true if a terminal reason was handled (caller returns).
  * @req REQ-LOOP-006
- * @version 2.0.6-rc16
+ * @req REQ-INFER-026
+ * @version 2.13.0
  */
 bool AgentEngine::handle_terminal_finish_reasons(
     LoopContext& ctx, const std::string& finish_reason) {
+    bool handled = true;
     if (finish_reason == "interrupted") {
         logger->info("[DECISION] interrupted");
         set_state(ctx, AgentState::INTERRUPTED);
-        return true;
-    }
-    if (finish_reason == "length") {
+    } else if (finish_reason == "context_overflow") {
+        ctx.metadata["failure_reason"] = "context_overflow";
+        ctx.metadata["failure_tier"] = ctx.locked_tier;
+        logger->error("[DECISION] prompt does not fit tier '{}' context — "
+                      "failing the turn instead of retrying it; the "
+                      "inference log carries the token breakdown",
+                      ctx.locked_tier);
+        set_state(ctx, AgentState::ERROR);
+    } else if (finish_reason == "length") {
         logger->info("[DECISION] length, continuing");
-        return true;
+    } else {
+        handled = false;
     }
-    return false;
+    return handled;
 }
 
 /**

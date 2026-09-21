@@ -89,7 +89,9 @@ SCENARIO("Delegation wiring fires on_delegation_start callback",
 
 #include <filesystem>
 #include <fstream>
+#include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace gh160_model {
 namespace fs = std::filesystem;
@@ -114,6 +116,29 @@ inline std::string slurp(const fs::path& p) {
     std::ifstream in(p);
     return std::string((std::istreambuf_iterator<char>(in)),
                        std::istreambuf_iterator<char>());
+}
+
+/**
+ * @brief The last `filesystem.read_file` RESULT in a conversation.
+ *
+ * A tool result is EVIDENCE: the bytes the filesystem handed back, in
+ * the message the executor appended. The assistant's prose around it is
+ * narration, and narration is not what containment is a claim about.
+ *
+ * @param msgs Conversation after the turn.
+ * @return The result message's content, or "" when the turn never read.
+ * @utility
+ * @version 2.13.0
+ */
+inline std::string last_read_result(const std::vector<Message>& msgs) {
+    for (auto it = msgs.rbegin(); it != msgs.rend(); ++it) {
+        auto name = it->metadata.find("tool_name");
+        if (name != it->metadata.end()
+            && name->second == "filesystem.read_file") {
+            return it->content;
+        }
+    }
+    return {};
 }
 
 /// @brief One JSON tool-definition array per tier in this scenario.
@@ -361,7 +386,41 @@ SCENARIO("gh#160: an isolated delegation never writes the project, and "
             THEN("the lead's second turn still sees the original text") {
                 REQUIRE(after_turn2.size() > 3);
                 CHECK(after_turn2.back().role == "assistant");
-                CHECK(after_turn2.back().content.find("REWRITTEN BY ENG")
+                // Asserted on the TOOL RESULT, not on the final prose.
+                //
+                // The prose form (`after_turn2.back().content` must not
+                // contain "REWRITTEN BY ENG") was the v2.13.0 gate's one
+                // failure, and it was the assertion that was wrong. The
+                // lead LEGITIMATELY knows that phrase in turn 2: the
+                // delegation-complete summary folds the child's report
+                // into the parent's context, by design. On the failing
+                // run the lead's <think> block said 'the file contains
+                // "ORIGINAL CONTENT" instead of what I expected
+                // ("REWRITTEN BY ENG")' and its ANSWER quoted the
+                // original bytes — containment held perfectly and the
+                // assertion still failed. It was constraining what the
+                // model chose to say, and (with thinking on) its
+                // reasoning trace as well.
+                //
+                // This form is STRICTLY STRONGER, on three counts:
+                //   - It reads the bytes the filesystem returned, which
+                //     is what "the lead still sees the original file"
+                //     actually claims. A sandbox escape changes those;
+                //     it cannot be talked around.
+                //   - REQUIRE makes it non-vacuous. The prose assertion
+                //     PASSED whenever the model declined to read at all
+                //     — the exact run where it proves nothing.
+                //   - It asserts the positive (ORIGINAL CONTENT present)
+                //     as well as the negative, so a read that errored or
+                //     came back empty fails instead of passing on an
+                //     absent needle.
+                const auto evidence = last_read_result(after_turn2);
+                INFO("turn-2 read result: " << evidence
+                     << "\nturn-2 answer: " << after_turn2.back().content);
+                REQUIRE_FALSE(evidence.empty());
+                CHECK(evidence.find("ORIGINAL CONTENT")
+                      != std::string::npos);
+                CHECK(evidence.find("REWRITTEN BY ENG")
                       == std::string::npos);
                 end_test_log();
             }

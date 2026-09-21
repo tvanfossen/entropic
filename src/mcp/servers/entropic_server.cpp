@@ -1570,21 +1570,40 @@ int EntropicServer::register_core_tools(
 }
 
 /**
- * @brief Register delegation tools if multi-tier.
+ * @brief Register delegation tools when there is somewhere to delegate TO.
+ *
+ * `tier_names` holds the delegation TARGETS, not every configured tier:
+ * `collect_delegatable_tiers` (src/facade/entropic.cpp) and
+ * `build_workspace` (src/facade/entropic_mcp.cpp) both drop the source /
+ * default tier before calling here, so a tier can never delegate to
+ * itself. One target is therefore a perfectly ordinary multi-tier
+ * config — a lead plus one worker — and the enum it patches has one
+ * legal value.
+ *
+ * gh#160/gh#162 (v2.13.0): the guard read `size() <= 1`, which was
+ * correct at v1.8.5 when the caller passed EVERY tier and a list of one
+ * meant "only the source exists". v2.0.4 changed the caller to pass
+ * targets only and this guard was not re-read, so the canonical two-tier
+ * deployment shipped with NO entropic.delegate, entropic.pipeline or
+ * entropic.resume_delegation on the model's menu at all — silently, since
+ * an absent tool looks exactly like a model that chose not to call it.
+ *
  * @param tools_dir Path to tools directory.
- * @param tier_names Tier names for schema patching.
- * @return 3 (delegate, pipeline, resume_delegation) when more than one
- *         tier is configured; 0 for a single-tier config, which skips
- *         registering them entirely so they never appear in the model's
- *         tool list.
+ * @param tier_names Delegation targets for schema patching (source tier
+ *                   already excluded by the caller).
+ * @param require_context_tiers Tiers that refuse a contextless
+ *        delegation (gh#162).
+ * @return 3 (delegate, pipeline, resume_delegation) when at least one
+ *         target exists; 0 when there is none, which skips registering
+ *         them entirely so they never appear in the model's tool list.
  * @req REQ-MCP-024
- * @version 2.1.6
+ * @version 2.13.0
  */
 int EntropicServer::register_delegation_tools(
     const std::string& tools_dir,
     const std::vector<std::string>& tier_names,
     const std::vector<std::string>& require_context_tiers) {
-    if (tier_names.size() <= 1) {
+    if (tier_names.empty()) {
         return 0;
     }
     auto delegate_def = load_tool_definition(

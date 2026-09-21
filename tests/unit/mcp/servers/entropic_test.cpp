@@ -300,8 +300,13 @@ TEST_CASE("test_delegate_skips_duplicate_check", "[entropic]") {
     REQUIRE(server.skip_duplicate_check("pipeline"));
 }
 
+// The constructor's `tier_names` are the delegation TARGETS, not every
+// configured tier — `collect_delegatable_tiers` (src/facade/entropic.cpp)
+// drops the source/default tier before calling here, and the v2.0.6 enum
+// SCENARIO below pins that meaning. So "single-tier config" is expressed
+// as an EMPTY target list: one tier, nobody to hand work to.
 TEST_CASE("test_single_tier_skips_delegate", "[entropic]") {
-    EntropicServer server({"lead"}, TEST_DATA_DIR);
+    EntropicServer server({}, TEST_DATA_DIR);
 
     json args;
     args["target"] = "lead";
@@ -311,6 +316,39 @@ TEST_CASE("test_single_tier_skips_delegate", "[entropic]") {
     auto result = extract_result(envelope);
 
     REQUIRE(result.find("Unknown tool") != std::string::npos);
+}
+
+// gh#160/gh#162 (v2.13.0): a lead plus ONE worker is a multi-tier config.
+// The guard here used to be `tier_names.size() <= 1`, written at v1.8.5
+// when the caller passed EVERY tier; v2.0.4 made the caller pass targets
+// only and the guard was never re-read. The result was that the canonical
+// two-tier deployment — one lead, one worker — silently shipped with no
+// entropic.delegate at all.
+TEST_CASE("test_one_delegatable_tier_registers_delegate", "[entropic]") {
+    EntropicServer server({"eng"}, TEST_DATA_DIR);
+
+    json args;
+    args["target"] = "eng";
+    args["task"] = "write hello world";
+
+    auto envelope = server.execute("delegate", args.dump());
+    auto types = extract_directive_types(envelope);
+
+    REQUIRE(has_directive(types, "delegate"));
+    REQUIRE(has_directive(types, "stop_processing"));
+}
+
+// The same off-by-one hid resume_delegation, which shares the guard.
+TEST_CASE("test_one_delegatable_tier_registers_resume", "[entropic]") {
+    EntropicServer server({"eng"}, TEST_DATA_DIR);
+
+    auto tools = json::parse(server.list_tools());
+    bool has_resume = std::any_of(
+        tools.begin(), tools.end(), [](const json& t) {
+            return t.value("name", std::string{}) == "resume_delegation";
+        });
+
+    REQUIRE(has_resume);
 }
 
 // ── v2.0.6: Delegate enum filtering ─────────────────────

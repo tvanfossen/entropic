@@ -931,6 +931,25 @@ SCENARIO("gh#158: an unkeyed context read during a starting run cannot abort",
                 }
             });
 
+            // Wait for the poller to complete ONE cycle before the runners
+            // start. Without this the detector is a coin flip: 800
+            // `set_active_session` calls take microseconds, so on a loaded
+            // box (the full CPU suite runs ~24 test binaries at once) the
+            // poller could be scheduled for the first time only after
+            // `done` was already set — 0 reads, 0 overlap, and the
+            // liveness CHECK below failing on a suite that had found
+            // nothing wrong. Reproduced at roughly 1 run in 3.
+            //
+            // It STRENGTHENS the scenario: the poller is now demonstrably
+            // live for the whole of the runner loop instead of for an
+            // unknown fraction of it. `threw` is in the wait condition so
+            // a poller that throws on its very first read — the abort this
+            // scenario exists to catch — fails the test instead of hanging
+            // the harness.
+            while (reads.load() == 0 && threw.load() == 0) {
+                std::this_thread::yield();
+            }
+
             std::vector<std::thread> runners;
             for (int t = 0; t < 2; ++t) {
                 runners.emplace_back([&, t] {

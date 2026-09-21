@@ -65,19 +65,34 @@ bool has_ci(const std::string& hay, const std::string& needle) {
 
 /**
  * @brief Create a repository holding one marker file.
- * @param tag Distinctive marker word.
+ *
+ * The directory name and the marker word are deliberately DECOUPLED.
+ * The first cut named the directories after the markers
+ * (`entropic_gh166_bazel_<pid>`), which made the load-bearing negative
+ * assertion mean two different things at once: `has_ci(transcript,
+ * "meson")` matched the other repository's CONTENT — what the scenario
+ * claims — but equally the other repository's PATH, which proves
+ * nothing. It matters now that the root confinement actually holds: a
+ * refused cross-workspace read answers "Path escapes project root:
+ * /tmp/...meson.../PROJECT.md", so under the old naming CONTAINMENT
+ * WORKING would have FAILED the assertion. It also handed the model the
+ * sibling root by analogy from its own — which is how the v2.13.0 gate
+ * reached the hole in the first place.
+ *
+ * @param slot Opaque directory suffix ("a" / "b") — carries no marker.
+ * @param marker Distinctive word, written ONLY inside the file.
  * @return Path to the created directory.
  * @utility
  * @version 2.13.0
  */
-fs::path make_repo(const std::string& tag) {
+fs::path make_repo(const std::string& slot, const std::string& marker) {
     auto dir = fs::temp_directory_path() /
-               ("entropic_gh166_" + tag + "_" + std::to_string(::getpid()));
+               ("entropic_gh166_" + slot + "_" + std::to_string(::getpid()));
     fs::remove_all(dir);
     fs::create_directories(dir);
     std::ofstream(dir / "PROJECT.md")
         << "# Project\nThe build system for this project is "
-        << tag << ".\n";
+        << marker << ".\n";
     return dir;
 }
 
@@ -136,8 +151,8 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
             SKIP("gemma-4-E2B QAT GGUF not present at " + gguf.string());
         }
 
-        auto repo_a = make_repo("bazel");
-        auto repo_b = make_repo("meson");
+        auto repo_a = make_repo("a", "bazel");
+        auto repo_b = make_repo("b", "meson");
 
         entropic::test::facade::FacadeProject project("gh166_workspaces");
         entropic::test::facade::TierSpec lead;
@@ -195,6 +210,14 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
                 // TRANSCRIPT — a tool result lands in the conversation as a
                 // user message, so a cross-workspace read is visible there
                 // even when the model never mentions it.
+                //
+                // It fails on a SERVED cross-workspace read too, which is
+                // what the v2.13.0 gate caught: the bundled config ships
+                // `mcp.filesystem.allow_outside_root: true`, so until a
+                // workspace forced its own confinement, an absolute path
+                // into the sibling repository was read out and answered.
+                // Since the markers no longer appear in any path, a match
+                // here can only be the other repository's CONTENTS.
                 INFO("A transcript: " << a.transcript);
                 INFO("B transcript: " << b.transcript);
                 CHECK_FALSE(has_ci(a.transcript, "meson"));

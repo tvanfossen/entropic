@@ -42,6 +42,46 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
 // ── Named workspaces (gh#166, v2.13.0) ──────────────────────
 
 /**
+ * @brief The handle's MCP config, confined to a workspace root (gh#166).
+ *
+ * `mcp.filesystem.allow_outside_root` is a SINGLE-PROJECT convenience:
+ * one repository, the operator's own machine, "let the agent read
+ * /etc/os-release". `data/default_config.yaml` ships it TRUE, so it is
+ * what a handle built from the bundled default actually holds.
+ *
+ * The moment one handle serves several repositories that setting stops
+ * meaning what the operator agreed to. "Outside my root" no longer means
+ * "somewhere on the disk"; it means "inside ANOTHER WORKSPACE" — and a
+ * workspace's whole contract (REQ-MCP-027) is that a bound session
+ * cannot reach the other repository's files. The v2.13.0 gh#166 model
+ * gate proved the gap end to end: both repositories held a PROJECT.md,
+ * the model asked for the sibling by absolute path, and the bound
+ * session's own server served it without a single "Path escape blocked".
+ *
+ * So a workspace's servers are confined unconditionally. The handle's
+ * DEFAULT set — every consumer that binds no workspace, which is every
+ * consumer before this release — is untouched and still honours the
+ * setting verbatim.
+ *
+ * @param h Engine handle (configured).
+ * @return A copy of `h->config.mcp` with root confinement forced on.
+ * @utility
+ * @req REQ-MCP-027
+ * @req REQ-MCP-021
+ * @version 2.13.0
+ */
+static entropic::MCPConfig confined_mcp_config(entropic_handle_t h) {
+    entropic::MCPConfig mcp = h->config.mcp;
+    if (mcp.filesystem.allow_outside_root) {
+        logger->info("workspace servers confine to their root "
+                     "(host mcp.filesystem.allow_outside_root=true "
+                     "applies to the default set only)");
+    }
+    mcp.filesystem.allow_outside_root = false;
+    return mcp;
+}
+
+/**
  * @brief Build a workspace's own server instances rooted at `dir`.
  *
  * The built-in servers take their root at CONSTRUCTION and hold one
@@ -56,7 +96,7 @@ static entropic_error_t check_server_mgr(entropic_handle_t h) {
  * @return Owned workspace with connected servers.
  * @utility
  * @req REQ-MCP-027
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static std::unique_ptr<EntropicWorkspace> build_workspace(
     entropic_handle_t h, const std::string& name,
@@ -75,9 +115,10 @@ static std::unique_ptr<EntropicWorkspace> build_workspace(
         if (cfg.requires_context) { require_context.push_back(tier); }
     }
     auto data_dir = entropic::config::resolve_data_dir(h->config);
-    ws->servers->init_builtins(h->config.mcp, tier_names,
+    const auto mcp = confined_mcp_config(h);
+    ws->servers->init_builtins(mcp, tier_names,
                                data_dir.string(), require_context);
-    ws->servers->load_plugins(h->config.mcp);
+    ws->servers->load_plugins(mcp);
     return ws;
 }
 

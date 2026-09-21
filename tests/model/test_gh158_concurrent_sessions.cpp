@@ -50,8 +50,23 @@
  * registered tools, 18,594 bytes, ~5,000 prompt tokens — which is what
  * produced "Decode chunk failed" on every turn of the G4 run while forty
  * assertions passed anyway. These arms exercise session isolation, not tool
- * use; they need exactly one tool, because the tier contract requires an
- * explicit completion. Naming it is what makes the prompt fit.
+ * use, so the menu names exactly one tool and the prompt fits.
+ *
+ * NO COMPLETION CONTRACT (v2.13.0). Trimming the menu to
+ * `{"entropic.complete"}` paid a debt these arms never owed: a
+ * FacadeProject tier derives `explicit_completion: true`
+ * (`populate_tier_info`, src/facade/entropic.cpp), so every turn had to end
+ * in a tool call — and that call was DENIED at dispatch, because a
+ * FacadeProject wrote no `permissions:` block and `auto_approve` defaults
+ * to false ("[mcp.tool_executor] No approval callback — denying:
+ * entropic.complete", 21 times in
+ * build/test-reports/model/logs/test-gh158-concurrent.log). Both sessions
+ * recalled their own secret correctly and then spent their remaining turns
+ * arguing with "[SYSTEM] ... You must end every turn with exactly one tool
+ * call", so `final_answer` — the LAST assistant message — read "I am ready
+ * for your next instruction." for A and the bare string "entropic.complete"
+ * for B. Each arm now sets `explicit_completion = false`, and FacadeProject
+ * writes `permissions.auto_approve: true`.
  *
  * Requires: GPU + gemma-4-E2B QAT GGUF (arms 1-4) and Qwen3.6-35B-A3B
  * (arm 5). Run: ctest -L model -R gh158
@@ -150,10 +165,13 @@ SCENARIO("gh#158: two concurrent sessions do not bleed into each other",
             "You are a terse assistant. Answer in one short sentence.";
         lead.context_length = 4096;
         // Three plain conversational turns need no filesystem, git, web or
-        // delegation tool — but the tier DOES owe an explicit completion, so
-        // it is given exactly that one (1,772 bytes of schema) instead of
-        // the default 18,594-byte menu of 27.
+        // delegation tool. The menu is trimmed to one (1,772 bytes of
+        // schema instead of the default 18,594-byte menu of 27) so the
+        // prompt fits, and the completion CONTRACT is switched off: this
+        // scenario is about which conversation a session recalls from, not
+        // about ending a turn with a tool. See the file header.
         lead.allowed_tools = {"entropic.complete"};
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
@@ -222,11 +240,12 @@ SCENARIO("gh#158: interrupting one session leaves the other running",
         lead.gguf_key = "gemma4_e2b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
-        // See the first arm: one tool, because the tier owes a completion
-        // and this scenario is about the interrupt, not the menu. A refused
+        // See the first arm: one tool so the prompt fits, no completion
+        // contract, because this scenario is about the interrupt. A refused
         // prompt would make the interrupt assertion vacuous — A would never
         // be running when the interrupt arrives.
         lead.allowed_tools = {"entropic.complete"};
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
@@ -301,8 +320,10 @@ SCENARIO("gh#158: metrics and context reads are safe during live runs",
         lead.adapter = "gemma4";
         lead.context_length = 4096;
         // See the first arm. The poller needs two real decodes IN FLIGHT;
-        // a refused prompt gives it nothing to race against.
+        // a refused prompt gives it nothing to race against, and a nudge
+        // spiral gives it the wrong thing to race against.
         lead.allowed_tools = {"entropic.complete"};
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);

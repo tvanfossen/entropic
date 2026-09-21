@@ -45,10 +45,34 @@
  * degrade: an oversized prompt is a typed refusal
  * (`ENTROPIC_ERROR_EVAL_CONTEXT_FULL`, terminal `context_overflow`), so
  * the seed turn would come back empty and its REQUIRE would fail before
- * a single restore happened. Restoring a conversation needs no tool at
- * all, but the tier contract derives `explicit_completion: true`
- * (`populate_tier_info`, src/facade/entropic.cpp) — an empty menu owes a
- * completion it cannot call — so each tier names exactly that one tool.
+ * a single restore happened. Each tier therefore names exactly one tool.
+ *
+ * @par No completion contract (v2.13.0 fixture fix)
+ * Restoring a conversation needs no tool at all, but the tier contract
+ * derived `explicit_completion: true` (`populate_tier_info`,
+ * src/facade/entropic.cpp, `.value_or(!tier.auto_chain.has_value())`) and
+ * the one-tool menu was a way of paying a debt the scenario never owed.
+ * It did not work: `entropic.complete` was DENIED at dispatch, because a
+ * FacadeProject wrote no `permissions:` block and `auto_approve` defaults
+ * to false. The gate log
+ * (build/test-reports/model/logs/test-gh165-restore.log) has the model
+ * recalling the word correctly —
+ *
+ *     [11] role=user  Earlier I gave you one word to remember...
+ *     Generated: 2 tokens, finish=stop ... Content: cinnamon
+ *
+ * — and then four turns of
+ *
+ *     [SYSTEM] Your previous response contained no tool call. You must
+ *     end every turn with exactly one tool call (entropic.complete).
+ *     Tool `entropic.complete` was denied: Permission denied
+ *
+ * ending "empty-turn allowance exhausted (tier=lead, n=3/3), failing
+ * turn". `final_answer` reads the LAST assistant message, which by then
+ * was "I am ready for your next instruction." The model was never the
+ * problem. Each tier now sets `explicit_completion = false`, and
+ * FacadeProject writes `permissions.auto_approve: true` so a staged tool
+ * is a callable one.
  *
  * @par Answer, not transcript (v2.13.0)
  * The recall assertions assert on `final_answer(...)` — the last assistant
@@ -143,10 +167,13 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
             "You are a terse assistant. Answer in one short sentence.";
         lead.context_length = 4096;
         // Three plain conversational turns need no filesystem, git or web
-        // tool — but the tier DOES owe an explicit completion, so it is
-        // given exactly that one (1,595 bytes of schema) instead of the
-        // default 18,594-byte menu of 27.
+        // tool. The menu is trimmed to one (1,595 bytes of schema instead
+        // of the default 18,594-byte menu of 27) so the prompt fits, and
+        // the completion CONTRACT is switched off outright: a recall test
+        // is about the conversation, not about ending a turn with a tool.
+        // See the file header for what leaving it on cost.
         lead.allowed_tools = {"entropic.complete"};
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
@@ -235,11 +262,12 @@ SCENARIO("gh#165 + gh#164: release the weights, keep the conversation",
         lead.gguf_key = "gemma4_e2b_qat";
         lead.adapter = "gemma4";
         lead.context_length = 4096;
-        // See the first scenario: one tool, because the tier owes a
-        // completion and this scenario is about the release/restore pair,
-        // not the menu. A refused seed turn would leave nothing to
+        // See the first scenario: one tool so the prompt fits, and no
+        // completion contract, because this scenario is about the
+        // release/restore pair. A refused seed turn would leave nothing to
         // snapshot and the recall assertion would never be reached.
         lead.allowed_tools = {"entropic.complete"};
+        lead.explicit_completion = false;
         auto* h = project.setup({lead});
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);

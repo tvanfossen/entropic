@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,6 +77,24 @@ struct TierSpec {
     /// filesystem calls names them here and pays for two.
     /// @version 2.13.0
     std::vector<std::string> allowed_tools;
+
+    /// @brief Identity `explicit_completion` frontmatter. nullopt = derive.
+    ///
+    /// `populate_tier_info` (src/facade/entropic.cpp) derives this as
+    /// `frontmatter.explicit_completion.value_or(!tier.auto_chain
+    /// .has_value())`, so a FacadeProject tier — which writes neither —
+    /// came out TRUE, and every turn owed a closing tool call. For a
+    /// scenario that is about conversation state rather than about tool
+    /// use, that contract is pure interference: the engine answers a
+    /// perfectly good reply with "[SYSTEM] Your previous response
+    /// contained no tool call ... Retry.", three times, and the LAST
+    /// assistant message — the one `final_answer` reads — is whatever the
+    /// model said while arguing with the nudge, not its answer. See the
+    /// v2.13.0 gh#165 and gh#158 gate logs.
+    ///
+    /// Set it to false when the scenario needs no completion contract.
+    /// @version 2.13.0
+    std::optional<bool> explicit_completion;
 };
 
 /**
@@ -134,6 +153,27 @@ public:
     const fs::path& dir() const { return dir_; }
     entropic_handle_t handle() const { return handle_; }
 
+    /// @brief `permissions.auto_approve` for the generated config.
+    ///
+    /// A FacadeProject wrote no `permissions:` block at all, so
+    /// `PermissionsConfig::auto_approve` stayed at its `false` default and
+    /// `lc.auto_approve_tools` with it. `ToolExecutor::check_approval` then
+    /// needs an explicit allow-pattern or an `on_tool_call` callback, and a
+    /// facade test wires neither — so EVERY tool call from EVERY facade
+    /// model test was denied at dispatch:
+    ///
+    ///     [mcp.tool_executor] No approval callback — denying:
+    ///       entropic.complete
+    ///
+    /// That is not a production configuration; it is a project nobody
+    /// ships. `examples/explorer` and `examples/pychess` both set
+    /// `auto_approve: true`, and the direct-engine model harness sets
+    /// `lc.auto_approve_tools = true` by hand. Defaulting it here puts the
+    /// facade harness on the same footing — a tool a test stages is a tool
+    /// the test can actually call. Set it false to exercise denial.
+    /// @version 2.13.0
+    bool auto_approve_tools = true;
+
     /// @brief Why the last `setup()` returned nullptr ("" when it did not).
     /// @version 2.13.0
     const std::string& setup_failure() const { return setup_failure_; }
@@ -186,6 +226,8 @@ private:
         cfg += "  default: "
              + (default_tier.empty() ? tiers.front().name : default_tier) + "\n";
         cfg += "constitutional_validation:\n  enabled: false\n";
+        cfg += std::string("permissions:\n  auto_approve: ")
+             + (auto_approve_tools ? "true" : "false") + "\n";
         write_file(dir_ / "config.local.yaml", cfg);
     }
 
@@ -196,6 +238,10 @@ private:
                        + "enable_thinking: "
                        + (t.enable_thinking ? "true" : "false") + "\n";
         if (!t.grammar_name.empty()) { fm += "grammar: " + t.grammar_name + "\n"; }
+        if (t.explicit_completion.has_value()) {
+            fm += std::string("explicit_completion: ")
+                + (*t.explicit_completion ? "true" : "false") + "\n";
+        }
         if (!t.allowed_tools.empty()) {
             fm += "allowed_tools:\n";
             for (const auto& tool : t.allowed_tools) {

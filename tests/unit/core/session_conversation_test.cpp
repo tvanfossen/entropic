@@ -283,3 +283,47 @@ SCENARIO("gh#165: the RUNNING session refuses replacement, others do not",
         }
     }
 }
+
+// ── gh#158 (v2.13.0): the unkeyed accessors must be TOTAL ──────────────
+
+SCENARIO("gh#158: the unkeyed accessors survive a key that is not in the map",
+         "[engine][gh158][session][2.13.0]") {
+    GIVEN("an engine whose active session has been dropped") {
+        // `get_messages()` and `message_count()` resolved their key and then
+        // indexed `conversations_` with `.at()`. `.at()` on an absent key
+        // throws `std::out_of_range("_Map_base::at")`, and both accessors are
+        // reached from the C ABI — `entropic_context_usage`,
+        // `entropic_get_messages` — where an escaping exception is a
+        // std::terminate, i.e. the HOST process dies.
+        //
+        // Two ordinary sequences reach an absent key. This is the one a
+        // single thread can produce: drop the session that is still the
+        // active one. The concurrent one (a run publishing its key before
+        // the entry exists) is in tests/concurrency/test_thread_safety.cpp,
+        // and it is what aborted the v2.13.0 gh#158 GPU gate:
+        //
+        //     terminate called after throwing an instance of
+        //       'std::out_of_range'  what():  _Map_base::at
+        //     ... SIGABRT - Abort (abnormal termination) signal
+        MockInference mock;
+        auto iface = make_mock_interface(mock);
+        LoopConfig lc;
+        CompactionConfig cc;
+        AgentEngine engine(iface, lc, cc);
+
+        engine.set_active_session("repo-a");
+        engine.run_turn("alpha one");
+        REQUIRE(engine.message_count() > 0);
+        REQUIRE(engine.drop_session("repo-a"));
+
+        WHEN("a host reads context without naming a session") {
+            THEN("the count answers for the default session, it does not "
+                 "throw") {
+                CHECK(engine.message_count() == 0);
+            }
+            AND_THEN("the message accessor answers too") {
+                CHECK(engine.get_messages().empty());
+            }
+        }
+    }
+}

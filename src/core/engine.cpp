@@ -3342,11 +3342,12 @@ void AgentEngine::set_session_logger(SessionLogger* log) {
  *
  * @return The active session's state.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 ConversationState& AgentEngine::active_conversation() {
+    const auto key = active_session_key();
     std::lock_guard<std::mutex> guard(conversations_mutex_);
-    return conversations_[active_session_key()];
+    return conversations_[key];
 }
 
 // ── Per-session run registry (gh#158, v2.13.0) ─────────────────
@@ -3376,27 +3377,46 @@ thread_local bool t_holds_claim = false;
  * engine driver in a test) falls back to the handle field, which is what
  * keeps the legacy unkeyed accessors reading what they read in v2.12.0.
  *
+ * Returned BY VALUE, and the handle-wide fallback is read under
+ * `session_key_mutex_`: the member is a `std::string` that every starting
+ * run assigns, so a caller on another thread reading it unsynchronized —
+ * which is precisely what the unkeyed accessors do — was a data race on a
+ * string, not merely a stale answer.
+ *
  * @return The session key in force on this thread.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
-const std::string& AgentEngine::active_session_key() const {
-    return t_active_session_bound ? t_active_session_key
-                                  : active_session_key_;
+std::string AgentEngine::active_session_key() const {
+    if (t_active_session_bound) { return t_active_session_key; }
+    std::lock_guard<std::mutex> guard(session_key_mutex_);
+    return active_session_key_;
 }
 
 /**
  * @brief Bind this turn to a caller-scoped session — see header.
+ *
+ * The conversation entry is created BEFORE the key is published, and that
+ * order is load-bearing. Publishing first left a window in which another
+ * thread's unkeyed accessor resolved a key that was not yet in
+ * `conversations_`; both of those accessors then indexed the map with
+ * `.at()` and threw `std::out_of_range` out of a C entry point, aborting
+ * the host. The accessors are total now as well, so this ordering is the
+ * belt to their braces rather than the only guard.
+ *
  * @param key Session key for the turn about to run.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 void AgentEngine::set_active_session(const std::string& key) {
+    {
+        std::lock_guard<std::mutex> guard(conversations_mutex_);
+        conversations_[key];  // default-construct on first use
+    }
     t_active_session_key = key;
     t_active_session_bound = true;
+    std::lock_guard<std::mutex> guard(session_key_mutex_);
     active_session_key_ = key;
-    std::lock_guard<std::mutex> guard(conversations_mutex_);
-    conversations_[key];  // default-construct on first use
 }
 
 /**
@@ -3928,13 +3948,24 @@ void AgentEngine::clear_conversation() {
 
 /**
  * @brief Get conversation message count.
- * @return Number of messages.
+ *
+ * TOTAL over keys (gh#158): an active key that is not in the map answers 0
+ * rather than throwing. `.at()` here reached the C ABI through
+ * `entropic_context_count`, where an escaping `std::out_of_range` is a
+ * `std::terminate` — the host dies because it asked how long a
+ * conversation was. Two ordinary sequences produce an absent key: dropping
+ * the session that is still the active one, and a concurrent run
+ * publishing its key (see `set_active_session`).
+ *
+ * @return Number of messages, or 0 when the active session is unknown.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 size_t AgentEngine::message_count() const {
+    const auto key = active_session_key();
     std::lock_guard<std::mutex> guard(conversations_mutex_);
-    return conversations_.at(active_session_key()).count();
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? 0 : it->second.count();
 }
 
 // ── Keyed conversation accessors (gh#144; locked for gh#165) ───
@@ -4045,15 +4076,22 @@ bool AgentEngine::set_session_messages(const std::string& key,
  * @brief Get conversation messages.
  * @return Const reference to messages.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 const std::vector<Message>& AgentEngine::get_messages() const {
-    // Deliberately NOT locked: this returns a REFERENCE into the mapped
-    // value, so a lock released on return would guard nothing the caller
-    // then reads. The keyed sibling `messages_for` returns by value and IS
-    // locked; that is the one gh#165's restore path and the facade use.
-    // This overload survives for pre-v2.12.0 callers only.
-    return conversations_.at(active_session_key()).messages;
+    static const std::vector<Message> kNoMessages;
+    const auto key = active_session_key();
+    // The lock guards the LOOKUP, not the returned reference — an
+    // `unordered_map` insert on another thread rehashes the bucket array,
+    // and traversing it mid-rehash is undefined behaviour whatever the
+    // caller does afterwards. Mapped values do not move on rehash, which is
+    // why this container was chosen (see the member's doc), so the
+    // reference stays valid for as long as the entry does. A caller that
+    // needs more than that wants the keyed sibling `messages_for`, which
+    // returns by value; this overload survives for pre-v2.12.0 callers.
+    std::lock_guard<std::mutex> guard(conversations_mutex_);
+    auto it = conversations_.find(key);
+    return it == conversations_.end() ? kNoMessages : it->second.messages;
 }
 
 // ── Mid-generation user-message queue (gh#40, v2.1.10) ─────────

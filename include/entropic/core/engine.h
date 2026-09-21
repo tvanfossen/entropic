@@ -637,15 +637,26 @@ public:
 
     /**
      * @brief Get conversation message count.
-     * @return Number of messages.
-     * @version 2.0.2
+     *
+     * TOTAL over keys since gh#158 (v2.13.0): an active session key that is
+     * not in the map answers 0. It used to `.at()`, and both this and
+     * `get_messages()` are reached from the C ABI, where an escaping
+     * `std::out_of_range` is a `std::terminate`.
+     *
+     * @return Number of messages; 0 when the active session is unknown.
+     * @version 2.13.0
      */
     size_t message_count() const;
 
     /**
      * @brief Get conversation messages (read-only).
-     * @return Const reference to message vector.
-     * @version 2.0.2
+     *
+     * TOTAL over keys since gh#158 (v2.13.0) — see `message_count()`. An
+     * unknown active session yields an empty vector rather than throwing.
+     *
+     * @return Const reference to the active session's message vector, or to
+     *         an empty one when that session is unknown.
+     * @version 2.13.0
      */
     const std::vector<Message>& get_messages() const;
 
@@ -880,11 +891,19 @@ public:
 
     /**
      * @brief Session whose turn is currently running.
+     *
+     * gh#158 (v2.13.0): returns BY VALUE. The handle-wide fallback is a
+     * `std::string` every starting run assigns, and a caller on another
+     * thread — a host polling context, which is the whole point of the
+     * fallback — read it with no synchronization at all. A reference
+     * handed out across that write is a data race on the string itself,
+     * not a merely stale answer.
+     *
      * @return The active key; `""` when idle or unkeyed.
      * @utility
-     * @version 2.12.0
+     * @version 2.13.0
      */
-    const std::string& active_session_key() const;
+    std::string active_session_key() const;
 
     /**
      * @brief Messages held by a named session.
@@ -2057,6 +2076,12 @@ private:
     /// vtable change needed, because `get_history` is only ever invoked from
     /// inside a tool call, i.e. inside a turn.
     std::string active_session_key_;
+    /// @brief gh#158: guards `active_session_key_`, for the same reason
+    /// `prompt_mutex_` below guards `system_prompt_`. Written by every
+    /// starting run, read by unkeyed accessors on threads that never bound
+    /// a session — and `api_mutex` covers neither side, since gh#109 took
+    /// it off the run path.
+    mutable std::mutex session_key_mutex_;
     std::string system_prompt_;                            ///< Cached system prompt
     /// @brief gh#158: guards `system_prompt_`. Written on the API thread
     /// under `api_mutex`, read on every run thread — which holds nothing

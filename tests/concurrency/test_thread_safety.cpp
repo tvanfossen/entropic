@@ -885,3 +885,74 @@ SCENARIO("gh#158: concurrent tool calls on one client get distinct ids",
         }
     }
 }
+
+SCENARIO("gh#158: an unkeyed context read during a starting run cannot abort",
+         "[concurrency][gh158][2.13.0]") {
+    GIVEN("two sessions starting turns while a host polls context") {
+        // This is the v2.13.0 GPU gate's SIGABRT, reduced. The gate's third
+        // gh#158 scenario polls `entropic_metrics_json` +
+        // `entropic_context_usage` while two keyed runs decode; the process
+        // aborted with
+        //
+        //     terminate called after throwing an instance of
+        //       'std::out_of_range'  what():  _Map_base::at
+        //
+        // `entropic_context_usage` calls the UNKEYED `get_messages()`, which
+        // resolves `active_session_key()`. A polling thread never bound a
+        // session, so it falls back to the handle-wide member — the one a
+        // starting run had just written. `set_active_session` published that
+        // key BEFORE inserting `conversations_[key]`, so between the two
+        // statements the poller named a key that was not yet in the map and
+        // `.at()` threw out of a C entry point.
+        //
+        // The write/read pair on that member was also unsynchronized (a
+        // std::string, not an atomic), and the read of `conversations_` took
+        // no lock at all while the runs inserted into it.
+        entropic::test::MockInference mock;
+        auto iface = entropic::test::make_mock_interface(mock);
+        auto engine = make_session_engine(iface);
+        engine.set_concurrent_sessions(true);
+
+        WHEN("a poller reads context while two runners rebind sessions") {
+            constexpr int kRuns = 400;
+            std::atomic<bool> done{false};
+            std::atomic<int> reads{0};
+            std::atomic<int> threw{0};
+
+            std::thread poller([&] {
+                while (!done.load()) {
+                    try {
+                        (void)engine.message_count();
+                        (void)engine.get_messages().size();
+                        reads.fetch_add(1);
+                    } catch (const std::exception&) {
+                        threw.fetch_add(1);
+                    }
+                }
+            });
+
+            std::vector<std::thread> runners;
+            for (int t = 0; t < 2; ++t) {
+                runners.emplace_back([&, t] {
+                    const std::string key =
+                        t == 0 ? "m-alpha" : "m-bravo";
+                    for (int i = 0; i < kRuns; ++i) {
+                        engine.set_active_session(
+                            key + std::to_string(i));
+                    }
+                });
+            }
+            for (auto& th : runners) { th.join(); }
+            done.store(true);
+            poller.join();
+
+            THEN("not one read threw") {
+                // A one-way detector: it can only fail when the window is
+                // real. `.at()` on an absent key is the abort the gate hit.
+                INFO("reads: " << reads.load());
+                CHECK(threw.load() == 0);
+                CHECK(reads.load() > 0);
+            }
+        }
+    }
+}

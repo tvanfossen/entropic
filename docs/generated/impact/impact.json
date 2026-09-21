@@ -1,100 +1,307 @@
 [
   {
+    "req_id": "REQ-API-009",
+    "req_name": "Run entry-point family, result contract, and cross-thread interruptibility",
+    "functions": [
+      {
+        "name": "try_begin_turn",
+        "file": "include/entropic/core/engine.h",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-COMPACT-002",
+    "req_name": "Fill-gated tool-result pruning and persistent context anchors",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "reinject_context_anchors",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "dir_anchor",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-001",
+    "req_name": "Delegation admission guards reject before a child loop runs",
+    "functions": [
+      {
+        "name": "push_delegation_isolation_unsafe",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "reject_delegation_if_guarded",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "reject_pipeline_if_guarded",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "execute_pending_pipeline",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-002",
+    "req_name": "Delegation lifecycle from preconditions to result fold-back",
+    "functions": [
+      {
+        "name": "dir_delegate",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "execute_pending_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_resume_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "run_pending_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "ensure_sandbox_manager",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_session_root",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-004",
+    "req_name": "Sequential pipeline with forward carry and per-stage reporting",
+    "functions": [
+      {
+        "name": "dir_pipeline",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "reject_pipeline_if_guarded",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "execute_pending_pipeline",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-DELEG-005",
+    "req_name": "Opt-in delegation sandbox isolation, wired end to end",
+    "functions": [
+      {
+        "name": "push_delegation_isolation_unsafe",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "resolve_session_root",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "sandbox_for_session",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      },
+      {
+        "name": "isolation_unsafe_tools",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
     "req_id": "REQ-DELEG-006",
     "req_name": "Explicit delegation context, required-context tiers, resume by target",
     "functions": [
       {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "resolve_latest_for_target",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "pipeline_rejection",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "resolve_resume_delegation",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-011",
-    "req_name": "Every tool declares its required access level, defaulting to WRITE",
+    "req_id": "REQ-HOOK-002",
+    "req_name": "Engine fires hooks at every lifecycle boundary, including a vetoable completion",
     "functions": [
       {
-        "name": "register_introspection_tools",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.3.7"
+        "name": "loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-013",
-    "req_name": "Tool arguments are validated against the declared JSON schema before dispatch",
+    "req_id": "REQ-IDEN-001",
+    "req_name": "Tier resolution contract and per-tier loop overrides",
     "functions": [
       {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.13.0"
-      },
-      {
-        "name": "PipelineTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.10.0"
+        "name": "run_turn_as",
+        "file": "src/core/engine.cpp",
+        "version": "2.12.0"
       }
     ]
   },
   {
-    "req_id": "REQ-MCP-024",
-    "req_name": "Engine-level entropic.* tools validate their arguments and emit typed directives",
+    "req_id": "REQ-INFER-026",
+    "req_name": "A prompt that cannot fit the tier context is refused, never decoded",
     "functions": [
       {
-        "name": "DelegateTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "handle_terminal_finish_reasons",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-001",
+    "req_name": "Agent state machine with observable, dual-channel transitions",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "run_turn",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.8"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-002",
+    "req_name": "Bounded loop termination with synthetic completion on cap",
+    "functions": [
+      {
+        "name": "run",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
+      },
+      {
+        "name": "loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-003",
+    "req_name": "Fixed per-iteration pipeline with pre-generate cancellation",
+    "functions": [
+      {
+        "name": "dispatch_pending_or_halt",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "PipelineTool",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.10.0"
+        "name": "execute_pending_delegation",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-006",
+    "req_name": "Interrupt and pause semantics across nested loops",
+    "functions": [
+      {
+        "name": "run_loop",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0 [reviewed]"
       },
       {
-        "name": "pipeline_rejection",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "dispatch_pending_or_halt",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "handle_terminal_finish_reasons",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "execute",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "interrupt",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
       },
       {
-        "name": "register_delegation_tools",
-        "file": "src/mcp/servers/entropic_server.cpp",
+        "name": "reset_interrupt",
+        "file": "src/core/engine.cpp",
         "version": "2.13.0"
-      },
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-008",
+    "req_name": "Family-aware streaming reasoning filter with UTF-8 alignment",
+    "functions": [
       {
-        "name": "register_introspection_tools",
-        "file": "src/mcp/servers/entropic_server.cpp",
-        "version": "2.3.7"
+        "name": "run_streaming",
+        "file": "src/core/engine.cpp",
+        "version": "2.1.8"
+      }
+    ]
+  },
+  {
+    "req_id": "REQ-LOOP-010",
+    "req_name": "Session conversations are readable, writable, and losslessly round-trippable",
+    "functions": [
+      {
+        "name": "set_session_messages",
+        "file": "src/core/engine.cpp",
+        "version": "2.13.0"
       }
     ]
   }

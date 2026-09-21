@@ -82,39 +82,46 @@ fs::path make_repo(const std::string& tag) {
 }
 
 /**
+ * @brief One bound session's last turn, both ways round.
+ *
+ * `entropic_run_session` returns the WHOLE serialized conversation, tool
+ * results included. Asserting `has_ci(answer, "bazel")` on that string
+ * matched the PROJECT.md contents the first turn had already read into the
+ * history, so the positive half of this scenario could not fail — the same
+ * defect gh#165 carried. The positive assertions now read `answer`; the
+ * negative ones keep reading `transcript`, where a cross-workspace read
+ * lands whether or not the model repeats it.
+ * @version 2.13.0
+ */
+struct WorkspaceTurn {
+    std::string answer;      ///< Final assistant message of the last turn
+    std::string transcript;  ///< That turn's whole serialized conversation
+};
+
+/**
  * @brief Drive one bound session's multi-turn conversation.
  * @param h Engine handle.
  * @param key Session key (already bound to a workspace).
- * @return The final answer text.
+ * @return The last turn's answer and its transcript.
  * @utility
  * @version 2.13.0
  */
-std::string run_workspace_turns(entropic_handle_t h,
-                                const std::string& key) {
-    char* out = nullptr;
-    if (entropic_run_session(
-            h, key.c_str(),
-            "Read PROJECT.md in this project and tell me, in one short "
-            "sentence, what the build system is.", &out) == ENTROPIC_OK) {
-        entropic_free(out);
-        out = nullptr;
-    }
-    if (entropic_run_session(h, key.c_str(),
-                             "List two colours, nothing else.", &out)
-        == ENTROPIC_OK) {
-        entropic_free(out);
-        out = nullptr;
-    }
-    std::string answer;
-    if (entropic_run_session(
-            h, key.c_str(),
-            "Name this project's build system again, exactly as PROJECT.md "
-            "states it. One word.", &out) == ENTROPIC_OK
-        && out != nullptr) {
-        answer = out;
-        entropic_free(out);
-    }
-    return answer;
+WorkspaceTurn run_workspace_turns(entropic_handle_t h,
+                                  const std::string& key) {
+    using entropic::test::facade::run_session_transcript;
+    run_session_transcript(
+        h, key.c_str(),
+        "Read PROJECT.md in this project and tell me, in one short "
+        "sentence, what the build system is.");
+    run_session_transcript(h, key.c_str(),
+                           "List two colours, nothing else.");
+    WorkspaceTurn turn;
+    turn.transcript = run_session_transcript(
+        h, key.c_str(),
+        "Name this project's build system again, exactly as PROJECT.md "
+        "states it. One word.");
+    turn.answer = entropic::test::facade::final_answer(turn.transcript);
+    return turn;
 }
 
 }  // namespace
@@ -160,30 +167,38 @@ SCENARIO("gh#166: two workspaces on one handle do not read each other's "
                 == ENTROPIC_OK);
 
         WHEN("both sessions run their turns at the same time") {
-            std::string answer_a;
-            std::string answer_b;
+            WorkspaceTurn a;
+            WorkspaceTurn b;
             std::thread ta([&] {
-                answer_a = run_workspace_turns(h, "sess-a");
+                a = run_workspace_turns(h, "sess-a");
             });
             std::thread tb([&] {
-                answer_b = run_workspace_turns(h, "sess-b");
+                b = run_workspace_turns(h, "sess-b");
             });
             ta.join();
             tb.join();
 
             THEN("each answers from ITS OWN repository") {
-                INFO("A: " << answer_a);
-                INFO("B: " << answer_b);
-                CHECK(has_ci(answer_a, "bazel"));
-                CHECK(has_ci(answer_b, "meson"));
+                // The ANSWER, not the transcript: the transcript already
+                // holds the file the first turn read, so over it this
+                // assertion passed however the model behaved.
+                INFO("A answer: [" << a.answer << "]\nA transcript: "
+                     << a.transcript);
+                INFO("B answer: [" << b.answer << "]\nB transcript: "
+                     << b.transcript);
+                CHECK(has_ci(a.answer, "bazel"));
+                CHECK(has_ci(b.answer, "meson"));
             }
             THEN("neither leaks the other repository's file") {
                 // The assertion that fails on a handle-wide tool root:
-                // both sessions would have read one PROJECT.md.
-                INFO("A: " << answer_a);
-                INFO("B: " << answer_b);
-                CHECK_FALSE(has_ci(answer_a, "meson"));
-                CHECK_FALSE(has_ci(answer_b, "bazel"));
+                // both sessions would have read one PROJECT.md. Kept on the
+                // TRANSCRIPT — a tool result lands in the conversation as a
+                // user message, so a cross-workspace read is visible there
+                // even when the model never mentions it.
+                INFO("A transcript: " << a.transcript);
+                INFO("B transcript: " << b.transcript);
+                CHECK_FALSE(has_ci(a.transcript, "meson"));
+                CHECK_FALSE(has_ci(b.transcript, "bazel"));
             }
             THEN("neither repository was modified") {
                 // No delegation isolation here; the point is that reads

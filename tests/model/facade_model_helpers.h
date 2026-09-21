@@ -11,11 +11,21 @@
  * that hid gh#88/90/94. RAII: destroys the handle + removes the dir on scope
  * exit.
  *
- * @version 2.8.0
+ * Also owns the run helpers (v2.13.0) — see the "transcript vs answer"
+ * note below for why a model test must almost never assert positively on
+ * what `entropic_run*` returns directly.
+ *
+ * @version 2.13.0
  */
 #pragma once
 
 #include <entropic/entropic.h>
+
+// The ONE answer extractor. src/facade is on the model-test include path
+// (tests/model/CMakeLists.txt) for exactly this, mirroring what
+// tests/unit/api/final_text_test.cpp already does — a second extractor
+// written here could drift from the rule the bridge actually applies.
+#include "final_text.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -211,5 +221,85 @@ private:
     entropic_handle_t handle_ = nullptr;
     std::string setup_failure_;  ///< Reason the last setup() failed
 };
+
+// ── Running a turn: transcript vs answer (v2.13.0) ──────────
+//
+// `entropic_run`, `entropic_run_as` and `entropic_run_session` all return
+// `serialize_messages(engine->run_turn(...))` — the WHOLE conversation,
+// system prompt and every user turn included, not the new assistant reply.
+//
+// A model test that treats that string as "the answer" cannot fail a
+// positive content assertion it seeded itself. The gh#165 shape:
+//
+//     run_turn(h, k, "Remember this word ...: cinnamon");
+//     answer = run_turn(h, k, "Repeat that exact word now.");
+//     CHECK(contains_ci(answer, "cinnamon"));     // ← ALWAYS true
+//
+// `answer` contains the seed message the test wrote two lines earlier, so
+// the CHECK passes whatever the model does — including decoding zero
+// characters, which is exactly what the v2.13.0 G4 gate log shows under
+// 28 green assertions. Only the negative form (`CHECK_FALSE(...)`) carried
+// any signal.
+//
+// So a run gives a call site BOTH, under two names, and the call site has
+// to pick per assertion:
+//
+//   run_*_transcript(...)  — the whole serialized conversation. Correct
+//       when the assertion is ABOUT the conversation: a round trip, a
+//       message count, or a NEGATIVE over everything the turn produced
+//       ("no <think> block anywhere", "this session's history never saw
+//       the other session's secret"). A negative narrowed to the answer
+//       would be WEAKER, so those deliberately stay here.
+//   final_answer(transcript) — the last non-empty assistant message, via
+//       the bridge's own `facade_text::extract_final_text`. Correct for
+//       every positive claim about what the MODEL said.
+//
+// Call sites keep the transcript around even when they assert on the
+// answer, so a failure prints why — untruncated.
+
+/// @brief Take ownership of a facade out-parameter string. @utility
+/// @version 2.13.0
+inline std::string take_owned(char* out) {
+    if (out == nullptr) { return {}; }
+    std::string s = out;
+    entropic_free(out);
+    return s;
+}
+
+/// @brief Final assistant message of a serialized conversation.
+///
+/// Empty when the turn produced no assistant text at all — which is a
+/// FAILING answer, and the whole point: the transcript form could not
+/// express it.
+/// @param transcript Serialized conversation JSON from a facade run.
+/// @return The last non-empty assistant content, or "".
+/// @utility @version 2.13.0
+inline std::string final_answer(const std::string& transcript) {
+    return facade_text::extract_final_text(transcript.c_str());
+}
+
+/// @brief Run a turn on the default session; whole conversation.
+/// @utility @version 2.13.0
+inline std::string run_transcript(entropic_handle_t h, const char* input) {
+    char* out = nullptr;
+    const auto rc = entropic_run(h, input, &out);
+    auto text = take_owned(out);
+    return (rc == ENTROPIC_OK) ? text : std::string{};
+}
+
+/// @brief Run a turn on a named session; whole conversation.
+///
+/// Empty on a non-OK return — which is how a caller distinguishes "the run
+/// was refused" (e.g. ENTROPIC_ERROR_EVAL_CONTEXT_FULL since 26884f6) from
+/// "the model said nothing".
+/// @utility @version 2.13.0
+inline std::string run_session_transcript(entropic_handle_t h,
+                                          const char* key,
+                                          const char* input) {
+    char* out = nullptr;
+    const auto rc = entropic_run_session(h, key, input, &out);
+    auto text = take_owned(out);
+    return (rc == ENTROPIC_OK) ? text : std::string{};
+}
 
 }  // namespace entropic::test::facade

@@ -93,36 +93,40 @@ bool contains_ci(const std::string& hay, const std::string& needle) {
     return lower(hay).find(lower(needle)) != std::string::npos;
 }
 
-/// @brief Run one session's whole multi-turn conversation. @utility
+/// @brief One session's recall turn, both ways round.
+///
+/// `entropic_run_session` returns the WHOLE serialized conversation, seed
+/// message included, so `CHECK(contains_ci(answer_a, "cinnamon"))` used to
+/// match the string this file itself wrote three turns earlier and could
+/// not fail. Same defect gh#165 carried; see facade_model_helpers.h. The
+/// positive assertions now read `answer`; the negative ones keep reading
+/// `transcript`, where another session's seed lands on a bleed whether or
+/// not the model repeats it.
 /// @version 2.13.0
-std::string run_session_turns(entropic_handle_t h, const std::string& key,
-                              const std::string& secret) {
-    char* out = nullptr;
+struct RecallTurn {
+    std::string answer;      ///< Final assistant message of the recall turn
+    std::string transcript;  ///< That turn's whole serialized conversation
+};
+
+/// @brief Seed, filler, recall — three turns on one session. @utility
+/// @version 2.13.0
+RecallTurn run_session_turns(entropic_handle_t h, const std::string& key,
+                             const std::string& secret) {
+    using entropic::test::facade::run_session_transcript;
     // Turn 1: seed. Turn 2: unrelated filler, so recall crosses a real turn
     // boundary with accumulated state rather than reading the last message.
-    const std::string seed =
-        "Remember this word, I will ask for it later: " + secret;
-    if (entropic_run_session(h, key.c_str(), seed.c_str(), &out)
-        == ENTROPIC_OK) {
-        entropic_free(out);
-        out = nullptr;
-    }
-    if (entropic_run_session(h, key.c_str(),
-                             "List two colours, nothing else.", &out)
-        == ENTROPIC_OK) {
-        entropic_free(out);
-        out = nullptr;
-    }
-    std::string answer;
-    if (entropic_run_session(
-            h, key.c_str(),
-            "Earlier in this conversation I gave you one word to remember. "
-            "Repeat that exact word now, and nothing else.", &out)
-        == ENTROPIC_OK && out != nullptr) {
-        answer = out;
-        entropic_free(out);
-    }
-    return answer;
+    run_session_transcript(
+        h, key.c_str(),
+        ("Remember this word, I will ask for it later: " + secret).c_str());
+    run_session_transcript(h, key.c_str(),
+                           "List two colours, nothing else.");
+    RecallTurn turn;
+    turn.transcript = run_session_transcript(
+        h, key.c_str(),
+        "Earlier in this conversation I gave you one word to remember. "
+        "Repeat that exact word now, and nothing else.");
+    turn.answer = entropic::test::facade::final_answer(turn.transcript);
+    return turn;
 }
 
 }  // namespace
@@ -155,32 +159,38 @@ SCENARIO("gh#158: two concurrent sessions do not bleed into each other",
         REQUIRE(h != nullptr);
 
         WHEN("two sessions run their turns on two threads at once") {
-            std::string answer_a;
-            std::string answer_b;
+            RecallTurn a;
+            RecallTurn b;
             std::thread ta([&] {
-                answer_a = run_session_turns(h, "repo-alpha", "cinnamon");
+                a = run_session_turns(h, "repo-alpha", "cinnamon");
             });
             std::thread tb([&] {
-                answer_b = run_session_turns(h, "repo-bravo", "tungsten");
+                b = run_session_turns(h, "repo-bravo", "tungsten");
             });
             ta.join();
             tb.join();
 
             THEN("each session recalls ITS OWN secret") {
-                INFO("A got: " << answer_a);
-                INFO("B got: " << answer_b);
-                CHECK(contains_ci(answer_a, "cinnamon"));
-                CHECK(contains_ci(answer_b, "tungsten"));
+                INFO("A answer: [" << a.answer << "]\nA transcript: "
+                     << a.transcript);
+                INFO("B answer: [" << b.answer << "]\nB transcript: "
+                     << b.transcript);
+                CHECK(contains_ci(a.answer, "cinnamon"));
+                CHECK(contains_ci(b.answer, "tungsten"));
             }
             AND_THEN("neither recalls the other's — the load-bearing half") {
                 // A shared conversation, a shared KV slot or a raced
-                // `active_slot_` all show up HERE. The positive assertion
-                // above passes by accident when both sessions share one
-                // history; this one cannot.
-                INFO("A got: " << answer_a);
-                INFO("B got: " << answer_b);
-                CHECK_FALSE(contains_ci(answer_a, "tungsten"));
-                CHECK_FALSE(contains_ci(answer_b, "cinnamon"));
+                // `active_slot_` all show up HERE. Deliberately over the
+                // TRANSCRIPT, not the answer: a shared history puts the
+                // other session's seed into this session's conversation
+                // whether or not the model ever repeats it, and that is the
+                // bleed being hunted. The positive half above is the one
+                // that has to read the answer — over the transcript it
+                // matched this session's own seed and could not fail.
+                INFO("A transcript: " << a.transcript);
+                INFO("B transcript: " << b.transcript);
+                CHECK_FALSE(contains_ci(a.transcript, "tungsten"));
+                CHECK_FALSE(contains_ci(b.transcript, "cinnamon"));
             }
             AND_THEN("both sessions are still listed with their own history") {
                 char* listed = nullptr;

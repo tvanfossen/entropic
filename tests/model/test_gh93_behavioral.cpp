@@ -38,12 +38,13 @@ using entropic::test::facade::TierSpec;
 
 namespace {
 
+/// @brief One turn; the WHOLE serialized conversation it returns.
+///
+/// Named for what it is. `entropic_run` returns the transcript, not the
+/// answer — callers that make a POSITIVE claim about what the model said
+/// must pass this through `final_answer` first (v2.13.0).
 std::string run(entropic_handle_t h, const char* prompt) {
-    char* out = nullptr;
-    entropic_run(h, prompt, &out);
-    std::string r = (out != nullptr) ? out : "";
-    if (out != nullptr) { entropic_free(out); }
-    return r;
+    return entropic::test::facade::run_transcript(h, prompt);
 }
 
 }  // namespace
@@ -64,11 +65,17 @@ SCENARIO("gh#94: enable_thinking:false suppresses think blocks (facade)",
         REQUIRE(h != nullptr);
 
         WHEN("a reasoning-flavored prompt is run") {
+            // `run` returns the WHOLE serialized conversation. That is the
+            // right scope for the NEGATIVE claim — no <think> block may
+            // survive anywhere in the turn — but it made the non-empty
+            // claim vacuous: an OK run always returns at least the system
+            // and user messages. The answer is what has to be non-empty.
             std::string out = run(h, "What is 2+2? Think it through.");
+            std::string answer = entropic::test::facade::final_answer(out);
             THEN("the output carries no <think> block and is non-empty") {
-                INFO("out=[" << out << "]");
+                INFO("answer=[" << answer << "]\ntranscript=[" << out << "]");
                 CHECK(out.find("<think>") == std::string::npos);
-                CHECK_FALSE(out.empty());
+                CHECK_FALSE(answer.empty());
             }
         }
     }

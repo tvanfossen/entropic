@@ -46,6 +46,11 @@
 #include <entropic/types/config.h>
 
 #include "model_test_context.h"  // start_test_log/test_log_contains/end_test_log only
+// v2.13.0: the bridge's own answer extractor. entropic_run returns the WHOLE
+// serialized conversation, so `REQUIRE_FALSE(result.empty())` was true for
+// any OK return — the system and user messages alone are not empty. The
+// claim is "the turn produces real content", which is about the ANSWER.
+#include "final_text.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -130,9 +135,12 @@ SCENARIO("gh#110: MTP engages through the real agent loop (entropic_run)",
             entropic_destroy(h);
 
             THEN("the turn succeeds with real content AND MTP actually engaged") {
-                INFO("rc=" << rc << "\nresult=[" << result << "]");
+                const std::string answer =
+                    facade_text::extract_final_text(result.c_str());
+                INFO("rc=" << rc << "\nanswer=[" << answer
+                     << "]\ntranscript=[" << result << "]");
                 REQUIRE(rc == ENTROPIC_OK);
-                REQUIRE_FALSE(result.empty());
+                REQUIRE_FALSE(answer.empty());
                 // Decisive gate: this log line is only emitted by
                 // LlamaCppBackend::generate_mtp when n_drafted > 0 — i.e. the
                 // speculative kernel ran, not plain decode. Before the fix,

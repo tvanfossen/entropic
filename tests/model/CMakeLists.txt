@@ -47,8 +47,12 @@ function(add_model_test NAME SOURCE)
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
     add_test(NAME model/${NAME} COMMAND ${NAME})
     set_tests_properties(model/${NAME} PROPERTIES
         LABELS "model"
@@ -76,8 +80,12 @@ function(add_model_test_per_case NAME SOURCE)
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
     math(EXPR _last "${ARGC} - 1")
     foreach(_i RANGE 2 ${_last})
         list(GET ARGV ${_i} _case)
@@ -107,8 +115,12 @@ function(add_bench_test NAME SOURCE)
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
     # gh#142: src/inference so a test can use the same VRAM estimator the
     # engine's admission gate uses (vram_footprint.h, device_memory.h).
+    # v2.13.0: src/facade so facade_model_helpers.h can reuse the bridge's
+    # own answer extractor (final_text.h) instead of a second copy — same
+    # precedent as tests/unit/api/final_text_test.cpp.
     target_include_directories(${NAME} PRIVATE
-        ${PROJECT_SOURCE_DIR}/src/inference)
+        ${PROJECT_SOURCE_DIR}/src/inference
+        ${PROJECT_SOURCE_DIR}/src/facade)
     # The benchmark cases are tagged [.] (Catch2 "hidden"), so they are NOT
     # collected by a bare run — the binary would exit 2 "No tests ran" and ctest
     # would record a FAILURE for a benchmark that never executed. Naming the tag

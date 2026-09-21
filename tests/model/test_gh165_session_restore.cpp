@@ -44,11 +44,20 @@
  * bytes, ~4,650 prompt tokens. Since 26884f6 that is no longer a quiet
  * degrade: an oversized prompt is a typed refusal
  * (`ENTROPIC_ERROR_EVAL_CONTEXT_FULL`, terminal `context_overflow`), so
- * `run_turn` would come back empty and the seed REQUIRE would fail before
+ * the seed turn would come back empty and its REQUIRE would fail before
  * a single restore happened. Restoring a conversation needs no tool at
  * all, but the tier contract derives `explicit_completion: true`
  * (`populate_tier_info`, src/facade/entropic.cpp) — an empty menu owes a
  * completion it cannot call — so each tier names exactly that one tool.
+ *
+ * @par Answer, not transcript (v2.13.0)
+ * The recall assertions assert on `final_answer(...)` — the last assistant
+ * message — not on what `entropic_run_session` returns, which is
+ * the WHOLE conversation including the seed message this test wrote
+ * itself. In the transcript form `CHECK(contains_ci(answer, "cinnamon"))`
+ * could not fail, and did not: a gate run of this file reported 28 passing
+ * assertions while every turn decoded 0 characters. The only assertion
+ * carrying signal was the negative one.
  *
  * Requires: GPU + gemma-4-E2B QAT GGUF. Run: ctest -L model -R gh165
  *
@@ -93,19 +102,25 @@ std::string snapshot(entropic_handle_t h, const char* key) {
     return json;
 }
 
-/// @brief Run one turn and return its final assistant text.
-/// @utility @version 2.13.0
-std::string run_turn(entropic_handle_t h, const char* key,
-                     const char* input) {
-    char* out = nullptr;
-    if (entropic_run_session(h, key, input, &out) != ENTROPIC_OK
-        || out == nullptr) {
-        return {};
-    }
-    std::string json = out;
-    entropic_free(out);
-    return json;
-}
+// Two things from facade_model_helpers.h, and the distinction between them
+// is the point of this file's v2.13.0 fix:
+//
+//   run_session_transcript — the WHOLE serialized conversation, which is
+//       what entropic_run_session actually returns. Empty only when the run
+//       itself was refused (ENTROPIC_ERROR_EVAL_CONTEXT_FULL since 26884f6),
+//       so it is what the seed REQUIREs below claim, and it is what gets
+//       logged when a recall assertion fails.
+//   final_answer           — the last non-empty assistant message in that
+//       transcript, via the bridge's own extractor. Every recall CHECK
+//       asserts on this.
+//
+// Until v2.13.0 this file had ONE local helper, returning the transcript,
+// and the recall CHECKs ran against it. `contains_ci(answer, "cinnamon")`
+// then matched the seed message the test itself wrote two statements
+// earlier: it could not fail, and did not — a gate run reported 28 passing
+// assertions while every turn decoded 0 characters.
+using entropic::test::facade::final_answer;
+using entropic::test::facade::run_session_transcript;
 
 }  // namespace
 
@@ -136,7 +151,7 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
 
-        REQUIRE_FALSE(run_turn(
+        REQUIRE_FALSE(run_session_transcript(
             h, "repo-a",
             "Remember this word, I will ask for it later: cinnamon").empty());
         const std::string stored = snapshot(h, "repo-a");
@@ -159,11 +174,14 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
                 // The load-bearing assertion: a restore that never reached
                 // the engine, or a serializer that dropped the turn, passes
                 // every unit test and fails right here.
-                const std::string answer = run_turn(
+                const std::string convo = run_session_transcript(
                     h, "repo-a",
                     "Earlier I gave you one word to remember. Repeat that "
                     "exact word now, and nothing else.");
-                INFO("answer: " << answer);
+                const std::string answer = final_answer(convo);
+                // Both, untruncated: the answer is what is asserted, the
+                // transcript is what tells an operator WHY it is empty.
+                INFO("answer: [" << answer << "]\ntranscript: " << convo);
                 CHECK(contains_ci(answer, "cinnamon"));
             }
         }
@@ -182,13 +200,20 @@ SCENARIO("gh#165: a dropped session restored from JSON keeps answering",
                 // Restoring must invalidate what the replaced conversation
                 // left resident. If the old prefix were reused the model
                 // would still be looking at 'cinnamon'.
-                const std::string answer = run_turn(
+                const std::string convo = run_session_transcript(
                     h, "repo-a",
                     "Earlier I gave you one word to remember. Repeat that "
                     "exact word now, and nothing else.");
-                INFO("answer: " << answer);
+                const std::string answer = final_answer(convo);
+                // Both, untruncated: the answer is what is asserted, the
+                // transcript is what tells an operator WHY it is empty.
+                INFO("answer: [" << answer << "]\ntranscript: " << convo);
                 CHECK(contains_ci(answer, "tungsten"));
-                CHECK_FALSE(contains_ci(answer, "cinnamon"));
+                // Negative over the TRANSCRIPT, not the answer: if the
+                // restore failed to replace the live conversation, the old
+                // 'cinnamon' history is still in it whether or not the
+                // model ever says the word.
+                CHECK_FALSE(contains_ci(convo, "cinnamon"));
             }
         }
     }
@@ -219,7 +244,7 @@ SCENARIO("gh#165 + gh#164: release the weights, keep the conversation",
         INFO("setup: " << project.setup_failure());
         REQUIRE(h != nullptr);
 
-        REQUIRE_FALSE(run_turn(
+        REQUIRE_FALSE(run_session_transcript(
             h, "repo-a",
             "Remember this word, I will ask for it later: marigold").empty());
         const std::string stored = snapshot(h, "repo-a");
@@ -235,11 +260,14 @@ SCENARIO("gh#165 + gh#164: release the weights, keep the conversation",
                     == ENTROPIC_OK);
 
             THEN("the next turn reloads the model and recalls the word") {
-                const std::string answer = run_turn(
+                const std::string convo = run_session_transcript(
                     h, "repo-a",
                     "Earlier I gave you one word to remember. Repeat that "
                     "exact word now, and nothing else.");
-                INFO("answer: " << answer);
+                const std::string answer = final_answer(convo);
+                // Both, untruncated: the answer is what is asserted, the
+                // transcript is what tells an operator WHY it is empty.
+                INFO("answer: [" << answer << "]\ntranscript: " << convo);
                 CHECK(contains_ci(answer, "marigold"));
             }
         }

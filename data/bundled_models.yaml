@@ -197,6 +197,48 @@ gemma4_a4b:
   # Vision: paired mmproj — see gemma4_a4b_mmproj (v2.1.12, gh#51).
   mmproj_key: gemma4_a4b_mmproj
 
+gemma4_a4b_qat:
+  name: gemma-4-26B-A4B-it-qat-UD-Q4_K_XL
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf
+  size_gb: 14.25
+  adapter: gemma4
+  description: Gemma 4 26B-A4B QAT — Q8-class quality at Q4 footprint; MoE (26B total, ~4B active). Pairs with mtp_a4b.
+  provider: unsloth
+  family: gemma4
+  size_label: a4b
+  quant: UD-Q4_K_XL
+  # License: Gemma Terms of Use (https://ai.google.dev/gemma/terms).
+  # QAT re-export: near-bf16 fidelity at the Q4 footprint, the same
+  # free-quality-win the E2B/E4B qat entries carry.
+  # SIZE WARNING: 14.25 GB — LARGER than the non-QAT gemma4_a4b
+  # (13.6 GB UD-IQ4_XS). On an 11 GB (1080 Ti) or 12 GB (3080 Ti) card
+  # this runs partially offloaded. `gpu_layers` moves WHOLE layers,
+  # attention included, which is the wrong split for an MoE — the
+  # right lever is tensor-targeted expert offload (llama.cpp -ncmoe),
+  # which entropic does not expose yet.
+  mmproj_key: gemma4_a4b_qat_mmproj
+
+gemma4_a4b_qat_mmproj:
+  name: gemma-4-26B-A4B-it-qat-mmproj-F16
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/mmproj-F16.gguf
+  size_gb: 1.19
+  description: Vision/audio projector paired with gemma4_a4b_qat (F16)
+  # License: Gemma Terms of Use. Unique `name` avoids the
+  # `mmproj-F16.gguf` filename collision pattern.
+
+mtp_a4b:
+  name: mtp-gemma-4-26B-A4B-it
+  url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/mtp-gemma-4-26B-A4B-it.gguf
+  size_gb: 0.24
+  description: MTP drafter for Gemma 4 26B-A4B (target-owned, shared-KV). Pair with gemma4_a4b_qat / gemma4_a4b.
+  provider: unsloth
+  family: gemma4
+  size_label: a4b
+  # Third MTP head alongside mtp_e2b / mtp_e4b. Under partial offload an
+  # accepted draft token skips a whole forward pass INCLUDING the
+  # host-resident expert reads, so MTP is expected to matter MORE here
+  # than on a fully-resident dense trunk — unmeasured, see gh#153.
+
 gemma4_a4b_mmproj:
   name: gemma-4-26B-A4B-it-mmproj-F16
   url: https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/resolve/main/mmproj-F16.gguf

@@ -1906,11 +1906,19 @@
 
     dir; (2) points every in-process and plugin server at the sandbox for
 
-    the child''s turns via ServerManager::set_working_dir_all and points
+    the child''s turns via ServerManager::enter_working_dir and points
 
-    them back on the way out, restoring the PARENT''S active root so a
+    them back on the way out (leave_working_dir), restoring the PARENT''S
 
-    nested delegation does not hand the outer child the project tree;
+    active root so a nested delegation does not hand the outer child the
+
+    project tree — holding that server set''s root lock for the child''s
+
+    whole run, so another session dispatching on the same set meanwhile
+
+    waits and then resolves against its own root, never the sandbox
+
+    (gh#158);
 
     (3) mints a unique sandbox id per delegation so siblings at one depth
 
@@ -1956,6 +1964,12 @@
 
     finishes, Then the tools are restored to the OUTER sandbox.
 
+    Given a sandboxed delegation on a server set, When another session
+
+    dispatches a tool on that set meanwhile, Then its call resolves
+
+    against its own root and not the sandbox.
+
     Given a child-visible external tool without readOnlyHint: true, When
 
     the delegation is dispatched, Then it is rejected with a typed
@@ -1982,6 +1996,12 @@
     TEST_CASE "gh#160: next_delegation_id never repeats" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/core/sandbox_test.cpp;
+
+    SCENARIO "gh#158: a session''s tool call never resolves inside another
+
+    session''s delegation sandbox" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
 
     TEST_CASE "gh#160: set_working_dir_all moves every in-process server";
 
@@ -5210,7 +5230,17 @@
 
     serves every unbound session, so read_file and write_file reach its map
 
-    from several run threads at once), and the whole generation path.
+    from several run threads at once), the working directory every
+
+    in-process and plugin server resolves against (the ServerManager''s
+
+    ToolRootLock: SHARED around each dispatch, EXCLUSIVE while a sandboxed
+
+    delegation has the set re-rooted, so another session''s call waits and
+
+    then resolves against its own root — never the sandbox), and the whole
+
+    generation path.
 
     Deleted rather than locked: the TokenCounter memo, an
 
@@ -5245,13 +5275,17 @@
 
     recursive, taken at the five generate entry points and nowhere else.
 
-    Order: generation_mutex_ -> swap_mutex_ / records_mutex_ -> the backend''s
+    Order: ToolRootLock (exclusive across a sandboxed child''s run) ->
+
+    generation_mutex_ -> swap_mutex_ / records_mutex_ -> the backend''s
 
     transition_mutex_ / mtp_mutex_. It cannot be inverted because no holder of
 
     an inner lock calls a generate entry point; `get_model` releases
 
-    `swap_mutex_` before returning.
+    `swap_mutex_` before returning; and ToolRootLock''s shared side is taken
+
+    only at tool dispatch, where a run thread holds none of the others.
 
 
     `entropic_interrupt` means every run; `entropic_interrupt_session` means
@@ -5336,6 +5370,24 @@
     server share its read tracker safely" —
 
     /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
+
+    SCENARIO "gh#158: a session''s tool call never resolves inside another
+
+    session''s delegation sandbox"; "gh#158: repeated sandbox swaps race nothing
+
+    a concurrent session reads" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/api/builtin_server_sharing_test.cpp;
+
+    TEST_CASE "gh#158: the root lock''s owner re-enters and passes through its
+
+    own shared side"; "gh#158: another thread''s dispatch waits while the root
+
+    lock is held exclusively"; "gh#158: re-rooting waits for an in-flight
+
+    dispatch"; "gh#158: leave_working_dir refuses a thread that never entered" —
+
+    /home/tvanfossen/Projects/entropic/tests/unit/mcp/tool_root_lock_test.cpp;
 
     SCENARIO "gh#158: two concurrent sessions do not bleed into each other" —
 

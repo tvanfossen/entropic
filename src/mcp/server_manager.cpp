@@ -242,14 +242,22 @@ void ServerManager::append_external_tools(nlohmann::json& all) const {
 
 /**
  * @brief Point every in-process and plugin server at `dir` (gh#160).
+ *
+ * gh#158: exclusive on `root_lock_` for its own duration, so it waits out
+ * any in-flight dispatch — the write of each server's root field and the
+ * filesystem server's ignore-rule reload never overlap a tool call that
+ * reads them. Re-entrant for a thread already inside enter_working_dir().
+ *
  * @param dir New working directory.
  * @return Number of servers that accepted the change.
  * @req REQ-MCP-001
  * @req REQ-DELEG-005
- * @version 2.13.0
+ * @req REQ-LOOP-009
+ * @version 2.13.0 [reviewed]
  */
 size_t ServerManager::set_working_dir_all(
         const std::filesystem::path& dir) {
+    std::lock_guard<ToolRootLock> exclusive(*root_lock_);
     size_t moved = 0;
     for (const auto& [name, server] : servers_) {
         if (server->set_working_dir(dir.string())) { ++moved; }
@@ -261,6 +269,49 @@ size_t ServerManager::set_working_dir_all(
     }
     logger->info("Tool working dir → {} ({} servers moved)",
                  dir.string(), moved);
+    return moved;
+}
+
+/**
+ * @brief Re-root for a sandboxed delegation and keep the root lock (gh#158).
+ *
+ * The lock is taken BEFORE the move and kept after it, so from the first
+ * re-rooted field to the restore no other thread's in-process or plugin
+ * dispatch runs on this manager. The owner's own dispatches pass through.
+ *
+ * @param dir Sandbox directory.
+ * @return Number of servers that accepted the change.
+ * @req REQ-DELEG-005
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+size_t ServerManager::enter_working_dir(const std::filesystem::path& dir) {
+    root_lock_->lock();
+    auto moved = set_working_dir_all(dir);
+    logger->info("Tool root lock HELD for sandbox {} — other sessions' "
+                 "in-process dispatch on this server set waits until "
+                 "restore", dir.string());
+    return moved;
+}
+
+/**
+ * @brief Restore after enter_working_dir(), then release one lock level.
+ * @param dir Directory to restore.
+ * @return Number of servers moved; 0 when this thread holds no lock.
+ * @req REQ-DELEG-005
+ * @req REQ-LOOP-009
+ * @version 2.13.0
+ */
+size_t ServerManager::leave_working_dir(const std::filesystem::path& dir) {
+    if (!root_lock_->owned_by_this_thread()) {
+        logger->error("leave_working_dir({}) from a thread that holds no "
+                      "sandbox root lock — refusing, nothing moved",
+                      dir.string());
+        return 0;
+    }
+    auto moved = set_working_dir_all(dir);
+    root_lock_->unlock();
+    logger->info("Tool root lock released on restore to {}", dir.string());
     return moved;
 }
 
@@ -413,14 +464,18 @@ MCPServerBase* ServerManager::get_server(const std::string& name) const {
  * it, which is not an error — there is then no path-taking tool whose
  * escapes need deciding.
  *
+ * Shared on `root_lock_` (gh#158): the install logs the server's root,
+ * which a concurrent sandbox swap writes.
+ *
  * @param fn Approver, or nullptr to clear.
  * @param user_data Forwarded to `fn`.
  * @return true when a filesystem server received it.
  * @req REQ-MCP-021
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 bool ServerManager::set_outside_root_approver(OutsideRootApprover fn,
                                               void* user_data) {
+    ToolRootShared root(*root_lock_, "set_outside_root_approver");
     auto* fs_server = dynamic_cast<FilesystemServer*>(
         get_server("filesystem"));
     if (fs_server != nullptr) {
@@ -530,13 +585,22 @@ std::string ServerManager::plugin_tool_schema(
  * than MCPServerBase subclasses — the base's list_tools/execute are
  * non-virtual and would present an empty registry.
  *
+ * gh#158 (v2.13.0): an in-process or plugin dispatch holds `root_lock_`
+ * SHARED for its duration — those are the servers a sandbox swap
+ * re-roots. While another session's sandboxed delegation holds it
+ * exclusively the call WAITS, then resolves against the restored root;
+ * before this it resolved inside that session's sandbox. External
+ * servers are separate processes the swap never moves, so they take
+ * nothing.
+ *
  * @param tool_name Fully-qualified name (`<server>.<tool>`).
  * @param args_json JSON arguments.
  * @return The resolved server's ServerResponse JSON envelope; for an
  *         unrecognised prefix, an error envelope naming the unknown
  *         server rather than a throw.
  * @req REQ-MCP-007
- * @version 2.10.1
+ * @req REQ-LOOP-009
+ * @version 2.13.0
  */
 std::string ServerManager::route_tool_call(
     const std::string& tool_name,
@@ -548,12 +612,14 @@ std::string ServerManager::route_tool_call(
     // Try in-process server first
     auto it = servers_.find(prefix);
     if (it != servers_.end()) {
+        ToolRootShared root(*root_lock_, tool_name);
         return it->second->execute(local_name, args_json);
     }
 
     // gh#133 (v2.10.1): try a loaded plugin
     auto plug_it = plugin_servers_.find(prefix);
     if (plug_it != plugin_servers_.end()) {
+        ToolRootShared root(*root_lock_, tool_name);
         return route_plugin_call(*plug_it->second, local_name, args_json);
     }
 

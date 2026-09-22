@@ -12,7 +12,10 @@
  * directory a delegation sandbox re-points (gh#160).
  *
  * Every dispatch goes through the handle's real `ToolExecutor`, which is
- * the path a run takes. The race half of each claim is proven by the
+ * the path a run takes; the sandbox swap is the facade's PRODUCTION
+ * callback (`swap_session_tool_dir`) driven through a real `ScopedSandbox`,
+ * exactly as `DelegationManager` drives it. The race half of each claim is
+ * proven by the
  * `tsan` preset (a report fails the test binary); the behavioural half is
  * asserted here, so the CPU lane catches a wrong answer too.
  *
@@ -20,12 +23,14 @@
  */
 
 #include <catch2/catch_test_macros.hpp>
+#include <entropic/core/sandbox.h>
 #include <entropic/entropic.h>
-#include "engine_handle.h"  // white-box: tool_executor, server_manager
+#include "engine_handle.h"  // white-box: tool_executor, swap_session_tool_dir
 
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -144,6 +149,35 @@ std::vector<std::string> dispatch(entropic_handle_t h, const std::string& key,
     return out;
 }
 
+/**
+ * @brief The joined result text of one batch, for marker matching.
+ * @param results Per-call result texts.
+ * @return All of them, newline-separated.
+ * @internal
+ * @version 2.13.0
+ */
+std::string joined(const std::vector<std::string>& results) {
+    std::string all;
+    for (const auto& r : results) { all += r + "\n"; }
+    return all;
+}
+
+/**
+ * @brief read_file + `bash cat` of one relative path — two servers, two
+ *        root fields (FilesystemServer::root_dir_, BashServer::working_dir_).
+ * @param id Call-id stem (distinct per batch — a repeat keys as duplicate).
+ * @param rel Path relative to the resolving servers' root.
+ * @return The two-call batch.
+ * @internal
+ * @version 2.13.0
+ */
+std::vector<entropic::ToolCall> read_both(const std::string& id,
+                                          const std::string& rel) {
+    return {make_call(id + "-fs", "filesystem.read_file", {{"path", rel}}),
+            make_call(id + "-sh", "bash.execute",
+                      {{"command", "cat " + rel}})};
+}
+
 }  // namespace
 
 SCENARIO("gh#158: two sessions reading and writing through ONE filesystem "
@@ -210,6 +244,136 @@ SCENARIO("gh#158: two sessions reading and writing through ONE filesystem "
                     CHECK(seen[t][i].find("read_before_write")
                           == std::string::npos);
                 }
+            }
+        }
+    }
+}
+
+SCENARIO("gh#158: a session's tool call never resolves inside another "
+         "session's delegation sandbox",
+         "[api][gh158][gh160][concurrency][v2.13.0]") {
+    // gh#160 re-roots the DEFAULT server set for a sandboxed delegation's
+    // whole child run. With concurrent_sessions on, a second UNBOUND
+    // session dispatches on that same set meanwhile. The invariant: its
+    // call resolves against ITS root — never the other session's sandbox.
+    TempDir root("swap_root");
+    root.put("notes.md", "MARKER-root\n");
+    TempDir sandbox("swap_sandbox");
+    sandbox.put("notes.md", "MARKER-sandbox\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+    REQUIRE(h.h->tool_executor != nullptr);
+
+    GIVEN("session A inside a sandboxed delegation, session B dispatching "
+          "while A's sandbox is in place") {
+        std::atomic<bool> a_inside{false};
+        std::atomic<bool> b_dispatching{false};
+        std::atomic<bool> a_restoring{false};
+        std::string a_saw;
+        std::string b_saw;
+        bool b_finished_after_restore = false;
+
+        std::thread ta([&] {
+            // Exactly what DelegationManager does around a child run.
+            entropic::ScopedSandbox scope(entropic::swap_session_tool_dir,
+                                          h.h, "s-a", sandbox.path,
+                                          root.path);
+            a_saw = joined(dispatch(h.h, "s-a", read_both("a", "notes.md")));
+            a_inside.store(true);
+            while (!b_dispatching.load()) { std::this_thread::yield(); }
+            // B is now inside (or blocked in) its dispatch. Hold the
+            // sandbox long enough that an unguarded B finishes first.
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            a_restoring.store(true);
+        });  // ~ScopedSandbox: restore, then release
+        std::thread tb([&] {
+            while (!a_inside.load()) { std::this_thread::yield(); }
+            b_dispatching.store(true);
+            b_saw = joined(dispatch(h.h, "s-b", read_both("b", "notes.md")));
+            b_finished_after_restore = a_restoring.load();
+        });
+        ta.join();
+        tb.join();
+        INFO("A saw:\n" << a_saw << "\nB saw:\n" << b_saw);
+
+        THEN("A's own child resolves inside its sandbox") {
+            // The sandbox owner passes through its own lock — otherwise
+            // the child would self-deadlock or escape its sandbox.
+            CHECK(a_saw.find("MARKER-sandbox") != std::string::npos);
+            CHECK(a_saw.find("MARKER-root") == std::string::npos);
+        }
+        THEN("B resolves against its own root, never A's sandbox") {
+            // Both servers: filesystem (root_dir_) and bash (working_dir_).
+            CHECK(b_saw.find("MARKER-root") != std::string::npos);
+            CHECK(b_saw.find("MARKER-sandbox") == std::string::npos);
+        }
+        THEN("B's call waited for A's restore rather than racing it") {
+            // Pins the CURRENT mechanism (the default set has one root, so
+            // a sandbox excludes other sessions' dispatch on it). The
+            // invariant is the THEN above; a per-session root design would
+            // legitimately change this one.
+            CHECK(b_finished_after_restore);
+        }
+    }
+}
+
+SCENARIO("gh#158: repeated sandbox swaps race nothing a concurrent "
+         "session reads",
+         "[api][gh158][gh160][concurrency][v2.13.0]") {
+    // The race half: set_working_dir_all rewrites a std::filesystem::path
+    // on three servers and RELOADS the ignore rules, while another run
+    // thread resolves paths and matches ignore rules against them. The
+    // tsan preset fails this binary on any report.
+    TempDir root("churn_root");
+    root.put("notes.md", "MARKER-root\n");
+    root.put(".gitignore", "build/\n");
+    TempDir sandbox("churn_sandbox");
+    sandbox.put("notes.md", "MARKER-sandbox\n");
+    sandbox.put(".gitignore", "out/\n");
+    Handle h(root.path);
+    REQUIRE(h.ok);
+
+    GIVEN("A entering and leaving a sandbox while B keeps reading") {
+        constexpr int kSwaps = 12;
+        constexpr int kReads = 30;
+        std::atomic<bool> go{false};
+        std::vector<std::string> a_saw(kSwaps);
+        std::vector<std::string> b_saw(kReads);
+
+        std::thread ta([&] {
+            while (!go.load()) { std::this_thread::yield(); }
+            for (int i = 0; i < kSwaps; ++i) {
+                entropic::ScopedSandbox scope(
+                    entropic::swap_session_tool_dir, h.h, "s-a",
+                    sandbox.path, root.path);
+                a_saw[size_t(i)] = joined(dispatch(
+                    h.h, "s-a", read_both("a" + std::to_string(i),
+                                          "notes.md")));
+            }
+        });
+        std::thread tb([&] {
+            go.store(true);
+            for (int i = 0; i < kReads; ++i) {
+                b_saw[size_t(i)] = joined(dispatch(
+                    h.h, "s-b", read_both("b" + std::to_string(i),
+                                          "notes.md")));
+            }
+        });
+        ta.join();
+        tb.join();
+
+        THEN("every A read is the sandbox and every B read is the root") {
+            for (int i = 0; i < kSwaps; ++i) {
+                INFO("A swap " << i << ": " << a_saw[size_t(i)]);
+                CHECK(a_saw[size_t(i)].find("MARKER-root")
+                      == std::string::npos);
+            }
+            for (int i = 0; i < kReads; ++i) {
+                INFO("B read " << i << ": " << b_saw[size_t(i)]);
+                CHECK(b_saw[size_t(i)].find("MARKER-sandbox")
+                      == std::string::npos);
+                CHECK(b_saw[size_t(i)].find("MARKER-root")
+                      != std::string::npos);
             }
         }
     }

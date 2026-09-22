@@ -140,6 +140,54 @@ void entropic::wire_outside_root_approver(entropic_handle_t h) {
 }
 
 /**
+ * @brief Move a session's servers into (or back out of) a sandbox.
+ *
+ * The implementation `sandbox.h` has described since v2.1.5 and nobody
+ * ever installed. `entering` drives a lock as well as the move: the
+ * in-process servers hold ONE working directory each, so two sandboxed
+ * delegations running at once (the default since gh#158) would
+ * otherwise interleave their swaps and write into each other's
+ * sandbox — or into the user's tree, once the first one restored.
+ *
+ * gh#158 (second audit pass): the lock is the server set's own
+ * (`ServerManager::enter_working_dir` / `leave_working_dir`), and every
+ * in-process dispatch on that set now takes it SHARED. Until then only
+ * the swaps took it (a facade `recursive_mutex`), so an UNBOUND session
+ * dispatching during another session's sandboxed delegation resolved
+ * inside that session's sandbox. One lock per ServerManager is still one
+ * per workspace (gh#166), which is where the parallelism comes back.
+ *
+ * Lives here rather than beside `wire_session_roots` because entropic.cpp
+ * is one `extern "C"` block and this is a C++ symbol: declared in
+ * engine_handle.h so a white-box test can drive the PRODUCTION swap
+ * through a real `ScopedSandbox` (gh#158).
+ *
+ * @param session_key Session whose tools are being moved.
+ * @param path Directory to point the servers at.
+ * @param entering True on sandbox entry, false on restore.
+ * @param ud Engine handle.
+ * @req REQ-DELEG-005
+ * @callback
+ * @version 2.13.0 [reviewed]
+ */
+void entropic::swap_session_tool_dir(
+    const std::string& session_key,
+    const std::filesystem::path& path,
+    bool entering, void* ud) {
+    auto* h = static_cast<entropic_handle_t>(ud);
+    auto* servers = entropic::workspace_servers(h, session_key);
+    if (servers == nullptr) { return; }
+    logger->info("delegation dir swap: session='{}' -> {} ({})",
+                 session_key, path.string(),
+                 entering ? "enter" : "restore");
+    if (entering) {
+        servers->enter_working_dir(path);
+    } else {
+        servers->leave_working_dir(path);
+    }
+}
+
+/**
  * @brief Register the outside-root path approver — see entropic.h.
  *
  * Only the slot changes: the default set's filesystem server already

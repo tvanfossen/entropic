@@ -8,6 +8,10 @@ target_sources(entropic-mcp PRIVATE
     server_base.cpp
     permission_manager.cpp
     server_manager.cpp
+    # gh#158 (v2.13.0): guards the working directory the in-process and
+    # plugin servers resolve against (shared per dispatch, exclusive while
+    # a sandboxed delegation has them re-rooted)
+    tool_root_lock.cpp
     # gh#133 (v2.10.1): dlopen-loaded in-process server plugins
     plugin_server.cpp
     tool_executor.cpp

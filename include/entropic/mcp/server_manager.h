@@ -19,6 +19,7 @@
 #include <entropic/mcp/plugin_server.h>
 #include <entropic/mcp/server_base.h>
 #include <entropic/mcp/servers/filesystem.h>
+#include <entropic/mcp/tool_root_lock.h>
 #include <entropic/types/config.h>
 
 #include <nlohmann/json_fwd.hpp>
@@ -183,23 +184,54 @@ public:
     /**
      * @brief Point every in-process and plugin server at `dir` (gh#160).
      *
-     * The facade's `ScopedSandbox` swap callback: this is what actually
-     * moves `filesystem`, `bash`, `git`, `diagnostics` and every dlopen
-     * plugin into a delegation sandbox and back out again. External
-     * (stdio/SSE) servers are NOT moved — they are separate processes
-     * with their own cwd, which is why a sandboxed delegation refuses to
-     * run when the child can reach a writable one
-     * (`external_tools_without_readonly_hint`).
+     * The primitive under enter_working_dir() / leave_working_dir(), which
+     * the facade's `ScopedSandbox` swap calls: this is what actually moves
+     * `filesystem`, `bash`, `git` and every dlopen plugin into a delegation
+     * sandbox and back out again (`diagnostics` keeps its construction
+     * root — it has no set_working_dir). External (stdio/SSE) servers are
+     * NOT moved — they are separate processes with their own cwd, which is
+     * why a sandboxed delegation refuses to run when the child can reach a
+     * writable one (`external_tools_without_readonly_hint`).
      *
      * @param dir New working directory for the registry.
      * @return Number of servers that accepted the change.
-     * @threadsafety Callers must not run two sandboxed delegations
-     *        against ONE manager concurrently — the facade serializes
-     *        them per workspace, because these are single fields on
-     *        shared server objects.
+     * @threadsafety Takes the root lock EXCLUSIVELY for its own duration
+     *        (re-entrant for a thread that already holds it), so it waits
+     *        for every in-flight in-process / plugin dispatch and no root
+     *        moves under a running tool call (gh#158).
      * @version 2.13.0
      */
     size_t set_working_dir_all(const std::filesystem::path& dir);
+
+    /**
+     * @brief Re-root every in-process and plugin server for a sandboxed
+     *        delegation, and KEEP the root lock (gh#158, gh#160).
+     *
+     * Takes the root lock exclusively and holds it until the matching
+     * leave_working_dir() on the SAME thread. Meanwhile any other thread's
+     * in-process / plugin dispatch on this manager waits, then resolves
+     * against the restored root — never the sandbox. The calling thread's
+     * own dispatches pass straight through and see `dir`, which is what a
+     * sandboxed child needs. Re-entrant: a nested delegation enters again
+     * on the same thread.
+     *
+     * @param dir Sandbox directory.
+     * @return Number of servers that accepted the change.
+     * @version 2.13.0
+     */
+    size_t enter_working_dir(const std::filesystem::path& dir);
+
+    /**
+     * @brief Restore after enter_working_dir(), then release one level of
+     *        the root lock (gh#158, gh#160).
+     * @param dir Directory to restore (the parent's active root).
+     * @return Number of servers that accepted the change; 0 with nothing
+     *         moved when the calling thread does not hold the lock — which
+     *         would otherwise release a lock it never took and pull the
+     *         servers out from under another thread's sandboxed child.
+     * @version 2.13.0
+     */
+    size_t leave_working_dir(const std::filesystem::path& dir);
 
     /**
      * @brief External tools that do not declare `readOnlyHint: true`.
@@ -405,6 +437,14 @@ private:
     std::filesystem::path project_dir_;                             ///< Project root
     std::map<std::string, std::unique_ptr<MCPServerBase>> servers_; ///< Name → in-process server
 
+    /// @brief gh#158: guards the working directory every in-process and
+    /// plugin server here resolves against — SHARED around each dispatch,
+    /// EXCLUSIVE while a sandboxed delegation has them re-rooted. One per
+    /// manager, so still one per workspace (gh#166). Owned through a
+    /// pointer because a lock cannot move and a ServerManager can.
+    std::unique_ptr<ToolRootLock> root_lock_ =
+        std::make_unique<ToolRootLock>();
+
     /**
      * @brief Route a tool call to a loaded plugin (gh#133).
      * @param plugin Target plugin.
@@ -483,11 +523,15 @@ private:
 
     /**
      * @brief Route a tool call to the correct server.
+     *
+     * gh#158: holds the root lock SHARED across an in-process or plugin
+     * dispatch — the servers a sandbox swap re-roots.
+     *
      * @param tool_name Fully-qualified name.
      * @param args_json JSON arguments.
      * @return ServerResponse JSON envelope.
      * @utility
-     * @version 1.8.7
+     * @version 2.13.0
      */
     std::string route_tool_call(const std::string& tool_name,
                                  const std::string& args_json);

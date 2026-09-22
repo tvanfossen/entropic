@@ -1650,45 +1650,6 @@ static std::filesystem::path facade_session_root(
 }
 
 /**
- * @brief Move a session's servers into (or back out of) a sandbox.
- *
- * The implementation `sandbox.h` has described since v2.1.5 and nobody
- * ever installed. `entering` drives a lock as well as the move: the
- * in-process servers hold ONE working directory each, so two sandboxed
- * delegations running at once (the default since gh#158) would
- * otherwise interleave their swaps and write into each other's
- * sandbox — or into the user's tree, once the first one restored.
- * Sandboxed delegations therefore serialize per handle; gh#166 makes
- * the lock per workspace, which is where the parallelism comes back.
- *
- * @param session_key Session whose tools are being moved.
- * @param path Directory to point the servers at.
- * @param entering True on sandbox entry, false on restore.
- * @param ud Engine handle.
- * @req REQ-DELEG-005
- * @callback
- * @version 2.13.0 [reviewed]
- */
-static void facade_swap_tool_dir(
-    const std::string& session_key,
-    const std::filesystem::path& path,
-    bool entering, void* ud) {
-    auto* h = static_cast<entropic_handle_t>(ud);
-    auto* servers = entropic::workspace_servers(h, session_key);
-    if (servers == nullptr) { return; }
-    // gh#166: the lock is the WORKSPACE's, so two sessions delegating in
-    // different repositories no longer serialize against each other.
-    auto* ws = entropic::workspace_for(h, session_key);
-    auto& lock = (ws != nullptr) ? ws->swap_mutex : h->sandbox_swap_mutex;
-    if (entering) { lock.lock(); }
-    servers->set_working_dir_all(path);
-    s_log->info("delegation dir swap: session='{}' -> {} ({})",
-                session_key, path.string(),
-                entering ? "enter" : "restore");
-    if (!entering) { lock.unlock(); }
-}
-
-/**
  * @brief External tools a sandboxed child could write through (gh#160).
  * @param session_key Session the delegation runs under (gh#166 routes on it).
  * @param allowed Child's tool allow-list (empty = everything).
@@ -1713,7 +1674,7 @@ static std::vector<std::string> facade_unsafe_external_tools(
  * @brief Install the gh#160 session-root + dir-swap seams on the engine.
  * @param h Engine handle with engine + server_manager constructed.
  * @dg_internal
- * @version 2.13.0
+ * @version 2.13.0 [reviewed]
  */
 static void wire_session_roots(entropic_handle_t h) {
     entropic::SessionRootInterface iface;
@@ -1721,7 +1682,7 @@ static void wire_session_roots(entropic_handle_t h) {
     iface.unsafe_external_tools = facade_unsafe_external_tools;
     iface.user_data = h;
     h->engine->set_session_root_interface(iface);
-    h->engine->set_dir_swap(facade_swap_tool_dir, h);
+    h->engine->set_dir_swap(entropic::swap_session_tool_dir, h);
 }
 
 /**

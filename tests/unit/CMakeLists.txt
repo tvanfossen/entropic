@@ -399,6 +399,8 @@ add_executable(entropic-mcp-tests
     mcp/permission_manager_test.cpp
     mcp/tool_executor_test.cpp
     mcp/server_manager_test.cpp
+    # gh#158 (v2.13.0): the root lock's owner / shared / exclusive rules
+    mcp/tool_root_lock_test.cpp
     mcp/tool_calling_loop_test.cpp
     # Per-server behavioral tests
     mcp/servers/filesystem_test.cpp

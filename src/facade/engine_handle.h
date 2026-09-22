@@ -68,9 +68,10 @@ struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
  * One resident model, many projects. A workspace owns its own tool root,
  * its own built-in + plugin server INSTANCES (they hold a working
  * directory each, so two workspaces cannot share one set), its own
- * external MCP servers, and its own delegation swap lock. Weights, tiers
- * and identity stay handle-wide — which is the entire point: switching
- * repository must not cost a 13 GiB reload.
+ * external MCP servers, and — through its ServerManager — its own
+ * delegation swap lock. Weights, tiers and identity stay handle-wide —
+ * which is the entire point: switching repository must not cost a 13 GiB
+ * reload.
  *
  * Per-workspace `app_context` is deliberately out of scope (follow-up).
  *
@@ -79,10 +80,11 @@ struct InterfaceContext;  // gh#58 follow-up (v2.2.6): per-handle iface ctx
 struct EntropicWorkspace {
     std::string name;                    ///< Caller-chosen workspace name
     std::filesystem::path root;          ///< Tool root for bound sessions
-    std::unique_ptr<entropic::ServerManager> servers; ///< Its own instances
-    /// @brief gh#160's swap lock, now per workspace — which is what lets
-    /// two sessions in DIFFERENT repositories delegate concurrently.
-    std::recursive_mutex swap_mutex;
+    /// @brief Its own instances. gh#158: the ServerManager carries the
+    /// sandbox swap lock (`ToolRootLock`), so it is per workspace — which is
+    /// what lets two sessions in DIFFERENT repositories delegate
+    /// concurrently.
+    std::unique_ptr<entropic::ServerManager> servers;
 };
 
 /**
@@ -128,16 +130,12 @@ struct entropic_engine {
     std::unique_ptr<entropic::MCPAuthorizationManager> mcp_auth;       ///< Per-identity tool auth
 
     // ── Phase 3b: Delegation isolation + workspaces (gh#160/gh#166) ──
-    /// @brief Swap lock for the DEFAULT workspace (gh#160).
-    ///
-    /// `set_working_dir` is a single field on each in-process server, so a
-    /// sandboxed delegation OWNS the registry for its duration. Recursive
-    /// because a nested delegation re-enters on the same thread; held from
-    /// `ScopedSandbox` construction to destruction. With
-    /// `delegation.isolation: none` (the default) it is never taken. A
-    /// named workspace has its own (`EntropicWorkspace::swap_mutex`), so
-    /// two repositories delegate in parallel.
-    std::recursive_mutex sandbox_swap_mutex;
+    // gh#158: the DEFAULT workspace's sandbox swap lock is
+    // `server_manager`'s own `ToolRootLock` — exclusive from `ScopedSandbox`
+    // construction to destruction, re-entrant for a nested delegation, and
+    // taken SHARED by every in-process dispatch on the set. The facade
+    // `recursive_mutex` it replaces serialized swaps against each other
+    // only, not against another session's tool calls.
 
     /// @brief gh#166: named workspaces, by name. The DEFAULT workspace is
     /// `server_manager` above and is not in this map.
@@ -265,6 +263,26 @@ inline entropic::ServerManager* workspace_servers(entropic_handle_t h,
  * @version 2.13.0
  */
 void wire_outside_root_approver(entropic_handle_t h);
+
+/**
+ * @brief The facade's gh#160 `ScopedSandbox` swap callback.
+ *
+ * Moves the session's server set (its workspace's, else the handle's
+ * default set) into `path` on entry and back out on restore. Installed on
+ * the engine by `wire_session_roots`; declared here — and exported, because
+ * the facade builds with hidden visibility — so a white-box test can drive
+ * the production swap rather than a copy of it (gh#158).
+ *
+ * @param session_key Session whose tools are being moved.
+ * @param path Directory to point the servers at.
+ * @param entering True on sandbox entry, false on restore.
+ * @param ud Engine handle (`entropic_handle_t`).
+ * @req REQ-DELEG-005
+ * @version 2.13.0
+ */
+ENTROPIC_EXPORT void swap_session_tool_dir(
+    const std::string& session_key, const std::filesystem::path& path,
+    bool entering, void* ud);
 
 /**
  * @brief gh#59 (v2.3.1): RAII guard combining api_mutex + log scope.

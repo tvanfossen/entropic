@@ -107,9 +107,13 @@ endfunction()
 # indistinguishable from one hiding a real failure. Labelled "bench" instead and
 # excluded from the default run; invoke deliberately:
 #
-#   ctest --test-dir build/full -L bench
+#   inv bench [--filter <ctest -R regex>] [--resume]
 #
-function(add_bench_test NAME SOURCE)
+# which runs each bench entry in its own process through the same 1:1 runner as
+# the model gate (tasks.py). gh#153: a binary whose cases each load their own
+# model registers one entry PER CASE (add_bench_executable + add_bench_entry),
+# for the same VRAM reason as add_model_test_per_case.
+function(add_bench_executable NAME SOURCE)
     add_executable(${NAME} ${SOURCE})
     target_link_libraries(${NAME} PRIVATE ${MODEL_TEST_LIBS})
     target_compile_definitions(${NAME} PRIVATE ${MODEL_TEST_DEFS})
@@ -121,16 +125,27 @@ function(add_bench_test NAME SOURCE)
     target_include_directories(${NAME} PRIVATE
         ${PROJECT_SOURCE_DIR}/src/inference
         ${PROJECT_SOURCE_DIR}/src/facade)
-    # The benchmark cases are tagged [.] (Catch2 "hidden"), so they are NOT
-    # collected by a bare run — the binary would exit 2 "No tests ran" and ctest
-    # would record a FAILURE for a benchmark that never executed. Naming the tag
-    # explicitly is what un-hides them, so the gate must pass it.
-    add_test(NAME bench/${NAME} COMMAND ${NAME} "[benchmark]")
-    set_tests_properties(bench/${NAME} PROPERTIES
+endfunction()
+
+# One ctest entry (one process) running the cases SPEC selects from binary NAME.
+#
+# The benchmark cases are tagged [.] (Catch2 "hidden"), so they are NOT
+# collected by a bare run — the binary would exit 2 "No tests ran" and ctest
+# would record a FAILURE for a benchmark that never executed. Naming a tag
+# explicitly is what un-hides them, so every entry must pass one.
+function(add_bench_entry NAME TEST_NAME SPEC)
+    add_test(NAME bench/${TEST_NAME} COMMAND ${NAME} "${SPEC}")
+    set_tests_properties(bench/${TEST_NAME} PROPERTIES
         LABELS "bench"
         RUN_SERIAL TRUE
         TIMEOUT 3600
     )
+endfunction()
+
+# A bench binary whose [benchmark] cases all run in one process.
+function(add_bench_test NAME SOURCE)
+    add_bench_executable(${NAME} ${SOURCE})
+    add_bench_entry(${NAME} ${NAME} "[benchmark]")
 endfunction()
 
 # ── Subsystem tests (18) — orchestrator-level ───────────────
@@ -279,10 +294,21 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
     "gh#108 (v2.10.3) CONTROL: non-streaming generate on the same tier"
     "gh#134 (v2.10.4) require_tool_call forces a tool call under MTP")
 
-# gh#108 (v2.9.3): side-by-side benchmark, E4B Q8 baseline vs the target
-# optimized config (E4B Q2-mobile + MTP + flash + q4 KV). Functional-only
-# assertions; prints both full responses + timing for human quality judgment.
-add_bench_test(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
+# Decode-configuration benchmarks, one entry (one process) per case — each
+# loads its own model, and the A4B case alone maps a 14 GB GGUF:
+#   quant-configs  gh#108 (v2.9.3): E4B Q8 baseline vs E4B Q2-mobile+MTP vs
+#                  E4B Q4_K_XL+MTP; functional-only, for human quality judgment.
+#   mtp-e4b        gh#153: four-arm MTP vs plain throughput (plain, control,
+#                  mtp, mtp-under-tier-grammar) on E4B QAT, fully offloaded.
+#   mtp-a4b        gh#153: the same four arms on 26B-A4B QAT, gpu_layers auto.
+# The gh#153 entries write build/test-reports/bench/gh153_mtp_<model>.json.
+add_bench_executable(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-quant-configs "[quant-configs]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-e4b "[mtp-e4b]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
 
 # gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
 # E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator

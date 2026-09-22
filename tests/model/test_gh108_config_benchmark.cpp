@@ -1,43 +1,77 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
  * @file test_gh108_config_benchmark.cpp
- * @brief gh#108 (v2.9.3): side-by-side benchmark of the target optimized
- *        config vs the E4B Q8 baseline, same prompt, for human quality
- *        judgment + measured performance.
+ * @brief Decode-configuration benchmarks: the gh#108 quant/config comparison
+ *        and the gh#153 four-arm MTP throughput measurement.
  *
- * Two configs, same prompt, greedy, run with thinking both ON and OFF:
- *   - "baseline": gemma-4-E4B-it-Q8_0.gguf, flash_attn on, f16 KV, plain decode.
- *   - "target":   gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf (TQ2_0 mobile QAT) + MTP
- *                 head, flash_attn on, q4_0 KV, generate_mtp().
+ * Each case is its own ctest entry — and so its own process, which is what
+ * returns VRAM between model loads (gh#142) — registered by tag in
+ * tests/model/CMakeLists.txt and run through `inv bench`:
  *
- * This is NOT a correctness/regression gate — quantized-vs-Q8 output is
- * expected to differ (lossy weights), and quality is a human judgment call,
- * not an assertable property. Assertions are functional only (no error,
- * non-empty output) so this stays green in CI while printing the RAW,
- * unmodified output (with and without thinking) for a human to judge.
- * Both wall-clock (this file's own timer, includes any fixed per-call
- * overhead) and the backend's internal decode-only throughput are reported.
+ *   [quant-configs]  gh#108 (v2.9.3): E4B Q8 baseline vs E4B Q2-mobile+MTP vs
+ *                    E4B Q4_K_XL+MTP, same prompt, thinking ON and OFF, for
+ *                    human quality judgment. Functional assertions only.
+ *   [mtp-e4b]        gh#153: MTP vs plain decode throughput on Gemma 4 E4B QAT,
+ *                    fully offloaded — four arms, asserted against a
+ *                    same-config floor.
+ *   [mtp-a4b]        gh#153: the same comparison on Gemma 4 26B-A4B QAT,
+ *                    partially offloaded with `gpu_layers: auto`.
+ *
+ * A note on `throughput_tok_s`, which both halves read: the backend stamps its
+ * clock BEFORE tokenize + prefill on the plain and the MTP path alike, so it is
+ * tokens over the WHOLE generate call, not decode alone. The gh#153 cases print
+ * each arm's prefill token count beside it so a cache-reuse asymmetry between
+ * arms is visible rather than folded silently into the figure.
  */
 
 #include "gh87_verify_helpers.h"  // LlamaCppBackend + config/result/message
+#include "model_test_context.h"   // helpers only — NO CATCH_REGISTER_LISTENER
 
+#include <entropic/config/bundled_models.h>
+#include <entropic/config/loader.h>
+#include <entropic/entropic.h>
+#include <entropic/inference/orchestrator.h>
+
+#include <nlohmann/json.hpp>
+
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <map>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace {
+
+// First line a shell command prints, newline stripped; "" on any failure.
+// Best-effort by design: used only to RECORD the environment (VRAM, GPU name,
+// git sha) next to a measurement, never to decide anything.
+std::string shell_first_line(const std::string& cmd) {
+    std::string line;
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (pipe != nullptr) {
+        char buf[256] = {0};
+        if (std::fgets(buf, sizeof(buf), pipe) != nullptr) { line = buf; }
+        pclose(pipe);
+    }
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) {
+        line.pop_back();
+    }
+    return line;
+}
 
 // Shells out to nvidia-smi for actual device memory usage (MiB). Best-effort:
 // returns -1 on any failure so callers can skip the reading rather than crash.
 long query_vram_used_mb() {
-    FILE* pipe = popen(
-        "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 0", "r");
-    if (!pipe) return -1;
-    char buf[64] = {0};
-    bool ok = std::fgets(buf, sizeof(buf), pipe) != nullptr;
-    pclose(pipe);
-    return ok ? std::strtol(buf, nullptr, 10) : -1;
+    const auto s = shell_first_line(
+        "nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits -i 0 "
+        "2>/dev/null");
+    return s.empty() ? -1 : std::strtol(s.c_str(), nullptr, 10);
 }
 
 entropic::ModelConfig base_cfg(const std::filesystem::path& path) {
@@ -88,7 +122,7 @@ void print_run(const char* label, const RunStats& s, int max_tokens) {
         "----------------------------------------------------------------\n"
         "%s\n"
         "  max_tokens=%d tokens=%d wall_ms=%.1f wall_tok/s=%.2f "
-        "decode_ms=%.1f decode_tok/s=%.2f finish=%s\n",
+        "gen_ms=%.1f engine_tok/s=%.2f finish=%s\n",
         label, max_tokens, s.result.token_count, s.wall_ms, wall_tok_s,
         s.result.generation_time_ms, s.result.throughput_tok_s,
         s.result.finish_reason.c_str());
@@ -103,7 +137,7 @@ void print_run(const char* label, const RunStats& s, int max_tokens) {
 
 TEST_CASE("gh#108 benchmark: E4B Q8 baseline vs E4B Q2-mobile+MTP+flash+q4KV "
           "vs E4B Q4_K_XL+MTP+flash+q4KV",
-          "[.][model][gh108][benchmark]") {
+          "[.][model][gh108][benchmark][quant-configs]") {
     auto q8_path = gh87verify::model_path("gemma-4-E4B-it-Q8_0.gguf");
     auto q2_path = gh87verify::model_path("gemma-4-E4B-it-qat-UD-Q2_K_XL.gguf");
     auto q4_path = gh87verify::model_path("gemma-4-E4B-it-UD-Q4_K_XL.gguf");
@@ -218,7 +252,7 @@ TEST_CASE("gh#108 benchmark: E4B Q8 baseline vs E4B Q2-mobile+MTP+flash+q4KV "
     double c_decode = q4mtp_nothink.result.throughput_tok_s;
     std::printf(
         "================================================================\n"
-        "decode-only speedup, thinking=OFF, vs [A] Q8 baseline:\n"
+        "engine tok/s ratio (prefill included), thinking=OFF, vs [A] Q8 baseline:\n"
         "  [B] Q2-mobile+MTP+flash+q4KV = %.2fx\n"
         "  [C] Q4_K_XL+MTP+flash+q4KV   = %.2fx\n"
         "================================================================\n",
@@ -237,4 +271,835 @@ TEST_CASE("gh#108 benchmark: E4B Q8 baseline vs E4B Q2-mobile+MTP+flash+q4KV "
     REQUIRE_FALSE(q4mtp_nothink.result.content.empty());
     REQUIRE(mtp_nothink.result.error_code == 0);
     REQUIRE_FALSE(mtp_nothink.result.content.empty());
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// gh#153 — MTP vs plain decode throughput, measured so it cannot be misread
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Decision #42 said MTP buys nothing on Pascal. That figure was taken at
+// n_draft=16, a default #44 later called a net slowdown, and it was never under
+// test: the suite asserted MTP ENGAGEMENT and never THROUGHPUT. A consumer's
+// harness then produced five figures that were each withdrawn because the
+// harness was measuring itself (decision #59), and the two that survived were
+// later found to have run under a tier grammar that never resolved — valid only
+// as "unconstrained" (#147, gh#154). The rules this case is built from, all of
+// them from that history:
+//
+//   * Four arms, every run, same tier config, same prompt, same model load:
+//       plain        plain decode
+//       control      a SECOND plain arm, identical to `plain`
+//       mtp          MTP head, n_draft=4
+//       mtp_grammar  MTP under a TIER grammar named by bare stem — the exact
+//                    spelling that failed open for the consumer
+//     The control is not optional: |plain - control| is the noise floor, and an
+//     effect is judged against it, never against zero.
+//   * Tokens per second only. Output volume differs between arms (a grammar
+//     changes what gets said), so a per-call duration is not a speed; none is
+//     printed. The floor is printed ABOVE the effect.
+//   * Figures come from the engine's own per-generation records —
+//     ModelOrchestrator::generation_records(), the ring entropic_metrics_json
+//     serializes as generations[] — never from log scraping or this file's
+//     clock.
+//   * An arm that did not do what its name says is INVALID and fails before
+//     any figure is reported: MTP arms must show n_drafted > 0 on EVERY record,
+//     plain arms n_drafted == 0, the grammar arm grammar.resolved with
+//     source=tier and its output in the grammar's shape, the unconstrained arms
+//     source=none.
+//   * One discarded warm-up round (every arm once: cold prefill, MTP head
+//     setup) before the measured rounds, which run in a Williams-balanced
+//     order (kOrder) so neither floor arm inherits a fixed predecessor.
+//   * No pinned multiplier. MTP must clear the floor by at least the floor
+//     again, and by no less than kMinMarginPct.
+//
+// The tiers share one GGUF, so they share one backend (the orchestrator pools
+// by path): every arm decodes on the same weights, the same KV configuration
+// and the same resolved gpu_layers. They differ only in the per-tier
+// `speculative.mtp` override and, for one arm, the tier `grammar:` stem.
+
+namespace gh153 {
+
+namespace fs = std::filesystem;
+
+/// @brief Tier grammar stem the grammar arm names. A BARE stem, resolved from
+///        `<config_dir>/grammars/` — the configuration that failed open in #147.
+constexpr const char* kGrammarKey = "gh153_review";
+
+/// @brief A code review as a JSON object. The prompt describes the same shape,
+///        so every arm writes comparable content and the grammar arm differs
+///        from `mtp` only by the constraint — which is what isolates the #147
+///        question (does a grammar move the accept rate).
+constexpr const char* kGrammarGbnf = R"GBNF(# gh#153 benchmark tier grammar: a code review as a JSON object.
+root    ::= "{" ws "\"summary\":" ws string "," ws "\"findings\":" ws "[" ws finding ("," ws finding)* ws "]" ws "}"
+finding ::= "{" ws "\"issue\":" ws string "," ws "\"fix\":" ws string ws "}"
+string  ::= "\"" ([^"\\\x7F\x00-\x1F] | "\\" (["\\/bfnrt] | "u" [0-9a-fA-F]{4}))* "\""
+ws      ::= | " " | "\n" [ \t]{0,20}
+)GBNF";
+
+/// @brief The one prompt every arm answers. Long-form on purpose: a short
+///        answer makes tok/s a measure of per-call overhead.
+constexpr const char* kReviewPrompt =
+    "Review the C function below. Answer with a JSON object that has two keys: "
+    "\"summary\", a one-paragraph overall assessment, and \"findings\", an "
+    "array with one object per problem, each with an \"issue\" key (what is "
+    "wrong and why it matters) and a \"fix\" key (the corrected code for that "
+    "problem). Report every bug, undefined behaviour, security problem and "
+    "performance problem you can find.\n\n"
+    "```c\n"
+    "char *join_words(char **words, int n) {\n"
+    "    char buf[64];\n"
+    "    int i, len = 0;\n"
+    "    for (i = 0; i <= n; i++) {\n"
+    "        strcat(buf, words[i]);\n"
+    "        strcat(buf, \" \");\n"
+    "        len += strlen(words[i]);\n"
+    "    }\n"
+    "    char *out = malloc(len);\n"
+    "    strcpy(out, buf);\n"
+    "    return out;\n"
+    "}\n"
+    "```\n";
+
+constexpr int kContextLength = 8192;
+/// @brief The shipped default (config.h), and the value the consumer's
+///        figures and decision #44 are stated at.
+constexpr int kNDraft = 4;
+/// @brief Least clearance above the floor, in percentage points, so a near-zero
+///        floor from one lucky pair of runs cannot certify a trivial effect.
+constexpr double kMinMarginPct = 5.0;
+
+/// @brief One arm: a tier name plus what that tier is configured to do.
+struct ArmSpec {
+    std::string name;  ///< Arm name == tier name
+    bool mtp;          ///< Per-tier speculative.mtp override
+    bool grammar;      ///< Tier names kGrammarKey
+};
+
+/// @brief The four arms. Index order is the one kOrder refers to.
+const std::vector<ArmSpec>& arms() {
+    static const std::vector<ArmSpec> k = {
+        {"plain", false, false},
+        {"control", false, false},
+        {"mtp", true, false},
+        {"mtp_grammar", true, true},
+    };
+    return k;
+}
+
+/// @brief Run order per round, as indices into arms(): a Williams square.
+///        Over the four measured rounds every arm runs once in every position
+///        AND follows every other arm exactly once. A plain rotation would
+///        always put `mtp_grammar` before `plain` and `plain` before `control`,
+///        so any carry-over from the previous generation (GPU clocks, the KV
+///        it leaves resident) would land on the two floor arms unequally and
+///        show up as noise that is not noise.
+constexpr std::size_t kOrder[4][4] = {
+    {0, 1, 3, 2},
+    {1, 2, 0, 3},
+    {2, 3, 1, 0},
+    {3, 0, 2, 1},
+};
+
+/// @brief One model under test.
+struct BenchModel {
+    std::string label;       ///< "e4b" | "a4b" — names the JSON summary
+    std::string target_key;  ///< Registry key of the trunk
+    std::string head_key;    ///< Registry key of the MTP head
+    std::string gpu_layers;  ///< YAML value as written: "-1" or "auto"
+    int max_tokens;          ///< Per-generation cap
+    int measured_rounds;     ///< Rounds after the discarded warm-up (x4)
+};
+
+/// @brief One generation, as the engine recorded it.
+struct Trial {
+    std::string arm;              ///< Arm / tier name
+    int round = 0;                ///< 0 = discarded warm-up
+    entropic::GenerationRecord rec;
+};
+
+/// @brief One arm's measured figures (warm-up excluded).
+struct ArmStats {
+    int trials = 0;
+    int tokens = 0;
+    double seconds = 0.0;    ///< Σ token_count / throughput_tok_s
+    double tok_s = 0.0;      ///< tokens / seconds — token-weighted
+    double tok_s_min = 0.0;  ///< Slowest single trial
+    double tok_s_max = 0.0;  ///< Fastest single trial
+    int n_drafted = 0;
+    int n_accepted = 0;
+    int prefill_tokens = 0;
+    std::string grammar_source = "none";
+    bool grammar_resolved = false;
+
+    double accept_rate() const {
+        return n_drafted > 0 ? static_cast<double>(n_accepted) / n_drafted
+                             : 0.0;
+    }
+};
+
+/// @brief Floor and effect, computed once and printed in that order.
+struct Verdict {
+    double floor_pct = 0.0;     ///< |plain - control| / min(plain, control)
+    double baseline = 0.0;      ///< The FASTER plain arm — conservative
+    double effect_pct = 0.0;    ///< mtp vs baseline
+    double required_pct = 0.0;  ///< floor + max(floor, kMinMarginPct)
+    bool clears = false;
+};
+
+/// @brief What the run actually resolved to — recorded, not assumed.
+struct RunInfo {
+    std::string yaml;
+    fs::path target_path;
+    fs::path head_path;
+    std::string quant;
+    uint64_t target_bytes = 0;
+    entropic::ModelConfig model;  ///< The backend's config AFTER admission
+    int n_layer = -1;
+    std::string offload;          ///< "full" | "partial" | "cpu"
+    long vram_used_mib = -1;      ///< Device-wide, after load (best-effort)
+    std::string gpu;
+    std::string git_sha;
+};
+
+/**
+ * @brief Temp project directory whose grammars/ holds the tier grammar.
+ *
+ * `config_dir:` points here, so the orchestrator's own startup scan
+ * (`load_bundled_grammars`) registers it — the production discovery path, not
+ * a registration this file performs on the engine's behalf.
+ */
+class BenchProject {
+public:
+    explicit BenchProject(const std::string& label)
+        : dir_(fs::temp_directory_path() / ("entropic_gh153_" + label)) {
+        fs::remove_all(dir_);
+        fs::create_directories(dir_ / "grammars");
+        std::ofstream(dir_ / "grammars" / (std::string(kGrammarKey) + ".gbnf"))
+            << kGrammarGbnf;
+    }
+    ~BenchProject() {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
+    BenchProject(const BenchProject&) = delete;
+    BenchProject& operator=(const BenchProject&) = delete;
+    const fs::path& dir() const { return dir_; }
+
+private:
+    fs::path dir_;
+};
+
+/// @brief One tier block. Identical model config on every tier, by design.
+std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
+    std::string y = "  " + arm.name + ":\n"
+        "    path: " + m.target_key + "\n"
+        "    adapter: gemma4\n"
+        "    context_length: " + std::to_string(kContextLength) + "\n"
+        "    gpu_layers: " + m.gpu_layers + "\n"
+        "    flash_attn: true\n"
+        "    cache_type_k: q4_0\n"
+        "    cache_type_v: q4_0\n"
+        "    use_mlock: false\n"
+        "    speculative:\n"
+        "      mtp: " + std::string(arm.mtp ? "true" : "false") + "\n";
+    if (arm.grammar) {
+        y += "    grammar: " + std::string(kGrammarKey) + "\n";
+    }
+    return y;
+}
+
+/// @brief The whole config, as YAML — parsed by the production loader.
+std::string config_yaml(const BenchModel& m, const fs::path& dir) {
+    std::string y = "config_dir: " + dir.string() + "\n"
+        "models:\n"
+        "  default: plain\n";
+    for (const auto& arm : arms()) { y += tier_yaml(m, arm); }
+    y += "routing:\n"
+         "  enabled: false\n"
+         "  fallback_tier: plain\n"
+         "inference:\n"
+         "  speculative:\n"
+         "    enabled: true\n"
+         "    mtp: true\n"
+         "    n_draft: " + std::to_string(kNDraft) + "\n"
+         "    draft:\n"
+         "      path: " + m.head_key + "\n";
+    return y;
+}
+
+/// @brief SKIP (with the reason) unless the GGUF is on disk.
+void skip_if_absent(const std::string& key, const fs::path& path) {
+    if (fs::is_regular_file(path)) { return; }
+    entropic::test::SkipFacts f;
+    f.key = key;
+    f.path = path.string();
+    SKIP(entropic::test::skip_reason_text(
+        entropic::test::SkipCause::kGgufMissing, f));
+}
+
+/// @brief SKIP when an operator waived large-model runs on this host — the
+///        same predicate both model-test load paths consult.
+void skip_if_waived(const std::string& key, const fs::path& path,
+                    uint64_t bytes) {
+    if (!entropic::large_model_tests_waived(bytes)) { return; }
+    entropic::test::SkipFacts f;
+    f.key = key;
+    f.path = path.string();
+    f.file_bytes = bytes;
+    SKIP(entropic::test::skip_reason_text(
+        entropic::test::SkipCause::kLargeModelWaived, f));
+}
+
+/// @brief Parse the YAML through the production loader and bring the default
+///        tier up. Fails loudly — a benchmark that cannot load has no result.
+std::unique_ptr<entropic::ModelOrchestrator> build_orchestrator(
+    const std::string& yaml, const entropic::config::BundledModels& registry) {
+    entropic::ParsedConfig cfg;
+    const auto err =
+        entropic::config::load_config_from_string(yaml, registry, cfg);
+    INFO("config rejected by the loader: " << err);
+    REQUIRE(err.empty());
+    auto orch = std::make_unique<entropic::ModelOrchestrator>();
+    const bool ok = orch->initialize(cfg);
+    INFO("orchestrator initialize failed; last residency error="
+         << static_cast<int>(orch->last_residency_error()));
+    REQUIRE(ok);
+    return orch;
+}
+
+/// @brief Pre-flight: the tier grammar was discovered AND parses. The registry
+///        keeps an invalid GBNF (flagged, not dropped) and `get()` still
+///        returns its text, so "resolved" alone would not rule out a grammar
+///        the sampler then fails to build.
+void require_grammar_registered(entropic::ModelOrchestrator& orch) {
+    const auto entries = orch.grammar_registry().list();
+    const auto it = std::find_if(entries.begin(), entries.end(),
+        [](const entropic::GrammarEntry& e) { return e.key == kGrammarKey; });
+    {
+        INFO("tier grammar '" << kGrammarKey << "' was not discovered under "
+             "config_dir/grammars — the grammar arm could not be constrained");
+        REQUIRE(it != entries.end());
+    }
+    INFO("tier grammar '" << kGrammarKey << "' failed GBNF validation: "
+         << it->error);
+    REQUIRE(it->validated);
+}
+
+/// @brief Record what the run resolved to: gpu_layers after `auto`, the real
+///        layer count, and the environment.
+RunInfo describe_run(const BenchModel& m,
+                     const entropic::config::BundledModels& registry,
+                     entropic::ModelOrchestrator& orch) {
+    RunInfo info;
+    info.target_path = registry.resolve(m.target_key);
+    info.head_path = registry.resolve(m.head_key);
+    info.quant = registry.get(m.target_key)->quant;
+    std::error_code ec;
+    info.target_bytes = fs::file_size(info.target_path, ec);
+    auto* backend = orch.get_backend("plain");
+    REQUIRE(backend != nullptr);
+    info.model = backend->config();
+    auto* llama = dynamic_cast<entropic::LlamaCppBackend*>(backend);
+    if (llama != nullptr && llama->llama_model_ptr() != nullptr) {
+        info.n_layer = llama_model_n_layer(llama->llama_model_ptr());
+    }
+    const int gl = info.model.gpu_layers;
+    const bool all = gl < 0 || (info.n_layer > 0 && gl >= info.n_layer);
+    info.offload = gl == 0 ? "cpu" : (all ? "full" : "partial");
+    info.vram_used_mib = query_vram_used_mb();
+    info.gpu = shell_first_line(
+        "nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null");
+    info.git_sha = shell_first_line(
+        "git -C \"" + std::string(MODEL_PATH) + "\" rev-parse HEAD 2>/dev/null");
+    return info;
+}
+
+/// @brief True when `text` has the grammar's shape: it opens `{"summary":`
+///        and, when the decode stopped on its own, closes on `}`. A
+///        length-capped decode is a grammar PREFIX and cannot be closed.
+///        Unconstrained Gemma wraps JSON in a ```json fence, which fails both.
+bool has_grammar_shape(const std::string& text, const std::string& finish) {
+    const auto open = text.find_first_not_of(" \t\r\n");
+    bool ok = open != std::string::npos && text[open] == '{';
+    if (ok) {
+        const auto key = text.find_first_not_of(" \t\r\n", open + 1);
+        ok = key != std::string::npos
+            && text.compare(key, 10, "\"summary\":") == 0;
+    }
+    if (ok && finish == "stop") {
+        const auto close = text.find_last_not_of(" \t\r\n");
+        ok = close != std::string::npos && text[close] == '}';
+    }
+    return ok;
+}
+
+/// @brief The grammar half of the integrity check.
+void check_grammar(const ArmSpec& arm, const entropic::GenerationRecord& rec,
+                   const entropic::GenerationResult& result,
+                   const std::string& where, std::vector<std::string>& v) {
+    const auto& g = rec.grammar;
+    const std::string got = "source=" + g.source + " key='" + g.key
+        + "' resolved=" + (g.resolved ? "true" : "false");
+    if (arm.grammar) {
+        if (!g.resolved || g.source != "tier" || g.key != kGrammarKey) {
+            v.push_back(where + ": the tier grammar did not apply (" + got
+                + "; expected source=tier key='" + kGrammarKey
+                + "' resolved=true)");
+        }
+        const auto& text =
+            result.raw_content.empty() ? result.content : result.raw_content;
+        if (!has_grammar_shape(text, rec.finish_reason)) {
+            v.push_back(where + ": output is not in the grammar's shape "
+                "(finish=" + rec.finish_reason + "), so the constraint did "
+                "not reach the sampler. Output:\n" + text);
+        }
+    } else if (g.resolved || g.source != "none") {
+        v.push_back(where + ": an unconstrained arm was constrained (" + got
+            + ")");
+    }
+    if (!g.conflict_winner.empty()) {
+        v.push_back(where + ": two grammars collided, winner="
+            + g.conflict_winner);
+    }
+}
+
+/// @brief Every property an arm's name claims, checked on its record.
+void check_record(const ArmSpec& arm, const entropic::GenerationRecord& rec,
+                  const entropic::GenerationResult& result,
+                  const std::string& where, std::vector<std::string>& v) {
+    if (rec.token_count != result.token_count) {
+        v.push_back(where + ": the newest record (" + std::to_string(
+            rec.token_count) + " tokens) is not this generation ("
+            + std::to_string(result.token_count) + " tokens)");
+    }
+    if (rec.token_count <= 0 || rec.throughput_tok_s <= 0.0) {
+        v.push_back(where + ": nothing measurable was decoded (tokens="
+            + std::to_string(rec.token_count) + ")");
+    }
+    if (arm.mtp && rec.n_drafted <= 0) {
+        v.push_back(where + ": MTP did not engage (n_drafted=0) — this "
+            "figure would be plain decode relabelled");
+    }
+    if (!arm.mtp && rec.n_drafted != 0) {
+        v.push_back(where + ": a plain arm drafted "
+            + std::to_string(rec.n_drafted) + " tokens — the floor would "
+            "compare MTP against MTP");
+    }
+    check_grammar(arm, rec, result, where, v);
+}
+
+/// @brief Run one arm once and take its record from the engine's ring.
+Trial run_trial(entropic::ModelOrchestrator& orch, const ArmSpec& arm,
+                int round, const entropic::GenerationParams& params,
+                std::vector<std::string>& violations) {
+    entropic::Message u;
+    u.role = "user";
+    u.content = kReviewPrompt;
+    const auto before = orch.generation_records().size();
+    const auto result = orch.generate({u}, params, arm.name);
+    const auto records = orch.generation_records();
+    const std::string where = arm.name + " round " + std::to_string(round);
+
+    Trial t;
+    t.arm = arm.name;
+    t.round = round;
+    const bool appended = !records.empty()
+        && (records.size() > before
+            || before >= entropic::ModelOrchestrator::kMaxGenerationRecords);
+    if (result.error_code != ENTROPIC_OK) {
+        violations.push_back(where + ": generation failed, error "
+            + std::to_string(static_cast<int>(result.error_code)) + ": "
+            + result.error_message);
+    } else if (!appended) {
+        violations.push_back(where + ": no generation record was appended");
+    } else {
+        t.rec = records.back();
+        check_record(arm, t.rec, result, where, violations);
+    }
+    // Progress only — no throughput here. A figure is reported once, after
+    // every arm has been proven to be what it is called.
+    std::printf("gh153 %-11s round %d%s: tokens=%d prefill=%d drafted=%d "
+                "accepted=%d grammar=%s/%s finish=%s\n",
+                arm.name.c_str(), round, round == 0 ? " (warm-up)" : "",
+                t.rec.token_count, t.rec.prefill_tokens, t.rec.n_drafted,
+                t.rec.n_accepted, t.rec.grammar.source.c_str(),
+                t.rec.grammar.resolved ? "resolved" : "unresolved",
+                t.rec.finish_reason.c_str());
+    std::fflush(stdout);
+    return t;
+}
+
+/// @brief Aggregate one arm's MEASURED trials (round 0 excluded).
+ArmStats aggregate(const std::vector<Trial>& trials, const std::string& arm) {
+    ArmStats s;
+    for (const auto& t : trials) {
+        if (t.arm != arm || t.round == 0) { continue; }
+        const auto& r = t.rec;
+        s.tokens += r.token_count;
+        s.seconds += static_cast<double>(r.token_count) / r.throughput_tok_s;
+        s.tok_s_min = s.trials == 0 ? r.throughput_tok_s
+                                    : std::min(s.tok_s_min, r.throughput_tok_s);
+        s.tok_s_max = std::max(s.tok_s_max, r.throughput_tok_s);
+        s.n_drafted += r.n_drafted;
+        s.n_accepted += r.n_accepted;
+        s.prefill_tokens += r.prefill_tokens;
+        s.grammar_source = r.grammar.source;
+        s.grammar_resolved = r.grammar.resolved;
+        ++s.trials;
+    }
+    s.tok_s = s.seconds > 0.0 ? s.tokens / s.seconds : 0.0;
+    return s;
+}
+
+/// @brief Floor first, then the effect judged against it.
+Verdict judge(const ArmStats& plain, const ArmStats& control,
+              const ArmStats& mtp) {
+    Verdict v;
+    const double lo = std::min(plain.tok_s, control.tok_s);
+    v.baseline = std::max(plain.tok_s, control.tok_s);
+    v.floor_pct = lo > 0.0 ? 100.0 * (v.baseline - lo) / lo : 0.0;
+    v.effect_pct = v.baseline > 0.0
+        ? 100.0 * (mtp.tok_s - v.baseline) / v.baseline : 0.0;
+    v.required_pct = v.floor_pct + std::max(v.floor_pct, kMinMarginPct);
+    v.clears = v.effect_pct > v.required_pct;
+    return v;
+}
+
+/// @brief One arm's headline line: tok/s with its token count beside it.
+void print_arm(const std::string& name, const ArmStats& s) {
+    std::printf("  %-12s %8.2f tok/s  %6d tokens  (per-trial %.2f .. %.2f)  "
+                "prefill %d",
+                name.c_str(), s.tok_s, s.tokens, s.tok_s_min, s.tok_s_max,
+                s.prefill_tokens);
+    if (s.n_drafted > 0) {
+        std::printf("  accept %d/%d = %.3f", s.n_accepted, s.n_drafted,
+                    s.accept_rate());
+    }
+    std::printf("\n");
+}
+
+/// @brief The configuration header — rule one of decision #59.
+void print_config(const BenchModel& m, const RunInfo& info) {
+    std::printf(
+        "\n================================================================\n"
+        "gh#153 MTP THROUGHPUT — %s (%s) + head %s\n"
+        "  gpu_layers: %s -> %d (%s, %d layers)  ctx=%d  flash_attn=%s  "
+        "KV %s/%s  use_mlock=%s\n"
+        "  n_draft=%d  temperature=0  max_tokens=%d  thinking=off  "
+        "GPU %s, %ld MiB used device-wide after load\n"
+        "  method: 1 discarded warm-up round (every arm once), then %d "
+        "measured rounds in a Williams-balanced arm order\n"
+        "  metric: tok/s = sum(tokens) / sum(tokens / throughput_tok_s) from "
+        "the engine's generation records\n"
+        "          (entropic_metrics_json generations[]); throughput_tok_s "
+        "spans the whole generate call, prefill included\n",
+        m.target_key.c_str(), info.quant.c_str(), m.head_key.c_str(),
+        m.gpu_layers.c_str(), info.model.gpu_layers, info.offload.c_str(),
+        info.n_layer, info.model.context_length,
+        info.model.flash_attn ? "on" : "off",
+        info.model.cache_type_k.c_str(), info.model.cache_type_v.c_str(),
+        info.model.use_mlock ? "true" : "false", kNDraft, m.max_tokens,
+        info.gpu.c_str(), info.vram_used_mib, m.measured_rounds);
+}
+
+/// @brief Human report. The FLOOR is printed above the EFFECT so the two
+///        cannot be read the other way round.
+void print_report(const BenchModel& m, const RunInfo& info,
+                  const std::map<std::string, ArmStats>& s, const Verdict& v) {
+    print_config(m, info);
+    std::printf("----------------------------------------------------------------\n"
+                "NOISE FLOOR — two identical plain arms\n");
+    print_arm("plain", s.at("plain"));
+    print_arm("control", s.at("control"));
+    std::printf("  floor        %8.2f %%\n"
+                "EFFECT — MTP vs the faster plain arm\n", v.floor_pct);
+    print_arm("mtp", s.at("mtp"));
+    std::printf("  effect       %+8.2f %%   required > %.2f %% "
+                "(floor + max(floor, %.1f pp))  -> %s\n",
+                v.effect_pct, v.required_pct, kMinMarginPct,
+                v.clears ? "CLEARS THE FLOOR" : "DOES NOT CLEAR THE FLOOR");
+    const auto& g = s.at("mtp_grammar");
+    const auto& u = s.at("mtp");
+    std::printf("MTP UNDER TIER GRAMMAR '%s' (source=%s, resolved=%s) — the "
+                "#147 question\n", kGrammarKey, g.grammar_source.c_str(),
+                g.grammar_resolved ? "true" : "false");
+    print_arm("mtp_grammar", g);
+    std::printf("  accept rate %.3f under the grammar vs %.3f unconstrained; "
+                "tok/s %+.2f %% vs unconstrained mtp\n"
+                "  NOT a speedup claim — this matrix has no plain arm under "
+                "the grammar to compare against\n",
+                g.accept_rate(), u.accept_rate(),
+                u.tok_s > 0.0 ? 100.0 * (g.tok_s - u.tok_s) / u.tok_s : 0.0);
+}
+
+/// @brief Per-trial rows, printed only for a VALID run.
+void print_trials(const std::vector<Trial>& trials) {
+    std::printf("----------------------------------------------------------------\n"
+                "per-trial records (round 0 = discarded warm-up)\n"
+                "  %-12s round  tokens     tok/s  prefill  drafted  accepted  "
+                "finish\n", "arm");
+    for (const auto& t : trials) {
+        std::printf("  %-12s %5d  %6d  %8.2f  %7d  %7d  %8d  %s\n",
+                    t.arm.c_str(), t.round, t.rec.token_count,
+                    t.rec.throughput_tok_s, t.rec.prefill_tokens,
+                    t.rec.n_drafted, t.rec.n_accepted,
+                    t.rec.finish_reason.c_str());
+    }
+}
+
+/// @brief UTC timestamp for the summary.
+std::string utc_now() {
+    const std::time_t t = std::time(nullptr);
+    char buf[32] = {0};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", std::gmtime(&t));
+    return buf;
+}
+
+/// @brief Where the machine-readable summary lands.
+fs::path summary_path(const std::string& label) {
+    return fs::path(TEST_REPORTS_DIR).parent_path() / "bench"
+         / ("gh153_mtp_" + label + ".json");
+}
+
+/// @brief The configuration block of the summary — every field read back
+///        from what the engine resolved, not from what this file asked for.
+nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
+    return {
+        {"schema", "entropic.gh153.mtp-bench/1"},
+        {"issue", "gh#153"},
+        {"entropic_version", entropic_version()},
+        {"git_sha", info.git_sha},
+        {"timestamp", utc_now()},
+        {"gpu", info.gpu},
+        {"model", {{"key", m.target_key},
+                   {"file", info.target_path.filename().string()},
+                   {"quant", info.quant},
+                   {"file_bytes", info.target_bytes}}},
+        {"mtp_head", {{"key", m.head_key},
+                      {"file", info.head_path.filename().string()}}},
+        {"config", {{"context_length", info.model.context_length},
+                    {"gpu_layers_configured", m.gpu_layers},
+                    {"gpu_layers_resolved", info.model.gpu_layers},
+                    {"n_layer", info.n_layer},
+                    {"offload", info.offload},
+                    {"flash_attn", info.model.flash_attn},
+                    {"cache_type_k", info.model.cache_type_k},
+                    {"cache_type_v", info.model.cache_type_v},
+                    {"use_mlock", info.model.use_mlock},
+                    {"n_draft", kNDraft},
+                    {"temperature", 0.0},
+                    {"max_tokens", m.max_tokens},
+                    {"enable_thinking", false},
+                    {"vram_used_mib_after_load", info.vram_used_mib},
+                    {"yaml", info.yaml}}},
+        {"method", {{"warmup", "one discarded round, every arm once"},
+                    {"measured_rounds", m.measured_rounds},
+                    {"order", "Williams square: each arm once per position, "
+                              "each arm after every other arm once"},
+                    {"records", "ModelOrchestrator::generation_records() — "
+                                "the ring entropic_metrics_json serializes as "
+                                "generations[]"},
+                    {"tok_s", "sum(token_count) / sum(token_count / "
+                              "throughput_tok_s) over measured records"},
+                    {"throughput_tok_s_spans", "the whole generate call, "
+                                               "prefill included"},
+                    {"floor", "|plain - control| / min(plain, control)"},
+                    {"effect", "mtp / max(plain, control) - 1"},
+                    {"required", "floor + max(floor, 5 pp)"}}},
+        {"prompt", kReviewPrompt},
+        {"grammar", {{"key", kGrammarKey}, {"gbnf", kGrammarGbnf}}},
+    };
+}
+
+/// @brief One arm's summary row — every field decision #42's rewrite needs.
+nlohmann::json arm_json(const ArmSpec& arm, const ArmStats& s,
+                        const BenchModel& m, const RunInfo& info) {
+    return {
+        {"arm", arm.name},
+        {"model", m.target_key},
+        {"quant", info.quant},
+        {"gpu_layers", info.model.gpu_layers},
+        {"offload", info.offload},
+        {"mtp", arm.mtp},
+        {"n_draft", arm.mtp ? kNDraft : 0},
+        {"grammar", {{"source", s.grammar_source},
+                     {"key", arm.grammar ? kGrammarKey : ""},
+                     {"resolved", s.grammar_resolved}}},
+        {"measured_trials", s.trials},
+        {"tokens", s.tokens},
+        {"tok_s", s.tok_s},
+        {"tok_s_min", s.tok_s_min},
+        {"tok_s_max", s.tok_s_max},
+        {"n_drafted", s.n_drafted},
+        {"n_accepted", s.n_accepted},
+        {"accept_rate", arm.mtp ? nlohmann::json(s.accept_rate())
+                                : nlohmann::json(nullptr)},
+        {"prefill_tokens", s.prefill_tokens},
+    };
+}
+
+/// @brief Every record, warm-up included and flagged.
+nlohmann::json trials_json(const std::vector<Trial>& trials) {
+    auto arr = nlohmann::json::array();
+    for (const auto& t : trials) {
+        arr.push_back({
+            {"arm", t.arm},
+            {"round", t.round},
+            {"warmup", t.round == 0},
+            {"finish_reason", t.rec.finish_reason},
+            {"token_count", t.rec.token_count},
+            {"prefill_tokens", t.rec.prefill_tokens},
+            {"throughput_tok_s", t.rec.throughput_tok_s},
+            {"n_drafted", t.rec.n_drafted},
+            {"n_accepted", t.rec.n_accepted},
+            {"grammar", {{"source", t.rec.grammar.source},
+                         {"key", t.rec.grammar.key},
+                         {"resolved", t.rec.grammar.resolved}}},
+        });
+    }
+    return arr;
+}
+
+/// @brief Write the summary and say where it went.
+void write_summary(const fs::path& path, const nlohmann::json& doc) {
+    fs::create_directories(path.parent_path());
+    std::ofstream(path) << doc.dump(2) << "\n";
+    std::printf("summary JSON: %s\n", path.string().c_str());
+}
+
+/// @brief Summary for a VALID run: arms, floor, effect, grammar arm, trials.
+nlohmann::json valid_summary(const BenchModel& m, const RunInfo& info,
+                             const std::map<std::string, ArmStats>& s,
+                             const Verdict& v,
+                             const std::vector<Trial>& trials) {
+    auto doc = run_json(m, info);
+    doc["valid"] = true;
+    auto rows = nlohmann::json::array();
+    for (const auto& arm : arms()) {
+        rows.push_back(arm_json(arm, s.at(arm.name), m, info));
+    }
+    doc["arms"] = rows;
+    doc["floor"] = {{"plain_tok_s", s.at("plain").tok_s},
+                    {"control_tok_s", s.at("control").tok_s},
+                    {"floor_pct", v.floor_pct}};
+    doc["effect"] = {{"mtp_tok_s", s.at("mtp").tok_s},
+                     {"baseline_tok_s", v.baseline},
+                     {"effect_pct", v.effect_pct},
+                     {"required_pct", v.required_pct},
+                     {"clears_floor", v.clears}};
+    const auto& g = s.at("mtp_grammar");
+    const auto& u = s.at("mtp");
+    doc["grammar_arm"] = {
+        {"accept_rate", g.accept_rate()},
+        {"accept_rate_unconstrained_mtp", u.accept_rate()},
+        {"tok_s_vs_unconstrained_mtp_pct",
+         u.tok_s > 0.0 ? 100.0 * (g.tok_s - u.tok_s) / u.tok_s : 0.0},
+        {"note", "no plain-under-grammar arm: not a speedup claim"}};
+    doc["trials"] = trials_json(trials);
+    return doc;
+}
+
+/// @brief Run all four arms on one model and judge MTP against the floor.
+void run_four_arm_bench(const BenchModel& m) {
+    entropic::config::BundledModels registry;
+    REQUIRE(load_registry(registry));
+    for (const auto* key : {&m.target_key, &m.head_key}) {
+        INFO("registry key '" << *key << "' is missing from "
+             "data/bundled_models.yaml");
+        REQUIRE(registry.get(*key) != nullptr);
+        skip_if_absent(*key, registry.resolve(*key));
+    }
+    std::error_code ec;
+    const auto target_path = registry.resolve(m.target_key);
+    const auto target_bytes = fs::file_size(target_path, ec);
+    skip_if_waived(m.target_key, target_path, target_bytes);
+    // A run that dies part-way must not leave the PREVIOUS run's figures
+    // sitting under this name looking current.
+    const auto out = summary_path(m.label);
+    fs::remove(out, ec);
+    wait_for_host_memory(static_cast<long>(target_bytes / (1024 * 1024)) + 2048);
+
+    BenchProject project(m.label);
+    const auto yaml = config_yaml(m, project.dir());
+    std::printf("\ngh153 config (production loader):\n%s", yaml.c_str());
+    auto orch = build_orchestrator(yaml, registry);
+    require_grammar_registered(*orch);
+    auto info = describe_run(m, registry, *orch);
+    info.yaml = yaml;
+    {
+        INFO("gpu_layers=" << m.gpu_layers << " resolved to "
+             << info.model.gpu_layers << " — nothing on the GPU, which is not "
+             "the configuration this case measures");
+        REQUIRE(info.model.gpu_layers != 0);
+    }
+
+    entropic::GenerationParams params;
+    params.temperature = 0.0f;
+    params.max_tokens = m.max_tokens;
+    params.enable_thinking = false;
+
+    std::vector<Trial> trials;
+    std::vector<std::string> violations;
+    const auto& as = arms();
+    // Round 0 is the warm-up and is never aggregated; measured round r runs
+    // kOrder row (r - 1) % 4. Stops after the first round that produced a
+    // violation: an invalid configuration is invalid in every round, and the
+    // GPU time is better not spent proving it again.
+    for (int round = 0; round <= m.measured_rounds && violations.empty();
+         ++round) {
+        const auto& row = kOrder[round == 0 ? 0 : (round - 1) % 4];
+        for (const std::size_t idx : row) {
+            trials.push_back(run_trial(*orch, as[idx], round, params, violations));
+        }
+    }
+
+    if (!violations.empty()) {
+        std::string all;
+        for (const auto& v : violations) { all += "\n  - " + v; }
+        std::printf("\ngh153 INVALID RUN — no figure is reported:%s\n",
+                    all.c_str());
+        auto doc = run_json(m, info);
+        doc["valid"] = false;
+        doc["violations"] = violations;
+        write_summary(out, doc);
+        INFO("INVALID: an arm did not do what its name says:" << all);
+        REQUIRE(violations.empty());
+    }
+
+    std::map<std::string, ArmStats> stats;
+    for (const auto& arm : as) { stats[arm.name] = aggregate(trials, arm.name); }
+    const auto verdict =
+        judge(stats.at("plain"), stats.at("control"), stats.at("mtp"));
+    print_report(m, info, stats, verdict);
+    print_trials(trials);
+    write_summary(out, valid_summary(m, info, stats, verdict, trials));
+    std::printf("================================================================\n");
+
+    INFO("MTP " << stats.at("mtp").tok_s << " tok/s vs the faster plain arm "
+         << verdict.baseline << " tok/s: effect " << verdict.effect_pct
+         << " % against a floor of " << verdict.floor_pct
+         << " % (required > " << verdict.required_pct << " %)");
+    REQUIRE(verdict.clears);
+}
+
+}  // namespace gh153
+
+TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 E4B "
+          "QAT fully offloaded",
+          "[.][model][gh153][benchmark][mtp-e4b]") {
+    // The consumer's configuration (#153): E4B QAT + its head, flash, q4_0 KV,
+    // every layer on the GPU.
+    gh153::run_four_arm_bench(
+        {"e4b", "gemma4_e4b_qat", "mtp_e4b", "-1", 512, 4});
+}
+
+TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
+          "QAT partially offloaded (gpu_layers auto)",
+          "[.][model][gh153][benchmark][mtp-a4b]") {
+    // 14.25 GB on the 11 GB floor card: `gpu_layers: auto` (decision #65)
+    // derives the split from free VRAM and the summary records what it chose.
+    // Shorter generations than E4B — a partially offloaded MoE decodes several
+    // times slower — so the four arms still fit a bounded run.
+    gh153::run_four_arm_bench(
+        {"a4b", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4});
 }

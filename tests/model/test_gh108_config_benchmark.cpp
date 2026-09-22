@@ -16,13 +16,22 @@
  *                    same-config floor.
  *   [mtp-a4b]        gh#153: the same comparison on Gemma 4 26B-A4B QAT,
  *                    partially offloaded with `gpu_layers: auto`.
+ *   [mtp-a4b-experts] gh#153 #42(iii): the same comparison on the same A4B at
+ *                    `gpu_layers: 31` (every layer) with `cpu_moe_layers: 31`
+ *                    — the EXPERIMENTAL experts-to-host split (decision #75).
  *
- * The two gh#153 cases run the SAME code and are judged by DIFFERENT rules,
+ * The three gh#153 cases run the SAME code and are judged by DIFFERENT rules,
  * selected from the residency the engine resolved rather than from the case:
  * a fully resident trunk must show MTP clearing the floor, a partially
  * resident one must only show MTP not being materially worse than plain.
  * That is decision #74; the reasoning is restated at the residency block
  * below, next to the code that applies it.
+ *
+ * Residency is about WEIGHTS, not about layer indices. `cpu_moe_layers` puts a
+ * layer's routed-expert FFN tensors on the host while its attention and KV stay
+ * on the card, so `gpu_layers` can say 31 of 31 while most of the model's bytes
+ * are in system RAM. A tier with `cpu_moe_layers > 0` is therefore NEVER
+ * classified fully resident — see `fully_resident_for` below.
  *
  * A note on `throughput_tok_s`, which both halves read: the backend stamps its
  * clock BEFORE tokenize + prefill on the plain and the MTP path alike, so it is
@@ -33,6 +42,11 @@
 
 #include "gh87_verify_helpers.h"  // LlamaCppBackend + config/result/message
 #include "model_test_context.h"   // helpers only — NO CATCH_REGISTER_LISTENER
+
+// src/inference is on this binary's include path (tests/model/CMakeLists.txt):
+// the engine's own free-VRAM query, which the expert-offload engagement check
+// measures against rather than inventing a second one.
+#include "device_memory.h"
 
 #include <entropic/config/bundled_models.h>
 #include <entropic/config/loader.h>
@@ -412,6 +426,11 @@ constexpr double kMinMarginPct = 5.0;
  * the resident fraction, because it means nothing without it: the same A4B
  * on a 12 GB card is still partial, at a better fraction, and is expected to
  * report a BETTER number under the SAME rule rather than a different rule.
+ *
+ * The rule follows the WEIGHTS, so `cpu_moe_layers` is part of the input and
+ * not a detail of the configuration: an experts-to-host tier has CPU-resident
+ * weights in every layer, which is precisely the condition kNotWorse exists
+ * for, however many layers `gpu_layers` claims. See `fully_resident_for`.
  */
 enum class ResidencyRule {
     kClearsFloor,   ///< Fully resident: MTP must beat plain by > required_pct
@@ -441,6 +460,61 @@ enum class ResidencyRule {
 int resident_layers_for(int gpu_layers, int n_layer) {
     if (gpu_layers < 0) { return n_layer; }
     return std::min(gpu_layers, n_layer);
+}
+
+/**
+ * @brief Is this trunk FULLY resident — every weight it has on the card?
+ *
+ * A layer count alone cannot answer that, and reading one as if it could is
+ * the bug this function exists to close. `gpu_layers` is role-blind, but
+ * `cpu_moe_layers` is not: it places the routed-expert FFN tensors of the
+ * first N layers on the HOST while that layer's attention, KV, router,
+ * shared/dense FFN and norms stay on the card (decision #75). A tier at
+ * `gpu_layers: 31, cpu_moe_layers: 31` therefore reports 31 of 31 layers
+ * resident while the large majority of a 26B-A4B's BYTES sit in system RAM —
+ * and `judge()` would have asserted the STRICT, fully-resident MTP rule on
+ * it, which is the exact misreading decision #74 was written to prevent.
+ *
+ * The rule is deliberately coarse: ANY expert offload disqualifies. This file
+ * has no way to price how much moved — "the first N layers" is not "N layers'
+ * worth of experts" (gemma4 decides per layer whether it has experts at all,
+ * so patterns for dense blocks match nothing), and a resident FRACTION that
+ * counted bytes would need GGUF tensor metadata the engine reads nowhere. A
+ * coarse "not fully resident" is honest; an invented fraction would not be.
+ *
+ * @param resident_layers Layers `gpu_layers` placed on the GPU.
+ * @param n_layer Model's repeating-layer count, or -1 when unreadable.
+ * @param cpu_moe_layers Layers whose routed experts were sent to the host.
+ * @return True only when every layer is on the card AND no expert left it.
+ */
+bool fully_resident_for(int resident_layers, int n_layer, int cpu_moe_layers) {
+    return n_layer > 0 && resident_layers == n_layer && cpu_moe_layers == 0;
+}
+
+/**
+ * @brief Where this tier's weights ended up, as one word for the log and JSON.
+ *
+ * The layer word first (`cpu` / `full` / `partial`), then `+experts_host` when
+ * routed experts were moved off the card, so `full+experts_host` cannot be
+ * skimmed as `full`: it says every LAYER was placed on the device and its
+ * experts were not.
+ *
+ * @param gpu_layers Resolved offload count.
+ * @param resident_layers Layers on the GPU.
+ * @param n_layer Model's repeating-layer count.
+ * @param cpu_moe_layers Layers whose routed experts went to the host.
+ * @return One of cpu | full | partial, optionally with `+experts_host`.
+ */
+std::string offload_word(int gpu_layers, int resident_layers, int n_layer,
+                         int cpu_moe_layers) {
+    std::string word = "partial";
+    if (gpu_layers == 0) {
+        word = "cpu";
+    } else if (n_layer > 0 && resident_layers == n_layer) {
+        word = "full";
+    }
+    if (cpu_moe_layers > 0) { word += "+experts_host"; }
+    return word;
 }
 
 /// @brief One arm: a tier name plus what that tier is configured to do.
@@ -477,12 +551,17 @@ constexpr std::size_t kOrder[4][4] = {
 
 /// @brief One model under test.
 struct BenchModel {
-    std::string label;       ///< "e4b" | "a4b" — names the JSON summary
+    std::string label;       ///< e4b | a4b | a4b_experts — names the JSON
     std::string target_key;  ///< Registry key of the trunk
     std::string head_key;    ///< Registry key of the MTP head
-    std::string gpu_layers;  ///< YAML value as written: "-1" or "auto"
+    std::string gpu_layers;  ///< YAML value as written: "-1", "auto" or a count
     int max_tokens;          ///< Per-generation cap
     int measured_rounds;     ///< Rounds after the discarded warm-up (x4)
+
+    /// @brief EXPERIMENTAL experts-to-host count; 0 leaves the key OUT of the
+    ///        YAML entirely, so every pre-existing case's config is unchanged
+    ///        byte for byte and their recorded `yaml` field still matches.
+    int cpu_moe_layers = 0;
 };
 
 /// @brief One generation, as the engine recorded it.
@@ -545,12 +624,48 @@ struct RunInfo {
     int n_layer = -1;
     int resident_layers = -1;     ///< Of n_layer, after `auto`/`-1` resolved
     double resident_fraction = 0.0;  ///< resident_layers / n_layer
+    /// @brief Layers whose routed experts the engine sent to the HOST. Read
+    ///        back from the backend's config, not from what this file asked
+    ///        for, and recorded beside `resident_fraction` everywhere that
+    ///        fraction appears — the fraction is a LAYER count and says
+    ///        nothing about the bytes this key moved off the card.
+    int cpu_moe_layers = 0;
     bool fully_resident = false;  ///< Selects the rule — see ResidencyRule
-    std::string offload;          ///< "full" | "partial" | "cpu"
+    std::string offload;          ///< cpu|full|partial [+experts_host]
     long vram_used_mib = -1;      ///< Device-wide, after load (best-effort)
+    long vram_used_mib_before = -1;  ///< Device-wide, before anything loaded
+    long vram_free_mib_before = -1;  ///< ggml's own query, before the load
     std::string gpu;
     std::string git_sha;
 };
+
+/// @brief VRAM as it stood BEFORE this run loaded anything — the reference
+///        the expert-offload engagement check is measured against.
+struct PreLoadVram {
+    long used_mib = -1;  ///< Device-wide (nvidia-smi); -1 when unreadable
+    long free_mib = -1;  ///< What this load could take (ggml); -1 when no GPU
+};
+
+/**
+ * @brief Sample both pre-load readings, nvidia-smi FIRST.
+ *
+ * The order is deliberate. `query_device_free_vram_bytes()` brings up a ggml
+ * device, and with it a CUDA context worth a few hundred MiB. Taking the
+ * nvidia-smi reading BEFORE that leaves the context inside the measured
+ * after-minus-before delta, so the delta over-counts what the model load
+ * itself took. That is the conservative direction for a check whose failure
+ * mode is a knob that did nothing: it can only make the bound harder to clear.
+ *
+ * @return Both readings, each -1 when it could not be taken.
+ */
+PreLoadVram sample_pre_load_vram() {
+    PreLoadVram v;
+    v.used_mib = query_vram_used_mb();
+    const uint64_t free_bytes = entropic::query_device_free_vram_bytes();
+    v.free_mib = free_bytes > 0
+        ? static_cast<long>(free_bytes / (1024ull * 1024ull)) : -1;
+    return v;
+}
 
 /**
  * @brief Temp project directory whose grammars/ holds the tier grammar.
@@ -590,9 +705,15 @@ std::string tier_yaml(const BenchModel& m, const ArmSpec& arm) {
         "    flash_attn: true\n"
         "    cache_type_k: q4_0\n"
         "    cache_type_v: q4_0\n"
-        "    use_mlock: false\n"
-        "    speculative:\n"
-        "      mtp: " + std::string(arm.mtp ? "true" : "false") + "\n";
+        "    use_mlock: false\n";
+    // Every arm carries it, because the four tiers share one GGUF and the
+    // orchestrator pools backends BY PATH: a tier that differed here would
+    // silently decode on the other tier's placement.
+    if (m.cpu_moe_layers > 0) {
+        y += "    cpu_moe_layers: " + std::to_string(m.cpu_moe_layers) + "\n";
+    }
+    y += "    speculative:\n"
+         "      mtp: " + std::string(arm.mtp ? "true" : "false") + "\n";
     if (arm.grammar) {
         y += "    grammar: " + std::string(kGrammarKey) + "\n";
     }
@@ -695,18 +816,192 @@ RunInfo describe_run(const BenchModel& m,
         info.n_layer = llama_model_n_layer(llama->llama_model_ptr());
     }
     const int gl = info.model.gpu_layers;
+    info.cpu_moe_layers = info.model.cpu_moe_layers;
     info.resident_layers = resident_layers_for(gl, info.n_layer);
-    info.fully_resident =
-        info.n_layer > 0 && info.resident_layers == info.n_layer;
+    info.fully_resident = fully_resident_for(info.resident_layers, info.n_layer,
+                                             info.cpu_moe_layers);
     info.resident_fraction = info.n_layer > 0
         ? static_cast<double>(info.resident_layers) / info.n_layer : 0.0;
-    info.offload = gl == 0 ? "cpu" : (info.fully_resident ? "full" : "partial");
+    info.offload = offload_word(gl, info.resident_layers, info.n_layer,
+                                info.cpu_moe_layers);
     info.vram_used_mib = query_vram_used_mb();
     info.gpu = shell_first_line(
         "nvidia-smi --query-gpu=name --format=csv,noheader -i 0 2>/dev/null");
     info.git_sha = shell_first_line(
         "git -C \"" + std::string(MODEL_PATH) + "\" rev-parse HEAD 2>/dev/null");
     return info;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Did `cpu_moe_layers` actually DO anything?
+// ────────────────────────────────────────────────────────────────────────────
+//
+// A prototype knob that silently did nothing must FAIL this case, never report
+// a throughput number. llama.cpp offers no post-load per-tensor buffer query,
+// so there is no direct "where did tensor X land". The strongest signal
+// available in-process is device memory, and it is sufficient here only
+// because the configuration is arranged to make it unambiguous:
+//
+//   MECHANISM. `gpu_layers` is asserted to have RESOLVED to the model's full
+//   layer count. Every repeating layer was requested RESIDENT, so there is
+//   nothing left in the engine that can put trunk weights on the host except
+//   the expert override. That rules out both ways this arm could quietly
+//   become an ordinary partial-offload run: the loader dropping the key, and
+//   `auto` (which is refused in this combination anyway) resolving low.
+//
+//   EFFECT. A load with every layer resident and no override would hold
+//   essentially the whole weights file on the card. The bound below says the
+//   load must instead finish with real headroom left, and it is derived from
+//   the two quantities this run measures for itself — the trunk's size on disk
+//   and the VRAM this card had free — with no pinned number:
+//
+//       overflow = weights - free      bytes that CANNOT be on this card
+//       bound    = free - overflow     the ceiling, cleared by the overflow again
+//
+//   "Cleared by the overflow again" is this file's own margin idiom, the same
+//   shape as `required = floor + max(floor, 5 pp)`: the minimum is never the
+//   margin. And here it is more than an idiom. `cpu_moe_layers` is not a
+//   fitting algorithm — it has no idea how big the card is and moves EVERY
+//   routed-expert tensor of the first N layers, not the least that would fit.
+//   So an engaged override does not squeak under the ceiling, it lands far
+//   below it; a load that merely squeaked under did not do what this knob does.
+//
+//   PRECONDITION. Both halves rest on the card being unable to hold the trunk.
+//   On a card that CAN, a fully resident load fits, a low reading proves
+//   nothing, and `bound` degenerates to a number nothing could exceed. That
+//   case is SKIPPED with the reason, before the load, rather than passed.
+//
+// What this does NOT establish: how MUCH moved. "The first N layers" is not
+// "N layers' worth of experts" — gemma4 decides per layer whether it has
+// experts at all — and nothing here prices the split in bytes.
+
+/// @brief The engagement check as numbers, all of them printed and recorded.
+struct Engagement {
+    long weights_mib = 0;    ///< The trunk's bytes on disk
+    long free_mib = -1;      ///< VRAM available to this load, before it
+    long overflow_mib = 0;   ///< weights - free: what cannot be on the card
+    long bound_mib = 0;      ///< free - overflow: the ceiling to clear
+    long used_mib = -1;      ///< Measured: VRAM this load consumed
+    bool measurable = false; ///< Every reading came back
+    bool engaged = false;    ///< used <= bound
+};
+
+/// @brief Bytes to MiB, the one conversion every figure here uses.
+long to_mib(uint64_t bytes) {
+    return static_cast<long>(bytes / (1024ull * 1024ull));
+}
+
+/**
+ * @brief Compute the engagement figures from what this run measured.
+ *
+ * @param info The run as the engine resolved it, with both VRAM readings.
+ * @return The figures; `measurable` false when a reading was unavailable.
+ */
+Engagement judge_engagement(const RunInfo& info) {
+    Engagement e;
+    e.weights_mib = to_mib(info.target_bytes);
+    e.free_mib = info.vram_free_mib_before;
+    if (info.vram_used_mib >= 0 && info.vram_used_mib_before >= 0) {
+        e.used_mib = info.vram_used_mib - info.vram_used_mib_before;
+    }
+    e.measurable = e.weights_mib > 0 && e.free_mib > 0 && e.used_mib >= 0;
+    if (e.measurable) {
+        e.overflow_mib = e.weights_mib - e.free_mib;
+        e.bound_mib = e.free_mib - e.overflow_mib;
+        e.engaged = e.used_mib <= e.bound_mib;
+    }
+    return e;
+}
+
+/**
+ * @brief Pre-flight for an expert-offload case, BEFORE the model is loaded.
+ *
+ * Fails loudly when there is no VRAM reading to be had, and SKIPs when this
+ * card is large enough to hold the trunk — on such a card device memory
+ * cannot distinguish an engaged override from a no-op, and a case that cannot
+ * prove its knob did something has no business reporting a throughput figure.
+ *
+ * @param m The bench model, carrying `cpu_moe_layers` (0 = not this case).
+ * @param target_bytes The trunk's size on disk.
+ * @param pre Both pre-load VRAM readings.
+ */
+void require_measurable_expert_offload(const BenchModel& m,
+                                       uint64_t target_bytes,
+                                       const PreLoadVram& pre) {
+    if (m.cpu_moe_layers <= 0) { return; }
+    {
+        INFO("cpu_moe_layers=" << m.cpu_moe_layers << " is EXPERIMENTAL and "
+             "this case's only proof that it engaged is device memory, but "
+             "nvidia-smi reported " << pre.used_mib << " MiB used and ggml "
+             "reported " << pre.free_mib << " MiB free. Without both, a knob "
+             "that did nothing would report a throughput number instead of "
+             "failing — the one outcome this case may not produce.");
+        REQUIRE(pre.used_mib >= 0);
+        REQUIRE(pre.free_mib > 0);
+    }
+    const long weights_mib = to_mib(target_bytes);
+    if (weights_mib > pre.free_mib) { return; }
+    SKIP("expert-offload engagement cannot be proven on this card: the trunk "
+         "is " + std::to_string(weights_mib) + " MiB and " +
+         std::to_string(pre.free_mib) + " MiB of VRAM is free, so a load with "
+         "every layer resident FITS and a low VRAM reading would not "
+         "distinguish an engaged override from a no-op. This case measures "
+         "the experts-only split on a card that cannot hold the model — the "
+         "situation cpu_moe_layers exists for. Run it on one, or re-derive "
+         "the assertion from something other than device memory.");
+}
+
+/// @brief Print the engagement figures, then assert them. Every number that
+///        the verdict rests on is on screen before the verdict is.
+void require_expert_offload_engaged(const BenchModel& m, const RunInfo& info,
+                                    const Engagement& e) {
+    if (m.cpu_moe_layers <= 0) { return; }
+    std::printf(
+        "----------------------------------------------------------------\n"
+        "EXPERT OFFLOAD ENGAGEMENT — cpu_moe_layers=%d (requested %d)\n"
+        "  trunk weights          %8ld MiB  on disk\n"
+        "  VRAM free before load  %8ld MiB  (ggml, this device)\n"
+        "  overflow               %8ld MiB  weights - free: bytes that CANNOT "
+        "be on this card\n"
+        "  bound                  %8ld MiB  free - overflow: the ceiling, "
+        "cleared by the overflow again\n"
+        "  VRAM this load took    %8ld MiB  (nvidia-smi device-wide, after - "
+        "before)\n"
+        "  gpu_layers resolved    %8d      of %d layers, every one requested "
+        "RESIDENT\n"
+        "  ENGAGED                %8s\n",
+        info.cpu_moe_layers, m.cpu_moe_layers, e.weights_mib, e.free_mib,
+        e.overflow_mib, e.bound_mib, e.used_mib, info.model.gpu_layers,
+        info.n_layer, e.engaged ? "YES" : "NO");
+    {
+        INFO("the loader did not carry cpu_moe_layers to the backend: asked "
+             "for " << m.cpu_moe_layers << ", the backend's post-admission "
+             "config holds " << info.cpu_moe_layers);
+        REQUIRE(info.cpu_moe_layers == m.cpu_moe_layers);
+    }
+    {
+        INFO("a VRAM reading went missing between the pre-flight and the load "
+             "(weights=" << e.weights_mib << " MiB, free=" << e.free_mib
+             << " MiB, taken=" << e.used_mib << " MiB), so there is no "
+             "engagement proof left and no figure may be reported");
+        REQUIRE(e.measurable);
+    }
+    {
+        INFO("gpu_layers resolved to " << info.model.gpu_layers << " of "
+             << info.n_layer << " layers, so this is an ordinary PARTIAL "
+             "offload and the VRAM reading cannot be attributed to the expert "
+             "override. This case requires every layer to be REQUESTED "
+             "resident, so that the override is the only thing left that can "
+             "put trunk weights on the host.");
+        REQUIRE(info.resident_layers == info.n_layer);
+    }
+    INFO("expert offload did NOT engage: the load took " << e.used_mib
+         << " MiB of VRAM, above the " << e.bound_mib << " MiB bound derived "
+         "from a " << e.weights_mib << " MiB trunk and " << e.free_mib
+         << " MiB of free VRAM (overflow " << e.overflow_mib << " MiB, cleared "
+         "again). With every layer requested resident, a load that takes that "
+         "much device memory is holding the expert weights on the card.");
+    REQUIRE(e.engaged);
 }
 
 /// @brief True when `text` has the grammar's shape: it opens `{"summary":`
@@ -894,8 +1189,8 @@ void print_config(const BenchModel& m, const RunInfo& info) {
     std::printf(
         "\n================================================================\n"
         "gh#153 MTP THROUGHPUT — %s (%s) + head %s\n"
-        "  gpu_layers: %s -> %d (%s, %d layers)  ctx=%d  flash_attn=%s  "
-        "KV %s/%s  use_mlock=%s\n"
+        "  gpu_layers: %s -> %d (%s, %d layers)  cpu_moe_layers=%d  ctx=%d  "
+        "flash_attn=%s  KV %s/%s  use_mlock=%s\n"
         "  n_draft=%d  temperature=0  max_tokens=%d  thinking=off  "
         "GPU %s, %ld MiB used device-wide after load\n"
         "  method: 1 discarded warm-up round (every arm once), then %d "
@@ -906,11 +1201,28 @@ void print_config(const BenchModel& m, const RunInfo& info) {
         "spans the whole generate call, prefill included\n",
         m.target_key.c_str(), info.quant.c_str(), m.head_key.c_str(),
         m.gpu_layers.c_str(), info.model.gpu_layers, info.offload.c_str(),
-        info.n_layer, info.model.context_length,
+        info.n_layer, info.cpu_moe_layers, info.model.context_length,
         info.model.flash_attn ? "on" : "off",
         info.model.cache_type_k.c_str(), info.model.cache_type_v.c_str(),
         info.model.use_mlock ? "true" : "false", kNDraft, m.max_tokens,
         info.gpu.c_str(), info.vram_used_mib, m.measured_rounds);
+}
+
+/// @brief Inside the RESIDENCY block: where the EXPERTS went, when they went
+///        anywhere. Without this the block reads "31 of 31 layers on the GPU"
+///        and a reader has every reason to take that for a resident run.
+void print_expert_note(const RunInfo& info) {
+    if (info.cpu_moe_layers <= 0) { return; }
+    std::printf(
+        "  EXPERTS ARE HOST-SIDE — cpu_moe_layers=%d: the routed-expert FFN\n"
+        "    tensors of the first %d layers are in SYSTEM RAM. The layer count\n"
+        "    above is what `gpu_layers` placed, and `gpu_layers` is role-blind,\n"
+        "    so %d of %d layers here is NOT a resident run — the large majority\n"
+        "    of this model's BYTES are on the host, and only its attention, KV,\n"
+        "    router, shared/dense FFN and norms are on the card. That is why\n"
+        "    the partial rule is the one asserted (decisions #74, #75).\n",
+        info.cpu_moe_layers, info.cpu_moe_layers, info.resident_layers,
+        info.n_layer);
 }
 
 /// @brief The residency line and BOTH rules' outcomes. Printed BELOW the
@@ -921,9 +1233,11 @@ void print_verdict(const RunInfo& info, const Verdict& v) {
     const bool full = v.rule == ResidencyRule::kClearsFloor;
     std::printf(
         "RESIDENCY — %d of %d layers on the GPU (%.1f %%, offload=%s, from "
-        "the RESOLVED gpu_layers=%d)\n  rule: %s\n",
+        "the RESOLVED gpu_layers=%d)\n",
         info.resident_layers, info.n_layer, 100.0 * v.resident_fraction,
-        info.offload.c_str(), info.model.gpu_layers,
+        info.offload.c_str(), info.model.gpu_layers);
+    print_expert_note(info);
+    std::printf("  rule: %s\n",
         full ? "FULLY RESIDENT — MTP must CLEAR the floor"
              : "PARTIALLY RESIDENT — MTP must only not be materially WORSE "
                "than plain; no win is claimed under partial offload");
@@ -1014,6 +1328,9 @@ nlohmann::json config_json(const BenchModel& m, const RunInfo& info) {
             {"n_layer", info.n_layer},
             {"resident_layers", info.resident_layers},
             {"resident_fraction", info.resident_fraction},
+            // Schema /3: the resident FRACTION is a layer count. This is the
+            // field that says whether those layers' weights were on the card.
+            {"cpu_moe_layers", info.cpu_moe_layers},
             {"fully_resident", info.fully_resident},
             {"offload", info.offload},
             {"flash_attn", info.model.flash_attn},
@@ -1024,14 +1341,49 @@ nlohmann::json config_json(const BenchModel& m, const RunInfo& info) {
             {"temperature", 0.0},
             {"max_tokens", m.max_tokens},
             {"enable_thinking", false},
+            {"vram_used_mib_before_load", info.vram_used_mib_before},
+            {"vram_free_mib_before_load", info.vram_free_mib_before},
             {"vram_used_mib_after_load", info.vram_used_mib},
             {"yaml", info.yaml}};
 }
 
+/// @brief The engagement figures, so a reader of this file years from now can
+///        check for themselves that the knob did something — and see that the
+///        bound came from the trunk's size and this card, not from a constant.
+nlohmann::json expert_offload_json(const RunInfo& info) {
+    const auto e = judge_engagement(info);
+    return {{"cpu_moe_layers", info.cpu_moe_layers},
+            {"weights_mib", e.weights_mib},
+            {"vram_free_mib_before_load", e.free_mib},
+            {"overflow_mib", e.overflow_mib},
+            {"bound_mib", e.bound_mib},
+            {"vram_mib_taken_by_load", e.used_mib},
+            {"measurable", e.measurable},
+            {"engaged", e.engaged},
+            {"bound", "free - (weights - free): with every layer REQUESTED "
+                      "resident, nothing but the expert override can put trunk "
+                      "weights on the host, so the load must finish clear of "
+                      "the card's ceiling by the overflow again. llama.cpp "
+                      "exposes no post-load per-tensor buffer query; this is "
+                      "the strongest in-process signal available"},
+            {"not_established", "HOW MUCH moved. 'The first N layers' is not "
+                                "'N layers' worth of experts' — gemma4 decides "
+                                "per layer whether it has experts — and "
+                                "nothing here prices the split in bytes"}};
+}
+
 /// @brief The run header of the summary: what was measured, and how.
 nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
-    return {
-        {"schema", "entropic.gh153.mtp-bench/2"},
+    nlohmann::json doc = {
+        // /3 (v2.13.0, gh#153 #42(iii)): `cpu_moe_layers` is recorded beside
+        // every `resident_fraction` — in config, on every arm row and in
+        // `effect` — and `fully_resident` now requires it to be 0, because a
+        // layer whose experts are host-side is not a resident layer. `offload`
+        // gains the `+experts_host` suffix and `expert_offload` carries the
+        // engagement figures. /2 readers see only added keys, but a /2 reader
+        // that infers residency from `resident_fraction` alone is wrong on a
+        // /3 document and must read `cpu_moe_layers` too.
+        {"schema", "entropic.gh153.mtp-bench/3"},
         {"issue", "gh#153"},
         {"entropic_version", entropic_version()},
         {"git_sha", info.git_sha},
@@ -1064,10 +1416,20 @@ nlohmann::json run_json(const BenchModel& m, const RunInfo& info) {
                              "resident, MTP must only be no worse than plain "
                              "by more than max(floor, 5 pp), because "
                              "verification cost scales with the drafted "
-                             "batch on CPU-resident layers"}}},
+                             "batch on CPU-resident layers"},
+                    {"residency", "fully resident means every layer on the "
+                                  "card AND cpu_moe_layers == 0: an "
+                                  "experts-to-host tier has CPU-resident "
+                                  "weights in every layer however many layers "
+                                  "gpu_layers claims, so it is judged by the "
+                                  "partial rule"}}},
         {"prompt", kReviewPrompt},
         {"grammar", {{"key", kGrammarKey}, {"gbnf", kGrammarGbnf}}},
     };
+    if (info.cpu_moe_layers > 0) {
+        doc["expert_offload"] = expert_offload_json(info);
+    }
+    return doc;
 }
 
 /// @brief One arm's summary row — every field decision #42's rewrite needs.
@@ -1080,8 +1442,10 @@ nlohmann::json arm_json(const ArmSpec& arm, const ArmStats& s,
         {"gpu_layers", info.model.gpu_layers},
         {"offload", info.offload},
         // Beside the tok/s, not only in the config block: a row lifted out
-        // of this array must carry the condition its figure depends on.
+        // of this array must carry the condition its figure depends on —
+        // which is the layer fraction AND where those layers' experts went.
         {"resident_fraction", info.resident_fraction},
+        {"cpu_moe_layers", info.cpu_moe_layers},
         {"mtp", arm.mtp},
         {"n_draft", arm.mtp ? kNDraft : 0},
         {"grammar", {{"source", s.grammar_source},
@@ -1156,6 +1520,7 @@ nlohmann::json valid_summary(const BenchModel& m, const RunInfo& info,
                      {"resident_layers", info.resident_layers},
                      {"n_layer", info.n_layer},
                      {"resident_fraction", info.resident_fraction},
+                     {"cpu_moe_layers", info.cpu_moe_layers},
                      {"required_pct", v.required_pct},
                      {"allowed_loss_pct", v.allowed_loss_pct},
                      {"clears_floor", v.clears},
@@ -1193,6 +1558,14 @@ void run_four_arm_bench(const BenchModel& m) {
     fs::remove(out, ec);
     wait_for_host_memory(static_cast<long>(target_bytes / (1024 * 1024)) + 2048);
 
+    // Sampled before anything is loaded, so the after-minus-before delta is
+    // this load's own device memory. It is also the reference the expert
+    // offload engagement bound is derived from, which is why the case that
+    // cannot be proven on this card is skipped HERE, before paying for a
+    // multi-minute load that could not have told anyone anything.
+    const auto pre = sample_pre_load_vram();
+    require_measurable_expert_offload(m, target_bytes, pre);
+
     BenchProject project(m.label);
     const auto yaml = config_yaml(m, project.dir());
     std::printf("\ngh153 config (production loader):\n%s", yaml.c_str());
@@ -1200,6 +1573,8 @@ void run_four_arm_bench(const BenchModel& m) {
     require_grammar_registered(*orch);
     auto info = describe_run(m, registry, *orch);
     info.yaml = yaml;
+    info.vram_used_mib_before = pre.used_mib;
+    info.vram_free_mib_before = pre.free_mib;
     {
         INFO("gpu_layers=" << m.gpu_layers << " resolved to "
              << info.model.gpu_layers << " — nothing on the GPU, which is not "
@@ -1214,6 +1589,10 @@ void run_four_arm_bench(const BenchModel& m) {
              "fraction is unknown and neither residency rule can be selected");
         REQUIRE(info.n_layer > 0);
     }
+    // Before a single token is generated: an experimental knob that did
+    // nothing must fail here, not produce a throughput figure that reads as a
+    // measurement of a split that never happened. No-op for every other case.
+    require_expert_offload_engaged(m, info, judge_engagement(info));
 
     entropic::GenerationParams params;
     params.temperature = 0.0f;
@@ -1309,4 +1688,45 @@ TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B 
     // not a different rule.
     gh153::run_four_arm_bench(
         {"a4b", "gemma4_a4b_qat", "mtp_a4b", "auto", 256, 4});
+}
+
+TEST_CASE("gh#153 MTP vs plain decode throughput — four arms, Gemma 4 26B-A4B "
+          "QAT with every layer placed and the routed experts on the host",
+          "[.][model][gh153][benchmark][mtp-a4b-experts]") {
+    // The same model, card, prompt, arms, floor and rules as [mtp-a4b]. One
+    // thing changes: `cpu_moe_layers` sends the routed-expert FFN tensors of
+    // all 31 layers to the host so attention, its KV, the router, the
+    // shared/dense FFN and the norms can stay on the card (decision #75).
+    // That is the split #42(iii) says its figures do not cover, and this case
+    // exists so the comparison against #42(b)'s 18-of-31 run can be made.
+    //
+    // `gpu_layers: 31` is an EXPLICIT COUNT, and the three ways of writing
+    // "all of them" are each wrong here:
+    //   -1 / 99  classify as `Offload::full` in vram_footprint.h, so the gh#148
+    //            admission gate prices the whole 14.25 GB file against an
+    //            11 GiB card and refuses the tier before the knob can help.
+    //   auto     is refused by design in this combination: the residency math
+    //            prices a layer as a WHOLE layer and has no model of expert
+    //            placement, so the split it derives would not describe the
+    //            load (expert_offload_conflict_reason).
+    // 31 classifies as `partial_unknown`, which leaves the gate open — the
+    // engine declines to price what it cannot price. The count also has to be
+    // the model's real layer count, and `require_expert_offload_engaged`
+    // asserts that it resolved to exactly `n_layer`: with every layer REQUESTED
+    // resident, the expert override is the only thing left that can put trunk
+    // weights on the host, which is what makes the VRAM reading mean something.
+    //
+    // context_length is the shared kContextLength (8192), NOT the 4096 of the
+    // prototype's illustrative snippet. This case is a controlled comparison
+    // against [mtp-a4b] on the same card, and a controlled comparison changes
+    // ONE variable; max_tokens 256 matches it for the same reason.
+    //
+    // NO expectation is stated here, deliberately. Whether an experts-only
+    // split moves MTP's -0.92 % is the open question #42(iii) names, and a
+    // case that printed the answer it wanted before measuring would be the
+    // fourth way this issue has gone wrong. The residency rule that judges it
+    // is chosen by the engine (decision #74) and, because the experts are
+    // host-side, it is the PARTIAL rule — 31 of 31 layers notwithstanding.
+    gh153::run_four_arm_bench(
+        {"a4b_experts", "gemma4_a4b_qat", "mtp_a4b", "31", 256, 4, 31});
 }

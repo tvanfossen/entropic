@@ -301,7 +301,17 @@ add_model_test_per_case(test-gh108-mtp-stream-grammar test_gh108_mtp_stream_gram
 #   mtp-e4b        gh#153: four-arm MTP vs plain throughput (plain, control,
 #                  mtp, mtp-under-tier-grammar) on E4B QAT, fully offloaded.
 #   mtp-a4b        gh#153: the same four arms on 26B-A4B QAT, gpu_layers auto.
+#   mtp-a4b-experts
+#                  gh#153 #42(iii): the same four arms on the same A4B at
+#                  gpu_layers 31 (every layer) + cpu_moe_layers 31 — the
+#                  EXPERIMENTAL experts-to-host split (decision #75). Skips
+#                  itself on a card large enough to hold the trunk, where
+#                  device memory cannot prove the override engaged.
 # The gh#153 entries write build/test-reports/bench/gh153_mtp_<model>.json.
+#
+# NOTE for `inv bench --filter`: ctest -R takes a REGEX, so
+# `-mtp-a4b` also selects `-mtp-a4b-experts`. Anchor it (`mtp-a4b$`) to run
+# only the auto-offload case.
 add_bench_executable(test-gh108-config-benchmark test_gh108_config_benchmark.cpp)
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-quant-configs "[quant-configs]")
@@ -309,6 +319,8 @@ add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-e4b "[mtp-e4b]")
 add_bench_entry(test-gh108-config-benchmark
     test-gh108-config-benchmark-mtp-a4b "[mtp-a4b]")
+add_bench_entry(test-gh108-config-benchmark
+    test-gh108-config-benchmark-mtp-a4b-experts "[mtp-a4b-experts]")
 
 # gh#108 (v2.9.3) follow-up: multi-turn tool-calling agentic benchmark,
 # E4B Q8 baseline vs E4B Q4_K_XL+MTP+flash+q4KV, through the orchestrator
